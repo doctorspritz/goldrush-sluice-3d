@@ -34,7 +34,7 @@ pub use world::World;
 // Re-export new PIC/FLIP types
 pub use flip::FlipSimulation;
 pub use grid::{CellType, Grid};
-pub use particle::{Particle, Particles};
+pub use particle::{Particle, ParticleMaterial, Particles};
 pub use sediment::{Sediment, SedimentParticle, SedimentState, SedimentType};
 pub use sluice::{create_box, create_flat_sluice, create_sluice};
 pub use pbf::{PbfSimulation, PbfParticle};

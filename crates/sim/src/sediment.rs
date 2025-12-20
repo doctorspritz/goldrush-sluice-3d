@@ -45,12 +45,14 @@ impl SedimentType {
         }
     }
 
-    /// Drag coefficient (higher = more resistance to flow)
+    /// Drag coefficient (higher = follows fluid better)
+    /// Light particles have HIGH drag (carried by flow)
+    /// Heavy particles have LOW drag (sink through flow)
     pub fn drag_coefficient(&self) -> f32 {
         match self {
-            Self::QuartzSand => 0.8,
-            Self::Magnetite => 1.0,
-            Self::Gold => 1.2, // Gold has more surface area due to flat shape
+            Self::QuartzSand => 8.0,  // HIGH drag - follows water flow
+            Self::Magnetite => 4.0,   // Medium drag
+            Self::Gold => 1.5,        // LOW drag - sinks through flow
         }
     }
 
@@ -164,43 +166,53 @@ impl Sediment {
     where
         F: Fn(Vec2) -> Vec2 + Sync,
     {
-        // Use update_with_collision with a no-op collision checker
-        self.update_with_collision(dt, sample_fluid_velocity, |_| false);
+        // Use update_with_collision with no-op collision/fluid checkers
+        self.update_with_collision(dt, sample_fluid_velocity, |_| false, |_| true);
     }
 
     /// Update with collision detection against solid terrain
     ///
     /// `is_solid` returns true if the position is inside solid geometry.
-    pub fn update_with_collision<F, S>(&mut self, dt: f32, sample_fluid_velocity: F, is_solid: S)
-    where
+    /// `is_fluid` returns true if the position is inside fluid (for drift-flux coupling).
+    pub fn update_with_collision<F, S, FL>(
+        &mut self,
+        dt: f32,
+        sample_fluid_velocity: F,
+        is_solid: S,
+        is_fluid: FL,
+    ) where
         F: Fn(Vec2) -> Vec2 + Sync,
         S: Fn(Vec2) -> bool + Sync,
+        FL: Fn(Vec2) -> bool + Sync,
     {
         self.particles.par_iter_mut().for_each(|particle| {
             if particle.state == SedimentState::Trapped {
                 return; // Trapped particles don't move
             }
 
-            // Sample fluid velocity at particle position
-            let u_fluid = sample_fluid_velocity(particle.position);
-
-            // Calculate slip velocity (Rubey settling)
+            let in_fluid = is_fluid(particle.position);
             let settling = particle.settling_velocity();
 
-            // Drag force opposes relative motion
-            let relative_vel = particle.velocity - u_fluid;
-            let drag_coeff = particle.material.drag_coefficient();
-            let drag = relative_vel * drag_coeff;
+            if in_fluid {
+                // DRIFT-FLUX: In water, particles are advected by flow + slip
+                let u_fluid = sample_fluid_velocity(particle.position);
+                let drag_coeff = particle.material.drag_coefficient();
 
-            // Update velocity: advect with fluid + slip through it
-            // The key insight: in fast flow, drag dominates (particle follows fluid)
-            // In slow/recirculating flow, gravity dominates (particle settles out)
-            let effective_g = particle.effective_gravity();
+                // Target velocity: fluid velocity + downward settling slip
+                let slip_velocity = Vec2::new(0.0, settling);
+                let target_vel = u_fluid + slip_velocity;
 
-            particle.velocity = u_fluid
-                + Vec2::new(0.0, settling) * dt  // Settling pulls down
-                - drag * dt                       // Drag opposes relative motion
-                + Vec2::new(0.0, effective_g * dt); // Buoyancy-adjusted gravity
+                // Exponential approach to target (drag coefficient controls rate)
+                // High drag = quickly match fluid, Low drag = slowly approach (keeps sinking)
+                let blend = (drag_coeff * dt).min(1.0);
+                particle.velocity = particle.velocity.lerp(target_vel, blend);
+            } else {
+                // IN AIR: Just fall with gravity (no fluid coupling)
+                let effective_g = particle.effective_gravity();
+                particle.velocity.y += effective_g * dt;
+                // Add some air drag to prevent crazy speeds
+                particle.velocity *= 0.99;
+            }
 
             // Calculate new position
             let new_pos = particle.position + particle.velocity * dt;
@@ -236,6 +248,36 @@ impl Sediment {
                 particle.state = SedimentState::Flowing;
             }
         });
+    }
+
+    /// Separate overlapping particles (simple push-apart)
+    pub fn separate_particles(&mut self, min_distance: f32) {
+        let n = self.particles.len();
+        if n < 2 {
+            return;
+        }
+
+        // Simple O(n²) separation - fine for small particle counts
+        // For larger counts, use spatial hashing
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let pi = self.particles[i].position;
+                let pj = self.particles[j].position;
+
+                let diff = pi - pj;
+                let dist_sq = diff.length_squared();
+                let min_dist_sq = min_distance * min_distance;
+
+                if dist_sq < min_dist_sq && dist_sq > 0.001 {
+                    let dist = dist_sq.sqrt();
+                    let overlap = min_distance - dist;
+                    let push = diff.normalize() * (overlap * 0.5);
+
+                    self.particles[i].position += push;
+                    self.particles[j].position -= push;
+                }
+            }
+        }
     }
 
     /// Remove particles outside bounds

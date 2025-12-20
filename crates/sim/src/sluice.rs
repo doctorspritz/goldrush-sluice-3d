@@ -7,10 +7,13 @@
 use crate::flip::FlipSimulation;
 
 /// Create a sluice box test setup
-pub fn create_sluice(sim: &mut FlipSimulation, slope: f32, riffle_spacing: usize, riffle_height: usize) {
+/// - slope: how much the floor rises per cell (0.3 = 17 degrees)
+/// - riffle_spacing: cells between riffles
+/// - riffle_height: how tall the riffles are (cells above floor)
+/// - riffle_width: how wide each riffle is (cells)
+pub fn create_sluice(sim: &mut FlipSimulation, slope: f32, riffle_spacing: usize, riffle_height: usize, riffle_width: usize) {
     let width = sim.grid.width;
     let height = sim.grid.height;
-    let cell_size = sim.grid.cell_size;
 
     // Clear all solid
     for idx in 0..sim.grid.solid.len() {
@@ -21,7 +24,7 @@ pub fn create_sluice(sim: &mut FlipSimulation, slope: f32, riffle_spacing: usize
     // Water flows LEFT to RIGHT (downhill)
     // Left side: floor surface is HIGH (floor_y is LOW in screen coords)
     // Right side: floor surface is LOW (floor_y is HIGH in screen coords)
-    let base_height = height / 3;
+    let base_height = height / 4; // Start higher for more room
 
     for i in 0..width {
         // Floor surface goes DOWN as x increases (water flows right)
@@ -32,12 +35,18 @@ pub fn create_sluice(sim: &mut FlipSimulation, slope: f32, riffle_spacing: usize
             sim.grid.set_solid(i, j);
         }
 
-        // Add riffles (vertical bars)
-        if i > 0 && i % riffle_spacing == 0 && i < width - riffle_spacing {
-            for dy in 0..riffle_height {
-                let riffle_y = floor_y.saturating_sub(dy + 1);
-                if riffle_y > 0 {
-                    sim.grid.set_solid(i, riffle_y);
+        // Add riffles (rectangular bars with width)
+        // Check if we're within a riffle zone
+        let riffle_start = riffle_spacing; // First riffle starts after spacing
+        if i >= riffle_start && i < width - riffle_spacing {
+            let pos_in_cycle = (i - riffle_start) % riffle_spacing;
+            if pos_in_cycle < riffle_width {
+                // We're within a riffle
+                for dy in 0..riffle_height {
+                    let riffle_y = floor_y.saturating_sub(dy + 1);
+                    if riffle_y > 0 {
+                        sim.grid.set_solid(i, riffle_y);
+                    }
                 }
             }
         }

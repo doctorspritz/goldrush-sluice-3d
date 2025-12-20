@@ -21,6 +21,12 @@ pub struct PbfParticle {
     pub vorticity: f32, // New scalar vorticity (2D Curl)
 }
 
+impl PbfParticle {
+    pub fn is_mud(&self) -> bool {
+        self.phase == 1
+    }
+}
+
 pub struct PbfSimulation {
     pub particles: Vec<PbfParticle>,
     pub width: f32,
@@ -29,39 +35,88 @@ pub struct PbfSimulation {
     // Spatial hash grid
     grid_heads: Vec<i32>,
     grid_next: Vec<i32>,
+    pub grid_solid: Vec<bool>, // [NEW] Collision map
 }
 
 impl PbfSimulation {
     pub fn new(width: f32, height: f32, cell_size: f32) -> Self {
-        let grid_cells = ((width / cell_size).ceil() * (height / cell_size).ceil()) as usize;
+        let grid_cells_x = (width / cell_size).ceil() as usize;
+        let grid_cells_y = (height / cell_size).ceil() as usize;
+        let num_cells = grid_cells_x * grid_cells_y;
+        
         Self {
             particles: Vec::with_capacity(MAX_PARTICLES),
             width,
             height,
             cell_size,
-            grid_heads: vec![-1; grid_cells],
+            grid_heads: vec![-1; num_cells],
             grid_next: Vec::with_capacity(MAX_PARTICLES),
+            grid_solid: vec![false; num_cells],
+        }
+    }
+    
+    // Helper to set collision
+    pub fn set_solid(&mut self, x: usize, y: usize) {
+        let w = (self.width / self.cell_size).ceil() as usize;
+        if x < w {
+            let idx = y * w + x;
+            if idx < self.grid_solid.len() {
+                self.grid_solid[idx] = true;
+            }
         }
     }
 
     pub fn update(&mut self, dt: f32) {
+        let grid_w = (self.width / self.cell_size).ceil() as usize;
+        let grid_h = (self.height / self.cell_size).ceil() as usize;
+        
         // 1. Prediction (Parallel)
+        // Clone grid_solid to avoid borrow conflict with build_spatial_hash
+        let grid_solid = self.grid_solid.clone();
+        let cs = self.cell_size;
+        
         self.particles.par_iter_mut().for_each(|p| {
             p.velocity += GRAVITY * dt;
             p.old_position = p.position;
-            p.position += p.velocity * dt;
             
-            // Boundary
-            p.position.x = p.position.x.clamp(self.cell_size, self.width - self.cell_size);
-            p.position.y = p.position.y.clamp(self.cell_size, self.height - self.cell_size);
+            let mut new_pos = p.position + p.velocity * dt;
+            
+            // Simple Boundary/Solid Collision
+            // Map pos to grid
+            let cx = (new_pos.x / cs) as i32;
+            let cy = (new_pos.y / cs) as i32;
+            
+            let mut collided = false;
+            
+            // Wall Clamping (Screen bounds)
+            if new_pos.x < cs { new_pos.x = cs; collided = true; }
+            if new_pos.x > self.width - cs { new_pos.x = self.width - cs; collided = true; }
+            if new_pos.y < cs { new_pos.y = cs; collided = true; }
+            if new_pos.y > self.height - cs { new_pos.y = self.height - cs; collided = true; }
+            
+            // Internal Solid Grid Collision
+            if !collided && cx >= 0 && cy >= 0 && (cx as usize) < grid_w && (cy as usize) < grid_h {
+                 let idx = (cy as usize) * grid_w + (cx as usize);
+                 if grid_solid[idx] {
+                     // Hit a solid cell!
+                     // Rudimentary resolve: push back to old position
+                     // Logic: if we moved into solid, revert to old_pos which (presumably) was Free.
+                     // And kill velocity (sticky) or reflect?
+                     // Let's try "Sticky" for mud/sluice behavior
+                     new_pos = p.old_position;
+                     p.velocity *= 0.0; // Stop dead
+                 }
+            }
+
+            p.position = new_pos;
         });
 
         // 2. Neighbors
         self.build_spatial_hash();
 
         // 3. Solve (Iterative)
-        let grid_width = (self.width / self.cell_size).ceil() as i32;
-        let grid_height = (self.height / self.cell_size).ceil() as i32;
+        let grid_width = grid_w as i32;
+        let grid_height = grid_h as i32;
         let h = self.cell_size * H_SCALE;
         let h2 = h * h;
 
@@ -152,17 +207,35 @@ impl PbfSimulation {
                 delta / REST_DENSITY
             }).collect();
 
-            // Apply Deltas
+            // Apply Deltas (with Solid Collision Check)
             self.particles.par_iter_mut().zip(deltas).for_each(|(p, d)| {
-                p.position += d;
-                p.position.x = p.position.x.clamp(self.cell_size, self.width - self.cell_size);
-                p.position.y = p.position.y.clamp(self.cell_size, self.height - self.cell_size);
+                let mut new_pos = p.position + d;
+                
+                // Re-check Collision (Constraint projection could push us into walls)
+                 let cx = (new_pos.x / cs) as i32;
+                 let cy = (new_pos.y / cs) as i32;
+                 let mut collided = false;
+                 
+                if new_pos.x < cs { new_pos.x = cs; collided = true; }
+                if new_pos.x > self.width - cs { new_pos.x = self.width - cs; collided = true; }
+                if new_pos.y < cs { new_pos.y = cs; collided = true; }
+                if new_pos.y > self.height - cs { new_pos.y = self.height - cs; collided = true; }
+                
+                 if !collided && cx >= 0 && cy >= 0 && (cx as usize) < grid_w && (cy as usize) < grid_h {
+                     let idx = (cy as usize) * grid_w + (cx as usize);
+                     if grid_solid[idx] {
+                         // Push back to pre-delta position (simple fix)
+                         new_pos = p.position;
+                     }
+                 }
+                p.position = new_pos;
             });
         }
 
         // 4. Update Velocities
         self.particles.par_iter_mut().for_each(|p| {
             p.velocity = (p.position - p.old_position) / dt;
+            p.velocity *= 0.999;
         });
 
         // 5. Vorticity Confinement (New)

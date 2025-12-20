@@ -106,6 +106,14 @@ impl Grid {
         self.solid[self.cell_index(i, j)]
     }
 
+    /// Check if cell contains fluid (for drift-flux coupling)
+    pub fn is_fluid(&self, i: usize, j: usize) -> bool {
+        if i >= self.width || j >= self.height {
+            return false;
+        }
+        self.cell_type[self.cell_index(i, j)] == CellType::Fluid
+    }
+
     /// Sample velocity at a world position using bilinear interpolation
     pub fn sample_velocity(&self, pos: Vec2) -> Vec2 {
         let u = self.sample_u(pos);
