@@ -98,7 +98,7 @@ impl ParticleRenderer {
             material,
             white_texture,
             velocity_max: 100.0,
-            particle_scale: 4.0,
+            particle_scale: 4.0, // Visible particle size
         }
     }
 
@@ -149,28 +149,23 @@ impl ParticleRenderer {
         gl_use_default_material();
     }
 
-    /// Draw particles sorted by density (heaviest on top)
+    /// Draw particles batched by material (one uniform per material type)
     pub fn draw_sorted(&self, particles: &Particles, screen_scale: f32) {
         gl_use_material(&self.material);
 
         let size = self.particle_scale * screen_scale;
 
-        // Sort by density (lighter first, heavier on top)
-        let mut indices: Vec<usize> = (0..particles.list.len()).collect();
-        indices.sort_by(|&a, &b| {
-            let da = particles.list[a].density();
-            let db = particles.list[b].density();
-            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Draw order: water, mud, sand, magnetite, gold (lightest to heaviest)
+        let materials = [
+            sim::ParticleMaterial::Water,
+            sim::ParticleMaterial::Mud,
+            sim::ParticleMaterial::Sand,
+            sim::ParticleMaterial::Magnetite,
+            sim::ParticleMaterial::Gold,
+        ];
 
-        for idx in indices {
-            let particle = &particles.list[idx];
-            let x = particle.position.x * screen_scale;
-            let y = particle.position.y * screen_scale;
-            
-            let [r, g, b, _] = particle.material.color();
-            
-            // Set particle color uniform
+        for mat in materials {
+            let [r, g, b, _] = mat.color();
             self.material.set_uniform("particleColor", [
                 r as f32 / 255.0,
                 g as f32 / 255.0,
@@ -178,17 +173,22 @@ impl ParticleRenderer {
                 1.0f32,
             ]);
 
-            // Draw textured quad (shader makes it circular, texture provides UVs)
-            draw_texture_ex(
-                &self.white_texture,
-                x - size / 2.0,
-                y - size / 2.0,
-                WHITE,
-                DrawTextureParams {
-                    dest_size: Some(vec2(size, size)),
-                    ..Default::default()
-                },
-            );
+            for particle in particles.iter() {
+                if particle.material == mat {
+                    let x = particle.position.x * screen_scale;
+                    let y = particle.position.y * screen_scale;
+                    draw_texture_ex(
+                        &self.white_texture,
+                        x - size / 2.0,
+                        y - size / 2.0,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(vec2(size, size)),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
         }
 
         gl_use_default_material();

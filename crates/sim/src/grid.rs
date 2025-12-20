@@ -215,10 +215,43 @@ impl Grid {
 
     /// Apply gravity to vertical velocity
     pub fn apply_gravity(&mut self, dt: f32) {
-        const GRAVITY: f32 = 200.0; // Pixels per second squared (increased for faster settling)
+        // Gravity scaled for visual effect - not too strong to cause free-fall,
+        // but enough for proper momentum
+        const GRAVITY: f32 = 120.0; // Pixels per second squared
 
         for v in &mut self.v {
             *v += GRAVITY * dt;
+        }
+    }
+
+    /// Zero out velocities at solid boundaries
+    /// MUST be called before compute_divergence to prevent velocity into walls
+    /// from corrupting the pressure solve
+    pub fn enforce_boundary_conditions(&mut self) {
+        // Zero u velocities at solid walls
+        for j in 0..self.height {
+            for i in 0..=self.width {
+                let u_idx = self.u_index(i, j);
+                // Check cells on either side of this u face
+                let left_solid = i == 0 || self.is_solid(i - 1, j);
+                let right_solid = i == self.width || self.is_solid(i, j);
+                if left_solid || right_solid {
+                    self.u[u_idx] = 0.0;
+                }
+            }
+        }
+
+        // Zero v velocities at solid walls
+        for j in 0..=self.height {
+            for i in 0..self.width {
+                let v_idx = self.v_index(i, j);
+                // Check cells above/below this v face
+                let below_solid = j == 0 || self.is_solid(i, j - 1);
+                let above_solid = j == self.height || self.is_solid(i, j);
+                if below_solid || above_solid {
+                    self.v[v_idx] = 0.0;
+                }
+            }
         }
     }
 
@@ -242,6 +275,32 @@ impl Grid {
 
                 self.divergence[idx] = (u_right - u_left + v_top - v_bottom) * scale;
             }
+        }
+    }
+
+    /// Sum of absolute divergence across all fluid cells
+    pub fn total_divergence(&self) -> f32 {
+        self.divergence.iter().map(|d| d.abs()).sum()
+    }
+
+    /// Pressure statistics (min, max, avg) for debugging
+    pub fn pressure_stats(&self) -> (f32, f32, f32) {
+        let mut min = f32::MAX;
+        let mut max = f32::MIN;
+        let mut sum = 0.0;
+        let mut count = 0;
+        for (idx, &p) in self.pressure.iter().enumerate() {
+            if self.cell_type[idx] == CellType::Fluid {
+                min = min.min(p);
+                max = max.max(p);
+                sum += p;
+                count += 1;
+            }
+        }
+        if count == 0 {
+            (0.0, 0.0, 0.0)
+        } else {
+            (min, max, sum / count as f32)
         }
     }
 
@@ -303,13 +362,19 @@ impl Grid {
 
         let div = self.divergence[idx];
 
-        // Gauss-Seidel update: p = (L + R + B + T - divergence) * 0.25
-        self.pressure[idx] = (p_left + p_right + p_bottom + p_top - div) * 0.25;
+        // Gauss-Seidel update for ∇²p = div
+        // Discretized: (p_L + p_R + p_B + p_T - 4*p) / h² = div
+        // Solving for p: p = (p_L + p_R + p_B + p_T - h²*div) / 4
+        let h_sq = self.cell_size * self.cell_size;
+        self.pressure[idx] = (p_left + p_right + p_bottom + p_top - h_sq * div) * 0.25;
     }
 
     /// Subtract pressure gradient from velocity field
-    pub fn apply_pressure_gradient(&mut self, dt: f32) {
-        let scale = dt / self.cell_size;
+    /// Uses formulation: u -= ∇p̃ / h where p̃ is pseudo-pressure from ∇²p̃ = div
+    pub fn apply_pressure_gradient(&mut self, _dt: f32) {
+        // CRITICAL FIX: Remove dt from scale. With dt, only 0.1% of divergence
+        // was corrected per frame. Without dt, we get full correction.
+        let scale = 1.0 / self.cell_size;
 
         // Update U velocities (horizontal)
         for j in 0..self.height {

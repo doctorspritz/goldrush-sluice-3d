@@ -9,11 +9,11 @@ use macroquad::prelude::*;
 use render::ParticleRenderer;
 use sim::{create_sluice, FlipSimulation};
 
-// Simulation size - larger for better sluice dynamics
-const SIM_WIDTH: usize = 256;
-const SIM_HEIGHT: usize = 192;
+// Simulation size
+const SIM_WIDTH: usize = 128;
+const SIM_HEIGHT: usize = 96;
 const CELL_SIZE: f32 = 2.0;
-const SCALE: f32 = 2.5; // Slightly smaller scale to fit on screen
+const SCALE: f32 = 5.0;
 
 // Render buffer size (simulation space, not screen space)
 const RENDER_WIDTH: usize = (SIM_WIDTH as f32 * CELL_SIZE) as usize;
@@ -44,7 +44,7 @@ async fn main() {
     // Set up sloped sluice with riffles
     // slope=0.25 means floor rises 0.25 cells per horizontal cell (about 14 degrees)
     // riffle_spacing=30, riffle_height=8, riffle_width=3
-    create_sluice(&mut sim, 0.25, 30, 8, 3);
+    create_sluice(&mut sim, 0.25, 30, 3, 2); // shorter riffles
 
         let mut img = Image::gen_image_color(RENDER_WIDTH as u16, RENDER_HEIGHT as u16, bg_color);
         for j in 0..sim.grid.height {
@@ -72,6 +72,8 @@ async fn main() {
     let mut show_velocity = false;
     let mut spawn_mud = false;
     let mut frame_count = 0u64;
+    let mut fps_samples: Vec<i32> = Vec::new();
+    let start_time = std::time::Instant::now();
 
     loop {
         // --- INPUT ---
@@ -87,7 +89,7 @@ async fn main() {
         if is_key_pressed(KeyCode::R) {
             // Reset simulation
             sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
-            create_sluice(&mut sim, 0.25, 30, 8, 3);
+            create_sluice(&mut sim, 0.25, 30, 3, 2); // shorter riffles
         }
         if is_key_pressed(KeyCode::C) {
             // Clear particles
@@ -109,31 +111,26 @@ async fn main() {
 
         // --- UPDATE ---
         if !paused {
-            // Spawn particles at inlet (left side, above the sluice floor)
-            if frame_count % 3 == 0 {
-                let inlet_x = 30.0;
-                let inlet_y = (SIM_HEIGHT as f32 * CELL_SIZE) * 0.15; // Higher up (15% from top)
+            // Spawn at x=0, 5px above sluice, aiming 30° down
+            {
+                let inlet_x = 5.0;
+                let inlet_y = 43.0;
+                let vx = 69.0;
+                let vy = 40.0;
 
-                // Spawn water - reduced to prevent washout
-                sim.spawn_water(inlet_x, inlet_y, 60.0, 0.0, 2);
+                sim.spawn_water(inlet_x, inlet_y, vx, vy, 4);
 
-                // Occasionally add mud
-                if frame_count % 20 == 0 {
-                    sim.spawn_mud(inlet_x, inlet_y + 5.0, 60.0, 0.0, 1);
-                }
-
-                // Spawn sediment particles (integrated into FLIP simulation)
-                // Sand is most common
                 if frame_count % 6 == 0 {
-                    sim.spawn_sand(inlet_x, inlet_y, 60.0, 0.0, 1);
+                    sim.spawn_mud(inlet_x, inlet_y + 3.0, vx, vy, 2);
                 }
-                // Magnetite less common (black sand indicator)
+                if frame_count % 2 == 0 {
+                    sim.spawn_sand(inlet_x, inlet_y, vx, vy, 2);
+                }
+                if frame_count % 5 == 0 {
+                    sim.spawn_magnetite(inlet_x, inlet_y, vx, vy, 1);
+                }
                 if frame_count % 15 == 0 {
-                    sim.spawn_magnetite(inlet_x, inlet_y, 60.0, 0.0, 1);
-                }
-                // Gold is rare!
-                if frame_count % 50 == 0 {
-                    sim.spawn_gold(inlet_x, inlet_y, 60.0, 0.0, 1);
+                    sim.spawn_gold(inlet_x, inlet_y, vx, vy, 1);
                 }
             }
 
@@ -146,6 +143,30 @@ async fn main() {
             sim.update(dt);
 
             frame_count += 1;
+
+            // Log diagnostics every second
+            if frame_count % 60 == 0 {
+                // Check post-update divergence (after pressure solve)
+                sim.grid.compute_divergence();
+                let div = sim.grid.total_divergence();
+
+                let mut max_vx: f32 = 0.0;  // Horizontal
+                let mut max_vy_down: f32 = 0.0;  // Positive Y = downward
+                let mut max_vy_up: f32 = 0.0;    // Negative Y = upward ejection
+                for p in sim.particles.iter() {
+                    max_vx = max_vx.max(p.velocity.x.abs());
+                    if p.velocity.y > 0.0 {
+                        max_vy_down = max_vy_down.max(p.velocity.y);
+                    } else {
+                        max_vy_up = max_vy_up.max(-p.velocity.y);
+                    }
+                }
+                let fps = get_fps();
+                fps_samples.push(fps);
+                let elapsed = start_time.elapsed().as_secs();
+                println!("t={:3}s: {:4} p, fps={:3}, div={:4.1}, vx={:.0}, vy=↓{:.0}/↑{:.0}",
+                    elapsed, sim.particles.len(), fps, div, max_vx, max_vy_down, max_vy_up);
+            }
         }
 
         // --- RENDER ---

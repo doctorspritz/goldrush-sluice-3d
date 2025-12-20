@@ -71,17 +71,19 @@ impl FlipSimulation {
         // 3. Store old grid velocities for FLIP
         self.store_old_velocities();
 
-        // 4. Apply forces (gravity)
+        // 4. Apply external forces (gravity + vorticity)
+        // These forces create divergence which is then removed by pressure projection
         self.grid.apply_gravity(dt);
+        // Vorticity confinement: ε < 0.1 per literature to avoid artificial turbulence
+        self.grid.apply_vorticity_confinement(dt, 0.05);
 
-        // 5. Pressure projection - this creates vortices and enforces incompressibility
+        // 5. Pressure projection - enforces incompressibility
+        // CRITICAL: Zero velocities at solid walls BEFORE computing divergence
+        self.grid.enforce_boundary_conditions();
         self.grid.compute_divergence();
-        self.grid.solve_pressure(20); // 20 Red-Black GS iterations (reduced for perf)
+        // Fewer iterations for speed (trades accuracy for FPS)
+        self.grid.solve_pressure(20);
         self.grid.apply_pressure_gradient(dt);
-
-        // 5b. Vorticity confinement - every frame for visible vortices behind riffles
-        // Reduced from 15.0 - too strong was causing water to spray upward
-        self.grid.apply_vorticity_confinement(dt, 3.0);
 
         // 6. Transfer grid velocities back to particles
         // Water: gets FLIP velocity
@@ -241,6 +243,13 @@ impl FlipSimulation {
 
             // Blend PIC/FLIP
             particle.velocity = v_pic * ALPHA + v_flip * (1.0 - ALPHA);
+
+            // Safety clamp: CFL requires v*dt < cell_size → v < 120 for dt=1/60, cell=2
+            const MAX_VELOCITY: f32 = 120.0;
+            let speed = particle.velocity.length();
+            if speed > MAX_VELOCITY {
+                particle.velocity *= MAX_VELOCITY / speed;
+            }
         });
     }
 
@@ -302,6 +311,13 @@ impl FlipSimulation {
             // Update velocity: new relative velocity + fluid velocity + gravity
             particle.velocity = v_fluid + new_v_rel;
             particle.velocity.y += g_eff * dt;
+
+            // Safety clamp for sediment too
+            const MAX_VELOCITY: f32 = 120.0;
+            let speed = particle.velocity.length();
+            if speed > MAX_VELOCITY {
+                particle.velocity *= MAX_VELOCITY / speed;
+            }
         });
     }
 
@@ -449,6 +465,13 @@ impl FlipSimulation {
 
             // Apply force as velocity change
             self.particles.list[idx].velocity += force * dt;
+
+            // Clamp velocity after near-pressure forces
+            const MAX_VELOCITY: f32 = 120.0;
+            let speed = self.particles.list[idx].velocity.length();
+            if speed > MAX_VELOCITY {
+                self.particles.list[idx].velocity *= MAX_VELOCITY / speed;
+            }
         }
     }
 
