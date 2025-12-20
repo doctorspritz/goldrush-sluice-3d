@@ -6,8 +6,18 @@
 mod render;
 
 use macroquad::prelude::*;
-use render::ParticleRenderer;
+use render::{MetaballRenderer, ParticleRenderer, draw_particles_fast, draw_particles_rect, draw_particles_mesh};
 use sim::{create_sluice, FlipSimulation};
+
+/// Rendering mode selection
+#[derive(Clone, Copy, PartialEq)]
+enum RenderMode {
+    Metaball,      // Two-pass metaball (slowest, best look)
+    Shader,        // Per-particle shader circles
+    FastCircle,    // macroquad draw_circle batching
+    FastRect,      // macroquad draw_rectangle batching
+    Mesh,          // Single mesh with vertex colors (fastest)
+}
 
 // Simulation size
 const SIM_WIDTH: usize = 128;
@@ -33,68 +43,90 @@ async fn main() {
     // Create simulation
     let mut sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
 
-    // Create GPU particle renderer
-    let renderer = ParticleRenderer::new();
+    // Create GPU particle renderers
+    let particle_renderer = ParticleRenderer::new();
+    let screen_w = (SIM_WIDTH as f32 * CELL_SIZE * SCALE) as u32;
+    let screen_h = (SIM_HEIGHT as f32 * CELL_SIZE * SCALE) as u32;
+    let mut metaball_renderer = MetaballRenderer::new(screen_w, screen_h);
 
-    // Create terrain texture (static, never changes)
-    let terrain_texture = {
+    // Initial sluice parameters
+    let initial_slope = 0.25f32;
+    let initial_spacing = 30usize;
+    let initial_height = 3usize;
+    let initial_width = 2usize;
+
+    // Set up sloped sluice with riffles (smaller for 1:1 particles)
+    create_sluice(&mut sim, initial_slope, initial_spacing, initial_height, initial_width);
+
+    // Helper to generate terrain texture at cell resolution (matches physics)
+    fn generate_terrain_texture(
+        sim: &FlipSimulation,
+        _slope: f32,
+        _riffle_spacing: usize,
+        _riffle_height: usize,
+        _riffle_width: usize,
+        cell_size: f32,
+        render_w: usize,
+        render_h: usize,
+    ) -> Texture2D {
         let bg_color = Color::from_rgba(20, 20, 30, 255);
         let terrain_color = Color::from_rgba(80, 80, 80, 255);
 
-    // Set up sloped sluice with riffles
-    // slope=0.25 means floor rises 0.25 cells per horizontal cell (about 14 degrees)
-    // riffle_spacing=30, riffle_height=8, riffle_width=3
-    // Riffle tests: (slope, spacing, HEIGHT, WIDTH)
-    // Baseline: (0.25, 30, 3, 4)
-    // R1: spacing=20 (more riffles)
-    // R2: spacing=45 (fewer riffles)
-    // R3: width=6 (thicker)
-    // R4: width=2 (thinner)
-    // R5: height=5 (taller)
-    create_sluice(&mut sim, 0.25, 30, 5, 4); // R5: taller riffles (height 3→5)
+        let mut img = Image::gen_image_color(render_w as u16, render_h as u16, bg_color);
 
-        let mut img = Image::gen_image_color(RENDER_WIDTH as u16, RENDER_HEIGHT as u16, bg_color);
+        // Render solid cells as blocks (matches physics collision)
         for j in 0..sim.grid.height {
             for i in 0..sim.grid.width {
                 if sim.grid.is_solid(i, j) {
-                    let start_x = (i as f32 * CELL_SIZE) as usize;
-                    let start_y = (j as f32 * CELL_SIZE) as usize;
-                    let end_x = ((i + 1) as f32 * CELL_SIZE) as usize;
-                    let end_y = ((j + 1) as f32 * CELL_SIZE) as usize;
-
-                    for py in start_y..end_y.min(RENDER_HEIGHT) {
-                        for px in start_x..end_x.min(RENDER_WIDTH) {
+                    let start_x = (i as f32 * cell_size) as usize;
+                    let start_y = (j as f32 * cell_size) as usize;
+                    let end_x = ((i + 1) as f32 * cell_size) as usize;
+                    let end_y = ((j + 1) as f32 * cell_size) as usize;
+                    for py in start_y..end_y.min(render_h) {
+                        for px in start_x..end_x.min(render_w) {
                             img.set_pixel(px as u32, py as u32, terrain_color);
                         }
                     }
                 }
             }
         }
+
         let tex = Texture2D::from_image(&img);
         tex.set_filter(FilterMode::Nearest);
         tex
-    };
+    }
+
+    // Create initial terrain texture
+    let terrain_texture = generate_terrain_texture(
+        &sim, initial_slope, initial_spacing, initial_height, initial_width,
+        CELL_SIZE, RENDER_WIDTH, RENDER_HEIGHT
+    );
 
     let mut paused = false;
     let mut show_velocity = false;
     let mut spawn_mud = false;
+    let mut render_mode = RenderMode::FastRect; // FastRect avoids geometry clamping
+    let mut metaball_threshold: f32 = 0.08;
+    let mut metaball_scale: f32 = 6.0;
+    let mut fast_particle_size: f32 = CELL_SIZE * SCALE * 0.5;  // Half-cell for balance of accuracy vs performance
     let mut frame_count = 0u64;
     let mut fps_samples: Vec<i32> = Vec::new();
     let start_time = std::time::Instant::now();
 
-    // Frame rate limiting
-    let target_frame_time = std::time::Duration::from_secs_f64(1.0 / 60.0);
+    // Frame timing (no artificial limiting - vsync handles it)
+    let _target_frame_time = std::time::Duration::from_secs_f64(1.0 / 60.0);
 
     // === TUNABLE PARAMETERS ===
-    // Inlet flow
-    let mut inlet_vx: f32 = 69.0;
-    let mut inlet_vy: f32 = 40.0;
-    let mut spawn_rate: usize = 14;
+    // Inlet flow (reduced for smaller riffles)
+    let mut inlet_vx: f32 = 45.0;
+    let mut inlet_vy: f32 = 25.0;
+    let mut spawn_rate: usize = 10;
 
     // Riffle geometry
+    let mut slope: f32 = 0.25;
     let mut riffle_spacing: usize = 30;
-    let mut riffle_height: usize = 4;
-    let mut riffle_width: usize = 4;
+    let mut riffle_height: usize = 3;
+    let mut riffle_width: usize = 2;
     let mut riffle_dirty = false; // rebuild terrain when true
 
     // Sediment blend (spawn every N frames, 0 = disabled)
@@ -122,7 +154,7 @@ async fn main() {
         if is_key_pressed(KeyCode::R) {
             // Reset simulation with current riffle params
             sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
-            create_sluice(&mut sim, 0.25, riffle_spacing, riffle_height, riffle_width);
+            create_sluice(&mut sim, slope, riffle_spacing, riffle_height, riffle_width);
             riffle_dirty = true; // rebuild texture
         }
         if is_key_pressed(KeyCode::C) {
@@ -199,34 +231,65 @@ async fn main() {
             gold_rate = if gold_rate == 0 { 20 } else if gold_rate > 5 { gold_rate - 5 } else { 0 };
         }
 
+        // Render mode controls - B cycles through modes
+        if is_key_pressed(KeyCode::B) {
+            render_mode = match render_mode {
+                RenderMode::Metaball => RenderMode::Shader,
+                RenderMode::Shader => RenderMode::FastCircle,
+                RenderMode::FastCircle => RenderMode::FastRect,
+                RenderMode::FastRect => RenderMode::Mesh,
+                RenderMode::Mesh => RenderMode::Metaball,
+            };
+        }
+        if is_key_pressed(KeyCode::T) {
+            metaball_threshold = (metaball_threshold + 0.02).min(0.5);
+            metaball_renderer.set_threshold(metaball_threshold);
+        }
+        if is_key_pressed(KeyCode::G) {
+            metaball_threshold = (metaball_threshold - 0.02).max(0.02);
+            metaball_renderer.set_threshold(metaball_threshold);
+        }
+        if is_key_pressed(KeyCode::Y) {
+            metaball_scale = (metaball_scale + 2.0).min(30.0);
+            metaball_renderer.set_particle_scale(metaball_scale);
+        }
+        if is_key_pressed(KeyCode::H) {
+            metaball_scale = (metaball_scale - 2.0).max(6.0);
+            metaball_renderer.set_particle_scale(metaball_scale);
+        }
+
+        // Near-pressure tuning: 5/6 for H (radius), 7/8 for rest density, 9/0 for particle size
+        if is_key_pressed(KeyCode::Key5) {
+            sim.near_pressure_h = (sim.near_pressure_h - 0.5).max(2.0);
+        }
+        if is_key_pressed(KeyCode::Key6) {
+            sim.near_pressure_h = (sim.near_pressure_h + 0.5).min(8.0);
+        }
+        if is_key_pressed(KeyCode::Key7) {
+            sim.near_pressure_rest = (sim.near_pressure_rest - 0.1).max(0.3);
+        }
+        if is_key_pressed(KeyCode::Key8) {
+            sim.near_pressure_rest = (sim.near_pressure_rest + 0.1).min(2.0);
+        }
+        if is_key_pressed(KeyCode::Key9) {
+            fast_particle_size = (fast_particle_size - 0.5).max(1.0);
+        }
+        if is_key_pressed(KeyCode::Key0) {
+            fast_particle_size = (fast_particle_size + 0.5).min(8.0);
+        }
+
         // Rebuild terrain if riffle params changed
         if riffle_dirty {
             riffle_dirty = false;
             sim.particles.list.clear();
             sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
-            create_sluice(&mut sim, 0.25, riffle_spacing, riffle_height, riffle_width);
+            create_sluice(&mut sim, slope, riffle_spacing, riffle_height, riffle_width);
 
-            // Rebuild terrain texture
-            let bg_color = Color::from_rgba(20, 20, 30, 255);
-            let terrain_color = Color::from_rgba(80, 80, 80, 255);
-            let mut img = Image::gen_image_color(RENDER_WIDTH as u16, RENDER_HEIGHT as u16, bg_color);
-            for j in 0..sim.grid.height {
-                for i in 0..sim.grid.width {
-                    if sim.grid.is_solid(i, j) {
-                        let start_x = (i as f32 * CELL_SIZE) as usize;
-                        let start_y = (j as f32 * CELL_SIZE) as usize;
-                        let end_x = ((i + 1) as f32 * CELL_SIZE) as usize;
-                        let end_y = ((j + 1) as f32 * CELL_SIZE) as usize;
-                        for py in start_y..end_y.min(RENDER_HEIGHT) {
-                            for px in start_x..end_x.min(RENDER_WIDTH) {
-                                img.set_pixel(px as u32, py as u32, terrain_color);
-                            }
-                        }
-                    }
-                }
-            }
-            terrain_texture = Texture2D::from_image(&img);
-            terrain_texture.set_filter(FilterMode::Nearest);
+            // Rebuild terrain texture with smooth floor line
+            terrain_texture = generate_terrain_texture(
+                &sim, slope, riffle_spacing, riffle_height, riffle_width,
+                CELL_SIZE, RENDER_WIDTH, RENDER_HEIGHT
+            );
         }
 
         // Mouse spawning
@@ -271,9 +334,11 @@ async fn main() {
             let outflow_x = (SIM_WIDTH as f32 - 5.0) * CELL_SIZE;
             sim.particles.list.retain(|p| p.position.x < outflow_x);
 
-            // Run simulation step
+            // Run simulation step with timing
+            let sim_start = std::time::Instant::now();
             let dt = 1.0 / 60.0;
             sim.update(dt);
+            let sim_time = sim_start.elapsed();
 
             frame_count += 1;
 
@@ -297,8 +362,8 @@ async fn main() {
                 let fps = get_fps();
                 fps_samples.push(fps);
                 let elapsed = start_time.elapsed().as_secs();
-                println!("t={:3}s: {:4} p, fps={:3}, div={:4.1}, vx={:.0}, vy=↓{:.0}/↑{:.0}",
-                    elapsed, sim.particles.len(), fps, div, max_vx, max_vy_down, max_vy_up);
+                println!("t={:3}s: {:5} p, fps={:3}, sim={:4.1}ms, div={:4.1}",
+                    elapsed, sim.particles.len(), fps, sim_time.as_secs_f32() * 1000.0, div);
             }
         }
 
@@ -319,8 +384,14 @@ async fn main() {
             },
         );
 
-        // Draw particles as smooth GPU-accelerated circles
-        renderer.draw_sorted(&sim.particles, SCALE);
+        // Draw particles with selected renderer
+        match render_mode {
+            RenderMode::Metaball => metaball_renderer.draw(&sim.particles, SCALE),
+            RenderMode::Shader => particle_renderer.draw_sorted(&sim.particles, SCALE),
+            RenderMode::FastCircle => draw_particles_fast(&sim.particles, SCALE, fast_particle_size),
+            RenderMode::FastRect => draw_particles_rect(&sim.particles, SCALE, fast_particle_size),
+            RenderMode::Mesh => draw_particles_mesh(&sim.particles, SCALE, fast_particle_size),
+        }
 
         // Draw velocity field on top (optional debug visualization)
         if show_velocity {
@@ -349,12 +420,20 @@ async fn main() {
         let (water, mud, sand, magnetite, gold) = sim.particles.count_by_material();
 
         // Top status bar
+        let mode_str = match render_mode {
+            RenderMode::Metaball => "METABALL",
+            RenderMode::Shader => "SHADER",
+            RenderMode::FastCircle => "FAST-CIRCLE",
+            RenderMode::FastRect => "FAST-RECT",
+            RenderMode::Mesh => "MESH-BATCH",
+        };
         draw_text(
             &format!(
-                "Particles: {} | FPS: {} | {}",
+                "Particles: {} | FPS: {} | {} | {}",
                 sim.particles.len(),
                 get_fps(),
-                if paused { "PAUSED" } else { "Running" }
+                if paused { "PAUSED" } else { "Running" },
+                mode_str
             ),
             10.0, 20.0, 18.0, WHITE,
         );
@@ -384,21 +463,37 @@ async fn main() {
             10.0, 92.0, 14.0, Color::from_rgba(200, 200, 200, 255),
         );
 
+        // Metaball params (when active)
+        if render_mode == RenderMode::Metaball {
+            draw_text(
+                &format!("METABALL: threshold={:.2} scale={:.0}", metaball_threshold, metaball_scale),
+                10.0, 108.0, 14.0, Color::from_rgba(180, 100, 255, 255),
+            );
+        }
+
+        // Near-pressure params & particle size
+        draw_text(
+            &format!("NEAR-PRESSURE: H={:.1} rest={:.1} | SIZE={:.1}", sim.near_pressure_h, sim.near_pressure_rest, fast_particle_size),
+            10.0, 124.0, 14.0, Color::from_rgba(100, 200, 100, 255),
+        );
+
         // Controls - BOTTOM
         draw_text(
             "←→ vx | Shift+←→ vy | ↑↓ spawn | Q/A spacing | W/S height | E/D width | 1234 sediment",
-            10.0, screen_height() - 28.0, 14.0, GRAY,
+            10.0, screen_height() - 58.0, 14.0, GRAY,
+        );
+        draw_text(
+            "[B]=Render | T/G threshold | Y/H scale | 5/6 H | 7/8 rest | 9/0 size",
+            10.0, screen_height() - 42.0, 14.0, GRAY,
         );
         draw_text(
             "[Space]=Pause [V]=Velocity [R]=Reset [C]=Clear",
-            10.0, screen_height() - 10.0, 14.0, GRAY,
+            10.0, screen_height() - 26.0, 14.0, GRAY,
         );
 
-        // Frame rate limiting - sleep if we finished early
-        let elapsed = frame_start.elapsed();
-        if elapsed < target_frame_time {
-            std::thread::sleep(target_frame_time - elapsed);
-        }
+        // Frame rate limiting disabled - we're CPU-bound on simulation
+        // The macroquad vsync will limit to monitor refresh rate
+        let _ = frame_start; // suppress unused warning
 
         next_frame().await
     }

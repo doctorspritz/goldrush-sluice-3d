@@ -60,6 +60,42 @@ impl ParticleMaterial {
     pub fn is_sediment(&self) -> bool {
         matches!(self, Self::Mud | Self::Sand | Self::Magnetite | Self::Gold)
     }
+
+    /// Render scale multiplier (1.0 = base size)
+    /// Solids render smaller than fluids for visual distinction
+    pub fn render_scale(&self) -> f32 {
+        match self {
+            Self::Water => 1.0,
+            Self::Mud => 0.85,
+            Self::Sand => 0.5,
+            Self::Magnetite => 0.45,
+            Self::Gold => 0.4,
+        }
+    }
+
+    /// Edge sharpness for metaball rendering (higher = harder borders)
+    /// Solids have crisp edges, water is blobby
+    pub fn edge_sharpness(&self) -> f32 {
+        match self {
+            Self::Water => 0.03,     // Soft, blobby
+            Self::Mud => 0.05,       // Slightly sharper
+            Self::Sand => 0.15,      // Distinct grains
+            Self::Magnetite => 0.20, // Hard particles
+            Self::Gold => 0.25,      // Crispest edges
+        }
+    }
+
+    /// Density contribution for metaball accumulation
+    /// Lower values = less blending between particles
+    pub fn density_contribution(&self) -> f32 {
+        match self {
+            Self::Water => 0.04,     // Blends together
+            Self::Mud => 0.035,      // Slightly less
+            Self::Sand => 0.025,     // More separate
+            Self::Magnetite => 0.02, // Distinct particles
+            Self::Gold => 0.015,     // Most distinct
+        }
+    }
 }
 
 /// A fluid particle - supports water, mud, and sediment types

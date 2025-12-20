@@ -41,6 +41,10 @@ pub struct Grid {
 
     /// Solid terrain (persistent, set from level geometry)
     pub solid: Vec<bool>,
+
+    /// Signed distance field to nearest solid (negative inside, positive outside)
+    /// Precomputed when terrain changes for O(1) collision queries
+    pub sdf: Vec<f32>,
 }
 
 impl Grid {
@@ -59,7 +63,113 @@ impl Grid {
             divergence: vec![0.0; cell_count],
             cell_type: vec![CellType::Air; cell_count],
             solid: vec![false; cell_count],
+            sdf: vec![f32::MAX; cell_count],  // Will be computed after terrain setup
         }
+    }
+
+    /// Compute signed distance field from solid cells using fast sweeping
+    /// Call this after terrain changes (set_solid calls)
+    ///
+    /// Returns: negative inside solid, zero at surface, positive outside
+    pub fn compute_sdf(&mut self) {
+        let w = self.width;
+        let h = self.height;
+        let cell_size = self.cell_size;
+
+        // First pass: compute unsigned distance to nearest solid
+        // Initialize: solid cells = 0, others = large positive
+        for idx in 0..self.sdf.len() {
+            self.sdf[idx] = if self.solid[idx] { 0.0 } else { f32::MAX };
+        }
+
+        // Fast sweeping: 4 diagonal passes to propagate distances
+        let offsets: [(i32, i32, f32); 4] = [
+            (1, 0, cell_size),   // right
+            (-1, 0, cell_size),  // left
+            (0, 1, cell_size),   // down
+            (0, -1, cell_size),  // up
+        ];
+
+        // Multiple sweep passes for convergence
+        for _sweep in 0..4 {
+            // Forward sweep (top-left to bottom-right)
+            for j in 0..h {
+                for i in 0..w {
+                    let idx = j * w + i;
+                    let mut min_dist = self.sdf[idx];
+                    for &(di, dj, d) in &offsets {
+                        let ni = i as i32 + di;
+                        let nj = j as i32 + dj;
+                        if ni >= 0 && ni < w as i32 && nj >= 0 && nj < h as i32 {
+                            let nidx = nj as usize * w + ni as usize;
+                            min_dist = min_dist.min(self.sdf[nidx].abs() + d);
+                        }
+                    }
+                    self.sdf[idx] = min_dist;
+                }
+            }
+
+            // Backward sweep (bottom-right to top-left)
+            for j in (0..h).rev() {
+                for i in (0..w).rev() {
+                    let idx = j * w + i;
+                    let mut min_dist = self.sdf[idx];
+                    for &(di, dj, d) in &offsets {
+                        let ni = i as i32 + di;
+                        let nj = j as i32 + dj;
+                        if ni >= 0 && ni < w as i32 && nj >= 0 && nj < h as i32 {
+                            let nidx = nj as usize * w + ni as usize;
+                            min_dist = min_dist.min(self.sdf[nidx].abs() + d);
+                        }
+                    }
+                    self.sdf[idx] = min_dist;
+                }
+            }
+        }
+
+        // Second pass: make distances NEGATIVE inside solid cells
+        // This creates a proper signed distance field
+        for idx in 0..self.sdf.len() {
+            if self.solid[idx] {
+                // Inside solid: negate the distance
+                // Distance should be negative, with magnitude = distance to nearest non-solid
+                self.sdf[idx] = -self.sdf[idx].max(cell_size * 0.5);
+            }
+        }
+    }
+
+    /// Sample SDF at world position (bilinear interpolation)
+    #[inline]
+    pub fn sample_sdf(&self, pos: Vec2) -> f32 {
+        let x = pos.x / self.cell_size - 0.5;
+        let y = pos.y / self.cell_size - 0.5;
+
+        let i0 = (x.floor() as i32).clamp(0, self.width as i32 - 2) as usize;
+        let j0 = (y.floor() as i32).clamp(0, self.height as i32 - 2) as usize;
+        let i1 = i0 + 1;
+        let j1 = j0 + 1;
+
+        let tx = (x - i0 as f32).clamp(0.0, 1.0);
+        let ty = (y - j0 as f32).clamp(0.0, 1.0);
+
+        let d00 = self.sdf[j0 * self.width + i0];
+        let d10 = self.sdf[j0 * self.width + i1];
+        let d01 = self.sdf[j1 * self.width + i0];
+        let d11 = self.sdf[j1 * self.width + i1];
+
+        let d0 = d00 * (1.0 - tx) + d10 * tx;
+        let d1 = d01 * (1.0 - tx) + d11 * tx;
+
+        d0 * (1.0 - ty) + d1 * ty
+    }
+
+    /// Get SDF gradient (points away from solid) at position
+    #[inline]
+    pub fn sdf_gradient(&self, pos: Vec2) -> Vec2 {
+        let eps = self.cell_size * 0.5;
+        let dx = self.sample_sdf(pos + Vec2::new(eps, 0.0)) - self.sample_sdf(pos - Vec2::new(eps, 0.0));
+        let dy = self.sample_sdf(pos + Vec2::new(0.0, eps)) - self.sample_sdf(pos - Vec2::new(0.0, eps));
+        Vec2::new(dx, dy).normalize_or_zero()
     }
 
     /// Convert world position to grid cell indices
@@ -307,8 +417,16 @@ impl Grid {
     /// Solve pressure using Red-Black Gauss-Seidel iteration
     /// 2x faster convergence than Jacobi - updates in-place using latest neighbor values
     /// This enforces incompressibility and creates vortices naturally
+    ///
+    /// Uses early termination when residual is below threshold, with a minimum
+    /// of `iterations` and maximum of `iterations * 2` to ensure convergence
+    /// for complex geometries while staying fast for simple cases.
     pub fn solve_pressure(&mut self, iterations: usize) {
-        for _ in 0..iterations {
+        let h_sq = self.cell_size * self.cell_size;
+        let convergence_threshold = 0.001; // Residual threshold for early exit
+        let max_iterations = iterations * 2; // Allow more iterations if needed
+
+        for iter in 0..max_iterations {
             // Red pass (i+j even) - can use updated values immediately
             for j in 1..self.height - 1 {
                 for i in 1..self.width - 1 {
@@ -325,7 +443,42 @@ impl Grid {
                     }
                 }
             }
+
+            // Check convergence after minimum iterations
+            if iter >= iterations - 1 {
+                let max_residual = self.compute_max_residual(h_sq);
+                if max_residual < convergence_threshold {
+                    break;
+                }
+            }
         }
+    }
+
+    /// Compute maximum residual of pressure equation: |∇²p - div|
+    fn compute_max_residual(&self, h_sq: f32) -> f32 {
+        let mut max_residual = 0.0f32;
+
+        for j in 1..self.height - 1 {
+            for i in 1..self.width - 1 {
+                let idx = self.cell_index(i, j);
+                if self.cell_type[idx] != CellType::Fluid {
+                    continue;
+                }
+
+                let p = self.pressure[idx];
+                let p_left = self.pressure[self.cell_index(i - 1, j)];
+                let p_right = self.pressure[self.cell_index(i + 1, j)];
+                let p_bottom = self.pressure[self.cell_index(i, j - 1)];
+                let p_top = self.pressure[self.cell_index(i, j + 1)];
+
+                // Laplacian: (p_L + p_R + p_B + p_T - 4*p) / h²
+                let laplacian = (p_left + p_right + p_bottom + p_top - 4.0 * p) / h_sq;
+                let residual = (laplacian - self.divergence[idx]).abs();
+                max_residual = max_residual.max(residual);
+            }
+        }
+
+        max_residual
     }
 
     /// Update a single pressure cell (helper for Red-Black GS)

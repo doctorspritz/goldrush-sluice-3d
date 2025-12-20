@@ -16,7 +16,7 @@ fn main() {
     println!("Setting up simulation {}x{} with cell_size={}", WIDTH, HEIGHT, CELL_SIZE);
 
     let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
-    create_sluice(&mut sim, 0.3, 20, 5);
+    create_sluice(&mut sim, 0.3, 20, 5, 2);
 
     // Pre-spawn ~5000 particles
     println!("Spawning particles...");

@@ -57,6 +57,9 @@ pub fn create_sluice(sim: &mut FlipSimulation, slope: f32, riffle_spacing: usize
         sim.grid.set_solid(0, j);
         sim.grid.set_solid(width - 1, j);
     }
+
+    // Precompute SDF for fast collision detection
+    sim.grid.compute_sdf();
 }
 
 /// Create a simple flat-bottom test tank with riffles

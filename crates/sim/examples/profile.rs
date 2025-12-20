@@ -15,7 +15,7 @@ fn main() {
     println!("=== FLIP Simulation Profiler ===\n");
 
     let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
-    create_sluice(&mut sim, 0.3, 20, 5);
+    create_sluice(&mut sim, 0.3, 20, 5, 2);
 
     // Pre-spawn ~5000 particles
     for i in 0..200 {

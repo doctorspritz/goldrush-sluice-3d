@@ -34,6 +34,18 @@ pub struct FlipSimulation {
     near_force_buffer: Vec<Vec2>,
     // Frame counter for skipping expensive operations
     frame: u32,
+
+    // Async near-pressure computation (spread over multiple frames)
+    // This decouples computation from application:
+    // - Snapshot positions once, compute forces over N frames, apply atomically
+    near_pressure_snapshot: Vec<Vec2>,      // Particle positions when computation started
+    near_pressure_densities: Vec<(f32, f32)>, // (density, near_density) for each particle
+    near_pressure_forces: Vec<Vec2>,        // Accumulated forces to apply
+    near_pressure_phase: u32,               // Current phase in computation cycle
+
+    // Tunable near-pressure parameters (press 1-9 to adjust in game)
+    pub near_pressure_h: f32,       // Interaction radius (default 4.0)
+    pub near_pressure_rest: f32,    // Rest density (default 0.8)
 }
 
 impl FlipSimulation {
@@ -55,6 +67,14 @@ impl FlipSimulation {
             impulse_buffer: Vec::new(),
             near_force_buffer: Vec::new(),
             frame: 0,
+            // Async near-pressure buffers
+            near_pressure_snapshot: Vec::new(),
+            near_pressure_densities: Vec::new(),
+            near_pressure_forces: Vec::new(),
+            near_pressure_phase: 0,
+            // Tunable parameters with defaults
+            near_pressure_h: 4.0,
+            near_pressure_rest: 0.8,
         }
     }
 
@@ -75,14 +95,18 @@ impl FlipSimulation {
         // These forces create divergence which is then removed by pressure projection
         self.grid.apply_gravity(dt);
         // Vorticity confinement: ε < 0.1 per literature to avoid artificial turbulence
-        self.grid.apply_vorticity_confinement(dt, 0.05);
+        // OPTIMIZATION: Run every 2 frames (less critical than pressure)
+        if self.frame % 2 == 0 {
+            self.grid.apply_vorticity_confinement(dt * 2.0, 0.05);
+        }
 
         // 5. Pressure projection - enforces incompressibility
         // CRITICAL: Zero velocities at solid walls BEFORE computing divergence
         self.grid.enforce_boundary_conditions();
         self.grid.compute_divergence();
         // Fewer iterations for speed (trades accuracy for FPS)
-        self.grid.solve_pressure(20);
+        // 10 iterations is sufficient for visual quality
+        self.grid.solve_pressure(10);
         self.grid.apply_pressure_gradient(dt);
 
         // 6. Transfer grid velocities back to particles
@@ -94,16 +118,14 @@ impl FlipSimulation {
         // This is proper Lagrangian sediment transport
         self.apply_sediment_forces(dt);
 
-        // 7b. Apply near-pressure forces (Clavet stabilization)
-        // This prevents heavy particles from clumping under compression
-        // Replaces the old position-based separation which fought against settling
-        self.apply_near_pressure(dt);
-
-        // 8. Advect particles
+        // 8. Advect particles (uses SDF for O(1) collision)
         self.advect_particles(dt);
 
-        // NOTE: Position-based separate_particles() removed - Clavet handles separation
-        // with velocity-based forces that work WITH settling, not against it
+        // 9. Push overlapping particles apart (FLIP-native separation)
+        // This replaces Clavet SPH near-pressure with a simpler, faster approach.
+        // Unlike Clavet's O(n × neighbors × kernels), this is O(n × overlaps).
+        // See docs/plans/flip-particle-separation-plan.md
+        self.push_particles_apart(2); // 2 iterations as recommended by Houdini FLIP
 
         // Clean up particles that left the simulation
         self.particles.remove_out_of_bounds(
@@ -332,14 +354,16 @@ impl FlipSimulation {
     /// Simple SPH-style collision avoidance for ALL particles.
     /// This prevents overlap without encoding material properties.
     /// Material behavior is handled by drag/buoyancy in apply_sediment_forces().
+    ///
+    /// Uses rayon for parallel computation of densities and forces.
     fn apply_near_pressure(&mut self, dt: f32) {
-        // Clavet parameters - same for all particles (no material magic)
-        const H: f32 = 4.0;           // Interaction radius
+        // Clavet parameters - H and REST_DENSITY are tunable
+        let h = self.near_pressure_h;
+        let rest_density = self.near_pressure_rest;
         const K_STIFFNESS: f32 = 0.5; // Volume preservation (gentle)
         const K_NEAR: f32 = 2.0;      // Overlap prevention
-        const REST_DENSITY: f32 = 0.8; // Target density
 
-        let h2 = H * H;
+        let h2 = h * h;
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
         let height = self.grid.height;
@@ -356,24 +380,251 @@ impl FlipSimulation {
         if self.near_force_buffer.len() < particle_count {
             self.near_force_buffer.resize(particle_count, Vec2::ZERO);
         }
+        // Also need a buffer for densities (to avoid aliasing issues with parallel writes)
+        if self.near_pressure_densities.len() < particle_count {
+            self.near_pressure_densities.resize(particle_count, (0.0, 0.0));
+        }
 
-        // Pass 1: Compute densities (standard and near)
-        // Standard density: W(r) = (1 - r/h)^2
-        // Near density:     W_near(r) = (1 - r/h)^3
-        for idx in 0..particle_count {
-            let pos_i = self.particles.list[idx].position;
+        // Capture references for parallel closure
+        let positions: Vec<Vec2> = self.particles.list.iter().map(|p| p.position).collect();
+        let cell_head = &self.cell_head;
+        let particle_next = &self.particle_next;
+
+        // Pass 1: Compute densities in parallel
+        let densities: Vec<(f32, f32)> = (0..particle_count)
+            .into_par_iter()
+            .map(|idx| {
+                let pos_i = positions[idx];
+                let gi = ((pos_i.x / cell_size) as i32).max(0).min(width as i32 - 1);
+                let gj = ((pos_i.y / cell_size) as i32).max(0).min(height as i32 - 1);
+
+                let mut density = 0.0f32;
+                let mut near_density = 0.0f32;
+
+                for dj in -1i32..=1 {
+                    for di in -1i32..=1 {
+                        let ni = gi + di;
+                        let nj = gj + dj;
+
+                        if ni < 0 || nj < 0 || ni >= width as i32 || nj >= height as i32 {
+                            continue;
+                        }
+
+                        let cell_idx = (nj as usize) * width + (ni as usize);
+                        let mut j = cell_head[cell_idx];
+
+                        while j >= 0 {
+                            let j_idx = j as usize;
+                            let pos_j = positions[j_idx];
+                            let r2 = (pos_i - pos_j).length_squared();
+
+                            if r2 < h2 && r2 > 0.0001 {
+                                let q = 1.0 - r2.sqrt() / h;
+                                density += q * q;
+                                near_density += q * q * q;
+                            }
+
+                            j = particle_next[j_idx];
+                        }
+                    }
+                }
+                (density, near_density)
+            })
+            .collect();
+
+        // Copy densities to particles (needed for other systems)
+        for (idx, (density, near_density)) in densities.iter().enumerate() {
+            self.particles.list[idx].near_density = *near_density;
+            self.near_force_buffer[idx] = Vec2::new(*density, 0.0);
+        }
+
+        // Pass 2: Compute forces in parallel
+        let forces: Vec<Vec2> = (0..particle_count)
+            .into_par_iter()
+            .map(|idx| {
+                let (density_i, near_density_i) = densities[idx];
+                let pos_i = positions[idx];
+                let pressure_i = K_STIFFNESS * (density_i - rest_density);
+                let near_pressure_i = K_NEAR * near_density_i;
+
+                let gi = ((pos_i.x / cell_size) as i32).max(0).min(width as i32 - 1);
+                let gj = ((pos_i.y / cell_size) as i32).max(0).min(height as i32 - 1);
+
+                let mut force = Vec2::ZERO;
+
+                for dj in -1i32..=1 {
+                    for di in -1i32..=1 {
+                        let ni = gi + di;
+                        let nj = gj + dj;
+
+                        if ni < 0 || nj < 0 || ni >= width as i32 || nj >= height as i32 {
+                            continue;
+                        }
+
+                        let cell_idx = (nj as usize) * width + (ni as usize);
+                        let mut j = cell_head[cell_idx];
+
+                        while j >= 0 {
+                            let j_idx = j as usize;
+                            if j_idx != idx {
+                                let pos_j = positions[j_idx];
+                                let r_vec = pos_i - pos_j;
+                                let r2 = r_vec.length_squared();
+
+                                if r2 < h2 && r2 > 0.0001 {
+                                    let r = r2.sqrt();
+                                    let q = 1.0 - r / h;
+                                    let dir = r_vec / r;
+
+                                    let (density_j, near_density_j) = densities[j_idx];
+                                    let pressure_j = K_STIFFNESS * (density_j - rest_density);
+                                    let near_pressure_j = K_NEAR * near_density_j;
+
+                                    let shared_p = (pressure_i + pressure_j) * 0.5;
+                                    let shared_p_near = (near_pressure_i + near_pressure_j) * 0.5;
+
+                                    force += dir * (shared_p * q + shared_p_near * q * q);
+                                }
+                            }
+                            j = particle_next[j_idx];
+                        }
+                    }
+                }
+                force
+            })
+            .collect();
+
+        // Apply forces to particles
+        for (idx, force) in forces.into_iter().enumerate() {
+            self.particles.list[idx].velocity += force * dt;
+
+            // Clamp velocity
+            const MAX_VELOCITY: f32 = 100.0;
+            let speed = self.particles.list[idx].velocity.length();
+            if speed > MAX_VELOCITY {
+                self.particles.list[idx].velocity *= MAX_VELOCITY / speed;
+            }
+        }
+    }
+
+    /// Step 7b (async): Near-pressure forces computed over multiple frames
+    ///
+    /// This decouples computation from application:
+    /// - Phase 0: Snapshot positions, build spatial hash from snapshot
+    /// - Phases 1-3: Compute densities for 1/3 of particles each
+    /// - Phases 4-6: Compute forces for 1/3 of particles each
+    /// - Phase 7: Apply all forces atomically, reset for new cycle
+    ///
+    /// Total cycle: 8 frames. Each frame does ~1/6 of the work.
+    /// Forces are computed from consistent snapshot, preserving momentum.
+    fn near_pressure_async(&mut self, dt: f32) {
+        const CYCLE_LENGTH: u32 = 8;
+        const H: f32 = 4.0;
+        const K_STIFFNESS: f32 = 0.5;
+        const K_NEAR: f32 = 2.0;
+        const REST_DENSITY: f32 = 0.8;
+
+        let phase = self.near_pressure_phase % CYCLE_LENGTH;
+        let particle_count = self.particles.len();
+
+        match phase {
+            0 => {
+                // Snapshot positions and initialize buffers
+                self.near_pressure_snapshot.clear();
+                self.near_pressure_snapshot.extend(self.particles.iter().map(|p| p.position));
+                self.near_pressure_densities.resize(particle_count, (0.0, 0.0));
+                self.near_pressure_forces.resize(particle_count, Vec2::ZERO);
+                for f in &mut self.near_pressure_forces {
+                    *f = Vec2::ZERO;
+                }
+                // Build spatial hash based on snapshot positions
+                self.build_spatial_hash_from_snapshot();
+            }
+            1 | 2 | 3 => {
+                // Compute densities for 1/3 of particles
+                let third = particle_count / 3 + 1;
+                let start = (phase as usize - 1) * third;
+                let end = ((phase as usize) * third).min(particle_count);
+                self.compute_densities_range(start, end, H);
+            }
+            4 | 5 | 6 => {
+                // Compute forces for 1/3 of particles
+                let third = particle_count / 3 + 1;
+                let start = (phase as usize - 4) * third;
+                let end = ((phase as usize - 3) * third).min(particle_count);
+                self.compute_forces_range(start, end, H, K_STIFFNESS, K_NEAR, REST_DENSITY);
+            }
+            7 => {
+                // Apply all accumulated forces
+                let dt_scaled = dt * CYCLE_LENGTH as f32;
+                for (idx, force) in self.near_pressure_forces.iter().enumerate() {
+                    if idx < self.particles.len() {
+                        self.particles.list[idx].velocity += *force * dt_scaled;
+
+                        // Clamp velocity
+                        const MAX_VELOCITY: f32 = 100.0;
+                        let speed = self.particles.list[idx].velocity.length();
+                        if speed > MAX_VELOCITY {
+                            self.particles.list[idx].velocity *= MAX_VELOCITY / speed;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        self.near_pressure_phase = self.near_pressure_phase.wrapping_add(1);
+    }
+
+    /// Build spatial hash from snapshot positions (not current positions)
+    fn build_spatial_hash_from_snapshot(&mut self) {
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let count = self.near_pressure_snapshot.len();
+
+        // Ensure buffers sized
+        if self.particle_next.len() < count {
+            self.particle_next.resize(count, -1);
+        }
+        for head in &mut self.cell_head {
+            *head = -1;
+        }
+        for next in &mut self.particle_next[..count] {
+            *next = -1;
+        }
+
+        for idx in 0..count {
+            let pos = self.near_pressure_snapshot[idx];
+            let i = (pos.x / cell_size) as usize;
+            let j = (pos.y / cell_size) as usize;
+            if i < width && j < self.grid.height {
+                let cell_idx = j * width + i;
+                self.particle_next[idx] = self.cell_head[cell_idx];
+                self.cell_head[cell_idx] = idx as i32;
+            }
+        }
+    }
+
+    /// Compute densities for particles in range [start, end)
+    fn compute_densities_range(&mut self, start: usize, end: usize, h: f32) {
+        let h2 = h * h;
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let height = self.grid.height;
+        let snapshot = &self.near_pressure_snapshot;
+
+        for idx in start..end.min(snapshot.len()) {
+            let pos_i = snapshot[idx];
             let gi = ((pos_i.x / cell_size) as i32).max(0).min(width as i32 - 1);
             let gj = ((pos_i.y / cell_size) as i32).max(0).min(height as i32 - 1);
 
             let mut density = 0.0f32;
             let mut near_density = 0.0f32;
 
-            // Search 3x3 neighborhood
             for dj in -1i32..=1 {
                 for di in -1i32..=1 {
                     let ni = gi + di;
                     let nj = gj + dj;
-
                     if ni < 0 || nj < 0 || ni >= width as i32 || nj >= height as i32 {
                         continue;
                     }
@@ -383,52 +634,46 @@ impl FlipSimulation {
 
                     while j >= 0 {
                         let j_idx = j as usize;
-                        let pos_j = self.particles.list[j_idx].position;
-                        let r_vec = pos_i - pos_j;
-                        let r2 = r_vec.length_squared();
+                        let pos_j = snapshot[j_idx];
+                        let r2 = (pos_i - pos_j).length_squared();
 
                         if r2 < h2 && r2 > 0.0001 {
-                            let r = r2.sqrt();
-                            let q = 1.0 - r / H; // Normalized distance [0, 1]
-
-                            // Standard density kernel: (1 - r/h)^2
+                            let q = 1.0 - r2.sqrt() / h;
                             density += q * q;
-                            // Near density kernel: (1 - r/h)^3
                             near_density += q * q * q;
                         }
-
                         j = self.particle_next[j_idx];
                     }
                 }
             }
-
-            self.particles.list[idx].near_density = near_density;
-            // Store standard density temporarily in near_force_buffer.x
-            self.near_force_buffer[idx] = Vec2::new(density, 0.0);
+            self.near_pressure_densities[idx] = (density, near_density);
         }
+    }
 
-        // Pass 2: Compute and apply pressure forces (same for all particles)
-        for idx in 0..particle_count {
-            let pos_i = self.particles.list[idx].position;
-            let density_i = self.near_force_buffer[idx].x;
-            let near_density_i = self.particles.list[idx].near_density;
+    /// Compute forces for particles in range [start, end)
+    fn compute_forces_range(&mut self, start: usize, end: usize, h: f32, k_stiff: f32, k_near: f32, rest_density: f32) {
+        let h2 = h * h;
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let height = self.grid.height;
+        let snapshot = &self.near_pressure_snapshot;
+        let densities = &self.near_pressure_densities;
 
-            // Pressure from standard density (volume preservation)
-            let pressure_i = K_STIFFNESS * (density_i - REST_DENSITY);
-            // Near-pressure (purely repulsive)
-            let near_pressure_i = K_NEAR * near_density_i;
+        for idx in start..end.min(snapshot.len()) {
+            let pos_i = snapshot[idx];
+            let (density_i, near_density_i) = densities[idx];
+            let pressure_i = k_stiff * (density_i - rest_density);
+            let near_pressure_i = k_near * near_density_i;
 
             let gi = ((pos_i.x / cell_size) as i32).max(0).min(width as i32 - 1);
             let gj = ((pos_i.y / cell_size) as i32).max(0).min(height as i32 - 1);
 
             let mut force = Vec2::ZERO;
 
-            // Search 3x3 neighborhood
             for dj in -1i32..=1 {
                 for di in -1i32..=1 {
                     let ni = gi + di;
                     let nj = gj + dj;
-
                     if ni < 0 || nj < 0 || ni >= width as i32 || nj >= height as i32 {
                         continue;
                     }
@@ -439,100 +684,105 @@ impl FlipSimulation {
                     while j >= 0 {
                         let j_idx = j as usize;
                         if j_idx != idx {
-                            let pos_j = self.particles.list[j_idx].position;
-                            let density_j = self.near_force_buffer[j_idx].x;
-                            let near_density_j = self.particles.list[j_idx].near_density;
-
+                            let pos_j = snapshot[j_idx];
                             let r_vec = pos_i - pos_j;
                             let r2 = r_vec.length_squared();
 
                             if r2 < h2 && r2 > 0.0001 {
                                 let r = r2.sqrt();
-                                let q = 1.0 - r / H;
+                                let q = 1.0 - r / h;
                                 let dir = r_vec / r;
 
-                                // Pressure from neighbor (same formula, no material stiffness)
-                                let pressure_j = K_STIFFNESS * (density_j - REST_DENSITY);
-                                let near_pressure_j = K_NEAR * near_density_j;
+                                let (density_j, near_density_j) = densities[j_idx];
+                                let pressure_j = k_stiff * (density_j - rest_density);
+                                let near_pressure_j = k_near * near_density_j;
 
-                                // Shared pressures (symmetric)
                                 let shared_p = (pressure_i + pressure_j) * 0.5;
-                                let shared_p_near = (near_pressure_i + near_pressure_j) * 0.5;
+                                let shared_near = (near_pressure_i + near_pressure_j) * 0.5;
 
-                                // Force from pressure gradients
-                                force += dir * (shared_p * q + shared_p_near * q * q);
+                                force += dir * (shared_p * q + shared_near * q * q);
                             }
                         }
-
                         j = self.particle_next[j_idx];
                     }
                 }
             }
-
-            // Apply force as velocity change
-            self.particles.list[idx].velocity += force * dt;
-
-            // Clamp velocity after near-pressure forces
-            const MAX_VELOCITY: f32 = 100.0;
-            let speed = self.particles.list[idx].velocity.length();
-            if speed > MAX_VELOCITY {
-                self.particles.list[idx].velocity *= MAX_VELOCITY / speed;
-            }
+            self.near_pressure_forces[idx] = force;
         }
     }
 
-    /// Step 8: Advect particles with ray-based collision detection
+    /// Step 8: Advect particles with SDF-based collision detection
+    /// Uses precomputed signed distance field for O(1) collision queries
     fn advect_particles(&mut self, dt: f32) {
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
         let height = self.grid.height;
-        // Only use expensive raycast if particle moves more than half a cell
-        let raycast_threshold = cell_size * 0.5;
+        let margin = cell_size;
+        let max_x = width as f32 * cell_size - margin;
+        let max_y = height as f32 * cell_size - margin;
 
-        for particle in self.particles.iter_mut() {
-            let displacement = particle.velocity * dt;
-            let dist = displacement.length();
+        let grid = &self.grid;
 
-            if dist > raycast_threshold {
-                // Fast particle - use raycast
-                let start = particle.position;
-                let end = start + displacement;
+        self.particles.list.par_iter_mut().for_each(|particle| {
+            // Move particle
+            particle.position += particle.velocity * dt;
 
-                let result = raycast_to_solid(&self.grid, start, end, cell_size);
+            // SDF collision: sample distance to nearest solid
+            let sdf_dist = grid.sample_sdf(particle.position);
 
-                match result {
-                    RaycastResult::NoHit => {
-                        particle.position = end;
-                    }
-                    RaycastResult::Hit { position, normal } => {
-                        particle.position = position;
-                        let v_dot_n = particle.velocity.dot(normal);
-                        if v_dot_n > 0.0 {
-                            particle.velocity -= normal * v_dot_n;
-                        }
+            // If inside or very close to solid, push out
+            if sdf_dist < cell_size * 0.5 {
+                // Get gradient (points away from solid)
+                let grad = grid.sdf_gradient(particle.position);
+
+                // Push out to safe distance
+                let push_dist = cell_size * 0.5 - sdf_dist;
+                particle.position += grad * push_dist;
+
+                // Remove velocity component into solid
+                let v_dot_n = particle.velocity.dot(grad);
+                if v_dot_n < 0.0 {
+                    particle.velocity -= grad * v_dot_n;
+                }
+            }
+
+            // SAFETY NET: Direct is_solid check to catch edge cases where SDF
+            // bilinear interpolation returns positive values for particles at
+            // the boundary of solid cells.
+            let (ci, cj) = grid.pos_to_cell(particle.position);
+            if grid.is_solid(ci, cj) {
+                // Particle is in a solid cell despite SDF check passing.
+                // Find nearest non-solid cell and push there.
+                let mut best_dir = Vec2::ZERO;
+                let mut found_escape = false;
+
+                // Check 8 neighbors for escape direction
+                for &(di, dj) in &[(-1i32, 0i32), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)] {
+                    let ni = (ci as i32 + di).clamp(0, width as i32 - 1) as usize;
+                    let nj = (cj as i32 + dj).clamp(0, height as i32 - 1) as usize;
+                    if !grid.is_solid(ni, nj) {
+                        best_dir = Vec2::new(di as f32, dj as f32).normalize();
+                        found_escape = true;
+                        break;
                     }
                 }
-            } else {
-                // Slow particle - simple move + check
-                particle.position += displacement;
 
-                // Quick solid check at new position
-                let (i, j) = self.grid.pos_to_cell(particle.position);
-                if self.grid.is_solid(i, j) {
-                    // Push out of solid
-                    particle.position -= displacement;
+                if found_escape {
+                    // Push particle out of solid cell towards non-solid neighbor
+                    particle.position += best_dir * cell_size;
                     // Kill velocity into solid
-                    if displacement.y > 0.0 {
-                        particle.velocity.y = 0.0;
+                    let v_dot_d = particle.velocity.dot(best_dir);
+                    if v_dot_d < 0.0 {
+                        particle.velocity -= best_dir * v_dot_d;
                     }
+                } else {
+                    // Surrounded by solids - try pushing up (most common escape)
+                    particle.position.y -= cell_size;
+                    particle.velocity.y = particle.velocity.y.min(0.0);
                 }
             }
 
             // Final bounds clamp
-            let margin = cell_size;
-            let max_x = width as f32 * cell_size - margin;
-            let max_y = height as f32 * cell_size - margin;
-
             particle.position.x = particle.position.x.clamp(margin, max_x);
             particle.position.y = particle.position.y.clamp(margin, max_y);
 
@@ -541,6 +791,186 @@ impl FlipSimulation {
             }
             if particle.position.y <= margin || particle.position.y >= max_y {
                 particle.velocity.y = 0.0;
+            }
+        });
+    }
+
+    /// Step 9: Push overlapping particles apart (FLIP-native separation)
+    ///
+    /// Unlike Clavet SPH which computes densities and pressures for all neighbors,
+    /// this is a simple overlap check that only does work when particles actually overlap.
+    /// This is the standard approach used by production FLIP solvers like Houdini.
+    ///
+    /// Algorithm from Matthias Müller:
+    /// - For each particle pair within 2*radius, compute penetration depth
+    /// - Push both particles apart along their center line by half the overlap
+    ///
+    /// WALL-AWARE MODIFICATION: When one particle is near a solid boundary, we push
+    /// the other particle more to avoid pushing into the wall. This prevents compression
+    /// against walls/floor.
+    ///
+    /// Complexity: O(n × overlaps) vs Clavet's O(n × neighbors × kernels)
+    fn push_particles_apart(&mut self, iterations: usize) {
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let height = self.grid.height;
+
+        // Particle radius based on visual size (particles render as ~2x2 blocks)
+        // Separation distance = 2 * radius
+        let particle_radius = 1.25;
+        let min_dist = particle_radius * 2.0;
+        let min_dist_sq = min_dist * min_dist;
+
+        // Distance threshold for "near solid" - particles closer than this to a wall
+        // get reduced push toward the wall
+        let near_solid_threshold = cell_size * 1.0;
+
+        // Ensure impulse buffer is sized
+        let particle_count = self.particles.len();
+        if self.impulse_buffer.len() < particle_count {
+            self.impulse_buffer.resize(particle_count, Vec2::ZERO);
+        }
+
+        for _ in 0..iterations {
+            // Build spatial hash for this iteration
+            self.build_spatial_hash();
+
+            // Clear impulse buffer
+            for imp in self.impulse_buffer.iter_mut().take(particle_count) {
+                *imp = Vec2::ZERO;
+            }
+
+            // Check all particle pairs and accumulate corrections
+            for idx in 0..particle_count {
+                let pos_i = self.particles.list[idx].position;
+                let sdf_i = self.grid.sample_sdf(pos_i);
+                let gi = ((pos_i.x / cell_size) as i32).max(0).min(width as i32 - 1);
+                let gj = ((pos_i.y / cell_size) as i32).max(0).min(height as i32 - 1);
+
+                // Check 3x3 neighborhood
+                for dj in -1i32..=1 {
+                    for di in -1i32..=1 {
+                        let ni = gi + di;
+                        let nj = gj + dj;
+
+                        if ni < 0 || nj < 0 || ni >= width as i32 || nj >= height as i32 {
+                            continue;
+                        }
+
+                        let cell_idx = (nj as usize) * width + (ni as usize);
+                        let mut j = self.cell_head[cell_idx];
+
+                        while j >= 0 {
+                            let j_idx = j as usize;
+                            // Only process each pair once (idx < j)
+                            if j_idx > idx {
+                                let pos_j = self.particles.list[j_idx].position;
+                                let diff = pos_i - pos_j;
+                                let dist_sq = diff.length_squared();
+
+                                // Only push apart if overlapping
+                                if dist_sq < min_dist_sq && dist_sq > 0.0001 {
+                                    let dist = dist_sq.sqrt();
+                                    let overlap = min_dist - dist;
+                                    let dir = diff / dist;  // Points from j to i
+
+                                    // Sample SDF for j
+                                    let sdf_j = self.grid.sample_sdf(pos_j);
+
+                                    // Calculate push ratios based on wall proximity
+                                    // If near wall, don't push toward wall - push the other particle more
+                                    let i_near_wall = sdf_i < near_solid_threshold;
+                                    let j_near_wall = sdf_j < near_solid_threshold;
+
+                                    let (ratio_i, ratio_j) = match (i_near_wall, j_near_wall) {
+                                        // Neither near wall: split evenly
+                                        (false, false) => (0.5, 0.5),
+                                        // i near wall: push j more (away from i)
+                                        (true, false) => (0.2, 0.8),
+                                        // j near wall: push i more (away from j)
+                                        (false, true) => (0.8, 0.2),
+                                        // Both near wall: still try to separate, but gently
+                                        (true, true) => (0.5, 0.5),
+                                    };
+
+                                    // Get wall normals (points away from solid)
+                                    let grad_i = if i_near_wall { self.grid.sdf_gradient(pos_i) } else { Vec2::ZERO };
+                                    let grad_j = if j_near_wall { self.grid.sdf_gradient(pos_j) } else { Vec2::ZERO };
+
+                                    // Correction for i (pushed away from j)
+                                    let mut corr_i = dir * overlap * ratio_i;
+                                    // If pushing i toward its nearby wall, redirect along wall tangent
+                                    if i_near_wall {
+                                        let toward_wall = corr_i.dot(grad_i);
+                                        if toward_wall < 0.0 {
+                                            // Remove wall-facing component and add tangent component
+                                            corr_i -= grad_i * toward_wall;
+                                            // Also add a small push away from wall
+                                            corr_i += grad_i * overlap * 0.3;
+                                        }
+                                    }
+
+                                    // Correction for j (pushed away from i, so opposite dir)
+                                    let mut corr_j = -dir * overlap * ratio_j;
+                                    // If pushing j toward its nearby wall, redirect along wall tangent
+                                    if j_near_wall {
+                                        let toward_wall = corr_j.dot(grad_j);
+                                        if toward_wall < 0.0 {
+                                            // Remove wall-facing component and add tangent component
+                                            corr_j -= grad_j * toward_wall;
+                                            // Also add a small push away from wall
+                                            corr_j += grad_j * overlap * 0.3;
+                                        }
+                                    }
+
+                                    self.impulse_buffer[idx] += corr_i;
+                                    self.impulse_buffer[j_idx] += corr_j;
+                                }
+                            }
+                            j = self.particle_next[j_idx];
+                        }
+                    }
+                }
+            }
+
+            // Apply corrections (with SDF collision check)
+            let grid = &self.grid;
+            for idx in 0..particle_count {
+                let correction = self.impulse_buffer[idx];
+                if correction.length_squared() > 0.0001 {
+                    let particle = &mut self.particles.list[idx];
+                    let new_pos = particle.position + correction;
+
+                    // Check if new position is inside solid
+                    let sdf_dist = grid.sample_sdf(new_pos);
+                    if sdf_dist > cell_size * 0.25 {
+                        // Safe to apply full correction (well outside solid)
+                        particle.position = new_pos;
+                    } else if sdf_dist > 0.0 {
+                        // Near solid surface - apply correction but ensure we stay outside
+                        particle.position = new_pos;
+                        // Push slightly away from solid to maintain margin
+                        let grad = grid.sdf_gradient(new_pos);
+                        let safe_dist = cell_size * 0.3;
+                        if sdf_dist < safe_dist {
+                            particle.position += grad * (safe_dist - sdf_dist);
+                        }
+                    } else {
+                        // New position would be inside solid - DON'T apply this correction
+                        // Instead, try to slide along the solid surface
+                        let grad = grid.sdf_gradient(particle.position);
+                        // Project correction onto tangent plane
+                        let tangent_corr = correction - grad * correction.dot(grad);
+                        if tangent_corr.length_squared() > 0.01 {
+                            let tangent_pos = particle.position + tangent_corr;
+                            let tangent_sdf = grid.sample_sdf(tangent_pos);
+                            if tangent_sdf > 0.0 {
+                                particle.position = tangent_pos;
+                            }
+                        }
+                        // If we can't slide, just don't move
+                    }
+                }
             }
         }
     }
@@ -729,18 +1159,30 @@ impl FlipSimulation {
         }
     }
 
+    /// Check if a position is safe for spawning (not inside solid)
+    #[inline]
+    fn is_spawn_safe(&self, x: f32, y: f32) -> bool {
+        let (i, j) = self.grid.pos_to_cell(Vec2::new(x, y));
+        !self.grid.is_solid(i, j) && self.grid.sample_sdf(Vec2::new(x, y)) > 0.0
+    }
+
     /// Spawn water particles at a position with initial velocity
     pub fn spawn_water(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
         let mut rng = rand::thread_rng();
         for _ in 0..count {
             let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
-            self.particles.spawn_water(
-                x + offset_x,
-                y + offset_y,
-                vx + (rng.gen::<f32>() - 0.5) * 10.0,
-                vy + (rng.gen::<f32>() - 0.5) * 10.0,
-            );
+            let px = x + offset_x;
+            let py = y + offset_y;
+            // Only spawn if position is not inside solid
+            if self.is_spawn_safe(px, py) {
+                self.particles.spawn_water(
+                    px,
+                    py,
+                    vx + (rng.gen::<f32>() - 0.5) * 10.0,
+                    vy + (rng.gen::<f32>() - 0.5) * 10.0,
+                );
+            }
         }
     }
 
@@ -750,12 +1192,16 @@ impl FlipSimulation {
         for _ in 0..count {
             let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
-            self.particles.spawn_mud(
-                x + offset_x,
-                y + offset_y,
-                vx + (rng.gen::<f32>() - 0.5) * 10.0,
-                vy + (rng.gen::<f32>() - 0.5) * 10.0,
-            );
+            let px = x + offset_x;
+            let py = y + offset_y;
+            if self.is_spawn_safe(px, py) {
+                self.particles.spawn_mud(
+                    px,
+                    py,
+                    vx + (rng.gen::<f32>() - 0.5) * 10.0,
+                    vy + (rng.gen::<f32>() - 0.5) * 10.0,
+                );
+            }
         }
     }
 
@@ -765,12 +1211,16 @@ impl FlipSimulation {
         for _ in 0..count {
             let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
-            self.particles.spawn_sand(
-                x + offset_x,
-                y + offset_y,
-                vx + (rng.gen::<f32>() - 0.5) * 5.0,
-                vy + (rng.gen::<f32>() - 0.5) * 5.0,
-            );
+            let px = x + offset_x;
+            let py = y + offset_y;
+            if self.is_spawn_safe(px, py) {
+                self.particles.spawn_sand(
+                    px,
+                    py,
+                    vx + (rng.gen::<f32>() - 0.5) * 5.0,
+                    vy + (rng.gen::<f32>() - 0.5) * 5.0,
+                );
+            }
         }
     }
 
@@ -780,12 +1230,16 @@ impl FlipSimulation {
         for _ in 0..count {
             let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
-            self.particles.spawn_magnetite(
-                x + offset_x,
-                y + offset_y,
-                vx + (rng.gen::<f32>() - 0.5) * 5.0,
-                vy + (rng.gen::<f32>() - 0.5) * 5.0,
-            );
+            let px = x + offset_x;
+            let py = y + offset_y;
+            if self.is_spawn_safe(px, py) {
+                self.particles.spawn_magnetite(
+                    px,
+                    py,
+                    vx + (rng.gen::<f32>() - 0.5) * 5.0,
+                    vy + (rng.gen::<f32>() - 0.5) * 5.0,
+                );
+            }
         }
     }
 
@@ -795,12 +1249,16 @@ impl FlipSimulation {
         for _ in 0..count {
             let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
-            self.particles.spawn_gold(
-                x + offset_x,
-                y + offset_y,
-                vx + (rng.gen::<f32>() - 0.5) * 5.0,
-                vy + (rng.gen::<f32>() - 0.5) * 5.0,
-            );
+            let px = x + offset_x;
+            let py = y + offset_y;
+            if self.is_spawn_safe(px, py) {
+                self.particles.spawn_gold(
+                    px,
+                    py,
+                    vx + (rng.gen::<f32>() - 0.5) * 5.0,
+                    vy + (rng.gen::<f32>() - 0.5) * 5.0,
+                );
+            }
         }
     }
 }

@@ -268,10 +268,12 @@ impl Sediment {
                 let dist_sq = diff.length_squared();
                 let min_dist_sq = min_distance * min_distance;
 
-                if dist_sq < min_dist_sq && dist_sq > 0.001 {
+                if dist_sq < min_dist_sq && dist_sq > 0.0001 {
                     let dist = dist_sq.sqrt();
                     let overlap = min_distance - dist;
-                    let push = diff.normalize() * (overlap * 0.5);
+                    // Use diff/dist instead of normalize() to avoid potential panic
+                    // and reuse already-computed dist
+                    let push = (diff / dist) * (overlap * 0.5);
 
                     self.particles[i].position += push;
                     self.particles[j].position -= push;
