@@ -244,8 +244,14 @@ impl FlipSimulation {
             // Blend PIC/FLIP
             particle.velocity = v_pic * ALPHA + v_flip * (1.0 - ALPHA);
 
+            // Spray dampening: reduce upward velocity (negative y = up in screen coords)
+            // This prevents unrealistic explosive spray from pressure spikes
+            if particle.velocity.y < -40.0 {
+                particle.velocity.y *= 0.7; // Dampen strong upward motion
+            }
+
             // Safety clamp: CFL requires v*dt < cell_size → v < 120 for dt=1/60, cell=2
-            const MAX_VELOCITY: f32 = 120.0;
+            const MAX_VELOCITY: f32 = 100.0; // Reduced from 120 for smoother flow
             let speed = particle.velocity.length();
             if speed > MAX_VELOCITY {
                 particle.velocity *= MAX_VELOCITY / speed;
@@ -313,7 +319,7 @@ impl FlipSimulation {
             particle.velocity.y += g_eff * dt;
 
             // Safety clamp for sediment too
-            const MAX_VELOCITY: f32 = 120.0;
+            const MAX_VELOCITY: f32 = 100.0;
             let speed = particle.velocity.length();
             if speed > MAX_VELOCITY {
                 particle.velocity *= MAX_VELOCITY / speed;
@@ -467,7 +473,7 @@ impl FlipSimulation {
             self.particles.list[idx].velocity += force * dt;
 
             // Clamp velocity after near-pressure forces
-            const MAX_VELOCITY: f32 = 120.0;
+            const MAX_VELOCITY: f32 = 100.0;
             let speed = self.particles.list[idx].velocity.length();
             if speed > MAX_VELOCITY {
                 self.particles.list[idx].velocity *= MAX_VELOCITY / speed;

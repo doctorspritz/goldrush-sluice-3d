@@ -44,7 +44,14 @@ async fn main() {
     // Set up sloped sluice with riffles
     // slope=0.25 means floor rises 0.25 cells per horizontal cell (about 14 degrees)
     // riffle_spacing=30, riffle_height=8, riffle_width=3
-    create_sluice(&mut sim, 0.25, 30, 3, 2); // shorter riffles
+    // Riffle tests: (slope, spacing, HEIGHT, WIDTH)
+    // Baseline: (0.25, 30, 3, 4)
+    // R1: spacing=20 (more riffles)
+    // R2: spacing=45 (fewer riffles)
+    // R3: width=6 (thicker)
+    // R4: width=2 (thinner)
+    // R5: height=5 (taller)
+    create_sluice(&mut sim, 0.25, 30, 5, 4); // R5: taller riffles (height 3→5)
 
         let mut img = Image::gen_image_color(RENDER_WIDTH as u16, RENDER_HEIGHT as u16, bg_color);
         for j in 0..sim.grid.height {
@@ -75,7 +82,33 @@ async fn main() {
     let mut fps_samples: Vec<i32> = Vec::new();
     let start_time = std::time::Instant::now();
 
+    // Frame rate limiting
+    let target_frame_time = std::time::Duration::from_secs_f64(1.0 / 60.0);
+
+    // === TUNABLE PARAMETERS ===
+    // Inlet flow
+    let mut inlet_vx: f32 = 69.0;
+    let mut inlet_vy: f32 = 40.0;
+    let mut spawn_rate: usize = 14;
+
+    // Riffle geometry
+    let mut riffle_spacing: usize = 30;
+    let mut riffle_height: usize = 4;
+    let mut riffle_width: usize = 4;
+    let mut riffle_dirty = false; // rebuild terrain when true
+
+    // Sediment blend (spawn every N frames, 0 = disabled)
+    let mut mud_rate: usize = 6;
+    let mut sand_rate: usize = 2;
+    let mut magnetite_rate: usize = 5;
+    let mut gold_rate: usize = 15;
+
+    // Mutable terrain texture
+    let mut terrain_texture = terrain_texture;
+
     loop {
+        let frame_start = std::time::Instant::now();
+
         // --- INPUT ---
         if is_key_pressed(KeyCode::Space) {
             paused = !paused;
@@ -87,13 +120,113 @@ async fn main() {
             spawn_mud = !spawn_mud;
         }
         if is_key_pressed(KeyCode::R) {
-            // Reset simulation
+            // Reset simulation with current riffle params
             sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
-            create_sluice(&mut sim, 0.25, 30, 3, 2); // shorter riffles
+            create_sluice(&mut sim, 0.25, riffle_spacing, riffle_height, riffle_width);
+            riffle_dirty = true; // rebuild texture
         }
         if is_key_pressed(KeyCode::C) {
             // Clear particles
             sim.particles.list.clear();
+        }
+
+        // === PARAMETER CONTROLS ===
+        // Velocity: Arrow keys (with shift for vy)
+        if is_key_pressed(KeyCode::Right) {
+            if is_key_down(KeyCode::LeftShift) {
+                inlet_vy = (inlet_vy + 5.0).min(80.0);
+            } else {
+                inlet_vx = (inlet_vx + 5.0).min(100.0);
+            }
+        }
+        if is_key_pressed(KeyCode::Left) {
+            if is_key_down(KeyCode::LeftShift) {
+                inlet_vy = (inlet_vy - 5.0).max(0.0);
+            } else {
+                inlet_vx = (inlet_vx - 5.0).max(20.0);
+            }
+        }
+
+        // Spawn rate: Up/Down arrows
+        if is_key_pressed(KeyCode::Up) {
+            spawn_rate = (spawn_rate + 2).min(30);
+        }
+        if is_key_pressed(KeyCode::Down) {
+            spawn_rate = spawn_rate.saturating_sub(2).max(2);
+        }
+
+        // Riffle spacing: Q/A
+        if is_key_pressed(KeyCode::Q) {
+            riffle_spacing = (riffle_spacing + 5).min(60);
+            riffle_dirty = true;
+        }
+        if is_key_pressed(KeyCode::A) {
+            riffle_spacing = riffle_spacing.saturating_sub(5).max(15);
+            riffle_dirty = true;
+        }
+
+        // Riffle height: W/S
+        if is_key_pressed(KeyCode::W) {
+            riffle_height = (riffle_height + 1).min(8);
+            riffle_dirty = true;
+        }
+        if is_key_pressed(KeyCode::S) {
+            riffle_height = riffle_height.saturating_sub(1).max(2);
+            riffle_dirty = true;
+        }
+
+        // Riffle width: E/D
+        if is_key_pressed(KeyCode::E) {
+            riffle_width = (riffle_width + 1).min(8);
+            riffle_dirty = true;
+        }
+        if is_key_pressed(KeyCode::D) {
+            riffle_width = riffle_width.saturating_sub(1).max(1);
+            riffle_dirty = true;
+        }
+
+        // Sediment rates: 1-4 to cycle
+        if is_key_pressed(KeyCode::Key1) {
+            mud_rate = if mud_rate == 0 { 6 } else if mud_rate > 2 { mud_rate - 2 } else { 0 };
+        }
+        if is_key_pressed(KeyCode::Key2) {
+            sand_rate = if sand_rate == 0 { 4 } else if sand_rate > 1 { sand_rate - 1 } else { 0 };
+        }
+        if is_key_pressed(KeyCode::Key3) {
+            magnetite_rate = if magnetite_rate == 0 { 8 } else if magnetite_rate > 2 { magnetite_rate - 2 } else { 0 };
+        }
+        if is_key_pressed(KeyCode::Key4) {
+            gold_rate = if gold_rate == 0 { 20 } else if gold_rate > 5 { gold_rate - 5 } else { 0 };
+        }
+
+        // Rebuild terrain if riffle params changed
+        if riffle_dirty {
+            riffle_dirty = false;
+            sim.particles.list.clear();
+            sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
+            create_sluice(&mut sim, 0.25, riffle_spacing, riffle_height, riffle_width);
+
+            // Rebuild terrain texture
+            let bg_color = Color::from_rgba(20, 20, 30, 255);
+            let terrain_color = Color::from_rgba(80, 80, 80, 255);
+            let mut img = Image::gen_image_color(RENDER_WIDTH as u16, RENDER_HEIGHT as u16, bg_color);
+            for j in 0..sim.grid.height {
+                for i in 0..sim.grid.width {
+                    if sim.grid.is_solid(i, j) {
+                        let start_x = (i as f32 * CELL_SIZE) as usize;
+                        let start_y = (j as f32 * CELL_SIZE) as usize;
+                        let end_x = ((i + 1) as f32 * CELL_SIZE) as usize;
+                        let end_y = ((j + 1) as f32 * CELL_SIZE) as usize;
+                        for py in start_y..end_y.min(RENDER_HEIGHT) {
+                            for px in start_x..end_x.min(RENDER_WIDTH) {
+                                img.set_pixel(px as u32, py as u32, terrain_color);
+                            }
+                        }
+                    }
+                }
+            }
+            terrain_texture = Texture2D::from_image(&img);
+            terrain_texture.set_filter(FilterMode::Nearest);
         }
 
         // Mouse spawning
@@ -111,26 +244,26 @@ async fn main() {
 
         // --- UPDATE ---
         if !paused {
-            // Spawn at x=0, 5px above sluice, aiming 30° down
+            // Spawn water and sediments using tunable parameters
             {
                 let inlet_x = 5.0;
                 let inlet_y = 43.0;
-                let vx = 69.0;
-                let vy = 40.0;
 
-                sim.spawn_water(inlet_x, inlet_y, vx, vy, 4);
+                // Water
+                sim.spawn_water(inlet_x, inlet_y, inlet_vx, inlet_vy, spawn_rate);
 
-                if frame_count % 6 == 0 {
-                    sim.spawn_mud(inlet_x, inlet_y + 3.0, vx, vy, 2);
+                // Sediments (spawn every N frames, 0 = disabled)
+                if mud_rate > 0 && frame_count % mud_rate as u64 == 0 {
+                    sim.spawn_mud(inlet_x, inlet_y + 3.0, inlet_vx, inlet_vy, 2);
                 }
-                if frame_count % 2 == 0 {
-                    sim.spawn_sand(inlet_x, inlet_y, vx, vy, 2);
+                if sand_rate > 0 && frame_count % sand_rate as u64 == 0 {
+                    sim.spawn_sand(inlet_x, inlet_y, inlet_vx, inlet_vy, 2);
                 }
-                if frame_count % 5 == 0 {
-                    sim.spawn_magnetite(inlet_x, inlet_y, vx, vy, 1);
+                if magnetite_rate > 0 && frame_count % magnetite_rate as u64 == 0 {
+                    sim.spawn_magnetite(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
                 }
-                if frame_count % 15 == 0 {
-                    sim.spawn_gold(inlet_x, inlet_y, vx, vy, 1);
+                if gold_rate > 0 && frame_count % gold_rate as u64 == 0 {
+                    sim.spawn_gold(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
                 }
             }
 
@@ -214,6 +347,8 @@ async fn main() {
 
         // --- UI ---
         let (water, mud, sand, magnetite, gold) = sim.particles.count_by_material();
+
+        // Top status bar
         draw_text(
             &format!(
                 "Particles: {} | FPS: {} | {}",
@@ -221,41 +356,49 @@ async fn main() {
                 get_fps(),
                 if paused { "PAUSED" } else { "Running" }
             ),
-            10.0,
-            25.0,
-            20.0,
-            WHITE,
+            10.0, 20.0, 18.0, WHITE,
         );
 
+        // Current parameters - LEFT SIDE
         draw_text(
-            &format!(
-                "Water: {} Mud: {} Sand: {} Mag: {} Gold: {}",
-                water, mud, sand, magnetite, gold
+            &format!("FLOW: vx={:.0} vy={:.0} rate={}", inlet_vx, inlet_vy, spawn_rate),
+            10.0, 42.0, 16.0, Color::from_rgba(100, 200, 255, 255),
+        );
+        draw_text(
+            &format!("RIFFLES: spacing={} height={} width={}", riffle_spacing, riffle_height, riffle_width),
+            10.0, 58.0, 16.0, Color::from_rgba(150, 150, 150, 255),
+        );
+        draw_text(
+            &format!("SEDIMENT: mud=1/{} sand=1/{} mag=1/{} gold=1/{}",
+                if mud_rate > 0 { mud_rate.to_string() } else { "off".to_string() },
+                if sand_rate > 0 { sand_rate.to_string() } else { "off".to_string() },
+                if magnetite_rate > 0 { magnetite_rate.to_string() } else { "off".to_string() },
+                if gold_rate > 0 { gold_rate.to_string() } else { "off".to_string() },
             ),
-            10.0,
-            45.0,
-            16.0,
-            Color::from_rgba(255, 215, 0, 255), // Gold color
+            10.0, 74.0, 14.0, Color::from_rgba(255, 215, 0, 200),
         );
 
+        // Material counts
         draw_text(
-            &format!(
-                "Spawning: {} | [Space]=Pause [V]=Velocity [M]=Toggle Mud [R]=Reset [C]=Clear",
-                if spawn_mud { "Mud" } else { "Water" }
-            ),
-            10.0,
-            65.0,
-            16.0,
-            GRAY,
+            &format!("W:{} M:{} S:{} Mag:{} Au:{}", water, mud, sand, magnetite, gold),
+            10.0, 92.0, 14.0, Color::from_rgba(200, 200, 200, 255),
         );
 
+        // Controls - BOTTOM
         draw_text(
-            "Watch gold (yellow) settle faster than sand (tan) through vortices!",
-            10.0,
-            screen_height() - 10.0,
-            16.0,
-            GRAY,
+            "←→ vx | Shift+←→ vy | ↑↓ spawn | Q/A spacing | W/S height | E/D width | 1234 sediment",
+            10.0, screen_height() - 28.0, 14.0, GRAY,
         );
+        draw_text(
+            "[Space]=Pause [V]=Velocity [R]=Reset [C]=Clear",
+            10.0, screen_height() - 10.0, 14.0, GRAY,
+        );
+
+        // Frame rate limiting - sleep if we finished early
+        let elapsed = frame_start.elapsed();
+        if elapsed < target_frame_time {
+            std::thread::sleep(target_frame_time - elapsed);
+        }
 
         next_frame().await
     }

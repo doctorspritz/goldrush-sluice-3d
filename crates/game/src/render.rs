@@ -98,7 +98,7 @@ impl ParticleRenderer {
             material,
             white_texture,
             velocity_max: 100.0,
-            particle_scale: 4.0, // Visible particle size
+            particle_scale: 2.5, // Smaller particles for denser flow
         }
     }
 
