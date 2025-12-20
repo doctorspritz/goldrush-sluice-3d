@@ -35,7 +35,7 @@ impl Particle {
             position,
             velocity,
             old_grid_velocity: Vec2::ZERO,
-            density: 2.5,
+            density: 5.0,
         }
     }
 

@@ -21,7 +21,9 @@ pub mod world;
 pub mod flip;
 pub mod grid;
 pub mod particle;
+pub mod sediment;
 pub mod sluice;
+pub mod pbf; // PBF for granular phase
 
 // Re-export old types (for backwards compatibility during transition)
 pub use cell::Cell;
@@ -33,4 +35,6 @@ pub use world::World;
 pub use flip::FlipSimulation;
 pub use grid::{CellType, Grid};
 pub use particle::{Particle, Particles};
+pub use sediment::{Sediment, SedimentParticle, SedimentState, SedimentType};
 pub use sluice::{create_box, create_flat_sluice, create_sluice};
+pub use pbf::{PbfSimulation, PbfParticle};

@@ -11,14 +11,20 @@
 //! 8. Advect particles
 
 use crate::grid::{CellType, Grid};
-use crate::particle::{Particle, Particles};
+use crate::particle::Particles;
 use glam::Vec2;
 use rand::Rng;
+use rayon::prelude::*;
 
 /// FLIP simulation state
 pub struct FlipSimulation {
     pub grid: Grid,
     pub particles: Particles,
+    // Pre-allocated P2G transfer buffers (eliminates ~320KB allocation per frame)
+    u_sum: Vec<f32>,
+    u_weight: Vec<f32>,
+    v_sum: Vec<f32>,
+    v_weight: Vec<f32>,
     // Pre-allocated spatial hash for particle separation (zero allocation per frame)
     cell_head: Vec<i32>,      // Index of first particle in each cell (-1 = empty)
     particle_next: Vec<i32>,  // Index of next particle in same cell (-1 = end)
@@ -31,9 +37,17 @@ pub struct FlipSimulation {
 impl FlipSimulation {
     pub fn new(width: usize, height: usize, cell_size: f32) -> Self {
         let cell_count = width * height;
+        let grid = Grid::new(width, height, cell_size);
+        // Pre-allocate P2G buffers based on grid size
+        let u_len = grid.u.len();
+        let v_len = grid.v.len();
         Self {
-            grid: Grid::new(width, height, cell_size),
+            grid,
             particles: Particles::new(),
+            u_sum: vec![0.0; u_len],
+            u_weight: vec![0.0; u_len],
+            v_sum: vec![0.0; v_len],
+            v_weight: vec![0.0; v_len],
             cell_head: vec![-1; cell_count],
             particle_next: Vec::new(),
             impulse_buffer: Vec::new(),
@@ -116,12 +130,13 @@ impl FlipSimulation {
     }
 
     /// Step 2: Transfer particle velocities to grid (P2G)
+    /// Uses pre-allocated buffers to avoid per-frame allocation
     fn particles_to_grid(&mut self) {
-        // Clear accumulators
-        let mut u_sum = vec![0.0f32; self.grid.u.len()];
-        let mut u_weight = vec![0.0f32; self.grid.u.len()];
-        let mut v_sum = vec![0.0f32; self.grid.v.len()];
-        let mut v_weight = vec![0.0f32; self.grid.v.len()];
+        // Clear accumulators (no allocation - just fill!)
+        self.u_sum.fill(0.0);
+        self.u_weight.fill(0.0);
+        self.v_sum.fill(0.0);
+        self.v_weight.fill(0.0);
 
         let cell_size = self.grid.cell_size;
 
@@ -135,8 +150,8 @@ impl FlipSimulation {
                 let nj = (j as i32 + dj) as usize;
                 if ni <= self.grid.width && nj < self.grid.height {
                     let idx = self.grid.u_index(ni, nj);
-                    u_sum[idx] += particle.velocity.x * w;
-                    u_weight[idx] += w;
+                    self.u_sum[idx] += particle.velocity.x * w;
+                    self.u_weight[idx] += w;
                 }
             }
 
@@ -149,23 +164,23 @@ impl FlipSimulation {
                 let nj = (j as i32 + dj) as usize;
                 if ni < self.grid.width && nj <= self.grid.height {
                     let idx = self.grid.v_index(ni, nj);
-                    v_sum[idx] += particle.velocity.y * w;
-                    v_weight[idx] += w;
+                    self.v_sum[idx] += particle.velocity.y * w;
+                    self.v_weight[idx] += w;
                 }
             }
         }
 
         // Normalize
         for i in 0..self.grid.u.len() {
-            if u_weight[i] > 0.0 {
-                self.grid.u[i] = u_sum[i] / u_weight[i];
+            if self.u_weight[i] > 0.0 {
+                self.grid.u[i] = self.u_sum[i] / self.u_weight[i];
             } else {
                 self.grid.u[i] = 0.0;
             }
         }
         for i in 0..self.grid.v.len() {
-            if v_weight[i] > 0.0 {
-                self.grid.v[i] = v_sum[i] / v_weight[i];
+            if self.v_weight[i] > 0.0 {
+                self.grid.v[i] = self.v_sum[i] / self.v_weight[i];
             } else {
                 self.grid.v[i] = 0.0;
             }
@@ -181,12 +196,14 @@ impl FlipSimulation {
 
     /// Step 6: Transfer grid velocities back to particles (G2P)
     /// Uses PIC/FLIP blend: 15% PIC (stable but dissipative) + 85% FLIP (preserves momentum)
-    /// Increased PIC for less bounciness
+    /// Parallelized with rayon for multi-core speedup
     fn grid_to_particles(&mut self) {
         const ALPHA: f32 = 0.15; // 15% PIC, 85% FLIP (more stable, less bouncy)
 
-        for particle in self.particles.iter_mut() {
-            let v_grid = self.grid.sample_velocity(particle.position);
+        // Split borrows to allow parallel iteration
+        let grid = &self.grid;
+        self.particles.list.par_iter_mut().for_each(|particle| {
+            let v_grid = grid.sample_velocity(particle.position);
 
             // PIC: use grid velocity directly
             let v_pic = v_grid;
@@ -197,20 +214,21 @@ impl FlipSimulation {
 
             // Blend
             particle.velocity = v_pic * ALPHA + v_flip * (1.0 - ALPHA);
-        }
+        });
     }
 
     /// Step 7: Apply density-based settling (mud sinks through water)
+    /// Parallelized with rayon
     fn apply_settling(&mut self, dt: f32) {
         const WATER_DENSITY: f32 = 1.0;
 
-        for particle in self.particles.iter_mut() {
+        self.particles.list.par_iter_mut().for_each(|particle| {
             if particle.density > WATER_DENSITY {
                 // Settling velocity based on density difference (simplified Stokes law)
                 let settling = (particle.density - WATER_DENSITY) * 2.0;
                 particle.velocity.y += settling * dt;
             }
-        }
+        });
     }
 
     /// Step 8: Advect particles with ray-based collision detection
@@ -401,87 +419,6 @@ impl FlipSimulation {
                 vy + (rng.gen::<f32>() - 0.5) * 10.0,
             );
         }
-    }
-}
-
-/// Resolve collision with solid cells (free function to avoid borrow issues)
-fn resolve_solid_collision(
-    particle: &mut Particle,
-    grid: &Grid,
-    cell_size: f32,
-    width: usize,
-    height: usize,
-) {
-    // Multiple iterations to handle corners
-    for _ in 0..3 {
-        let (i, j) = grid.pos_to_cell(particle.position);
-
-        if !grid.is_solid(i, j) {
-            break;
-        }
-
-        // Try to find the nearest non-solid cell
-        // Priority: up (most common for floor collision), then left/right, then down
-        let checks = [
-            (0i32, -1i32), // up
-            (-1, 0),       // left
-            (1, 0),        // right
-            (0, 1),        // down (last resort)
-        ];
-
-        let mut pushed = false;
-        for (di, dj) in checks {
-            let ni = (i as i32 + di).clamp(0, width as i32 - 1) as usize;
-            let nj = (j as i32 + dj).clamp(0, height as i32 - 1) as usize;
-
-            if !grid.is_solid(ni, nj) {
-                // Push to the edge of this cell towards the non-solid neighbor
-                if di < 0 {
-                    particle.position.x = i as f32 * cell_size - 0.5;
-                    particle.velocity.x = particle.velocity.x.min(0.0);
-                } else if di > 0 {
-                    particle.position.x = (i + 1) as f32 * cell_size + 0.5;
-                    particle.velocity.x = particle.velocity.x.max(0.0);
-                }
-                if dj < 0 {
-                    particle.position.y = j as f32 * cell_size - 0.5;
-                    particle.velocity.y = particle.velocity.y.min(0.0);
-                } else if dj > 0 {
-                    particle.position.y = (j + 1) as f32 * cell_size + 0.5;
-                    particle.velocity.y = particle.velocity.y.max(0.0);
-                }
-                pushed = true;
-                break;
-            }
-        }
-
-        // If completely stuck, just push up
-        if !pushed {
-            particle.position.y -= cell_size;
-            particle.velocity.y = particle.velocity.y.min(0.0);
-        }
-    }
-
-    // Clamp to bounds
-    let margin = cell_size;
-    let max_x = width as f32 * cell_size - margin;
-    let max_y = height as f32 * cell_size - margin;
-
-    if particle.position.x < margin {
-        particle.position.x = margin;
-        particle.velocity.x = particle.velocity.x.max(0.0);
-    }
-    if particle.position.x > max_x {
-        particle.position.x = max_x;
-        particle.velocity.x = particle.velocity.x.min(0.0);
-    }
-    if particle.position.y < margin {
-        particle.position.y = margin;
-        particle.velocity.y = particle.velocity.y.max(0.0);
-    }
-    if particle.position.y > max_y {
-        particle.position.y = max_y;
-        particle.velocity.y = particle.velocity.y.min(0.0);
     }
 }
 

@@ -4,7 +4,7 @@
 //! Uses batched pixel rendering for high performance.
 
 use macroquad::prelude::*;
-use sim::{create_sluice, FlipSimulation};
+use sim::{create_sluice, FlipSimulation, Sediment, SedimentType};
 
 // Simulation size
 const SIM_WIDTH: usize = 128;
@@ -29,6 +29,9 @@ fn window_conf() -> Conf {
 async fn main() {
     // Create simulation
     let mut sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
+
+    // Create sediment system (drift-flux particles coupled to FLIP velocity)
+    let mut sediment = Sediment::new();
 
     // Create render buffer (pixels in simulation space)
     let mut render_buffer = Image::gen_image_color(RENDER_WIDTH as u16, RENDER_HEIGHT as u16, BLACK);
@@ -83,10 +86,12 @@ async fn main() {
             // Reset simulation
             sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
             create_sluice(&mut sim, 0.3, 20, 5);
+            sediment = Sediment::new();
         }
         if is_key_pressed(KeyCode::C) {
             // Clear particles
             sim.particles.list.clear();
+            sediment.particles.clear();
         }
 
         // Mouse spawning
@@ -116,11 +121,45 @@ async fn main() {
                 if frame_count % 20 == 0 {
                     sim.spawn_mud(inlet_x, inlet_y + 5.0, 50.0, 0.0, 1);
                 }
+
+                // Spawn sediment with the water (mixed ore feed)
+                let sed_pos = glam::Vec2::new(inlet_x, inlet_y);
+                let sed_vel = glam::Vec2::new(50.0, 0.0);
+
+                // Sand is most common
+                if frame_count % 4 == 0 {
+                    sediment.spawn_sand(sed_pos, sed_vel);
+                }
+                // Magnetite less common (black sand indicator)
+                if frame_count % 12 == 0 {
+                    sediment.spawn_magnetite(sed_pos, sed_vel);
+                }
+                // Gold is rare!
+                if frame_count % 60 == 0 {
+                    sediment.spawn_gold(sed_pos, sed_vel);
+                }
             }
 
             // Run simulation step
             let dt = 1.0 / 60.0;
             sim.update(dt);
+
+            // Update sediment (drift-flux: advected by FLIP velocity + settling)
+            // With collision detection against sluice terrain
+            let grid = &sim.grid;
+            sediment.update_with_collision(
+                dt,
+                |pos| grid.sample_velocity(pos),
+                |pos| {
+                    // Convert pixel position to grid cell
+                    let gi = (pos.x / grid.cell_size) as usize;
+                    let gj = (pos.y / grid.cell_size) as usize;
+                    grid.is_solid(gi, gj)
+                },
+            );
+
+            // Remove sediment that exits the sluice
+            sediment.remove_out_of_bounds(RENDER_WIDTH as f32, RENDER_HEIGHT as f32);
 
             frame_count += 1;
         }
@@ -146,6 +185,26 @@ async fn main() {
             let rgba = if particle.is_mud() { mud_rgba } else { water_rgba };
 
             // Draw 2x2 block (pixels array is [u8; 4] per pixel)
+            let base = py * RENDER_WIDTH + px;
+            pixels[base] = rgba;
+            pixels[base + 1] = rgba;
+            let base2 = base + RENDER_WIDTH;
+            pixels[base2] = rgba;
+            pixels[base2 + 1] = rgba;
+        }
+
+        // Draw sediment particles on top (sand, magnetite, gold)
+        for particle in sediment.particles.iter() {
+            let px = particle.position.x as usize;
+            let py = particle.position.y as usize;
+
+            if px + 1 >= RENDER_WIDTH || py + 1 >= RENDER_HEIGHT {
+                continue;
+            }
+
+            let rgba = particle.material.color();
+
+            // Draw 2x2 block
             let base = py * RENDER_WIDTH + px;
             pixels[base] = rgba;
             pixels[base + 1] = rgba;
@@ -194,10 +253,12 @@ async fn main() {
         }
 
         // --- UI ---
+        let (sand, magnetite, gold) = sediment.count_by_type();
         draw_text(
             &format!(
-                "Particles: {} | FPS: {} | {}",
+                "Water: {} | Sediment: {} | FPS: {} | {}",
                 sim.particles.len(),
+                sediment.len(),
                 get_fps(),
                 if paused { "PAUSED" } else { "Running" }
             ),
@@ -209,17 +270,28 @@ async fn main() {
 
         draw_text(
             &format!(
+                "Sand: {} | Magnetite: {} | Gold: {}",
+                sand, magnetite, gold
+            ),
+            10.0,
+            45.0,
+            18.0,
+            Color::from_rgba(255, 215, 0, 255), // Gold color
+        );
+
+        draw_text(
+            &format!(
                 "Spawning: {} | [Space]=Pause [V]=Velocity [M]=Toggle Mud [R]=Reset [C]=Clear",
                 if spawn_mud { "Mud" } else { "Water" }
             ),
             10.0,
-            50.0,
+            65.0,
             16.0,
             GRAY,
         );
 
         draw_text(
-            "Click to spawn particles | Watch vortices form behind riffles!",
+            "Watch gold (yellow) settle faster than sand (tan) through vortices!",
             10.0,
             screen_height() - 10.0,
             16.0,
