@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/sim",
+  "crates/game",
+]
+
+default-members = [
+  "crates/game",
+]

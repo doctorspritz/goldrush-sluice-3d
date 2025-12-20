@@ -1,0 +1,403 @@
+//! MAC (Marker-and-Cell) grid for fluid simulation
+//!
+//! Uses staggered grid layout:
+//! - u (horizontal velocity) stored on left edges of cells
+//! - v (vertical velocity) stored on bottom edges of cells
+//! - pressure stored at cell centers
+
+use glam::Vec2;
+
+/// Cell type for boundary conditions
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CellType {
+    /// Solid obstacle - blocks flow
+    Solid,
+    /// Contains fluid particles
+    Fluid,
+    /// Empty air
+    Air,
+}
+
+/// Staggered MAC grid for pressure-velocity simulation
+pub struct Grid {
+    pub width: usize,
+    pub height: usize,
+    pub cell_size: f32,
+
+    /// Horizontal velocity (staggered on left edges)
+    /// Size: (width+1) * height
+    pub u: Vec<f32>,
+    /// Vertical velocity (staggered on bottom edges)
+    /// Size: width * (height+1)
+    pub v: Vec<f32>,
+
+    /// Pressure at cell centers
+    pub pressure: Vec<f32>,
+    /// Divergence at cell centers (computed during solve)
+    pub divergence: Vec<f32>,
+
+    /// Cell type for boundary handling
+    pub cell_type: Vec<CellType>,
+
+    /// Solid terrain (persistent, set from level geometry)
+    pub solid: Vec<bool>,
+}
+
+impl Grid {
+    pub fn new(width: usize, height: usize, cell_size: f32) -> Self {
+        let cell_count = width * height;
+        let u_count = (width + 1) * height;
+        let v_count = width * (height + 1);
+
+        Self {
+            width,
+            height,
+            cell_size,
+            u: vec![0.0; u_count],
+            v: vec![0.0; v_count],
+            pressure: vec![0.0; cell_count],
+            divergence: vec![0.0; cell_count],
+            cell_type: vec![CellType::Air; cell_count],
+            solid: vec![false; cell_count],
+        }
+    }
+
+    /// Convert world position to grid cell indices
+    pub fn pos_to_cell(&self, pos: Vec2) -> (usize, usize) {
+        let i = (pos.x / self.cell_size).floor() as i32;
+        let j = (pos.y / self.cell_size).floor() as i32;
+        (
+            i.clamp(0, self.width as i32 - 1) as usize,
+            j.clamp(0, self.height as i32 - 1) as usize,
+        )
+    }
+
+    /// Cell center index (for pressure, divergence, cell_type)
+    #[inline]
+    pub fn cell_index(&self, i: usize, j: usize) -> usize {
+        j * self.width + i
+    }
+
+    /// U velocity index (staggered on left edges)
+    #[inline]
+    pub fn u_index(&self, i: usize, j: usize) -> usize {
+        j * (self.width + 1) + i
+    }
+
+    /// V velocity index (staggered on bottom edges)
+    #[inline]
+    pub fn v_index(&self, i: usize, j: usize) -> usize {
+        j * self.width + i
+    }
+
+    /// Set cell as solid (terrain)
+    pub fn set_solid(&mut self, i: usize, j: usize) {
+        if i < self.width && j < self.height {
+            let idx = self.cell_index(i, j);
+            self.solid[idx] = true;
+        }
+    }
+
+    /// Check if cell is solid terrain
+    pub fn is_solid(&self, i: usize, j: usize) -> bool {
+        if i >= self.width || j >= self.height {
+            return true; // Out of bounds is solid
+        }
+        self.solid[self.cell_index(i, j)]
+    }
+
+    /// Sample velocity at a world position using bilinear interpolation
+    pub fn sample_velocity(&self, pos: Vec2) -> Vec2 {
+        let u = self.sample_u(pos);
+        let v = self.sample_v(pos);
+        Vec2::new(u, v)
+    }
+
+    /// Sample U component (staggered - sample at left edges)
+    fn sample_u(&self, pos: Vec2) -> f32 {
+        // U is stored at (i, j+0.5) in cell-space
+        let x = pos.x / self.cell_size;
+        let y = pos.y / self.cell_size - 0.5;
+
+        let i = x.floor() as i32;
+        let j = y.floor() as i32;
+        let fx = x - i as f32;
+        let fy = y - j as f32;
+
+        // Clamp indices
+        let i0 = i.clamp(0, self.width as i32) as usize;
+        let i1 = (i + 1).clamp(0, self.width as i32) as usize;
+        let j0 = j.clamp(0, self.height as i32 - 1) as usize;
+        let j1 = (j + 1).clamp(0, self.height as i32 - 1) as usize;
+
+        // Bilinear interpolation
+        let u00 = self.u[self.u_index(i0, j0)];
+        let u10 = self.u[self.u_index(i1, j0)];
+        let u01 = self.u[self.u_index(i0, j1)];
+        let u11 = self.u[self.u_index(i1, j1)];
+
+        let u0 = u00 * (1.0 - fx) + u10 * fx;
+        let u1 = u01 * (1.0 - fx) + u11 * fx;
+        u0 * (1.0 - fy) + u1 * fy
+    }
+
+    /// Sample V component (staggered - sample at bottom edges)
+    fn sample_v(&self, pos: Vec2) -> f32 {
+        // V is stored at (i+0.5, j) in cell-space
+        let x = pos.x / self.cell_size - 0.5;
+        let y = pos.y / self.cell_size;
+
+        let i = x.floor() as i32;
+        let j = y.floor() as i32;
+        let fx = x - i as f32;
+        let fy = y - j as f32;
+
+        // Clamp indices
+        let i0 = i.clamp(0, self.width as i32 - 1) as usize;
+        let i1 = (i + 1).clamp(0, self.width as i32 - 1) as usize;
+        let j0 = j.clamp(0, self.height as i32) as usize;
+        let j1 = (j + 1).clamp(0, self.height as i32) as usize;
+
+        // Bilinear interpolation
+        let v00 = self.v[self.v_index(i0, j0)];
+        let v10 = self.v[self.v_index(i1, j0)];
+        let v01 = self.v[self.v_index(i0, j1)];
+        let v11 = self.v[self.v_index(i1, j1)];
+
+        let v0 = v00 * (1.0 - fx) + v10 * fx;
+        let v1 = v01 * (1.0 - fx) + v11 * fx;
+        v0 * (1.0 - fy) + v1 * fy
+    }
+
+    /// Get bilinear interpolation weights for a position
+    /// Returns (i, j, weights) where weights is [(di, dj, weight); 4]
+    pub fn get_interp_weights(&self, pos: Vec2) -> (usize, usize, [(i32, i32, f32); 4]) {
+        let x = pos.x / self.cell_size;
+        let y = pos.y / self.cell_size;
+
+        let i = x.floor() as i32;
+        let j = y.floor() as i32;
+        let fx = x - i as f32;
+        let fy = y - j as f32;
+
+        let i = i.clamp(0, self.width as i32 - 1) as usize;
+        let j = j.clamp(0, self.height as i32 - 1) as usize;
+
+        let weights = [
+            (0, 0, (1.0 - fx) * (1.0 - fy)),
+            (1, 0, fx * (1.0 - fy)),
+            (0, 1, (1.0 - fx) * fy),
+            (1, 1, fx * fy),
+        ];
+
+        (i, j, weights)
+    }
+
+    /// Clear velocity field
+    pub fn clear_velocities(&mut self) {
+        self.u.fill(0.0);
+        self.v.fill(0.0);
+    }
+
+    /// Clear pressure
+    pub fn clear_pressure(&mut self) {
+        self.pressure.fill(0.0);
+        self.divergence.fill(0.0);
+    }
+
+    /// Apply gravity to vertical velocity
+    pub fn apply_gravity(&mut self, dt: f32) {
+        const GRAVITY: f32 = 200.0; // Pixels per second squared (increased for faster settling)
+
+        for v in &mut self.v {
+            *v += GRAVITY * dt;
+        }
+    }
+
+    /// Compute divergence of velocity field
+    pub fn compute_divergence(&mut self) {
+        let scale = 1.0 / self.cell_size;
+
+        for j in 0..self.height {
+            for i in 0..self.width {
+                let idx = self.cell_index(i, j);
+
+                if self.cell_type[idx] != CellType::Fluid {
+                    self.divergence[idx] = 0.0;
+                    continue;
+                }
+
+                let u_right = self.u[self.u_index(i + 1, j)];
+                let u_left = self.u[self.u_index(i, j)];
+                let v_top = self.v[self.v_index(i, j + 1)];
+                let v_bottom = self.v[self.v_index(i, j)];
+
+                self.divergence[idx] = (u_right - u_left + v_top - v_bottom) * scale;
+            }
+        }
+    }
+
+    /// Solve pressure using Red-Black Gauss-Seidel iteration
+    /// 2x faster convergence than Jacobi - updates in-place using latest neighbor values
+    /// This enforces incompressibility and creates vortices naturally
+    pub fn solve_pressure(&mut self, iterations: usize) {
+        for _ in 0..iterations {
+            // Red pass (i+j even) - can use updated values immediately
+            for j in 1..self.height - 1 {
+                for i in 1..self.width - 1 {
+                    if (i + j) % 2 == 0 {
+                        self.update_pressure_cell(i, j);
+                    }
+                }
+            }
+            // Black pass (i+j odd) - uses updated red values
+            for j in 1..self.height - 1 {
+                for i in 1..self.width - 1 {
+                    if (i + j) % 2 != 0 {
+                        self.update_pressure_cell(i, j);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Update a single pressure cell (helper for Red-Black GS)
+    #[inline]
+    fn update_pressure_cell(&mut self, i: usize, j: usize) {
+        let idx = self.cell_index(i, j);
+
+        if self.cell_type[idx] != CellType::Fluid {
+            self.pressure[idx] = 0.0;
+            return;
+        }
+
+        // Neighbor pressures (solid boundaries treated as current pressure)
+        let p_left = if self.cell_type[self.cell_index(i - 1, j)] == CellType::Solid {
+            self.pressure[idx]
+        } else {
+            self.pressure[self.cell_index(i - 1, j)]
+        };
+        let p_right = if self.cell_type[self.cell_index(i + 1, j)] == CellType::Solid {
+            self.pressure[idx]
+        } else {
+            self.pressure[self.cell_index(i + 1, j)]
+        };
+        let p_bottom = if self.cell_type[self.cell_index(i, j - 1)] == CellType::Solid {
+            self.pressure[idx]
+        } else {
+            self.pressure[self.cell_index(i, j - 1)]
+        };
+        let p_top = if self.cell_type[self.cell_index(i, j + 1)] == CellType::Solid {
+            self.pressure[idx]
+        } else {
+            self.pressure[self.cell_index(i, j + 1)]
+        };
+
+        let div = self.divergence[idx];
+
+        // Gauss-Seidel update: p = (L + R + B + T - divergence) * 0.25
+        self.pressure[idx] = (p_left + p_right + p_bottom + p_top - div) * 0.25;
+    }
+
+    /// Subtract pressure gradient from velocity field
+    pub fn apply_pressure_gradient(&mut self, dt: f32) {
+        let scale = dt / self.cell_size;
+
+        // Update U velocities (horizontal)
+        for j in 0..self.height {
+            for i in 1..self.width {
+                let idx_left = self.cell_index(i - 1, j);
+                let idx_right = self.cell_index(i, j);
+
+                // Skip if both cells are solid or air
+                let left_type = self.cell_type[idx_left];
+                let right_type = self.cell_type[idx_right];
+
+                let u_idx = self.u_index(i, j);
+                if left_type == CellType::Solid || right_type == CellType::Solid {
+                    self.u[u_idx] = 0.0;
+                } else if left_type == CellType::Fluid || right_type == CellType::Fluid {
+                    let grad = (self.pressure[idx_right] - self.pressure[idx_left]) * scale;
+                    self.u[u_idx] -= grad;
+                }
+            }
+        }
+
+        // Update V velocities (vertical)
+        for j in 1..self.height {
+            for i in 0..self.width {
+                let idx_bottom = self.cell_index(i, j - 1);
+                let idx_top = self.cell_index(i, j);
+
+                let bottom_type = self.cell_type[idx_bottom];
+                let top_type = self.cell_type[idx_top];
+
+                let v_idx = self.v_index(i, j);
+                if bottom_type == CellType::Solid || top_type == CellType::Solid {
+                    self.v[v_idx] = 0.0;
+                } else if bottom_type == CellType::Fluid || top_type == CellType::Fluid {
+                    let grad = (self.pressure[idx_top] - self.pressure[idx_bottom]) * scale;
+                    self.v[v_idx] -= grad;
+                }
+            }
+        }
+    }
+
+    /// Apply vorticity confinement to maintain swirling motion
+    /// Based on PavelDoGreat/WebGL-Fluid-Simulation
+    pub fn apply_vorticity_confinement(&mut self, dt: f32, strength: f32) {
+        // First pass: compute curl (vorticity) at each cell
+        let mut curl = vec![0.0f32; self.width * self.height];
+
+        for j in 1..self.height - 1 {
+            for i in 1..self.width - 1 {
+                let idx = self.cell_index(i, j);
+
+                if self.cell_type[idx] != CellType::Fluid {
+                    continue;
+                }
+
+                // Curl = dv/dx - du/dy
+                let du_dy = (self.u[self.u_index(i, j + 1)] - self.u[self.u_index(i, j.saturating_sub(1))]) * 0.5;
+                let dv_dx = (self.v[self.v_index(i + 1, j)] - self.v[self.v_index(i.saturating_sub(1), j)]) * 0.5;
+
+                curl[idx] = dv_dx - du_dy;
+            }
+        }
+
+        // Second pass: apply vorticity force
+        for j in 2..self.height - 2 {
+            for i in 2..self.width - 2 {
+                let idx = self.cell_index(i, j);
+
+                if self.cell_type[idx] != CellType::Fluid {
+                    continue;
+                }
+
+                // Gradient of curl magnitude
+                let curl_l = curl[self.cell_index(i - 1, j)].abs();
+                let curl_r = curl[self.cell_index(i + 1, j)].abs();
+                let curl_b = curl[self.cell_index(i, j - 1)].abs();
+                let curl_t = curl[self.cell_index(i, j + 1)].abs();
+
+                let grad_x = (curl_r - curl_l) * 0.5;
+                let grad_y = (curl_t - curl_b) * 0.5;
+
+                let len = (grad_x * grad_x + grad_y * grad_y).sqrt() + 1e-5;
+                let nx = grad_x / len;
+                let ny = grad_y / len;
+
+                // Force perpendicular to gradient, proportional to curl
+                let c = curl[idx];
+                let fx = ny * c * strength;
+                let fy = -nx * c * strength;
+
+                // Apply to velocity
+                let u_idx = self.u_index(i, j);
+                let v_idx = self.v_index(i, j);
+                self.u[u_idx] += fx * dt;
+                self.v[v_idx] += fy * dt;
+            }
+        }
+    }
+}
