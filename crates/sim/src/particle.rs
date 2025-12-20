@@ -33,7 +33,7 @@ impl ParticleMaterial {
     /// RGBA color for rendering
     pub fn color(&self) -> [u8; 4] {
         match self {
-            Self::Water => [30, 100, 200, 255],
+            Self::Water => [50, 140, 240, 255],
             Self::Mud => [139, 90, 43, 255],
             Self::Sand => [194, 178, 128, 255],    // Tan
             Self::Magnetite => [30, 30, 30, 255],  // Black

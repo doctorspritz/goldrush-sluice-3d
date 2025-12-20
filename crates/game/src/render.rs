@@ -11,12 +11,8 @@ use sim::Particles;
 const VERTEX_SHADER: &str = r#"#version 100
 attribute vec3 position;
 attribute vec2 texcoord;
-attribute vec4 color0;
 
-// Per-quad instance data (we'll encode in color0)
 varying lowp vec2 v_uv;
-varying lowp vec4 v_color;
-varying lowp float v_velocity;
 
 uniform mat4 Model;
 uniform mat4 Projection;
@@ -24,22 +20,17 @@ uniform mat4 Projection;
 void main() {
     gl_Position = Projection * Model * vec4(position, 1.0);
     v_uv = texcoord;
-    v_color = color0;
-    // Velocity encoded in alpha (we'll decode in fragment)
-    v_velocity = color0.a;
 }
 "#;
 
-/// Fragment shader for smooth circles with velocity coloring
+/// Fragment shader for smooth circles
 const FRAGMENT_SHADER: &str = r#"#version 100
 precision mediump float;
 
 varying lowp vec2 v_uv;
-varying lowp vec4 v_color;
-varying lowp float v_velocity;
 
-uniform float velocityMax;
-uniform float particleScale;
+// Custom uniform for particle color
+uniform lowp vec4 particleColor;
 
 void main() {
     // Calculate distance from center (UV is 0-1)
@@ -54,24 +45,22 @@ void main() {
         discard;
     }
     
-    // Base color from material (RGB stored in v_color)
-    vec3 baseColor = v_color.rgb;
+    // Use the particle color uniform
+    vec3 finalColor = particleColor.rgb;
     
-    // Velocity-based color shift (faster = brighter/whiter)
-    float velFactor = clamp(v_velocity / velocityMax, 0.0, 1.0);
-    vec3 velocityColor = mix(baseColor, vec3(1.0), velFactor * 0.4);
-    
-    // Add subtle rim lighting for depth
+    // Subtle rim darkening for depth
     float rim = smoothstep(0.5, 0.9, dist);
-    vec3 finalColor = mix(velocityColor, velocityColor * 0.7, rim);
+    finalColor = mix(finalColor, finalColor * 0.8, rim);
     
-    gl_FragColor = vec4(finalColor, alpha * 0.9);
+    gl_FragColor = vec4(finalColor, alpha * 0.85);
 }
 "#;
 
 /// Particle renderer with GPU-accelerated instanced circles
 pub struct ParticleRenderer {
     material: Material,
+    /// 1x1 white texture for UV-mapped quad rendering
+    white_texture: Texture2D,
     velocity_max: f32,
     particle_scale: f32,
 }
@@ -86,8 +75,7 @@ impl ParticleRenderer {
             },
             MaterialParams {
                 uniforms: vec![
-                    UniformDesc::new("velocityMax", UniformType::Float1),
-                    UniformDesc::new("particleScale", UniformType::Float1),
+                    UniformDesc::new("particleColor", UniformType::Float4),
                 ],
                 pipeline_params: PipelineParams {
                     color_blend: Some(BlendState::new(
@@ -102,8 +90,13 @@ impl ParticleRenderer {
         )
         .expect("Failed to load particle shader");
 
+        // Create 1x1 white texture for UV-mapped rendering
+        let white_img = Image::gen_image_color(1, 1, WHITE);
+        let white_texture = Texture2D::from_image(&white_img);
+
         Self {
             material,
+            white_texture,
             velocity_max: 100.0,
             particle_scale: 4.0,
         }
@@ -121,10 +114,6 @@ impl ParticleRenderer {
 
     /// Render all particles as smooth circles
     pub fn draw(&self, particles: &Particles, screen_scale: f32) {
-        // Set uniforms
-        self.material.set_uniform("velocityMax", self.velocity_max);
-        self.material.set_uniform("particleScale", self.particle_scale);
-
         gl_use_material(&self.material);
 
         let size = self.particle_scale * screen_scale;
@@ -134,20 +123,27 @@ impl ParticleRenderer {
             let x = particle.position.x * screen_scale;
             let y = particle.position.y * screen_scale;
             
-            // Encode velocity magnitude in alpha for shader
-            let vel_mag = particle.velocity.length();
             let [r, g, b, _] = particle.material.color();
             
-            // Normalize color to 0-1 and encode velocity in alpha
-            let color = Color::new(
+            // Set particle color uniform
+            self.material.set_uniform("particleColor", [
                 r as f32 / 255.0,
                 g as f32 / 255.0,
                 b as f32 / 255.0,
-                vel_mag, // Raw velocity, will be normalized in shader
-            );
+                1.0f32,
+            ]);
 
-            // Draw quad (shader makes it circular)
-            draw_rectangle(x - size / 2.0, y - size / 2.0, size, size, color);
+            // Draw textured quad (shader makes it circular, texture provides UVs)
+            draw_texture_ex(
+                &self.white_texture,
+                x - size / 2.0,
+                y - size / 2.0,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(vec2(size, size)),
+                    ..Default::default()
+                },
+            );
         }
 
         gl_use_default_material();
@@ -155,10 +151,6 @@ impl ParticleRenderer {
 
     /// Draw particles sorted by density (heaviest on top)
     pub fn draw_sorted(&self, particles: &Particles, screen_scale: f32) {
-        // Set uniforms
-        self.material.set_uniform("velocityMax", self.velocity_max);
-        self.material.set_uniform("particleScale", self.particle_scale);
-
         gl_use_material(&self.material);
 
         let size = self.particle_scale * screen_scale;
@@ -176,17 +168,27 @@ impl ParticleRenderer {
             let x = particle.position.x * screen_scale;
             let y = particle.position.y * screen_scale;
             
-            let vel_mag = particle.velocity.length();
             let [r, g, b, _] = particle.material.color();
             
-            let color = Color::new(
+            // Set particle color uniform
+            self.material.set_uniform("particleColor", [
                 r as f32 / 255.0,
                 g as f32 / 255.0,
                 b as f32 / 255.0,
-                vel_mag,
-            );
+                1.0f32,
+            ]);
 
-            draw_rectangle(x - size / 2.0, y - size / 2.0, size, size, color);
+            // Draw textured quad (shader makes it circular, texture provides UVs)
+            draw_texture_ex(
+                &self.white_texture,
+                x - size / 2.0,
+                y - size / 2.0,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(vec2(size, size)),
+                    ..Default::default()
+                },
+            );
         }
 
         gl_use_default_material();
