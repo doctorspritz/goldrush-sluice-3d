@@ -14,7 +14,7 @@
 //! Reference: Jiang et al. 2015 "The Affine Particle-In-Cell Method"
 
 use crate::grid::{apic_d_inverse, quadratic_bspline, CellType, Grid};
-use crate::particle::{Particles, ParticleState};
+use crate::particle::{ParticleMaterial, Particles, ParticleState};
 use glam::{Mat2, Vec2};
 use rand::Rng;
 use rayon::prelude::*;
@@ -186,9 +186,13 @@ impl FlipSimulation {
             }
         }
 
-        // Mark fluid cells - ALL particles mark cells as fluid
-        // This ensures proper pressure boundaries at water-sediment interface
+        // Mark fluid cells - only WATER particles mark cells as fluid
+        // Sediment in air should NOT mark cells as fluid
         for particle in self.particles.iter() {
+            // Only water marks cells as Fluid
+            if particle.material != ParticleMaterial::Water {
+                continue;
+            }
             let (i, j) = self.grid.pos_to_cell(particle.position);
             let idx = self.grid.cell_index(i, j);
             if self.grid.cell_type[idx] != CellType::Solid {
@@ -531,92 +535,79 @@ impl FlipSimulation {
                     particle.material.typical_diameter()
                 };
 
+                // ========== FIRST: Check if in air - applies to ALL states ==========
+                // If in air, just fall. No settling physics, no friction, just gravity.
+                let (ci, cj) = grid.pos_to_cell(particle.position);
+                let cell_idx = grid.cell_index(ci, cj);
+                let cell_type = grid.cell_type[cell_idx];
+                let in_air = cell_type == CellType::Air;
+
+                if in_air {
+                    // IN AIR: Free fall under gravity - no other physics
+                    const AIR_GRAVITY: f32 = 150.0;
+                    particle.velocity.y += AIR_GRAVITY * dt;
+                    // Reset to suspended if we were bedload (can't be bedload in air)
+                    particle.state = ParticleState::Suspended;
+                    return;
+                }
+
+                // ========== IN FLUID: Apply state-dependent physics ==========
                 match particle.state {
                     ParticleState::Suspended => {
-                        // ========== SUSPENDED: Normal settling + drag ==========
-
-                        // Check if particle is in a FLUID cell (not AIR)
-                        // This determines whether to apply water settling or air gravity
-                        let (ci, cj) = grid.pos_to_cell(particle.position);
-                        let cell_idx = grid.cell_index(ci, cj);
-                        let cell_type = grid.cell_type[cell_idx];
-                        let in_fluid_cell = cell_type == CellType::Fluid;
-
-                        // Also check grid velocity as backup (handles edge cases)
+                        // Settling through water
                         let v_fluid = particle.old_grid_velocity;
-                        let has_fluid_velocity = v_fluid.length_squared() > 1.0;
 
-                        let in_fluid = in_fluid_cell || has_fluid_velocity;
-
-                        if in_fluid {
-                            // ===== IN FLUID: Settling through water =====
-                            // Compute base settling velocity
-                            let base_settling = if use_ferguson_church {
-                                // Ferguson-Church universal equation (handles all Reynolds regimes)
-                                particle.material.settling_velocity(diameter)
-                            } else {
-                                // Simple density-based settling: v = sqrt((ρ-1) * g * d) / ρ
-                                let r = (density - 1.0) / 1.0;
-                                if r > 0.0 && diameter > 0.0 {
-                                    (r * SIMPLE_GRAVITY * diameter).sqrt() / density.sqrt()
-                                } else {
-                                    0.0
-                                }
-                            };
-
-                            // Apply hindered settling if enabled
-                            let settling_velocity = if use_hindered_settling {
-                                let neighbor_count = neighbor_counts.get(idx).copied().unwrap_or(0) as usize;
-                                let concentration = neighbor_count_to_concentration(neighbor_count, REST_NEIGHBORS);
-                                let hindered_factor = hindered_settling_factor(concentration);
-                                base_settling * hindered_factor
-                            } else {
-                                base_settling
-                            };
-
-                            // Target velocity: fluid velocity + downward settling slip
-                            let slip = glam::Vec2::new(0.0, settling_velocity);
-                            let target_velocity = v_fluid + slip;
-
-                            // Drag toward target velocity (heavier = slower response)
-                            let drag_rate = BASE_DRAG_RATE / density;
-                            let blend = (drag_rate * dt).clamp(0.0, 1.0);
-                            particle.velocity = particle.velocity.lerp(target_velocity, blend);
+                        // Compute base settling velocity
+                        let base_settling = if use_ferguson_church {
+                            particle.material.settling_velocity(diameter)
                         } else {
-                            // ===== IN AIR: Free fall under gravity =====
-                            // Particles in air fall much faster than in water (no buoyancy/drag)
-                            const AIR_GRAVITY: f32 = 150.0;
-                            particle.velocity.y += AIR_GRAVITY * dt;
-                        }
+                            let r = (density - 1.0) / 1.0;
+                            if r > 0.0 && diameter > 0.0 {
+                                (r * SIMPLE_GRAVITY * diameter).sqrt() / density.sqrt()
+                            } else {
+                                0.0
+                            }
+                        };
+
+                        // Apply hindered settling if enabled
+                        let settling_velocity = if use_hindered_settling {
+                            let neighbor_count = neighbor_counts.get(idx).copied().unwrap_or(0) as usize;
+                            let concentration = neighbor_count_to_concentration(neighbor_count, REST_NEIGHBORS);
+                            let hindered_factor = hindered_settling_factor(concentration);
+                            base_settling * hindered_factor
+                        } else {
+                            base_settling
+                        };
+
+                        // Target velocity: fluid velocity + downward settling slip
+                        let slip = glam::Vec2::new(0.0, settling_velocity);
+                        let target_velocity = v_fluid + slip;
+
+                        // Drag toward target velocity (heavier = slower response)
+                        let drag_rate = BASE_DRAG_RATE / density;
+                        let blend = (drag_rate * dt).clamp(0.0, 1.0);
+                        particle.velocity = particle.velocity.lerp(target_velocity, blend);
                     }
 
                     ParticleState::Bedload => {
-                        // ========== BEDLOAD: Friction-dominated ==========
-                        // Particle is on bed, experiences friction deceleration
-                        // Only accelerates if fluid drag exceeds static friction
-
+                        // Friction-dominated on bed
                         let speed = particle.velocity.length();
 
                         if speed > 0.001 {
-                            // Apply dynamic friction to decelerate
-                            // F_friction = μ_d × m × g (opposing motion)
                             let friction_coeff = particle.material.dynamic_friction();
                             let friction_decel = friction_coeff * GRAVITY * dt;
 
                             if friction_decel >= speed {
-                                // Friction stops particle completely
                                 particle.velocity = Vec2::ZERO;
                             } else {
-                                // Reduce speed by friction
                                 let new_speed = speed - friction_decel;
                                 particle.velocity = particle.velocity.normalize() * new_speed;
                             }
                         }
 
                         // Slight response to fluid (bedload can creep)
-                        // But much weaker than suspended drag
                         let v_fluid = particle.old_grid_velocity;
-                        let creep_rate = 0.5 / density; // Very weak response
+                        let creep_rate = 0.5 / density;
                         let blend = (creep_rate * dt).clamp(0.0, 0.1);
                         particle.velocity = particle.velocity.lerp(v_fluid, blend);
                     }
