@@ -25,24 +25,50 @@ pub fn create_sluice(sim: &mut FlipSimulation, slope: f32, riffle_spacing: usize
     // Left side: floor surface is HIGH (floor_y is LOW in screen coords)
     // Right side: floor surface is LOW (floor_y is HIGH in screen coords)
     let base_height = height / 4; // Start higher for more room
+    let slick_plate_len = 50;     // Flat inlet section for flow development
 
     for i in 0..width {
-        // Floor surface goes DOWN as x increases (water flows right)
-        let floor_y = base_height + (i as f32 * slope) as usize;
+        // Floor surface calculation
+        let floor_y = if i < slick_plate_len {
+            // Slick Plate: Flat section
+            base_height
+        } else {
+            // Sloped section: Starts dropping after slick plate
+            base_height + ((i - slick_plate_len) as f32 * slope) as usize
+        };
 
         // Fill everything below floor_y as solid
         for j in floor_y..height {
             sim.grid.set_solid(i, j);
         }
 
-        // Add riffles (rectangular bars with width)
-        // Check if we're within a riffle zone
-        let riffle_start = riffle_spacing; // First riffle starts after spacing
+        // Add riffles (wedge shaped: ramp upstream, vertical downstream)
+        // Start riffles only after the slick plate
+        let riffle_start = slick_plate_len + riffle_spacing;
+        
+        // Check if we are in a riffle zone (periodic)
         if i >= riffle_start && i < width - riffle_spacing {
-            let pos_in_cycle = (i - riffle_start) % riffle_spacing;
-            if pos_in_cycle < riffle_width {
-                // We're within a riffle
-                for dy in 0..riffle_height {
+            let cycle_len = riffle_spacing;
+            let rel_x = (i - riffle_start) % cycle_len;
+
+            // Riffle geometry:
+            // Gentler ramp (3:1 slope) for better flow adherance
+            let ramp_slope_inv = 3; // 3 units run for 1 unit rise
+            let ramp_len = riffle_height * ramp_slope_inv; 
+            let total_len = ramp_len + riffle_width;
+
+            if rel_x < total_len {
+                // Calculate height at this x
+                let h = if rel_x < ramp_len {
+                    // Ramp section: rise 1 unit every 3 cells
+                    (rel_x / ramp_slope_inv) + 1
+                } else {
+                    // Flat top section
+                    riffle_height
+                };
+
+                // Fill solid from floor up to height h
+                for dy in 0..h {
                     let riffle_y = floor_y.saturating_sub(dy + 1);
                     if riffle_y > 0 {
                         sim.grid.set_solid(i, riffle_y);
@@ -58,7 +84,7 @@ pub fn create_sluice(sim: &mut FlipSimulation, slope: f32, riffle_spacing: usize
         sim.grid.set_solid(width - 1, j);
     }
 
-    // Precompute SDF for fast collision detection
+    // Precompute SDF with new geometry
     sim.grid.compute_sdf();
 }
 

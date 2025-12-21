@@ -10,7 +10,7 @@
 /// - Particle settling (Ferguson-Church)
 /// - Sediment forces (buoyancy, friction)
 /// - PBF external forces
-pub const GRAVITY: f32 = 400.0;
+pub const GRAVITY: f32 = 250.0;
 
 /// Reference water density (dimensionless).
 ///
