@@ -113,9 +113,9 @@ impl FlipSimulation {
             use_hindered_settling: true,
             use_variable_diameter: true,
             diameter_variation: 0.3, // ±30% size variation
-            // Viscosity for vortex shedding (disabled by default for comparison)
-            use_viscosity: false,
-            viscosity: 1.0, // Good starting point for Re ~ 300
+            // Viscosity for vortex shedding (enabled by default for boundary layer separation)
+            use_viscosity: true,
+            viscosity: 0.5, // Low viscosity - enough for vortex shedding without slowing flow
         }
     }
 
@@ -551,14 +551,8 @@ impl FlipSimulation {
         // ~8 particles per 3x3 cell neighborhood is typical for dilute flow
         const REST_NEIGHBORS: f32 = 8.0;
 
-        // Simple density-based settling constant (used when Ferguson-Church is disabled)
-        const SIMPLE_GRAVITY: f32 = 150.0;
-
-        // Gravity for friction force calculation
-        const GRAVITY: f32 = 150.0;
-
-        // Air gravity - same as grid gravity for consistency
-        const AIR_GRAVITY: f32 = 120.0;
+        // Unified gravity constant - matches grid.apply_gravity()
+        const GRAVITY: f32 = 400.0;
 
         // Minimum water neighbors to be considered "in fluid"
         const MIN_WATER_NEIGHBORS: u16 = 3;
@@ -590,7 +584,7 @@ impl FlipSimulation {
                 if !in_water {
                     // IN AIR: Apply gravity directly (free fall)
                     // No settling, no fluid drag - just gravity + air resistance
-                    particle.velocity.y += AIR_GRAVITY * dt;
+                    particle.velocity.y += GRAVITY * dt;
 
                     // Light air drag to prevent runaway velocities
                     particle.velocity *= 0.995;
@@ -639,8 +633,7 @@ impl FlipSimulation {
 
                 if in_air {
                     // IN AIR: Free fall under gravity - no other physics
-                    const AIR_GRAVITY: f32 = 150.0;
-                    particle.velocity.y += AIR_GRAVITY * dt;
+                    particle.velocity.y += GRAVITY * dt;
                     // Reset to suspended if we were bedload (can't be bedload in air)
                     particle.state = ParticleState::Suspended;
                     return;
@@ -658,7 +651,7 @@ impl FlipSimulation {
                         } else {
                             let r = (density - 1.0) / 1.0;
                             if r > 0.0 && diameter > 0.0 {
-                                (r * SIMPLE_GRAVITY * diameter).sqrt() / density.sqrt()
+                                (r * GRAVITY * diameter).sqrt() / density.sqrt()
                             } else {
                                 0.0
                             }
@@ -732,8 +725,8 @@ impl FlipSimulation {
         // Shear velocity estimation constant
         const SHEAR_VELOCITY_FACTOR: f32 = 0.1;
 
-        // Gravity for Shields calculation
-        const GRAVITY: f32 = 150.0;
+        // Gravity for Shields calculation - matches grid.apply_gravity()
+        const GRAVITY: f32 = 400.0;
 
         let grid = &self.grid;
         let cell_size = grid.cell_size;
@@ -1203,6 +1196,42 @@ impl FlipSimulation {
                 // Remove velocity component into solid, keep damped tangential
                 let v_normal_clamped = if v_dot_n < 0.0 { Vec2::ZERO } else { v_normal };
                 particle.velocity = v_tangent_damped + v_normal_clamped;
+            }
+
+            // SAFETY NET: Direct is_solid check to catch edge cases where SDF
+            // bilinear interpolation returns positive values for particles at
+            // the boundary of solid cells.
+            let (ci, cj) = grid.pos_to_cell(particle.position);
+            if grid.is_solid(ci, cj) {
+                // Particle is in a solid cell despite SDF check passing.
+                // Find nearest non-solid cell and push there.
+                let mut best_dir = Vec2::ZERO;
+                let mut found_escape = false;
+
+                // Check 8 neighbors for escape direction
+                for &(di, dj) in &[(-1i32, 0i32), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)] {
+                    let ni = (ci as i32 + di).clamp(0, width as i32 - 1) as usize;
+                    let nj = (cj as i32 + dj).clamp(0, height as i32 - 1) as usize;
+                    if !grid.is_solid(ni, nj) {
+                        best_dir = Vec2::new(di as f32, dj as f32).normalize();
+                        found_escape = true;
+                        break;
+                    }
+                }
+
+                if found_escape {
+                    // Push particle out of solid cell towards non-solid neighbor
+                    particle.position += best_dir * cell_size;
+                    // Kill velocity into solid
+                    let v_dot_d = particle.velocity.dot(best_dir);
+                    if v_dot_d < 0.0 {
+                        particle.velocity -= best_dir * v_dot_d;
+                    }
+                } else {
+                    // Surrounded by solids - try pushing up (most common escape)
+                    particle.position.y -= cell_size;
+                    particle.velocity.y = particle.velocity.y.min(0.0);
+                }
             }
 
             // Final bounds clamp
