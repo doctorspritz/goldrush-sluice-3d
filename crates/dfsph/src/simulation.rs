@@ -279,28 +279,36 @@ impl DfsphSimulation {
                 if temp_pos.y < cs { temp_pos.y = cs; p.velocity.y *= -restitution; }
                 if temp_pos.y > h_f - cs { temp_pos.y = h_f - cs; p.velocity.y *= -restitution; }
                 
-                // Grid Solids
+                // Grid Solids - ray march to find first collision
                 if is_solid(temp_pos) {
-                    let start_cell_x = ((*old_pos).x / cs) as i32;
-                    let start_cell_y = ((*old_pos).y / cs) as i32;
-                    let end_cell_x = (temp_pos.x / cs) as i32;
-                    let end_cell_y = (temp_pos.y / cs) as i32;
+                    let dir = temp_pos - *old_pos;
+                    let dist = dir.length();
 
-                    if start_cell_x != end_cell_x {
-                        // X Crossing
-                        p.velocity.x *= -restitution; 
-                        temp_pos.x = (*old_pos).x; 
-                    }
-                    
-                    if start_cell_y != end_cell_y {
-                        // Y Crossing
-                         p.velocity.y *= -restitution;
-                         temp_pos.y = (*old_pos).y;
-                    }
-                    
-                    if is_solid(temp_pos) {
+                    if dist > 0.001 {
+                        let step = cs * 0.5; // Check every half cell
+                        let steps = (dist / step).ceil() as usize;
+                        let mut safe_pos = *old_pos;
+
+                        for i in 1..=steps {
+                            let t = (i as f32) / (steps as f32);
+                            let check_pos = *old_pos + dir * t;
+                            if is_solid(check_pos) {
+                                // Found collision - stop just before
+                                let normal = if (check_pos.x / cs).floor() != (safe_pos.x / cs).floor() {
+                                    Vec2::new(if dir.x > 0.0 { -1.0 } else { 1.0 }, 0.0)
+                                } else {
+                                    Vec2::new(0.0, if dir.y > 0.0 { -1.0 } else { 1.0 })
+                                };
+                                p.velocity = p.velocity - 2.0 * p.velocity.dot(normal) * normal * (1.0 - restitution);
+                                temp_pos = safe_pos;
+                                break;
+                            }
+                            safe_pos = check_pos;
+                        }
+                    } else {
+                        // Already in solid - push out
                         temp_pos = *old_pos;
-                        p.velocity = Vec2::ZERO; 
+                        p.velocity = Vec2::ZERO;
                     }
                 }
                 
