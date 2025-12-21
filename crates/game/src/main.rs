@@ -13,6 +13,7 @@ use sim::{create_sluice, FlipSimulation};
 #[derive(Clone, Copy, PartialEq)]
 enum RenderMode {
     Metaball,      // Two-pass metaball (slowest, best look)
+    Hybrid,        // Water as metaballs, Solids as specific shapes
     Shader,        // Per-particle shader circles
     FastCircle,    // macroquad draw_circle batching
     FastRect,      // macroquad draw_rectangle batching
@@ -105,7 +106,7 @@ async fn main() {
     let mut paused = false;
     let mut show_velocity = false;
     let mut spawn_mud = false;
-    let mut render_mode = RenderMode::FastRect; // FastRect avoids geometry clamping
+    let mut render_mode = RenderMode::Hybrid; // Default to Hybrid for best look
     let mut metaball_threshold: f32 = 0.08;
     let mut metaball_scale: f32 = 6.0;
     let mut fast_particle_size: f32 = CELL_SIZE * SCALE * 0.5;  // Half-cell for balance of accuracy vs performance
@@ -247,11 +248,12 @@ async fn main() {
         // Render mode controls - B cycles through modes
         if is_key_pressed(KeyCode::B) {
             render_mode = match render_mode {
+                RenderMode::Hybrid => RenderMode::Metaball,
                 RenderMode::Metaball => RenderMode::Shader,
                 RenderMode::Shader => RenderMode::FastCircle,
                 RenderMode::FastCircle => RenderMode::FastRect,
                 RenderMode::FastRect => RenderMode::Mesh,
-                RenderMode::Mesh => RenderMode::Metaball,
+                RenderMode::Mesh => RenderMode::Hybrid,
             };
         }
         if is_key_pressed(KeyCode::T) {
@@ -417,8 +419,18 @@ async fn main() {
         );
 
         // Draw particles with selected renderer
+        // Draw particles with selected renderer
         match render_mode {
-            RenderMode::Metaball => metaball_renderer.draw(&sim.particles, SCALE),
+            RenderMode::Hybrid => {
+                // Pass 1: Water as metaballs for fluid look
+                metaball_renderer.draw_filtered(&sim.particles, SCALE, true);
+                // Pass 2: Solids as sharp sprites for clarity
+                particle_renderer.draw_filtered(&sim.particles, SCALE, false);
+            }
+            // Legacy modes use full draw (passing true/false doesn't matter for non-filtered methods if we didn't update them,
+            // but we only updated filtered ones. Wait, I only added `draw_filtered`. 
+            // The original `draw` methods still exist and draw everything.
+            RenderMode::Metaball => metaball_renderer.draw(&sim.particles, SCALE), 
             RenderMode::Shader => particle_renderer.draw_sorted(&sim.particles, SCALE),
             RenderMode::FastCircle => draw_particles_fast(&sim.particles, SCALE, fast_particle_size),
             RenderMode::FastRect => draw_particles_rect(&sim.particles, SCALE, fast_particle_size),
@@ -454,6 +466,7 @@ async fn main() {
         // Top status bar
         let mode_str = match render_mode {
             RenderMode::Metaball => "METABALL",
+            RenderMode::Hybrid => "HYBRID",
             RenderMode::Shader => "SHADER",
             RenderMode::FastCircle => "FAST-CIRCLE",
             RenderMode::FastRect => "FAST-RECT",
@@ -499,7 +512,7 @@ async fn main() {
         );
 
         // Metaball params (when active)
-        if render_mode == RenderMode::Metaball {
+        if render_mode == RenderMode::Metaball || render_mode == RenderMode::Hybrid {
             draw_text(
                 &format!("METABALL: threshold={:.2} scale={:.0}", metaball_threshold, metaball_scale),
                 10.0, 108.0, 14.0, Color::from_rgba(180, 100, 255, 255),

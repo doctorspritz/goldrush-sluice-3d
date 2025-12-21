@@ -256,6 +256,56 @@ impl ParticleRenderer {
 
         gl_use_default_material();
     }
+
+    /// Draw particles, optionally filtering for only water or only solids
+    pub fn draw_filtered(&self, particles: &Particles, screen_scale: f32, draw_water: bool) {
+        gl_use_material(&self.material);
+
+        let size = self.particle_scale * screen_scale;
+
+        // Draw order: water, mud, sand, magnetite, gold (lightest to heaviest)
+        let materials = [
+            sim::ParticleMaterial::Water,
+            sim::ParticleMaterial::Mud,
+            sim::ParticleMaterial::Sand,
+            sim::ParticleMaterial::Magnetite,
+            sim::ParticleMaterial::Gold,
+        ];
+
+        for mat in materials {
+            let is_water = mat == sim::ParticleMaterial::Water;
+            if draw_water != is_water {
+                continue;
+            }
+
+            let [r, g, b, _] = mat.color();
+            self.material.set_uniform("particleColor", [
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+                1.0f32,
+            ]);
+
+            for particle in particles.iter() {
+                if particle.material == mat {
+                    let x = particle.position.x * screen_scale;
+                    let y = particle.position.y * screen_scale;
+                    draw_texture_ex(
+                        &self.white_texture,
+                        x - size / 2.0,
+                        y - size / 2.0,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(vec2(size, size)),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+        }
+
+        gl_use_default_material();
+    }
 }
 
 impl Default for ParticleRenderer {
@@ -357,6 +407,8 @@ impl MetaballRenderer {
 
     /// Render particles with metaball effect
     /// Uses per-particle draw calls with material batching (one uniform set per material)
+    /// Render particles with metaball effect
+    /// Uses per-particle draw calls with material batching (one uniform set per material)
     pub fn draw(&self, particles: &Particles, screen_scale: f32) {
         let base_size = self.particle_scale * screen_scale;
         let rt_w = self.render_target.texture.width();
@@ -375,7 +427,6 @@ impl MetaballRenderer {
         gl_use_material(&self.density_material);
 
         // Draw order: water, mud, sand, magnetite, gold
-        // Batch by material to minimize uniform changes
         let materials = [
             sim::ParticleMaterial::Water,
             sim::ParticleMaterial::Mud,
@@ -385,6 +436,91 @@ impl MetaballRenderer {
         ];
 
         for mat in materials {
+            let [r, g, b, _] = mat.color();
+            let size = base_size * mat.render_scale();
+            let density_mult = mat.density_contribution();
+
+            self.density_material.set_uniform("particleColor", [
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+                1.0f32,
+            ]);
+            self.density_material.set_uniform("densityMult", density_mult);
+
+            for particle in particles.iter() {
+                if particle.material == mat {
+                    let x = particle.position.x * screen_scale;
+                    let y = particle.position.y * screen_scale;
+                    draw_texture_ex(
+                        &self.white_texture,
+                        x - size / 2.0,
+                        y - size / 2.0,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(vec2(size, size)),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+        }
+
+        gl_use_default_material();
+
+        // Pass 2: Draw render target to screen with threshold
+        set_default_camera();
+
+        gl_use_material(&self.threshold_material);
+        self.threshold_material.set_uniform("threshold", self.threshold);
+
+        draw_texture_ex(
+            &self.render_target.texture,
+            0.0,
+            0.0,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(screen_width(), screen_height())),
+                ..Default::default()
+            },
+        );
+
+        gl_use_default_material();
+    }
+
+    /// Render particles with metaball effect, filtered by type (water vs solids)
+    pub fn draw_filtered(&self, particles: &Particles, screen_scale: f32, draw_water: bool) {
+        let base_size = self.particle_scale * screen_scale;
+        let rt_w = self.render_target.texture.width();
+        let rt_h = self.render_target.texture.height();
+
+        // Pass 1: Render density to render target
+        set_camera(&Camera2D {
+            zoom: vec2(2.0 / rt_w, -2.0 / rt_h),
+            target: vec2(rt_w / 2.0, rt_h / 2.0),
+            render_target: Some(self.render_target.clone()),
+            ..Default::default()
+        });
+
+        clear_background(Color::new(0.0, 0.0, 0.0, 0.0));
+
+        gl_use_material(&self.density_material);
+
+        // Draw order: water, mud, sand, magnetite, gold
+        let materials = [
+            sim::ParticleMaterial::Water,
+            sim::ParticleMaterial::Mud,
+            sim::ParticleMaterial::Sand,
+            sim::ParticleMaterial::Magnetite,
+            sim::ParticleMaterial::Gold,
+        ];
+
+        for mat in materials {
+            let is_water = mat == sim::ParticleMaterial::Water;
+            if draw_water != is_water {
+                continue;
+            }
+
             let [r, g, b, _] = mat.color();
             let size = base_size * mat.render_scale();
             let density_mult = mat.density_contribution();
