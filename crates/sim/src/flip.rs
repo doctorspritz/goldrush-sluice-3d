@@ -382,7 +382,8 @@ impl FlipSimulation {
         // FLIP ratio: 0 = pure PIC (smooth but dissipative), 1 = pure FLIP (preserves velocity but noisy)
         // Higher = less viscous, more energetic flow
         // User requested "more APIC" -> 0.90 for stability
-        const FLIP_RATIO: f32 = 0.90;
+        // UPDATE: Increased to 0.97 for better vortex preservation (less damping)
+        const FLIP_RATIO: f32 = 0.97;
 
         self.particles.list.par_iter_mut().for_each(|particle| {
             let pos = particle.position;

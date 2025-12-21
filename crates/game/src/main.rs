@@ -20,11 +20,11 @@ enum RenderMode {
 }
 
 // Simulation size (high resolution for better vortex formation)
-const SIM_WIDTH: usize = 256;
-const SIM_HEIGHT: usize = 192;
+// Simulation size (high resolution for better vortex formation)
+const SIM_WIDTH: usize = 512;
+const SIM_HEIGHT: usize = 384;
 const CELL_SIZE: f32 = 1.0;
-const SCALE: f32 = 5.0;
-
+const SCALE: f32 = 2.5; // Reduced scale to fit screen with double resolution
 // Render buffer size (simulation space, not screen space)
 const RENDER_WIDTH: usize = (SIM_WIDTH as f32 * CELL_SIZE) as usize;
 const RENDER_HEIGHT: usize = (SIM_HEIGHT as f32 * CELL_SIZE) as usize;
@@ -118,8 +118,8 @@ async fn main() {
 
     // === TUNABLE PARAMETERS ===
     // Inlet flow (higher spawn rate for finer grid to maintain ~6-8 particles/cell)
-    let mut inlet_vx: f32 = 45.0;
-    let mut inlet_vy: f32 = 25.0;
+    let mut inlet_vx: f32 = 80.0;
+    let mut inlet_vy: f32 = 5.0;
     let mut spawn_rate: usize = 4;  // Water particles per frame (4x for finer grid)
 
     // Riffle geometry (doubled for finer grid)
@@ -336,7 +336,7 @@ async fn main() {
             // flow_multiplier scales everything: more water, more frequent sediments
             {
                 let inlet_x = 5.0;
-                let inlet_y = 43.0;
+                let inlet_y = 86.0;
 
                 // Water (spawn_rate * flow_multiplier per frame)
                 sim.spawn_water(inlet_x, inlet_y, inlet_vx, inlet_vy, spawn_rate * flow_multiplier);
