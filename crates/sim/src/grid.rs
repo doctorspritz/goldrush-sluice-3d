@@ -85,6 +85,10 @@ pub struct Grid {
     /// Signed distance field to nearest solid (negative inside, positive outside)
     /// Precomputed when terrain changes for O(1) collision queries
     pub sdf: Vec<f32>,
+
+    /// Vorticity (curl) at cell centers: ω = ∂v/∂x - ∂u/∂y
+    /// Used for vorticity confinement and diagnostics
+    pub vorticity: Vec<f32>,
 }
 
 impl Grid {
@@ -104,6 +108,7 @@ impl Grid {
             cell_type: vec![CellType::Air; cell_count],
             solid: vec![false; cell_count],
             sdf: vec![f32::MAX; cell_count],  // Will be computed after terrain setup
+            vorticity: vec![0.0; cell_count],
         }
     }
 
@@ -609,27 +614,79 @@ impl Grid {
         }
     }
 
-    /// Apply vorticity confinement to maintain swirling motion
-    /// Based on PavelDoGreat/WebGL-Fluid-Simulation
-    pub fn apply_vorticity_confinement(&mut self, dt: f32, strength: f32) {
-        // First pass: compute curl (vorticity) at each cell
-        let mut curl = vec![0.0f32; self.width * self.height];
-
+    /// Compute vorticity (curl) field: ω = ∂v/∂x - ∂u/∂y
+    /// Stores result in self.vorticity for later use in confinement and diagnostics
+    pub fn compute_vorticity(&mut self) {
         for j in 1..self.height - 1 {
             for i in 1..self.width - 1 {
                 let idx = self.cell_index(i, j);
 
                 if self.cell_type[idx] != CellType::Fluid {
+                    self.vorticity[idx] = 0.0;
                     continue;
                 }
 
-                // Curl = dv/dx - du/dy
+                // Curl = dv/dx - du/dy using central differences
                 let du_dy = (self.u[self.u_index(i, j + 1)] - self.u[self.u_index(i, j.saturating_sub(1))]) * 0.5;
                 let dv_dx = (self.v[self.v_index(i + 1, j)] - self.v[self.v_index(i.saturating_sub(1), j)]) * 0.5;
 
-                curl[idx] = dv_dx - du_dy;
+                self.vorticity[idx] = dv_dx - du_dy;
             }
         }
+    }
+
+    /// Compute enstrophy: ε = ½∫|ω|² dV
+    /// Enstrophy measures total vorticity intensity in the fluid
+    /// Higher enstrophy = more rotational motion
+    pub fn compute_enstrophy(&self) -> f32 {
+        let cell_area = self.cell_size * self.cell_size;
+        let mut enstrophy = 0.0f32;
+
+        for j in 1..self.height - 1 {
+            for i in 1..self.width - 1 {
+                let idx = self.cell_index(i, j);
+                if self.cell_type[idx] == CellType::Fluid {
+                    enstrophy += 0.5 * self.vorticity[idx] * self.vorticity[idx] * cell_area;
+                }
+            }
+        }
+
+        enstrophy
+    }
+
+    /// Compute total absolute vorticity: ∫|ω| dV
+    /// Useful for debugging and tracking vortex strength
+    pub fn total_absolute_vorticity(&self) -> f32 {
+        let cell_area = self.cell_size * self.cell_size;
+        let mut total = 0.0f32;
+
+        for j in 1..self.height - 1 {
+            for i in 1..self.width - 1 {
+                let idx = self.cell_index(i, j);
+                if self.cell_type[idx] == CellType::Fluid {
+                    total += self.vorticity[idx].abs() * cell_area;
+                }
+            }
+        }
+
+        total
+    }
+
+    /// Get maximum absolute vorticity in the field
+    pub fn max_vorticity(&self) -> f32 {
+        self.vorticity.iter()
+            .map(|v| v.abs())
+            .fold(0.0f32, f32::max)
+    }
+
+    /// Apply vorticity confinement to maintain swirling motion
+    /// Based on PavelDoGreat/WebGL-Fluid-Simulation
+    pub fn apply_vorticity_confinement(&mut self, dt: f32, strength: f32) {
+        // First pass: compute curl (vorticity) at each cell and store it
+        self.compute_vorticity();
+
+        // Use stored vorticity for confinement
+        let curl = &self.vorticity;
 
         // Second pass: apply vorticity force
         for j in 2..self.height - 2 {
@@ -654,9 +711,12 @@ impl Grid {
                 let ny = grad_y / len;
 
                 // Force perpendicular to gradient, proportional to curl
+                // F = ε × h × (N × ω) - scaled by grid spacing for grid independence
+                // Reference: Fedkiw et al. 2001 "Visual Simulation of Smoke"
                 let c = curl[idx];
-                let fx = ny * c * strength;
-                let fy = -nx * c * strength;
+                let h = self.cell_size;
+                let fx = ny * c * strength * h;
+                let fy = -nx * c * strength * h;
 
                 // Apply to velocity
                 let u_idx = self.u_index(i, j);
