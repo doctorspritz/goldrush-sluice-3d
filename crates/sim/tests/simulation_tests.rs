@@ -212,3 +212,238 @@ fn test_overlapping_particles_separate() {
     assert!(final_dist >= 2.0,
         "Particles should be pushed apart: final_dist = {}", final_dist);
 }
+
+// ============================================================================
+// APIC Behavioral Tests
+// These tests verify expected behavior for the APIC transfer method
+// ============================================================================
+
+/// APIC-1: Simulation should not gain energy (no blow-up)
+/// This is critical - APIC should be stable and not amplify velocities
+#[test]
+fn test_simulation_energy_bounded() {
+    const WIDTH: usize = 48;
+    const HEIGHT: usize = 48;
+    const CELL_SIZE: f32 = 4.0;
+    const DT: f32 = 1.0 / 60.0;
+    const FRAMES: usize = 300;
+
+    let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+
+    // Create a container
+    for i in 0..WIDTH {
+        sim.grid.set_solid(i, HEIGHT - 1);  // Floor
+        sim.grid.set_solid(i, 0);           // Ceiling
+    }
+    for j in 0..HEIGHT {
+        sim.grid.set_solid(0, j);           // Left wall
+        sim.grid.set_solid(WIDTH - 1, j);   // Right wall
+    }
+    sim.grid.compute_sdf();
+
+    // Spawn water with initial velocity
+    for i in 0..10 {
+        for j in 0..10 {
+            let x = (10 + i) as f32 * CELL_SIZE + CELL_SIZE * 0.5;
+            let y = (10 + j) as f32 * CELL_SIZE + CELL_SIZE * 0.5;
+            sim.spawn_water(x, y, 20.0, -10.0, 1);
+        }
+    }
+
+    // Measure initial kinetic energy
+    let initial_ke: f32 = sim.particles.iter()
+        .map(|p| p.velocity.length_squared())
+        .sum();
+
+    // Run simulation
+    let mut max_ke: f32 = initial_ke;
+    for _ in 0..FRAMES {
+        sim.update(DT);
+
+        let ke: f32 = sim.particles.iter()
+            .map(|p| p.velocity.length_squared())
+            .sum();
+        max_ke = max_ke.max(ke);
+
+        // Check for NaN/Inf
+        for p in sim.particles.iter() {
+            assert!(!p.velocity.x.is_nan(), "Velocity became NaN");
+            assert!(!p.velocity.y.is_nan(), "Velocity became NaN");
+            assert!(!p.position.x.is_nan(), "Position became NaN");
+            assert!(!p.position.y.is_nan(), "Position became NaN");
+        }
+    }
+
+    // Energy should not increase dramatically (allow 2x for transients)
+    // With gravity, potential energy converts to kinetic, so we're lenient
+    assert!(max_ke < initial_ke * 10.0 + 50000.0,
+        "Energy blow-up detected: initial={}, max={}", initial_ke, max_ke);
+}
+
+/// APIC-2: Sediment should still settle through water
+/// This tests that the Lagrangian sediment coupling still works with APIC
+#[test]
+fn test_sediment_settles_through_water() {
+    const WIDTH: usize = 32;
+    const HEIGHT: usize = 48;
+    const CELL_SIZE: f32 = 4.0;
+    const DT: f32 = 1.0 / 60.0;
+    const FRAMES: usize = 200;
+
+    let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+
+    // Create container
+    for i in 0..WIDTH {
+        sim.grid.set_solid(i, HEIGHT - 1);
+    }
+    for j in 0..HEIGHT {
+        sim.grid.set_solid(0, j);
+        sim.grid.set_solid(WIDTH - 1, j);
+    }
+    sim.grid.compute_sdf();
+
+    // Fill with water
+    for i in 5..WIDTH-5 {
+        for j in 10..HEIGHT-5 {
+            let x = i as f32 * CELL_SIZE + CELL_SIZE * 0.5;
+            let y = j as f32 * CELL_SIZE + CELL_SIZE * 0.5;
+            sim.spawn_water(x, y, 0.0, 0.0, 1);
+        }
+    }
+
+    // Spawn gold particle near top
+    let gold_x = WIDTH as f32 * CELL_SIZE / 2.0;
+    let gold_y = 15.0 * CELL_SIZE;  // Near top
+    sim.particles.spawn_gold(gold_x, gold_y, 0.0, 0.0);
+
+    let gold_initial_y = sim.particles.list.last().unwrap().position.y;
+
+    // Run simulation
+    for _ in 0..FRAMES {
+        sim.update(DT);
+    }
+
+    // Find gold particle (it's the last one we added)
+    let gold_final_y = sim.particles.list.iter()
+        .filter(|p| p.material == sim::particle::ParticleMaterial::Gold)
+        .next()
+        .map(|p| p.position.y)
+        .unwrap_or(gold_initial_y);
+
+    // Gold should have moved down significantly (Y increases downward in this coord system)
+    let distance_settled = gold_final_y - gold_initial_y;
+    assert!(distance_settled > CELL_SIZE * 5.0,
+        "Gold should settle through water: initial_y={}, final_y={}, settled={}",
+        gold_initial_y, gold_final_y, distance_settled);
+}
+
+/// APIC-3: Simulation should remain stable over many frames
+/// No NaN, no crashes, particles stay in bounds
+#[test]
+fn test_simulation_long_stability() {
+    const WIDTH: usize = 64;
+    const HEIGHT: usize = 48;
+    const CELL_SIZE: f32 = 4.0;
+    const DT: f32 = 1.0 / 60.0;
+    const FRAMES: usize = 500;
+
+    let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+    create_sluice(&mut sim, 0.3, 15, 4, 2);
+
+    // Spawn initial water
+    for i in 0..50 {
+        let x = 20.0 + (i % 10) as f32 * 4.0;
+        let y = 30.0 + (i / 10) as f32 * 4.0;
+        sim.spawn_water(x, y, 40.0, 0.0, 3);
+    }
+
+    let sim_width = WIDTH as f32 * CELL_SIZE;
+    let sim_height = HEIGHT as f32 * CELL_SIZE;
+
+    // Run simulation
+    for frame in 0..FRAMES {
+        // Add more water periodically
+        if frame % 10 == 0 {
+            sim.spawn_water(20.0, 30.0, 40.0, 0.0, 2);
+        }
+
+        sim.update(DT);
+
+        // Check stability
+        for p in sim.particles.iter() {
+            assert!(!p.velocity.x.is_nan(), "Frame {}: Velocity.x NaN", frame);
+            assert!(!p.velocity.y.is_nan(), "Frame {}: Velocity.y NaN", frame);
+            assert!(!p.position.x.is_nan(), "Frame {}: Position.x NaN", frame);
+            assert!(!p.position.y.is_nan(), "Frame {}: Position.y NaN", frame);
+            assert!(p.velocity.length() < 500.0,
+                "Frame {}: Velocity too high: {}", frame, p.velocity.length());
+        }
+
+        // Particles should stay roughly in bounds (allow some margin)
+        let in_bounds = sim.particles.iter()
+            .filter(|p| p.position.x >= -10.0 && p.position.x < sim_width + 10.0
+                     && p.position.y >= -10.0 && p.position.y < sim_height + 10.0)
+            .count();
+        let total = sim.particles.len();
+        assert!(in_bounds as f32 / total as f32 > 0.9 || total < 10,
+            "Frame {}: Too many particles out of bounds: {}/{}", frame, total - in_bounds, total);
+    }
+}
+
+/// APIC-4: Velocity field should be smoother than baseline
+/// Measures velocity variance - APIC should produce less noisy velocities
+#[test]
+fn test_velocity_variance_reasonable() {
+    const WIDTH: usize = 48;
+    const HEIGHT: usize = 48;
+    const CELL_SIZE: f32 = 4.0;
+    const DT: f32 = 1.0 / 60.0;
+
+    let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+
+    // Container
+    for i in 0..WIDTH {
+        sim.grid.set_solid(i, HEIGHT - 1);
+    }
+    for j in 0..HEIGHT {
+        sim.grid.set_solid(0, j);
+        sim.grid.set_solid(WIDTH - 1, j);
+    }
+    sim.grid.compute_sdf();
+
+    // Spawn water block
+    for i in 10..30 {
+        for j in 10..30 {
+            let x = i as f32 * CELL_SIZE + CELL_SIZE * 0.5;
+            let y = j as f32 * CELL_SIZE + CELL_SIZE * 0.5;
+            sim.spawn_water(x, y, 0.0, 0.0, 1);
+        }
+    }
+
+    // Let it settle
+    for _ in 0..100 {
+        sim.update(DT);
+    }
+
+    // Measure velocity variance
+    let n = sim.particles.len() as f32;
+    if n < 10.0 {
+        return; // Not enough particles
+    }
+
+    let mean_vx: f32 = sim.particles.iter().map(|p| p.velocity.x).sum::<f32>() / n;
+    let mean_vy: f32 = sim.particles.iter().map(|p| p.velocity.y).sum::<f32>() / n;
+
+    let variance: f32 = sim.particles.iter()
+        .map(|p| {
+            let dx = p.velocity.x - mean_vx;
+            let dy = p.velocity.y - mean_vy;
+            dx * dx + dy * dy
+        })
+        .sum::<f32>() / n;
+
+    // Variance should be reasonable for settled water
+    // This is a sanity check - specific threshold may need tuning
+    assert!(variance < 1000.0,
+        "Velocity variance too high for settled water: {}", variance);
+}

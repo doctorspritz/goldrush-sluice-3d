@@ -6,7 +6,7 @@
 //! Supports multiple material types with different densities for
 //! natural settling stratification in the sluice.
 
-use glam::Vec2;
+use glam::{Mat2, Vec2};
 
 /// Material type for particles (affects rendering and settling)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,7 +105,10 @@ pub struct Particle {
     pub position: Vec2,
     /// Current velocity
     pub velocity: Vec2,
-    /// Velocity sampled from grid before pressure solve (for FLIP)
+    /// Affine velocity matrix for APIC transfer (captures local velocity gradients)
+    /// Stores rotation and deformation for angular momentum preservation
+    pub affine_velocity: Mat2,
+    /// Velocity sampled from grid (used for sediment drag calculation)
     pub old_grid_velocity: Vec2,
     /// Material type (determines density and color)
     pub material: ParticleMaterial,
@@ -119,6 +122,7 @@ impl Particle {
         Self {
             position,
             velocity,
+            affine_velocity: Mat2::ZERO,
             old_grid_velocity: Vec2::ZERO,
             material,
             near_density: 0.0,

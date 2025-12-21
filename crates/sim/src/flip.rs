@@ -1,18 +1,21 @@
-//! PIC/FLIP (Particle-In-Cell / Fluid-Implicit-Particle) simulation
+//! APIC (Affine Particle-In-Cell) simulation
 //!
-//! This module ties together particles and grid for fluid simulation:
+//! APIC stores an affine velocity field per particle via the C matrix.
+//! This preserves angular momentum and reduces noise compared to FLIP.
+//!
+//! Algorithm:
 //! 1. Classify cells (solid/fluid/air)
-//! 2. Transfer particle velocities to grid (P2G)
-//! 3. Store old grid velocities
-//! 4. Apply forces (gravity)
-//! 5. Pressure projection (creates vortices!)
-//! 6. Transfer grid velocities back to particles (G2P with PIC/FLIP blend)
-//! 7. Apply density-based settling
-//! 8. Advect particles
+//! 2. Transfer particle velocities + affine momentum to grid (P2G)
+//! 3. Apply forces (gravity)
+//! 4. Pressure projection (creates vortices!)
+//! 5. Transfer grid velocities back to particles + reconstruct C matrix (G2P)
+//! 6. Advect particles
+//!
+//! Reference: Jiang et al. 2015 "The Affine Particle-In-Cell Method"
 
-use crate::grid::{CellType, Grid};
+use crate::grid::{apic_d_inverse, quadratic_bspline, CellType, Grid};
 use crate::particle::Particles;
-use glam::Vec2;
+use glam::{Mat2, Vec2};
 use rand::Rng;
 use rayon::prelude::*;
 
@@ -164,55 +167,122 @@ impl FlipSimulation {
         }
     }
 
-    /// Step 2: Transfer particle velocities to grid (P2G)
-    /// ALL particles contribute velocity to ensure proper pressure boundaries.
-    /// Sediment contributes with reduced weight (it occupies space but is sparse).
+    /// Step 2: APIC Particle-to-Grid transfer (P2G)
+    ///
+    /// Transfers particle velocity + affine momentum to the grid using quadratic B-splines.
+    /// The affine velocity matrix C captures local velocity gradients.
+    ///
+    /// For each grid node i:
+    ///   momentum_i += w_ip * (v_p + C_p * (x_i - x_p))
+    ///   mass_i += w_ip
+    ///
+    /// Final grid velocity: v_i = momentum_i / mass_i
     fn particles_to_grid(&mut self) {
-        // Clear accumulators (no allocation - just fill!)
+        // Clear accumulators
         self.u_sum.fill(0.0);
         self.u_weight.fill(0.0);
         self.v_sum.fill(0.0);
         self.v_weight.fill(0.0);
 
         let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let height = self.grid.height;
 
         for particle in self.particles.iter() {
             // Sediment contributes with reduced weight (occupies space but sparse)
-            // This prevents zero-velocity "walls" that cause pressure spikes
             let weight_scale = if particle.is_sediment() { 0.5 } else { 1.0 };
 
-            // U component (staggered - sample at left edges)
-            let u_pos = particle.position - Vec2::new(cell_size * 0.5, 0.0);
-            let (i, j, weights) = self.grid.get_interp_weights(u_pos);
+            let pos = particle.position;
+            let vel = particle.velocity;
+            let c_mat = particle.affine_velocity;
 
-            for (di, dj, w) in weights {
-                let ni = (i as i32 + di) as usize;
-                let nj = (j as i32 + dj) as usize;
-                if ni <= self.grid.width && nj < self.grid.height {
-                    let idx = self.grid.u_index(ni, nj);
+            // ========== U component (staggered on left edges) ==========
+            // U nodes are at (i * cell_size, (j + 0.5) * cell_size) in world coords
+            // Convert to cell-space for quadratic B-spline
+            let u_pos = pos / cell_size - Vec2::new(0.0, 0.5);
+            let base_i = u_pos.x.floor() as i32;
+            let base_j = u_pos.y.floor() as i32;
+            let fx = u_pos.x - base_i as f32;
+            let fy = u_pos.y - base_j as f32;
+
+            for dj in -1..=1i32 {
+                for di in -1..=1i32 {
+                    let ni = base_i + di;
+                    let nj = base_j + dj;
+
+                    // Bounds check for U grid: ni in [0, width], nj in [0, height-1]
+                    if ni < 0 || ni > width as i32 || nj < 0 || nj >= height as i32 {
+                        continue;
+                    }
+
+                    // Distance from particle to this node (in cell units)
+                    let delta = Vec2::new(fx - di as f32, fy - dj as f32);
+                    let w = quadratic_bspline(delta);
+                    if w <= 0.0 {
+                        continue;
+                    }
+
+                    // APIC: offset from particle to grid node (in world coords)
+                    let offset = Vec2::new(
+                        (ni as f32) * cell_size - pos.x,
+                        (nj as f32 + 0.5) * cell_size - pos.y,
+                    );
+
+                    // Affine velocity contribution: C * offset
+                    let affine_vel = c_mat * offset;
+
+                    let idx = self.grid.u_index(ni as usize, nj as usize);
                     let scaled_w = w * weight_scale;
-                    self.u_sum[idx] += particle.velocity.x * scaled_w;
+
+                    // APIC: momentum includes affine term
+                    self.u_sum[idx] += (vel.x + affine_vel.x) * scaled_w;
                     self.u_weight[idx] += scaled_w;
                 }
             }
 
-            // V component (staggered - sample at bottom edges)
-            let v_pos = particle.position - Vec2::new(0.0, cell_size * 0.5);
-            let (i, j, weights) = self.grid.get_interp_weights(v_pos);
+            // ========== V component (staggered on bottom edges) ==========
+            // V nodes are at ((i + 0.5) * cell_size, j * cell_size) in world coords
+            let v_pos = pos / cell_size - Vec2::new(0.5, 0.0);
+            let base_i = v_pos.x.floor() as i32;
+            let base_j = v_pos.y.floor() as i32;
+            let fx = v_pos.x - base_i as f32;
+            let fy = v_pos.y - base_j as f32;
 
-            for (di, dj, w) in weights {
-                let ni = (i as i32 + di) as usize;
-                let nj = (j as i32 + dj) as usize;
-                if ni < self.grid.width && nj <= self.grid.height {
-                    let idx = self.grid.v_index(ni, nj);
+            for dj in -1..=1i32 {
+                for di in -1..=1i32 {
+                    let ni = base_i + di;
+                    let nj = base_j + dj;
+
+                    // Bounds check for V grid: ni in [0, width-1], nj in [0, height]
+                    if ni < 0 || ni >= width as i32 || nj < 0 || nj > height as i32 {
+                        continue;
+                    }
+
+                    let delta = Vec2::new(fx - di as f32, fy - dj as f32);
+                    let w = quadratic_bspline(delta);
+                    if w <= 0.0 {
+                        continue;
+                    }
+
+                    // Offset from particle to grid node (in world coords)
+                    let offset = Vec2::new(
+                        (ni as f32 + 0.5) * cell_size - pos.x,
+                        (nj as f32) * cell_size - pos.y,
+                    );
+
+                    // Affine velocity contribution
+                    let affine_vel = c_mat * offset;
+
+                    let idx = self.grid.v_index(ni as usize, nj as usize);
                     let scaled_w = w * weight_scale;
-                    self.v_sum[idx] += particle.velocity.y * scaled_w;
+
+                    self.v_sum[idx] += (vel.y + affine_vel.y) * scaled_w;
                     self.v_weight[idx] += scaled_w;
                 }
             }
         }
 
-        // Normalize
+        // Normalize: velocity = momentum / mass
         for i in 0..self.grid.u.len() {
             if self.u_weight[i] > 0.0 {
                 self.grid.u[i] = self.u_sum[i] / self.u_weight[i];
@@ -236,44 +306,129 @@ impl FlipSimulation {
         }
     }
 
-    /// Step 6: Transfer grid velocities back to particles (G2P)
+    /// Step 5: APIC Grid-to-Particle transfer (G2P)
+    ///
+    /// For each particle:
+    ///   v_p = Σ_i w_ip * v_i                    (velocity from grid)
+    ///   C_p = D_inv * Σ_i w_ip * v_i ⊗ (x_i - x_p)  (affine velocity matrix)
+    ///
+    /// Where D_inv = 4/Δx² for quadratic B-splines.
+    /// The C matrix captures local velocity gradients for angular momentum conservation.
     ///
     /// TWO DIFFERENT BEHAVIORS:
-    /// - Water: Normal PIC/FLIP blend (moves with fluid)
-    /// - Sediment: Does NOT receive grid velocity directly. Instead handled in apply_sediment_forces()
+    /// - Water: Gets grid velocity and updates C matrix (APIC)
+    /// - Sediment: Only samples fluid velocity for drag calculation (Lagrangian)
     fn grid_to_particles(&mut self) {
-        const ALPHA: f32 = 0.05; // 5% PIC, 95% FLIP for less numerical diffusion
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let height = self.grid.height;
+        let d_inv = apic_d_inverse(cell_size);
 
         let grid = &self.grid;
+
         self.particles.list.par_iter_mut().for_each(|particle| {
-            // Sediment doesn't participate in G2P - it's Lagrangian
+            let pos = particle.position;
+
+            // Sample velocity from grid using bilinear interpolation for sediment
+            let v_grid = grid.sample_velocity(pos);
+
+            // Sediment doesn't participate in APIC - it's Lagrangian
+            // Store fluid velocity for drag calculation in apply_sediment_forces
             if particle.is_sediment() {
-                // Just sample and store the fluid velocity for drag calculation later
-                particle.old_grid_velocity = grid.sample_velocity(particle.position);
+                particle.old_grid_velocity = v_grid;
                 return;
             }
 
-            // Water: normal PIC/FLIP
-            let v_grid = grid.sample_velocity(particle.position);
+            // ========== APIC for water particles ==========
+            let mut new_velocity = Vec2::ZERO;
+            let mut new_c = Mat2::ZERO;
 
-            // PIC: direct grid velocity
-            let v_pic = v_grid;
+            // Sample U component
+            let u_pos = pos / cell_size - Vec2::new(0.0, 0.5);
+            let base_i = u_pos.x.floor() as i32;
+            let base_j = u_pos.y.floor() as i32;
+            let fx = u_pos.x - base_i as f32;
+            let fy = u_pos.y - base_j as f32;
 
-            // FLIP: velocity change
-            let delta_v = v_grid - particle.old_grid_velocity;
-            let v_flip = particle.velocity + delta_v;
+            for dj in -1..=1i32 {
+                for di in -1..=1i32 {
+                    let ni = base_i + di;
+                    let nj = base_j + dj;
 
-            // Blend PIC/FLIP
-            particle.velocity = v_pic * ALPHA + v_flip * (1.0 - ALPHA);
+                    if ni < 0 || ni > width as i32 || nj < 0 || nj >= height as i32 {
+                        continue;
+                    }
 
-            // Spray dampening: reduce upward velocity (negative y = up in screen coords)
-            // This prevents unrealistic explosive spray from pressure spikes
-            if particle.velocity.y < -40.0 {
-                particle.velocity.y *= 0.7; // Dampen strong upward motion
+                    let delta = Vec2::new(fx - di as f32, fy - dj as f32);
+                    let w = quadratic_bspline(delta);
+                    if w <= 0.0 {
+                        continue;
+                    }
+
+                    let u_idx = grid.u_index(ni as usize, nj as usize);
+                    let u_val = grid.u[u_idx];
+
+                    // Velocity contribution
+                    new_velocity.x += w * u_val;
+
+                    // C matrix contribution: v_i ⊗ (x_i - x_p) * w * D_inv
+                    let offset = Vec2::new(
+                        (ni as f32) * cell_size - pos.x,
+                        (nj as f32 + 0.5) * cell_size - pos.y,
+                    );
+                    // outer_product(u_component, offset) contributes to C's first column
+                    new_c.x_axis += offset * (w * u_val * d_inv);
+                }
             }
 
-            // Safety clamp: CFL requires v*dt < cell_size → v < 120 for dt=1/60, cell=2
-            const MAX_VELOCITY: f32 = 100.0; // Reduced from 120 for smoother flow
+            // Sample V component
+            let v_pos = pos / cell_size - Vec2::new(0.5, 0.0);
+            let base_i = v_pos.x.floor() as i32;
+            let base_j = v_pos.y.floor() as i32;
+            let fx = v_pos.x - base_i as f32;
+            let fy = v_pos.y - base_j as f32;
+
+            for dj in -1..=1i32 {
+                for di in -1..=1i32 {
+                    let ni = base_i + di;
+                    let nj = base_j + dj;
+
+                    if ni < 0 || ni >= width as i32 || nj < 0 || nj > height as i32 {
+                        continue;
+                    }
+
+                    let delta = Vec2::new(fx - di as f32, fy - dj as f32);
+                    let w = quadratic_bspline(delta);
+                    if w <= 0.0 {
+                        continue;
+                    }
+
+                    let v_idx = grid.v_index(ni as usize, nj as usize);
+                    let v_val = grid.v[v_idx];
+
+                    // Velocity contribution
+                    new_velocity.y += w * v_val;
+
+                    // C matrix contribution (second column from V)
+                    let offset = Vec2::new(
+                        (ni as f32 + 0.5) * cell_size - pos.x,
+                        (nj as f32) * cell_size - pos.y,
+                    );
+                    new_c.y_axis += offset * (w * v_val * d_inv);
+                }
+            }
+
+            // Update particle state
+            particle.velocity = new_velocity;
+            particle.affine_velocity = new_c;
+
+            // Spray dampening: reduce upward velocity (negative y = up in screen coords)
+            if particle.velocity.y < -40.0 {
+                particle.velocity.y *= 0.7;
+            }
+
+            // Safety clamp: CFL requires v*dt < cell_size
+            const MAX_VELOCITY: f32 = 100.0;
             let speed = particle.velocity.length();
             if speed > MAX_VELOCITY {
                 particle.velocity *= MAX_VELOCITY / speed;
