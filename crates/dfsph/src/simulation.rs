@@ -10,7 +10,7 @@ const GRAVITY_VEC: Vec2 = Vec2::new(0.0, physics::GRAVITY);
 const SOLVER_ITERATIONS: usize = 4; // Default iterations (adapted dynamically)
 const REST_DENSITY: f32 = 1.0;  // Normalized density for SPH
 const H_SCALE: f32 = 1.5; // Radius of support relative to cell size
-const EPSILON: f32 = 0.0001; // Avoid div by zero
+const EPSILON: f32 = 100.0; // Regularization to prevent explosive pressure response
 const MAX_PARTICLES_CAP: usize = 3000; // Hard cap for performance safety
 
 pub struct DfsphSimulation {
@@ -148,8 +148,8 @@ impl DfsphSimulation {
         // 0. CFL: Determine subtops
         // Max displacement should be ~0.9 * particle_radius per step (PBF is stable).
         // H ~ 1.5 * cell_size. Radius approx cell_size/2.
-        // Limit: 0.9 * (cell_size * 0.5) 
-        let limit = 0.9 * self.cell_size * 0.5;
+        // Limit: 0.4 * cell_size to prevent tunneling through thin walls
+        let limit = 0.4 * self.cell_size;
         
         let max_vel_sq: f32 = self.particles.list.iter()
             .map(|p| p.velocity.length_squared())
@@ -165,7 +165,7 @@ impl DfsphSimulation {
         
         // Safety clamps
         if num_substeps < 1 { num_substeps = 1; }
-        if num_substeps > 4 { num_substeps = 4; } // Cap at 4 for performance (was 8)
+        if num_substeps > 8 { num_substeps = 8; } // Allow more substeps to prevent tunneling
         
         let dt_sub = dt / (num_substeps as f32);
 
@@ -448,13 +448,20 @@ impl DfsphSimulation {
             }
         }
         
-        // 4. Update Velocity
+        // 4. Update Velocity (with clamping to prevent explosions)
         {
              let particles_slice = &mut self.particles.list;
              let old_pos_slice = &mut self.old_positions;
+             let max_vel = self.cell_size * 20.0; // Max velocity = 20 cells per second
 
              particles_slice.iter_mut().zip(old_pos_slice.iter()).for_each(|(p, old_pos)| {
-                p.velocity = (p.position - *old_pos) / dt;
+                let new_vel = (p.position - *old_pos) / dt;
+                let vel_mag = new_vel.length();
+                if vel_mag > max_vel {
+                    p.velocity = new_vel * (max_vel / vel_mag);
+                } else {
+                    p.velocity = new_vel;
+                }
             });
         }
     }
