@@ -19,10 +19,10 @@ enum RenderMode {
     Mesh,          // Single mesh with vertex colors (fastest)
 }
 
-// Simulation size
-const SIM_WIDTH: usize = 128;
-const SIM_HEIGHT: usize = 96;
-const CELL_SIZE: f32 = 2.0;
+// Simulation size (high resolution for better vortex formation)
+const SIM_WIDTH: usize = 256;
+const SIM_HEIGHT: usize = 192;
+const CELL_SIZE: f32 = 1.0;
 const SCALE: f32 = 5.0;
 
 // Render buffer size (simulation space, not screen space)
@@ -49,11 +49,11 @@ async fn main() {
     let screen_h = (SIM_HEIGHT as f32 * CELL_SIZE * SCALE) as u32;
     let mut metaball_renderer = MetaballRenderer::new(screen_w, screen_h);
 
-    // Initial sluice parameters
+    // Initial sluice parameters (doubled for finer grid to maintain physical size)
     let initial_slope = 0.25f32;
-    let initial_spacing = 30usize;
-    let initial_height = 3usize;
-    let initial_width = 2usize;
+    let initial_spacing = 60usize;  // 30 * 2 cells
+    let initial_height = 6usize;    // 3 * 2 cells
+    let initial_width = 4usize;     // 2 * 2 cells
 
     // Set up sloped sluice with riffles (smaller for 1:1 particles)
     create_sluice(&mut sim, initial_slope, initial_spacing, initial_height, initial_width);
@@ -117,25 +117,25 @@ async fn main() {
     let _target_frame_time = std::time::Duration::from_secs_f64(1.0 / 60.0);
 
     // === TUNABLE PARAMETERS ===
-    // Inlet flow (reduced for smaller riffles)
+    // Inlet flow (higher spawn rate for finer grid to maintain ~6-8 particles/cell)
     let mut inlet_vx: f32 = 45.0;
     let mut inlet_vy: f32 = 25.0;
-    let mut spawn_rate: usize = 1;  // Water particles per frame (reduced 5x)
+    let mut spawn_rate: usize = 4;  // Water particles per frame (4x for finer grid)
 
-    // Riffle geometry
+    // Riffle geometry (doubled for finer grid)
     let mut slope: f32 = 0.25;
-    let mut riffle_spacing: usize = 30;
-    let mut riffle_height: usize = 3;
-    let mut riffle_width: usize = 2;
+    let mut riffle_spacing: usize = 60;
+    let mut riffle_height: usize = 6;
+    let mut riffle_width: usize = 4;
     let mut riffle_dirty = false; // rebuild terrain when true
 
     // Sediment blend (spawn every N frames, 0 = disabled)
     // Target: 10% solids by volume (realistic slurry)
-    // At spawn_rate=1 water/frame, need ~0.11 solids/frame total
-    let mut mud_rate: usize = 40;       // 1 per 40 frames = 0.025/frame
-    let mut sand_rate: usize = 15;      // 1 per 15 frames = 0.067/frame
-    let mut magnetite_rate: usize = 75; // 1 per 75 frames = 0.013/frame (black sand)
-    let mut gold_rate: usize = 300;     // 1 per 300 frames = 0.003/frame (trace)
+    // At spawn_rate=4 water/frame, need ~0.44 solids/frame total
+    let mut mud_rate: usize = 10;       // 1 per 10 frames = 0.1/frame
+    let mut sand_rate: usize = 4;       // 1 per 4 frames = 0.25/frame
+    let mut magnetite_rate: usize = 20; // 1 per 20 frames = 0.05/frame (black sand)
+    let mut gold_rate: usize = 75;      // 1 per 75 frames = 0.013/frame (trace)
 
     // Global flow multiplier (F/G to adjust) - scales all spawn rates
     let mut flow_multiplier: usize = 1;
@@ -200,33 +200,33 @@ async fn main() {
             flow_multiplier = flow_multiplier.saturating_sub(1).max(1);
         }
 
-        // Riffle spacing: Q/A
+        // Riffle spacing: Q/A (doubled limits for finer grid)
         if is_key_pressed(KeyCode::Q) {
-            riffle_spacing = (riffle_spacing + 5).min(60);
+            riffle_spacing = (riffle_spacing + 10).min(120);
             riffle_dirty = true;
         }
         if is_key_pressed(KeyCode::A) {
-            riffle_spacing = riffle_spacing.saturating_sub(5).max(15);
+            riffle_spacing = riffle_spacing.saturating_sub(10).max(30);
             riffle_dirty = true;
         }
 
-        // Riffle height: W/S
+        // Riffle height: W/S (doubled limits for finer grid)
         if is_key_pressed(KeyCode::W) {
-            riffle_height = (riffle_height + 1).min(8);
+            riffle_height = (riffle_height + 2).min(16);
             riffle_dirty = true;
         }
         if is_key_pressed(KeyCode::S) {
-            riffle_height = riffle_height.saturating_sub(1).max(2);
+            riffle_height = riffle_height.saturating_sub(2).max(4);
             riffle_dirty = true;
         }
 
-        // Riffle width: E/D
+        // Riffle width: E/D (doubled limits for finer grid)
         if is_key_pressed(KeyCode::E) {
-            riffle_width = (riffle_width + 1).min(8);
+            riffle_width = (riffle_width + 2).min(16);
             riffle_dirty = true;
         }
         if is_key_pressed(KeyCode::D) {
-            riffle_width = riffle_width.saturating_sub(1).max(1);
+            riffle_width = riffle_width.saturating_sub(2).max(2);
             riffle_dirty = true;
         }
 
