@@ -128,9 +128,9 @@ impl FlipSimulation {
         // CRITICAL: Zero velocities at solid walls BEFORE computing divergence
         self.grid.enforce_boundary_conditions();
         self.grid.compute_divergence();
-        // Fewer iterations for speed (trades accuracy for FPS)
-        // 10 iterations is sufficient for visual quality
-        self.grid.solve_pressure(10);
+        // Pressure solver iterations (more needed for finer grids)
+        // 15 iterations for 256x192 grid to maintain convergence
+        self.grid.solve_pressure(15);
         self.grid.apply_pressure_gradient(dt);
 
         // 6. Transfer grid velocities back to particles
