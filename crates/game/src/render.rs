@@ -459,8 +459,8 @@ pub fn draw_particles_rect(particles: &Particles, screen_scale: f32, base_size: 
     for particle in particles.iter() {
         let x = particle.position.x * screen_scale;
         let y = particle.position.y * screen_scale;
-        let [r, g, b, _] = particle.material.color();
-        let color = Color::from_rgba(r, g, b, 220);
+        let [r, g, b, a] = particle.material.color();
+        let color = Color::from_rgba(r, g, b, a);
         let size = base_size * particle.material.render_scale();
 
         draw_rectangle(x - size/2.0, y - size/2.0, size, size, color);
@@ -492,8 +492,8 @@ pub fn draw_particles_mesh(particles: &Particles, screen_scale: f32, base_size: 
         for (local_i, particle) in particles.iter().skip(batch_start).take(batch_size).enumerate() {
             let x = particle.position.x * screen_scale;
             let y = particle.position.y * screen_scale;
-            let [r, g, b, _] = particle.material.color();
-            let color = Color::from_rgba(r, g, b, 220);
+            let [r, g, b, a] = particle.material.color();
+            let color = Color::from_rgba(r, g, b, a);
             let size = base_size * particle.material.render_scale();
 
             let half = size / 2.0;

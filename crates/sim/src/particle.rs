@@ -33,7 +33,7 @@ impl ParticleMaterial {
     /// RGBA color for rendering
     pub fn color(&self) -> [u8; 4] {
         match self {
-            Self::Water => [50, 140, 240, 255],
+            Self::Water => [50, 140, 240, 100],   // Semi-transparent for solid visibility
             Self::Mud => [139, 90, 43, 255],
             Self::Sand => [194, 178, 128, 255],    // Tan
             Self::Magnetite => [30, 30, 30, 255],  // Black
@@ -62,15 +62,11 @@ impl ParticleMaterial {
     }
 
     /// Render scale multiplier (1.0 = base size)
-    /// Solids render smaller than fluids for visual distinction
+    /// Normalized for development - all particles same size for ratio visibility
     pub fn render_scale(&self) -> f32 {
-        match self {
-            Self::Water => 1.0,
-            Self::Mud => 0.85,
-            Self::Sand => 0.5,
-            Self::Magnetite => 0.45,
-            Self::Gold => 0.4,
-        }
+        1.0 // Normalized: all materials same size during development
+        // Original values for production:
+        // Water => 1.0, Mud => 0.85, Sand => 0.5, Magnetite => 0.45, Gold => 0.4
     }
 
     /// Edge sharpness for metaball rendering (higher = harder borders)

@@ -356,3 +356,45 @@ fn compute_weight_2d(particle_pos: Vec2, grid_pos: Vec2, dx: f32) -> f32 {
 ### Production Use
 - **Blender FLIP Fluids**: [APIC solver documentation](https://flipfluids.com/weekly-development-notes-54-new-apic-solver-in-flip-fluids-1-0-9b/)
 - **Houdini FLIP Solver**: Includes APIC transfer mode
+
+## 11. Sluice Box Slurry Configuration
+
+For realistic gold sluice simulation, the water-to-solids ratio is critical. Real mining slurry contains 10-12% solids by volume.
+
+### Current Configuration (main.rs)
+
+```rust
+// 90% water, 10% solids (realistic slurry)
+spawn_rate = 5;           // 5 water particles/frame
+mud_rate = 8;             // 1 mud every 8 frames = 0.125/frame
+sand_rate = 3;            // 1 sand every 3 frames = 0.33/frame
+magnetite_rate = 15;      // 1 black sand every 15 frames = 0.067/frame
+gold_rate = 60;           // 1 gold every 60 frames = 0.017/frame
+// Total solids ≈ 0.54/frame → ~10% of total particles
+```
+
+### Three Scenarios to Test
+
+| Scenario | Solids % | spawn_rate | Behavior |
+|----------|----------|------------|----------|
+| Too little slurry | 5-7% | 8-10 | Gold washes out with everything else |
+| **Ideal** | 10-12% | 5 | Gold/black sand settles in riffles, sand washes out |
+| Too much slurry | 15-20% | 2-3 | Riffles pack up, water flows over, nothing settles |
+
+### Expected Physics
+
+1. **Riffle Vortices**: Each riffle creates a low-pressure vortex behind it
+2. **Density Separation**: Heavy particles (gold, magnetite) drop into vortex pockets
+3. **Light Particles**: Sand and mud stay in suspension, wash downstream
+4. **Sorting Process**:
+   - Material drops into first few riffles
+   - Water stirs and re-sorts
+   - Lighter material washes further down
+   - Eventually light material exits the sluice
+
+### UI Display
+
+The simulation now shows real-time solids percentage:
+```
+W:1200 M:15 S:45 Mag:8 Au:2 | Solids: 5.5%
+```
