@@ -532,41 +532,51 @@ impl FlipSimulation {
                     ParticleState::Suspended => {
                         // ========== SUSPENDED: Normal settling + drag ==========
 
-                        // Compute base settling velocity
-                        let base_settling = if use_ferguson_church {
-                            // Ferguson-Church universal equation (handles all Reynolds regimes)
-                            particle.material.settling_velocity(diameter)
-                        } else {
-                            // Simple density-based settling: v = sqrt((ρ-1) * g * d) / ρ
-                            let r = (density - 1.0) / 1.0;
-                            if r > 0.0 && diameter > 0.0 {
-                                (r * SIMPLE_GRAVITY * diameter).sqrt() / density.sqrt()
-                            } else {
-                                0.0
-                            }
-                        };
-
-                        // Apply hindered settling if enabled
-                        let settling_velocity = if use_hindered_settling {
-                            let neighbor_count = neighbor_counts.get(idx).copied().unwrap_or(0) as usize;
-                            let concentration = neighbor_count_to_concentration(neighbor_count, REST_NEIGHBORS);
-                            let hindered_factor = hindered_settling_factor(concentration);
-                            base_settling * hindered_factor
-                        } else {
-                            base_settling
-                        };
-
-                        // Sample fluid velocity at particle position (stored during G2P)
+                        // Check if particle is in fluid or air
+                        // If grid velocity is very small, particle is likely in air
                         let v_fluid = particle.old_grid_velocity;
+                        let in_fluid = v_fluid.length_squared() > 0.1 || particle.near_density > 0.5;
 
-                        // Target velocity: fluid velocity + downward settling slip
-                        let slip = glam::Vec2::new(0.0, settling_velocity);
-                        let target_velocity = v_fluid + slip;
+                        if in_fluid {
+                            // ===== IN FLUID: Settling through water =====
+                            // Compute base settling velocity
+                            let base_settling = if use_ferguson_church {
+                                // Ferguson-Church universal equation (handles all Reynolds regimes)
+                                particle.material.settling_velocity(diameter)
+                            } else {
+                                // Simple density-based settling: v = sqrt((ρ-1) * g * d) / ρ
+                                let r = (density - 1.0) / 1.0;
+                                if r > 0.0 && diameter > 0.0 {
+                                    (r * SIMPLE_GRAVITY * diameter).sqrt() / density.sqrt()
+                                } else {
+                                    0.0
+                                }
+                            };
 
-                        // Drag toward target velocity (heavier = slower response)
-                        let drag_rate = BASE_DRAG_RATE / density;
-                        let blend = (drag_rate * dt).clamp(0.0, 1.0);
-                        particle.velocity = particle.velocity.lerp(target_velocity, blend);
+                            // Apply hindered settling if enabled
+                            let settling_velocity = if use_hindered_settling {
+                                let neighbor_count = neighbor_counts.get(idx).copied().unwrap_or(0) as usize;
+                                let concentration = neighbor_count_to_concentration(neighbor_count, REST_NEIGHBORS);
+                                let hindered_factor = hindered_settling_factor(concentration);
+                                base_settling * hindered_factor
+                            } else {
+                                base_settling
+                            };
+
+                            // Target velocity: fluid velocity + downward settling slip
+                            let slip = glam::Vec2::new(0.0, settling_velocity);
+                            let target_velocity = v_fluid + slip;
+
+                            // Drag toward target velocity (heavier = slower response)
+                            let drag_rate = BASE_DRAG_RATE / density;
+                            let blend = (drag_rate * dt).clamp(0.0, 1.0);
+                            particle.velocity = particle.velocity.lerp(target_velocity, blend);
+                        } else {
+                            // ===== IN AIR: Free fall under gravity =====
+                            // Particles in air fall much faster than in water (no buoyancy/drag)
+                            const AIR_GRAVITY: f32 = 150.0;
+                            particle.velocity.y += AIR_GRAVITY * dt;
+                        }
                     }
 
                     ParticleState::Bedload => {
