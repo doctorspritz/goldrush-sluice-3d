@@ -8,6 +8,17 @@
 
 use glam::{Mat2, Vec2};
 
+/// Particle transport state for friction mechanics
+/// Determines whether particle follows fluid (suspended) or experiences bed friction (bedload)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ParticleState {
+    /// Particle is suspended in fluid - follows APIC transfer + settling velocity
+    #[default]
+    Suspended,
+    /// Particle is on the bed - experiences friction, resists flow until Shields exceeded
+    Bedload,
+}
+
 /// Material type for particles (affects rendering and settling)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParticleMaterial {
@@ -122,6 +133,40 @@ impl ParticleMaterial {
         }
     }
 
+    /// Static friction coefficient for bed contact
+    /// Controls how easily particles slide along the sluice floor
+    /// Higher values = more resistance to sliding
+    pub fn static_friction(&self) -> f32 {
+        match self {
+            Self::Water => 0.0,       // Water has no friction
+            Self::Mud => 0.25,        // Slippery clay
+            Self::Sand => 0.5,        // Rough grains
+            Self::Magnetite => 0.45,  // Angular but smooth
+            Self::Gold => 0.35,       // Smooth metal surface
+        }
+    }
+
+    /// Dynamic friction coefficient (kinetic friction)
+    /// Applied when particle is sliding along the bed
+    /// Typically 70-90% of static friction
+    pub fn dynamic_friction(&self) -> f32 {
+        self.static_friction() * 0.8
+    }
+
+    /// Critical Shields number (τ*_c) for sediment entrainment
+    /// Determines threshold shear stress to mobilize bedload particles
+    /// Lower values = easier to move
+    /// Reference: Shields (1936), with adjustments for particle properties
+    pub fn shields_critical(&self) -> f32 {
+        match self {
+            Self::Water => 0.0,       // N/A - water is the fluid
+            Self::Mud => 0.03,        // Fine particles, easy to suspend
+            Self::Sand => 0.045,      // Standard Shields value for sand
+            Self::Magnetite => 0.05,  // Slightly harder to move
+            Self::Gold => 0.055,      // Heavy particles, harder to entrain
+        }
+    }
+
     /// Calculate settling velocity using Ferguson-Church universal equation
     ///
     /// Formula: w = (R * g * D²) / (C₁ * ν + √(0.75 * C₂ * R * g * D³))
@@ -180,6 +225,8 @@ pub struct Particle {
     /// Particle diameter in simulation units (for Ferguson-Church settling)
     /// If 0.0, uses material.typical_diameter() as fallback
     pub diameter: f32,
+    /// Transport state (suspended vs bedload) for friction mechanics
+    pub state: ParticleState,
 }
 
 impl Particle {
@@ -193,6 +240,7 @@ impl Particle {
             material,
             near_density: 0.0,
             diameter: material.typical_diameter(),
+            state: ParticleState::Suspended,
         }
     }
 
@@ -206,6 +254,7 @@ impl Particle {
             material,
             near_density: 0.0,
             diameter,
+            state: ParticleState::Suspended,
         }
     }
 
@@ -686,6 +735,159 @@ mod tests {
                 neighbors, conc, factor, hindered
             );
         }
+    }
+
+    // ==========================================================================
+    // Phase 4 Tests: Friction Coefficients
+    // ==========================================================================
+
+    #[test]
+    fn test_friction_coefficients_exist() {
+        // All sediments should have positive friction coefficients
+        for material in [
+            ParticleMaterial::Mud,
+            ParticleMaterial::Sand,
+            ParticleMaterial::Magnetite,
+            ParticleMaterial::Gold,
+        ] {
+            assert!(
+                material.static_friction() > 0.0,
+                "{:?} should have positive static friction",
+                material
+            );
+            assert!(
+                material.dynamic_friction() > 0.0,
+                "{:?} should have positive dynamic friction",
+                material
+            );
+        }
+    }
+
+    #[test]
+    fn test_water_has_no_friction() {
+        assert_eq!(ParticleMaterial::Water.static_friction(), 0.0);
+        assert_eq!(ParticleMaterial::Water.dynamic_friction(), 0.0);
+    }
+
+    #[test]
+    fn test_dynamic_friction_less_than_static() {
+        // Dynamic friction should be less than static for all materials
+        for material in [
+            ParticleMaterial::Mud,
+            ParticleMaterial::Sand,
+            ParticleMaterial::Magnetite,
+            ParticleMaterial::Gold,
+        ] {
+            assert!(
+                material.dynamic_friction() < material.static_friction(),
+                "{:?} dynamic friction should be less than static",
+                material
+            );
+        }
+    }
+
+    #[test]
+    fn test_friction_in_reasonable_range() {
+        // Friction coefficients should be between 0 and 1
+        for material in [
+            ParticleMaterial::Mud,
+            ParticleMaterial::Sand,
+            ParticleMaterial::Magnetite,
+            ParticleMaterial::Gold,
+        ] {
+            let mu_s = material.static_friction();
+            let mu_d = material.dynamic_friction();
+            assert!(mu_s <= 1.0, "{:?} static friction {} too high", material, mu_s);
+            assert!(mu_d <= 1.0, "{:?} dynamic friction {} too high", material, mu_d);
+        }
+    }
+
+    // ==========================================================================
+    // Phase 5 Tests: Shields Critical Threshold
+    // ==========================================================================
+
+    #[test]
+    fn test_shields_critical_exists() {
+        // All sediments should have positive Shields threshold
+        for material in [
+            ParticleMaterial::Mud,
+            ParticleMaterial::Sand,
+            ParticleMaterial::Magnetite,
+            ParticleMaterial::Gold,
+        ] {
+            assert!(
+                material.shields_critical() > 0.0,
+                "{:?} should have positive Shields critical",
+                material
+            );
+        }
+    }
+
+    #[test]
+    fn test_water_has_no_shields() {
+        assert_eq!(ParticleMaterial::Water.shields_critical(), 0.0);
+    }
+
+    #[test]
+    fn test_shields_ordering() {
+        // Heavier particles should be harder to entrain (higher Shields)
+        // Gold > Magnetite >= Sand > Mud
+        assert!(
+            ParticleMaterial::Gold.shields_critical() >= ParticleMaterial::Sand.shields_critical(),
+            "Gold should require higher shear to entrain than sand"
+        );
+        assert!(
+            ParticleMaterial::Sand.shields_critical() > ParticleMaterial::Mud.shields_critical(),
+            "Sand should require higher shear to entrain than mud"
+        );
+    }
+
+    #[test]
+    fn test_shields_in_physical_range() {
+        // Shields criterion typically 0.03-0.06 for most particles
+        for material in [
+            ParticleMaterial::Mud,
+            ParticleMaterial::Sand,
+            ParticleMaterial::Magnetite,
+            ParticleMaterial::Gold,
+        ] {
+            let shields = material.shields_critical();
+            assert!(
+                shields >= 0.01 && shields <= 0.1,
+                "{:?} Shields {} outside physical range [0.01, 0.1]",
+                material,
+                shields
+            );
+        }
+    }
+
+    // ==========================================================================
+    // Phase 6 Tests: Particle State
+    // ==========================================================================
+
+    #[test]
+    fn test_particle_default_state_is_suspended() {
+        let p = Particle::sand(Vec2::new(0.0, 0.0), Vec2::ZERO);
+        assert_eq!(p.state, ParticleState::Suspended);
+    }
+
+    #[test]
+    fn test_particle_state_can_change() {
+        let mut p = Particle::gold(Vec2::new(0.0, 0.0), Vec2::ZERO);
+        assert_eq!(p.state, ParticleState::Suspended);
+        p.state = ParticleState::Bedload;
+        assert_eq!(p.state, ParticleState::Bedload);
+    }
+
+    #[test]
+    fn test_particle_with_diameter_has_suspended_state() {
+        let p = Particle::with_diameter(
+            Vec2::new(0.0, 0.0),
+            Vec2::ZERO,
+            ParticleMaterial::Gold,
+            2.0,
+        );
+        assert_eq!(p.state, ParticleState::Suspended);
     }
 }
 

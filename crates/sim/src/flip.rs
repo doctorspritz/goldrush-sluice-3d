@@ -14,7 +14,7 @@
 //! Reference: Jiang et al. 2015 "The Affine Particle-In-Cell Method"
 
 use crate::grid::{apic_d_inverse, quadratic_bspline, CellType, Grid};
-use crate::particle::Particles;
+use crate::particle::{Particles, ParticleState};
 use glam::{Mat2, Vec2};
 use rand::Rng;
 use rayon::prelude::*;
@@ -147,6 +147,9 @@ impl FlipSimulation {
         // 7. Apply forces to sediment (drag + buoyancy + hindered settling)
         // This is proper Lagrangian sediment transport with Richardson-Zaki correction
         self.apply_sediment_forces(dt);
+
+        // 7b. Update particle states (Suspended ↔ Bedload transitions)
+        self.update_particle_states();
 
         // 8. Advect particles (uses SDF for O(1) collision)
         self.advect_particles(dt);
@@ -472,10 +475,9 @@ impl FlipSimulation {
     ///   which accounts for particle size, density, and shape factor
     /// - Richardson-Zaki hindered settling reduces velocity in concentrated regions
     ///
-    /// The Ferguson-Church equation naturally handles:
-    /// - Fine particles (Stokes regime): settling ∝ d²
-    /// - Coarse particles (Newton regime): settling ∝ √d
-    /// - Shape effects: flaky gold settles slower than spherical sand of equal mass
+    /// BEDLOAD vs SUSPENDED behavior:
+    /// - Suspended: Normal settling + drag toward fluid velocity
+    /// - Bedload: Friction-dominated, resists motion until Shields exceeded
     ///
     /// Feature flags control which physics are active:
     /// - use_ferguson_church: Use Ferguson-Church (true) or simple density-based (false)
@@ -495,6 +497,9 @@ impl FlipSimulation {
 
         // Simple density-based settling constant (used when Ferguson-Church is disabled)
         const SIMPLE_GRAVITY: f32 = 150.0;
+
+        // Gravity for friction force calculation
+        const GRAVITY: f32 = 150.0;
 
         // Borrow neighbor_counts as a slice for parallel access
         let neighbor_counts = &self.neighbor_counts;
@@ -523,46 +528,78 @@ impl FlipSimulation {
                     particle.material.typical_diameter()
                 };
 
-                // Compute base settling velocity
-                let base_settling = if use_ferguson_church {
-                    // Ferguson-Church universal equation (handles all Reynolds regimes)
-                    particle.material.settling_velocity(diameter)
-                } else {
-                    // Simple density-based settling: v = sqrt((ρ-1) * g * d) / ρ
-                    // This is a basic Stokes-like approximation
-                    let r = (density - 1.0) / 1.0; // Relative submerged density
-                    if r > 0.0 && diameter > 0.0 {
-                        (r * SIMPLE_GRAVITY * diameter).sqrt() / density.sqrt()
-                    } else {
-                        0.0
+                match particle.state {
+                    ParticleState::Suspended => {
+                        // ========== SUSPENDED: Normal settling + drag ==========
+
+                        // Compute base settling velocity
+                        let base_settling = if use_ferguson_church {
+                            // Ferguson-Church universal equation (handles all Reynolds regimes)
+                            particle.material.settling_velocity(diameter)
+                        } else {
+                            // Simple density-based settling: v = sqrt((ρ-1) * g * d) / ρ
+                            let r = (density - 1.0) / 1.0;
+                            if r > 0.0 && diameter > 0.0 {
+                                (r * SIMPLE_GRAVITY * diameter).sqrt() / density.sqrt()
+                            } else {
+                                0.0
+                            }
+                        };
+
+                        // Apply hindered settling if enabled
+                        let settling_velocity = if use_hindered_settling {
+                            let neighbor_count = neighbor_counts.get(idx).copied().unwrap_or(0) as usize;
+                            let concentration = neighbor_count_to_concentration(neighbor_count, REST_NEIGHBORS);
+                            let hindered_factor = hindered_settling_factor(concentration);
+                            base_settling * hindered_factor
+                        } else {
+                            base_settling
+                        };
+
+                        // Sample fluid velocity at particle position (stored during G2P)
+                        let v_fluid = particle.old_grid_velocity;
+
+                        // Target velocity: fluid velocity + downward settling slip
+                        let slip = glam::Vec2::new(0.0, settling_velocity);
+                        let target_velocity = v_fluid + slip;
+
+                        // Drag toward target velocity (heavier = slower response)
+                        let drag_rate = BASE_DRAG_RATE / density;
+                        let blend = (drag_rate * dt).clamp(0.0, 1.0);
+                        particle.velocity = particle.velocity.lerp(target_velocity, blend);
                     }
-                };
 
-                // Apply hindered settling if enabled
-                let settling_velocity = if use_hindered_settling {
-                    let neighbor_count = neighbor_counts.get(idx).copied().unwrap_or(0) as usize;
-                    let concentration = neighbor_count_to_concentration(neighbor_count, REST_NEIGHBORS);
-                    let hindered_factor = hindered_settling_factor(concentration);
-                    base_settling * hindered_factor
-                } else {
-                    base_settling
-                };
+                    ParticleState::Bedload => {
+                        // ========== BEDLOAD: Friction-dominated ==========
+                        // Particle is on bed, experiences friction deceleration
+                        // Only accelerates if fluid drag exceeds static friction
 
-                // Sample fluid velocity at particle position (stored during G2P)
-                let v_fluid = particle.old_grid_velocity;
+                        let speed = particle.velocity.length();
 
-                // Target velocity: fluid velocity + downward settling slip
-                // The settling velocity is the terminal velocity in still water
-                let slip = glam::Vec2::new(0.0, settling_velocity);
-                let target_velocity = v_fluid + slip;
+                        if speed > 0.001 {
+                            // Apply dynamic friction to decelerate
+                            // F_friction = μ_d × m × g (opposing motion)
+                            let friction_coeff = particle.material.dynamic_friction();
+                            let friction_decel = friction_coeff * GRAVITY * dt;
 
-                // Drag toward target velocity
-                // Heavier particles have more inertia (respond slower)
-                let drag_rate = BASE_DRAG_RATE / density;
-                let blend = (drag_rate * dt).clamp(0.0, 1.0);
+                            if friction_decel >= speed {
+                                // Friction stops particle completely
+                                particle.velocity = Vec2::ZERO;
+                            } else {
+                                // Reduce speed by friction
+                                let new_speed = speed - friction_decel;
+                                particle.velocity = particle.velocity.normalize() * new_speed;
+                            }
+                        }
 
-                // Exponential approach to target for stability
-                particle.velocity = particle.velocity.lerp(target_velocity, blend);
+                        // Slight response to fluid (bedload can creep)
+                        // But much weaker than suspended drag
+                        let v_fluid = particle.old_grid_velocity;
+                        let creep_rate = 0.5 / density; // Very weak response
+                        let blend = (creep_rate * dt).clamp(0.0, 0.1);
+                        particle.velocity = particle.velocity.lerp(v_fluid, blend);
+                    }
+                }
 
                 // Safety clamp
                 const MAX_VELOCITY: f32 = 120.0;
@@ -573,7 +610,91 @@ impl FlipSimulation {
             });
     }
 
-    /// Step 7b: Apply near-pressure forces (Clavet et al. 2005)
+    /// Step 7b: Update particle states (Suspended ↔ Bedload)
+    ///
+    /// State transitions based on:
+    /// - Enter Bedload: velocity < threshold AND near floor (SDF < radius)
+    /// - Exit Bedload: Shields number > critical threshold × hysteresis buffer
+    ///
+    /// Hysteresis prevents rapid flickering between states.
+    fn update_particle_states(&mut self) {
+        // Thresholds for state transitions
+        const VELOCITY_SETTLE_THRESHOLD: f32 = 3.0;   // Enter bedload below this speed
+        const SHIELDS_HYSTERESIS: f32 = 1.2;          // 20% buffer for exit threshold
+        const NEAR_FLOOR_DISTANCE: f32 = 1.5;         // Must be very close to solid
+
+        // Shear velocity estimation constant
+        // u* ≈ 0.1 × U (rough approximation for boundary layer)
+        const SHEAR_VELOCITY_FACTOR: f32 = 0.1;
+
+        // Gravity for Shields calculation
+        const GRAVITY: f32 = 150.0;
+
+        let grid = &self.grid;
+
+        self.particles.list.par_iter_mut().for_each(|particle| {
+            // Only update sediment states
+            if !particle.is_sediment() {
+                return;
+            }
+
+            let sdf_dist = grid.sample_sdf(particle.position);
+            let speed = particle.velocity.length();
+
+            // Check if near a solid surface
+            let near_solid = sdf_dist < NEAR_FLOOR_DISTANCE;
+
+            // Check if the surface is floor-like (gradient pointing upward)
+            // SDF gradient points away from solid - for a floor, that's upward (negative y in screen coords)
+            let is_floor_surface = if near_solid {
+                let grad = grid.sdf_gradient(particle.position);
+                // grad.y < -0.5 means surface normal points mostly upward (floor)
+                // In screen coords, y increases downward, so floor normal is negative y
+                grad.y < -0.5
+            } else {
+                false
+            };
+
+            let on_floor = near_solid && is_floor_surface;
+
+            match particle.state {
+                ParticleState::Suspended => {
+                    // Transition to bedload if slow and on floor (not wall)
+                    if on_floor && speed < VELOCITY_SETTLE_THRESHOLD {
+                        particle.state = ParticleState::Bedload;
+                    }
+                }
+                ParticleState::Bedload => {
+                    // Compute Shields number for re-entrainment check
+                    // τ* = τ / [(ρ_s - ρ_f) × g × d]
+                    // where τ = ρ_f × u*² and u* ≈ 0.1 × U
+
+                    let fluid_vel = particle.old_grid_velocity;
+                    let flow_speed = fluid_vel.length();
+                    let shear_velocity = flow_speed * SHEAR_VELOCITY_FACTOR;
+                    let bed_shear = shear_velocity * shear_velocity; // τ = ρ × u*² (ρ=1)
+
+                    let density_diff = (particle.density() - 1.0).max(0.1); // ρ_s - ρ_f
+                    let diameter = particle.effective_diameter().max(0.1);
+
+                    let shields_number = bed_shear / (density_diff * GRAVITY * diameter);
+                    let shields_critical = particle.material.shields_critical();
+
+                    // Exit bedload if Shields exceeds critical with hysteresis buffer
+                    if shields_number > shields_critical * SHIELDS_HYSTERESIS {
+                        particle.state = ParticleState::Suspended;
+                    }
+
+                    // Also exit if lifted off floor (e.g., by vortex)
+                    if !on_floor && speed > VELOCITY_SETTLE_THRESHOLD * 2.0 {
+                        particle.state = ParticleState::Suspended;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Step 7c: Apply near-pressure forces (Clavet et al. 2005)
     ///
     /// Simple SPH-style collision avoidance for ALL particles.
     /// This prevents overlap without encoding material properties.
@@ -954,7 +1075,7 @@ impl FlipSimulation {
             // SDF collision: sample distance to nearest solid
             let sdf_dist = grid.sample_sdf(particle.position);
 
-            // If inside or very close to solid, push out
+            // If inside or very close to solid, push out and apply friction
             if sdf_dist < cell_size * 0.5 {
                 // Get gradient (points away from solid)
                 let grad = grid.sdf_gradient(particle.position);
@@ -963,11 +1084,29 @@ impl FlipSimulation {
                 let push_dist = cell_size * 0.5 - sdf_dist;
                 particle.position += grad * push_dist;
 
-                // Remove velocity component into solid
+                // Decompose velocity into normal and tangential components
                 let v_dot_n = particle.velocity.dot(grad);
-                if v_dot_n < 0.0 {
-                    particle.velocity -= grad * v_dot_n;
-                }
+                let v_normal = grad * v_dot_n;
+                let v_tangent = particle.velocity - v_normal;
+
+                // Apply friction to tangential velocity (sediment only)
+                let v_tangent_damped = if particle.is_sediment() {
+                    // Get friction coefficient based on state
+                    let friction = if particle.state == ParticleState::Bedload {
+                        // Bedload: stronger friction (static-like)
+                        particle.material.static_friction()
+                    } else {
+                        // Suspended but touching floor: lighter friction
+                        particle.material.dynamic_friction() * 0.5
+                    };
+                    v_tangent * (1.0 - friction)
+                } else {
+                    v_tangent // Water has no friction
+                };
+
+                // Remove velocity component into solid, keep damped tangential
+                let v_normal_clamped = if v_dot_n < 0.0 { Vec2::ZERO } else { v_normal };
+                particle.velocity = v_tangent_damped + v_normal_clamped;
             }
 
             // SAFETY NET: Direct is_solid check to catch edge cases where SDF
