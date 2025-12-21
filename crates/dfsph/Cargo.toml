@@ -1,10 +1,10 @@
 [package]
-name = "game"
+name = "dfsph"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-macroquad = "0.4"
 glam = { workspace = true }
+rayon = "1.8"
+rand = "0.8"
 sim = { path = "../sim" }
-dfsph = { path = "../dfsph" }

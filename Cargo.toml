@@ -3,8 +3,12 @@ resolver = "2"
 members = [
   "crates/sim",
   "crates/game",
+  "crates/dfsph",
 ]
 
 default-members = [
   "crates/game",
 ]
+
+[workspace.dependencies]
+glam = "0.27"
