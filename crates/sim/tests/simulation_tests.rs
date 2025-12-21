@@ -6,8 +6,7 @@
 //! - P2: Pressure solver converges
 //! - P3: Sediment separation doesn't panic
 
-use sim::sediment::{Sediment, SedimentType};
-use sim::particle::{ParticleState, ParticleMaterial};
+use sim::particle::ParticleState;
 use sim::{create_sluice, FlipSimulation};
 use glam::Vec2;
 
@@ -151,34 +150,7 @@ fn test_pressure_solver_convergence() {
         "Pressure solver did not converge: max_div = {}", max_div);
 }
 
-/// P3: Sediment separation should not panic with overlapping particles
-#[test]
-fn test_sediment_separation_no_panic() {
-    let mut sediment = Sediment::new();
-
-    // Add particles at exactly the same position (worst case)
-    for _ in 0..10 {
-        sediment.spawn(Vec2::new(100.0, 100.0), Vec2::ZERO, SedimentType::QuartzSand, 2.0);
-    }
-
-    // Add particles very close together
-    for i in 0..10 {
-        sediment.spawn(
-            Vec2::new(200.0 + i as f32 * 0.001, 100.0),
-            Vec2::ZERO,
-            SedimentType::QuartzSand,
-            2.0,
-        );
-    }
-
-    // This should not panic
-    sediment.separate_particles(2.0);
-
-    // Run multiple times for stability
-    for _ in 0..10 {
-        sediment.separate_particles(2.0);
-    }
-}
+// Note: Legacy sediment.rs tests removed - using FLIP particle system now
 
 /// Overlapping particles should be pushed apart
 #[test]

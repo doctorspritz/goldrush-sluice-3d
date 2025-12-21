@@ -673,61 +673,7 @@ fn test_pressure_solver_convergence() -> (usize, usize) {
 
 /// TEST 7: Sediment separation should not panic even with particles at same position
 fn test_sediment_separation_no_panic() -> (usize, usize) {
-    let mut pass = 0;
-    let mut fail = 0;
-
-    use sim::sediment::{Sediment, SedimentType};
-    use glam::Vec2;
-
-    let mut sediment = Sediment::new();
-
-    // Add particles at exactly the same position (worst case)
-    for _ in 0..10 {
-        sediment.spawn(Vec2::new(100.0, 100.0), Vec2::ZERO, SedimentType::QuartzSand, 2.0);
-    }
-
-    // Add particles very close together
-    for i in 0..10 {
-        sediment.spawn(
-            Vec2::new(200.0 + i as f32 * 0.001, 100.0),
-            Vec2::ZERO,
-            SedimentType::QuartzSand,
-            2.0,
-        );
-    }
-
-    println!("  Created {} sediment particles", sediment.len());
-    println!("  10 at exact same position, 10 very close (0.001 apart)");
-
-    // This should not panic
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        sediment.separate_particles(2.0);
-    }));
-
-    print!("  [7.1] Separation runs without panic: ");
-    if result.is_ok() {
-        println!("PASS");
-        pass += 1;
-    } else {
-        println!("FAIL (panicked!)");
-        fail += 1;
-    }
-
-    // Run again to make sure it's stable
-    let result2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        for _ in 0..10 {
-            sediment.separate_particles(2.0);
-        }
-    }));
-
-    print!("  [7.2] Multiple separations stable: ");
-    if result2.is_ok() {
-        println!("PASS");
-        pass += 1;
-    } else {
-        println!("FAIL (panicked on iteration)");
-        fail += 1;
-    }
-
-    (pass, fail)
+    // Legacy sediment.rs was removed - using FLIP particle system now
+    println!("  [SKIPPED] Legacy sediment tests removed");
+    (0, 0)
 }

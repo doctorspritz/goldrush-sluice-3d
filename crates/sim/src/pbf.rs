@@ -2,7 +2,10 @@ use glam::Vec2;
 use rayon::prelude::*;
 use std::f32::consts::PI;
 
-const GRAVITY: Vec2 = Vec2::new(0.0, 400.0);
+use crate::physics;
+
+/// Gravity vector derived from unified physics constant.
+const GRAVITY: Vec2 = Vec2::new(0.0, physics::GRAVITY);
 const SOLVER_ITERATIONS: usize = 4;
 const REST_DENSITY: f32 = 0.05; 
 const MAX_PARTICLES: usize = 10000;

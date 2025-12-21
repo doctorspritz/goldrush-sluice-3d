@@ -187,11 +187,8 @@ impl ParticleMaterial {
             return 0.0;
         }
 
-        // Constants (tuned for simulation scale)
-        const WATER_DENSITY: f32 = 1.0;
-        const GRAVITY: f32 = 150.0;           // pixels/s² (simulation gravity)
-        const KINEMATIC_VISCOSITY: f32 = 0.5; // Normalized for simulation
-        const C1: f32 = 18.0;                 // Stokes constant
+        use crate::physics::{GRAVITY, KINEMATIC_VISCOSITY, WATER_DENSITY};
+        const C1: f32 = 18.0; // Stokes constant
 
         let density = self.density();
         let c2 = self.shape_factor();

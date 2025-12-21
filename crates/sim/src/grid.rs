@@ -379,8 +379,7 @@ impl Grid {
     /// Boundary conditions will zero velocity at solid faces
     /// Pressure solve will handle incompressibility
     pub fn apply_gravity(&mut self, dt: f32) {
-        // Strong gravity for rushing sluice water
-        const GRAVITY: f32 = 400.0;
+        use crate::physics::GRAVITY;
         for v in &mut self.v {
             *v += GRAVITY * dt;
         }

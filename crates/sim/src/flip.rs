@@ -563,20 +563,13 @@ impl FlipSimulation {
         // ~8 particles per 3x3 cell neighborhood is typical for dilute flow
         const REST_NEIGHBORS: f32 = 8.0;
 
-        // Simple density-based settling constant (used when Ferguson-Church is disabled)
-        const SIMPLE_GRAVITY: f32 = 400.0;
-
-        // Gravity for friction force calculation
-        const GRAVITY: f32 = 400.0;
-
-        // Air gravity - same as grid gravity for consistency
-        const AIR_GRAVITY: f32 = 400.0;
+        use crate::physics::GRAVITY;
 
         // Minimum water neighbors to be considered "in fluid"
         const MIN_WATER_NEIGHBORS: u16 = 3;
 
         // Shear velocity estimation constant
-        const SHEAR_VELOCITY_FACTOR: f32 = 0.1;
+        const SHEAR_VELOCITY_FACTOR: f32 = 0.05;
 
         // Borrow neighbor_counts as a slice for parallel access
         let neighbor_counts = &self.neighbor_counts;
@@ -605,7 +598,7 @@ impl FlipSimulation {
                 if !in_water {
                     // IN AIR: Apply gravity directly (free fall)
                     // No settling, no fluid drag - just gravity + air resistance
-                    particle.velocity.y += AIR_GRAVITY * dt;
+                    particle.velocity.y += GRAVITY * dt;
 
                     // Light air drag to prevent runaway velocities
                     particle.velocity *= 0.995;
@@ -640,8 +633,7 @@ impl FlipSimulation {
 
                 if in_air {
                     // IN AIR: Free fall under gravity - no other physics
-                    const AIR_GRAVITY: f32 = 150.0;
-                    particle.velocity.y += AIR_GRAVITY * dt;
+                    particle.velocity.y += GRAVITY * dt;
                     // Reset to suspended if we were bedload (can't be bedload in air)
                     particle.state = ParticleState::Suspended;
                     return;
@@ -659,7 +651,7 @@ impl FlipSimulation {
                         } else {
                             let r = (density - 1.0) / 1.0;
                             if r > 0.0 && diameter > 0.0 {
-                                (r * SIMPLE_GRAVITY * diameter).sqrt() / density.sqrt()
+                                (r * GRAVITY * diameter).sqrt() / density.sqrt()
                             } else {
                                 0.0
                             }
@@ -747,13 +739,12 @@ impl FlipSimulation {
     fn update_particle_states(&mut self) {
         // Thresholds for state transitions
         const VELOCITY_SETTLE_THRESHOLD: f32 = 3.0;   // Enter bedload below this speed
-        const SHIELDS_HYSTERESIS: f32 = 1.2;          // 20% buffer for exit threshold
+        const SHIELDS_HYSTERESIS: f32 = 2.0;          // 100% buffer for exit (harder to remobilize)
 
         // Shear velocity estimation constant
-        const SHEAR_VELOCITY_FACTOR: f32 = 0.1;
+        const SHEAR_VELOCITY_FACTOR: f32 = 0.05;
 
-        // Gravity for Shields calculation
-        const GRAVITY: f32 = 150.0;
+        use crate::physics::GRAVITY;
 
         let grid = &self.grid;
         let cell_size = grid.cell_size;
