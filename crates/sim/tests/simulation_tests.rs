@@ -7,6 +7,7 @@
 //! - P3: Sediment separation doesn't panic
 
 use sim::sediment::{Sediment, SedimentType};
+use sim::particle::{ParticleState, ParticleMaterial};
 use sim::{create_sluice, FlipSimulation};
 use glam::Vec2;
 
@@ -446,4 +447,180 @@ fn test_velocity_variance_reasonable() {
     // This is a sanity check - specific threshold may need tuning
     assert!(variance < 1000.0,
         "Velocity variance too high for settled water: {}", variance);
+}
+
+// ============================================================================
+// BEDLOAD STATE TRANSITION TESTS
+// ============================================================================
+
+/// Particles in mid-air should NEVER transition to Bedload
+/// This verifies that particles don't "settle in air"
+#[test]
+fn test_midair_particles_stay_suspended() {
+    const WIDTH: usize = 64;
+    const HEIGHT: usize = 48;
+    const CELL_SIZE: f32 = 4.0;
+    const DT: f32 = 1.0 / 60.0;
+
+    let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+
+    // Create only a floor at the very bottom - leave lots of air space
+    for i in 0..WIDTH {
+        for j in (HEIGHT - 3)..HEIGHT {
+            sim.grid.set_solid(i, j);
+        }
+    }
+    sim.grid.compute_sdf();
+
+    // Spawn sediment particles in mid-air (far from floor)
+    // Floor is at y = (HEIGHT-3) * CELL_SIZE = 45 * 4 = 180
+    // Spawn at y = 40 (very far from floor)
+    let spawn_y = 40.0;
+    for i in 0..10 {
+        let x = 100.0 + i as f32 * 5.0;
+        sim.spawn_sand(x, spawn_y, 0.0, 0.0, 1);
+    }
+
+    // Give particles zero velocity (should trigger bedload if near floor)
+    for p in sim.particles.iter_mut() {
+        p.velocity = Vec2::ZERO;
+    }
+
+    // Run simulation for a few frames
+    for _ in 0..10 {
+        sim.update(DT);
+    }
+
+    // All particles should still be Suspended (not Bedload) because they're in mid-air
+    let bedload_count = sim.particles.iter()
+        .filter(|p| p.is_sediment() && p.state == ParticleState::Bedload)
+        .count();
+
+    assert_eq!(bedload_count, 0,
+        "Found {} particles in Bedload state while in mid-air! Particles should NOT settle in air.",
+        bedload_count);
+}
+
+/// Particles that have fallen to the floor should transition to Bedload
+#[test]
+fn test_particles_on_floor_become_bedload() {
+    const WIDTH: usize = 64;
+    const HEIGHT: usize = 48;
+    const CELL_SIZE: f32 = 4.0;
+    const DT: f32 = 1.0 / 60.0;
+
+    let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+
+    // Create floor at bottom
+    for i in 0..WIDTH {
+        for j in (HEIGHT - 3)..HEIGHT {
+            sim.grid.set_solid(i, j);
+        }
+    }
+    sim.grid.compute_sdf();
+
+    // Spawn sediment particles just above the floor
+    // Floor top is at y = (HEIGHT-3) * CELL_SIZE = 45 * 4 = 180
+    // Spawn particles very close to floor
+    let floor_y = (HEIGHT - 3) as f32 * CELL_SIZE;
+    let spawn_y = floor_y - CELL_SIZE * 0.5; // Half a cell above floor
+
+    for i in 0..10 {
+        let x = 100.0 + i as f32 * 5.0;
+        sim.spawn_sand(x, spawn_y, 0.0, 0.0, 1);
+    }
+
+    // Debug: print SDF and gradient at spawn positions
+    println!("Floor y = {}", floor_y);
+    println!("Spawn y = {}", spawn_y);
+    for p in sim.particles.iter() {
+        if p.is_sediment() {
+            let sdf = sim.grid.sample_sdf(p.position);
+            let grad = sim.grid.sdf_gradient(p.position);
+            println!("Particle at ({}, {}): SDF={:.2}, grad=({:.2}, {:.2})",
+                p.position.x, p.position.y, sdf, grad.x, grad.y);
+        }
+    }
+
+    // Set particles to very low velocity (below settle threshold)
+    for p in sim.particles.iter_mut() {
+        p.velocity = Vec2::new(0.01, 0.01);
+    }
+
+    // Run simulation to let them settle
+    for _ in 0..30 {
+        sim.update(DT);
+    }
+
+    // Debug: print states after settling
+    println!("\nAfter settling:");
+    for (i, p) in sim.particles.iter().enumerate() {
+        if p.is_sediment() {
+            let sdf = sim.grid.sample_sdf(p.position);
+            let grad = sim.grid.sdf_gradient(p.position);
+            println!("Particle {}: pos=({:.1}, {:.1}), SDF={:.2}, grad=({:.2}, {:.2}), state={:?}, vel=({:.2}, {:.2})",
+                i, p.position.x, p.position.y, sdf, grad.x, grad.y, p.state, p.velocity.x, p.velocity.y);
+        }
+    }
+
+    // At least some particles should be in Bedload state on the floor
+    let bedload_count = sim.particles.iter()
+        .filter(|p| p.is_sediment() && p.state == ParticleState::Bedload)
+        .count();
+
+    let sediment_count = sim.particles.iter()
+        .filter(|p| p.is_sediment())
+        .count();
+
+    // At least 50% should have settled to bedload
+    assert!(bedload_count > sediment_count / 2,
+        "Only {} of {} sediment particles transitioned to Bedload on floor",
+        bedload_count, sediment_count);
+}
+
+/// Particles near walls (not floors) should stay Suspended
+#[test]
+fn test_particles_near_walls_stay_suspended() {
+    const WIDTH: usize = 64;
+    const HEIGHT: usize = 48;
+    const CELL_SIZE: f32 = 4.0;
+    const DT: f32 = 1.0 / 60.0;
+
+    let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+
+    // Create only a left wall (no floor)
+    for j in 0..HEIGHT {
+        for i in 0..3 {
+            sim.grid.set_solid(i, j);
+        }
+    }
+    sim.grid.compute_sdf();
+
+    // Spawn sediment particles near the left wall
+    let wall_x = 3.0 * CELL_SIZE; // Right edge of wall
+    let spawn_x = wall_x + CELL_SIZE * 0.5; // Half a cell from wall
+
+    for i in 0..10 {
+        let y = 50.0 + i as f32 * 5.0;
+        sim.spawn_sand(spawn_x, y, 0.0, 0.0, 1);
+    }
+
+    // Set particles to very low velocity
+    for p in sim.particles.iter_mut() {
+        p.velocity = Vec2::new(0.01, 0.01);
+    }
+
+    // Run simulation
+    for _ in 0..30 {
+        sim.update(DT);
+    }
+
+    // Particles should NOT be in Bedload state (walls are not floors)
+    let bedload_count = sim.particles.iter()
+        .filter(|p| p.is_sediment() && p.state == ParticleState::Bedload)
+        .count();
+
+    assert_eq!(bedload_count, 0,
+        "Found {} particles in Bedload state near a wall! Only floors should cause Bedload.",
+        bedload_count);
 }

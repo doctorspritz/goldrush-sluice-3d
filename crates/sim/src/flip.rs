@@ -621,7 +621,6 @@ impl FlipSimulation {
         // Thresholds for state transitions
         const VELOCITY_SETTLE_THRESHOLD: f32 = 3.0;   // Enter bedload below this speed
         const SHIELDS_HYSTERESIS: f32 = 1.2;          // 20% buffer for exit threshold
-        const NEAR_FLOOR_DISTANCE: f32 = 1.5;         // Must be very close to solid
 
         // Shear velocity estimation constant
         // u* ≈ 0.1 × U (rough approximation for boundary layer)
@@ -631,6 +630,11 @@ impl FlipSimulation {
         const GRAVITY: f32 = 150.0;
 
         let grid = &self.grid;
+        let cell_size = grid.cell_size;
+
+        // Near floor distance: 1.5x cell size to catch particles resting on floor
+        // This accounts for particles being pushed up by SDF collision
+        let near_floor_distance = cell_size * 1.5;
 
         self.particles.list.par_iter_mut().for_each(|particle| {
             // Only update sediment states
@@ -641,8 +645,8 @@ impl FlipSimulation {
             let sdf_dist = grid.sample_sdf(particle.position);
             let speed = particle.velocity.length();
 
-            // Check if near a solid surface
-            let near_solid = sdf_dist < NEAR_FLOOR_DISTANCE;
+            // Check if near a solid surface (using cell-size-relative threshold)
+            let near_solid = sdf_dist < near_floor_distance;
 
             // Check if the surface is floor-like (gradient pointing upward)
             // SDF gradient points away from solid - for a floor, that's upward (negative y in screen coords)
