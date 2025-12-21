@@ -52,6 +52,8 @@ pub struct FlipSimulation {
 
     // Pre-allocated buffer for neighbor counts (hindered settling)
     neighbor_counts: Vec<u16>,
+    // Pre-allocated buffer for water neighbor counts (in-fluid detection)
+    water_neighbor_counts: Vec<u16>,
 
     // === Sediment Physics Feature Flags ===
     // Toggle these to compare old vs new physics behavior
@@ -99,10 +101,13 @@ impl FlipSimulation {
             near_pressure_forces: Vec::new(),
             near_pressure_phase: 0,
             // Tunable parameters with defaults
-            near_pressure_h: 4.0,
-            near_pressure_rest: 0.8,
+            // Larger h = longer range pressure propagation for incompressibility
+            near_pressure_h: 5.0,  // Moderate range
+            near_pressure_rest: 0.1, // Very low = strong incompressibility, almost no compression
             // Neighbor counts for hindered settling
             neighbor_counts: Vec::new(),
+            // Water neighbor counts for in-fluid detection
+            water_neighbor_counts: Vec::new(),
             // Sediment physics feature flags (all enabled by default)
             use_ferguson_church: true,
             use_hindered_settling: true,
@@ -158,24 +163,42 @@ impl FlipSimulation {
         // Sediment: stores fluid velocity for drag calculation
         self.grid_to_particles();
 
+        // 6a. Slope flow correction now handled in Grid::apply_gravity()
+        // Gravity is applied tangentially near floors at the grid level.
+
         // 6b. Build spatial hash for neighbor queries (used by sediment forces + separation)
         self.build_spatial_hash();
 
         // 6c. Compute neighbor counts for hindered settling
         self.compute_neighbor_counts();
 
+        // 6d. Compute water neighbor counts for in-fluid detection
+        // Sediment particles with no water neighbors are "in air" and fall with gravity
+        self.compute_water_neighbor_counts();
+
         // 7. Apply forces to sediment (drag + buoyancy + hindered settling)
         // This is proper Lagrangian sediment transport with Richardson-Zaki correction
         self.apply_sediment_forces(dt);
 
+        // 7b. Apply near-pressure for particle-particle repulsion
+        // This creates density-based forces that push particles from high to low density
+        // Without this, particles bunch up and lose momentum through P2G averaging
+        // Multiple iterations = faster pressure propagation (pressure waves travel further per frame)
+        for _ in 0..3 {
+            self.apply_near_pressure(dt / 3.0);
+        }
+
         // 8. Advect particles (uses SDF for O(1) collision)
         self.advect_particles(dt);
 
-        // 9. Push overlapping particles apart (FLIP-native separation)
-        // This replaces Clavet SPH near-pressure with a simpler, faster approach.
-        // Unlike Clavet's O(n × neighbors × kernels), this is O(n × overlaps).
-        // See docs/plans/flip-particle-separation-plan.md
-        self.push_particles_apart(2); // 2 iterations as recommended by Houdini FLIP
+        // 8b. Update particle states (Suspended ↔ Bedload transitions)
+        // After collision handling, particles near floor with low velocity become Bedload
+        self.update_particle_states(dt);
+
+        // 9. Push overlapping particles apart - DISABLED
+        // Near-pressure handles incompressibility now. If pressure is strong enough,
+        // particles won't overlap and we don't need explicit collision.
+        // self.push_particles_apart(1);
 
         // Clean up particles that left the simulation
         self.particles.remove_out_of_bounds(
@@ -373,6 +396,10 @@ impl FlipSimulation {
 
         let grid = &self.grid;
 
+        // FLIP ratio: 0 = pure PIC (smooth but dissipative), 1 = pure FLIP (preserves velocity but noisy)
+        // Higher = less viscous, more energetic flow
+        const FLIP_RATIO: f32 = 0.99;  // Almost pure FLIP for fast rushing water
+
         self.particles.list.par_iter_mut().for_each(|particle| {
             let pos = particle.position;
 
@@ -385,6 +412,9 @@ impl FlipSimulation {
                 particle.old_grid_velocity = v_grid;
                 return;
             }
+
+            // Store old particle velocity for FLIP blend
+            let old_particle_velocity = particle.velocity;
 
             // ========== APIC for water particles ==========
             let mut new_velocity = Vec2::ZERO;
@@ -465,17 +495,25 @@ impl FlipSimulation {
                 }
             }
 
-            // Update particle state
-            particle.velocity = new_velocity;
+            // FLIP/PIC blend for velocity update
+            // FLIP: preserve particle velocity, add grid delta from forces/pressure
+            // PIC: take grid velocity directly (dissipative but stable)
+            //
+            // FLIP formula: v_p^{n+1} = v_p^n + (v_grid^{n+1} - v_grid^n)
+            // The grid delta captures: gravity + pressure projection + vorticity
+            // This preserves particle momentum while adding external forces
+            //
+            // We stored old_grid_v in store_old_velocities() BEFORE forces were applied
+            let grid_delta = new_velocity - particle.old_grid_velocity;
+            let flip_velocity = old_particle_velocity + grid_delta;
+            let pic_velocity = new_velocity;
+
+            // Blend: mostly FLIP (0.95) to preserve horizontal momentum
+            particle.velocity = FLIP_RATIO * flip_velocity + (1.0 - FLIP_RATIO) * pic_velocity;
             particle.affine_velocity = new_c;
 
-            // Spray dampening: reduce upward velocity (negative y = up in screen coords)
-            if particle.velocity.y < -40.0 {
-                particle.velocity.y *= 0.7;
-            }
-
-            // Safety clamp: CFL requires v*dt < cell_size
-            const MAX_VELOCITY: f32 = 100.0;
+            // Safety clamp
+            const MAX_VELOCITY: f32 = 150.0;
             let speed = particle.velocity.length();
             if speed > MAX_VELOCITY {
                 particle.velocity *= MAX_VELOCITY / speed;
@@ -516,8 +554,17 @@ impl FlipSimulation {
         // Simple density-based settling constant (used when Ferguson-Church is disabled)
         const SIMPLE_GRAVITY: f32 = 150.0;
 
+        // Air gravity - same as grid gravity for consistency
+        const AIR_GRAVITY: f32 = 120.0;
+
+        // Minimum water neighbors to be considered "in fluid"
+        // With 3 neighbors, we're confident the particle is submerged
+        const MIN_WATER_NEIGHBORS: u16 = 3;
+
         // Borrow neighbor_counts as a slice for parallel access
         let neighbor_counts = &self.neighbor_counts;
+        let water_neighbor_counts = &self.water_neighbor_counts;
+        let grid = &self.grid;
 
         // Copy feature flags for closure capture
         let use_ferguson_church = self.use_ferguson_church;
@@ -534,6 +581,44 @@ impl FlipSimulation {
                     return;
                 }
 
+                // Check if particle is in water or air
+                let water_neighbors = water_neighbor_counts.get(idx).copied().unwrap_or(0);
+                let in_water = water_neighbors >= MIN_WATER_NEIGHBORS;
+
+                if !in_water {
+                    // IN AIR: Apply gravity directly (free fall)
+                    // No settling, no fluid drag - just gravity + air resistance
+                    particle.velocity.y += AIR_GRAVITY * dt;
+
+                    // Light air drag to prevent runaway velocities
+                    particle.velocity *= 0.995;
+
+                    // Safety clamp
+                    const MAX_VELOCITY: f32 = 200.0; // Higher limit for free fall
+                    let speed = particle.velocity.length();
+                    if speed > MAX_VELOCITY {
+                        particle.velocity *= MAX_VELOCITY / speed;
+                    }
+                    return;
+                }
+
+                // Check if particle is in bedload state (resting on floor)
+                if particle.state == crate::particle::ParticleState::Bedload {
+                    // BEDLOAD: Friction-dominated, resist flow until Shields exceeded
+                    // Aggressive damping to stop jittering
+                    let speed = particle.velocity.length();
+                    if speed < 1.0 {
+                        // Very slow - just stop completely
+                        particle.velocity = Vec2::ZERO;
+                    } else {
+                        // Strong exponential damping toward zero
+                        particle.velocity *= 0.8; // 20% reduction per frame
+                    }
+                    // Don't apply settling or fluid drag - state transition handles re-entrainment
+                    return;
+                }
+
+                // IN WATER (Suspended): Apply drift-flux settling physics
                 let density = particle.density();
 
                 // Get diameter: per-particle if enabled, otherwise material typical
@@ -569,7 +654,26 @@ impl FlipSimulation {
                 };
 
                 // Sample fluid velocity at particle position (stored during G2P)
-                let v_fluid = particle.old_grid_velocity;
+                let mut v_fluid = particle.old_grid_velocity;
+
+                // FLOOR FRICTION: If near floor, apply continuous friction to tangential velocity
+                // This slows particles sliding along the bottom until they enter Bedload
+                const FLOOR_PROXIMITY: f32 = 4.0; // pixels from floor to apply friction
+                let sdf_dist = grid.sample_sdf(particle.position);
+                if sdf_dist < FLOOR_PROXIMITY {
+                    let friction = particle.material.friction_coefficient();
+                    // Reduce horizontal fluid influence when on floor
+                    // Floor friction opposes horizontal motion
+                    v_fluid.x *= 1.0 - friction * 0.5;
+                    // Apply direct velocity friction for sliding
+                    let speed = particle.velocity.length();
+                    if speed > 0.1 {
+                        let friction_decel = friction * SIMPLE_GRAVITY * dt;
+                        if friction_decel < speed {
+                            particle.velocity -= particle.velocity.normalize() * friction_decel;
+                        }
+                    }
+                }
 
                 // Target velocity: fluid velocity + downward settling slip
                 // The settling velocity is the terminal velocity in still water
@@ -593,6 +697,65 @@ impl FlipSimulation {
             });
     }
 
+    /// Step 8b: Update particle states (Suspended ↔ Bedload transitions)
+    ///
+    /// State machine with hysteresis to prevent flickering:
+    /// - Enter bedload: |v| < threshold AND near floor (SDF < radius)
+    /// - Exit bedload: Shields number > critical × 1.2 (20% buffer)
+    ///
+    /// This allows particles to accumulate in riffles until flow is strong enough
+    /// to re-entrain them (Shields criterion).
+    fn update_particle_states(&mut self, _dt: f32) {
+        use crate::particle::ParticleState;
+
+        // Thresholds for state transitions
+        const V_SETTLE_THRESHOLD: f32 = 15.0;  // Enter bedload below this speed (was 5.0)
+        const FLOOR_DISTANCE: f32 = 6.0;       // Distance from floor to trigger bedload
+        const SHIELDS_BUFFER: f32 = 1.5;       // 50% hysteresis to exit bedload (prevent flickering)
+        const GRAVITY: f32 = 150.0;            // Simulation gravity
+
+        let grid = &self.grid;
+
+        self.particles.list.par_iter_mut().for_each(|particle| {
+            // Only sediment has state transitions
+            if !particle.is_sediment() {
+                return;
+            }
+
+            let sdf_dist = grid.sample_sdf(particle.position);
+            let near_floor = sdf_dist < FLOOR_DISTANCE;
+            let speed = particle.velocity.length();
+
+            match particle.state {
+                ParticleState::Suspended => {
+                    // Transition to bedload if slow and near floor
+                    if near_floor && speed < V_SETTLE_THRESHOLD {
+                        particle.state = ParticleState::Bedload;
+                    }
+                }
+                ParticleState::Bedload => {
+                    // Compute Shields number for re-entrainment
+                    // τ* = τ / [(ρ_s - ρ_f) × g × d]
+                    // Bed shear stress τ ≈ ρ_f × u*² where u* from near-bed velocity
+                    let fluid_vel = particle.old_grid_velocity;
+                    let shear_velocity = fluid_vel.length() * 0.1; // u* ≈ 0.1 × U
+                    let bed_shear = 1.0 * shear_velocity * shear_velocity; // τ = ρ × u*²
+
+                    let density_diff = (particle.material.density() - 1.0).max(0.1);
+                    let diameter = particle.effective_diameter().max(0.1);
+
+                    let shields_number = bed_shear / (density_diff * GRAVITY * diameter);
+                    let shields_critical = particle.material.shields_critical();
+
+                    // Re-entrain if Shields exceeds critical with hysteresis
+                    if shields_number > shields_critical * SHIELDS_BUFFER {
+                        particle.state = ParticleState::Suspended;
+                    }
+                }
+            }
+        });
+    }
+
     /// Step 7b: Apply near-pressure forces (Clavet et al. 2005)
     ///
     /// Simple SPH-style collision avoidance for ALL particles.
@@ -604,8 +767,11 @@ impl FlipSimulation {
         // Clavet parameters - H and REST_DENSITY are tunable
         let h = self.near_pressure_h;
         let rest_density = self.near_pressure_rest;
-        const K_STIFFNESS: f32 = 0.5; // Volume preservation (gentle)
-        const K_NEAR: f32 = 2.0;      // Overlap prevention
+        // Incompressibility: strong close-range repulsion, moderate long-range
+        // K_NEAR uses q² so it's much stronger at close range - this prevents compression
+        // K_STIFFNESS is gentler, just maintains spacing without damping flow
+        const K_STIFFNESS: f32 = 5.0;   // Long-range: gentle, don't damp flow
+        const K_NEAR: f32 = 80.0;       // Close-range: STRONG, water is incompressible
 
         let h2 = h * h;
         let cell_size = self.grid.cell_size;
@@ -738,16 +904,10 @@ impl FlipSimulation {
             })
             .collect();
 
-        // Apply forces to particles
+        // Apply forces to particles - no clamping here, let pressure push freely
+        // Velocity clamping happens in G2P and advection
         for (idx, force) in forces.into_iter().enumerate() {
             self.particles.list[idx].velocity += force * dt;
-
-            // Clamp velocity
-            const MAX_VELOCITY: f32 = 100.0;
-            let speed = self.particles.list[idx].velocity.length();
-            if speed > MAX_VELOCITY {
-                self.particles.list[idx].velocity *= MAX_VELOCITY / speed;
-            }
         }
     }
 
@@ -971,58 +1131,30 @@ impl FlipSimulation {
             // Move particle
             particle.position += particle.velocity * dt;
 
-            // SDF collision: sample distance to nearest solid
+            // Simple SDF collision: only push out if inside or touching solid
             let sdf_dist = grid.sample_sdf(particle.position);
 
-            // If inside or very close to solid, push out
-            if sdf_dist < cell_size * 0.5 {
-                // Get gradient (points away from solid)
+            if sdf_dist < 0.5 {  // Very close to or inside solid
                 let grad = grid.sdf_gradient(particle.position);
+                let grad_len = grad.length();
+                if grad_len > 0.01 {
+                    let normal = grad / grad_len;
 
-                // Push out to safe distance
-                let push_dist = cell_size * 0.5 - sdf_dist;
-                particle.position += grad * push_dist;
+                    // Push out to safe distance (0.5 px from surface)
+                    let push_dist = 0.5 - sdf_dist;
+                    particle.position += normal * push_dist;
 
-                // Remove velocity component into solid
-                let v_dot_n = particle.velocity.dot(grad);
-                if v_dot_n < 0.0 {
-                    particle.velocity -= grad * v_dot_n;
-                }
-            }
+                    // Only remove velocity INTO the solid, keep tangential
+                    let v_into_wall = particle.velocity.dot(normal);
+                    if v_into_wall < 0.0 {
+                        particle.velocity -= normal * v_into_wall;
 
-            // SAFETY NET: Direct is_solid check to catch edge cases where SDF
-            // bilinear interpolation returns positive values for particles at
-            // the boundary of solid cells.
-            let (ci, cj) = grid.pos_to_cell(particle.position);
-            if grid.is_solid(ci, cj) {
-                // Particle is in a solid cell despite SDF check passing.
-                // Find nearest non-solid cell and push there.
-                let mut best_dir = Vec2::ZERO;
-                let mut found_escape = false;
-
-                // Check 8 neighbors for escape direction
-                for &(di, dj) in &[(-1i32, 0i32), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)] {
-                    let ni = (ci as i32 + di).clamp(0, width as i32 - 1) as usize;
-                    let nj = (cj as i32 + dj).clamp(0, height as i32 - 1) as usize;
-                    if !grid.is_solid(ni, nj) {
-                        best_dir = Vec2::new(di as f32, dj as f32).normalize();
-                        found_escape = true;
-                        break;
+                        // Apply friction only to sediment
+                        if particle.is_sediment() {
+                            let friction = particle.material.friction_coefficient();
+                            particle.velocity *= 1.0 - friction * 0.3;
+                        }
                     }
-                }
-
-                if found_escape {
-                    // Push particle out of solid cell towards non-solid neighbor
-                    particle.position += best_dir * cell_size;
-                    // Kill velocity into solid
-                    let v_dot_d = particle.velocity.dot(best_dir);
-                    if v_dot_d < 0.0 {
-                        particle.velocity -= best_dir * v_dot_d;
-                    }
-                } else {
-                    // Surrounded by solids - try pushing up (most common escape)
-                    particle.position.y -= cell_size;
-                    particle.velocity.y = particle.velocity.y.min(0.0);
                 }
             }
 
@@ -1041,42 +1173,30 @@ impl FlipSimulation {
 
     /// Step 9: Push overlapping particles apart (FLIP-native separation)
     ///
-    /// Unlike Clavet SPH which computes densities and pressures for all neighbors,
-    /// this is a simple overlap check that only does work when particles actually overlap.
-    /// This is the standard approach used by production FLIP solvers like Houdini.
+    /// Simple overlap check that only does work when particles actually overlap.
+    /// Standard approach used by production FLIP solvers like Houdini.
     ///
     /// Algorithm from Matthias Müller:
     /// - For each particle pair within 2*radius, compute penetration depth
     /// - Push both particles apart along their center line by half the overlap
     ///
-    /// WALL-AWARE MODIFICATION: When one particle is near a solid boundary, we push
-    /// the other particle more to avoid pushing into the wall. This prevents compression
-    /// against walls/floor.
-    ///
-    /// Complexity: O(n × overlaps) vs Clavet's O(n × neighbors × kernels)
+    /// Collision with solids is handled by advect_particles, not here.
     fn push_particles_apart(&mut self, iterations: usize) {
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
         let height = self.grid.height;
 
         // Particle radius based on visual size (particles render as ~2x2 blocks)
-        // Separation distance = 2 * radius
         let particle_radius = 1.25;
         let min_dist = particle_radius * 2.0;
         let min_dist_sq = min_dist * min_dist;
 
-        // Distance threshold for "near solid" - particles closer than this to a wall
-        // get reduced push toward the wall
-        let near_solid_threshold = cell_size * 1.0;
-
-        // Ensure impulse buffer is sized
         let particle_count = self.particles.len();
         if self.impulse_buffer.len() < particle_count {
             self.impulse_buffer.resize(particle_count, Vec2::ZERO);
         }
 
         for _ in 0..iterations {
-            // Build spatial hash for this iteration
             self.build_spatial_hash();
 
             // Clear impulse buffer
@@ -1087,7 +1207,6 @@ impl FlipSimulation {
             // Check all particle pairs and accumulate corrections
             for idx in 0..particle_count {
                 let pos_i = self.particles.list[idx].position;
-                let sdf_i = self.grid.sample_sdf(pos_i);
                 let gi = ((pos_i.x / cell_size) as i32).max(0).min(width as i32 - 1);
                 let gj = ((pos_i.y / cell_size) as i32).max(0).min(height as i32 - 1);
 
@@ -1116,59 +1235,12 @@ impl FlipSimulation {
                                 if dist_sq < min_dist_sq && dist_sq > 0.0001 {
                                     let dist = dist_sq.sqrt();
                                     let overlap = min_dist - dist;
-                                    let dir = diff / dist;  // Points from j to i
+                                    let dir = diff / dist;
 
-                                    // Sample SDF for j
-                                    let sdf_j = self.grid.sample_sdf(pos_j);
-
-                                    // Calculate push ratios based on wall proximity
-                                    // If near wall, don't push toward wall - push the other particle more
-                                    let i_near_wall = sdf_i < near_solid_threshold;
-                                    let j_near_wall = sdf_j < near_solid_threshold;
-
-                                    let (ratio_i, ratio_j) = match (i_near_wall, j_near_wall) {
-                                        // Neither near wall: split evenly
-                                        (false, false) => (0.5, 0.5),
-                                        // i near wall: push j more (away from i)
-                                        (true, false) => (0.2, 0.8),
-                                        // j near wall: push i more (away from j)
-                                        (false, true) => (0.8, 0.2),
-                                        // Both near wall: still try to separate, but gently
-                                        (true, true) => (0.5, 0.5),
-                                    };
-
-                                    // Get wall normals (points away from solid)
-                                    let grad_i = if i_near_wall { self.grid.sdf_gradient(pos_i) } else { Vec2::ZERO };
-                                    let grad_j = if j_near_wall { self.grid.sdf_gradient(pos_j) } else { Vec2::ZERO };
-
-                                    // Correction for i (pushed away from j)
-                                    let mut corr_i = dir * overlap * ratio_i;
-                                    // If pushing i toward its nearby wall, redirect along wall tangent
-                                    if i_near_wall {
-                                        let toward_wall = corr_i.dot(grad_i);
-                                        if toward_wall < 0.0 {
-                                            // Remove wall-facing component and add tangent component
-                                            corr_i -= grad_i * toward_wall;
-                                            // Also add a small push away from wall
-                                            corr_i += grad_i * overlap * 0.3;
-                                        }
-                                    }
-
-                                    // Correction for j (pushed away from i, so opposite dir)
-                                    let mut corr_j = -dir * overlap * ratio_j;
-                                    // If pushing j toward its nearby wall, redirect along wall tangent
-                                    if j_near_wall {
-                                        let toward_wall = corr_j.dot(grad_j);
-                                        if toward_wall < 0.0 {
-                                            // Remove wall-facing component and add tangent component
-                                            corr_j -= grad_j * toward_wall;
-                                            // Also add a small push away from wall
-                                            corr_j += grad_j * overlap * 0.3;
-                                        }
-                                    }
-
-                                    self.impulse_buffer[idx] += corr_i;
-                                    self.impulse_buffer[j_idx] += corr_j;
+                                    // Very gentle push - only 10% of overlap to avoid jitter
+                                    let correction = dir * overlap * 0.1;
+                                    self.impulse_buffer[idx] += correction;
+                                    self.impulse_buffer[j_idx] -= correction;
                                 }
                             }
                             j = self.particle_next[j_idx];
@@ -1177,7 +1249,7 @@ impl FlipSimulation {
                 }
             }
 
-            // Apply corrections (with SDF collision check)
+            // Apply corrections (with SDF check to avoid pushing into solids)
             let grid = &self.grid;
             for idx in 0..particle_count {
                 let correction = self.impulse_buffer[idx];
@@ -1185,35 +1257,12 @@ impl FlipSimulation {
                     let particle = &mut self.particles.list[idx];
                     let new_pos = particle.position + correction;
 
-                    // Check if new position is inside solid
+                    // Only apply if new position is outside solids
                     let sdf_dist = grid.sample_sdf(new_pos);
-                    if sdf_dist > cell_size * 0.25 {
-                        // Safe to apply full correction (well outside solid)
+                    if sdf_dist > 0.0 {
                         particle.position = new_pos;
-                    } else if sdf_dist > 0.0 {
-                        // Near solid surface - apply correction but ensure we stay outside
-                        particle.position = new_pos;
-                        // Push slightly away from solid to maintain margin
-                        let grad = grid.sdf_gradient(new_pos);
-                        let safe_dist = cell_size * 0.3;
-                        if sdf_dist < safe_dist {
-                            particle.position += grad * (safe_dist - sdf_dist);
-                        }
-                    } else {
-                        // New position would be inside solid - DON'T apply this correction
-                        // Instead, try to slide along the solid surface
-                        let grad = grid.sdf_gradient(particle.position);
-                        // Project correction onto tangent plane
-                        let tangent_corr = correction - grad * correction.dot(grad);
-                        if tangent_corr.length_squared() > 0.01 {
-                            let tangent_pos = particle.position + tangent_corr;
-                            let tangent_sdf = grid.sample_sdf(tangent_pos);
-                            if tangent_sdf > 0.0 {
-                                particle.position = tangent_pos;
-                            }
-                        }
-                        // If we can't slide, just don't move
                     }
+                    // If would push into solid, skip this correction
                 }
             }
         }
@@ -1291,160 +1340,54 @@ impl FlipSimulation {
         }
     }
 
-    /// Step 9: Soft particle separation - applies velocity impulses instead of position snaps
-    fn separate_particles(&mut self) {
+    /// Compute water neighbor counts for each particle (used for in-fluid detection)
+    /// A sediment particle with zero water neighbors is "in air" and should fall with gravity
+    /// rather than settling at terminal velocity through water.
+    fn compute_water_neighbor_counts(&mut self) {
+        use crate::particle::ParticleMaterial;
+
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
         let height = self.grid.height;
-        // Particles render as 2x2 blocks, so min distance should prevent visual overlap
-        let min_dist = 2.5; // Slightly more than 2 pixels to prevent overlap
-        let min_dist_sq = min_dist * min_dist;
-
-        // Build spatial hash once
-        self.build_spatial_hash();
-
-        // Use pre-allocated impulse buffer for position corrections
         let particle_count = self.particles.len();
-        if self.impulse_buffer.len() < particle_count {
-            self.impulse_buffer.resize(particle_count, Vec2::ZERO);
-        }
-        // Clear impulses
-        for imp in self.impulse_buffer.iter_mut().take(particle_count) {
-            *imp = Vec2::ZERO;
+
+        // Resize buffer if needed
+        if self.water_neighbor_counts.len() < particle_count {
+            self.water_neighbor_counts.resize(particle_count, 0);
         }
 
-        for idx in 0..self.particles.len() {
-            let pos = self.particles.list[idx].position;
-            let gi = ((pos.x / cell_size) as i32).max(0).min(width as i32 - 1);
-            let gj = ((pos.y / cell_size) as i32).max(0).min(height as i32 - 1);
+        // Count WATER neighbors for each particle (same cell + 8 adjacent cells)
+        for (idx, particle) in self.particles.list.iter().enumerate() {
+            let gi = ((particle.position.x / cell_size) as i32).clamp(0, width as i32 - 1) as usize;
+            let gj = ((particle.position.y / cell_size) as i32).clamp(0, height as i32 - 1) as usize;
 
-            // Check 3x3 neighborhood using linked-cell list
+            let mut water_count: u16 = 0;
+
+            // Check 3x3 neighborhood
             for dj in -1i32..=1 {
                 for di in -1i32..=1 {
-                    let ni = gi + di;
-                    let nj = gj + dj;
+                    let ni = gi as i32 + di;
+                    let nj = gj as i32 + dj;
 
-                    if ni < 0 || nj < 0 || ni >= width as i32 || nj >= height as i32 {
+                    if ni < 0 || ni >= width as i32 || nj < 0 || nj >= height as i32 {
                         continue;
                     }
 
-                    let cell_idx = (nj as usize) * width + (ni as usize);
+                    let cell_idx = nj as usize * width + ni as usize;
+                    let mut p_idx = self.cell_head[cell_idx];
 
-                    // Walk linked list for this cell
-                    let mut other_idx = self.cell_head[cell_idx];
-                    while other_idx >= 0 {
-                        let other_idx_usize = other_idx as usize;
-                        if other_idx_usize > idx {
-                            // Only process each pair once (idx < other)
-                            let other_pos = self.particles.list[other_idx_usize].position;
-                            let diff = pos - other_pos;
-                            let dist_sq = diff.length_squared();
-
-                            if dist_sq < min_dist_sq && dist_sq > 0.0001 {
-                                let dist = dist_sq.sqrt();
-                                let overlap = min_dist - dist;
-                                let dir = diff / dist;
-                                // Position correction - push each particle half the overlap
-                                let correction = dir * overlap * 0.5;
-                                self.impulse_buffer[idx] += correction;
-                                self.impulse_buffer[other_idx_usize] -= correction;
-                            }
+                    // Walk linked list counting only WATER particles
+                    while p_idx >= 0 {
+                        let neighbor = &self.particles.list[p_idx as usize];
+                        if neighbor.material == ParticleMaterial::Water {
+                            water_count = water_count.saturating_add(1);
                         }
-                        other_idx = self.particle_next[other_idx_usize];
+                        p_idx = self.particle_next[p_idx as usize];
                     }
                 }
             }
-        }
 
-        // Apply position corrections, but don't push into solids
-        for idx in 0..particle_count {
-            let particle = &mut self.particles.list[idx];
-            let new_pos = particle.position + self.impulse_buffer[idx];
-
-            // Check if new position is in a solid cell
-            let ni = (new_pos.x / cell_size) as usize;
-            let nj = (new_pos.y / cell_size) as usize;
-
-            if ni < width && nj < height && !self.grid.is_solid(ni, nj) {
-                particle.position = new_pos;
-            } else {
-                // Try just horizontal correction
-                let horiz_pos = Vec2::new(new_pos.x, particle.position.y);
-                let hi = (horiz_pos.x / cell_size) as usize;
-                let hj = (horiz_pos.y / cell_size) as usize;
-                if hi < width && hj < height && !self.grid.is_solid(hi, hj) {
-                    particle.position.x = new_pos.x;
-                }
-                // Try just vertical correction
-                let vert_pos = Vec2::new(particle.position.x, new_pos.y);
-                let vi = (vert_pos.x / cell_size) as usize;
-                let vj = (vert_pos.y / cell_size) as usize;
-                if vi < width && vj < height && !self.grid.is_solid(vi, vj) {
-                    particle.position.y = new_pos.y;
-                }
-            }
-        }
-
-        // Final pass: push any particles inside solids back out
-        self.resolve_solid_penetration();
-    }
-
-    /// Push particles that are inside solid cells back to the nearest non-solid position
-    fn resolve_solid_penetration(&mut self) {
-        let cell_size = self.grid.cell_size;
-        let width = self.grid.width;
-        let height = self.grid.height;
-
-        for particle in self.particles.list.iter_mut() {
-            let i = (particle.position.x / cell_size) as usize;
-            let j = (particle.position.y / cell_size) as usize;
-
-            if i >= width || j >= height {
-                continue;
-            }
-
-            if !self.grid.is_solid(i, j) {
-                continue; // Not in solid, nothing to do
-            }
-
-            // Particle is inside solid - find nearest non-solid cell
-            let cell_center_x = (i as f32 + 0.5) * cell_size;
-            let cell_center_y = (j as f32 + 0.5) * cell_size;
-
-            // Check 4 cardinal neighbors and move to nearest non-solid
-            let neighbors = [
-                (i.wrapping_sub(1), j, -1.0f32, 0.0f32), // left
-                (i + 1, j, 1.0, 0.0),                     // right
-                (i, j.wrapping_sub(1), 0.0, -1.0),       // up
-                (i, j + 1, 0.0, 1.0),                     // down
-            ];
-
-            for (ni, nj, dx, dy) in neighbors {
-                if ni < width && nj < height && !self.grid.is_solid(ni, nj) {
-                    // Move particle to edge of this neighbor cell
-                    let edge_x = if dx < 0.0 {
-                        i as f32 * cell_size - 0.5
-                    } else if dx > 0.0 {
-                        (i + 1) as f32 * cell_size + 0.5
-                    } else {
-                        particle.position.x
-                    };
-                    let edge_y = if dy < 0.0 {
-                        j as f32 * cell_size - 0.5
-                    } else if dy > 0.0 {
-                        (j + 1) as f32 * cell_size + 0.5
-                    } else {
-                        particle.position.y
-                    };
-
-                    particle.position.x = edge_x;
-                    particle.position.y = edge_y;
-                    // Zero velocity component going into solid
-                    if dx != 0.0 { particle.velocity.x = 0.0; }
-                    if dy != 0.0 { particle.velocity.y = 0.0; }
-                    break;
-                }
-            }
+            self.water_neighbor_counts[idx] = water_count;
         }
     }
 
@@ -1766,118 +1709,4 @@ impl FlipSimulation {
 
         ke
     }
-}
-
-/// Result of raycasting through the grid
-enum RaycastResult {
-    NoHit,
-    Hit { position: Vec2, normal: Vec2 },
-}
-
-/// Raycast from start to end, detecting first solid cell collision
-/// Uses DDA (Digital Differential Analyzer) for efficient grid traversal
-fn raycast_to_solid(grid: &Grid, start: Vec2, end: Vec2, cell_size: f32) -> RaycastResult {
-    let dir = end - start;
-    let dist = dir.length();
-
-    // Skip raycast for very short movements
-    if dist < 0.001 {
-        let (i, j) = grid.pos_to_cell(end);
-        if grid.is_solid(i, j) {
-            return RaycastResult::Hit {
-                position: start,
-                normal: Vec2::new(0.0, -1.0), // Default up
-            };
-        }
-        return RaycastResult::NoHit;
-    }
-
-    let dir_norm = dir / dist;
-
-    // DDA setup
-    let mut x = start.x / cell_size;
-    let mut y = start.y / cell_size;
-    let end_x = end.x / cell_size;
-    let end_y = end.y / cell_size;
-
-    let step_x: i32 = if dir_norm.x >= 0.0 { 1 } else { -1 };
-    let step_y: i32 = if dir_norm.y >= 0.0 { 1 } else { -1 };
-
-    // Distance to next cell boundary
-    let t_delta_x = if dir_norm.x.abs() > 0.0001 {
-        (cell_size / dir_norm.x.abs())
-    } else {
-        f32::MAX
-    };
-    let t_delta_y = if dir_norm.y.abs() > 0.0001 {
-        (cell_size / dir_norm.y.abs())
-    } else {
-        f32::MAX
-    };
-
-    // Distance to first cell boundary
-    let mut t_max_x = if dir_norm.x > 0.0 {
-        ((x.floor() + 1.0) - x) * t_delta_x
-    } else if dir_norm.x < 0.0 {
-        (x - x.floor()) * t_delta_x
-    } else {
-        f32::MAX
-    };
-    let mut t_max_y = if dir_norm.y > 0.0 {
-        ((y.floor() + 1.0) - y) * t_delta_y
-    } else if dir_norm.y < 0.0 {
-        (y - y.floor()) * t_delta_y
-    } else {
-        f32::MAX
-    };
-
-    let mut cell_x = x.floor() as i32;
-    let mut cell_y = y.floor() as i32;
-    let end_cell_x = end_x.floor() as i32;
-    let end_cell_y = end_y.floor() as i32;
-
-    // Walk through cells
-    let max_steps = ((end_cell_x - cell_x).abs() + (end_cell_y - cell_y).abs() + 2) as usize;
-    for _ in 0..max_steps {
-        // Check current cell
-        if cell_x >= 0
-            && cell_y >= 0
-            && (cell_x as usize) < grid.width
-            && (cell_y as usize) < grid.height
-        {
-            if grid.is_solid(cell_x as usize, cell_y as usize) {
-                // Hit! Calculate position just before entering this cell
-                let hit_t = (t_max_x.min(t_max_y) - t_delta_x.min(t_delta_y)).max(0.0);
-                let hit_pos = start + dir_norm * hit_t * 0.95; // Back off slightly
-
-                // Determine normal based on which boundary we crossed
-                let normal = if t_max_x < t_max_y {
-                    Vec2::new(-step_x as f32, 0.0)
-                } else {
-                    Vec2::new(0.0, -step_y as f32)
-                };
-
-                return RaycastResult::Hit {
-                    position: hit_pos,
-                    normal,
-                };
-            }
-        }
-
-        // Check if we've reached the end
-        if cell_x == end_cell_x && cell_y == end_cell_y {
-            break;
-        }
-
-        // Step to next cell
-        if t_max_x < t_max_y {
-            t_max_x += t_delta_x;
-            cell_x += step_x;
-        } else {
-            t_max_y += t_delta_y;
-            cell_y += step_y;
-        }
-    }
-
-    RaycastResult::NoHit
 }

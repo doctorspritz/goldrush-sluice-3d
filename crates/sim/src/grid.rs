@@ -89,6 +89,10 @@ pub struct Grid {
     /// Vorticity (curl) at cell centers: ω = ∂v/∂x - ∂u/∂y
     /// Used for vorticity confinement and diagnostics
     pub vorticity: Vec<f32>,
+
+    /// Temporary buffer for viscosity diffusion (avoids allocation)
+    u_temp: Vec<f32>,
+    v_temp: Vec<f32>,
 }
 
 impl Grid {
@@ -109,6 +113,9 @@ impl Grid {
             solid: vec![false; cell_count],
             sdf: vec![f32::MAX; cell_count],  // Will be computed after terrain setup
             vorticity: vec![0.0; cell_count],
+            // Pre-allocated buffers for viscosity (avoids per-frame allocation)
+            u_temp: vec![0.0; u_count],
+            v_temp: vec![0.0; v_count],
         }
     }
 
@@ -368,12 +375,12 @@ impl Grid {
         self.divergence.fill(0.0);
     }
 
-    /// Apply gravity to vertical velocity
+    /// Apply gravity - simple uniform downward
+    /// Boundary conditions will zero velocity at solid faces
+    /// Pressure solve will handle incompressibility
     pub fn apply_gravity(&mut self, dt: f32) {
-        // Gravity scaled for visual effect - not too strong to cause free-fall,
-        // but enough for proper momentum
-        const GRAVITY: f32 = 120.0; // Pixels per second squared
-
+        // Strong gravity for rushing sluice water
+        const GRAVITY: f32 = 400.0;
         for v in &mut self.v {
             *v += GRAVITY * dt;
         }
@@ -403,17 +410,12 @@ impl Grid {
 
         // ========== Diffuse U velocities ==========
         // U is stored at left edges: (i, j+0.5) for i in 0..=width, j in 0..height
-        // We need temporary storage to avoid read-write conflicts
-        let mut u_new = self.u.clone();
+        // Copy to temp buffer, then write back (avoids allocation)
+        self.u_temp.copy_from_slice(&self.u);
 
         for j in 0..self.height {
-            for i in 0..=self.width {
+            for i in 1..self.width {
                 let idx = self.u_index(i, j);
-
-                // Skip boundary velocities (will be zeroed anyway)
-                if i == 0 || i == self.width {
-                    continue;
-                }
 
                 // Check if adjacent cells are fluid (not solid/air)
                 let cell_left = self.cell_index(i - 1, j);
@@ -425,33 +427,27 @@ impl Grid {
                     continue;
                 }
 
-                let u = self.u[idx];
+                let u = self.u_temp[idx];
 
                 // Get neighbors with boundary handling
-                let u_left = if i > 0 { self.u[self.u_index(i - 1, j)] } else { 0.0 };
-                let u_right = if i < self.width { self.u[self.u_index(i + 1, j)] } else { 0.0 };
-                let u_bottom = if j > 0 { self.u[self.u_index(i, j - 1)] } else { u };
-                let u_top = if j < self.height - 1 { self.u[self.u_index(i, j + 1)] } else { u };
+                let u_left = self.u_temp[self.u_index(i - 1, j)];
+                let u_right = self.u_temp[self.u_index(i + 1, j)];
+                let u_bottom = if j > 0 { self.u_temp[self.u_index(i, j - 1)] } else { u };
+                let u_top = if j < self.height - 1 { self.u_temp[self.u_index(i, j + 1)] } else { u };
 
                 // Laplacian with Neumann BC at domain edges
                 let laplacian = u_left + u_right + u_bottom + u_top - 4.0 * u;
-                u_new[idx] = u + scale * laplacian;
+                self.u[idx] = u + scale * laplacian;
             }
         }
-        self.u = u_new;
 
         // ========== Diffuse V velocities ==========
         // V is stored at bottom edges: (i+0.5, j) for i in 0..width, j in 0..=height
-        let mut v_new = self.v.clone();
+        self.v_temp.copy_from_slice(&self.v);
 
-        for j in 0..=self.height {
+        for j in 1..self.height {
             for i in 0..self.width {
                 let idx = self.v_index(i, j);
-
-                // Skip boundary velocities
-                if j == 0 || j == self.height {
-                    continue;
-                }
 
                 // Check if adjacent cells are fluid
                 let cell_bottom = self.cell_index(i, j - 1);
@@ -462,19 +458,18 @@ impl Grid {
                     continue;
                 }
 
-                let v = self.v[idx];
+                let v = self.v_temp[idx];
 
                 // Get neighbors
-                let v_left = if i > 0 { self.v[self.v_index(i - 1, j)] } else { v };
-                let v_right = if i < self.width - 1 { self.v[self.v_index(i + 1, j)] } else { v };
-                let v_bottom = if j > 0 { self.v[self.v_index(i, j - 1)] } else { 0.0 };
-                let v_top = if j < self.height { self.v[self.v_index(i, j + 1)] } else { 0.0 };
+                let v_left = if i > 0 { self.v_temp[self.v_index(i - 1, j)] } else { v };
+                let v_right = if i < self.width - 1 { self.v_temp[self.v_index(i + 1, j)] } else { v };
+                let v_bottom = self.v_temp[self.v_index(i, j - 1)];
+                let v_top = self.v_temp[self.v_index(i, j + 1)];
 
                 let laplacian = v_left + v_right + v_bottom + v_top - 4.0 * v;
-                v_new[idx] = v + scale * laplacian;
+                self.v[idx] = v + scale * laplacian;
             }
         }
-        self.v = v_new;
     }
 
     /// Zero out velocities at solid boundaries
