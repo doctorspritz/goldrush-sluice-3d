@@ -504,6 +504,9 @@ impl FlipSimulation {
         // Borrow neighbor_counts as a slice for parallel access
         let neighbor_counts = &self.neighbor_counts;
 
+        // Borrow grid for cell type lookup
+        let grid = &self.grid;
+
         // Copy feature flags for closure capture
         let use_ferguson_church = self.use_ferguson_church;
         let use_hindered_settling = self.use_hindered_settling;
@@ -532,10 +535,18 @@ impl FlipSimulation {
                     ParticleState::Suspended => {
                         // ========== SUSPENDED: Normal settling + drag ==========
 
-                        // Check if particle is in fluid or air
-                        // If grid velocity is very small, particle is likely in air
+                        // Check if particle is in a FLUID cell (not AIR)
+                        // This determines whether to apply water settling or air gravity
+                        let (ci, cj) = grid.pos_to_cell(particle.position);
+                        let cell_idx = grid.cell_index(ci, cj);
+                        let cell_type = grid.cell_type[cell_idx];
+                        let in_fluid_cell = cell_type == CellType::Fluid;
+
+                        // Also check grid velocity as backup (handles edge cases)
                         let v_fluid = particle.old_grid_velocity;
-                        let in_fluid = v_fluid.length_squared() > 0.1 || particle.near_density > 0.5;
+                        let has_fluid_velocity = v_fluid.length_squared() > 1.0;
+
+                        let in_fluid = in_fluid_cell || has_fluid_velocity;
 
                         if in_fluid {
                             // ===== IN FLUID: Settling through water =====

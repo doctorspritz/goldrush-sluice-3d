@@ -453,10 +453,10 @@ fn test_velocity_variance_reasonable() {
 // BEDLOAD STATE TRANSITION TESTS
 // ============================================================================
 
-/// Particles in mid-air should NEVER transition to Bedload
-/// This verifies that particles don't "settle in air"
+/// Particles in mid-air should fall under gravity, not float
+/// This verifies that sediment particles in air have downward velocity
 #[test]
-fn test_midair_particles_stay_suspended() {
+fn test_midair_particles_fall_under_gravity() {
     const WIDTH: usize = 64;
     const HEIGHT: usize = 48;
     const CELL_SIZE: f32 = 4.0;
@@ -472,7 +472,7 @@ fn test_midair_particles_stay_suspended() {
     }
     sim.grid.compute_sdf();
 
-    // Spawn sediment particles in mid-air (far from floor)
+    // Spawn sediment particles in mid-air (far from floor and far from any water)
     // Floor is at y = (HEIGHT-3) * CELL_SIZE = 45 * 4 = 180
     // Spawn at y = 40 (very far from floor)
     let spawn_y = 40.0;
@@ -481,23 +481,51 @@ fn test_midair_particles_stay_suspended() {
         sim.spawn_sand(x, spawn_y, 0.0, 0.0, 1);
     }
 
-    // Give particles zero velocity (should trigger bedload if near floor)
+    // Record initial positions
+    let initial_positions: Vec<f32> = sim.particles.iter()
+        .filter(|p| p.is_sediment())
+        .map(|p| p.position.y)
+        .collect();
+
+    // Give particles zero velocity to start
     for p in sim.particles.iter_mut() {
         p.velocity = Vec2::ZERO;
     }
 
-    // Run simulation for a few frames
-    for _ in 0..10 {
+    // Run simulation for enough frames to see falling
+    for _ in 0..60 {  // 1 second at 60fps
         sim.update(DT);
     }
 
-    // All particles should still be Suspended (not Bedload) because they're in mid-air
+    // Check that particles have fallen (y position increased, since y+ is down)
+    let mut fell_count = 0;
+    for (i, p) in sim.particles.iter().enumerate() {
+        if p.is_sediment() && i < initial_positions.len() {
+            let delta_y = p.position.y - initial_positions[i];
+            println!("Particle {}: initial_y={:.1}, final_y={:.1}, delta={:.1}, vel_y={:.2}",
+                i, initial_positions[i], p.position.y, delta_y, p.velocity.y);
+
+            // Particle should have fallen at least 10 units in 1 second under gravity
+            if delta_y > 10.0 {
+                fell_count += 1;
+            }
+        }
+    }
+
+    let sediment_count = sim.particles.iter().filter(|p| p.is_sediment()).count();
+
+    // All particles should have fallen
+    assert!(fell_count == sediment_count,
+        "Only {} of {} particles fell under gravity. Particles in air should fall!",
+        fell_count, sediment_count);
+
+    // Also verify they stayed Suspended (didn't falsely transition to Bedload in air)
     let bedload_count = sim.particles.iter()
         .filter(|p| p.is_sediment() && p.state == ParticleState::Bedload)
         .count();
 
     assert_eq!(bedload_count, 0,
-        "Found {} particles in Bedload state while in mid-air! Particles should NOT settle in air.",
+        "Found {} particles in Bedload state while in mid-air!",
         bedload_count);
 }
 
