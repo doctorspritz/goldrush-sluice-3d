@@ -8,7 +8,7 @@ const GRAVITY_VEC: Vec2 = Vec2::new(0.0, physics::GRAVITY);
 
 // Core PBF Parameters
 const SOLVER_ITERATIONS: usize = 4; // Default iterations (adapted dynamically)
-const REST_DENSITY: f32 = 1000.0;
+const REST_DENSITY: f32 = 1.0;  // Normalized density for SPH
 const H_SCALE: f32 = 1.5; // Radius of support relative to cell size
 const EPSILON: f32 = 0.0001; // Avoid div by zero
 const MAX_PARTICLES_CAP: usize = 3000; // Hard cap for performance safety
