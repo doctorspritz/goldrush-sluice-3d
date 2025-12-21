@@ -379,6 +379,104 @@ impl Grid {
         }
     }
 
+    /// Apply viscosity diffusion to velocity field
+    /// This creates boundary layers near walls, enabling vortex shedding.
+    ///
+    /// Uses explicit Euler: ∂u/∂t = ν∇²u
+    /// Stability requires: ν * dt / h² < 0.25 (automatically clamped)
+    ///
+    /// Only affects velocities near walls where there are velocity gradients.
+    /// Bulk flow with uniform velocity is unaffected (Laplacian ≈ 0).
+    pub fn apply_viscosity(&mut self, dt: f32, viscosity: f32) {
+        let h_sq = self.cell_size * self.cell_size;
+
+        // Stability check: clamp effective viscosity to prevent blowup
+        // For explicit Euler diffusion: ν * dt / h² < 0.25
+        let max_viscosity = 0.2 * h_sq / dt; // Use 0.2 for safety margin
+        let nu = viscosity.min(max_viscosity);
+        let scale = nu * dt / h_sq;
+
+        // Skip if viscosity is negligible
+        if scale < 1e-6 {
+            return;
+        }
+
+        // ========== Diffuse U velocities ==========
+        // U is stored at left edges: (i, j+0.5) for i in 0..=width, j in 0..height
+        // We need temporary storage to avoid read-write conflicts
+        let mut u_new = self.u.clone();
+
+        for j in 0..self.height {
+            for i in 0..=self.width {
+                let idx = self.u_index(i, j);
+
+                // Skip boundary velocities (will be zeroed anyway)
+                if i == 0 || i == self.width {
+                    continue;
+                }
+
+                // Check if adjacent cells are fluid (not solid/air)
+                let cell_left = self.cell_index(i - 1, j);
+                let cell_right = self.cell_index(i, j);
+
+                // Only apply viscosity in fluid regions
+                if self.cell_type[cell_left] != CellType::Fluid
+                   && self.cell_type[cell_right] != CellType::Fluid {
+                    continue;
+                }
+
+                let u = self.u[idx];
+
+                // Get neighbors with boundary handling
+                let u_left = if i > 0 { self.u[self.u_index(i - 1, j)] } else { 0.0 };
+                let u_right = if i < self.width { self.u[self.u_index(i + 1, j)] } else { 0.0 };
+                let u_bottom = if j > 0 { self.u[self.u_index(i, j - 1)] } else { u };
+                let u_top = if j < self.height - 1 { self.u[self.u_index(i, j + 1)] } else { u };
+
+                // Laplacian with Neumann BC at domain edges
+                let laplacian = u_left + u_right + u_bottom + u_top - 4.0 * u;
+                u_new[idx] = u + scale * laplacian;
+            }
+        }
+        self.u = u_new;
+
+        // ========== Diffuse V velocities ==========
+        // V is stored at bottom edges: (i+0.5, j) for i in 0..width, j in 0..=height
+        let mut v_new = self.v.clone();
+
+        for j in 0..=self.height {
+            for i in 0..self.width {
+                let idx = self.v_index(i, j);
+
+                // Skip boundary velocities
+                if j == 0 || j == self.height {
+                    continue;
+                }
+
+                // Check if adjacent cells are fluid
+                let cell_bottom = self.cell_index(i, j - 1);
+                let cell_top = self.cell_index(i, j);
+
+                if self.cell_type[cell_bottom] != CellType::Fluid
+                   && self.cell_type[cell_top] != CellType::Fluid {
+                    continue;
+                }
+
+                let v = self.v[idx];
+
+                // Get neighbors
+                let v_left = if i > 0 { self.v[self.v_index(i - 1, j)] } else { v };
+                let v_right = if i < self.width - 1 { self.v[self.v_index(i + 1, j)] } else { v };
+                let v_bottom = if j > 0 { self.v[self.v_index(i, j - 1)] } else { 0.0 };
+                let v_top = if j < self.height { self.v[self.v_index(i, j + 1)] } else { 0.0 };
+
+                let laplacian = v_left + v_right + v_bottom + v_top - 4.0 * v;
+                v_new[idx] = v + scale * laplacian;
+            }
+        }
+        self.v = v_new;
+    }
+
     /// Zero out velocities at solid boundaries
     /// MUST be called before compute_divergence to prevent velocity into walls
     /// from corrupting the pressure solve

@@ -291,6 +291,18 @@ async fn main() {
             fast_particle_size = (fast_particle_size + 0.5).min(8.0);
         }
 
+        // Viscosity controls: I to toggle, O/P to adjust
+        // Viscosity creates boundary layers needed for vortex shedding
+        if is_key_pressed(KeyCode::I) {
+            sim.use_viscosity = !sim.use_viscosity;
+        }
+        if is_key_pressed(KeyCode::O) {
+            sim.viscosity = (sim.viscosity - 0.25).max(0.25);
+        }
+        if is_key_pressed(KeyCode::P) {
+            sim.viscosity = (sim.viscosity + 0.25).min(5.0);
+        }
+
         // Rebuild terrain if riffle params changed
         if riffle_dirty {
             riffle_dirty = false;
@@ -500,18 +512,31 @@ async fn main() {
             10.0, 124.0, 14.0, Color::from_rgba(100, 200, 100, 255),
         );
 
+        // Viscosity params (for vortex shedding)
+        let visc_status = if sim.use_viscosity {
+            format!("VISCOSITY: ON (ν={:.2})", sim.viscosity)
+        } else {
+            "VISCOSITY: OFF".to_string()
+        };
+        let visc_color = if sim.use_viscosity {
+            Color::from_rgba(255, 150, 100, 255)
+        } else {
+            Color::from_rgba(100, 100, 100, 255)
+        };
+        draw_text(&visc_status, 10.0, 140.0, 14.0, visc_color);
+
         // Controls - BOTTOM
         draw_text(
             "←→ vx | Shift+←→ vy | ↑↓ spawn | +/- flow×  | Q/A spacing | W/S height | E/D width",
-            10.0, screen_height() - 58.0, 14.0, GRAY,
+            10.0, screen_height() - 74.0, 14.0, GRAY,
         );
         draw_text(
             "[B]=Render | T/G threshold | Y/H scale | 5/6 H | 7/8 rest | 9/0 size",
-            10.0, screen_height() - 42.0, 14.0, GRAY,
+            10.0, screen_height() - 58.0, 14.0, GRAY,
         );
         draw_text(
-            "[Space]=Pause [V]=Velocity [R]=Reset [C]=Clear",
-            10.0, screen_height() - 26.0, 14.0, GRAY,
+            "[I]=Viscosity | O/P ν | [Space]=Pause [V]=Velocity [R]=Reset [C]=Clear",
+            10.0, screen_height() - 42.0, 14.0, GRAY,
         );
 
         // Frame rate limiting disabled - we're CPU-bound on simulation

@@ -63,6 +63,15 @@ pub struct FlipSimulation {
     pub use_variable_diameter: bool,
     /// Size variation factor: diameter = typical * (1 ± variation)
     pub diameter_variation: f32,
+
+    // === Viscosity for Vortex Shedding ===
+    // Viscosity creates boundary layer separation needed for vortex formation
+    /// Enable viscosity diffusion (creates shear layers at walls)
+    pub use_viscosity: bool,
+    /// Kinematic viscosity coefficient (higher = more diffusion, slower flow near walls)
+    /// Typical values: 0.5-3.0 for visible vortex shedding
+    /// Too high: slows entire flow; Too low: no boundary layer separation
+    pub viscosity: f32,
 }
 
 impl FlipSimulation {
@@ -99,6 +108,9 @@ impl FlipSimulation {
             use_hindered_settling: true,
             use_variable_diameter: true,
             diameter_variation: 0.3, // ±30% size variation
+            // Viscosity for vortex shedding (disabled by default for comparison)
+            use_viscosity: false,
+            viscosity: 1.0, // Good starting point for Re ~ 300
         }
     }
 
@@ -118,6 +130,14 @@ impl FlipSimulation {
         // 4. Apply external forces (gravity + vorticity)
         // These forces create divergence which is then removed by pressure projection
         self.grid.apply_gravity(dt);
+
+        // 4b. Apply viscosity diffusion (creates boundary layers for vortex shedding)
+        // Viscosity primarily affects velocity gradients near walls, not bulk flow.
+        // Without viscosity, flow goes smoothly around obstacles without separation.
+        if self.use_viscosity {
+            self.grid.apply_viscosity(dt, self.viscosity);
+        }
+
         // Vorticity confinement: ε < 0.1 per literature to avoid artificial turbulence
         // OPTIMIZATION: Run every 2 frames (less critical than pressure)
         if self.frame % 2 == 0 {
