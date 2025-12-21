@@ -4,9 +4,9 @@
 
 use crate::chunk::{Chunk, CHUNK_SIZE};
 
-const ITERATIONS: usize = 4; // Back to 4 for better pressure solving
+const ITERATIONS: usize = 20; // Increased to 20 for better pressure/incompressibility
 const DT: f32 = 0.1; // Time step
-const VISCOSITY: f32 = 0.0; // Zero for inviscid water
+const VISCOSITY: f32 = 0.0005; // Increased to 0.0005 to damp FLIP noise
 
 /// Solve fluid dynamics for a single frame.
 /// Uses chunk's scratch buffers to avoid heap allocation.
@@ -20,6 +20,10 @@ pub fn solve_fluid(chunk: &mut Chunk) {
     diffuse(1, &mut *chunk.vel_x, &*chunk.scratch_a, VISCOSITY, DT);
     diffuse(2, &mut *chunk.vel_y, &*chunk.scratch_b, VISCOSITY, DT);
 
+    // 1.5 Vorticity Confinement (Enhance vortices)
+    // We can reuse scratch_a for curl computation since we don't need vx_prev anymore
+    vorticity_confinement(&mut *chunk.vel_x, &mut *chunk.vel_y, &mut *chunk.scratch_a, DT);
+
     // 2. Project (Enforce Mass Conservation / Incompressibility)
     project(&mut *chunk.vel_x, &mut *chunk.vel_y, &mut *chunk.scratch_a, &mut *chunk.scratch_b);
 
@@ -32,6 +36,63 @@ pub fn solve_fluid(chunk: &mut Chunk) {
 
     // 4. Project again (to keep it clean)
     project(&mut *chunk.vel_x, &mut *chunk.vel_y, &mut *chunk.scratch_a, &mut *chunk.scratch_b);
+}
+
+/// Apply vorticity confinement force to enhance swirling motion.
+/// Stores curl in the scratch buffer.
+fn vorticity_confinement(u: &mut [f32], v: &mut [f32], scratch: &mut [f32], dt: f32) {
+    let curl = scratch; // Alias for clarity
+    let h = 1.0; // / CHUNK_SIZE as f32; // Grid scale (relative)
+    let strength = 2.0; // Vorticity confinement strength (Aggressive)
+
+    // 1. Compute Curl: (dv/dx - du/dy) * 0.5
+    for j in 1..CHUNK_SIZE-1 {
+        for i in 1..CHUNK_SIZE-1 {
+            let idx = Chunk::index(i, j);
+            
+            let dv_dx = (v[Chunk::index(i + 1, j)] - v[Chunk::index(i - 1, j)]) * 0.5;
+            let du_dy = (u[Chunk::index(i, j + 1)] - u[Chunk::index(i, j - 1)]) * 0.5;
+            
+            curl[idx] = dv_dx - du_dy;
+        }
+    }
+    set_bnd(0, curl);
+
+    // 2. Compute and Apply Force
+    for j in 1..CHUNK_SIZE-1 {
+        for i in 1..CHUNK_SIZE-1 {
+            let idx = Chunk::index(i, j);
+            
+            // Gradient of curl magnitude |w|
+            let w_right = curl[Chunk::index(i + 1, j)].abs();
+            let w_left = curl[Chunk::index(i - 1, j)].abs();
+            let w_top = curl[Chunk::index(i, j + 1)].abs();
+            let w_bottom = curl[Chunk::index(i, j - 1)].abs();
+            
+            let dw_dx = (w_right - w_left) * 0.5;
+            let dw_dy = (w_top - w_bottom) * 0.5;
+            
+            // Safe normalize
+            let len = (dw_dx * dw_dx + dw_dy * dw_dy).sqrt();
+            if len < 1e-5 {
+                continue;
+            }
+            
+            let nx = dw_dx / len;
+            let ny = dw_dy / len;
+            
+            // Force direction: N x w (vectors)
+            // F = strength * h * (N x unit_z * curl)
+            // (nx, ny, 0) x (0, 0, curl) = (ny * curl, -nx * curl, 0)
+            
+            let w = curl[idx];
+            let fx = ny * w * strength * h;
+            let fy = -nx * w * strength * h;
+            
+            u[idx] += fx * dt;
+            v[idx] += fy * dt;
+        }
+    }
 }
 
 /// Linear backtrace advection.

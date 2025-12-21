@@ -8,6 +8,13 @@
 
 use glam::{Mat2, Vec2};
 
+/// State of a sediment particle
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParticleState {
+    Suspended,
+    Bedload,
+}
+
 /// Material type for particles (affects rendering and settling)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParticleMaterial {
@@ -159,6 +166,30 @@ impl ParticleMaterial {
 
         numerator / denominator
     }
+
+    /// Friction coefficient for sliding on the floor
+    /// Higher values = stops faster
+    pub fn friction_coefficient(&self) -> f32 {
+        match self {
+            Self::Water => 0.0,
+            Self::Mud => 0.4,
+            Self::Sand => 0.6,
+            Self::Magnetite => 0.7,
+            Self::Gold => 0.8, // Heavy, high friction
+        }
+    }
+
+    /// Critical Shields number for re-entrainment
+    /// Higher = harder to lift from bed
+    pub fn shields_critical(&self) -> f32 {
+        match self {
+            Self::Water => 0.0,
+            Self::Mud => 0.03, // Easily suspended
+            Self::Sand => 0.045, // Standard sand
+            Self::Magnetite => 0.05,
+            Self::Gold => 0.06, // Hardest to lift
+        }
+    }
 }
 
 /// A fluid particle - supports water, mud, and sediment types
@@ -180,6 +211,8 @@ pub struct Particle {
     /// Particle diameter in simulation units (for Ferguson-Church settling)
     /// If 0.0, uses material.typical_diameter() as fallback
     pub diameter: f32,
+    /// Physical state: Suspended (moving) or Bedload (resting)
+    pub state: ParticleState,
 }
 
 impl Particle {
@@ -193,6 +226,7 @@ impl Particle {
             material,
             near_density: 0.0,
             diameter: material.typical_diameter(),
+            state: ParticleState::Suspended,
         }
     }
 
@@ -206,6 +240,7 @@ impl Particle {
             material,
             near_density: 0.0,
             diameter,
+            state: ParticleState::Suspended,
         }
     }
 

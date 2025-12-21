@@ -398,7 +398,8 @@ impl FlipSimulation {
 
         // FLIP ratio: 0 = pure PIC (smooth but dissipative), 1 = pure FLIP (preserves velocity but noisy)
         // Higher = less viscous, more energetic flow
-        const FLIP_RATIO: f32 = 0.99;  // Almost pure FLIP for fast rushing water
+        // User requested "more APIC" -> 0.90 for stability
+        const FLIP_RATIO: f32 = 0.90;
 
         self.particles.list.par_iter_mut().for_each(|particle| {
             let pos = particle.position;
