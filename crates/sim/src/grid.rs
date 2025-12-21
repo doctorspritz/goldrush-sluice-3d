@@ -85,6 +85,14 @@ pub struct Grid {
     /// Signed distance field to nearest solid (negative inside, positive outside)
     /// Precomputed when terrain changes for O(1) collision queries
     pub sdf: Vec<f32>,
+
+    /// Vorticity (curl) at cell centers: ω = ∂v/∂x - ∂u/∂y
+    /// Used for vorticity confinement and diagnostics
+    pub vorticity: Vec<f32>,
+
+    /// Temporary buffer for viscosity diffusion (avoids allocation)
+    u_temp: Vec<f32>,
+    v_temp: Vec<f32>,
 }
 
 impl Grid {
@@ -104,6 +112,10 @@ impl Grid {
             cell_type: vec![CellType::Air; cell_count],
             solid: vec![false; cell_count],
             sdf: vec![f32::MAX; cell_count],  // Will be computed after terrain setup
+            vorticity: vec![0.0; cell_count],
+            // Pre-allocated buffers for viscosity (avoids per-frame allocation)
+            u_temp: vec![0.0; u_count],
+            v_temp: vec![0.0; v_count],
         }
     }
 
@@ -363,14 +375,100 @@ impl Grid {
         self.divergence.fill(0.0);
     }
 
-    /// Apply gravity to vertical velocity
+    /// Apply gravity - simple uniform downward
+    /// Boundary conditions will zero velocity at solid faces
+    /// Pressure solve will handle incompressibility
     pub fn apply_gravity(&mut self, dt: f32) {
-        // Gravity scaled for visual effect - not too strong to cause free-fall,
-        // but enough for proper momentum
-        const GRAVITY: f32 = 120.0; // Pixels per second squared
-
+        // Strong gravity for rushing sluice water
+        const GRAVITY: f32 = 400.0;
         for v in &mut self.v {
             *v += GRAVITY * dt;
+        }
+    }
+
+    /// Apply viscosity diffusion to velocity field
+    /// This creates boundary layers near walls, enabling vortex shedding.
+    ///
+    /// Uses explicit Euler: ∂u/∂t = ν∇²u
+    /// Stability requires: ν * dt / h² < 0.25 (automatically clamped)
+    ///
+    /// Only affects velocities near walls where there are velocity gradients.
+    /// Bulk flow with uniform velocity is unaffected (Laplacian ≈ 0).
+    pub fn apply_viscosity(&mut self, dt: f32, viscosity: f32) {
+        let h_sq = self.cell_size * self.cell_size;
+
+        // Stability check: clamp effective viscosity to prevent blowup
+        // For explicit Euler diffusion: ν * dt / h² < 0.25
+        let max_viscosity = 0.2 * h_sq / dt; // Use 0.2 for safety margin
+        let nu = viscosity.min(max_viscosity);
+        let scale = nu * dt / h_sq;
+
+        // Skip if viscosity is negligible
+        if scale < 1e-6 {
+            return;
+        }
+
+        // ========== Diffuse U velocities ==========
+        // U is stored at left edges: (i, j+0.5) for i in 0..=width, j in 0..height
+        // Copy to temp buffer, then write back (avoids allocation)
+        self.u_temp.copy_from_slice(&self.u);
+
+        for j in 0..self.height {
+            for i in 1..self.width {
+                let idx = self.u_index(i, j);
+
+                // Check if adjacent cells are fluid (not solid/air)
+                let cell_left = self.cell_index(i - 1, j);
+                let cell_right = self.cell_index(i, j);
+
+                // Only apply viscosity in fluid regions
+                if self.cell_type[cell_left] != CellType::Fluid
+                   && self.cell_type[cell_right] != CellType::Fluid {
+                    continue;
+                }
+
+                let u = self.u_temp[idx];
+
+                // Get neighbors with boundary handling
+                let u_left = self.u_temp[self.u_index(i - 1, j)];
+                let u_right = self.u_temp[self.u_index(i + 1, j)];
+                let u_bottom = if j > 0 { self.u_temp[self.u_index(i, j - 1)] } else { u };
+                let u_top = if j < self.height - 1 { self.u_temp[self.u_index(i, j + 1)] } else { u };
+
+                // Laplacian with Neumann BC at domain edges
+                let laplacian = u_left + u_right + u_bottom + u_top - 4.0 * u;
+                self.u[idx] = u + scale * laplacian;
+            }
+        }
+
+        // ========== Diffuse V velocities ==========
+        // V is stored at bottom edges: (i+0.5, j) for i in 0..width, j in 0..=height
+        self.v_temp.copy_from_slice(&self.v);
+
+        for j in 1..self.height {
+            for i in 0..self.width {
+                let idx = self.v_index(i, j);
+
+                // Check if adjacent cells are fluid
+                let cell_bottom = self.cell_index(i, j - 1);
+                let cell_top = self.cell_index(i, j);
+
+                if self.cell_type[cell_bottom] != CellType::Fluid
+                   && self.cell_type[cell_top] != CellType::Fluid {
+                    continue;
+                }
+
+                let v = self.v_temp[idx];
+
+                // Get neighbors
+                let v_left = if i > 0 { self.v_temp[self.v_index(i - 1, j)] } else { v };
+                let v_right = if i < self.width - 1 { self.v_temp[self.v_index(i + 1, j)] } else { v };
+                let v_bottom = self.v_temp[self.v_index(i, j - 1)];
+                let v_top = self.v_temp[self.v_index(i, j + 1)];
+
+                let laplacian = v_left + v_right + v_bottom + v_top - 4.0 * v;
+                self.v[idx] = v + scale * laplacian;
+            }
         }
     }
 
@@ -609,27 +707,79 @@ impl Grid {
         }
     }
 
-    /// Apply vorticity confinement to maintain swirling motion
-    /// Based on PavelDoGreat/WebGL-Fluid-Simulation
-    pub fn apply_vorticity_confinement(&mut self, dt: f32, strength: f32) {
-        // First pass: compute curl (vorticity) at each cell
-        let mut curl = vec![0.0f32; self.width * self.height];
-
+    /// Compute vorticity (curl) field: ω = ∂v/∂x - ∂u/∂y
+    /// Stores result in self.vorticity for later use in confinement and diagnostics
+    pub fn compute_vorticity(&mut self) {
         for j in 1..self.height - 1 {
             for i in 1..self.width - 1 {
                 let idx = self.cell_index(i, j);
 
                 if self.cell_type[idx] != CellType::Fluid {
+                    self.vorticity[idx] = 0.0;
                     continue;
                 }
 
-                // Curl = dv/dx - du/dy
+                // Curl = dv/dx - du/dy using central differences
                 let du_dy = (self.u[self.u_index(i, j + 1)] - self.u[self.u_index(i, j.saturating_sub(1))]) * 0.5;
                 let dv_dx = (self.v[self.v_index(i + 1, j)] - self.v[self.v_index(i.saturating_sub(1), j)]) * 0.5;
 
-                curl[idx] = dv_dx - du_dy;
+                self.vorticity[idx] = dv_dx - du_dy;
             }
         }
+    }
+
+    /// Compute enstrophy: ε = ½∫|ω|² dV
+    /// Enstrophy measures total vorticity intensity in the fluid
+    /// Higher enstrophy = more rotational motion
+    pub fn compute_enstrophy(&self) -> f32 {
+        let cell_area = self.cell_size * self.cell_size;
+        let mut enstrophy = 0.0f32;
+
+        for j in 1..self.height - 1 {
+            for i in 1..self.width - 1 {
+                let idx = self.cell_index(i, j);
+                if self.cell_type[idx] == CellType::Fluid {
+                    enstrophy += 0.5 * self.vorticity[idx] * self.vorticity[idx] * cell_area;
+                }
+            }
+        }
+
+        enstrophy
+    }
+
+    /// Compute total absolute vorticity: ∫|ω| dV
+    /// Useful for debugging and tracking vortex strength
+    pub fn total_absolute_vorticity(&self) -> f32 {
+        let cell_area = self.cell_size * self.cell_size;
+        let mut total = 0.0f32;
+
+        for j in 1..self.height - 1 {
+            for i in 1..self.width - 1 {
+                let idx = self.cell_index(i, j);
+                if self.cell_type[idx] == CellType::Fluid {
+                    total += self.vorticity[idx].abs() * cell_area;
+                }
+            }
+        }
+
+        total
+    }
+
+    /// Get maximum absolute vorticity in the field
+    pub fn max_vorticity(&self) -> f32 {
+        self.vorticity.iter()
+            .map(|v| v.abs())
+            .fold(0.0f32, f32::max)
+    }
+
+    /// Apply vorticity confinement to maintain swirling motion
+    /// Based on PavelDoGreat/WebGL-Fluid-Simulation
+    pub fn apply_vorticity_confinement(&mut self, dt: f32, strength: f32) {
+        // First pass: compute curl (vorticity) at each cell and store it
+        self.compute_vorticity();
+
+        // Use stored vorticity for confinement
+        let curl = &self.vorticity;
 
         // Second pass: apply vorticity force
         for j in 2..self.height - 2 {
@@ -654,9 +804,12 @@ impl Grid {
                 let ny = grad_y / len;
 
                 // Force perpendicular to gradient, proportional to curl
+                // F = ε × h × (N × ω) - scaled by grid spacing for grid independence
+                // Reference: Fedkiw et al. 2001 "Visual Simulation of Smoke"
                 let c = curl[idx];
-                let fx = ny * c * strength;
-                let fy = -nx * c * strength;
+                let h = self.cell_size;
+                let fx = ny * c * strength * h;
+                let fy = -nx * c * strength * h;
 
                 // Apply to velocity
                 let u_idx = self.u_index(i, j);
