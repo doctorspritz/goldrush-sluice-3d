@@ -49,6 +49,20 @@ pub struct FlipSimulation {
     // Tunable near-pressure parameters (press 1-9 to adjust in game)
     pub near_pressure_h: f32,       // Interaction radius (default 4.0)
     pub near_pressure_rest: f32,    // Rest density (default 0.8)
+
+    // Pre-allocated buffer for neighbor counts (hindered settling)
+    neighbor_counts: Vec<u16>,
+
+    // === Sediment Physics Feature Flags ===
+    // Toggle these to compare old vs new physics behavior
+    /// Use Ferguson-Church settling velocity (vs simple density-based)
+    pub use_ferguson_church: bool,
+    /// Use Richardson-Zaki hindered settling in concentrated regions
+    pub use_hindered_settling: bool,
+    /// Use per-particle diameter (vs material typical diameter)
+    pub use_variable_diameter: bool,
+    /// Size variation factor: diameter = typical * (1 ± variation)
+    pub diameter_variation: f32,
 }
 
 impl FlipSimulation {
@@ -78,6 +92,13 @@ impl FlipSimulation {
             // Tunable parameters with defaults
             near_pressure_h: 4.0,
             near_pressure_rest: 0.8,
+            // Neighbor counts for hindered settling
+            neighbor_counts: Vec::new(),
+            // Sediment physics feature flags (all enabled by default)
+            use_ferguson_church: true,
+            use_hindered_settling: true,
+            use_variable_diameter: true,
+            diameter_variation: 0.3, // ±30% size variation
         }
     }
 
@@ -117,8 +138,14 @@ impl FlipSimulation {
         // Sediment: stores fluid velocity for drag calculation
         self.grid_to_particles();
 
-        // 7. Apply forces to sediment (drag + buoyancy)
-        // This is proper Lagrangian sediment transport
+        // 6b. Build spatial hash for neighbor queries (used by sediment forces + separation)
+        self.build_spatial_hash();
+
+        // 6c. Compute neighbor counts for hindered settling
+        self.compute_neighbor_counts();
+
+        // 7. Apply forces to sediment (drag + buoyancy + hindered settling)
+        // This is proper Lagrangian sediment transport with Richardson-Zaki correction
         self.apply_sediment_forces(dt);
 
         // 8. Advect particles (uses SDF for O(1) collision)
@@ -438,70 +465,112 @@ impl FlipSimulation {
 
     /// Step 7: Apply forces to sediment particles (Lagrangian sediment transport)
     ///
-    /// Sediment experiences:
-    /// 1. DRAG toward local fluid velocity: F_d = β * (v_fluid - v_particle)
-    /// 2. BUOYANCY (via reduced gravity): g_eff = g * (1 - ρ_f/ρ_p)
+    /// Uses drift-flux model with Ferguson-Church (2004) settling velocity:
+    /// - Particles are advected by fluid velocity
+    /// - Plus a "slip" velocity toward the bottom (settling)
+    /// - Slip velocity computed from Ferguson-Church universal equation
+    ///   which accounts for particle size, density, and shape factor
+    /// - Richardson-Zaki hindered settling reduces velocity in concentrated regions
     ///
-    /// The drag coefficient β = 1/τ where τ is the response time.
-    /// Heavier particles have larger τ (respond slower to fluid).
+    /// The Ferguson-Church equation naturally handles:
+    /// - Fine particles (Stokes regime): settling ∝ d²
+    /// - Coarse particles (Newton regime): settling ∝ √d
+    /// - Shape effects: flaky gold settles slower than spherical sand of equal mass
     ///
-    /// Terminal velocity emerges naturally from force balance:
-    /// At equilibrium: drag = buoyancy → β * v_t = g_eff → v_t = g_eff / β
+    /// Feature flags control which physics are active:
+    /// - use_ferguson_church: Use Ferguson-Church (true) or simple density-based (false)
+    /// - use_hindered_settling: Apply Richardson-Zaki correction in concentrated regions
+    /// - use_variable_diameter: Use per-particle diameter (true) or material typical (false)
     fn apply_sediment_forces(&mut self, dt: f32) {
-        const WATER_DENSITY: f32 = 1.0;
-        const GRAVITY: f32 = 150.0; // pixels/s² (tuned for visual scale)
+        use crate::particle::{hindered_settling_factor, neighbor_count_to_concentration};
 
-        // Base drag coefficient (inverse of response time)
-        // Smaller = more inertia, slower to adopt fluid velocity
-        // This is physics-based: β ∝ 1/(ρ_p * d²) from Stokes drag
-        const BASE_DRAG: f32 = 8.0;
+        // Drag rate controls how fast particles approach target velocity
+        // Higher = particles quickly match fluid + slip (more responsive)
+        // Lower = particles maintain momentum longer (more inertial)
+        const BASE_DRAG_RATE: f32 = 5.0;
 
-        let grid = &self.grid;
+        // Expected neighbors at "rest" (dilute) conditions
+        // ~8 particles per 3x3 cell neighborhood is typical for dilute flow
+        const REST_NEIGHBORS: f32 = 8.0;
 
-        self.particles.list.par_iter_mut().for_each(|particle| {
-            // Only apply to sediment - water is handled by FLIP
-            if !particle.is_sediment() {
-                return;
-            }
+        // Simple density-based settling constant (used when Ferguson-Church is disabled)
+        const SIMPLE_GRAVITY: f32 = 150.0;
 
-            let density = particle.density();
+        // Borrow neighbor_counts as a slice for parallel access
+        let neighbor_counts = &self.neighbor_counts;
 
-            // Drag coefficient inversely proportional to density (heavier = more inertia)
-            // β = BASE_DRAG / density
-            // Gold (19.3): β = 8/19.3 = 0.41 (slow response)
-            // Sand (2.65): β = 8/2.65 = 3.0 (fast response)
-            let beta = BASE_DRAG / density;
+        // Copy feature flags for closure capture
+        let use_ferguson_church = self.use_ferguson_church;
+        let use_hindered_settling = self.use_hindered_settling;
+        let use_variable_diameter = self.use_variable_diameter;
 
-            // Sample fluid velocity at particle position (stored during G2P)
-            let v_fluid = particle.old_grid_velocity;
+        self.particles
+            .list
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(idx, particle)| {
+                // Only apply to sediment - water is handled by APIC
+                if !particle.is_sediment() {
+                    return;
+                }
 
-            // Relative velocity (particle relative to fluid)
-            let v_rel = particle.velocity - v_fluid;
+                let density = particle.density();
 
-            // DRAG FORCE: pulls particle toward fluid velocity
-            // dv/dt = -β * v_rel
-            // Using exponential decay for stability: v_rel_new = v_rel * exp(-β * dt)
-            let decay = (-beta * dt).exp();
-            let new_v_rel = v_rel * decay;
+                // Get diameter: per-particle if enabled, otherwise material typical
+                let diameter = if use_variable_diameter {
+                    particle.effective_diameter()
+                } else {
+                    particle.material.typical_diameter()
+                };
 
-            // BUOYANCY: reduced gravity based on density ratio
-            // g_eff = g * (ρ_p - ρ_f) / ρ_p = g * (1 - ρ_f/ρ_p)
-            // For gold: g_eff = g * (1 - 1/19.3) = 0.95g (almost full gravity)
-            // For sand: g_eff = g * (1 - 1/2.65) = 0.62g (reduced gravity)
-            let buoyancy_factor = 1.0 - WATER_DENSITY / density;
-            let g_eff = GRAVITY * buoyancy_factor;
+                // Compute base settling velocity
+                let base_settling = if use_ferguson_church {
+                    // Ferguson-Church universal equation (handles all Reynolds regimes)
+                    particle.material.settling_velocity(diameter)
+                } else {
+                    // Simple density-based settling: v = sqrt((ρ-1) * g * d) / ρ
+                    // This is a basic Stokes-like approximation
+                    let r = (density - 1.0) / 1.0; // Relative submerged density
+                    if r > 0.0 && diameter > 0.0 {
+                        (r * SIMPLE_GRAVITY * diameter).sqrt() / density.sqrt()
+                    } else {
+                        0.0
+                    }
+                };
 
-            // Update velocity: new relative velocity + fluid velocity + gravity
-            particle.velocity = v_fluid + new_v_rel;
-            particle.velocity.y += g_eff * dt;
+                // Apply hindered settling if enabled
+                let settling_velocity = if use_hindered_settling {
+                    let neighbor_count = neighbor_counts.get(idx).copied().unwrap_or(0) as usize;
+                    let concentration = neighbor_count_to_concentration(neighbor_count, REST_NEIGHBORS);
+                    let hindered_factor = hindered_settling_factor(concentration);
+                    base_settling * hindered_factor
+                } else {
+                    base_settling
+                };
 
-            // Safety clamp for sediment too
-            const MAX_VELOCITY: f32 = 100.0;
-            let speed = particle.velocity.length();
-            if speed > MAX_VELOCITY {
-                particle.velocity *= MAX_VELOCITY / speed;
-            }
-        });
+                // Sample fluid velocity at particle position (stored during G2P)
+                let v_fluid = particle.old_grid_velocity;
+
+                // Target velocity: fluid velocity + downward settling slip
+                // The settling velocity is the terminal velocity in still water
+                let slip = glam::Vec2::new(0.0, settling_velocity);
+                let target_velocity = v_fluid + slip;
+
+                // Drag toward target velocity
+                // Heavier particles have more inertia (respond slower)
+                let drag_rate = BASE_DRAG_RATE / density;
+                let blend = (drag_rate * dt).clamp(0.0, 1.0);
+
+                // Exponential approach to target for stability
+                particle.velocity = particle.velocity.lerp(target_velocity, blend);
+
+                // Safety clamp
+                const MAX_VELOCITY: f32 = 120.0;
+                let speed = particle.velocity.length();
+                if speed > MAX_VELOCITY {
+                    particle.velocity *= MAX_VELOCITY / speed;
+                }
+            });
     }
 
     /// Step 7b: Apply near-pressure forces (Clavet et al. 2005)
@@ -1157,6 +1226,51 @@ impl FlipSimulation {
         }
     }
 
+    /// Compute neighbor counts for each particle (used for hindered settling)
+    /// Uses the spatial hash to count particles in same + adjacent cells
+    fn compute_neighbor_counts(&mut self) {
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let height = self.grid.height;
+        let particle_count = self.particles.len();
+
+        // Resize neighbor counts buffer if needed
+        if self.neighbor_counts.len() < particle_count {
+            self.neighbor_counts.resize(particle_count, 0);
+        }
+
+        // Count neighbors for each particle (same cell + 8 adjacent cells)
+        for (idx, particle) in self.particles.list.iter().enumerate() {
+            let gi = ((particle.position.x / cell_size) as i32).clamp(0, width as i32 - 1) as usize;
+            let gj = ((particle.position.y / cell_size) as i32).clamp(0, height as i32 - 1) as usize;
+
+            let mut count: u16 = 0;
+
+            // Check 3x3 neighborhood
+            for dj in -1i32..=1 {
+                for di in -1i32..=1 {
+                    let ni = gi as i32 + di;
+                    let nj = gj as i32 + dj;
+
+                    if ni < 0 || ni >= width as i32 || nj < 0 || nj >= height as i32 {
+                        continue;
+                    }
+
+                    let cell_idx = nj as usize * width + ni as usize;
+                    let mut p_idx = self.cell_head[cell_idx];
+
+                    // Walk linked list counting particles
+                    while p_idx >= 0 {
+                        count = count.saturating_add(1);
+                        p_idx = self.particle_next[p_idx as usize];
+                    }
+                }
+            }
+
+            self.neighbor_counts[idx] = count;
+        }
+    }
+
     /// Step 9: Soft particle separation - applies velocity impulses instead of position snaps
     fn separate_particles(&mut self) {
         let cell_size = self.grid.cell_size;
@@ -1343,76 +1457,104 @@ impl FlipSimulation {
 
     /// Spawn mud particles at a position
     pub fn spawn_mud(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
+        use crate::particle::ParticleMaterial;
         let mut rng = rand::thread_rng();
+        let use_variation = self.use_variable_diameter;
+        let variation = self.diameter_variation;
         for _ in 0..count {
             let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let px = x + offset_x;
             let py = y + offset_y;
             if self.is_spawn_safe(px, py) {
-                self.particles.spawn_mud(
-                    px,
-                    py,
-                    vx + (rng.gen::<f32>() - 0.5) * 10.0,
-                    vy + (rng.gen::<f32>() - 0.5) * 10.0,
-                );
+                let final_vx = vx + (rng.gen::<f32>() - 0.5) * 10.0;
+                let final_vy = vy + (rng.gen::<f32>() - 0.5) * 10.0;
+                if use_variation {
+                    self.particles.spawn_with_variation(
+                        px, py, final_vx, final_vy,
+                        ParticleMaterial::Mud, variation, rng.gen(),
+                    );
+                } else {
+                    self.particles.spawn_mud(px, py, final_vx, final_vy);
+                }
             }
         }
     }
 
     /// Spawn sand particles (light sediment, carried by flow)
     pub fn spawn_sand(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
+        use crate::particle::ParticleMaterial;
         let mut rng = rand::thread_rng();
+        let use_variation = self.use_variable_diameter;
+        let variation = self.diameter_variation;
         for _ in 0..count {
             let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let px = x + offset_x;
             let py = y + offset_y;
             if self.is_spawn_safe(px, py) {
-                self.particles.spawn_sand(
-                    px,
-                    py,
-                    vx + (rng.gen::<f32>() - 0.5) * 5.0,
-                    vy + (rng.gen::<f32>() - 0.5) * 5.0,
-                );
+                let final_vx = vx + (rng.gen::<f32>() - 0.5) * 5.0;
+                let final_vy = vy + (rng.gen::<f32>() - 0.5) * 5.0;
+                if use_variation {
+                    self.particles.spawn_with_variation(
+                        px, py, final_vx, final_vy,
+                        ParticleMaterial::Sand, variation, rng.gen(),
+                    );
+                } else {
+                    self.particles.spawn_sand(px, py, final_vx, final_vy);
+                }
             }
         }
     }
 
     /// Spawn magnetite particles (black sand indicator)
     pub fn spawn_magnetite(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
+        use crate::particle::ParticleMaterial;
         let mut rng = rand::thread_rng();
+        let use_variation = self.use_variable_diameter;
+        let variation = self.diameter_variation;
         for _ in 0..count {
             let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let px = x + offset_x;
             let py = y + offset_y;
             if self.is_spawn_safe(px, py) {
-                self.particles.spawn_magnetite(
-                    px,
-                    py,
-                    vx + (rng.gen::<f32>() - 0.5) * 5.0,
-                    vy + (rng.gen::<f32>() - 0.5) * 5.0,
-                );
+                let final_vx = vx + (rng.gen::<f32>() - 0.5) * 5.0;
+                let final_vy = vy + (rng.gen::<f32>() - 0.5) * 5.0;
+                if use_variation {
+                    self.particles.spawn_with_variation(
+                        px, py, final_vx, final_vy,
+                        ParticleMaterial::Magnetite, variation, rng.gen(),
+                    );
+                } else {
+                    self.particles.spawn_magnetite(px, py, final_vx, final_vy);
+                }
             }
         }
     }
 
     /// Spawn gold particles (heavy, settles fast through water)
     pub fn spawn_gold(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
+        use crate::particle::ParticleMaterial;
         let mut rng = rand::thread_rng();
+        let use_variation = self.use_variable_diameter;
+        let variation = self.diameter_variation;
         for _ in 0..count {
             let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
             let px = x + offset_x;
             let py = y + offset_y;
             if self.is_spawn_safe(px, py) {
-                self.particles.spawn_gold(
-                    px,
-                    py,
-                    vx + (rng.gen::<f32>() - 0.5) * 5.0,
-                    vy + (rng.gen::<f32>() - 0.5) * 5.0,
-                );
+                let final_vx = vx + (rng.gen::<f32>() - 0.5) * 5.0;
+                let final_vy = vy + (rng.gen::<f32>() - 0.5) * 5.0;
+                if use_variation {
+                    self.particles.spawn_with_variation(
+                        px, py, final_vx, final_vy,
+                        ParticleMaterial::Gold, variation, rng.gen(),
+                    );
+                } else {
+                    self.particles.spawn_gold(px, py, final_vx, final_vy);
+                }
             }
         }
     }
