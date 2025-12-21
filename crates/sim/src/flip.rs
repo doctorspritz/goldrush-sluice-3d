@@ -126,27 +126,11 @@ impl FlipSimulation {
         // 1. Classify cells based on particle positions
         self.classify_cells();
 
-        // 2. Transfer particle velocities to grid
+        // 2. Transfer particle velocities to grid (P2G)
         self.particles_to_grid();
 
-        // 3. Store old grid velocities for FLIP
+        // 3. Store old grid velocities for FLIP blending
         self.store_old_velocities();
-
-        // 4. Apply external forces (gravity + vorticity)
-        // These forces create divergence which is then removed by pressure projection
-        self.grid.apply_gravity(dt);
-
-        // 4b. Apply viscosity diffusion (creates boundary layers for vortex shedding)
-        // Viscosity primarily affects velocity gradients near walls, not bulk flow.
-        // Without viscosity, flow goes smoothly around obstacles without separation.
-        // 1. Update grid state (classify cells as solid/fluid/air)
-        self.classify_cells();
-
-        // 2. Transfer particle velocity to grid (P2G)
-        self.particles_to_grid();
-
-        // 3. Save old grid state for FLIP/PIC mixing
-        // (Handled internally or not needed)
 
         // 4. Apply external forces (gravity)
         self.grid.apply_gravity(dt);

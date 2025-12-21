@@ -568,7 +568,7 @@ impl Grid {
             for j in 1..self.height - 1 {
                 for i in 1..self.width - 1 {
                     if (i + j) % 2 == 0 {
-                        self.update_pressure_cell(i, j);
+                        self.update_pressure_cell(i, j, h_sq);
                     }
                 }
             }
@@ -576,7 +576,7 @@ impl Grid {
             for j in 1..self.height - 1 {
                 for i in 1..self.width - 1 {
                     if (i + j) % 2 != 0 {
-                        self.update_pressure_cell(i, j);
+                        self.update_pressure_cell(i, j, h_sq);
                     }
                 }
             }
@@ -589,6 +589,48 @@ impl Grid {
                 }
             }
         }
+    }
+
+    /// Update a single pressure cell (helper for Red-Black GS)
+    #[inline]
+    fn update_pressure_cell(&mut self, i: usize, j: usize, h_sq: f32) {
+        let idx = self.cell_index(i, j);
+
+        if self.cell_type[idx] != CellType::Fluid {
+            self.pressure[idx] = 0.0;
+            return;
+        }
+
+        let p = self.pressure[idx];
+
+        // Neighbor pressures (solid boundaries use Neumann BC: dp/dn = 0)
+        let p_left = if self.cell_type[self.cell_index(i - 1, j)] == CellType::Solid {
+            p
+        } else {
+            self.pressure[self.cell_index(i - 1, j)]
+        };
+        let p_right = if self.cell_type[self.cell_index(i + 1, j)] == CellType::Solid {
+            p
+        } else {
+            self.pressure[self.cell_index(i + 1, j)]
+        };
+        let p_bottom = if self.cell_type[self.cell_index(i, j - 1)] == CellType::Solid {
+            p
+        } else {
+            self.pressure[self.cell_index(i, j - 1)]
+        };
+        let p_top = if self.cell_type[self.cell_index(i, j + 1)] == CellType::Solid {
+            p
+        } else {
+            self.pressure[self.cell_index(i, j + 1)]
+        };
+
+        let div = self.divergence[idx];
+
+        // Gauss-Seidel update for ∇²p = div
+        // Discretized: (p_L + p_R + p_B + p_T - 4*p) / h² = div
+        // Solving for p: p = (p_L + p_R + p_B + p_T - h²*div) / 4
+        self.pressure[idx] = (p_left + p_right + p_bottom + p_top - h_sq * div) * 0.25;
     }
 
     /// Compute maximum residual of pressure equation: |∇²p - div|
@@ -616,47 +658,6 @@ impl Grid {
         }
 
         max_residual
-    }
-
-    /// Update a single pressure cell (helper for Red-Black GS)
-    #[inline]
-    fn update_pressure_cell(&mut self, i: usize, j: usize) {
-        let idx = self.cell_index(i, j);
-
-        if self.cell_type[idx] != CellType::Fluid {
-            self.pressure[idx] = 0.0;
-            return;
-        }
-
-        // Neighbor pressures (solid boundaries treated as current pressure)
-        let p_left = if self.cell_type[self.cell_index(i - 1, j)] == CellType::Solid {
-            self.pressure[idx]
-        } else {
-            self.pressure[self.cell_index(i - 1, j)]
-        };
-        let p_right = if self.cell_type[self.cell_index(i + 1, j)] == CellType::Solid {
-            self.pressure[idx]
-        } else {
-            self.pressure[self.cell_index(i + 1, j)]
-        };
-        let p_bottom = if self.cell_type[self.cell_index(i, j - 1)] == CellType::Solid {
-            self.pressure[idx]
-        } else {
-            self.pressure[self.cell_index(i, j - 1)]
-        };
-        let p_top = if self.cell_type[self.cell_index(i, j + 1)] == CellType::Solid {
-            self.pressure[idx]
-        } else {
-            self.pressure[self.cell_index(i, j + 1)]
-        };
-
-        let div = self.divergence[idx];
-
-        // Gauss-Seidel update for ∇²p = div
-        // Discretized: (p_L + p_R + p_B + p_T - 4*p) / h² = div
-        // Solving for p: p = (p_L + p_R + p_B + p_T - h²*div) / 4
-        let h_sq = self.cell_size * self.cell_size;
-        self.pressure[idx] = (p_left + p_right + p_bottom + p_top - h_sq * div) * 0.25;
     }
 
     /// Subtract pressure gradient from velocity field
