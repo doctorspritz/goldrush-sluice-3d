@@ -1558,6 +1558,194 @@ impl FlipSimulation {
             }
         }
     }
+
+    // ========================================================================
+    // VORTEX METRICS - For testing and diagnostics
+    // ========================================================================
+
+    /// Compute total kinetic energy of particles: KE = ½Σ|v|²
+    /// Each particle is assumed to have unit mass for simplicity.
+    /// For proper physics, multiply by particle mass (not tracked currently).
+    pub fn compute_kinetic_energy(&self) -> f32 {
+        self.particles.iter()
+            .map(|p| 0.5 * p.velocity.length_squared())
+            .sum()
+    }
+
+    /// Compute kinetic energy of water particles only
+    pub fn compute_water_kinetic_energy(&self) -> f32 {
+        self.particles.iter()
+            .filter(|p| !p.is_sediment())
+            .map(|p| 0.5 * p.velocity.length_squared())
+            .sum()
+    }
+
+    /// Compute enstrophy from the grid vorticity field
+    /// Must call grid.compute_vorticity() first
+    pub fn compute_enstrophy(&self) -> f32 {
+        self.grid.compute_enstrophy()
+    }
+
+    /// Compute and store vorticity, then return enstrophy
+    /// Convenience method for tests
+    pub fn update_and_compute_enstrophy(&mut self) -> f32 {
+        // Ensure cell types are current
+        self.classify_cells();
+        // Compute vorticity from current grid state
+        self.grid.compute_vorticity();
+        self.grid.compute_enstrophy()
+    }
+
+    /// Get maximum particle velocity (for CFL checking)
+    pub fn max_velocity(&self) -> f32 {
+        self.particles.iter()
+            .map(|p| p.velocity.length())
+            .fold(0.0f32, f32::max)
+    }
+
+    /// Compute CFL number: CFL = v_max * dt / dx
+    /// Should be < 1 for stability, < 0.5 for high-fidelity vortices
+    pub fn compute_cfl(&self, dt: f32) -> f32 {
+        self.max_velocity() * dt / self.grid.cell_size
+    }
+
+    /// Initialize velocity field for Taylor-Green vortex test
+    /// u = -cos(πx)sin(πy), v = sin(πx)cos(πy)
+    /// Domain is assumed to be [0, L] x [0, L] where L = width * cell_size
+    pub fn initialize_taylor_green(&mut self) {
+        use std::f32::consts::PI;
+
+        let l = self.grid.width as f32 * self.grid.cell_size;
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let height = self.grid.height;
+
+        // Set U velocities
+        for j in 0..height {
+            for i in 0..=width {
+                let x = i as f32 * cell_size;
+                let y = (j as f32 + 0.5) * cell_size;
+
+                let u = -f32::cos(PI * x / l) * f32::sin(PI * y / l);
+                let idx = self.grid.u_index(i, j);
+                self.grid.u[idx] = u;
+            }
+        }
+
+        // Set V velocities
+        for j in 0..=height {
+            for i in 0..width {
+                let x = (i as f32 + 0.5) * cell_size;
+                let y = j as f32 * cell_size;
+
+                let v = f32::sin(PI * x / l) * f32::cos(PI * y / l);
+                let idx = self.grid.v_index(i, j);
+                self.grid.v[idx] = v;
+            }
+        }
+
+        // Mark all cells as fluid for the test
+        for j in 0..height {
+            for i in 0..width {
+                let idx = self.grid.cell_index(i, j);
+                self.grid.cell_type[idx] = crate::grid::CellType::Fluid;
+            }
+        }
+    }
+
+    /// Initialize solid body rotation: v = ω × r
+    /// Creates a rotating disk of fluid
+    pub fn initialize_solid_rotation(&mut self, angular_velocity: f32) {
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let height = self.grid.height;
+        let cx = width as f32 * cell_size / 2.0;
+        let cy = height as f32 * cell_size / 2.0;
+        let radius = cx.min(cy) * 0.8; // 80% of domain
+
+        // Set U velocities
+        for j in 0..height {
+            for i in 0..=width {
+                let x = i as f32 * cell_size;
+                let y = (j as f32 + 0.5) * cell_size;
+
+                let dx = x - cx;
+                let dy = y - cy;
+                let r = (dx * dx + dy * dy).sqrt();
+
+                let idx = self.grid.u_index(i, j);
+                if r < radius {
+                    // u = -ω * (y - cy)
+                    self.grid.u[idx] = -angular_velocity * dy;
+                } else {
+                    self.grid.u[idx] = 0.0;
+                }
+            }
+        }
+
+        // Set V velocities
+        for j in 0..=height {
+            for i in 0..width {
+                let x = (i as f32 + 0.5) * cell_size;
+                let y = j as f32 * cell_size;
+
+                let dx = x - cx;
+                let dy = y - cy;
+                let r = (dx * dx + dy * dy).sqrt();
+
+                let idx = self.grid.v_index(i, j);
+                if r < radius {
+                    // v = ω * (x - cx)
+                    self.grid.v[idx] = angular_velocity * dx;
+                } else {
+                    self.grid.v[idx] = 0.0;
+                }
+            }
+        }
+
+        // Mark interior cells as fluid
+        for j in 0..height {
+            for i in 0..width {
+                let x = (i as f32 + 0.5) * cell_size;
+                let y = (j as f32 + 0.5) * cell_size;
+                let dx = x - cx;
+                let dy = y - cy;
+                let r = (dx * dx + dy * dy).sqrt();
+
+                let idx = self.grid.cell_index(i, j);
+                if r < radius {
+                    self.grid.cell_type[idx] = crate::grid::CellType::Fluid;
+                } else {
+                    self.grid.cell_type[idx] = crate::grid::CellType::Air;
+                }
+            }
+        }
+    }
+
+    /// Compute grid kinetic energy: KE = ½∫|v|² dV
+    /// This is more accurate than particle KE for grid-based tests
+    pub fn compute_grid_kinetic_energy(&self) -> f32 {
+        let cell_area = self.grid.cell_size * self.grid.cell_size;
+        let mut ke = 0.0f32;
+
+        for j in 0..self.grid.height {
+            for i in 0..self.grid.width {
+                let idx = self.grid.cell_index(i, j);
+                if self.grid.cell_type[idx] != crate::grid::CellType::Fluid {
+                    continue;
+                }
+
+                // Sample velocity at cell center
+                let x = (i as f32 + 0.5) * self.grid.cell_size;
+                let y = (j as f32 + 0.5) * self.grid.cell_size;
+                let vel = self.grid.sample_velocity(Vec2::new(x, y));
+
+                ke += 0.5 * vel.length_squared() * cell_area;
+            }
+        }
+
+        ke
+    }
 }
 
 /// Result of raycasting through the grid
