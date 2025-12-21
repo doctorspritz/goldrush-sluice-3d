@@ -31,6 +31,7 @@ pub enum ParticleMaterial {
 
 impl ParticleMaterial {
     /// Density relative to water (specific gravity)
+    #[inline]
     pub fn density(&self) -> f32 {
         match self {
             Self::Water => 1.0,
@@ -106,6 +107,7 @@ impl ParticleMaterial {
 
     /// Typical particle diameter in simulation units (pixels)
     /// Based on realistic size ranges for each material type
+    #[inline]
     pub fn typical_diameter(&self) -> f32 {
         match self {
             Self::Water => 0.0,       // N/A - water is the fluid
@@ -157,6 +159,7 @@ impl ParticleMaterial {
     /// Determines threshold shear stress to mobilize bedload particles
     /// Lower values = easier to move
     /// Reference: Shields (1936), with adjustments for particle properties
+    #[inline]
     pub fn shields_critical(&self) -> f32 {
         match self {
             Self::Water => 0.0,       // N/A - water is the fluid
@@ -271,6 +274,7 @@ impl Particle {
     }
 
     /// Get effective diameter (falls back to typical if not set)
+    #[inline]
     pub fn effective_diameter(&self) -> f32 {
         if self.diameter > 0.0 {
             self.diameter

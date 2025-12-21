@@ -139,15 +139,17 @@ impl FlipSimulation {
         // 4b. Apply viscosity diffusion (creates boundary layers for vortex shedding)
         // Viscosity primarily affects velocity gradients near walls, not bulk flow.
         // Without viscosity, flow goes smoothly around obstacles without separation.
-        if self.use_viscosity {
-            self.grid.apply_viscosity(dt, self.viscosity);
-        }
+        // 1. Update grid state (classify cells as solid/fluid/air)
+        self.classify_cells();
 
-        // Vorticity confinement: ε < 0.1 per literature to avoid artificial turbulence
-        // OPTIMIZATION: Run every 2 frames (less critical than pressure)
-        if self.frame % 2 == 0 {
-            self.grid.apply_vorticity_confinement(dt * 2.0, 0.05);
-        }
+        // 2. Transfer particle velocity to grid (P2G)
+        self.particles_to_grid();
+
+        // 3. Save old grid state for FLIP/PIC mixing
+        // (Handled internally or not needed)
+
+        // 4. Apply external forces (gravity)
+        self.grid.apply_gravity(dt);
 
         // 5. Pressure projection - enforces incompressibility
         // CRITICAL: Zero velocities at solid walls BEFORE computing divergence
@@ -169,12 +171,9 @@ impl FlipSimulation {
         // 6b. Build spatial hash for neighbor queries (used by sediment forces + separation)
         self.build_spatial_hash();
 
-        // 6c. Compute neighbor counts for hindered settling
+        // 6c. Compute neighbor counts for hindered settling AND stickiness
+        // (Merged implementation computes both total and water neighbors in parallel)
         self.compute_neighbor_counts();
-
-        // 6d. Compute water neighbor counts for in-fluid detection
-        // Sediment particles with no water neighbors are "in air" and fall with gravity
-        self.compute_water_neighbor_counts();
 
         // 7. Apply forces to sediment (drag + buoyancy + hindered settling)
         // This is proper Lagrangian sediment transport with Richardson-Zaki correction
@@ -510,7 +509,20 @@ impl FlipSimulation {
             let pic_velocity = new_velocity;
 
             // Blend: mostly FLIP (0.95) to preserve horizontal momentum
-            particle.velocity = FLIP_RATIO * flip_velocity + (1.0 - FLIP_RATIO) * pic_velocity;
+            // EXCEPTION: Bedload particles should ignore grid updates to stay "stuck"
+            // unless they are transitioning out. But apply_sediment_forces handles adhesion.
+            // Problem: If FLIP adds a large grid_delta (pressure push), it might unstick.
+            // Solution: For Bedload, mostly use particle velocity (which is zero) + very small delta
+            if particle.state == ParticleState::Bedload {
+                 // For bedload, we want to IGNORE the grid velocity update that would push them
+                 // We only update if they are explicitly being moved by forces we want (like lifting)
+                 // But apply_sediment_forces is responsible for mobility.
+                 // So we keep them at their current velocity (zero) until sediment forces act.
+                 // However, we DO need to update affine velocity for consistency.
+                 particle.velocity = old_particle_velocity;
+            } else {
+                 particle.velocity = FLIP_RATIO * flip_velocity + (1.0 - FLIP_RATIO) * pic_velocity;
+            }
             particle.affine_velocity = new_c;
 
             // Safety clamp
@@ -552,16 +564,19 @@ impl FlipSimulation {
         const REST_NEIGHBORS: f32 = 8.0;
 
         // Simple density-based settling constant (used when Ferguson-Church is disabled)
-        const SIMPLE_GRAVITY: f32 = 150.0;
+        const SIMPLE_GRAVITY: f32 = 400.0;
 
         // Gravity for friction force calculation
-        const GRAVITY: f32 = 150.0;
+        const GRAVITY: f32 = 400.0;
 
         // Air gravity - same as grid gravity for consistency
-        const AIR_GRAVITY: f32 = 120.0;
+        const AIR_GRAVITY: f32 = 400.0;
 
         // Minimum water neighbors to be considered "in fluid"
         const MIN_WATER_NEIGHBORS: u16 = 3;
+
+        // Shear velocity estimation constant
+        const SHEAR_VELOCITY_FACTOR: f32 = 0.1;
 
         // Borrow neighbor_counts as a slice for parallel access
         let neighbor_counts = &self.neighbor_counts;
@@ -604,21 +619,7 @@ impl FlipSimulation {
                     return;
                 }
 
-                // Check if particle is in bedload state (resting on floor)
-                if particle.state == crate::particle::ParticleState::Bedload {
-                    // BEDLOAD: Friction-dominated, resist flow until Shields exceeded
-                    // Aggressive damping to stop jittering
-                    let speed = particle.velocity.length();
-                    if speed < 1.0 {
-                        // Very slow - just stop completely
-                        particle.velocity = Vec2::ZERO;
-                    } else {
-                        // Strong exponential damping toward zero
-                        particle.velocity *= 0.8; // 20% reduction per frame
-                    }
-                    // Don't apply settling or fluid drag - state transition handles re-entrainment
-                    return;
-                }
+
 
                 // IN WATER (Suspended): Apply drift-flux settling physics
                 let density = particle.density();
@@ -686,6 +687,25 @@ impl FlipSimulation {
 
                     ParticleState::Bedload => {
                         // Friction-dominated on bed
+                        // Calculate Shields number to see if flow is strong enough to move it
+                        let fluid_vel = particle.old_grid_velocity;
+                        let flow_speed_sq = fluid_vel.length_squared();
+                        let bed_shear = flow_speed_sq * SHEAR_VELOCITY_FACTOR * SHEAR_VELOCITY_FACTOR;
+
+                        let density_diff = (particle.density() - 1.0).max(0.1);
+                        let diameter = particle.effective_diameter().max(0.1);
+
+                        let shields_number = bed_shear / (density_diff * GRAVITY * diameter);
+                        let shields_critical = particle.material.shields_critical();
+
+                        // STICKINESS: If shear stress < critical, particle STICKS (zero velocity)
+                        // This prevents "creep" unless the flow is actually strong enough to move it.
+                        if shields_number < shields_critical {
+                             particle.velocity = Vec2::ZERO;
+                             return;
+                        }
+
+                        // If we are here, Shields > Critical, so we slide/creep
                         let speed = particle.velocity.length();
 
                         if speed > 0.001 {
@@ -819,8 +839,8 @@ impl FlipSimulation {
         let width = self.grid.width;
         let height = self.grid.height;
 
-        // Build spatial hash for neighbor queries
-        self.build_spatial_hash();
+        // Spatial hash is already built in update() and positions don't change
+        // self.build_spatial_hash();
 
         let particle_count = self.particles.len();
         if particle_count == 0 {
@@ -838,6 +858,8 @@ impl FlipSimulation {
 
         // Capture references for parallel closure
         let positions: Vec<Vec2> = self.particles.list.iter().map(|p| p.position).collect();
+        // Removed states allocation to improve FPS - access directly in loop
+        // let states: Vec<ParticleState> = self.particles.list.iter().map(|p| p.state).collect();
         let cell_head = &self.cell_head;
         let particle_next = &self.particle_next;
 
@@ -889,10 +911,17 @@ impl FlipSimulation {
             self.near_force_buffer[idx] = Vec2::new(*density, 0.0);
         }
 
+        let particles_list = &self.particles.list;
+
         // Pass 2: Compute forces in parallel
         let forces: Vec<Vec2> = (0..particle_count)
             .into_par_iter()
             .map(|idx| {
+                // Skip force computation for stuck particles
+                if particles_list[idx].state == ParticleState::Bedload {
+                    return Vec2::ZERO;
+                }
+
                 let (density_i, near_density_i) = densities[idx];
                 let pos_i = positions[idx];
                 let pressure_i = K_STIFFNESS * (density_i - rest_density);
@@ -941,7 +970,14 @@ impl FlipSimulation {
                         }
                     }
                 }
-                force
+                // Weight the force by inverse density
+                // Heavier particles should be harder to push around by pressure
+                let density_val = particles_list[idx].density();
+                if density_val > 0.0 {
+                    force / density_val
+                } else {
+                    force
+                }
             })
             .collect();
 
@@ -1167,7 +1203,7 @@ impl FlipSimulation {
         let max_y = height as f32 * cell_size - margin;
 
         let grid = &self.grid;
-
+        
         self.particles.list.par_iter_mut().for_each(|particle| {
             // Move particle
             particle.position += particle.velocity * dt;
@@ -1342,100 +1378,84 @@ impl FlipSimulation {
         }
     }
 
-    /// Compute neighbor counts for each particle (used for hindered settling)
-    /// Uses the spatial hash to count particles in same + adjacent cells
+    /// Compute neighbor counts for each particle (used for hindered settling and stickiness)
+    /// Uses the spatial hash to count particles in same + adjacent cells.
+    /// Parallelized for performance.
     fn compute_neighbor_counts(&mut self) {
+        use crate::particle::ParticleMaterial;
+        use rayon::prelude::*;
+
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
         let height = self.grid.height;
         let particle_count = self.particles.len();
 
-        // Resize neighbor counts buffer if needed
+        // Resize buffers
         if self.neighbor_counts.len() < particle_count {
             self.neighbor_counts.resize(particle_count, 0);
         }
-
-        // Count neighbors for each particle (same cell + 8 adjacent cells)
-        for (idx, particle) in self.particles.list.iter().enumerate() {
-            let gi = ((particle.position.x / cell_size) as i32).clamp(0, width as i32 - 1) as usize;
-            let gj = ((particle.position.y / cell_size) as i32).clamp(0, height as i32 - 1) as usize;
-
-            let mut count: u16 = 0;
-
-            // Check 3x3 neighborhood
-            for dj in -1i32..=1 {
-                for di in -1i32..=1 {
-                    let ni = gi as i32 + di;
-                    let nj = gj as i32 + dj;
-
-                    if ni < 0 || ni >= width as i32 || nj < 0 || nj >= height as i32 {
-                        continue;
-                    }
-
-                    let cell_idx = nj as usize * width + ni as usize;
-                    let mut p_idx = self.cell_head[cell_idx];
-
-                    // Walk linked list counting particles
-                    while p_idx >= 0 {
-                        count = count.saturating_add(1);
-                        p_idx = self.particle_next[p_idx as usize];
-                    }
-                }
-            }
-
-            self.neighbor_counts[idx] = count;
-        }
-    }
-
-    /// Compute water neighbor counts for each particle (used for in-fluid detection)
-    /// A sediment particle with zero water neighbors is "in air" and should fall with gravity
-    /// rather than settling at terminal velocity through water.
-    fn compute_water_neighbor_counts(&mut self) {
-        use crate::particle::ParticleMaterial;
-
-        let cell_size = self.grid.cell_size;
-        let width = self.grid.width;
-        let height = self.grid.height;
-        let particle_count = self.particles.len();
-
-        // Resize buffer if needed
         if self.water_neighbor_counts.len() < particle_count {
             self.water_neighbor_counts.resize(particle_count, 0);
         }
 
-        // Count WATER neighbors for each particle (same cell + 8 adjacent cells)
-        for (idx, particle) in self.particles.list.iter().enumerate() {
-            let gi = ((particle.position.x / cell_size) as i32).clamp(0, width as i32 - 1) as usize;
-            let gj = ((particle.position.y / cell_size) as i32).clamp(0, height as i32 - 1) as usize;
+        // Capture immutable references for parallel iteration
+        let positions: Vec<Vec2> = self.particles.list.iter().map(|p| p.position).collect();
+        let materials: Vec<ParticleMaterial> = self.particles.list.iter().map(|p| p.material).collect();
+        let cell_head = &self.cell_head;
+        let particle_next = &self.particle_next;
 
-            let mut water_count: u16 = 0;
+        // Compute counts in parallel
+        let counts: Vec<(u16, u16)> = (0..particle_count)
+            .into_par_iter()
+            .map(|idx| {
+                let pos = positions[idx];
+                let gi = ((pos.x / cell_size) as i32).clamp(0, width as i32 - 1) as usize;
+                let gj = ((pos.y / cell_size) as i32).clamp(0, height as i32 - 1) as usize;
 
-            // Check 3x3 neighborhood
-            for dj in -1i32..=1 {
-                for di in -1i32..=1 {
-                    let ni = gi as i32 + di;
-                    let nj = gj as i32 + dj;
+                let mut total_count: u16 = 0;
+                let mut water_count: u16 = 0;
 
-                    if ni < 0 || ni >= width as i32 || nj < 0 || nj >= height as i32 {
-                        continue;
-                    }
+                // Check 3x3 neighborhood
+                for dj in -1i32..=1 {
+                    for di in -1i32..=1 {
+                        let ni = gi as i32 + di;
+                        let nj = gj as i32 + dj;
 
-                    let cell_idx = nj as usize * width + ni as usize;
-                    let mut p_idx = self.cell_head[cell_idx];
-
-                    // Walk linked list counting only WATER particles
-                    while p_idx >= 0 {
-                        let neighbor = &self.particles.list[p_idx as usize];
-                        if neighbor.material == ParticleMaterial::Water {
-                            water_count = water_count.saturating_add(1);
+                        if ni < 0 || ni >= width as i32 || nj < 0 || nj >= height as i32 {
+                            continue;
                         }
-                        p_idx = self.particle_next[p_idx as usize];
+
+                        let cell_idx = nj as usize * width + ni as usize;
+                        let mut p_idx = cell_head[cell_idx];
+
+                        while p_idx >= 0 {
+                            let neighbor_idx = p_idx as usize;
+                            // Count all neighbors
+                            total_count = total_count.saturating_add(1);
+
+                            // Count water neighbors specially
+                            if materials[neighbor_idx] == ParticleMaterial::Water {
+                                water_count = water_count.saturating_add(1);
+                            }
+                            
+                            p_idx = particle_next[neighbor_idx];
+                        }
                     }
                 }
-            }
+                (total_count, water_count)
+            })
+            .collect();
 
-            self.water_neighbor_counts[idx] = water_count;
+        // Write back to self
+        for (idx, (total, water)) in counts.into_iter().enumerate() {
+            self.neighbor_counts[idx] = total;
+            self.water_neighbor_counts[idx] = water;
         }
+    }
+
+    // Legacy function removed (merged into compute_neighbor_counts)
+    fn compute_water_neighbor_counts(&mut self) {
+        // No-op, handled by compute_neighbor_counts
     }
 
     /// Check if a position is safe for spawning (not inside solid)
