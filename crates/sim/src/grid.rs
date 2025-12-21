@@ -127,14 +127,28 @@ impl Grid {
         let w = self.width;
         let h = self.height;
         let cell_size = self.cell_size;
+        let len = self.sdf.len();
 
-        // First pass: compute unsigned distance to nearest solid
-        // Initialize: solid cells = 0, others = large positive
-        for idx in 0..self.sdf.len() {
-            self.sdf[idx] = if self.solid[idx] { 0.0 } else { f32::MAX };
+        // We need two distance fields:
+        // 1. Distance to nearest solid (valid in air, 0 in solid) -> self.sdf
+        // 2. Distance to nearest air (valid in solid, 0 in air) -> inner_sdf
+        let mut inner_sdf = vec![f32::MAX; len];
+
+        // Initialize
+        for idx in 0..len {
+            if self.solid[idx] {
+                // Solid: Outer dist = 0, Inner dist = MAX
+                self.sdf[idx] = 0.0;
+                inner_sdf[idx] = f32::MAX;
+            } else {
+                // Air/Fluid: Outer dist = MAX, Inner dist = 0
+                self.sdf[idx] = f32::MAX; 
+                inner_sdf[idx] = 0.0;
+            }
         }
 
-        // Fast sweeping: 4 diagonal passes to propagate distances
+        // Fast sweeping: propagate distances
+        // We sweep both fields simultaneously for efficiency
         let offsets: [(i32, i32, f32); 4] = [
             (1, 0, cell_size),   // right
             (-1, 0, cell_size),  // left
@@ -142,51 +156,61 @@ impl Grid {
             (0, -1, cell_size),  // up
         ];
 
-        // Multiple sweep passes for convergence
-        for _sweep in 0..4 {
-            // Forward sweep (top-left to bottom-right)
+        // 4 passes (2 forward/backward pairs) for robust convergence
+        for _ in 0..2 {
+            // Forward sweep (Top-Left -> Bottom-Right)
             for j in 0..h {
                 for i in 0..w {
                     let idx = j * w + i;
-                    let mut min_dist = self.sdf[idx];
-                    for &(di, dj, d) in &offsets {
-                        let ni = i as i32 + di;
-                        let nj = j as i32 + dj;
-                        if ni >= 0 && ni < w as i32 && nj >= 0 && nj < h as i32 {
-                            let nidx = nj as usize * w + ni as usize;
-                            min_dist = min_dist.min(self.sdf[nidx].abs() + d);
-                        }
+                    let mut min_outer = self.sdf[idx];
+                    let mut min_inner = inner_sdf[idx];
+
+                    // Check neighbors (Left and Up are causal for this sweep)
+                    if i > 0 {
+                        let nidx = idx - 1; // Left
+                        min_outer = min_outer.min(self.sdf[nidx] + cell_size);
+                        min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
                     }
-                    self.sdf[idx] = min_dist;
+                    if j > 0 {
+                        let nidx = idx - w; // Up
+                        min_outer = min_outer.min(self.sdf[nidx] + cell_size);
+                        min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
+                    }
+                    
+                    self.sdf[idx] = min_outer;
+                    inner_sdf[idx] = min_inner;
                 }
             }
 
-            // Backward sweep (bottom-right to top-left)
+            // Backward sweep (Bottom-Right -> Top-Left)
             for j in (0..h).rev() {
                 for i in (0..w).rev() {
                     let idx = j * w + i;
-                    let mut min_dist = self.sdf[idx];
-                    for &(di, dj, d) in &offsets {
-                        let ni = i as i32 + di;
-                        let nj = j as i32 + dj;
-                        if ni >= 0 && ni < w as i32 && nj >= 0 && nj < h as i32 {
-                            let nidx = nj as usize * w + ni as usize;
-                            min_dist = min_dist.min(self.sdf[nidx].abs() + d);
-                        }
+                    let mut min_outer = self.sdf[idx];
+                    let mut min_inner = inner_sdf[idx];
+
+                    if i < w - 1 {
+                        let nidx = idx + 1; // Right
+                        min_outer = min_outer.min(self.sdf[nidx] + cell_size);
+                        min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
                     }
-                    self.sdf[idx] = min_dist;
+                    if j < h - 1 {
+                        let nidx = idx + w; // Down
+                        min_outer = min_outer.min(self.sdf[nidx] + cell_size);
+                        min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
+                    }
+
+                    self.sdf[idx] = min_outer;
+                    inner_sdf[idx] = min_inner;
                 }
             }
         }
 
-        // Second pass: make distances NEGATIVE inside solid cells
-        // This creates a proper signed distance field
-        for idx in 0..self.sdf.len() {
-            if self.solid[idx] {
-                // Inside solid: negate the distance
-                // Distance should be negative, with magnitude = distance to nearest non-solid
-                self.sdf[idx] = -self.sdf[idx].max(cell_size * 0.5);
-            }
+        // Combine: SDF = Outer - Inner
+        for idx in 0..len {
+            // If solid: Outer=0, Inner=dist -> SDF = -dist
+            // If air: Outer=dist, Inner=0 -> SDF = dist
+            self.sdf[idx] = self.sdf[idx] - inner_sdf[idx];
         }
     }
 
