@@ -18,5 +18,9 @@ pub mod pbf;
 pub use flip::FlipSimulation;
 pub use grid::{CellType, Grid};
 pub use particle::{Particle, ParticleMaterial, Particles};
-pub use sluice::{create_box, create_flat_sluice, create_sluice};
+pub use sluice::{
+    create_box, create_flat_sluice, create_sluice, create_sluice_with_mode,
+    compute_surface_heightfield, get_riffle_cells,
+    RiffleMode, SluiceConfig,
+};
 pub use pbf::{PbfSimulation, PbfParticle};
