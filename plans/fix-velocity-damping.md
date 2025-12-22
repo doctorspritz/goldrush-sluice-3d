@@ -162,3 +162,31 @@ sim.grid.compute_bed_heights();
 3. **Sediment settles at correct rate** - no hindered crushing
 4. **Performance improves** - fewer near-pressure passes
 5. **Flow looks like a sluice** - water exits right side, recirculates behind riffles
+
+---
+
+## Completion Status
+
+**All fixes implemented and committed:**
+
+| Fix | Status | Commit |
+|-----|--------|--------|
+| 1. Remove directional resistance | ✅ Complete | 53a3b4c |
+| 2. Make sediment passive | ✅ Complete | 53a3b4c |
+| 3. Disable hindered settling | ✅ Complete | 53a3b4c |
+| 4. Reduce near-pressure to 1x | ✅ Complete | 53a3b4c |
+| 5. Add vorticity confinement | ✅ Complete | 53a3b4c |
+| 6. Open right wall (outlet) | ✅ Complete | 53a3b4c |
+| 7. Fix SDF in terrain builders | ✅ Complete | 53a3b4c |
+
+**New velocity monitoring tests added:**
+| Test | Purpose | Commit |
+|------|---------|--------|
+| test_velocity_preservation | Verifies steady-state flow maintains velocity | 113a853 |
+| test_sediment_passive_coupling | Verifies passive sediment doesn't drag flow | 113a853 |
+
+All 4 entrainment tests pass:
+- test_sediment_entrainment ✅
+- test_gold_requires_higher_shear ✅
+- test_velocity_preservation ✅
+- test_sediment_passive_coupling ✅
