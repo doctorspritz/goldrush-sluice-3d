@@ -114,7 +114,7 @@ impl ParticleMaterial {
             Self::Mud => 0.5,         // Fine clay/silt particles
             Self::Sand => 2.0,        // Medium sand grains
             Self::Magnetite => 1.5,   // Black sand crystals
-            Self::Gold => 1.0,        // Fine gold (smaller but denser)
+            Self::Gold => 0.5,        // Fine gold (high density, small size)
         }
     }
 

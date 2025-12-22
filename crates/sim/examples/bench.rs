@@ -4,13 +4,23 @@
 //! Profile with: cargo flamegraph --example bench -p sim
 
 use sim::{create_sluice, FlipSimulation};
-use std::time::Instant;
+use std::{
+    env,
+    time::{Duration, Instant},
+};
 
 fn main() {
     const WIDTH: usize = 128;
     const HEIGHT: usize = 128;
     const CELL_SIZE: f32 = 2.0;
-    const FRAMES: usize = 300; // 5 seconds at 60 FPS
+    let frames: usize = env::var("BENCH_FRAMES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300); // 5 seconds at 60 FPS
+    let idle_after = env::var("BENCH_IDLE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     const DT: f32 = 1.0 / 60.0;
 
     println!("Setting up simulation {}x{} with cell_size={}", WIDTH, HEIGHT, CELL_SIZE);
@@ -35,10 +45,10 @@ fn main() {
     println!("After warmup: {} particles", sim.particles.len());
 
     // Benchmark
-    println!("Running {} frames...", FRAMES);
+    println!("Running {} frames...", frames);
     let start = Instant::now();
 
-    for frame in 0..FRAMES {
+    for frame in 0..frames {
         // Spawn more particles like the game does
         if frame % 2 == 0 {
             let inlet_x = 20.0;
@@ -54,7 +64,7 @@ fn main() {
     }
 
     let elapsed = start.elapsed();
-    let avg_frame_time = elapsed.as_secs_f64() / FRAMES as f64;
+    let avg_frame_time = elapsed.as_secs_f64() / frames as f64;
     let fps = 1.0 / avg_frame_time;
 
     println!("\n=== Results ===");
@@ -67,5 +77,9 @@ fn main() {
         println!("\n⚠️  Below 60 FPS target - optimization needed");
     } else {
         println!("\n✅ Meeting 60 FPS target");
+    }
+
+    if idle_after > 0 {
+        std::thread::sleep(Duration::from_secs(idle_after));
     }
 }

@@ -54,11 +54,8 @@ void main() {
     // Use uniform color
     vec3 finalColor = particleColor.rgb;
 
-    // Subtle rim darkening for depth
-    float rim = smoothstep(0.5, 0.9, dist);
-    finalColor = mix(finalColor, finalColor * 0.8, rim);
-
-    gl_FragColor = vec4(finalColor, alpha * 0.85);
+    // Simplified color output without rim darkening
+    gl_FragColor = vec4(finalColor, alpha);
 }
 "#;
 
