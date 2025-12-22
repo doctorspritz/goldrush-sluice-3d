@@ -279,37 +279,43 @@ impl DfsphSimulation {
                 if temp_pos.y < cs { temp_pos.y = cs; p.velocity.y *= -restitution; }
                 if temp_pos.y > h_f - cs { temp_pos.y = h_f - cs; p.velocity.y *= -restitution; }
                 
-                // Grid Solids - ray march to find first collision
-                if is_solid(temp_pos) {
-                    let dir = temp_pos - *old_pos;
-                    let dist = dir.length();
+                // Grid Solids - ALWAYS ray march to catch tunneling through walls
+                let dir = temp_pos - *old_pos;
+                let dist = dir.length();
 
-                    if dist > 0.001 {
-                        let step = cs * 0.5; // Check every half cell
-                        let steps = (dist / step).ceil() as usize;
-                        let mut safe_pos = *old_pos;
+                if dist > 0.001 {
+                    let step = cs * 0.25; // Check every quarter cell for thin walls
+                    let steps = ((dist / step).ceil() as usize).max(4);
+                    let mut safe_pos = *old_pos;
+                    let mut hit = false;
 
-                        for i in 1..=steps {
-                            let t = (i as f32) / (steps as f32);
-                            let check_pos = *old_pos + dir * t;
-                            if is_solid(check_pos) {
-                                // Found collision - stop just before
-                                let normal = if (check_pos.x / cs).floor() != (safe_pos.x / cs).floor() {
-                                    Vec2::new(if dir.x > 0.0 { -1.0 } else { 1.0 }, 0.0)
-                                } else {
-                                    Vec2::new(0.0, if dir.y > 0.0 { -1.0 } else { 1.0 })
-                                };
-                                p.velocity = p.velocity - 2.0 * p.velocity.dot(normal) * normal * (1.0 - restitution);
-                                temp_pos = safe_pos;
-                                break;
-                            }
-                            safe_pos = check_pos;
+                    for i in 1..=steps {
+                        let t = (i as f32) / (steps as f32);
+                        let check_pos = *old_pos + dir * t;
+                        if is_solid(check_pos) {
+                            // Found collision - stop just before
+                            let normal = if (check_pos.x / cs).floor() != (safe_pos.x / cs).floor() {
+                                Vec2::new(if dir.x > 0.0 { -1.0 } else { 1.0 }, 0.0)
+                            } else {
+                                Vec2::new(0.0, if dir.y > 0.0 { -1.0 } else { 1.0 })
+                            };
+                            p.velocity = p.velocity - 2.0 * p.velocity.dot(normal) * normal * (1.0 - restitution);
+                            temp_pos = safe_pos;
+                            hit = true;
+                            break;
                         }
-                    } else {
-                        // Already in solid - push out
-                        temp_pos = *old_pos;
-                        p.velocity = Vec2::ZERO;
+                        safe_pos = check_pos;
                     }
+
+                    // Final check - if we still ended up in solid, reset completely
+                    if !hit && is_solid(temp_pos) {
+                        temp_pos = *old_pos;
+                        p.velocity *= 0.1;
+                    }
+                } else if is_solid(temp_pos) {
+                    // Already in solid or barely moving - push out
+                    temp_pos = *old_pos;
+                    p.velocity = Vec2::ZERO;
                 }
                 
                 p.position = temp_pos;
@@ -433,25 +439,48 @@ impl DfsphSimulation {
                     delta / REST_DENSITY
                 }));
 
-                // Apply deltas to particles and update positions_buffer in-place
+                // Apply deltas to particles with ray-march collision
                 particles_slice.iter_mut().enumerate().zip(self.deltas_buffer.iter()).for_each(|((i, p), d)| {
                     let mut new_pos = p.position + *d;
-                    let cx = (new_pos.x / cs) as i32;
-                    let cy = (new_pos.y / cs) as i32;
-                    let mut collided = false;
-                    if new_pos.x < cs { new_pos.x = cs; collided = true; }
-                    if new_pos.x > w_f - cs { new_pos.x = w_f - cs; collided = true; }
-                    if new_pos.y < cs { new_pos.y = cs; collided = true; }
-                    if new_pos.y > h_f - cs { new_pos.y = h_f - cs; collided = true; }
-                    
-                    if !collided && cx >= 0 && cy >= 0 && (cx as usize) < grid_w && (cy as usize) < grid_h {
-                        let idx = (cy as usize) * grid_w + (cx as usize);
-                        if idx < grid_solid.len() && grid_solid[idx] {
-                            new_pos = p.position;
+
+                    // Bounds
+                    if new_pos.x < cs { new_pos.x = cs; }
+                    if new_pos.x > w_f - cs { new_pos.x = w_f - cs; }
+                    if new_pos.y < cs { new_pos.y = cs; }
+                    if new_pos.y > h_f - cs { new_pos.y = h_f - cs; }
+
+                    // Ray-march for solid collision
+                    let is_solid_pos = |pos: Vec2| -> bool {
+                        let cx = (pos.x / cs) as i32;
+                        let cy = (pos.y / cs) as i32;
+                        if cx >= 0 && cy >= 0 && (cx as usize) < grid_w && (cy as usize) < grid_h {
+                            let idx = (cy as usize) * grid_w + (cx as usize);
+                            return idx < grid_solid.len() && grid_solid[idx];
+                        }
+                        false
+                    };
+
+                    let dir = new_pos - p.position;
+                    let dist = dir.length();
+                    if dist > 0.001 {
+                        let steps = ((dist / (cs * 0.25)).ceil() as usize).max(2);
+                        let mut safe_pos = p.position;
+                        for s in 1..=steps {
+                            let t = (s as f32) / (steps as f32);
+                            let check = p.position + dir * t;
+                            if is_solid_pos(check) {
+                                new_pos = safe_pos;
+                                break;
+                            }
+                            safe_pos = check;
                         }
                     }
+                    if is_solid_pos(new_pos) {
+                        new_pos = p.position;
+                    }
+
                     p.position = new_pos;
-                    self.positions_buffer[i] = new_pos; // Update buffer in-place instead of re-collecting
+                    self.positions_buffer[i] = new_pos;
                 });
             }
         }

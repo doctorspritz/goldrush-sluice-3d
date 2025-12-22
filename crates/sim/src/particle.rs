@@ -320,6 +320,25 @@ impl Particle {
         self.material.is_sediment()
     }
 
+    /// Advect micro-stepped with collision callback
+    /// Ensures particle never travels more than 0.5 * cell_size per substep.
+    /// The callback is executed after each substep to resolve collisions.
+    pub fn advect_micro_stepped<F>(&mut self, dt: f32, cell_size: f32, mut collision_callback: F)
+    where
+        F: FnMut(&mut Self),
+    {
+        let max_disp = 0.5 * cell_size;
+        let disp = self.velocity * dt;
+        // Ensure at least 1 step, and steps is calculated based on displacement vs max_disp
+        let steps = (disp.length() / max_disp).ceil().max(1.0) as usize;
+        let sub_dt = dt / steps as f32;
+
+        for _ in 0..steps {
+            self.position += self.velocity * sub_dt;
+            collision_callback(self);
+        }
+    }
+
     /// Get RGBA color for rendering
     pub fn color(&self) -> [u8; 4] {
         self.material.color()

@@ -102,12 +102,12 @@ impl FlipSimulation {
             near_pressure_phase: 0,
             // Tunable parameters with defaults
             // Larger h = longer range pressure propagation for incompressibility
-            near_pressure_h: 5.0,  // Moderate range
-            near_pressure_rest: 0.1, // Very low = strong incompressibility, almost no compression
+            near_pressure_h: 4.0,  // Moderate range
+            near_pressure_rest: 0.8, // Very low = strong incompressibility, almost no compression
             // Neighbor counts for hindered settling
-            neighbor_counts: Vec::new(),
+            neighbor_counts: vec![0; cell_count * 9], // Approximation
             // Water neighbor counts for in-fluid detection
-            water_neighbor_counts: Vec::new(),
+            water_neighbor_counts: vec![0; cell_count * 9],
             // Sediment physics feature flags (all enabled by default)
             use_ferguson_church: true,
             use_hindered_settling: true,
@@ -125,6 +125,9 @@ impl FlipSimulation {
 
         // 1. Classify cells based on particle positions
         self.classify_cells();
+        
+        // 1b. Update Signed Distance Field for collision
+        self.grid.compute_sdf();
 
         // 2. Transfer particle velocities to grid (P2G)
         self.particles_to_grid();
@@ -140,14 +143,16 @@ impl FlipSimulation {
         self.grid.enforce_boundary_conditions();
         self.grid.compute_divergence();
         // Pressure solver iterations (more needed for finer grids)
-        // 15 iterations for 256x192 grid to maintain convergence
+        // REDUCED from 15 to 5 to reduce viscosity/damping and make water "lively"
+        // This is a trade-off: less incompressibility vs more energy preservation.
+        // UPDATE: Restored to 15 because 5 was too unstable/dampening with under-relaxation
         self.grid.solve_pressure(15);
         self.grid.apply_pressure_gradient(dt);
 
         // 6. Transfer grid velocities back to particles
         // Water: gets FLIP velocity
         // Sediment: stores fluid velocity for drag calculation
-        self.grid_to_particles();
+        self.grid_to_particles(dt);
 
         // 6a. Slope flow correction now handled in Grid::apply_gravity()
         // Gravity is applied tangentially near floors at the grid level.
@@ -196,14 +201,20 @@ impl FlipSimulation {
         }
 
         // Mark solid cells from terrain
-        for j in 0..self.grid.height {
-            for i in 0..self.grid.width {
-                if self.grid.is_solid(i, j) {
-                    let idx = self.grid.cell_index(i, j);
-                    self.grid.cell_type[idx] = CellType::Solid;
-                }
+    for j in 0..self.grid.height {
+        for i in 0..self.grid.width {
+            let idx = self.grid.cell_index(i, j);
+            
+            // Explicitly mark boundaries as solid
+            // 0 is Top (Open), Height-1 is Bottom (Floor)
+            // 0 and Width-1 are Walls
+            let is_boundary = i == 0 || i == self.grid.width - 1 || j == self.grid.height - 1;
+            
+            if is_boundary || self.grid.is_solid(i, j) {
+                self.grid.cell_type[idx] = CellType::Solid;
             }
         }
+    }
 
         // Mark fluid cells - only WATER particles mark cells as fluid
         // Sediment in air should NOT mark cells as fluid
@@ -371,7 +382,9 @@ impl FlipSimulation {
     /// TWO DIFFERENT BEHAVIORS:
     /// - Water: Gets grid velocity and updates C matrix (APIC)
     /// - Sediment: Only samples fluid velocity for drag calculation (Lagrangian)
-    fn grid_to_particles(&mut self) {
+    /// - Water: Gets grid velocity and updates C matrix (APIC)
+    /// - Sediment: Only samples fluid velocity for drag calculation (Lagrangian)
+    fn grid_to_particles(&mut self, dt: f32) {
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
         let height = self.grid.height;
@@ -382,8 +395,8 @@ impl FlipSimulation {
         // FLIP ratio: 0 = pure PIC (smooth but dissipative), 1 = pure FLIP (preserves velocity but noisy)
         // Higher = less viscous, more energetic flow
         // User requested "more APIC" -> 0.90 for stability
-        // UPDATE: Increased to 0.97 for better vortex preservation (less damping)
-        const FLIP_RATIO: f32 = 0.97;
+        // UPDATE: Increased to 0.99 for maximum "liveliness" and reduced viscosity
+        const FLIP_RATIO: f32 = 0.99;
 
         self.particles.list.par_iter_mut().for_each(|particle| {
             let pos = particle.position;
@@ -490,7 +503,18 @@ impl FlipSimulation {
             //
             // We stored old_grid_v in store_old_velocities() BEFORE forces were applied
             let grid_delta = new_velocity - particle.old_grid_velocity;
-            let flip_velocity = old_particle_velocity + grid_delta;
+
+            // CLAMPING: Prevent energy explosions by limiting the FLIP delta
+            // This is "non-negotiable" for stability.
+            // Limit delta to 5 cells per frame (heuristic)
+            let max_dv = 5.0 * cell_size / dt; 
+            let clamped_delta = if grid_delta.length_squared() > max_dv * max_dv {
+                grid_delta.normalize() * max_dv
+            } else {
+                grid_delta
+            };
+
+            let flip_velocity = old_particle_velocity + clamped_delta;
             let pic_velocity = new_velocity;
 
             // Blend: mostly FLIP (0.95) to preserve horizontal momentum
@@ -511,7 +535,8 @@ impl FlipSimulation {
             particle.affine_velocity = new_c;
 
             // Safety clamp
-            const MAX_VELOCITY: f32 = 150.0;
+            // Increased to 2000.0 to allow tunneling test to reproduce (and eventually be fixed by micro-steps)
+            const MAX_VELOCITY: f32 = 2000.0;
             let speed = particle.velocity.length();
             if speed > MAX_VELOCITY {
                 particle.velocity *= MAX_VELOCITY / speed;
@@ -656,8 +681,24 @@ impl FlipSimulation {
                         let slip = glam::Vec2::new(0.0, settling_velocity);
                         let target_velocity = v_fluid + slip;
 
-                        // Drag toward target velocity (heavier = slower response)
-                        let drag_rate = BASE_DRAG_RATE / density;
+                        // Drag toward target velocity
+                        // RATE physics:
+                        // Settling is driven by effective gravity (gravity - buoyancy).
+                        // Terminal velocity is reached when Drag = Effective Gravity.
+                        // Drag Force = m * drag_rate * v.
+                        // m * drag_rate * v_term = m * g_eff.
+                        // So drag_rate = g_eff / v_term.
+                        // This ensures initial acceleration matches gravity.
+
+                        let effective_gravity = GRAVITY * (density - 1.0) / density;
+                        let drag_rate = if base_settling > 0.001 {
+                            // Physics-based rate
+                            effective_gravity / base_settling
+                        } else {
+                            // Fallback for neutral buoyancy
+                            BASE_DRAG_RATE
+                        };
+
                         let blend = (drag_rate * dt).clamp(0.0, 1.0);
                         particle.velocity = particle.velocity.lerp(target_velocity, blend);
                     }
@@ -785,7 +826,9 @@ impl FlipSimulation {
                     }
 
                     // Also exit if lifted off floor (e.g., by vortex)
-                    if !on_floor && speed > VELOCITY_SETTLE_THRESHOLD * 2.0 {
+                    // Heavie particles need more speed to lift off
+                    let lift_threshold = VELOCITY_SETTLE_THRESHOLD * 2.0 * particle.density().sqrt();
+                    if !on_floor && speed > lift_threshold {
                         particle.state = ParticleState::Suspended;
                     }
                 }
@@ -1181,52 +1224,59 @@ impl FlipSimulation {
         let grid = &self.grid;
         
         self.particles.list.par_iter_mut().for_each(|particle| {
-            // Move particle
-            particle.position += particle.velocity * dt;
+            // Optimization: Skip advection for settled particles
+            // This allows large sediment beds with zero cost
+            if particle.state == ParticleState::Bedload {
+                return;
+            }
 
-            // Simple SDF collision: only push out if inside or touching solid
-            let sdf_dist = grid.sample_sdf(particle.position);
+            // Micro-stepped advection with collision checking per substep
+            // This prevents tunneling through thin walls at high velocities
+            particle.advect_micro_stepped(dt, cell_size, |p| {
+                // Simple SDF collision: only push out if inside or touching solid
+                let sdf_dist = grid.sample_sdf(p.position);
 
-            // If inside or very close to solid, push out and apply friction
-            if sdf_dist < cell_size * 0.5 {
-                let grad = grid.sdf_gradient(particle.position);
+                // If inside or very close to solid, push out and apply friction
+                if sdf_dist < cell_size * 0.5 {
+                    let grad = grid.sdf_gradient(p.position);
 
-                // Push out to safe distance
-                let push_dist = cell_size * 0.5 - sdf_dist;
-                particle.position += grad * push_dist;
+                    // Push out to safe distance
+                    let push_dist = cell_size * 0.5 - sdf_dist;
+                    p.position += grad * push_dist;
 
-                // Decompose velocity into normal and tangential components
-                let v_dot_n = particle.velocity.dot(grad);
-                let v_normal = grad * v_dot_n;
-                let v_tangent = particle.velocity - v_normal;
+                    // Decompose velocity into normal and tangential components
+                    let v_dot_n = p.velocity.dot(grad);
+                    let v_normal = grad * v_dot_n;
+                    let v_tangent = p.velocity - v_normal;
 
-                // Apply friction to tangential velocity (sediment only)
-                let v_tangent_damped = if particle.is_sediment() {
-                    let friction = if particle.state == ParticleState::Bedload {
-                        particle.material.static_friction()
+                    // Apply friction to tangential velocity (sediment only)
+                    let v_tangent_damped = if p.is_sediment() {
+                        let friction = if p.state == ParticleState::Bedload {
+                            p.material.static_friction()
+                        } else {
+                            p.material.dynamic_friction() * 0.5
+                        };
+                        v_tangent * (1.0 - friction)
                     } else {
-                        particle.material.dynamic_friction() * 0.5
+                        v_tangent
                     };
-                    v_tangent * (1.0 - friction)
-                } else {
-                    v_tangent
-                };
 
-                // Remove velocity component into solid, keep damped tangential
-                let v_normal_clamped = if v_dot_n < 0.0 { Vec2::ZERO } else { v_normal };
-                particle.velocity = v_tangent_damped + v_normal_clamped;
-            }
+                    // Remove velocity component into solid, keep damped tangential
+                    let v_normal_clamped = if v_dot_n < 0.0 { Vec2::ZERO } else { v_normal };
+                    p.velocity = v_tangent_damped + v_normal_clamped;
+                }
 
-            // Final bounds clamp
-            particle.position.x = particle.position.x.clamp(margin, max_x);
-            particle.position.y = particle.position.y.clamp(margin, max_y);
+                // Final bounds clamp (per substep to keep it contained)
+                p.position.x = p.position.x.clamp(margin, max_x);
+                p.position.y = p.position.y.clamp(margin, max_y);
 
-            if particle.position.x <= margin || particle.position.x >= max_x {
-                particle.velocity.x = 0.0;
-            }
-            if particle.position.y <= margin || particle.position.y >= max_y {
-                particle.velocity.y = 0.0;
-            }
+                if p.position.x <= margin || p.position.x >= max_x {
+                    p.velocity.x = 0.0;
+                }
+                if p.position.y <= margin || p.position.y >= max_y {
+                    p.velocity.y = 0.0;
+                }
+            });
         });
     }
 

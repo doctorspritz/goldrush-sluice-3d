@@ -90,6 +90,10 @@ pub struct Grid {
     /// Used for vorticity confinement and diagnostics
     pub vorticity: Vec<f32>,
 
+    /// Bed heightfield (y-coordinate) for each x-column
+    /// Used for optimized floor collision and rendering
+    pub bed_height: Vec<f32>,
+
     /// Temporary buffer for viscosity diffusion (avoids allocation)
     u_temp: Vec<f32>,
     v_temp: Vec<f32>,
@@ -113,6 +117,7 @@ impl Grid {
             solid: vec![false; cell_count],
             sdf: vec![f32::MAX; cell_count],  // Will be computed after terrain setup
             vorticity: vec![0.0; cell_count],
+            bed_height: vec![0.0; width],
             // Pre-allocated buffers for viscosity (avoids per-frame allocation)
             u_temp: vec![0.0; u_count],
             v_temp: vec![0.0; v_count],
@@ -136,7 +141,7 @@ impl Grid {
 
         // Initialize
         for idx in 0..len {
-            if self.solid[idx] {
+            if self.cell_type[idx] == CellType::Solid {
                 // Solid: Outer dist = 0, Inner dist = MAX
                 self.sdf[idx] = 0.0;
                 inner_sdf[idx] = f32::MAX;
@@ -686,10 +691,19 @@ impl Grid {
 
     /// Subtract pressure gradient from velocity field
     /// Uses formulation: u -= ∇p̃ / h where p̃ is pseudo-pressure from ∇²p̃ = div
+    /// Subtract pressure gradient from velocity field
+    /// Uses formulation: u -= ∇p̃ / h where p̃ is pseudo-pressure from ∇²p̃ = div
     pub fn apply_pressure_gradient(&mut self, _dt: f32) {
         // CRITICAL FIX: Remove dt from scale. With dt, only 0.1% of divergence
         // was corrected per frame. Without dt, we get full correction.
-        let scale = 1.0 / self.cell_size;
+        // let scale = 1.0 / self.cell_size;
+
+        // UNDER-RELAXATION: Scale by 0.8 to remove only 80% of divergence
+        // This leaves some "divergent" modes which manifests as acoustic waves
+        // but keeps the fluid much more "lively" and energetic (less viscous).
+        // This is a common trick in game physics to combat numerical damping.
+        const RELAXATION: f32 = 0.8;
+        let scale = RELAXATION / self.cell_size;
 
         // Update U velocities (horizontal)
         for j in 0..self.height {
