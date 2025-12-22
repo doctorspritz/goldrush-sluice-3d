@@ -605,6 +605,49 @@ async fn main() {
             10.0, screen_height() - 42.0, 14.0, GRAY,
         );
 
+        // === CURSOR DEBUG ===
+        {
+            let (mx, my) = mouse_position();
+            let wx = mx / SCALE;
+            let wy = my / SCALE;
+            let col = (wx / CELL_SIZE) as usize;
+
+            // Get pile height at cursor column
+            let pile_h = if col < sim.pile_height.len() {
+                sim.pile_height[col]
+            } else {
+                f32::INFINITY
+            };
+
+            // Count particles near cursor (within 10 world units)
+            let mut bedload_near = 0;
+            let mut suspended_near = 0;
+            for p in &sim.particles.list {
+                let dx = p.position.x - wx;
+                let dy = p.position.y - wy;
+                if dx*dx + dy*dy < 100.0 {
+                    if p.is_sediment() {
+                        match p.state {
+                            sim::particle::ParticleState::Bedload => bedload_near += 1,
+                            sim::particle::ParticleState::Suspended => suspended_near += 1,
+                        }
+                    }
+                }
+            }
+
+            let pile_str = if pile_h < f32::INFINITY {
+                format!("{:.1}", pile_h)
+            } else {
+                "none".to_string()
+            };
+
+            let debug_text = format!(
+                "cursor: ({:.0},{:.0}) col:{} pile:{} | nearby: bed={} sus={}",
+                wx, wy, col, pile_str, bedload_near, suspended_near
+            );
+            draw_text(&debug_text, mx + 15.0, my - 10.0, 14.0, YELLOW);
+        }
+
         // Frame rate limiting disabled - we're CPU-bound on simulation
         // The macroquad vsync will limit to monitor refresh rate
         let _ = frame_start; // suppress unused warning

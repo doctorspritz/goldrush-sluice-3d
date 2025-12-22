@@ -58,7 +58,7 @@ pub struct FlipSimulation {
     // === Pile Heightfield for Stacking ===
     // Bedload particles act as a collision floor for suspended particles
     // pile_height[x] = top of bedload pile at column x (in world coordinates)
-    pile_height: Vec<f32>,
+    pub pile_height: Vec<f32>,
 
     // === Sediment Physics Feature Flags ===
     // Toggle these to compare old vs new physics behavior
@@ -114,7 +114,7 @@ impl FlipSimulation {
             // Water neighbor counts for in-fluid detection
             water_neighbor_counts: vec![0; cell_count * 9],
             // Pile heightfield for stacking (one entry per column)
-            pile_height: vec![f32::NEG_INFINITY; width],
+            pile_height: vec![f32::INFINITY; width],
             // Sediment physics feature flags
             use_ferguson_church: true,
             use_hindered_settling: false, // Disabled: neighbor count mismatch crushes settling to 6%
@@ -815,11 +815,14 @@ impl FlipSimulation {
             let on_solid_floor = near_solid && is_floor_surface;
 
             // Check if supported by pile
+            // pile_top is the smallest Y (highest point) of bedload in this column
+            // Particle is "on pile" if its bottom is CLOSE to pile_top (within 1 cell)
             let col = ((particle.position.x / cell_size) as usize).min(pile_width.saturating_sub(1));
             let pile_top = pile_height[col];
             let particle_radius = cell_size * 0.5;
-            let on_pile = pile_top > f32::NEG_INFINITY
-                && particle.position.y + particle_radius >= pile_top - cell_size * 0.5;
+            let particle_bottom = particle.position.y + particle_radius;
+            let on_pile = pile_top < f32::INFINITY  // pile exists
+                && (particle_bottom - pile_top).abs() < cell_size;  // within 1 cell of pile top
 
             let has_support = on_solid_floor || on_pile;
 
@@ -868,7 +871,8 @@ impl FlipSimulation {
                 } else { false };
                 let col = ((p.position.x / cell_size) as usize).min(pile_width.saturating_sub(1));
                 let pile_top = self.pile_height[col];
-                let on_pile = pile_top > f32::NEG_INFINITY && p.position.y + cell_size * 0.5 >= pile_top - cell_size * 0.5;
+                let particle_bottom = p.position.y + cell_size * 0.5;
+                let on_pile = pile_top < f32::INFINITY && (particle_bottom - pile_top).abs() < cell_size;
                 if (near_solid && is_floor) || on_pile { has_support_count += 1; }
 
                 // Check shear
@@ -880,8 +884,23 @@ impl FlipSimulation {
                 if shear_n < JAM_THRESHOLD { low_shear_count += 1; }
             }
 
-            eprintln!("[JAM DEBUG] bedload={} suspended={} has_support={} low_shear={}",
-                bedload_count, suspended_count, has_support_count, low_shear_count);
+            // Show some bedload positions
+            let bedload_positions: Vec<_> = self.particles.list.iter()
+                .filter(|p| p.is_sediment() && p.state == ParticleState::Bedload)
+                .take(5)
+                .map(|p| format!("({:.0},{:.0})", p.position.x, p.position.y))
+                .collect();
+
+            // Show non-INFINITY pile heights (actual piles)
+            let active_piles: Vec<_> = self.pile_height.iter().enumerate()
+                .filter(|(_, h)| **h < f32::INFINITY)
+                .take(5)
+                .map(|(col, h)| format!("col{}={:.0}", col, h))
+                .collect();
+
+            eprintln!("[JAM DEBUG] bedload={} suspended={} has_support={} low_shear={} | pos:{:?} | piles:{:?}",
+                bedload_count, suspended_count, has_support_count, low_shear_count,
+                bedload_positions, active_piles);
         }
     }
 
@@ -894,17 +913,18 @@ impl FlipSimulation {
         let cell_size = self.grid.cell_size;
         let width = self.pile_height.len();
 
-        // Reset heightfield to negative infinity (no pile)
+        // Reset heightfield to positive infinity (no pile)
+        // With +Y = DOWN, smaller Y = higher up, so we use INFINITY as "no pile"
         for h in &mut self.pile_height {
-            *h = f32::NEG_INFINITY;
+            *h = f32::INFINITY;
         }
 
-        // Find highest bedload particle in each column
+        // Find highest bedload particle in each column (smallest Y = highest point)
         for particle in self.particles.list.iter() {
             if particle.state == ParticleState::Bedload && particle.is_sediment() {
                 let col = ((particle.position.x / cell_size) as usize).min(width.saturating_sub(1));
-                let particle_top = particle.position.y - cell_size * 0.5; // Top of particle
-                self.pile_height[col] = self.pile_height[col].max(particle_top);
+                let particle_top = particle.position.y - cell_size * 0.5; // Top of particle (smaller Y)
+                self.pile_height[col] = self.pile_height[col].min(particle_top); // min = highest point
             }
         }
 
@@ -917,7 +937,7 @@ impl FlipSimulation {
             let right = self.pile_height[i + 1];
 
             // Only smooth if all three columns have piles
-            if left > f32::NEG_INFINITY && center > f32::NEG_INFINITY && right > f32::NEG_INFINITY {
+            if left < f32::INFINITY && center < f32::INFINITY && right < f32::INFINITY {
                 smoothed[i] = (left + 2.0 * center + right) / 4.0;
             }
         }
@@ -1357,15 +1377,23 @@ impl FlipSimulation {
                     p.velocity = v_tangent_damped + v_normal_clamped;
                 }
 
-                // === PILE AS FLOOR CONSTRAINT ===
-                // Project suspended sediment particles onto the pile surface
-                // This allows particles to stack on existing bedload piles
-                if p.is_sediment() && p.state == ParticleState::Suspended {
+                // === PILE AS SOLID FLOOR ===
+                // Piles act as solid floors for ALL particles (water and sediment)
+                // Check current column AND adjacent columns to prevent slipping through gaps
+                {
                     let col = ((p.position.x / cell_size) as usize).min(pile_width.saturating_sub(1));
-                    let floor_y = pile_height[col];
 
-                    // Only project if there's a pile in this column
-                    if floor_y > f32::NEG_INFINITY {
+                    // Find the highest pile (smallest Y) among current and adjacent columns
+                    let mut floor_y = pile_height[col];
+                    if col > 0 {
+                        floor_y = floor_y.min(pile_height[col - 1]);
+                    }
+                    if col + 1 < pile_width {
+                        floor_y = floor_y.min(pile_height[col + 1]);
+                    }
+
+                    // Only project if there's a pile nearby
+                    if floor_y < f32::INFINITY {
                         let particle_radius = cell_size * 0.5;
                         let particle_bottom = p.position.y + particle_radius;
 
