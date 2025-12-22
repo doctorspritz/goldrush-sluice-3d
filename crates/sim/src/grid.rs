@@ -878,13 +878,24 @@ impl Grid {
                     continue;
                 }
 
-                // === ATTENUATION NEAR SURFACES ===
-                // 1. Distance to solid (SDF)
-                let sdf_dist = self.sdf[idx];
-                let sdf_atten = (sdf_dist / (3.0 * dx)).clamp(0.0, 1.0);
+                // === FREE SURFACE CHECK ===
+                // Air is compressible - vorticity confinement only makes sense in
+                // incompressible regions. Skip any fluid cell adjacent to air.
+                let has_air_neighbor =
+                    self.cell_type[self.cell_index(i, j - 1)] == CellType::Air ||
+                    self.cell_type[self.cell_index(i, j + 1)] == CellType::Air ||
+                    self.cell_type[self.cell_index(i - 1, j)] == CellType::Air ||
+                    self.cell_type[self.cell_index(i + 1, j)] == CellType::Air;
 
-                // 2. Distance to pile surface
+                if has_air_neighbor {
+                    continue; // Free surface - no confinement
+                }
+
+                // === ATTENUATION NEAR SOLID/PILE SURFACES ===
+                // Attenuate (don't skip) near solid walls and piles
                 let cell_y = (j as f32 + 0.5) * dx;
+
+                // Distance to pile surface
                 let pile_atten = if i < pile_height.len() && pile_height[i] < f32::INFINITY {
                     let pile_y = pile_height[i];
                     let dist_to_pile = cell_y - pile_y; // positive = above pile
@@ -897,11 +908,8 @@ impl Grid {
                     1.0 // No pile in this column
                 };
 
-                // Combined attenuation (use minimum - strongest damping wins)
-                let atten = sdf_atten.min(pile_atten);
-
-                if atten < 0.01 {
-                    continue; // Skip if fully damped
+                if pile_atten < 0.01 {
+                    continue;
                 }
 
                 // Gradient of curl magnitude
@@ -922,8 +930,8 @@ impl Grid {
                 // Reference: Fedkiw et al. 2001 "Visual Simulation of Smoke"
                 let c = curl[idx];
                 let h = self.cell_size;
-                let fx = ny * c * strength * h * atten;
-                let fy = -nx * c * strength * h * atten;
+                let fx = ny * c * strength * h * pile_atten;
+                let fy = -nx * c * strength * h * pile_atten;
 
                 // Apply to velocity
                 let u_idx = self.u_index(i, j);
