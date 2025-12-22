@@ -783,6 +783,58 @@ impl Grid {
         }
     }
 
+    /// Damp vertical velocity at the free surface to eliminate "fizz"
+    ///
+    /// The top fluid cells in each column experience gravity-induced vertical jitter
+    /// that creates a chaotic appearance. This function applies depth-weighted damping
+    /// to v.y only, preserving horizontal transport while calming the surface.
+    ///
+    /// Called AFTER pressure projection so we don't fight incompressibility.
+    pub fn damp_surface_vertical(&mut self) {
+        // First pass: find the topmost fluid cell in each column (surface_j)
+        let mut surface_j: Vec<Option<usize>> = vec![None; self.width];
+
+        for i in 0..self.width {
+            for j in 0..self.height {
+                let idx = self.cell_index(i, j);
+                if self.cell_type[idx] == CellType::Fluid {
+                    // First fluid cell from top (smallest j = highest because +Y is down)
+                    surface_j[i] = Some(j);
+                    break;
+                }
+            }
+        }
+
+        // Second pass: damp v.y based on depth from surface
+        // Depth 0 (at surface) = strongest damping
+        // Depth 3+ = no damping
+        const SURFACE_DEPTH: f32 = 3.0;
+
+        for j in 1..self.height {
+            for i in 0..self.width {
+                let idx = self.cell_index(i, j);
+                if self.cell_type[idx] != CellType::Fluid {
+                    continue;
+                }
+
+                if let Some(surf) = surface_j[i] {
+                    // depth = 0 at surface, increases downward
+                    let depth = (j as i32 - surf as i32) as f32;
+
+                    if depth < SURFACE_DEPTH {
+                        // t = 0 at surface, 1 at SURFACE_DEPTH cells down
+                        let t = (depth / SURFACE_DEPTH).clamp(0.0, 1.0);
+
+                        // Damp vertical velocity only
+                        // v is stored at bottom edge of cells, so v_index(i, j) is between j-1 and j
+                        let v_idx = self.v_index(i, j);
+                        self.v[v_idx] *= t;
+                    }
+                }
+            }
+        }
+    }
+
     /// Compute vorticity (curl) field: ω = ∂v/∂x - ∂u/∂y
     /// Stores result in self.vorticity for later use in confinement and diagnostics
     pub fn compute_vorticity(&mut self) {
@@ -865,9 +917,24 @@ impl Grid {
         // First pass: compute curl (vorticity) at each cell and store it
         self.compute_vorticity();
 
+        // Find the topmost fluid cell in each column (free surface)
+        let mut surface_j: Vec<Option<usize>> = vec![None; self.width];
+        for i in 0..self.width {
+            for j in 0..self.height {
+                let idx = self.cell_index(i, j);
+                if self.cell_type[idx] == CellType::Fluid {
+                    surface_j[i] = Some(j);
+                    break;
+                }
+            }
+        }
+
         // Use stored vorticity for confinement
         let curl = &self.vorticity;
         let dx = self.cell_size;
+
+        // Cells within this depth of surface are skipped (prevents fake turbulence band)
+        const SURFACE_SKIP_DEPTH: usize = 3;
 
         // Second pass: apply vorticity force
         for j in 2..self.height - 2 {
@@ -889,6 +956,15 @@ impl Grid {
 
                 if has_air_neighbor {
                     continue; // Free surface - no confinement
+                }
+
+                // === TOP N CELLS SKIP ===
+                // Skip vorticity confinement in top 2-3 cells per column
+                // These cells create "fake turbulence bands" at the surface
+                if let Some(surf) = surface_j[i] {
+                    if j < surf + SURFACE_SKIP_DEPTH {
+                        continue;
+                    }
                 }
 
                 // === ATTENUATION NEAR SOLID/PILE SURFACES ===

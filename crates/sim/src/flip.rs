@@ -162,6 +162,11 @@ impl FlipSimulation {
         self.grid.solve_pressure(15);
         self.grid.apply_pressure_gradient(dt);
 
+        // 5b. Damp vertical velocity at free surface
+        // Eliminates gravity-induced "fizz" without affecting horizontal transport
+        // Must be AFTER pressure projection to not fight incompressibility
+        self.grid.damp_surface_vertical();
+
         // 6. Transfer grid velocities back to particles
         // Water: gets FLIP velocity
         // Sediment: stores fluid velocity for drag calculation
@@ -413,12 +418,6 @@ impl FlipSimulation {
 
         let grid = &self.grid;
 
-        // FLIP ratio: 0 = pure PIC (smooth but dissipative), 1 = pure FLIP (preserves velocity but noisy)
-        // Higher = less viscous, more energetic flow
-        // User requested "more APIC" -> 0.90 for stability
-        // UPDATE: Increased to 0.99 for maximum "liveliness" and reduced viscosity
-        const FLIP_RATIO: f32 = 0.99;
-
         self.particles.list.par_iter_mut().for_each(|particle| {
             let pos = particle.position;
 
@@ -551,7 +550,36 @@ impl FlipSimulation {
                  // However, we DO need to update affine velocity for consistency.
                  particle.velocity = old_particle_velocity;
             } else {
-                 particle.velocity = FLIP_RATIO * flip_velocity + (1.0 - FLIP_RATIO) * pic_velocity;
+                 // ANISOTROPIC FLIP: Different ratios for x and y
+                 // Near surface: damp y more aggressively (more PIC-ish) to kill vertical fizz
+                 // Bulk: use high FLIP for both to preserve energy
+
+                 // Check if particle is near surface (cell adjacent to air)
+                 let gi = (pos.x / cell_size) as i32;
+                 let gj = (pos.y / cell_size) as i32;
+                 let near_surface = if gi >= 1 && gi < width as i32 - 1 && gj >= 1 && gj < height as i32 - 1 {
+                     let idx_up = (gj - 1) as usize * width + gi as usize;
+                     let idx_down = (gj + 1) as usize * width + gi as usize;
+                     let idx_left = gj as usize * width + (gi - 1) as usize;
+                     let idx_right = gj as usize * width + (gi + 1) as usize;
+
+                     grid.cell_type[idx_up] == CellType::Air ||
+                     grid.cell_type[idx_down] == CellType::Air ||
+                     grid.cell_type[idx_left] == CellType::Air ||
+                     grid.cell_type[idx_right] == CellType::Air
+                 } else {
+                     true // Treat boundary as surface
+                 };
+
+                 const FLIP_X: f32 = 0.98;   // High FLIP for horizontal (preserve transport)
+                 const FLIP_Y_BULK: f32 = 0.95;   // High FLIP for vertical in bulk
+                 const FLIP_Y_SURFACE: f32 = 0.70; // More PIC-ish for vertical at surface
+
+                 let flip_y = if near_surface { FLIP_Y_SURFACE } else { FLIP_Y_BULK };
+
+                 let vx = FLIP_X * flip_velocity.x + (1.0 - FLIP_X) * pic_velocity.x;
+                 let vy = flip_y * flip_velocity.y + (1.0 - flip_y) * pic_velocity.y;
+                 particle.velocity = Vec2::new(vx, vy);
             }
             particle.affine_velocity = new_c;
 
@@ -1117,6 +1145,14 @@ impl FlipSimulation {
                 }
 
                 let (density_i, near_density_i) = densities[idx];
+
+                // Skip water particles at free surface (low neighbor count)
+                // Surface water has missing neighbors on air side, causing "fizz" if we
+                // apply near-pressure. Grid projection handles water incompressibility.
+                // Threshold: ~50% of rest_density means particle is at surface
+                if !particles_list[idx].is_sediment() && density_i < rest_density * 0.5 {
+                    return Vec2::ZERO;
+                }
                 let pos_i = positions[idx];
                 let pressure_i = K_STIFFNESS * (density_i - rest_density);
                 let near_pressure_i = K_NEAR * near_density_i;
