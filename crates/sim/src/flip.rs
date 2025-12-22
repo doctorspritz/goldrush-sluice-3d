@@ -108,9 +108,9 @@ impl FlipSimulation {
             neighbor_counts: vec![0; cell_count * 9], // Approximation
             // Water neighbor counts for in-fluid detection
             water_neighbor_counts: vec![0; cell_count * 9],
-            // Sediment physics feature flags (all enabled by default)
+            // Sediment physics feature flags
             use_ferguson_church: true,
-            use_hindered_settling: true,
+            use_hindered_settling: false, // Disabled: neighbor count mismatch crushes settling to 6%
             use_variable_diameter: true,
             diameter_variation: 0.3, // ±30% size variation
             // Viscosity for vortex shedding (disabled by default for comparison)
@@ -128,8 +128,6 @@ impl FlipSimulation {
         
         // 1b. Update Signed Distance Field for collision
         self.grid.compute_sdf();
-        // Also update bed heights (only changes when terrain changes)
-        self.grid.compute_bed_heights();
 
         // 2. Transfer particle velocities to grid (P2G)
         self.particles_to_grid();
@@ -139,6 +137,10 @@ impl FlipSimulation {
 
         // 4. Apply external forces (gravity)
         self.grid.apply_gravity(dt);
+
+        // 4b. Vorticity confinement - preserves swirl, creates vortex shedding
+        // Applied before pressure solve so projection cleans up any divergence
+        self.grid.apply_vorticity_confinement(dt, 40.0);
 
         // 5. Pressure projection - enforces incompressibility
         // CRITICAL: Zero velocities at solid walls BEFORE computing divergence
@@ -171,9 +173,8 @@ impl FlipSimulation {
         self.apply_sediment_forces(dt);
 
         // 7b. Apply near-pressure for particle-particle repulsion
-        for _ in 0..3 {
-            self.apply_near_pressure(dt / 3.0);
-        }
+        // Reduced from 3x to 1x for performance (pressure solve already handles incompressibility)
+        self.apply_near_pressure(dt);
 
         // 8. Advect particles (uses SDF for O(1) collision)
         self.advect_particles(dt);
@@ -255,8 +256,9 @@ impl FlipSimulation {
         let height = self.grid.height;
 
         for particle in self.particles.iter() {
-            // Sediment contributes with reduced weight (occupies space but sparse)
-            let weight_scale = if particle.is_sediment() { 0.5 } else { 1.0 };
+            // Sediment is passive (one-way coupling) - doesn't affect grid velocities
+            // This prevents stationary bedload from averaging flow velocity toward zero
+            let weight_scale = if particle.is_sediment() { 0.0 } else { 1.0 };
 
             let pos = particle.position;
             let vel = particle.velocity;
@@ -533,35 +535,6 @@ impl FlipSimulation {
                  particle.velocity = old_particle_velocity;
             } else {
                  particle.velocity = FLIP_RATIO * flip_velocity + (1.0 - FLIP_RATIO) * pic_velocity;
-
-                 // ========== DIRECTIONAL RESISTANCE ==========
-                 // Near the bed, apply strong vertical damping (prevents penetration)
-                 // but light horizontal damping (allows slip/flow along bed)
-                 // This matches boundary layer physics.
-
-                 // Estimate water surface height (use 60% of domain as reasonable approximation)
-                 let surface_height = height as f32 * cell_size * 0.6;
-
-                 // Compute normalized height: 0 = at bed, 1 = at surface
-                 let h_norm = grid.normalized_height_above_bed(pos, surface_height);
-
-                 // Resistance factor: high near bed (h_norm=0), 1.0 at surface (h_norm=1)
-                 // Using r = 1 + strength * (1 - h_norm)^2 for smooth falloff
-                 const RESISTANCE_STRENGTH: f32 = 2.0;
-                 let r = 1.0 + RESISTANCE_STRENGTH * (1.0 - h_norm).powi(2);
-
-                 // Directional damping:
-                 // - Horizontal: lightly damped (r^0.35 preserves horizontal momentum)
-                 // - Vertical: strongly damped (r^1.0 kills vertical penetration into bed)
-                 particle.velocity.x /= r.powf(0.35);
-                 particle.velocity.y /= r;
-
-                 // Slip boost near bed: allow extra horizontal persistence
-                 // Simulates laminar sheet flow and slip over packed gravel
-                 if h_norm < 0.3 {
-                     const SLIP_BOOST: f32 = 1.2;
-                     particle.velocity.x *= SLIP_BOOST;
-                 }
             }
             particle.affine_velocity = new_c;
 

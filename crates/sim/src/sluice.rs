@@ -147,16 +147,15 @@ pub fn create_sluice_with_mode(sim: &mut FlipSimulation, config: &SluiceConfig) 
         }
     }
 
-    // Add walls on left and right
+    // Add left wall only - right side is open (outlet)
+    // This allows water to exit and creates proper sluice flow
     for j in 0..height {
         sim.grid.set_solid(0, j);
-        sim.grid.set_solid(width - 1, j);
+        // Right wall open: sim.grid.set_solid(width - 1, j);
     }
 
     // Precompute SDF with new geometry
     sim.grid.compute_sdf();
-    // Compute bed heights for directional resistance
-    sim.grid.compute_bed_heights();
 }
 
 /// Apply riffle geometry at a given x position based on mode
@@ -454,6 +453,9 @@ pub fn create_flat_sluice(sim: &mut FlipSimulation, riffle_spacing: usize, riffl
         sim.grid.set_solid(0, j);
         sim.grid.set_solid(width - 1, j);
     }
+
+    // Precompute SDF with new geometry
+    sim.grid.compute_sdf();
 }
 
 /// Create a simple box with no riffles for basic fluid testing
@@ -476,6 +478,9 @@ pub fn create_box(sim: &mut FlipSimulation) {
         sim.grid.set_solid(0, j);
         sim.grid.set_solid(width - 1, j);
     }
+
+    // Precompute SDF with new geometry
+    sim.grid.compute_sdf();
 }
 
 /// Get riffle cell positions for debug rendering
