@@ -821,8 +821,13 @@ impl FlipSimulation {
             let pile_top = pile_height[col];
             let particle_radius = cell_size * 0.5;
             let particle_bottom = particle.position.y + particle_radius;
-            let on_pile = pile_top < f32::INFINITY  // pile exists
-                && (particle_bottom - pile_top).abs() < cell_size;  // within 1 cell of pile top
+            // Particle is "on pile" if:
+            // 1. pile exists (pile_top < INFINITY)
+            // 2. particle_bottom >= pile_top (particle is AT or BELOW pile surface, not floating above)
+            // 3. particle_bottom is close to pile_top (within 1 cell)
+            let on_pile = pile_top < f32::INFINITY
+                && particle_bottom >= pile_top  // not floating above the pile
+                && (particle_bottom - pile_top) < cell_size;  // within 1 cell of pile top
 
             let has_support = on_solid_floor || on_pile;
 
@@ -872,7 +877,9 @@ impl FlipSimulation {
                 let col = ((p.position.x / cell_size) as usize).min(pile_width.saturating_sub(1));
                 let pile_top = self.pile_height[col];
                 let particle_bottom = p.position.y + cell_size * 0.5;
-                let on_pile = pile_top < f32::INFINITY && (particle_bottom - pile_top).abs() < cell_size;
+                let on_pile = pile_top < f32::INFINITY
+                    && particle_bottom >= pile_top
+                    && (particle_bottom - pile_top) < cell_size;
                 if (near_solid && is_floor) || on_pile { has_support_count += 1; }
 
                 // Check shear
