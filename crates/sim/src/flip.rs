@@ -147,7 +147,9 @@ impl FlipSimulation {
 
         // 4b. Vorticity confinement - preserves swirl, creates vortex shedding
         // Applied before pressure solve so projection cleans up any divergence
-        self.grid.apply_vorticity_confinement(dt, 40.0);
+        // Attenuated near SDF surfaces and pile surfaces to prevent boundary turbulence
+        let pile_height_copy = self.pile_height.clone();
+        self.grid.apply_vorticity_confinement_with_piles(dt, 40.0, &pile_height_copy);
 
         // 5. Pressure projection - enforces incompressibility
         // CRITICAL: Zero velocities at solid walls BEFORE computing divergence
@@ -844,6 +846,16 @@ impl FlipSimulation {
                     }
                 }
                 ParticleState::Bedload => {
+                    // 1. LOSS-OF-SUPPORT UNJAM (hard constraint)
+                    // Bedload MUST unjam if it loses support - no floating bedload allowed
+                    if !has_support {
+                        particle.state = ParticleState::Suspended;
+                        particle.velocity = fluid_vel_here; // Resume with local fluid velocity
+                        particle.jam_time = 0.0;
+                        return; // Skip shear check
+                    }
+
+                    // 2. SHEAR-BASED UNJAM (physics)
                     // Increment jam time
                     particle.jam_time += dt;
 

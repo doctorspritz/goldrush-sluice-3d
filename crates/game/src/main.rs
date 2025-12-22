@@ -6,7 +6,7 @@
 mod render;
 
 use macroquad::prelude::*;
-use render::{MetaballRenderer, ParticleRenderer, draw_particles_fast, draw_particles_rect, draw_particles_mesh};
+use render::{MetaballRenderer, ParticleRenderer, draw_particles_fast, draw_particles_fast_debug, draw_particles_rect, draw_particles_mesh};
 use sim::{
     create_sluice_with_mode, FlipSimulation, RiffleMode, SluiceConfig,
     compute_surface_heightfield,
@@ -129,6 +129,7 @@ async fn main() {
     let mut show_velocity = false;
     let mut show_surface_line = false;
     let mut spawn_mud = false;
+    let mut debug_state_colors = false; // D key: Bedload=red, Suspended=blue
     let mut render_mode = RenderMode::Hybrid; // Default to Hybrid for best look
     let mut metaball_threshold: f32 = 0.08;
     let mut metaball_scale: f32 = 6.0;
@@ -257,6 +258,10 @@ async fn main() {
         if is_key_pressed(KeyCode::D) {
             sluice_config.riffle_width = sluice_config.riffle_width.saturating_sub(2).max(2);
             riffle_dirty = true;
+        }
+        // X = toggle debug state colors (Bedload=red, Suspended=blue)
+        if is_key_pressed(KeyCode::X) {
+            debug_state_colors = !debug_state_colors;
         }
 
         // Sediment rates: 1-4 to cycle
@@ -459,7 +464,7 @@ async fn main() {
             // The original `draw` methods still exist and draw everything.
             RenderMode::Metaball => metaball_renderer.draw(&sim.particles, SCALE), 
             RenderMode::Shader => particle_renderer.draw_sorted(&sim.particles, SCALE),
-            RenderMode::FastCircle => draw_particles_fast(&sim.particles, SCALE, fast_particle_size),
+            RenderMode::FastCircle => draw_particles_fast_debug(&sim.particles, SCALE, fast_particle_size, debug_state_colors),
             RenderMode::FastRect => draw_particles_rect(&sim.particles, SCALE, fast_particle_size),
             RenderMode::Mesh => draw_particles_mesh(&sim.particles, SCALE, fast_particle_size),
         }

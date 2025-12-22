@@ -13,6 +13,7 @@ use macroquad::prelude::*;
 use macroquad::miniquad::{BlendState, Equation, BlendFactor, BlendValue};
 use macroquad::models::{Mesh, Vertex, draw_mesh};
 use sim::Particles;
+use sim::particle::ParticleState;
 
 /// Vertex shader for particle circles
 const VERTEX_SHADER: &str = r#"#version 100
@@ -573,15 +574,30 @@ impl MetaballRenderer {
 
 /// Fast batched circle renderer using macroquad's internal batching
 /// Renders particles as simple filled circles with no shader overhead
+/// If debug_state is true, Bedload=red, Suspended=blue (for sediment only)
 pub fn draw_particles_fast(particles: &Particles, screen_scale: f32, base_size: f32) {
+    draw_particles_fast_debug(particles, screen_scale, base_size, false);
+}
+
+/// Fast renderer with optional debug state coloring
+pub fn draw_particles_fast_debug(particles: &Particles, screen_scale: f32, base_size: f32, debug_state: bool) {
     // Draw all particles using macroquad's draw_circle which batches internally
     // This avoids custom shader overhead and uniform changes
     for particle in particles.iter() {
         let x = particle.position.x * screen_scale;
         let y = particle.position.y * screen_scale;
-        let [r, g, b, a] = particle.material.color();
-        let color = Color::from_rgba(r, g, b, a);
         let size = base_size * particle.material.render_scale();
+
+        let color = if debug_state && particle.is_sediment() {
+            // Debug mode: Bedload = red, Suspended = blue
+            match particle.state {
+                ParticleState::Bedload => Color::from_rgba(255, 50, 50, 255),
+                ParticleState::Suspended => Color::from_rgba(50, 100, 255, 255),
+            }
+        } else {
+            let [r, g, b, a] = particle.material.color();
+            Color::from_rgba(r, g, b, a)
+        };
 
         draw_circle(x, y, size, color);
     }

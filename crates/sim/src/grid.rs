@@ -850,12 +850,24 @@ impl Grid {
 
     /// Apply vorticity confinement to maintain swirling motion
     /// Based on PavelDoGreat/WebGL-Fluid-Simulation
+    ///
+    /// Attenuates confinement near:
+    /// - Solid surfaces (using SDF distance)
+    /// - Dynamic pile surfaces (using pile_height)
+    /// This prevents artificial turbulence at smooth boundaries.
     pub fn apply_vorticity_confinement(&mut self, dt: f32, strength: f32) {
+        // Call with no pile (backward compatible)
+        self.apply_vorticity_confinement_with_piles(dt, strength, &[]);
+    }
+
+    /// Apply vorticity confinement with pile-aware attenuation
+    pub fn apply_vorticity_confinement_with_piles(&mut self, dt: f32, strength: f32, pile_height: &[f32]) {
         // First pass: compute curl (vorticity) at each cell and store it
         self.compute_vorticity();
 
         // Use stored vorticity for confinement
         let curl = &self.vorticity;
+        let dx = self.cell_size;
 
         // Second pass: apply vorticity force
         for j in 2..self.height - 2 {
@@ -864,6 +876,32 @@ impl Grid {
 
                 if self.cell_type[idx] != CellType::Fluid {
                     continue;
+                }
+
+                // === ATTENUATION NEAR SURFACES ===
+                // 1. Distance to solid (SDF)
+                let sdf_dist = self.sdf[idx];
+                let sdf_atten = (sdf_dist / (3.0 * dx)).clamp(0.0, 1.0);
+
+                // 2. Distance to pile surface
+                let cell_y = (j as f32 + 0.5) * dx;
+                let pile_atten = if i < pile_height.len() && pile_height[i] < f32::INFINITY {
+                    let pile_y = pile_height[i];
+                    let dist_to_pile = cell_y - pile_y; // positive = above pile
+                    if dist_to_pile < 0.0 {
+                        0.0 // Below pile - no confinement
+                    } else {
+                        (dist_to_pile / (3.0 * dx)).clamp(0.0, 1.0)
+                    }
+                } else {
+                    1.0 // No pile in this column
+                };
+
+                // Combined attenuation (use minimum - strongest damping wins)
+                let atten = sdf_atten.min(pile_atten);
+
+                if atten < 0.01 {
+                    continue; // Skip if fully damped
                 }
 
                 // Gradient of curl magnitude
@@ -884,8 +922,8 @@ impl Grid {
                 // Reference: Fedkiw et al. 2001 "Visual Simulation of Smoke"
                 let c = curl[idx];
                 let h = self.cell_size;
-                let fx = ny * c * strength * h;
-                let fy = -nx * c * strength * h;
+                let fx = ny * c * strength * h * atten;
+                let fy = -nx * c * strength * h * atten;
 
                 // Apply to velocity
                 let u_idx = self.u_index(i, j);
