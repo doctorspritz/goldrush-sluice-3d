@@ -86,6 +86,8 @@ pub fn create_sluice(sim: &mut FlipSimulation, slope: f32, riffle_spacing: usize
 
     // Precompute SDF with new geometry
     sim.grid.compute_sdf();
+    // Compute bed heights for directional resistance
+    sim.grid.compute_bed_heights();
 }
 
 /// Create a simple flat-bottom test tank with riffles

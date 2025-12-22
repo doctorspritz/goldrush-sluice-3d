@@ -219,6 +219,44 @@ impl Grid {
         }
     }
 
+    /// Compute bed heightfield from solid terrain
+    /// For each column, find the topmost solid cell and store its top edge y-coordinate
+    /// Call this after terrain setup (after compute_sdf)
+    pub fn compute_bed_heights(&mut self) {
+        for i in 0..self.width {
+            // Scan from top to bottom to find first solid cell
+            let mut bed_y = 0.0f32;
+            for j in (0..self.height).rev() {
+                if self.is_solid(i, j) {
+                    // Found solid - bed surface is top of this cell
+                    bed_y = (j as f32 + 1.0) * self.cell_size;
+                    break;
+                }
+            }
+            self.bed_height[i] = bed_y;
+        }
+    }
+
+    /// Sample bed height at a world x-position using linear interpolation
+    #[inline]
+    pub fn sample_bed_height(&self, x: f32) -> f32 {
+        let fx = x / self.cell_size - 0.5;
+        let i0 = (fx.floor() as i32).clamp(0, self.width as i32 - 2) as usize;
+        let i1 = i0 + 1;
+        let t = (fx - i0 as f32).clamp(0.0, 1.0);
+        self.bed_height[i0] * (1.0 - t) + self.bed_height[i1] * t
+    }
+
+    /// Compute normalized height above bed (0 = at bed, 1 = at water surface)
+    /// surface_height is the estimated water surface level
+    #[inline]
+    pub fn normalized_height_above_bed(&self, pos: Vec2, surface_height: f32) -> f32 {
+        let bed = self.sample_bed_height(pos.x);
+        let height_above_bed = (pos.y - bed).max(0.0);
+        let water_depth = (surface_height - bed).max(0.01); // avoid div by zero
+        (height_above_bed / water_depth).clamp(0.0, 1.0)
+    }
+
     /// Sample SDF at world position (bilinear interpolation)
     #[inline]
     pub fn sample_sdf(&self, pos: Vec2) -> f32 {
