@@ -239,6 +239,9 @@ pub struct Particle {
     pub diameter: f32,
     /// Transport state (suspended vs bedload) for friction mechanics
     pub state: ParticleState,
+    /// Time spent in bedload state (seconds) - used for hysteresis
+    /// Particles must be bedload for MIN_JAM_TIME before unjamming
+    pub jam_time: f32,
 }
 
 impl Particle {
@@ -253,6 +256,7 @@ impl Particle {
             near_density: 0.0,
             diameter: material.typical_diameter(),
             state: ParticleState::Suspended,
+            jam_time: 0.0,
         }
     }
 
@@ -267,6 +271,7 @@ impl Particle {
             near_density: 0.0,
             diameter,
             state: ParticleState::Suspended,
+            jam_time: 0.0,
         }
     }
 

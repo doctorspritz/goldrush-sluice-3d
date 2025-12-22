@@ -16,11 +16,18 @@ fn test_sediment_settling() {
     const HEIGHT: usize = 64; // Tall enough to reach terminal velocity
     const CELL_SIZE: f32 = 4.0;
     const DT: f32 = 1.0 / 60.0;
-    
+
     let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
-    
+
+    // Set up solid floor for particles to land on
+    for i in 0..WIDTH {
+        sim.grid.set_solid(i, HEIGHT - 1); // Floor at bottom
+    }
+    sim.grid.compute_sdf();
+
     // 0. Fill the tank with water (Dense: 4 particles per cell to ensure Fluid identification)
-    for y in 0..HEIGHT {
+    // Don't spawn water in the solid floor row
+    for y in 0..(HEIGHT - 1) {
         for x in 0..WIDTH {
             // Jitter positions slightly to avoid grid alignment artifacts
             sim.spawn_water(x as f32 * CELL_SIZE + 1.0, y as f32 * CELL_SIZE + 1.0, 0.0, 0.0, 1);

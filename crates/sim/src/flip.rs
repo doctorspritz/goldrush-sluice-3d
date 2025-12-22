@@ -55,6 +55,11 @@ pub struct FlipSimulation {
     // Pre-allocated buffer for water neighbor counts (in-fluid detection)
     water_neighbor_counts: Vec<u16>,
 
+    // === Pile Heightfield for Stacking ===
+    // Bedload particles act as a collision floor for suspended particles
+    // pile_height[x] = top of bedload pile at column x (in world coordinates)
+    pile_height: Vec<f32>,
+
     // === Sediment Physics Feature Flags ===
     // Toggle these to compare old vs new physics behavior
     /// Use Ferguson-Church settling velocity (vs simple density-based)
@@ -108,6 +113,8 @@ impl FlipSimulation {
             neighbor_counts: vec![0; cell_count * 9], // Approximation
             // Water neighbor counts for in-fluid detection
             water_neighbor_counts: vec![0; cell_count * 9],
+            // Pile heightfield for stacking (one entry per column)
+            pile_height: vec![f32::NEG_INFINITY; width],
             // Sediment physics feature flags
             use_ferguson_church: true,
             use_hindered_settling: false, // Disabled: neighbor count mismatch crushes settling to 6%
@@ -180,7 +187,11 @@ impl FlipSimulation {
         self.advect_particles(dt);
 
         // 8b. Update particle states (Suspended ↔ Bedload transitions)
-        self.update_particle_states();
+        self.update_particle_states(dt);
+
+        // 8c. Compute pile heightfield from bedload particles
+        // This must happen AFTER state updates, BEFORE next frame's advection
+        self.compute_pile_heightfield();
 
         // 9. Push overlapping particles apart - DISABLED
         // Near-pressure handles incompressibility now. If pressure is strong enough,
@@ -582,9 +593,6 @@ impl FlipSimulation {
         // Minimum water neighbors to be considered "in fluid"
         const MIN_WATER_NEIGHBORS: u16 = 3;
 
-        // Shear velocity estimation constant
-        const SHEAR_VELOCITY_FACTOR: f32 = 0.05;
-
         // Borrow neighbor_counts as a slice for parallel access
         let neighbor_counts = &self.neighbor_counts;
         let water_neighbor_counts = &self.water_neighbor_counts;
@@ -602,6 +610,15 @@ impl FlipSimulation {
             .for_each(|(idx, particle)| {
                 // Only apply to sediment - water is handled by APIC
                 if !particle.is_sediment() {
+                    return;
+                }
+
+                // === TASK 4: BEDLOAD PARTICLES ARE FORCE-FREE ===
+                // Jammed/bedload particles do not receive gravity, drag, or any integration.
+                // They remain static until unjammed by update_particle_states().
+                // This is critical for stable pile formation.
+                if particle.state == ParticleState::Bedload {
+                    particle.velocity = Vec2::ZERO;
                     return;
                 }
 
@@ -653,102 +670,57 @@ impl FlipSimulation {
                     return;
                 }
 
-                // ========== IN FLUID: Apply state-dependent physics ==========
-                match particle.state {
-                    ParticleState::Suspended => {
-                        // Settling through water
-                        let v_fluid = particle.old_grid_velocity;
+                // ========== IN FLUID: Apply settling physics (Suspended only) ==========
+                // Note: Bedload particles are skipped at the top of this function
+                // Settling through water
+                let v_fluid = particle.old_grid_velocity;
 
-                        // Compute base settling velocity
-                        let base_settling = if use_ferguson_church {
-                            particle.material.settling_velocity(diameter)
-                        } else {
-                            let r = (density - 1.0) / 1.0;
-                            if r > 0.0 && diameter > 0.0 {
-                                (r * GRAVITY * diameter).sqrt() / density.sqrt()
-                            } else {
-                                0.0
-                            }
-                        };
-
-                        // Apply hindered settling if enabled
-                        let settling_velocity = if use_hindered_settling {
-                            let neighbor_count = neighbor_counts.get(idx).copied().unwrap_or(0) as usize;
-                            let concentration = neighbor_count_to_concentration(neighbor_count, REST_NEIGHBORS);
-                            let hindered_factor = hindered_settling_factor(concentration);
-                            base_settling * hindered_factor
-                        } else {
-                            base_settling
-                        };
-
-                        // Target velocity: fluid velocity + downward settling slip
-                        let slip = glam::Vec2::new(0.0, settling_velocity);
-                        let target_velocity = v_fluid + slip;
-
-                        // Drag toward target velocity
-                        // RATE physics:
-                        // Settling is driven by effective gravity (gravity - buoyancy).
-                        // Terminal velocity is reached when Drag = Effective Gravity.
-                        // Drag Force = m * drag_rate * v.
-                        // m * drag_rate * v_term = m * g_eff.
-                        // So drag_rate = g_eff / v_term.
-                        // This ensures initial acceleration matches gravity.
-
-                        let effective_gravity = GRAVITY * (density - 1.0) / density;
-                        let drag_rate = if base_settling > 0.001 {
-                            // Physics-based rate
-                            effective_gravity / base_settling
-                        } else {
-                            // Fallback for neutral buoyancy
-                            BASE_DRAG_RATE
-                        };
-
-                        let blend = (drag_rate * dt).clamp(0.0, 1.0);
-                        particle.velocity = particle.velocity.lerp(target_velocity, blend);
+                // Compute base settling velocity
+                let base_settling = if use_ferguson_church {
+                    particle.material.settling_velocity(diameter)
+                } else {
+                    let r = (density - 1.0) / 1.0;
+                    if r > 0.0 && diameter > 0.0 {
+                        (r * GRAVITY * diameter).sqrt() / density.sqrt()
+                    } else {
+                        0.0
                     }
+                };
 
-                    ParticleState::Bedload => {
-                        // Friction-dominated on bed
-                        // Calculate Shields number to see if flow is strong enough to move it
-                        let fluid_vel = particle.old_grid_velocity;
-                        let flow_speed_sq = fluid_vel.length_squared();
-                        let bed_shear = flow_speed_sq * SHEAR_VELOCITY_FACTOR * SHEAR_VELOCITY_FACTOR;
+                // Apply hindered settling if enabled
+                let settling_velocity = if use_hindered_settling {
+                    let neighbor_count = neighbor_counts.get(idx).copied().unwrap_or(0) as usize;
+                    let concentration = neighbor_count_to_concentration(neighbor_count, REST_NEIGHBORS);
+                    let hindered_factor = hindered_settling_factor(concentration);
+                    base_settling * hindered_factor
+                } else {
+                    base_settling
+                };
 
-                        let density_diff = (particle.density() - 1.0).max(0.1);
-                        let diameter = particle.effective_diameter().max(0.1);
+                // Target velocity: fluid velocity + downward settling slip
+                let slip = glam::Vec2::new(0.0, settling_velocity);
+                let target_velocity = v_fluid + slip;
 
-                        let shields_number = bed_shear / (density_diff * GRAVITY * diameter);
-                        let shields_critical = particle.material.shields_critical();
+                // Drag toward target velocity
+                // RATE physics:
+                // Settling is driven by effective gravity (gravity - buoyancy).
+                // Terminal velocity is reached when Drag = Effective Gravity.
+                // Drag Force = m * drag_rate * v.
+                // m * drag_rate * v_term = m * g_eff.
+                // So drag_rate = g_eff / v_term.
+                // This ensures initial acceleration matches gravity.
 
-                        // STICKINESS: If shear stress < critical, particle STICKS (zero velocity)
-                        // This prevents "creep" unless the flow is actually strong enough to move it.
-                        if shields_number < shields_critical {
-                             particle.velocity = Vec2::ZERO;
-                             return;
-                        }
+                let effective_gravity = GRAVITY * (density - 1.0) / density;
+                let drag_rate = if base_settling > 0.001 {
+                    // Physics-based rate
+                    effective_gravity / base_settling
+                } else {
+                    // Fallback for neutral buoyancy
+                    BASE_DRAG_RATE
+                };
 
-                        // If we are here, Shields > Critical, so we slide/creep
-                        let speed = particle.velocity.length();
-
-                        if speed > 0.001 {
-                            let friction_coeff = particle.material.dynamic_friction();
-                            let friction_decel = friction_coeff * GRAVITY * dt;
-
-                            if friction_decel >= speed {
-                                particle.velocity = Vec2::ZERO;
-                            } else {
-                                let new_speed = speed - friction_decel;
-                                particle.velocity = particle.velocity.normalize() * new_speed;
-                            }
-                        }
-
-                        // Slight response to fluid (bedload can creep)
-                        let v_fluid = particle.old_grid_velocity;
-                        let creep_rate = 0.5 / density;
-                        let blend = (creep_rate * dt).clamp(0.0, 0.1);
-                        particle.velocity = particle.velocity.lerp(v_fluid, blend);
-                    }
-                }
+                let blend = (drag_rate * dt).clamp(0.0, 1.0);
+                particle.velocity = particle.velocity.lerp(target_velocity, blend);
 
                 // Safety clamp
                 const MAX_VELOCITY: f32 = 120.0;
@@ -763,21 +735,40 @@ impl FlipSimulation {
     ///
     /// State transitions based on:
     /// - Enter Bedload: velocity < threshold AND near floor (SDF < radius)
-    /// - Exit Bedload: Shields number > critical threshold × hysteresis buffer
+    /// - Exit Bedload: Shields number > unjam threshold AND jam_time > MIN_JAM_TIME
     ///
-    /// Hysteresis prevents rapid flickering between states.
-    fn update_particle_states(&mut self) {
-        // Thresholds for state transitions
-        const VELOCITY_SETTLE_THRESHOLD: f32 = 3.0;   // Enter bedload below this speed
-        const SHIELDS_HYSTERESIS: f32 = 2.0;          // 100% buffer for exit (harder to remobilize)
+    /// Hysteresis prevents rapid flickering between states:
+    /// - UNJAM_THRESHOLD is 2-3x JAM_THRESHOLD
+    /// - MIN_JAM_TIME requires particles to be bedload for some time before unjamming
+    /// - Shear deadzone shields bedload particles from small velocity fluctuations
+    fn update_particle_states(&mut self, dt: f32) {
+        // Thresholds in normalized units (cells-per-frame)
+        const JAM_THRESHOLD: f32 = 0.15;
+        const UNJAM_THRESHOLD: f32 = 0.40;
+        const SHEAR_DEADZONE: f32 = 0.08;
+        const MIN_JAM_TIME: f32 = 0.20;
+        const JAM_VEL_MAX: f32 = 0.05;
 
-        // Shear velocity estimation constant
-        const SHEAR_VELOCITY_FACTOR: f32 = 0.05;
-
-        use crate::physics::GRAVITY;
+        // Per-material shear resistance multiplier
+        // Higher = harder to entrain (requires more shear)
+        fn material_shear_factor(mat: ParticleMaterial) -> f32 {
+            match mat {
+                ParticleMaterial::Sand => 1.0,
+                ParticleMaterial::Gold => 6.0,
+                ParticleMaterial::Magnetite => 1.5,
+                ParticleMaterial::Mud => 0.7,
+                ParticleMaterial::Water => 1.0, // N/A for water
+            }
+        }
 
         let grid = &self.grid;
         let cell_size = grid.cell_size;
+        let pile_height = &self.pile_height;
+        let pile_width = pile_height.len();
+
+        // Velocity scale: "1 cell per frame" in velocity units
+        // This normalizes velocities to cells-per-frame for threshold comparison
+        let v_scale = cell_size / dt;
 
         // Near floor distance: 1.5x cell size to catch particles resting on floor
         let near_floor_distance = cell_size * 1.5;
@@ -788,56 +779,149 @@ impl FlipSimulation {
                 return;
             }
 
+            // Compute shear as velocity gradient (difference between layers)
+            // shear = (u(x,y) - u(x,y-dx)).length()
+            // where y-dx is one cell below (toward bed)
+            let fluid_vel_here = particle.old_grid_velocity;
+            let pos_below = particle.position + Vec2::new(0.0, cell_size);
+            let fluid_vel_below = grid.sample_velocity(pos_below);
+            let shear = (fluid_vel_here - fluid_vel_below).length();
+
+            // Apply deadzone and normalize to cells-per-frame
+            let effective_shear = (shear - SHEAR_DEADZONE).max(0.0);
+            let shear_n = effective_shear / v_scale;
+
+            // Relative velocity: particle motion relative to local fluid (normalized)
+            let rel_vel = (particle.velocity - fluid_vel_here).length();
+            let rel_vel_n = rel_vel / v_scale;
+
+            // Material-aware thresholds
+            let factor = material_shear_factor(particle.material);
+            let jam_th = JAM_THRESHOLD * factor;
+            let unjam_th = UNJAM_THRESHOLD * factor;
+
+            // === SUPPORT CHECK ===
+            // Particles can only jam if they're supported by something:
+            // 1. On a solid floor (SDF surface pointing up)
+            // 2. On top of a pile (bedload particles below)
             let sdf_dist = grid.sample_sdf(particle.position);
-            let speed = particle.velocity.length();
-
-            // Check if near a solid surface (using cell-size-relative threshold)
             let near_solid = sdf_dist < near_floor_distance;
-
-            // Check if the surface is floor-like (gradient pointing upward)
             let is_floor_surface = if near_solid {
                 let grad = grid.sdf_gradient(particle.position);
-                grad.y < -0.5
+                grad.y < -0.5 // Floor has gradient pointing upward (negative y)
             } else {
                 false
             };
+            let on_solid_floor = near_solid && is_floor_surface;
 
-            let on_floor = near_solid && is_floor_surface;
+            // Check if supported by pile
+            let col = ((particle.position.x / cell_size) as usize).min(pile_width.saturating_sub(1));
+            let pile_top = pile_height[col];
+            let particle_radius = cell_size * 0.5;
+            let on_pile = pile_top > f32::NEG_INFINITY
+                && particle.position.y + particle_radius >= pile_top - cell_size * 0.5;
+
+            let has_support = on_solid_floor || on_pile;
 
             match particle.state {
                 ParticleState::Suspended => {
-                    // Transition to bedload if slow and on floor (not wall)
-                    if on_floor && speed < VELOCITY_SETTLE_THRESHOLD {
+                    // JAM: must have support AND low normalized shear AND low relative velocity
+                    if has_support && shear_n < jam_th && rel_vel_n < JAM_VEL_MAX {
                         particle.state = ParticleState::Bedload;
+                        particle.jam_time = 0.0;
                     }
                 }
                 ParticleState::Bedload => {
-                    // Compute Shields number for re-entrainment check
-                    let fluid_vel = particle.old_grid_velocity;
-                    let flow_speed = fluid_vel.length();
-                    let shear_velocity = flow_speed * SHEAR_VELOCITY_FACTOR;
-                    let bed_shear = shear_velocity * shear_velocity;
+                    // Increment jam time
+                    particle.jam_time += dt;
 
-                    let density_diff = (particle.density() - 1.0).max(0.1);
-                    let diameter = particle.effective_diameter().max(0.1);
-
-                    let shields_number = bed_shear / (density_diff * GRAVITY * diameter);
-                    let shields_critical = particle.material.shields_critical();
-
-                    // Exit bedload if Shields exceeds critical with hysteresis buffer
-                    if shields_number > shields_critical * SHIELDS_HYSTERESIS {
-                        particle.state = ParticleState::Suspended;
-                    }
-
-                    // Also exit if lifted off floor (e.g., by vortex)
-                    // Heavie particles need more speed to lift off
-                    let lift_threshold = VELOCITY_SETTLE_THRESHOLD * 2.0 * particle.density().sqrt();
-                    if !on_floor && speed > lift_threshold {
+                    // UNJAM: if normalized shear exceeds threshold after minimum jam time
+                    if shear_n > unjam_th && particle.jam_time > MIN_JAM_TIME {
                         particle.state = ParticleState::Suspended;
                     }
                 }
             }
         });
+
+        // DEBUG: Print state counts every 60 frames
+        static DEBUG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let frame = DEBUG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if frame % 60 == 0 {
+            let mut bedload_count = 0;
+            let mut suspended_count = 0;
+            let mut has_support_count = 0;
+            let mut low_shear_count = 0;
+
+            for p in &self.particles.list {
+                if !p.is_sediment() { continue; }
+                match p.state {
+                    ParticleState::Bedload => bedload_count += 1,
+                    ParticleState::Suspended => suspended_count += 1,
+                }
+
+                // Check support
+                let sdf_dist = self.grid.sample_sdf(p.position);
+                let near_solid = sdf_dist < near_floor_distance;
+                let is_floor = if near_solid {
+                    let grad = self.grid.sdf_gradient(p.position);
+                    grad.y < -0.5
+                } else { false };
+                let col = ((p.position.x / cell_size) as usize).min(pile_width.saturating_sub(1));
+                let pile_top = self.pile_height[col];
+                let on_pile = pile_top > f32::NEG_INFINITY && p.position.y + cell_size * 0.5 >= pile_top - cell_size * 0.5;
+                if (near_solid && is_floor) || on_pile { has_support_count += 1; }
+
+                // Check shear
+                let fluid_vel_here = p.old_grid_velocity;
+                let pos_below = p.position + Vec2::new(0.0, cell_size);
+                let fluid_vel_below = self.grid.sample_velocity(pos_below);
+                let shear = (fluid_vel_here - fluid_vel_below).length();
+                let shear_n = (shear - SHEAR_DEADZONE).max(0.0) / v_scale;
+                if shear_n < JAM_THRESHOLD { low_shear_count += 1; }
+            }
+
+            eprintln!("[JAM DEBUG] bedload={} suspended={} has_support={} low_shear={}",
+                bedload_count, suspended_count, has_support_count, low_shear_count);
+        }
+    }
+
+    /// Step 8c: Compute pile heightfield from bedload particles
+    ///
+    /// Builds a column-based heightfield where pile_height[x] is the top
+    /// of the bedload pile at column x. This allows suspended particles
+    /// to land on existing piles and stack upward.
+    fn compute_pile_heightfield(&mut self) {
+        let cell_size = self.grid.cell_size;
+        let width = self.pile_height.len();
+
+        // Reset heightfield to negative infinity (no pile)
+        for h in &mut self.pile_height {
+            *h = f32::NEG_INFINITY;
+        }
+
+        // Find highest bedload particle in each column
+        for particle in self.particles.list.iter() {
+            if particle.state == ParticleState::Bedload && particle.is_sediment() {
+                let col = ((particle.position.x / cell_size) as usize).min(width.saturating_sub(1));
+                let particle_top = particle.position.y - cell_size * 0.5; // Top of particle
+                self.pile_height[col] = self.pile_height[col].max(particle_top);
+            }
+        }
+
+        // Smooth over ±1 column to avoid stair-stepping
+        // This helps particles settle smoothly onto pile edges
+        let mut smoothed = self.pile_height.clone();
+        for i in 1..(width - 1) {
+            let left = self.pile_height[i - 1];
+            let center = self.pile_height[i];
+            let right = self.pile_height[i + 1];
+
+            // Only smooth if all three columns have piles
+            if left > f32::NEG_INFINITY && center > f32::NEG_INFINITY && right > f32::NEG_INFINITY {
+                smoothed[i] = (left + 2.0 * center + right) / 4.0;
+            }
+        }
+        self.pile_height = smoothed;
     }
 
     /// Step 7c: Apply near-pressure forces (Clavet et al. 2005)
@@ -1217,6 +1301,7 @@ impl FlipSimulation {
 
     /// Step 8: Advect particles with SDF-based collision detection
     /// Uses precomputed signed distance field for O(1) collision queries
+    /// Also projects suspended particles onto pile heightfield (pile as floor constraint)
     fn advect_particles(&mut self, dt: f32) {
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
@@ -1226,7 +1311,9 @@ impl FlipSimulation {
         let max_y = height as f32 * cell_size - margin;
 
         let grid = &self.grid;
-        
+        let pile_height = &self.pile_height;
+        let pile_width = pile_height.len();
+
         self.particles.list.par_iter_mut().for_each(|particle| {
             // Optimization: Skip advection for settled particles
             // This allows large sediment beds with zero cost
@@ -1268,6 +1355,30 @@ impl FlipSimulation {
                     // Remove velocity component into solid, keep damped tangential
                     let v_normal_clamped = if v_dot_n < 0.0 { Vec2::ZERO } else { v_normal };
                     p.velocity = v_tangent_damped + v_normal_clamped;
+                }
+
+                // === PILE AS FLOOR CONSTRAINT ===
+                // Project suspended sediment particles onto the pile surface
+                // This allows particles to stack on existing bedload piles
+                if p.is_sediment() && p.state == ParticleState::Suspended {
+                    let col = ((p.position.x / cell_size) as usize).min(pile_width.saturating_sub(1));
+                    let floor_y = pile_height[col];
+
+                    // Only project if there's a pile in this column
+                    if floor_y > f32::NEG_INFINITY {
+                        let particle_radius = cell_size * 0.5;
+                        let particle_bottom = p.position.y + particle_radius;
+
+                        // If particle bottom is below pile top, push it up
+                        if particle_bottom > floor_y {
+                            p.position.y = floor_y - particle_radius;
+
+                            // Zero vertical velocity (landed on pile)
+                            if p.velocity.y > 0.0 {
+                                p.velocity.y = 0.0;
+                            }
+                        }
+                    }
                 }
 
                 // Final bounds clamp (per substep to keep it contained)
