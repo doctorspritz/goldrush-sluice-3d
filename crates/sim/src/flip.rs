@@ -193,6 +193,10 @@ impl FlipSimulation {
         // This must happen AFTER state updates, BEFORE next frame's advection
         self.compute_pile_heightfield();
 
+        // 8d. Enforce pile constraints on ALL particles
+        // Catches particles that drifted under piles or were at same level when pile formed
+        self.enforce_pile_constraints();
+
         // 9. Push overlapping particles apart - DISABLED
         // Near-pressure handles incompressibility now. If pressure is strong enough,
         // particles won't overlap and we don't need explicit collision.
@@ -949,6 +953,50 @@ impl FlipSimulation {
             }
         }
         self.pile_height = smoothed;
+    }
+
+    /// Step 8d: Enforce pile constraints on all non-bedload particles
+    ///
+    /// After pile heightfield is computed, ensure no particle is below the pile.
+    /// This catches particles that:
+    /// - Drifted sideways under a pile
+    /// - Were at same level as bedload when it became stuck
+    /// - Fell through gaps between columns
+    fn enforce_pile_constraints(&mut self) {
+        let cell_size = self.grid.cell_size;
+        let pile_height = &self.pile_height;
+        let pile_width = pile_height.len();
+
+        self.particles.list.par_iter_mut().for_each(|p| {
+            // Bedload particles ARE the pile, don't push them
+            if p.state == ParticleState::Bedload {
+                return;
+            }
+
+            let col = ((p.position.x / cell_size) as usize).min(pile_width.saturating_sub(1));
+
+            // Check current and adjacent columns for pile
+            let mut floor_y = pile_height[col];
+            if col > 0 {
+                floor_y = floor_y.min(pile_height[col - 1]);
+            }
+            if col + 1 < pile_width {
+                floor_y = floor_y.min(pile_height[col + 1]);
+            }
+
+            // If there's a pile and particle is below it, push up
+            if floor_y < f32::INFINITY {
+                let particle_radius = cell_size * 0.5;
+                let particle_bottom = p.position.y + particle_radius;
+
+                if particle_bottom > floor_y {
+                    p.position.y = floor_y - particle_radius;
+                    if p.velocity.y > 0.0 {
+                        p.velocity.y = 0.0;
+                    }
+                }
+            }
+        });
     }
 
     /// Step 7c: Apply near-pressure forces (Clavet et al. 2005)
