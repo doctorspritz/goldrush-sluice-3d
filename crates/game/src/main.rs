@@ -7,7 +7,10 @@ mod render;
 
 use macroquad::prelude::*;
 use render::{MetaballRenderer, ParticleRenderer, draw_particles_fast, draw_particles_rect, draw_particles_mesh};
-use sim::{create_sluice, FlipSimulation};
+use sim::{
+    create_sluice_with_mode, FlipSimulation, RiffleMode, SluiceConfig,
+    compute_surface_heightfield,
+};
 
 /// Rendering mode selection
 #[derive(Clone, Copy, PartialEq)]
@@ -50,42 +53,62 @@ async fn main() {
     let screen_h = (SIM_HEIGHT as f32 * CELL_SIZE * SCALE) as u32;
     let mut metaball_renderer = MetaballRenderer::new(screen_w, screen_h);
 
-    // Initial sluice parameters (doubled for finer grid to maintain physical size)
-    let initial_slope = 0.25f32;
-    let initial_spacing = 60usize;  // 30 * 2 cells
-    let initial_height = 6usize;    // 3 * 2 cells
-    let initial_width = 4usize;     // 2 * 2 cells
+    // Initial sluice configuration
+    let mut sluice_config = SluiceConfig {
+        slope: 0.25,
+        riffle_spacing: 60,
+        riffle_height: 6,
+        riffle_width: 4,
+        riffle_mode: RiffleMode::ClassicBattEdge,
+        slick_plate_len: 50,
+    };
 
-    // Set up sloped sluice with riffles (smaller for 1:1 particles)
-    create_sluice(&mut sim, initial_slope, initial_spacing, initial_height, initial_width);
+    // Set up sloped sluice with riffles
+    create_sluice_with_mode(&mut sim, &sluice_config);
 
     // Helper to generate terrain texture at cell resolution (matches physics)
     fn generate_terrain_texture(
         sim: &FlipSimulation,
-        _slope: f32,
-        _riffle_spacing: usize,
-        _riffle_height: usize,
-        _riffle_width: usize,
+        config: &SluiceConfig,
         cell_size: f32,
         render_w: usize,
         render_h: usize,
     ) -> Texture2D {
         let bg_color = Color::from_rgba(20, 20, 30, 255);
         let terrain_color = Color::from_rgba(80, 80, 80, 255);
+        let riffle_color = config.riffle_mode.debug_color();
+        let riffle_color = Color::from_rgba(riffle_color[0], riffle_color[1], riffle_color[2], riffle_color[3]);
 
         let mut img = Image::gen_image_color(render_w as u16, render_h as u16, bg_color);
+
+        // Calculate floor for each column to distinguish riffles from floor
+        let base_height = sim.grid.height / 4;
 
         // Render solid cells as blocks (matches physics collision)
         for j in 0..sim.grid.height {
             for i in 0..sim.grid.width {
                 if sim.grid.is_solid(i, j) {
+                    // Determine if this is a riffle cell (above floor)
+                    let floor_y = if i < config.slick_plate_len {
+                        base_height
+                    } else {
+                        base_height + ((i - config.slick_plate_len) as f32 * config.slope) as usize
+                    };
+
+                    // Use riffle color for cells above floor line, terrain color for floor
+                    let color = if j < floor_y && config.riffle_mode != RiffleMode::None {
+                        riffle_color
+                    } else {
+                        terrain_color
+                    };
+
                     let start_x = (i as f32 * cell_size) as usize;
                     let start_y = (j as f32 * cell_size) as usize;
                     let end_x = ((i + 1) as f32 * cell_size) as usize;
                     let end_y = ((j + 1) as f32 * cell_size) as usize;
                     for py in start_y..end_y.min(render_h) {
                         for px in start_x..end_x.min(render_w) {
-                            img.set_pixel(px as u32, py as u32, terrain_color);
+                            img.set_pixel(px as u32, py as u32, color);
                         }
                     }
                 }
@@ -99,12 +122,12 @@ async fn main() {
 
     // Create initial terrain texture
     let terrain_texture = generate_terrain_texture(
-        &sim, initial_slope, initial_spacing, initial_height, initial_width,
-        CELL_SIZE, RENDER_WIDTH, RENDER_HEIGHT
+        &sim, &sluice_config, CELL_SIZE, RENDER_WIDTH, RENDER_HEIGHT
     );
 
     let mut paused = false;
     let mut show_velocity = false;
+    let mut show_surface_line = false;
     let mut spawn_mud = false;
     let mut render_mode = RenderMode::Hybrid; // Default to Hybrid for best look
     let mut metaball_threshold: f32 = 0.08;
@@ -123,11 +146,7 @@ async fn main() {
     let mut inlet_vy: f32 = 5.0;
     let mut spawn_rate: usize = 4;  // Water particles per frame (4x for finer grid)
 
-    // Riffle geometry (doubled for finer grid)
-    let mut slope: f32 = 0.25;
-    let mut riffle_spacing: usize = 60;
-    let mut riffle_height: usize = 6;
-    let mut riffle_width: usize = 4;
+    // Riffle geometry is in sluice_config (defined earlier)
     let mut riffle_dirty = false; // rebuild terrain when true
 
     // Sediment blend (spawn every N frames, 0 = disabled)
@@ -160,8 +179,17 @@ async fn main() {
         if is_key_pressed(KeyCode::R) {
             // Reset simulation with current riffle params
             sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
-            create_sluice(&mut sim, slope, riffle_spacing, riffle_height, riffle_width);
+            create_sluice_with_mode(&mut sim, &sluice_config);
             riffle_dirty = true; // rebuild texture
+        }
+        // Riffle mode toggle (N key)
+        if is_key_pressed(KeyCode::N) {
+            sluice_config.riffle_mode = sluice_config.riffle_mode.next();
+            riffle_dirty = true;
+        }
+        // Surface line toggle (L key)
+        if is_key_pressed(KeyCode::L) {
+            show_surface_line = !show_surface_line;
         }
         if is_key_pressed(KeyCode::C) {
             // Clear particles
@@ -203,31 +231,31 @@ async fn main() {
 
         // Riffle spacing: Q/A (doubled limits for finer grid)
         if is_key_pressed(KeyCode::Q) {
-            riffle_spacing = (riffle_spacing + 10).min(120);
+            sluice_config.riffle_spacing = (sluice_config.riffle_spacing + 10).min(120);
             riffle_dirty = true;
         }
         if is_key_pressed(KeyCode::A) {
-            riffle_spacing = riffle_spacing.saturating_sub(10).max(30);
+            sluice_config.riffle_spacing = sluice_config.riffle_spacing.saturating_sub(10).max(30);
             riffle_dirty = true;
         }
 
         // Riffle height: W/S (doubled limits for finer grid)
         if is_key_pressed(KeyCode::W) {
-            riffle_height = (riffle_height + 2).min(16);
+            sluice_config.riffle_height = (sluice_config.riffle_height + 2).min(16);
             riffle_dirty = true;
         }
         if is_key_pressed(KeyCode::S) {
-            riffle_height = riffle_height.saturating_sub(2).max(4);
+            sluice_config.riffle_height = sluice_config.riffle_height.saturating_sub(2).max(4);
             riffle_dirty = true;
         }
 
         // Riffle width: E/D (doubled limits for finer grid)
         if is_key_pressed(KeyCode::E) {
-            riffle_width = (riffle_width + 2).min(16);
+            sluice_config.riffle_width = (sluice_config.riffle_width + 2).min(16);
             riffle_dirty = true;
         }
         if is_key_pressed(KeyCode::D) {
-            riffle_width = riffle_width.saturating_sub(2).max(2);
+            sluice_config.riffle_width = sluice_config.riffle_width.saturating_sub(2).max(2);
             riffle_dirty = true;
         }
 
@@ -310,12 +338,11 @@ async fn main() {
             riffle_dirty = false;
             sim.particles.list.clear();
             sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
-            create_sluice(&mut sim, slope, riffle_spacing, riffle_height, riffle_width);
+            create_sluice_with_mode(&mut sim, &sluice_config);
 
-            // Rebuild terrain texture with smooth floor line
+            // Rebuild terrain texture with riffle mode color
             terrain_texture = generate_terrain_texture(
-                &sim, slope, riffle_spacing, riffle_height, riffle_width,
-                CELL_SIZE, RENDER_WIDTH, RENDER_HEIGHT
+                &sim, &sluice_config, CELL_SIZE, RENDER_WIDTH, RENDER_HEIGHT
             );
         }
 
@@ -460,6 +487,24 @@ async fn main() {
             }
         }
 
+        // Draw surface heightfield line (optional debug visualization)
+        if show_surface_line {
+            let surface = compute_surface_heightfield(&sim);
+            let surface_color = Color::from_rgba(100, 200, 255, 200);
+
+            for i in 1..sim.grid.width {
+                let x0 = (i - 1) as f32 * CELL_SIZE * SCALE;
+                let x1 = i as f32 * CELL_SIZE * SCALE;
+                let y0 = surface[i - 1] * SCALE;
+                let y1 = surface[i] * SCALE;
+
+                // Only draw if valid (not MAX)
+                if y0 < screen_height() && y1 < screen_height() {
+                    draw_line(x0, y0, x1, y1, 2.0, surface_color);
+                }
+            }
+        }
+
         // --- UI ---
         let (water, mud, sand, magnetite, gold) = sim.particles.count_by_material();
 
@@ -488,9 +533,13 @@ async fn main() {
             &format!("FLOW: vx={:.0} vy={:.0} rate={} x{}", inlet_vx, inlet_vy, spawn_rate, flow_multiplier),
             10.0, 42.0, 16.0, Color::from_rgba(100, 200, 255, 255),
         );
+        // Riffle mode with mode-specific color
+        let riffle_color = sluice_config.riffle_mode.debug_color();
         draw_text(
-            &format!("RIFFLES: spacing={} height={} width={}", riffle_spacing, riffle_height, riffle_width),
-            10.0, 58.0, 16.0, Color::from_rgba(150, 150, 150, 255),
+            &format!("RIFFLES: {} | spacing={} height={} width={}",
+                sluice_config.riffle_mode.name(),
+                sluice_config.riffle_spacing, sluice_config.riffle_height, sluice_config.riffle_width),
+            10.0, 58.0, 16.0, Color::from_rgba(riffle_color[0], riffle_color[1], riffle_color[2], 255),
         );
         draw_text(
             &format!("SEDIMENT: mud=1/{} sand=1/{} mag=1/{} gold=1/{}",
@@ -541,14 +590,18 @@ async fn main() {
         // Controls - BOTTOM
         draw_text(
             "←→ vx | Shift+←→ vy | ↑↓ spawn | +/- flow×  | Q/A spacing | W/S height | E/D width",
+            10.0, screen_height() - 90.0, 14.0, GRAY,
+        );
+        draw_text(
+            "[N]=Riffle Mode | [L]=Surface Line | [B]=Render | T/G threshold | Y/H scale",
             10.0, screen_height() - 74.0, 14.0, GRAY,
         );
         draw_text(
-            "[B]=Render | T/G threshold | Y/H scale | 5/6 H | 7/8 rest | 9/0 size",
+            "5/6 H | 7/8 rest | 9/0 size | [I]=Viscosity | O/P ν",
             10.0, screen_height() - 58.0, 14.0, GRAY,
         );
         draw_text(
-            "[I]=Viscosity | O/P ν | [Space]=Pause [V]=Velocity [R]=Reset [C]=Clear",
+            "[Space]=Pause [V]=Velocity [R]=Reset [C]=Clear",
             10.0, screen_height() - 42.0, 14.0, GRAY,
         );
 
