@@ -145,11 +145,11 @@ impl FlipSimulation {
         // 4. Apply external forces (gravity)
         self.grid.apply_gravity(dt);
 
-        // 4b. Vorticity confinement - preserves swirl, creates vortex shedding
-        // Applied before pressure solve so projection cleans up any divergence
-        // Attenuated near SDF surfaces and pile surfaces to prevent boundary turbulence
+        // 4b. Vorticity confinement - preserves swirl in bulk water
+        // Skips cells adjacent to air (free surface) - air is compressible
+        // Strength (ε) must be 0.01-0.1 per Fedkiw 2001 - higher causes artificial turbulence
         let pile_height_copy = self.pile_height.clone();
-        self.grid.apply_vorticity_confinement_with_piles(dt, 40.0, &pile_height_copy);
+        self.grid.apply_vorticity_confinement_with_piles(dt, 0.05, &pile_height_copy);
 
         // 5. Pressure projection - enforces incompressibility
         // CRITICAL: Zero velocities at solid walls BEFORE computing divergence
