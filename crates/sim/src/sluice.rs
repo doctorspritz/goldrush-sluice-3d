@@ -519,11 +519,13 @@ pub fn compute_surface_heightfield(sim: &FlipSimulation) -> Vec<f32> {
 
     let mut surface = vec![f32::MAX; width];
 
-    // Find topmost particle in each column (all particles are water now)
+    // Find topmost water particle in each column
     for particle in sim.particles.iter() {
-        let i = (particle.position.x / cell_size) as usize;
-        if i < width {
-            surface[i] = surface[i].min(particle.position.y);
+        if particle.material == crate::particle::ParticleMaterial::Water {
+            let i = (particle.position.x / cell_size) as usize;
+            if i < width {
+                surface[i] = surface[i].min(particle.position.y);
+            }
         }
     }
 

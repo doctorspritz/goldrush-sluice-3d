@@ -736,12 +736,7 @@ impl Grid {
         // was corrected per frame. Without dt, we get full correction.
         // let scale = 1.0 / self.cell_size;
 
-        // UNDER-RELAXATION: Scale by 0.8 to remove only 80% of divergence
-        // This leaves some "divergent" modes which manifests as acoustic waves
-        // but keeps the fluid much more "lively" and energetic (less viscous).
-        // This is a common trick in game physics to combat numerical damping.
-        const RELAXATION: f32 = 0.8;
-        let scale = RELAXATION / self.cell_size;
+        let scale = 1.0 / self.cell_size;
 
         // Update U velocities (horizontal)
         for j in 0..self.height {
@@ -934,7 +929,7 @@ impl Grid {
         let dx = self.cell_size;
 
         // Cells within this depth of surface are skipped (prevents fake turbulence band)
-        const SURFACE_SKIP_DEPTH: usize = 3;
+        const SURFACE_SKIP_DEPTH: usize = 1;
 
         // Second pass: apply vorticity force
         for j in 2..self.height - 2 {
@@ -1016,5 +1011,248 @@ impl Grid {
                 self.v[v_idx] += fy * dt;
             }
         }
+    }
+
+    // ============================================================================
+    // VELOCITY EXTRAPOLATION (for FLIP momentum conservation)
+    // ============================================================================
+
+    /// Extrapolate velocities from fluid cells into non-fluid cells
+    /// Uses layered wavefront: each layer copies from known neighbors
+    ///
+    /// This is critical for FLIP: particles near air boundaries need valid
+    /// velocities to sample for the FLIP delta calculation. Without extrapolation,
+    /// they sample zeros/undefined values causing phantom momentum loss.
+    pub fn extrapolate_velocities(&mut self, max_layers: usize) {
+        // Track which faces have valid velocities
+        let mut u_known: Vec<bool> = vec![false; self.u.len()];
+        let mut v_known: Vec<bool> = vec![false; self.v.len()];
+
+        // Initialize: fluid cell faces are known
+        self.mark_fluid_faces_known(&mut u_known, &mut v_known);
+
+        // Propagate layer by layer
+        for _ in 0..max_layers {
+            self.extrapolate_u_layer(&mut u_known);
+            self.extrapolate_v_layer(&mut v_known);
+        }
+    }
+
+    /// Mark U and V faces that have valid P2G velocities as "known"
+    /// These are INTERIOR fluid faces (both neighbors are fluid).
+    /// Boundary faces (fluid-air) will be filled by extrapolation.
+    fn mark_fluid_faces_known(&self, u_known: &mut [bool], v_known: &mut [bool]) {
+        // Mark U faces: known if BOTH adjacent cells are fluid (interior face)
+        // Faces at fluid-air boundary are NOT marked - they get extrapolated
+        for j in 0..self.height {
+            for i in 0..=self.width {
+                let u_idx = self.u_index(i, j);
+
+                // Check cells on either side
+                let left_fluid = i > 0 && self.cell_type[self.cell_index(i - 1, j)] == CellType::Fluid;
+                let right_fluid = i < self.width && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
+
+                // Only mark if BOTH cells are fluid (interior face has valid P2G value)
+                if left_fluid && right_fluid {
+                    u_known[u_idx] = true;
+                }
+            }
+        }
+
+        // Mark V faces: known if BOTH adjacent cells are fluid
+        for j in 0..=self.height {
+            for i in 0..self.width {
+                let v_idx = self.v_index(i, j);
+
+                let bottom_fluid = j > 0 && self.cell_type[self.cell_index(i, j - 1)] == CellType::Fluid;
+                let top_fluid = j < self.height && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
+
+                if bottom_fluid && top_fluid {
+                    v_known[v_idx] = true;
+                }
+            }
+        }
+    }
+
+    /// Extrapolate U velocities one layer outward
+    fn extrapolate_u_layer(&mut self, u_known: &mut [bool]) {
+        // Two-buffer pattern: compute new values without reading them in same pass
+        let mut new_known = vec![false; u_known.len()];
+        let mut new_values = vec![0.0f32; self.u.len()];
+
+        for j in 0..self.height {
+            for i in 0..=self.width {
+                let u_idx = self.u_index(i, j);
+
+                if u_known[u_idx] {
+                    continue; // Already known, skip
+                }
+
+                // Don't extrapolate into faces touching solid cells
+                let left_solid = i == 0 || self.cell_type[self.cell_index(i - 1, j)] == CellType::Solid;
+                let right_solid = i == self.width || self.cell_type[self.cell_index(i, j)] == CellType::Solid;
+                if left_solid || right_solid {
+                    continue; // Solid boundary - handled by boundary conditions
+                }
+
+                // Average of known cardinal neighbors (staggered U grid)
+                let mut sum = 0.0;
+                let mut count = 0;
+
+                // Left neighbor (i-1, j)
+                if i > 0 {
+                    let idx = self.u_index(i - 1, j);
+                    if u_known[idx] {
+                        sum += self.u[idx];
+                        count += 1;
+                    }
+                }
+                // Right neighbor (i+1, j)
+                if i < self.width {
+                    let idx = self.u_index(i + 1, j);
+                    if u_known[idx] {
+                        sum += self.u[idx];
+                        count += 1;
+                    }
+                }
+                // Down neighbor (i, j-1)
+                if j > 0 {
+                    let idx = self.u_index(i, j - 1);
+                    if u_known[idx] {
+                        sum += self.u[idx];
+                        count += 1;
+                    }
+                }
+                // Up neighbor (i, j+1)
+                if j + 1 < self.height {
+                    let idx = self.u_index(i, j + 1);
+                    if u_known[idx] {
+                        sum += self.u[idx];
+                        count += 1;
+                    }
+                }
+
+                if count > 0 {
+                    new_values[u_idx] = sum / count as f32;
+                    new_known[u_idx] = true;
+                }
+                // If count == 0, leave unchanged (next layer may reach it)
+            }
+        }
+
+        // Apply new values and merge known flags
+        for i in 0..u_known.len() {
+            if new_known[i] {
+                self.u[i] = new_values[i];
+                u_known[i] = true;
+            }
+        }
+    }
+
+    /// Extrapolate V velocities one layer outward
+    fn extrapolate_v_layer(&mut self, v_known: &mut [bool]) {
+        let mut new_known = vec![false; v_known.len()];
+        let mut new_values = vec![0.0f32; self.v.len()];
+
+        for j in 0..=self.height {
+            for i in 0..self.width {
+                let v_idx = self.v_index(i, j);
+
+                if v_known[v_idx] {
+                    continue;
+                }
+
+                // Don't extrapolate into faces touching solid cells
+                let bottom_solid = j == 0 || self.cell_type[self.cell_index(i, j - 1)] == CellType::Solid;
+                let top_solid = j == self.height || self.cell_type[self.cell_index(i, j)] == CellType::Solid;
+                if bottom_solid || top_solid {
+                    continue; // Solid boundary - handled by boundary conditions
+                }
+
+                let mut sum = 0.0;
+                let mut count = 0;
+
+                // Left neighbor (i-1, j)
+                if i > 0 {
+                    let idx = self.v_index(i - 1, j);
+                    if v_known[idx] {
+                        sum += self.v[idx];
+                        count += 1;
+                    }
+                }
+                // Right neighbor (i+1, j)
+                if i + 1 < self.width {
+                    let idx = self.v_index(i + 1, j);
+                    if v_known[idx] {
+                        sum += self.v[idx];
+                        count += 1;
+                    }
+                }
+                // Down neighbor (i, j-1)
+                if j > 0 {
+                    let idx = self.v_index(i, j - 1);
+                    if v_known[idx] {
+                        sum += self.v[idx];
+                        count += 1;
+                    }
+                }
+                // Up neighbor (i, j+1)
+                if j < self.height {
+                    let idx = self.v_index(i, j + 1);
+                    if v_known[idx] {
+                        sum += self.v[idx];
+                        count += 1;
+                    }
+                }
+
+                if count > 0 {
+                    new_values[v_idx] = sum / count as f32;
+                    new_known[v_idx] = true;
+                }
+            }
+        }
+
+        for i in 0..v_known.len() {
+            if new_known[i] {
+                self.v[i] = new_values[i];
+                v_known[i] = true;
+            }
+        }
+    }
+
+    /// Total momentum vector of the grid (sum of velocity * cell_size for fluid-adjacent faces)
+    /// Only counts faces that touch at least one fluid cell.
+    /// Used for conservation tests - extrapolated velocities don't count.
+    pub fn total_momentum(&self) -> Vec2 {
+        let mut momentum = Vec2::ZERO;
+
+        // Sum U momentum (horizontal) - only for faces adjacent to fluid
+        for j in 0..self.height {
+            for i in 0..=self.width {
+                // Check if either adjacent cell is fluid
+                let left_fluid = i > 0 && self.cell_type[self.cell_index(i - 1, j)] == CellType::Fluid;
+                let right_fluid = i < self.width && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
+
+                if left_fluid || right_fluid {
+                    let u_idx = self.u_index(i, j);
+                    momentum.x += self.u[u_idx] * self.cell_size;
+                }
+            }
+        }
+
+        // Sum V momentum (vertical) - only for faces adjacent to fluid
+        for j in 0..=self.height {
+            for i in 0..self.width {
+                let bottom_fluid = j > 0 && self.cell_type[self.cell_index(i, j - 1)] == CellType::Fluid;
+                let top_fluid = j < self.height && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
+
+                if bottom_fluid || top_fluid {
+                    let v_idx = self.v_index(i, j);
+                    momentum.y += self.v[v_idx] * self.cell_size;
+                }
+            }
+        }
+
+        momentum
     }
 }

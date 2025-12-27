@@ -1,11 +1,19 @@
-//! GPU-accelerated water particle rendering
+//! GPU-accelerated particle rendering
 //!
-//! WATER-ONLY VERSION - Simplified for pure water simulation
+//! Renders particles as smooth circles with velocity-based coloring.
+//! Uses macroquad's material system for custom GLSL shaders.
+//! Supports metaball-style rendering for cohesive fluid appearance.
+//!
+//! ## GPU Batching Strategy
+//! Instead of one draw call per particle, we batch all particles of each
+//! material type into a single Mesh and draw with one call per material.
+//! This reduces draw calls from N to 5 (one per material type).
 
 use macroquad::prelude::*;
 use macroquad::miniquad::{BlendState, Equation, BlendFactor, BlendValue};
 use macroquad::models::{Mesh, Vertex, draw_mesh};
 use sim::Particles;
+use sim::particle::ParticleState;
 
 /// Vertex shader for particle circles
 const VERTEX_SHADER: &str = r#"#version 100
@@ -32,19 +40,27 @@ varying lowp vec2 v_uv;
 uniform lowp vec4 particleColor;
 
 void main() {
+    // Calculate distance from center (UV is 0-1)
     vec2 center = vec2(0.5, 0.5);
     float dist = length(v_uv - center) * 2.0;
+
+    // Smooth circle with soft edge
     float alpha = 1.0 - smoothstep(0.7, 1.0, dist);
 
+    // Discard pixels outside circle
     if (alpha < 0.01) {
         discard;
     }
 
-    gl_FragColor = vec4(particleColor.rgb, alpha);
+    // Use uniform color
+    vec3 finalColor = particleColor.rgb;
+
+    // Simplified color output without rim darkening
+    gl_FragColor = vec4(finalColor, alpha);
 }
 "#;
 
-/// Metaball density pass
+/// Metaball density pass - soft gaussian falloff with additive blending
 const METABALL_DENSITY_FRAG: &str = r#"#version 100
 precision mediump float;
 
@@ -56,12 +72,16 @@ uniform lowp float densityMult;
 void main() {
     vec2 center = vec2(0.5, 0.5);
     float dist = length(v_uv - center) * 2.0;
+
+    // Gaussian-like falloff: strong in center, soft fade at edges
     float density = exp(-dist * dist * 4.0) * densityMult;
+
+    // Output: RGB is color weighted by density, A is density itself
     gl_FragColor = vec4(particleColor.rgb * density, density);
 }
 "#;
 
-/// Metaball threshold pass
+/// Metaball threshold pass - thresholds the accumulated density
 const METABALL_THRESHOLD_FRAG: &str = r#"#version 100
 precision mediump float;
 
@@ -71,76 +91,43 @@ uniform sampler2D Texture;
 uniform lowp float threshold;
 
 void main() {
+    // Flip Y when sampling to correct for render target coordinate mismatch
     vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);
     vec4 texSample = texture2D(Texture, uv);
+
     float density = texSample.a;
+
+    // Discard below threshold
     if (density < threshold) {
         discard;
     }
+
+    // Recover color (was pre-multiplied by density)
     vec3 color = texSample.rgb / max(density, 0.001);
-    float edgeFactor = smoothstep(threshold, threshold + 0.08, density);
-    gl_FragColor = vec4(color, edgeFactor * 0.85);
+
+    // Very sharp edge transition - minimal alpha variation
+    float edge = smoothstep(threshold, threshold + 0.03, density);
+
+    // Subtle rim darkening for depth (reduced effect)
+    float rim = 1.0 - smoothstep(threshold, threshold + 0.1, density);
+    color = mix(color, color * 0.9, rim * 0.3);
+
+    // High consistent alpha with minimal variation
+    gl_FragColor = vec4(color, 0.85 + edge * 0.1);
 }
 "#;
 
-/// Metaball renderer (simplified stub)
-pub struct MetaballRenderer {
-    particle_renderer: ParticleRenderer,
-}
-
-impl MetaballRenderer {
-    pub fn new(_width: u32, _height: u32) -> Self {
-        Self {
-            particle_renderer: ParticleRenderer::new(),
-        }
-    }
-
-    pub fn draw(&mut self, particles: &Particles, _scale: f32, base_size: f32) {
-        self.particle_renderer.draw_particles_metaball(particles, base_size);
-    }
-
-    pub fn draw_water(&mut self, particles: &Particles, _scale: f32, base_size: f32) {
-        self.particle_renderer.draw_particles_metaball(particles, base_size);
-    }
-
-    pub fn set_threshold(&mut self, _threshold: f32) {}
-    pub fn set_scale(&mut self, _scale: f32) {}
-}
-
-/// Fast particle rendering (simple colored rectangles)
-pub fn draw_particles_fast(particles: &Particles, scale: f32, size: f32) {
-    let color = Color::from_rgba(50, 140, 240, 180);
-    for p in particles.iter() {
-        draw_rectangle(p.position.x * scale, p.position.y * scale, size, size, color);
-    }
-}
-
-/// Fast particle rendering with debug colors
-pub fn draw_particles_fast_debug(particles: &Particles, scale: f32, size: f32, _debug: bool) {
-    draw_particles_fast(particles, scale, size);
-}
-
-/// Fast rectangle rendering
-pub fn draw_particles_rect(particles: &Particles, scale: f32, size: f32) {
-    draw_particles_fast(particles, scale, size);
-}
-
-/// Mesh batch rendering
-pub fn draw_particles_mesh(particles: &Particles, scale: f32, size: f32) {
-    draw_particles_fast(particles, scale, size);
-}
-
+/// Particle renderer with GPU-accelerated instanced circles
 pub struct ParticleRenderer {
-    pub material: Material,
-    pub metaball_density_material: Material,
-    pub metaball_threshold_material: Material,
-    pub render_target: Option<RenderTarget>,
-    pub base_size: f32,
-    mesh_vertices: Vec<Vertex>,
-    mesh_indices: Vec<u16>,
+    material: Material,
+    /// 1x1 white texture for UV-mapped quad rendering
+    white_texture: Texture2D,
+    velocity_max: f32,
+    particle_scale: f32,
 }
 
 impl ParticleRenderer {
+    /// Create a new particle renderer
     pub fn new() -> Self {
         let material = load_material(
             ShaderSource::Glsl {
@@ -149,42 +136,7 @@ impl ParticleRenderer {
             },
             MaterialParams {
                 uniforms: vec![
-                    ("particleColor".to_string(), UniformType::Float4),
-                ],
-                ..Default::default()
-            },
-        ).unwrap();
-
-        let metaball_density_material = load_material(
-            ShaderSource::Glsl {
-                vertex: VERTEX_SHADER,
-                fragment: METABALL_DENSITY_FRAG,
-            },
-            MaterialParams {
-                uniforms: vec![
-                    ("particleColor".to_string(), UniformType::Float4),
-                    ("densityMult".to_string(), UniformType::Float1),
-                ],
-                pipeline_params: PipelineParams {
-                    color_blend: Some(BlendState::new(
-                        Equation::Add,
-                        BlendFactor::Value(BlendValue::SourceAlpha),
-                        BlendFactor::One,
-                    )),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        ).unwrap();
-
-        let metaball_threshold_material = load_material(
-            ShaderSource::Glsl {
-                vertex: VERTEX_SHADER,
-                fragment: METABALL_THRESHOLD_FRAG,
-            },
-            MaterialParams {
-                uniforms: vec![
-                    ("threshold".to_string(), UniformType::Float1),
+                    UniformDesc::new("particleColor", UniformType::Float4),
                 ],
                 pipeline_params: PipelineParams {
                     color_blend: Some(BlendState::new(
@@ -196,182 +148,568 @@ impl ParticleRenderer {
                 },
                 ..Default::default()
             },
-        ).unwrap();
+        )
+        .expect("Failed to load particle shader");
+
+        // Create 1x1 white texture for UV-mapped rendering
+        let white_img = Image::gen_image_color(1, 1, WHITE);
+        let white_texture = Texture2D::from_image(&white_img);
 
         Self {
             material,
-            metaball_density_material,
-            metaball_threshold_material,
-            render_target: None,
-            base_size: 3.0,
-            mesh_vertices: Vec::with_capacity(4000),
-            mesh_indices: Vec::with_capacity(6000),
+            white_texture,
+            velocity_max: 100.0,
+            particle_scale: 2.5, // Smaller particles for denser flow
         }
     }
 
-    fn ensure_render_target(&mut self) {
-        let sw = screen_width() as u32;
-        let sh = screen_height() as u32;
-
-        let needs_new = match &self.render_target {
-            None => true,
-            Some(rt) => rt.texture.width() != sw as f32 || rt.texture.height() != sh as f32,
-        };
-
-        if needs_new {
-            self.render_target = Some(render_target(sw, sh));
-        }
+    /// Set maximum velocity for color scaling
+    pub fn set_velocity_max(&mut self, max: f32) {
+        self.velocity_max = max;
     }
 
-    /// Simple particle rendering - one draw call for all water
-    pub fn draw_particles(&mut self, particles: &Particles, base_size: f32) {
-        if particles.is_empty() {
-            return;
-        }
+    /// Set particle visual scale
+    pub fn set_particle_scale(&mut self, scale: f32) {
+        self.particle_scale = scale;
+    }
 
-        // Water color: blue
-        let color = [50.0 / 255.0, 140.0 / 255.0, 240.0 / 255.0, 0.7];
-
-        self.mesh_vertices.clear();
-        self.mesh_indices.clear();
-
-        for particle in particles.iter() {
-            let x = particle.position.x;
-            let y = particle.position.y;
-            let half = base_size * 0.5;
-
-            let base_idx = self.mesh_vertices.len() as u16;
-
-            self.mesh_vertices.push(Vertex {
-                position: Vec3::new(x - half, y - half, 0.0),
-                uv: Vec2::new(0.0, 0.0),
-                color: WHITE,
-            });
-            self.mesh_vertices.push(Vertex {
-                position: Vec3::new(x + half, y - half, 0.0),
-                uv: Vec2::new(1.0, 0.0),
-                color: WHITE,
-            });
-            self.mesh_vertices.push(Vertex {
-                position: Vec3::new(x + half, y + half, 0.0),
-                uv: Vec2::new(1.0, 1.0),
-                color: WHITE,
-            });
-            self.mesh_vertices.push(Vertex {
-                position: Vec3::new(x - half, y + half, 0.0),
-                uv: Vec2::new(0.0, 1.0),
-                color: WHITE,
-            });
-
-            self.mesh_indices.push(base_idx);
-            self.mesh_indices.push(base_idx + 1);
-            self.mesh_indices.push(base_idx + 2);
-            self.mesh_indices.push(base_idx);
-            self.mesh_indices.push(base_idx + 2);
-            self.mesh_indices.push(base_idx + 3);
-        }
-
-        let mesh = Mesh {
-            vertices: self.mesh_vertices.clone(),
-            indices: self.mesh_indices.clone(),
-            texture: None,
-        };
-
+    /// Render all particles as smooth circles
+    pub fn draw(&self, particles: &Particles, screen_scale: f32) {
         gl_use_material(&self.material);
-        self.material.set_uniform("particleColor", color);
-        draw_mesh(&mesh);
+
+        let size = self.particle_scale * screen_scale;
+
+        // Draw each particle as a textured quad (circle rendered in shader)
+        for particle in particles.iter() {
+            let x = particle.position.x * screen_scale;
+            let y = particle.position.y * screen_scale;
+
+            let [r, g, b, _] = particle.material.color();
+
+            // Set particle color uniform
+            self.material.set_uniform("particleColor", [
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+                1.0f32,
+            ]);
+
+            // Draw textured quad (shader makes it circular, texture provides UVs)
+            draw_texture_ex(
+                &self.white_texture,
+                x - size / 2.0,
+                y - size / 2.0,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(vec2(size, size)),
+                    ..Default::default()
+                },
+            );
+        }
+
         gl_use_default_material();
     }
 
-    /// Metaball rendering for cohesive water appearance
-    pub fn draw_particles_metaball(&mut self, particles: &Particles, base_size: f32) {
-        if particles.is_empty() {
-            return;
+    /// Draw particles batched by material (one uniform per material type)
+    pub fn draw_sorted(&self, particles: &Particles, screen_scale: f32) {
+        gl_use_material(&self.material);
+
+        let size = self.particle_scale * screen_scale;
+
+        // Draw order: water, mud, sand, magnetite, gold (lightest to heaviest)
+        let materials = [
+            sim::ParticleMaterial::Water,
+            sim::ParticleMaterial::Mud,
+            sim::ParticleMaterial::Sand,
+            sim::ParticleMaterial::Magnetite,
+            sim::ParticleMaterial::Gold,
+        ];
+
+        for mat in materials {
+            let [r, g, b, _] = mat.color();
+            self.material.set_uniform("particleColor", [
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+                1.0f32,
+            ]);
+
+            for particle in particles.iter() {
+                if particle.material == mat {
+                    let x = particle.position.x * screen_scale;
+                    let y = particle.position.y * screen_scale;
+                    draw_texture_ex(
+                        &self.white_texture,
+                        x - size / 2.0,
+                        y - size / 2.0,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(vec2(size, size)),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
         }
 
-        self.ensure_render_target();
-        let rt = self.render_target.as_ref().unwrap();
+        gl_use_default_material();
+    }
 
-        // Pass 1: Accumulate density to render target
+    /// Draw particles, optionally filtering for only water or only solids
+    pub fn draw_filtered(&self, particles: &Particles, screen_scale: f32, draw_water: bool) {
+        gl_use_material(&self.material);
+
+        let size = self.particle_scale * screen_scale;
+
+        // Draw order: water, mud, sand, magnetite, gold (lightest to heaviest)
+        let materials = [
+            sim::ParticleMaterial::Water,
+            sim::ParticleMaterial::Mud,
+            sim::ParticleMaterial::Sand,
+            sim::ParticleMaterial::Magnetite,
+            sim::ParticleMaterial::Gold,
+        ];
+
+        for mat in materials {
+            let is_water = mat == sim::ParticleMaterial::Water;
+            if draw_water != is_water {
+                continue;
+            }
+
+            let [r, g, b, _] = mat.color();
+            self.material.set_uniform("particleColor", [
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+                1.0f32,
+            ]);
+
+            for particle in particles.iter() {
+                if particle.material == mat {
+                    let x = particle.position.x * screen_scale;
+                    let y = particle.position.y * screen_scale;
+                    draw_texture_ex(
+                        &self.white_texture,
+                        x - size / 2.0,
+                        y - size / 2.0,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(vec2(size, size)),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+        }
+
+        gl_use_default_material();
+    }
+}
+
+impl Default for ParticleRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Metaball-style fluid renderer with GPU batched rendering
+/// Uses two-pass rendering: density accumulation + threshold
+/// Batches all particles into meshes for minimal draw calls
+pub struct MetaballRenderer {
+    density_material: Material,
+    threshold_material: Material,
+    render_target: RenderTarget,
+    white_texture: Texture2D,
+    particle_scale: f32,
+    threshold: f32,
+}
+
+impl MetaballRenderer {
+    /// Create a new metaball renderer
+    pub fn new(width: u32, height: u32) -> Self {
+        // Density accumulation pass - additive blending
+        let density_material = load_material(
+            ShaderSource::Glsl {
+                vertex: VERTEX_SHADER,
+                fragment: METABALL_DENSITY_FRAG,
+            },
+            MaterialParams {
+                uniforms: vec![
+                    UniformDesc::new("particleColor", UniformType::Float4),
+                    UniformDesc::new("densityMult", UniformType::Float1),
+                ],
+                pipeline_params: PipelineParams {
+                    // Additive blending: src + dst
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::One,
+                        BlendFactor::One,
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .expect("Failed to load density shader");
+
+        // Threshold pass - standard alpha blending
+        let threshold_material = load_material(
+            ShaderSource::Glsl {
+                vertex: VERTEX_SHADER,
+                fragment: METABALL_THRESHOLD_FRAG,
+            },
+            MaterialParams {
+                uniforms: vec![
+                    UniformDesc::new("threshold", UniformType::Float1),
+                ],
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Value(BlendValue::SourceAlpha),
+                        BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .expect("Failed to load threshold shader");
+
+        // Create render target for density accumulation
+        let render_target = render_target(width, height);
+        render_target.texture.set_filter(FilterMode::Linear);
+
+        // Create 1x1 white texture for mesh UV mapping
+        let white_img = Image::gen_image_color(1, 1, WHITE);
+        let white_texture = Texture2D::from_image(&white_img);
+
+        Self {
+            density_material,
+            threshold_material,
+            render_target,
+            white_texture,
+            particle_scale: 6.0,
+            threshold: 0.08,
+        }
+    }
+
+    /// Set particle visual scale (larger = more overlap = more blobby)
+    pub fn set_particle_scale(&mut self, scale: f32) {
+        self.particle_scale = scale;
+    }
+
+    /// Set threshold for metaball surface (lower = more fluid, higher = more droplets)
+    pub fn set_threshold(&mut self, threshold: f32) {
+        self.threshold = threshold;
+    }
+
+    /// Render particles with metaball effect
+    /// Uses per-particle draw calls with material batching (one uniform set per material)
+    /// Render particles with metaball effect
+    /// Uses per-particle draw calls with material batching (one uniform set per material)
+    pub fn draw(&self, particles: &Particles, screen_scale: f32) {
+        let base_size = self.particle_scale * screen_scale;
+        let rt_w = self.render_target.texture.width();
+        let rt_h = self.render_target.texture.height();
+
+        // Pass 1: Render density to render target
         set_camera(&Camera2D {
-            render_target: Some(rt.clone()),
-            ..Camera2D::from_display_rect(Rect::new(0.0, 0.0, screen_width(), screen_height()))
+            zoom: vec2(2.0 / rt_w, -2.0 / rt_h),
+            target: vec2(rt_w / 2.0, rt_h / 2.0),
+            render_target: Some(self.render_target.clone()),
+            ..Default::default()
         });
 
         clear_background(Color::new(0.0, 0.0, 0.0, 0.0));
 
-        // Water color
-        let color = [50.0 / 255.0, 140.0 / 255.0, 240.0 / 255.0, 1.0];
-        let density_mult = 0.035;
-        let particle_size = base_size * 2.5;
+        gl_use_material(&self.density_material);
 
-        self.mesh_vertices.clear();
-        self.mesh_indices.clear();
+        // Draw order: water, mud, sand, magnetite, gold
+        let materials = [
+            sim::ParticleMaterial::Water,
+            sim::ParticleMaterial::Mud,
+            sim::ParticleMaterial::Sand,
+            sim::ParticleMaterial::Magnetite,
+            sim::ParticleMaterial::Gold,
+        ];
 
-        for particle in particles.iter() {
-            let x = particle.position.x;
-            let y = particle.position.y;
-            let half = particle_size * 0.5;
+        for mat in materials {
+            let [r, g, b, _] = mat.color();
+            let size = base_size * mat.render_scale();
+            let density_mult = mat.density_contribution();
 
-            let base_idx = self.mesh_vertices.len() as u16;
+            self.density_material.set_uniform("particleColor", [
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+                1.0f32,
+            ]);
+            self.density_material.set_uniform("densityMult", density_mult);
 
-            self.mesh_vertices.push(Vertex {
-                position: Vec3::new(x - half, y - half, 0.0),
-                uv: Vec2::new(0.0, 0.0),
-                color: WHITE,
-            });
-            self.mesh_vertices.push(Vertex {
-                position: Vec3::new(x + half, y - half, 0.0),
-                uv: Vec2::new(1.0, 0.0),
-                color: WHITE,
-            });
-            self.mesh_vertices.push(Vertex {
-                position: Vec3::new(x + half, y + half, 0.0),
-                uv: Vec2::new(1.0, 1.0),
-                color: WHITE,
-            });
-            self.mesh_vertices.push(Vertex {
-                position: Vec3::new(x - half, y + half, 0.0),
-                uv: Vec2::new(0.0, 1.0),
-                color: WHITE,
-            });
-
-            self.mesh_indices.push(base_idx);
-            self.mesh_indices.push(base_idx + 1);
-            self.mesh_indices.push(base_idx + 2);
-            self.mesh_indices.push(base_idx);
-            self.mesh_indices.push(base_idx + 2);
-            self.mesh_indices.push(base_idx + 3);
+            for particle in particles.iter() {
+                if particle.material == mat {
+                    let x = particle.position.x * screen_scale;
+                    let y = particle.position.y * screen_scale;
+                    draw_texture_ex(
+                        &self.white_texture,
+                        x - size / 2.0,
+                        y - size / 2.0,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(vec2(size, size)),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
         }
 
-        let mesh = Mesh {
-            vertices: self.mesh_vertices.clone(),
-            indices: self.mesh_indices.clone(),
-            texture: None,
-        };
-
-        gl_use_material(&self.metaball_density_material);
-        self.metaball_density_material.set_uniform("particleColor", color);
-        self.metaball_density_material.set_uniform("densityMult", density_mult);
-        draw_mesh(&mesh);
         gl_use_default_material();
 
-        // Pass 2: Threshold and render to screen
+        // Pass 2: Draw render target to screen with threshold
         set_default_camera();
 
-        gl_use_material(&self.metaball_threshold_material);
-        self.metaball_threshold_material.set_uniform("threshold", 0.5f32);
+        gl_use_material(&self.threshold_material);
+        self.threshold_material.set_uniform("threshold", self.threshold);
+
         draw_texture_ex(
-            &rt.texture,
+            &self.render_target.texture,
             0.0,
             0.0,
             WHITE,
             DrawTextureParams {
-                dest_size: Some(Vec2::new(screen_width(), screen_height())),
-                flip_y: true,
+                dest_size: Some(vec2(screen_width(), screen_height())),
                 ..Default::default()
             },
         );
+
         gl_use_default_material();
     }
+
+    /// Render particles with metaball effect, filtered by type (water vs solids)
+    pub fn draw_filtered(&self, particles: &Particles, screen_scale: f32, draw_water: bool) {
+        let base_size = self.particle_scale * screen_scale;
+        let rt_w = self.render_target.texture.width();
+        let rt_h = self.render_target.texture.height();
+
+        // Pass 1: Render density to render target
+        set_camera(&Camera2D {
+            zoom: vec2(2.0 / rt_w, -2.0 / rt_h),
+            target: vec2(rt_w / 2.0, rt_h / 2.0),
+            render_target: Some(self.render_target.clone()),
+            ..Default::default()
+        });
+
+        clear_background(Color::new(0.0, 0.0, 0.0, 0.0));
+
+        gl_use_material(&self.density_material);
+
+        // Draw order: water, mud, sand, magnetite, gold
+        let materials = [
+            sim::ParticleMaterial::Water,
+            sim::ParticleMaterial::Mud,
+            sim::ParticleMaterial::Sand,
+            sim::ParticleMaterial::Magnetite,
+            sim::ParticleMaterial::Gold,
+        ];
+
+        for mat in materials {
+            let is_water = mat == sim::ParticleMaterial::Water;
+            if draw_water != is_water {
+                continue;
+            }
+
+            let [r, g, b, _] = mat.color();
+            let size = base_size * mat.render_scale();
+            let density_mult = mat.density_contribution();
+
+            self.density_material.set_uniform("particleColor", [
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+                1.0f32,
+            ]);
+            self.density_material.set_uniform("densityMult", density_mult);
+
+            for particle in particles.iter() {
+                if particle.material == mat {
+                    let x = particle.position.x * screen_scale;
+                    let y = particle.position.y * screen_scale;
+                    draw_texture_ex(
+                        &self.white_texture,
+                        x - size / 2.0,
+                        y - size / 2.0,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(vec2(size, size)),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+        }
+
+        gl_use_default_material();
+
+        // Pass 2: Draw render target to screen with threshold
+        set_default_camera();
+
+        gl_use_material(&self.threshold_material);
+        self.threshold_material.set_uniform("threshold", self.threshold);
+
+        draw_texture_ex(
+            &self.render_target.texture,
+            0.0,
+            0.0,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(screen_width(), screen_height())),
+                ..Default::default()
+            },
+        );
+
+        gl_use_default_material();
+    }
+}
+
+/// Fast batched circle renderer using macroquad's internal batching
+/// Renders particles as simple filled circles with no shader overhead
+/// If debug_state is true, Bedload=red, Suspended=blue (for sediment only)
+pub fn draw_particles_fast(particles: &Particles, screen_scale: f32, base_size: f32) {
+    draw_particles_fast_debug(particles, screen_scale, base_size, false);
+}
+
+/// Fast renderer with optional debug state coloring
+pub fn draw_particles_fast_debug(particles: &Particles, screen_scale: f32, base_size: f32, debug_state: bool) {
+    // Draw all particles using macroquad's draw_circle which batches internally
+    // This avoids custom shader overhead and uniform changes
+    for particle in particles.iter() {
+        let x = particle.position.x * screen_scale;
+        let y = particle.position.y * screen_scale;
+        let size = base_size * particle.material.render_scale();
+
+        let color = if debug_state && particle.is_sediment() {
+            // Debug mode: Bedload = red, Suspended = blue
+            match particle.state {
+                ParticleState::Bedload => Color::from_rgba(255, 50, 50, 255),
+                ParticleState::Suspended => Color::from_rgba(50, 100, 255, 255),
+            }
+        } else {
+            let [r, g, b, a] = particle.material.color();
+            Color::from_rgba(r, g, b, a)
+        };
+
+        draw_circle(x, y, size, color);
+    }
+}
+
+/// Ultra-fast rectangle renderer - rectangles batch better than circles
+pub fn draw_particles_rect(particles: &Particles, screen_scale: f32, base_size: f32) {
+    for particle in particles.iter() {
+        let x = particle.position.x * screen_scale;
+        let y = particle.position.y * screen_scale;
+        let [r, g, b, a] = particle.material.color();
+        let color = Color::from_rgba(r, g, b, a);
+        let size = base_size * particle.material.render_scale();
+
+        draw_rectangle(x - size/2.0, y - size/2.0, size, size, color);
+    }
+}
+
+/// Single-mesh batched renderer - builds meshes with all particles
+/// Uses vertex colors and default material for maximum batching
+/// Batches in chunks of ~8000 particles to stay within u16 index limits
+pub fn draw_particles_mesh(particles: &Particles, screen_scale: f32, base_size: f32) {
+    let count = particles.len();
+    if count == 0 {
+        return;
+    }
+
+    // Max particles per batch: 65536 indices / 6 indices per quad = 10922
+    // Use 8000 for safety margin
+    const MAX_PER_BATCH: usize = 8000;
+
+    let mut batch_start = 0;
+    while batch_start < count {
+        let batch_end = (batch_start + MAX_PER_BATCH).min(count);
+        let batch_size = batch_end - batch_start;
+
+        // Pre-allocate vertex and index buffers for this batch
+        let mut vertices: Vec<Vertex> = Vec::with_capacity(batch_size * 4);
+        let mut indices: Vec<u16> = Vec::with_capacity(batch_size * 6);
+
+        for (local_i, particle) in particles.iter().skip(batch_start).take(batch_size).enumerate() {
+            let x = particle.position.x * screen_scale;
+            let y = particle.position.y * screen_scale;
+            let [r, g, b, a] = particle.material.color();
+            let color = Color::from_rgba(r, g, b, a);
+            let size = base_size * particle.material.render_scale();
+
+            let half = size / 2.0;
+            let base_idx = (local_i * 4) as u16;
+
+            // Quad vertices (top-left, top-right, bottom-right, bottom-left)
+            vertices.push(Vertex {
+                position: vec3(x - half, y - half, 0.0),
+                uv: vec2(0.0, 0.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+            vertices.push(Vertex {
+                position: vec3(x + half, y - half, 0.0),
+                uv: vec2(1.0, 0.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+            vertices.push(Vertex {
+                position: vec3(x + half, y + half, 0.0),
+                uv: vec2(1.0, 1.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+            vertices.push(Vertex {
+                position: vec3(x - half, y + half, 0.0),
+                uv: vec2(0.0, 1.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+
+            // Two triangles per quad
+            indices.push(base_idx);
+            indices.push(base_idx + 1);
+            indices.push(base_idx + 2);
+            indices.push(base_idx);
+            indices.push(base_idx + 2);
+            indices.push(base_idx + 3);
+        }
+
+        // Build and draw mesh for this batch
+        let mesh = Mesh {
+            vertices,
+            indices,
+            texture: None,
+        };
+        draw_mesh(&mesh);
+
+        batch_start = batch_end;
+    }
+}
+
+/// Generate a gradient texture for velocity coloring (alternative approach)
+pub fn create_velocity_gradient(resolution: u32) -> Image {
+    let mut img = Image::gen_image_color(resolution as u16, 1, WHITE);
+    let pixels = img.get_image_data_mut();
+
+    for i in 0..resolution {
+        let t = i as f32 / (resolution - 1) as f32;
+
+        // Blue (slow) -> Cyan -> White (fast)
+        let r = (t * 255.0) as u8;
+        let g = ((0.5 + t * 0.5) * 255.0) as u8;
+        let b = 255;
+
+        pixels[i as usize] = [r, g, b, 255];
+    }
+
+    img
 }

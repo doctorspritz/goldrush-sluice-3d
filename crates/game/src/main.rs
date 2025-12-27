@@ -128,7 +128,8 @@ async fn main() {
     let mut paused = false;
     let mut show_velocity = false;
     let mut show_surface_line = false;
-    let mut debug_state_colors = false; // D key toggle
+    let mut spawn_mud = false;
+    let mut debug_state_colors = false; // D key: Bedload=red, Suspended=blue
     let mut render_mode = RenderMode::Hybrid; // Default to Hybrid for best look
     let mut metaball_threshold: f32 = 0.08;
     let mut metaball_scale: f32 = 6.0;
@@ -149,7 +150,15 @@ async fn main() {
     // Riffle geometry is in sluice_config (defined earlier)
     let mut riffle_dirty = false; // rebuild terrain when true
 
-    // Global flow multiplier (F/G to adjust)
+    // Sediment blend (spawn every N frames, 0 = disabled)
+    // Target: 10% solids by volume (realistic slurry)
+    // At spawn_rate=4 water/frame, need ~0.44 solids/frame total
+    let mut mud_rate: usize = 10;       // 1 per 10 frames = 0.1/frame
+    let mut sand_rate: usize = 4;       // 1 per 4 frames = 0.25/frame
+    let mut magnetite_rate: usize = 20; // 1 per 20 frames = 0.05/frame (black sand)
+    let mut gold_rate: usize = 75;      // 1 per 75 frames = 0.013/frame (trace)
+
+    // Global flow multiplier (F/G to adjust) - scales all spawn rates
     let mut flow_multiplier: usize = 1;
 
     // Mutable terrain texture
@@ -164,6 +173,9 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::V) {
             show_velocity = !show_velocity;
+        }
+        if is_key_pressed(KeyCode::M) {
+            spawn_mud = !spawn_mud;
         }
         if is_key_pressed(KeyCode::R) {
             // Reset simulation with current riffle params
@@ -252,6 +264,20 @@ async fn main() {
             debug_state_colors = !debug_state_colors;
         }
 
+        // Sediment rates: 1-4 to cycle
+        if is_key_pressed(KeyCode::Key1) {
+            mud_rate = if mud_rate == 0 { 6 } else if mud_rate > 2 { mud_rate - 2 } else { 0 };
+        }
+        if is_key_pressed(KeyCode::Key2) {
+            sand_rate = if sand_rate == 0 { 4 } else if sand_rate > 1 { sand_rate - 1 } else { 0 };
+        }
+        if is_key_pressed(KeyCode::Key3) {
+            magnetite_rate = if magnetite_rate == 0 { 8 } else if magnetite_rate > 2 { magnetite_rate - 2 } else { 0 };
+        }
+        if is_key_pressed(KeyCode::Key4) {
+            gold_rate = if gold_rate == 0 { 20 } else if gold_rate > 5 { gold_rate - 5 } else { 0 };
+        }
+
         // Render mode controls - B cycles through modes
         if is_key_pressed(KeyCode::B) {
             render_mode = match render_mode {
@@ -300,6 +326,18 @@ async fn main() {
             fast_particle_size = (fast_particle_size + 0.5).min(8.0);
         }
 
+        // Viscosity controls: I to toggle, O/P to adjust
+        // Viscosity creates boundary layers needed for vortex shedding
+        if is_key_pressed(KeyCode::I) {
+            sim.use_viscosity = !sim.use_viscosity;
+        }
+        if is_key_pressed(KeyCode::O) {
+            sim.viscosity = (sim.viscosity - 0.25).max(0.25);
+        }
+        if is_key_pressed(KeyCode::P) {
+            sim.viscosity = (sim.viscosity + 0.25).min(5.0);
+        }
+
         // Rebuild terrain if riffle params changed
         if riffle_dirty {
             riffle_dirty = false;
@@ -318,16 +356,44 @@ async fn main() {
             let (mx, my) = mouse_position();
             let wx = mx / SCALE;
             let wy = my / SCALE;
-            sim.spawn_water(wx, wy, 20.0, 0.0, 5);
+
+            if spawn_mud {
+                sim.spawn_mud(wx, wy, 20.0, 0.0, 3);
+            } else {
+                sim.spawn_water(wx, wy, 20.0, 0.0, 5);
+            }
         }
 
         // --- UPDATE ---
         if !paused {
-            // Spawn water at inlet
+            // Spawn water and sediments using tunable parameters
+            // flow_multiplier scales everything: more water, more frequent sediments
             {
                 let inlet_x = 5.0;
                 let inlet_y = 86.0;
+
+                // Water (spawn_rate * flow_multiplier per frame)
                 sim.spawn_water(inlet_x, inlet_y, inlet_vx, inlet_vy, spawn_rate * flow_multiplier);
+
+                // Sediments (spawn every N/multiplier frames, 0 = disabled)
+                // Dividing interval by multiplier increases frequency proportionally
+                let effective_mud = mud_rate / flow_multiplier.max(1);
+                let effective_sand = sand_rate / flow_multiplier.max(1);
+                let effective_mag = magnetite_rate / flow_multiplier.max(1);
+                let effective_gold = gold_rate / flow_multiplier.max(1);
+
+                if effective_mud > 0 && frame_count % effective_mud as u64 == 0 {
+                    sim.spawn_mud(inlet_x, inlet_y + 3.0, inlet_vx, inlet_vy, 1);
+                }
+                if effective_sand > 0 && frame_count % effective_sand as u64 == 0 {
+                    sim.spawn_sand(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
+                }
+                if effective_mag > 0 && frame_count % effective_mag as u64 == 0 {
+                    sim.spawn_magnetite(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
+                }
+                if effective_gold > 0 && frame_count % effective_gold as u64 == 0 {
+                    sim.spawn_gold(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
+                }
             }
 
             // Remove particles that reached the end (right side outflow)
@@ -384,14 +450,20 @@ async fn main() {
             },
         );
 
-        // Draw particles with selected renderer (water-only)
+        // Draw particles with selected renderer
+        // Draw particles with selected renderer
         match render_mode {
-            RenderMode::Hybrid | RenderMode::Metaball => {
-                metaball_renderer.draw(&sim.particles, SCALE, fast_particle_size);
+            RenderMode::Hybrid => {
+                // Pass 1: Water as metaballs for fluid look
+                metaball_renderer.draw_filtered(&sim.particles, SCALE, true);
+                // Pass 2: Solids as sharp sprites for clarity
+                particle_renderer.draw_filtered(&sim.particles, SCALE, false);
             }
-            RenderMode::Shader => {
-                particle_renderer.draw_particles(&sim.particles, fast_particle_size);
-            }
+            // Legacy modes use full draw (passing true/false doesn't matter for non-filtered methods if we didn't update them,
+            // but we only updated filtered ones. Wait, I only added `draw_filtered`. 
+            // The original `draw` methods still exist and draw everything.
+            RenderMode::Metaball => metaball_renderer.draw(&sim.particles, SCALE), 
+            RenderMode::Shader => particle_renderer.draw_sorted(&sim.particles, SCALE),
             RenderMode::FastCircle => draw_particles_fast_debug(&sim.particles, SCALE, fast_particle_size, debug_state_colors),
             RenderMode::FastRect => draw_particles_rect(&sim.particles, SCALE, fast_particle_size),
             RenderMode::Mesh => draw_particles_mesh(&sim.particles, SCALE, fast_particle_size),
@@ -439,6 +511,8 @@ async fn main() {
         }
 
         // --- UI ---
+        let (water, mud, sand, magnetite, gold) = sim.particles.count_by_material();
+
         // Top status bar
         let mode_str = match render_mode {
             RenderMode::Metaball => "METABALL",
@@ -472,6 +546,25 @@ async fn main() {
                 sluice_config.riffle_spacing, sluice_config.riffle_height, sluice_config.riffle_width),
             10.0, 58.0, 16.0, Color::from_rgba(riffle_color[0], riffle_color[1], riffle_color[2], 255),
         );
+        draw_text(
+            &format!("SEDIMENT: mud=1/{} sand=1/{} mag=1/{} gold=1/{}",
+                if mud_rate > 0 { mud_rate.to_string() } else { "off".to_string() },
+                if sand_rate > 0 { sand_rate.to_string() } else { "off".to_string() },
+                if magnetite_rate > 0 { magnetite_rate.to_string() } else { "off".to_string() },
+                if gold_rate > 0 { gold_rate.to_string() } else { "off".to_string() },
+            ),
+            10.0, 74.0, 14.0, Color::from_rgba(255, 215, 0, 200),
+        );
+
+        // Material counts with slurry percentage
+        let total = water + mud + sand + magnetite + gold;
+        let solids = mud + sand + magnetite + gold;
+        let solids_pct = if total > 0 { (solids as f32 / total as f32) * 100.0 } else { 0.0 };
+        draw_text(
+            &format!("W:{} M:{} S:{} Mag:{} Au:{} | Solids: {:.1}%", water, mud, sand, magnetite, gold, solids_pct),
+            10.0, 92.0, 14.0, Color::from_rgba(200, 200, 200, 255),
+        );
+
         // Metaball params (when active)
         if render_mode == RenderMode::Metaball || render_mode == RenderMode::Hybrid {
             draw_text(
@@ -486,6 +579,19 @@ async fn main() {
             10.0, 124.0, 14.0, Color::from_rgba(100, 200, 100, 255),
         );
 
+        // Viscosity params (for vortex shedding)
+        let visc_status = if sim.use_viscosity {
+            format!("VISCOSITY: ON (ν={:.2})", sim.viscosity)
+        } else {
+            "VISCOSITY: OFF".to_string()
+        };
+        let visc_color = if sim.use_viscosity {
+            Color::from_rgba(255, 150, 100, 255)
+        } else {
+            Color::from_rgba(100, 100, 100, 255)
+        };
+        draw_text(&visc_status, 10.0, 140.0, 14.0, visc_color);
+
         // Controls - BOTTOM
         draw_text(
             "←→ vx | Shift+←→ vy | ↑↓ spawn | +/- flow×  | Q/A spacing | W/S height | E/D width",
@@ -496,7 +602,7 @@ async fn main() {
             10.0, screen_height() - 74.0, 14.0, GRAY,
         );
         draw_text(
-            "5/6 H | 7/8 rest | 9/0 size",
+            "5/6 H | 7/8 rest | 9/0 size | [I]=Viscosity | O/P ν",
             10.0, screen_height() - 58.0, 14.0, GRAY,
         );
         draw_text(
@@ -511,19 +617,38 @@ async fn main() {
             let wy = my / SCALE;
             let col = (wx / CELL_SIZE) as usize;
 
-            // Count water particles near cursor
-            let mut water_near = 0;
+            // Get pile height at cursor column
+            let pile_h = if col < sim.pile_height.len() {
+                sim.pile_height[col]
+            } else {
+                f32::INFINITY
+            };
+
+            // Count particles near cursor (within 10 world units)
+            let mut bedload_near = 0;
+            let mut suspended_near = 0;
             for p in &sim.particles.list {
                 let dx = p.position.x - wx;
                 let dy = p.position.y - wy;
                 if dx*dx + dy*dy < 100.0 {
-                    water_near += 1;
+                    if p.is_sediment() {
+                        match p.state {
+                            sim::particle::ParticleState::Bedload => bedload_near += 1,
+                            sim::particle::ParticleState::Suspended => suspended_near += 1,
+                        }
+                    }
                 }
             }
 
+            let pile_str = if pile_h < f32::INFINITY {
+                format!("{:.1}", pile_h)
+            } else {
+                "none".to_string()
+            };
+
             let debug_text = format!(
-                "cursor: ({:.0},{:.0}) col:{} | water nearby: {}",
-                wx, wy, col, water_near
+                "cursor: ({:.0},{:.0}) col:{} pile:{} | nearby: bed={} sus={}",
+                wx, wy, col, pile_str, bedload_near, suspended_near
             );
             draw_text(&debug_text, mx + 15.0, my - 10.0, 14.0, YELLOW);
         }
