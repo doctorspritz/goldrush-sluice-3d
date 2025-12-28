@@ -52,8 +52,8 @@ impl DepositedCell {
         // Shields values for each material (from particle.rs)
         const MUD_SHIELDS: f32 = 0.03;
         const SAND_SHIELDS: f32 = 0.045;
-        const MAGNETITE_SHIELDS: f32 = 0.05;
-        const GOLD_SHIELDS: f32 = 0.055;
+        const MAGNETITE_SHIELDS: f32 = 0.07;  // ~55% harder to entrain than sand
+        const GOLD_SHIELDS: f32 = 0.09;       // 2× harder to entrain than sand
 
         (self.mud_fraction * MUD_SHIELDS
             + self.sand_fraction * SAND_SHIELDS

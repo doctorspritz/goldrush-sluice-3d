@@ -568,15 +568,31 @@ pub fn draw_particles_fast(particles: &Particles, screen_scale: f32, base_size: 
 }
 
 /// Fast renderer with optional debug state coloring
+/// Two-pass: water first (background), then sediment on top (foreground)
 pub fn draw_particles_fast_debug(particles: &Particles, screen_scale: f32, base_size: f32, debug_state: bool) {
-    // Draw all particles using macroquad's draw_circle which batches internally
-    // This avoids custom shader overhead and uniform changes
+    // Pass 1: Draw water particles first (background)
     for particle in particles.iter() {
+        if particle.is_sediment() {
+            continue; // Skip sediment in first pass
+        }
+        let x = particle.position.x * screen_scale;
+        let y = particle.position.y * screen_scale;
+        let size = base_size * particle.material.render_scale();
+        let [r, g, b, a] = particle.material.color();
+        let color = Color::from_rgba(r, g, b, a);
+        draw_circle(x, y, size, color);
+    }
+
+    // Pass 2: Draw sediment particles on top (foreground)
+    for particle in particles.iter() {
+        if !particle.is_sediment() {
+            continue; // Skip water in second pass
+        }
         let x = particle.position.x * screen_scale;
         let y = particle.position.y * screen_scale;
         let size = base_size * particle.material.render_scale();
 
-        let color = if debug_state && particle.is_sediment() {
+        let color = if debug_state {
             // Debug mode: Bedload = red, Suspended = blue
             match particle.state {
                 ParticleState::Bedload => Color::from_rgba(255, 50, 50, 255),
@@ -592,14 +608,31 @@ pub fn draw_particles_fast_debug(particles: &Particles, screen_scale: f32, base_
 }
 
 /// Ultra-fast rectangle renderer - rectangles batch better than circles
+/// Two-pass: water first (background), then sediment on top (foreground)
 pub fn draw_particles_rect(particles: &Particles, screen_scale: f32, base_size: f32) {
+    // Pass 1: Draw water first
     for particle in particles.iter() {
+        if particle.is_sediment() {
+            continue;
+        }
         let x = particle.position.x * screen_scale;
         let y = particle.position.y * screen_scale;
         let [r, g, b, a] = particle.material.color();
         let color = Color::from_rgba(r, g, b, a);
         let size = base_size * particle.material.render_scale();
+        draw_rectangle(x - size/2.0, y - size/2.0, size, size, color);
+    }
 
+    // Pass 2: Draw sediment on top
+    for particle in particles.iter() {
+        if !particle.is_sediment() {
+            continue;
+        }
+        let x = particle.position.x * screen_scale;
+        let y = particle.position.y * screen_scale;
+        let [r, g, b, a] = particle.material.color();
+        let color = Color::from_rgba(r, g, b, a);
+        let size = base_size * particle.material.render_scale();
         draw_rectangle(x - size/2.0, y - size/2.0, size, size, color);
     }
 }
@@ -607,26 +640,24 @@ pub fn draw_particles_rect(particles: &Particles, screen_scale: f32, base_size: 
 /// Single-mesh batched renderer - builds meshes with all particles
 /// Uses vertex colors and default material for maximum batching
 /// Batches in chunks of ~8000 particles to stay within u16 index limits
+/// Two-pass: water first (background), then sediment on top (foreground)
 pub fn draw_particles_mesh(particles: &Particles, screen_scale: f32, base_size: f32) {
-    let count = particles.len();
-    if count == 0 {
-        return;
-    }
-
     // Max particles per batch: 65536 indices / 6 indices per quad = 10922
     // Use 8000 for safety margin
     const MAX_PER_BATCH: usize = 8000;
 
-    let mut batch_start = 0;
-    while batch_start < count {
-        let batch_end = (batch_start + MAX_PER_BATCH).min(count);
-        let batch_size = batch_end - batch_start;
+    // Helper to draw a filtered subset of particles
+    let draw_filtered = |draw_sediment: bool| {
+        let mut vertices: Vec<Vertex> = Vec::with_capacity(MAX_PER_BATCH * 4);
+        let mut indices: Vec<u16> = Vec::with_capacity(MAX_PER_BATCH * 6);
+        let mut local_i: usize = 0;
 
-        // Pre-allocate vertex and index buffers for this batch
-        let mut vertices: Vec<Vertex> = Vec::with_capacity(batch_size * 4);
-        let mut indices: Vec<u16> = Vec::with_capacity(batch_size * 6);
+        for particle in particles.iter() {
+            // Filter: first pass = water only, second pass = sediment only
+            if particle.is_sediment() != draw_sediment {
+                continue;
+            }
 
-        for (local_i, particle) in particles.iter().skip(batch_start).take(batch_size).enumerate() {
             let x = particle.position.x * screen_scale;
             let y = particle.position.y * screen_scale;
             let [r, g, b, a] = particle.material.color();
@@ -669,18 +700,38 @@ pub fn draw_particles_mesh(particles: &Particles, screen_scale: f32, base_size: 
             indices.push(base_idx);
             indices.push(base_idx + 2);
             indices.push(base_idx + 3);
+
+            local_i += 1;
+
+            // Flush batch if full
+            if local_i >= MAX_PER_BATCH {
+                let mesh = Mesh {
+                    vertices: std::mem::take(&mut vertices),
+                    indices: std::mem::take(&mut indices),
+                    texture: None,
+                };
+                draw_mesh(&mesh);
+                vertices.reserve(MAX_PER_BATCH * 4);
+                indices.reserve(MAX_PER_BATCH * 6);
+                local_i = 0;
+            }
         }
 
-        // Build and draw mesh for this batch
-        let mesh = Mesh {
-            vertices,
-            indices,
-            texture: None,
-        };
-        draw_mesh(&mesh);
+        // Draw remaining particles in last batch
+        if !vertices.is_empty() {
+            let mesh = Mesh {
+                vertices,
+                indices,
+                texture: None,
+            };
+            draw_mesh(&mesh);
+        }
+    };
 
-        batch_start = batch_end;
-    }
+    // Pass 1: Draw water (background)
+    draw_filtered(false);
+    // Pass 2: Draw sediment (foreground)
+    draw_filtered(true);
 }
 
 /// Generate a gradient texture for velocity coloring (alternative approach)

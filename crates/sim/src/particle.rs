@@ -45,11 +45,11 @@ impl ParticleMaterial {
     /// RGBA color for rendering
     pub fn color(&self) -> [u8; 4] {
         match self {
-            Self::Water => [50, 140, 240, 100],   // Semi-transparent for solid visibility
-            Self::Mud => [139, 90, 43, 255],
-            Self::Sand => [194, 178, 128, 255],    // Tan
-            Self::Magnetite => [30, 30, 30, 255],  // Black
-            Self::Gold => [255, 215, 0, 255],      // Gold
+            Self::Water => [70, 160, 255, 180],    // More visible blue, less transparent
+            Self::Mud => [160, 100, 50, 255],      // Brighter brown
+            Self::Sand => [220, 200, 140, 255],    // Brighter tan
+            Self::Magnetite => [50, 50, 55, 255],  // Dark gray (not pure black)
+            Self::Gold => [255, 220, 50, 255],     // Bright gold
         }
     }
 
@@ -100,7 +100,7 @@ impl ParticleMaterial {
             Self::Water => 0.0,       // N/A - water is the fluid
             Self::Mud => 0.5,         // Fine clay/silt particles
             Self::Sand => 2.0,        // Medium sand grains
-            Self::Magnetite => 1.5,   // Black sand crystals
+            Self::Magnetite => 2.0,   // Black sand - same size, settles faster due to density
             Self::Gold => 0.5,        // Fine gold (high density, small size)
         }
     }
@@ -152,8 +152,8 @@ impl ParticleMaterial {
             Self::Water => 0.0,       // N/A - water is the fluid
             Self::Mud => 0.03,        // Fine particles, easy to suspend
             Self::Sand => 0.045,      // Standard Shields value for sand
-            Self::Magnetite => 0.05,  // Slightly harder to move
-            Self::Gold => 0.055,      // Heavy particles, harder to entrain
+            Self::Magnetite => 0.07,  // ~55% harder to entrain than sand (heavy, angular)
+            Self::Gold => 0.09,       // Heaviest - hardest to entrain (2× sand)
         }
     }
 

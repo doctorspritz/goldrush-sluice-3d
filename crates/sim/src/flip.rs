@@ -857,9 +857,20 @@ impl FlipSimulation {
                 // We use vorticity magnitude as a proxy for turbulence intensity.
 
                 // Tunable parameters for vorticity suspension
-                const SETTLING_FACTOR: f32 = 0.62;     // Base settling (unchanged)
                 const VORT_LIFT_SCALE: f32 = 0.3;      // How much vorticity counters settling
                 const VORT_SWIRL_SCALE: f32 = 0.05;    // How much vorticity adds tangential motion
+
+                // Material-specific settling using Ferguson-Church formula
+                // Different materials settle at different rates based on density and size
+                let settling_velocity = particle.material.settling_velocity(particle.effective_diameter());
+
+                // Convert terminal velocity to acceleration factor
+                // settling_velocity is terminal velocity (px/s), we want fraction of gravity
+                // Factor = v_terminal / (g * tau) where tau is relaxation time
+                // For simplicity, normalize so that reference settling gives reasonable behavior
+                const REFERENCE_SETTLING: f32 = 28.0;  // Sand at typical diameter
+                const BASE_FACTOR: f32 = 0.62;         // Original tuned value for sand
+                let settling_factor = BASE_FACTOR * (settling_velocity / REFERENCE_SETTLING);
 
                 // Sample vorticity at particle position
                 let vorticity = grid.sample_vorticity(pos);
@@ -867,15 +878,21 @@ impl FlipSimulation {
 
                 // 1. LIFT: Reduce settling in high-vorticity regions
                 // Higher vorticity → less settling (particle stays suspended)
-                // Cap lift_factor at 1.0 to prevent particles from rising unnaturally
-                let lift_factor = (vort_magnitude * VORT_LIFT_SCALE).min(1.0);
-                let effective_settling = SETTLING_FACTOR * (1.0 - lift_factor);
+                // Only apply lift if vorticity is significant (reduces noise-driven suspension)
+                const MIN_VORT_FOR_LIFT: f32 = 0.5; // Threshold to filter noise
+                let lift_factor = if vort_magnitude > MIN_VORT_FOR_LIFT {
+                    ((vort_magnitude - MIN_VORT_FOR_LIFT) * VORT_LIFT_SCALE).min(1.0)
+                } else {
+                    0.0
+                };
+                let effective_settling = settling_factor * (1.0 - lift_factor);
 
                 // 2. SWIRL: Add velocity perpendicular to particle motion
-                // Vorticity ω creates rotation - particles should follow eddies
-                // Perpendicular to velocity: (vx, vy) → (-vy, vx)
+                // Only apply swirl if there's actual flow (not in calm water)
+                // Requires both: particle moving AND meaningful vorticity
+                const MIN_VORT_FOR_SWIRL: f32 = 1.0; // Higher threshold for swirl
                 let speed = particle.velocity.length();
-                let swirl_velocity = if speed > 0.1 {
+                let swirl_velocity = if speed > 5.0 && vort_magnitude > MIN_VORT_FOR_SWIRL {
                     let v_normalized = particle.velocity / speed;
                     let v_perp = Vec2::new(-v_normalized.y, v_normalized.x);
                     // Signed vorticity: positive ω → CCW rotation → add CCW perpendicular
@@ -1716,6 +1733,10 @@ impl FlipSimulation {
             let num_magnetite = (PARTICLES_PER_CELL as f32 * cell.magnetite_frac).round() as usize;
             let num_gold = (PARTICLES_PER_CELL as f32 * cell.gold_frac).round() as usize;
 
+            // Entrained particles get flow velocity with small random perturbation
+            // No violent upward kick - just inherit the flow that eroded them
+            let base_vel = cell.vel_above * 0.7; // Inherit 70% of flow velocity
+
             // Spawn mud particles
             for _ in 0..num_mud {
                 let jitter = Vec2::new(
@@ -1723,7 +1744,11 @@ impl FlipSimulation {
                     (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
                 );
                 let pos = cell_center + jitter;
-                let vel = cell.vel_above * 0.8 + Vec2::new(0.0, -2.0 * v_scale);
+                let vel_jitter = Vec2::new(
+                    (rng.gen::<f32>() - 0.5) * 10.0,
+                    (rng.gen::<f32>() - 0.5) * 10.0,
+                );
+                let vel = base_vel + vel_jitter;
                 self.particles.spawn_mud(pos.x, pos.y, vel.x, vel.y);
             }
 
@@ -1734,7 +1759,11 @@ impl FlipSimulation {
                     (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
                 );
                 let pos = cell_center + jitter;
-                let vel = cell.vel_above * 0.8 + Vec2::new(0.0, -2.0 * v_scale);
+                let vel_jitter = Vec2::new(
+                    (rng.gen::<f32>() - 0.5) * 10.0,
+                    (rng.gen::<f32>() - 0.5) * 10.0,
+                );
+                let vel = base_vel + vel_jitter;
                 self.particles.spawn_sand(pos.x, pos.y, vel.x, vel.y);
             }
 
@@ -1745,7 +1774,11 @@ impl FlipSimulation {
                     (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
                 );
                 let pos = cell_center + jitter;
-                let vel = cell.vel_above * 0.8 + Vec2::new(0.0, -2.0 * v_scale);
+                let vel_jitter = Vec2::new(
+                    (rng.gen::<f32>() - 0.5) * 10.0,
+                    (rng.gen::<f32>() - 0.5) * 10.0,
+                );
+                let vel = base_vel + vel_jitter;
                 self.particles.spawn_magnetite(pos.x, pos.y, vel.x, vel.y);
             }
 
@@ -1756,7 +1789,11 @@ impl FlipSimulation {
                     (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
                 );
                 let pos = cell_center + jitter;
-                let vel = cell.vel_above * 0.8 + Vec2::new(0.0, -2.0 * v_scale);
+                let vel_jitter = Vec2::new(
+                    (rng.gen::<f32>() - 0.5) * 10.0,
+                    (rng.gen::<f32>() - 0.5) * 10.0,
+                );
+                let vel = base_vel + vel_jitter;
                 self.particles.spawn_gold(pos.x, pos.y, vel.x, vel.y);
             }
         }
@@ -1969,8 +2006,8 @@ impl FlipSimulation {
                 ParticleMaterial::Water => 1.0,     // N/A for water
                 ParticleMaterial::Mud => 0.67,      // Shields 0.03 / 0.045 - easier to entrain
                 ParticleMaterial::Sand => 1.0,      // Reference material
-                ParticleMaterial::Magnetite => 1.11, // Shields 0.05 / 0.045 - harder to entrain
-                ParticleMaterial::Gold => 1.22,     // Shields 0.055 / 0.045 - hardest to entrain
+                ParticleMaterial::Magnetite => 1.56, // Shields 0.07 / 0.045 - much harder to entrain
+                ParticleMaterial::Gold => 2.0,      // Shields 0.09 / 0.045 - hardest to entrain
             }
         }
 

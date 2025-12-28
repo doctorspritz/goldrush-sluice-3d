@@ -132,7 +132,7 @@ async fn main() {
     let mut render_mode = RenderMode::Mesh; // Default to Mesh for best performance (batches 8000 particles per draw call)
     let mut metaball_threshold: f32 = 0.08;
     let mut metaball_scale: f32 = 6.0;
-    let mut fast_particle_size: f32 = CELL_SIZE * SCALE * 0.5;  // Half-cell for balance of accuracy vs performance
+    let mut fast_particle_size: f32 = CELL_SIZE * SCALE * 1.5;  // Larger for visibility
     let mut frame_count = 0u64;
     let mut fps_samples: Vec<i32> = Vec::new();
     let start_time = std::time::Instant::now();
