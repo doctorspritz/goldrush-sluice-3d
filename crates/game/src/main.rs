@@ -151,6 +151,7 @@ async fn main() {
 
     // Sediment spawn rate (spawn every N frames, 0 = disabled)
     let mut sand_rate: usize = 4;       // 1 per 4 frames = 0.25/frame
+    let mut magnetite_rate: usize = 8;  // 1 per 8 frames = heavier material spawns less
 
     // Global flow multiplier (F/G to adjust) - scales all spawn rates
     let mut flow_multiplier: usize = 1;
@@ -260,6 +261,11 @@ async fn main() {
             sand_rate = if sand_rate == 0 { 4 } else if sand_rate > 1 { sand_rate - 1 } else { 0 };
         }
 
+        // Magnetite (black sand) rate: Key3 to cycle
+        if is_key_pressed(KeyCode::Key3) {
+            magnetite_rate = if magnetite_rate == 0 { 8 } else if magnetite_rate > 1 { magnetite_rate - 1 } else { 0 };
+        }
+
         // Sand PIC ratio: ]/[ to adjust (0.0 = pure FLIP, 1.0 = pure PIC)
         if is_key_pressed(KeyCode::RightBracket) {
             sim.sand_pic_ratio = (sim.sand_pic_ratio + 0.1).min(1.0);
@@ -356,6 +362,12 @@ async fn main() {
                 let effective_sand = sand_rate / flow_multiplier.max(1);
                 if effective_sand > 0 && frame_count % effective_sand as u64 == 0 {
                     sim.spawn_sand(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
+                }
+
+                // Magnetite/black sand (spawn every N/multiplier frames, 0 = disabled)
+                let effective_magnetite = magnetite_rate / flow_multiplier.max(1);
+                if effective_magnetite > 0 && frame_count % effective_magnetite as u64 == 0 {
+                    sim.spawn_magnetite(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
                 }
             }
 
@@ -474,7 +486,8 @@ async fn main() {
         }
 
         // --- UI ---
-        let (water, sand) = sim.particles.count_by_material();
+        let (water, mud, sand, magnetite, gold) = sim.particles.count_by_material();
+        let total_sediment = mud + sand + magnetite + gold;
 
         // Top status bar
         let mode_str = match render_mode {
@@ -510,17 +523,19 @@ async fn main() {
             10.0, 58.0, 16.0, Color::from_rgba(riffle_color[0], riffle_color[1], riffle_color[2], 255),
         );
         draw_text(
-            &format!("SAND: 1/{}",
+            &format!("SAND[2]: 1/{} | MAG[3]: 1/{}",
                 if sand_rate > 0 { sand_rate.to_string() } else { "off".to_string() },
+                if magnetite_rate > 0 { magnetite_rate.to_string() } else { "off".to_string() },
             ),
             10.0, 74.0, 14.0, Color::from_rgba(255, 215, 0, 200),
         );
 
         // Material counts with slurry percentage
-        let total = water + sand;
-        let solids_pct = if total > 0 { (sand as f32 / total as f32) * 100.0 } else { 0.0 };
+        let total = water + total_sediment;
+        let solids_pct = if total > 0 { (total_sediment as f32 / total as f32) * 100.0 } else { 0.0 };
         draw_text(
-            &format!("Water:{} Sand:{} | Sand: {:.1}%", water, sand, solids_pct),
+            &format!("Water:{} Sand:{} Mag:{} Gold:{} | Solids: {:.1}%",
+                water, sand, magnetite, gold, solids_pct),
             10.0, 92.0, 14.0, Color::from_rgba(200, 200, 200, 255),
         );
 
