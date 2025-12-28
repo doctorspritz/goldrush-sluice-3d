@@ -131,6 +131,14 @@ pub struct Grid {
     /// Pre-allocated buffer for inner SDF (avoids 512KB allocation per frame)
     inner_sdf: Vec<f32>,
 
+    /// Pre-allocated buffers for velocity extrapolation (avoids ~1MB allocation per frame)
+    u_known: Vec<bool>,
+    v_known: Vec<bool>,
+    u_new_known: Vec<bool>,
+    v_new_known: Vec<bool>,
+    u_new_values: Vec<f32>,
+    v_new_values: Vec<f32>,
+
     /// Multigrid hierarchy for fast pressure solve
     /// Level 0 is finest (same size as main grid), higher levels are coarser
     mg_levels: Vec<MultigridLevel>,
@@ -174,6 +182,13 @@ impl Grid {
             v_temp: vec![0.0; v_count],
             // Pre-allocated buffer for inner SDF computation
             inner_sdf: vec![0.0; cell_count],
+            // Pre-allocated buffers for velocity extrapolation
+            u_known: vec![false; u_count],
+            v_known: vec![false; v_count],
+            u_new_known: vec![false; u_count],
+            v_new_known: vec![false; v_count],
+            u_new_values: vec![0.0; u_count],
+            v_new_values: vec![0.0; v_count],
             mg_levels,
         }
     }
@@ -1065,18 +1080,20 @@ impl Grid {
     /// This is critical for FLIP: particles near air boundaries need valid
     /// velocities to sample for the FLIP delta calculation. Without extrapolation,
     /// they sample zeros/undefined values causing phantom momentum loss.
+    ///
+    /// Optimization: Uses pre-allocated buffers to avoid ~1MB allocation per call.
     pub fn extrapolate_velocities(&mut self, max_layers: usize) {
-        // Track which faces have valid velocities
-        let mut u_known: Vec<bool> = vec![false; self.u.len()];
-        let mut v_known: Vec<bool> = vec![false; self.v.len()];
+        // Reset pre-allocated buffers (much faster than allocating)
+        self.u_known.fill(false);
+        self.v_known.fill(false);
 
         // Initialize: fluid cell faces are known
-        self.mark_fluid_faces_known(&mut u_known, &mut v_known);
+        self.mark_fluid_faces_known_preallocated();
 
         // Propagate layer by layer
         for _ in 0..max_layers {
-            self.extrapolate_u_layer(&mut u_known);
-            self.extrapolate_v_layer(&mut v_known);
+            self.extrapolate_u_layer_preallocated();
+            self.extrapolate_v_layer_preallocated();
         }
     }
 
@@ -1265,6 +1282,170 @@ impl Grid {
             if new_known[i] {
                 self.v[i] = new_values[i];
                 v_known[i] = true;
+            }
+        }
+    }
+
+    /// Mark fluid faces as known using pre-allocated buffer
+    fn mark_fluid_faces_known_preallocated(&mut self) {
+        // Mark U faces: known if AT LEAST ONE adjacent cell is fluid
+        for j in 0..self.height {
+            for i in 0..=self.width {
+                let u_idx = self.u_index(i, j);
+                let left_fluid = i > 0 && self.cell_type[self.cell_index(i - 1, j)] == CellType::Fluid;
+                let right_fluid = i < self.width && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
+                if left_fluid || right_fluid {
+                    self.u_known[u_idx] = true;
+                }
+            }
+        }
+
+        // Mark V faces
+        for j in 0..=self.height {
+            for i in 0..self.width {
+                let v_idx = self.v_index(i, j);
+                let bottom_fluid = j > 0 && self.cell_type[self.cell_index(i, j - 1)] == CellType::Fluid;
+                let top_fluid = j < self.height && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
+                if bottom_fluid || top_fluid {
+                    self.v_known[v_idx] = true;
+                }
+            }
+        }
+    }
+
+    /// Extrapolate U velocities one layer using pre-allocated buffers
+    fn extrapolate_u_layer_preallocated(&mut self) {
+        // Clear temp buffers
+        self.u_new_known.fill(false);
+
+        for j in 0..self.height {
+            for i in 0..=self.width {
+                let u_idx = self.u_index(i, j);
+
+                if self.u_known[u_idx] {
+                    continue;
+                }
+
+                // Skip faces touching solid or fluid cells
+                let left_solid = i == 0 || self.cell_type[self.cell_index(i - 1, j)] == CellType::Solid;
+                let right_solid = i == self.width || self.cell_type[self.cell_index(i, j)] == CellType::Solid;
+                let left_fluid = i > 0 && self.cell_type[self.cell_index(i - 1, j)] == CellType::Fluid;
+                let right_fluid = i < self.width && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
+                if left_solid || right_solid || left_fluid || right_fluid {
+                    continue;
+                }
+
+                let mut sum = 0.0;
+                let mut count = 0;
+
+                if i > 0 {
+                    let idx = self.u_index(i - 1, j);
+                    if self.u_known[idx] {
+                        sum += self.u[idx];
+                        count += 1;
+                    }
+                }
+                if i < self.width {
+                    let idx = self.u_index(i + 1, j);
+                    if self.u_known[idx] {
+                        sum += self.u[idx];
+                        count += 1;
+                    }
+                }
+                if j > 0 {
+                    let idx = self.u_index(i, j - 1);
+                    if self.u_known[idx] {
+                        sum += self.u[idx];
+                        count += 1;
+                    }
+                }
+                if j + 1 < self.height {
+                    let idx = self.u_index(i, j + 1);
+                    if self.u_known[idx] {
+                        sum += self.u[idx];
+                        count += 1;
+                    }
+                }
+
+                if count > 0 {
+                    self.u_new_values[u_idx] = sum / count as f32;
+                    self.u_new_known[u_idx] = true;
+                }
+            }
+        }
+
+        // Apply new values
+        for i in 0..self.u_known.len() {
+            if self.u_new_known[i] {
+                self.u[i] = self.u_new_values[i];
+                self.u_known[i] = true;
+            }
+        }
+    }
+
+    /// Extrapolate V velocities one layer using pre-allocated buffers
+    fn extrapolate_v_layer_preallocated(&mut self) {
+        self.v_new_known.fill(false);
+
+        for j in 0..=self.height {
+            for i in 0..self.width {
+                let v_idx = self.v_index(i, j);
+
+                if self.v_known[v_idx] {
+                    continue;
+                }
+
+                let bottom_solid = j == 0 || self.cell_type[self.cell_index(i, j - 1)] == CellType::Solid;
+                let top_solid = j == self.height || self.cell_type[self.cell_index(i, j)] == CellType::Solid;
+                let bottom_fluid = j > 0 && self.cell_type[self.cell_index(i, j - 1)] == CellType::Fluid;
+                let top_fluid = j < self.height && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
+                if bottom_solid || top_solid || bottom_fluid || top_fluid {
+                    continue;
+                }
+
+                let mut sum = 0.0;
+                let mut count = 0;
+
+                if i > 0 {
+                    let idx = self.v_index(i - 1, j);
+                    if self.v_known[idx] {
+                        sum += self.v[idx];
+                        count += 1;
+                    }
+                }
+                if i + 1 < self.width {
+                    let idx = self.v_index(i + 1, j);
+                    if self.v_known[idx] {
+                        sum += self.v[idx];
+                        count += 1;
+                    }
+                }
+                if j > 0 {
+                    let idx = self.v_index(i, j - 1);
+                    if self.v_known[idx] {
+                        sum += self.v[idx];
+                        count += 1;
+                    }
+                }
+                if j < self.height {
+                    let idx = self.v_index(i, j + 1);
+                    if self.v_known[idx] {
+                        sum += self.v[idx];
+                        count += 1;
+                    }
+                }
+
+                if count > 0 {
+                    self.v_new_values[v_idx] = sum / count as f32;
+                    self.v_new_known[v_idx] = true;
+                }
+            }
+        }
+
+        for i in 0..self.v_known.len() {
+            if self.v_new_known[i] {
+                self.v[i] = self.v_new_values[i];
+                self.v_known[i] = true;
             }
         }
     }

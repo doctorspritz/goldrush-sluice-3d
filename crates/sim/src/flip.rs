@@ -149,8 +149,11 @@ impl FlipSimulation {
         // 4b. Vorticity confinement - preserves swirl in bulk water
         // Skips cells adjacent to air (free surface) - air is compressible
         // Strength (ε) must be 0.01-0.1 per Fedkiw 2001 - higher causes artificial turbulence
-        let pile_height_copy = self.pile_height.clone();
-        self.grid.apply_vorticity_confinement_with_piles(dt, 0.05, &pile_height_copy);
+        {
+            let grid = &mut self.grid;
+            let pile_height = &self.pile_height;
+            grid.apply_vorticity_confinement_with_piles(dt, 0.05, pile_height);
+        }
         let t4 = Instant::now();
 
         // 5. Pressure projection - enforces incompressibility
@@ -162,7 +165,8 @@ impl FlipSimulation {
         // Multigrid pressure solver - 2 V-cycles
         // Testing reduced cycles for faster solve
         self.grid.solve_pressure_multigrid(2);
-        self.grid.apply_pressure_gradient(dt);
+        // Two-way coupling: use mixture density for pressure gradient
+        self.apply_pressure_gradient_two_way(dt);
         let t5 = Instant::now();
 
         // Diagnostic: compute divergence after for analysis (used by tests)
@@ -249,12 +253,16 @@ impl FlipSimulation {
         let t3 = Instant::now();
 
         self.grid.apply_gravity(dt);
-        let pile_height_copy = self.pile_height.clone();
-        self.grid.apply_vorticity_confinement_with_piles(dt, 0.05, &pile_height_copy);
+        {
+            let grid = &mut self.grid;
+            let pile_height = &self.pile_height;
+            grid.apply_vorticity_confinement_with_piles(dt, 0.05, pile_height);
+        }
         self.grid.enforce_boundary_conditions();
         self.grid.compute_divergence();
         self.grid.solve_pressure_multigrid(2);
-        self.grid.apply_pressure_gradient(dt);
+        // Two-way coupling: use mixture density for pressure gradient
+        self.apply_pressure_gradient_two_way(dt);
         self.grid.compute_divergence();
         self.grid.extrapolate_velocities(1);
         let t4 = Instant::now();
@@ -527,17 +535,98 @@ impl FlipSimulation {
         }
     }
 
+    /// Apply pressure gradient with mixture density for two-way coupling
+    ///
+    /// Higher sand fraction → higher mixture density → smaller acceleration
+    /// This is what causes sand-laden flow to move slower than clear water
+    fn apply_pressure_gradient_two_way(&mut self, _dt: f32) {
+        let scale = 1.0 / self.grid.cell_size;
+
+        // Density constants
+        const WATER_DENSITY: f32 = 1.0;
+        const SAND_DENSITY: f32 = 2.65;
+
+        // Update U velocities (horizontal)
+        for j in 0..self.grid.height {
+            for i in 1..self.grid.width {
+                let idx_left = self.grid.cell_index(i - 1, j);
+                let idx_right = self.grid.cell_index(i, j);
+
+                let left_type = self.grid.cell_type[idx_left];
+                let right_type = self.grid.cell_type[idx_right];
+
+                let u_idx = self.grid.u_index(i, j);
+                if left_type == CellType::Solid || right_type == CellType::Solid {
+                    self.grid.u[u_idx] = 0.0;
+                } else if left_type == CellType::Fluid || right_type == CellType::Fluid {
+                    // Compute sand fraction at this face
+                    let sand_vol = self.sand_volume_u[u_idx];
+                    let water_vol = self.water_volume_u[u_idx];
+                    let total_vol = sand_vol + water_vol;
+
+                    // Mixture density: ρ_mix = ρ_water * (1 - φ) + ρ_sand * φ
+                    let rho_mix = if total_vol > 0.0 {
+                        let sand_frac = sand_vol / total_vol;
+                        WATER_DENSITY * (1.0 - sand_frac) + SAND_DENSITY * sand_frac
+                    } else {
+                        WATER_DENSITY  // Default to water if no particles
+                    };
+
+                    let grad = (self.grid.pressure[idx_right] - self.grid.pressure[idx_left]) * scale;
+                    self.grid.u[u_idx] -= grad / rho_mix;
+                }
+            }
+        }
+
+        // Update V velocities (vertical)
+        for j in 1..self.grid.height {
+            for i in 0..self.grid.width {
+                let idx_bottom = self.grid.cell_index(i, j - 1);
+                let idx_top = self.grid.cell_index(i, j);
+
+                let bottom_type = self.grid.cell_type[idx_bottom];
+                let top_type = self.grid.cell_type[idx_top];
+
+                let v_idx = self.grid.v_index(i, j);
+                if bottom_type == CellType::Solid || top_type == CellType::Solid {
+                    self.grid.v[v_idx] = 0.0;
+                } else if bottom_type == CellType::Fluid || top_type == CellType::Fluid {
+                    // Compute sand fraction at this face
+                    let sand_vol = self.sand_volume_v[v_idx];
+                    let water_vol = self.water_volume_v[v_idx];
+                    let total_vol = sand_vol + water_vol;
+
+                    // Mixture density
+                    let rho_mix = if total_vol > 0.0 {
+                        let sand_frac = sand_vol / total_vol;
+                        WATER_DENSITY * (1.0 - sand_frac) + SAND_DENSITY * sand_frac
+                    } else {
+                        WATER_DENSITY
+                    };
+
+                    let grad = (self.grid.pressure[idx_top] - self.grid.pressure[idx_bottom]) * scale;
+                    self.grid.v[v_idx] -= grad / rho_mix;
+                }
+            }
+        }
+    }
+
     /// Step 3: Store old grid velocities for FLIP calculation
     ///
     /// CRITICAL: Must use quadratic B-spline sampling (same as G2P) to avoid
     /// kernel mismatch that causes phantom velocity deltas.
     /// See: plans/flip-damping-diagnosis.md
+    ///
+    /// Optimizations:
+    /// - Parallelized with rayon (particles are independent)
+    /// - Precomputed 1D weights (reduces bspline calls from 18 to 12)
     fn store_old_velocities(&mut self) {
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
         let height = self.grid.height;
+        let grid = &self.grid;
 
-        for particle in self.particles.iter_mut() {
+        self.particles.list.par_iter_mut().for_each(|particle| {
             let pos = particle.position;
             let mut velocity = Vec2::ZERO;
             let mut u_weight_sum = 0.0f32;
@@ -551,24 +640,38 @@ impl FlipSimulation {
             let fx = u_pos.x - base_i as f32;
             let fy = u_pos.y - base_j as f32;
 
+            // Precompute 1D weights for U
+            let u_wx = [
+                quadratic_bspline_1d(fx + 1.0),
+                quadratic_bspline_1d(fx),
+                quadratic_bspline_1d(fx - 1.0),
+            ];
+            let u_wy = [
+                quadratic_bspline_1d(fy + 1.0),
+                quadratic_bspline_1d(fy),
+                quadratic_bspline_1d(fy - 1.0),
+            ];
+
             for dj in -1..=1i32 {
+                let nj = base_j + dj;
+                if nj < 0 || nj >= height as i32 {
+                    continue;
+                }
+                let wy = u_wy[(dj + 1) as usize];
+
                 for di in -1..=1i32 {
                     let ni = base_i + di;
-                    let nj = base_j + dj;
-
-                    // Same boundary check as G2P
-                    if ni < 0 || ni > width as i32 || nj < 0 || nj >= height as i32 {
+                    if ni < 0 || ni > width as i32 {
                         continue;
                     }
 
-                    let delta = Vec2::new(fx - di as f32, fy - dj as f32);
-                    let w = quadratic_bspline(delta);
+                    let w = u_wx[(di + 1) as usize] * wy;
                     if w <= 0.0 {
                         continue;
                     }
 
-                    let u_idx = self.grid.u_index(ni as usize, nj as usize);
-                    velocity.x += w * self.grid.u[u_idx];
+                    let u_idx = grid.u_index(ni as usize, nj as usize);
+                    velocity.x += w * grid.u[u_idx];
                     u_weight_sum += w;
                 }
             }
@@ -581,24 +684,38 @@ impl FlipSimulation {
             let fx = v_pos.x - base_i as f32;
             let fy = v_pos.y - base_j as f32;
 
+            // Precompute 1D weights for V
+            let v_wx = [
+                quadratic_bspline_1d(fx + 1.0),
+                quadratic_bspline_1d(fx),
+                quadratic_bspline_1d(fx - 1.0),
+            ];
+            let v_wy = [
+                quadratic_bspline_1d(fy + 1.0),
+                quadratic_bspline_1d(fy),
+                quadratic_bspline_1d(fy - 1.0),
+            ];
+
             for dj in -1..=1i32 {
+                let nj = base_j + dj;
+                if nj < 0 || nj > height as i32 {
+                    continue;
+                }
+                let wy = v_wy[(dj + 1) as usize];
+
                 for di in -1..=1i32 {
                     let ni = base_i + di;
-                    let nj = base_j + dj;
-
-                    // Same boundary check as G2P
-                    if ni < 0 || ni >= width as i32 || nj < 0 || nj > height as i32 {
+                    if ni < 0 || ni >= width as i32 {
                         continue;
                     }
 
-                    let delta = Vec2::new(fx - di as f32, fy - dj as f32);
-                    let w = quadratic_bspline(delta);
+                    let w = v_wx[(di + 1) as usize] * wy;
                     if w <= 0.0 {
                         continue;
                     }
 
-                    let v_idx = self.grid.v_index(ni as usize, nj as usize);
-                    velocity.y += w * self.grid.v[v_idx];
+                    let v_idx = grid.v_index(ni as usize, nj as usize);
+                    velocity.y += w * grid.v[v_idx];
                     v_weight_sum += w;
                 }
             }
@@ -612,7 +729,7 @@ impl FlipSimulation {
             }
 
             particle.old_grid_velocity = velocity;
-        }
+        });
     }
 
     /// Step 5: APIC Grid-to-Particle transfer (G2P)
@@ -1765,8 +1882,11 @@ impl FlipSimulation {
         diagnostics.push(("grid_after_gravity", (grid_u_sum.powi(2) + grid_v_sum.powi(2)).sqrt()));
 
         // 4b. Vorticity confinement
-        let pile_height_copy = self.pile_height.clone();
-        self.grid.apply_vorticity_confinement_with_piles(dt, 0.05, &pile_height_copy);
+        {
+            let grid = &mut self.grid;
+            let pile_height = &self.pile_height;
+            grid.apply_vorticity_confinement_with_piles(dt, 0.05, pile_height);
+        }
         let grid_u_sum: f32 = self.grid.u.iter().sum();
         let grid_v_sum: f32 = self.grid.v.iter().sum();
         diagnostics.push(("grid_after_vorticity", (grid_u_sum.powi(2) + grid_v_sum.powi(2)).sqrt()));
@@ -1783,7 +1903,8 @@ impl FlipSimulation {
         diagnostics.push(("divergence", div));
 
         self.grid.solve_pressure_multigrid(2);
-        self.grid.apply_pressure_gradient(dt);
+        // Two-way coupling: use mixture density for pressure gradient
+        self.apply_pressure_gradient_two_way(dt);
         let grid_u_sum: f32 = self.grid.u.iter().sum();
         let grid_v_sum: f32 = self.grid.v.iter().sum();
         diagnostics.push(("grid_after_pressure", (grid_u_sum.powi(2) + grid_v_sum.powi(2)).sqrt()));
