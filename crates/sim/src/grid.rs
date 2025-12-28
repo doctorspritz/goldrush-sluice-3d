@@ -1737,7 +1737,15 @@ impl Grid {
     /// Sync level 0 of multigrid with current grid state
     fn mg_sync_level_zero(&mut self) {
         let level = &mut self.mg_levels[0];
-        level.divergence.copy_from_slice(&self.divergence);
+
+        // CRITICAL: The standard solver uses p = (neighbors - h²*div) / 4
+        // But the multigrid uses p = (neighbors - div) / 4 for simplicity.
+        // To make them consistent, we pre-multiply divergence by h² here.
+        let h_sq = self.cell_size * self.cell_size;
+        for i in 0..self.divergence.len() {
+            level.divergence[i] = self.divergence[i] * h_sq;
+        }
+
         level.pressure.copy_from_slice(&self.pressure);
         for (i, &ct) in self.cell_type.iter().enumerate() {
             level.cell_type[i] = ct;
@@ -1923,10 +1931,12 @@ impl Grid {
                     p_center
                 };
 
-                // Laplacian: (p_L + p_R + p_B + p_T - 4*p) with h=1
-                let laplacian = p_left + p_right + p_bottom + p_top - 4.0 * p_center;
+                // Residual = b - A*x = div - (neighbors - 4*p)
+                // Note: divergence was pre-multiplied by h² in mg_sync_level_zero
+                let neighbors_minus_4p = p_left + p_right + p_bottom + p_top - 4.0 * p_center;
+                let div = self.mg_levels[level].divergence[idx];
 
-                self.mg_levels[level].residual[idx] = self.mg_levels[level].divergence[idx] - laplacian;
+                self.mg_levels[level].residual[idx] = div - neighbors_minus_4p;
             }
         }
     }
@@ -1937,6 +1947,8 @@ impl Grid {
         let w = self.mg_levels[level].width;
         let h = self.mg_levels[level].height;
 
+        // Divergence was pre-multiplied by h² in mg_sync_level_zero,
+        // so we use the simplified form: p = (neighbors - div) / 4
         for _ in 0..iterations {
             // Red-black ordering
             for color in 0..2 {
@@ -2000,6 +2012,7 @@ impl Grid {
                         };
 
                         // GS update: p = (p_L + p_R + p_B + p_T - div) / 4
+                        // Note: div was pre-multiplied by h² in mg_sync_level_zero
                         let div = self.mg_levels[level].divergence[idx];
                         self.mg_levels[level].pressure[idx] = (p_left + p_right + p_bottom + p_top - div) * 0.25;
                     }

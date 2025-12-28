@@ -183,9 +183,8 @@ impl FlipSimulation {
         self.grid.compute_divergence();
         let div_before = self.grid.total_divergence();
 
-        // Multigrid pressure solver - 2 V-cycles
-        // Testing reduced cycles for faster solve
-        self.grid.solve_pressure_multigrid(2);
+        // Multigrid pressure solver - 4 V-cycles for better convergence
+        self.grid.solve_pressure_multigrid(4);
         // Two-way coupling: use mixture density for pressure gradient
         self.apply_pressure_gradient_two_way(dt);
 
@@ -289,7 +288,7 @@ impl FlipSimulation {
         }
         self.grid.enforce_boundary_conditions();
         self.grid.compute_divergence();
-        self.grid.solve_pressure_multigrid(2);
+        self.grid.solve_pressure_multigrid(4);
         // Two-way coupling: use mixture density for pressure gradient
         self.apply_pressure_gradient_two_way(dt);
         self.grid.compute_divergence();
@@ -1309,14 +1308,14 @@ impl FlipSimulation {
         const CONTACT_STIFFNESS: f32 = 3000.0;
         // Damping ratio (0-1, higher = more energy dissipation, less bounce)
         const DAMPING_RATIO: f32 = 0.7;
-        // Friction coefficient (tangential resistance)
+        // Base friction coefficient (tangential resistance)
         const FRICTION_COEFF: f32 = 0.5;
         // Particle radius for contact detection
         const PARTICLE_RADIUS_CELLS: f32 = 0.5;
-        // Velocity threshold - particles moving faster than this have reduced DEM
-        const FLOW_VELOCITY_THRESHOLD: f32 = 15.0; // px/s - particles flowing faster are "suspended"
-        // Floor distance - DEM is stronger near the floor
-        const FLOOR_PROXIMITY_CELLS: f32 = 3.0;
+        // Velocity threshold for friction scaling (slow = more friction)
+        const FRICTION_VELOCITY_THRESHOLD: f32 = 20.0; // px/s
+        // Floor distance for enhanced friction
+        const FLOOR_PROXIMITY_CELLS: f32 = 4.0;
 
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
@@ -1326,49 +1325,22 @@ impl FlipSimulation {
         let contact_dist = particle_radius * 2.0;
         let contact_dist_sq = contact_dist * contact_dist;
 
-        // Pre-allocate force buffer and DEM strength per particle
+        // Pre-allocate force buffer
         let particle_count = self.particles.list.len();
         let mut forces: Vec<Vec2> = vec![Vec2::ZERO; particle_count];
-        let mut dem_strength: Vec<f32> = vec![0.0; particle_count];
-
-        // First pass: compute DEM strength based on velocity and floor proximity
-        for idx in 0..particle_count {
-            let p = &self.particles.list[idx];
-            if !p.is_sediment() {
-                continue;
-            }
-
-            // Velocity-based: fast particles have weak DEM (they're being carried)
-            let speed = p.velocity.length();
-            let density_ratio = p.material.density() / 2.65; // Relative to sand
-
-            // Heavy particles (gold) can settle even at higher velocities
-            let effective_threshold = FLOW_VELOCITY_THRESHOLD / density_ratio.sqrt();
-            let velocity_factor = (1.0 - (speed / effective_threshold).min(1.0)).max(0.0);
-
-            // Floor proximity: stronger DEM near floor
-            let floor_dist = self.grid.sample_sdf(p.position) / cell_size;
-            let floor_factor = (1.0 - (floor_dist / FLOOR_PROXIMITY_CELLS).max(0.0)).max(0.0);
-
-            // Density factor: heavier particles settle more aggressively
-            // Gold (7.3x sand) gets ~2.7x settling strength
-            let density_factor = density_ratio.powf(0.6);
-
-            // Combined strength: heavy particles get strong DEM even when faster
-            dem_strength[idx] = velocity_factor.max(floor_factor * 0.5) * density_factor;
-        }
 
         // Compute contact forces between sediment particles
         for idx in 0..particle_count {
             let p_i = &self.particles.list[idx];
 
-            // Only sediment particles with some DEM strength
-            if !p_i.is_sediment() || dem_strength[idx] < 0.01 {
+            // Only sediment particles participate in DEM
+            if !p_i.is_sediment() {
                 continue;
             }
 
             let pos_i = p_i.position;
             let vel_i = p_i.velocity;
+            let speed_i = vel_i.length();
 
             let gi = ((pos_i.x / cell_size) as i32).max(0).min(width as i32 - 1);
             let gj = ((pos_i.y / cell_size) as i32).max(0).min(height as i32 - 1);
@@ -1419,14 +1391,19 @@ impl FlipSimulation {
                         let normal_vel = rel_vel.dot(normal);
                         let tangent_vel = rel_vel - normal * normal_vel;
 
-                        // Spring-damper normal force
+                        // Spring-damper normal force - ALWAYS applies (collision)
                         let spring_force = CONTACT_STIFFNESS * overlap;
                         let damping_force = DAMPING_RATIO * 2.0 * (CONTACT_STIFFNESS).sqrt() * normal_vel;
                         let normal_force_mag = (spring_force - damping_force).max(0.0);
                         let normal_force = normal * normal_force_mag;
 
+                        // Friction scales with velocity: slow = grip, fast = slide
+                        let avg_speed = (speed_i + p_j.velocity.length()) * 0.5;
+                        let friction_scale = (1.0 - (avg_speed / FRICTION_VELOCITY_THRESHOLD).min(1.0)).max(0.1);
+                        let effective_friction = FRICTION_COEFF * friction_scale;
+
                         // Friction (Coulomb model)
-                        let max_friction = FRICTION_COEFF * normal_force_mag;
+                        let max_friction = effective_friction * normal_force_mag;
                         let tangent_speed = tangent_vel.length();
                         let friction_force = if tangent_speed > 0.001 {
                             let friction_dir = -tangent_vel / tangent_speed;
@@ -1447,27 +1424,24 @@ impl FlipSimulation {
                         let ratio_i = density_j / total_density; // lighter i -> bigger ratio
                         let ratio_j = density_i / total_density; // lighter j -> bigger ratio
 
-                        // Scale by DEM strength - fast-moving particles have weaker DEM
-                        let strength = (dem_strength[idx] * dem_strength[j_idx]).sqrt();
-
-                        forces[idx] += total_force * ratio_i * strength;
-                        forces[j_idx] -= total_force * ratio_j * strength;
+                        // Collision forces always apply at full strength
+                        forces[idx] += total_force * ratio_i;
+                        forces[j_idx] -= total_force * ratio_j;
 
                         // Buoyancy-like sinking: heavy particles push down on light ones
-                        // When particles are stacked, heavier one sinks
                         let density_diff = density_i - density_j;
-                        if density_diff.abs() > 0.1 && strength > 0.1 {
-                            // Vertical component: heavier pushes lighter up, sinks itself down
-                            let buoyancy_strength = 50.0; // Tune this
+                        if density_diff.abs() > 0.1 {
+                            // Heavier pushes lighter up, sinks itself down
+                            let buoyancy_strength = 50.0;
                             let buoyancy = Vec2::new(0.0, -buoyancy_strength * density_diff * overlap);
-                            forces[idx] += buoyancy * ratio_i * strength;
-                            forces[j_idx] -= buoyancy * ratio_j * strength;
+                            forces[idx] += buoyancy * ratio_i;
+                            forces[j_idx] -= buoyancy * ratio_j;
                         }
                     }
                 }
             }
 
-            // Floor contact (SDF-based) - always applied (can't go through floor)
+            // Floor contact (SDF-based) - always applied
             let sdf_dist = self.grid.sample_sdf(pos_i);
             if sdf_dist < particle_radius && sdf_dist > -particle_radius {
                 let floor_normal = -self.grid.sdf_gradient(pos_i); // Points away from solid
@@ -1482,10 +1456,15 @@ impl FlipSimulation {
 
                     forces[idx] += floor_normal * floor_force_mag;
 
-                    // Floor friction - scaled by DEM strength so flowing particles slide easier
+                    // Floor friction - scales with velocity (slow = grip, fast = slide)
+                    // Also stronger when closer to floor
+                    let floor_dist_cells = sdf_dist / cell_size;
+                    let proximity_factor = (1.0 - (floor_dist_cells / FLOOR_PROXIMITY_CELLS).max(0.0)).max(0.0);
+                    let velocity_factor = (1.0 - (speed_i / FRICTION_VELOCITY_THRESHOLD).min(1.0)).max(0.2);
+                    let friction_strength = proximity_factor * velocity_factor;
+
                     let tangent = Vec2::new(-floor_normal.y, floor_normal.x);
                     let tangent_vel = vel_i.dot(tangent);
-                    let friction_strength = dem_strength[idx].max(0.2); // Min 20% friction
                     let floor_friction = FRICTION_COEFF * floor_force_mag * friction_strength;
                     if tangent_vel.abs() > 0.001 {
                         forces[idx] -= tangent * tangent_vel.signum() * floor_friction.min(tangent_vel.abs() * CONTACT_STIFFNESS * friction_strength);
