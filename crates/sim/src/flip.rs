@@ -1340,18 +1340,22 @@ impl FlipSimulation {
 
             // Velocity-based: fast particles have weak DEM (they're being carried)
             let speed = p.velocity.length();
-            let velocity_factor = (1.0 - (speed / FLOW_VELOCITY_THRESHOLD).min(1.0)).max(0.0);
+            let density_ratio = p.material.density() / 2.65; // Relative to sand
+
+            // Heavy particles (gold) can settle even at higher velocities
+            let effective_threshold = FLOW_VELOCITY_THRESHOLD / density_ratio.sqrt();
+            let velocity_factor = (1.0 - (speed / effective_threshold).min(1.0)).max(0.0);
 
             // Floor proximity: stronger DEM near floor
             let floor_dist = self.grid.sample_sdf(p.position) / cell_size;
             let floor_factor = (1.0 - (floor_dist / FLOOR_PROXIMITY_CELLS).max(0.0)).max(0.0);
 
-            // Density factor: heavier particles get more DEM (they settle more)
-            let density_factor = (p.material.density() / 2.65).min(3.0); // Normalize to sand
+            // Density factor: heavier particles settle more aggressively
+            // Gold (7.3x sand) gets ~2.7x settling strength
+            let density_factor = density_ratio.powf(0.6);
 
-            // Combined strength: must be slow AND near floor for strong DEM
-            // Heavy particles get DEM even when faster
-            dem_strength[idx] = velocity_factor.max(floor_factor * 0.5) * density_factor.sqrt();
+            // Combined strength: heavy particles get strong DEM even when faster
+            dem_strength[idx] = velocity_factor.max(floor_factor * 0.5) * density_factor;
         }
 
         // Compute contact forces between sediment particles

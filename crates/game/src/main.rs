@@ -60,7 +60,7 @@ async fn main() {
         riffle_height: 6,
         riffle_width: 4,
         riffle_mode: RiffleMode::ClassicBattEdge,
-        slick_plate_len: 50,
+        slick_plate_len: 0, // No flat section - slope starts immediately
     };
 
     // Set up sloped sluice with riffles

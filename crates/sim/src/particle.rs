@@ -47,9 +47,9 @@ impl ParticleMaterial {
         match self {
             Self::Water => [70, 160, 255, 180],    // More visible blue, less transparent
             Self::Mud => [160, 100, 50, 255],      // Brighter brown
-            Self::Sand => [220, 200, 140, 255],    // Brighter tan
+            Self::Sand => [245, 240, 230, 255],    // Pale white/cream
             Self::Magnetite => [50, 50, 55, 255],  // Dark gray (not pure black)
-            Self::Gold => [255, 220, 50, 255],     // Bright gold
+            Self::Gold => [200, 150, 30, 255],     // Deep rich gold
         }
     }
 
