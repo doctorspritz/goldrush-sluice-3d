@@ -29,21 +29,19 @@ struct RiffleTestResult {
     avg_flow_velocity: f32,
     // Sediment metrics (if applicable)
     sand_trapped: usize,
-    gold_trapped: usize,
 }
 
 impl std::fmt::Display for RiffleTestResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{:16} | Peak E: {:6.1} | Final E: {:6.1} | Stable: {:5} | Flow: {:5.1} | Sand: {:4} | Gold: {:4}",
+            "{:16} | Peak E: {:6.1} | Final E: {:6.1} | Stable: {:5} | Flow: {:5.1} | Sand: {:4}",
             self.mode.name(),
             self.peak_enstrophy,
             self.final_enstrophy,
             if self.enstrophy_stable { "YES" } else { "NO" },
             self.avg_flow_velocity,
             self.sand_trapped,
-            self.gold_trapped,
         )
     }
 }
@@ -112,11 +110,10 @@ fn test_riffle_water_only(mode: RiffleMode, steps: usize) -> RiffleTestResult {
         enstrophy_stable,
         avg_flow_velocity: avg_flow,
         sand_trapped: 0,
-        gold_trapped: 0,
     }
 }
 
-/// Test a riffle mode with sediment (sand + gold)
+/// Test a riffle mode with sediment (sand only)
 fn test_riffle_with_sediment(mode: RiffleMode, steps: usize) -> RiffleTestResult {
     let mut sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
 
@@ -152,11 +149,6 @@ fn test_riffle_with_sediment(mode: RiffleMode, steps: usize) -> RiffleTestResult
             sim.spawn_sand(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
         }
 
-        // Spawn gold every 20 frames
-        if step % 20 == 0 {
-            sim.spawn_gold(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
-        }
-
         sim.update(DT);
 
         if step % 10 == 0 {
@@ -171,18 +163,10 @@ fn test_riffle_with_sediment(mode: RiffleMode, steps: usize) -> RiffleTestResult
     let trap_velocity_threshold = 10.0;
     let riffle_zone_start = config.slick_plate_len as f32 * CELL_SIZE;
 
-    let mut sand_trapped = 0usize;
-    let mut gold_trapped = 0usize;
-
-    for particle in sim.particles.iter() {
-        if particle.position.x > riffle_zone_start && particle.velocity.length() < trap_velocity_threshold {
-            match particle.material {
-                ParticleMaterial::Sand => sand_trapped += 1,
-                ParticleMaterial::Gold => gold_trapped += 1,
-                _ => {}
-            }
-        }
-    }
+    let sand_trapped = sim.particles.iter()
+        .filter(|p| p.material == ParticleMaterial::Sand)
+        .filter(|p| p.position.x > riffle_zone_start && p.velocity.length() < trap_velocity_threshold)
+        .count();
 
     let avg_flow: f32 = sim.particles.iter()
         .filter(|p| p.material == ParticleMaterial::Water)
@@ -196,7 +180,6 @@ fn test_riffle_with_sediment(mode: RiffleMode, steps: usize) -> RiffleTestResult
         enstrophy_stable: true, // Not checking stability in sediment test
         avg_flow_velocity: avg_flow,
         sand_trapped,
-        gold_trapped,
     }
 }
 
@@ -214,10 +197,10 @@ fn main() {
 
     // Test 1: Water-only (vortex formation)
     println!("TEST 1: WATER-ONLY (Vortex Formation)");
-    println!("{}", "=".repeat(100));
-    println!("{:16} | {:12} | {:12} | {:7} | {:7} | {:6} | {:6}",
-        "Mode", "Peak E", "Final E", "Stable", "Flow", "Sand", "Gold");
-    println!("{}", "-".repeat(100));
+    println!("{}", "=".repeat(90));
+    println!("{:16} | {:12} | {:12} | {:7} | {:7} | {:6}",
+        "Mode", "Peak E", "Final E", "Stable", "Flow", "Sand");
+    println!("{}", "-".repeat(90));
 
     for mode in &modes {
         let result = test_riffle_water_only(*mode, 500);
@@ -228,10 +211,10 @@ fn main() {
 
     // Test 2: With sediment (trapping behavior)
     println!("TEST 2: WITH SEDIMENT (Trapping Behavior)");
-    println!("{}", "=".repeat(100));
-    println!("{:16} | {:12} | {:12} | {:7} | {:7} | {:6} | {:6}",
-        "Mode", "Peak E", "Final E", "Stable", "Flow", "Sand", "Gold");
-    println!("{}", "-".repeat(100));
+    println!("{}", "=".repeat(90));
+    println!("{:16} | {:12} | {:12} | {:7} | {:7} | {:6}",
+        "Mode", "Peak E", "Final E", "Stable", "Flow", "Sand");
+    println!("{}", "-".repeat(90));
 
     for mode in &modes {
         let result = test_riffle_with_sediment(*mode, 800);
@@ -242,7 +225,7 @@ fn main() {
     println!("\nExpected behavior:");
     println!("- Enstrophy should be higher with riffles than without (vortex formation)");
     println!("- Stable = YES indicates persistent vortices (not drifting)");
-    println!("- Sand trapped > Gold trapped indicates density-based stratification");
+    println!("- Sand trapped > 0 indicates sediment accumulation behind riffles");
     println!("- Different modes should show visibly different behavior");
     println!("\nIf two modes look identical, the geometry implementation may have failed.");
 }

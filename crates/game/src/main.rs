@@ -414,7 +414,6 @@ async fn main() {
         );
 
         // Draw particles with selected renderer
-        // Draw particles with selected renderer
         match render_mode {
             RenderMode::Hybrid => {
                 // Pass 1: Water as metaballs for fluid look
@@ -430,6 +429,20 @@ async fn main() {
             RenderMode::FastCircle => draw_particles_fast_debug(&sim.particles, SCALE, fast_particle_size, debug_state_colors),
             RenderMode::FastRect => draw_particles_rect(&sim.particles, SCALE, fast_particle_size),
             RenderMode::Mesh => draw_particles_mesh(&sim.particles, SCALE, fast_particle_size),
+        }
+
+        // Draw deposited sediment cells ON TOP of particles (so visible in all render modes)
+        // Deposited cells are solid terrain, so they should be visible even under water
+        let deposit_color = Color::from_rgba(180, 140, 60, 255);
+        for j in 0..sim.grid.height {
+            for i in 0..sim.grid.width {
+                if sim.grid.is_deposited(i, j) {
+                    let x = i as f32 * CELL_SIZE * SCALE;
+                    let y = j as f32 * CELL_SIZE * SCALE;
+                    let size = CELL_SIZE * SCALE;
+                    draw_rectangle(x, y, size, size, deposit_color);
+                }
+            }
         }
 
         // Draw velocity field on top (optional debug visualization)

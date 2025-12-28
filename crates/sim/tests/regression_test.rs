@@ -23,9 +23,9 @@ fn test_regression_mixed_simulation() {
          sim.spawn_sand(x as f32 * CELL_SIZE, 5.0 * CELL_SIZE, 0.0, 0.0, 1);
     }
     
-    // Gold particles (initially suspended)
+    // Extra sand particles (initially suspended)
     for x in 20..30 {
-        sim.spawn_gold(x as f32 * CELL_SIZE, 15.0 * CELL_SIZE, 0.0, 0.0, 1);
+        sim.spawn_sand(x as f32 * CELL_SIZE, 15.0 * CELL_SIZE, 0.0, 0.0, 1);
     }
     
     let initial_count = sim.particles.len();

@@ -284,30 +284,30 @@ fn test_sediment_settles_through_water() {
         }
     }
 
-    // Spawn gold particle near top
-    let gold_x = WIDTH as f32 * CELL_SIZE / 2.0;
-    let gold_y = 15.0 * CELL_SIZE;  // Near top
-    sim.particles.spawn_gold(gold_x, gold_y, 0.0, 0.0);
+    // Spawn sand particle near top
+    let sand_x = WIDTH as f32 * CELL_SIZE / 2.0;
+    let sand_y = 15.0 * CELL_SIZE;  // Near top
+    sim.particles.spawn_sand(sand_x, sand_y, 0.0, 0.0);
 
-    let gold_initial_y = sim.particles.list.last().unwrap().position.y;
+    let sand_initial_y = sim.particles.list.last().unwrap().position.y;
 
     // Run simulation
     for _ in 0..FRAMES {
         sim.update(DT);
     }
 
-    // Find gold particle (it's the last one we added)
-    let gold_final_y = sim.particles.list.iter()
-        .filter(|p| p.material == sim::particle::ParticleMaterial::Gold)
+    // Find sand particle (it's the last one we added)
+    let sand_final_y = sim.particles.list.iter()
+        .filter(|p| p.material == sim::particle::ParticleMaterial::Sand)
         .next()
         .map(|p| p.position.y)
-        .unwrap_or(gold_initial_y);
+        .unwrap_or(sand_initial_y);
 
-    // Gold should have moved down significantly (Y increases downward in this coord system)
-    let distance_settled = gold_final_y - gold_initial_y;
+    // Sand should have moved down significantly (Y increases downward in this coord system)
+    let distance_settled = sand_final_y - sand_initial_y;
     assert!(distance_settled > CELL_SIZE * 5.0,
-        "Gold should settle through water: initial_y={}, final_y={}, settled={}",
-        gold_initial_y, gold_final_y, distance_settled);
+        "Sand should settle through water: initial_y={}, final_y={}, settled={}",
+        sand_initial_y, sand_final_y, distance_settled);
 }
 
 /// APIC-3: Simulation should remain stable over many frames
