@@ -145,6 +145,7 @@ dependencies = [
 name = "game"
 version = "0.1.0"
 dependencies = [
+ "dfsph",
  "glam",
  "macroquad",
  "sim",
@@ -380,6 +381,7 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "rand",
+ "rand_chacha",
  "rayon",
  "rustc-hash",
 ]

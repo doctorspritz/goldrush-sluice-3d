@@ -26,7 +26,7 @@ enum RenderMode {
 // Simulation size (high resolution for better vortex formation)
 // Simulation size (high resolution for better vortex formation)
 const SIM_WIDTH: usize = 512;
-const SIM_HEIGHT: usize = 384;
+const SIM_HEIGHT: usize = 256;
 const CELL_SIZE: f32 = 1.0;
 const SCALE: f32 = 2.5; // Reduced scale to fit screen with double resolution
 // Render buffer size (simulation space, not screen space)
@@ -130,7 +130,7 @@ async fn main() {
     let mut show_surface_line = false;
     let mut spawn_mud = false;
     let mut debug_state_colors = false; // D key: Bedload=red, Suspended=blue
-    let mut render_mode = RenderMode::Hybrid; // Default to Hybrid for best look
+    let mut render_mode = RenderMode::Mesh; // Default to Mesh for best performance (batches 8000 particles per draw call)
     let mut metaball_threshold: f32 = 0.08;
     let mut metaball_scale: f32 = 6.0;
     let mut fast_particle_size: f32 = CELL_SIZE * SCALE * 0.5;  // Half-cell for balance of accuracy vs performance
@@ -306,19 +306,7 @@ async fn main() {
             metaball_renderer.set_particle_scale(metaball_scale);
         }
 
-        // Near-pressure tuning: 5/6 for H (radius), 7/8 for rest density, 9/0 for particle size
-        if is_key_pressed(KeyCode::Key5) {
-            sim.near_pressure_h = (sim.near_pressure_h - 0.5).max(2.0);
-        }
-        if is_key_pressed(KeyCode::Key6) {
-            sim.near_pressure_h = (sim.near_pressure_h + 0.5).min(8.0);
-        }
-        if is_key_pressed(KeyCode::Key7) {
-            sim.near_pressure_rest = (sim.near_pressure_rest - 0.1).max(0.3);
-        }
-        if is_key_pressed(KeyCode::Key8) {
-            sim.near_pressure_rest = (sim.near_pressure_rest + 0.1).min(2.0);
-        }
+        // Particle size tuning: 9/0 to adjust
         if is_key_pressed(KeyCode::Key9) {
             fast_particle_size = (fast_particle_size - 0.5).max(1.0);
         }
@@ -370,7 +358,8 @@ async fn main() {
             // flow_multiplier scales everything: more water, more frequent sediments
             {
                 let inlet_x = 5.0;
-                let inlet_y = 86.0;
+                // Spawn above the floor (base_height = SIM_HEIGHT/4)
+                let inlet_y = (SIM_HEIGHT / 4 - 10) as f32;
 
                 // Water (spawn_rate * flow_multiplier per frame)
                 sim.spawn_water(inlet_x, inlet_y, inlet_vx, inlet_vy, spawn_rate * flow_multiplier);
@@ -573,9 +562,9 @@ async fn main() {
             );
         }
 
-        // Near-pressure params & particle size
+        // Particle size
         draw_text(
-            &format!("NEAR-PRESSURE: H={:.1} rest={:.1} | SIZE={:.1}", sim.near_pressure_h, sim.near_pressure_rest, fast_particle_size),
+            &format!("PARTICLE SIZE={:.1}", fast_particle_size),
             10.0, 124.0, 14.0, Color::from_rgba(100, 200, 100, 255),
         );
 

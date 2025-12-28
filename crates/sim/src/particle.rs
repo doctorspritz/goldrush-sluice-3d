@@ -53,19 +53,6 @@ impl ParticleMaterial {
         }
     }
 
-    /// Near-pressure stiffness multiplier (Clavet et al. 2005)
-    /// All fluids need high stiffness for incompressibility.
-    /// Sediments are stiffer - they dominate in cross-material interactions.
-    pub fn near_pressure_stiffness(&self) -> f32 {
-        match self {
-            Self::Water => 1.0,      // Incompressible fluid
-            Self::Mud => 1.2,        // Slightly stiffer
-            Self::Sand => 2.0,       // Granular - harder than water
-            Self::Magnetite => 3.0,  // Dense grains
-            Self::Gold => 4.0,       // Hardest - dominates water
-        }
-    }
-
     /// Is this a sediment type? (anything denser than water)
     /// Only water participates in the FLIP pressure solve.
     /// Sediment is Lagrangian - carried by fluid via drag forces.
@@ -232,8 +219,6 @@ pub struct Particle {
     pub old_grid_velocity: Vec2,
     /// Material type (determines density and color)
     pub material: ParticleMaterial,
-    /// Near-density for Clavet pressure (computed each frame)
-    pub near_density: f32,
     /// Particle diameter in simulation units (for Ferguson-Church settling)
     /// If 0.0, uses material.typical_diameter() as fallback
     pub diameter: f32,
@@ -253,7 +238,6 @@ impl Particle {
             affine_velocity: Mat2::ZERO,
             old_grid_velocity: Vec2::ZERO,
             material,
-            near_density: 0.0,
             diameter: material.typical_diameter(),
             state: ParticleState::Suspended,
             jam_time: 0.0,
@@ -268,7 +252,6 @@ impl Particle {
             affine_velocity: Mat2::ZERO,
             old_grid_velocity: Vec2::ZERO,
             material,
-            near_density: 0.0,
             diameter,
             state: ParticleState::Suspended,
             jam_time: 0.0,
