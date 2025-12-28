@@ -128,16 +128,23 @@ impl FlipSimulation {
 
     /// Run one simulation step
     pub fn update(&mut self, dt: f32) {
+        use std::time::Instant;
         self.frame = self.frame.wrapping_add(1);
+        let profile = self.frame % 120 == 0;
+
+        let t0 = Instant::now();
 
         // 1. Classify cells based on particle positions
         self.classify_cells();
-        
+        let t1 = Instant::now();
+
         // 1b. Update Signed Distance Field for collision
         self.grid.compute_sdf();
+        let t2 = Instant::now();
 
         // 2. Transfer particle velocities to grid (P2G)
         self.particles_to_grid();
+        let t3 = Instant::now();
 
         // 2b. Extrapolate velocities into air cells (1 layer)
         // This ensures store_old_velocities samples valid values everywhere
@@ -154,19 +161,30 @@ impl FlipSimulation {
         // Strength (ε) must be 0.01-0.1 per Fedkiw 2001 - higher causes artificial turbulence
         let pile_height_copy = self.pile_height.clone();
         self.grid.apply_vorticity_confinement_with_piles(dt, 0.05, &pile_height_copy);
+        let t4 = Instant::now();
 
         // 5. Pressure projection - enforces incompressibility
         // CRITICAL: Zero velocities at solid walls BEFORE computing divergence
         self.grid.enforce_boundary_conditions();
         self.grid.compute_divergence();
-        // Pressure solver iterations (more needed for finer grids)
-        // REDUCED from 15 to 5 to reduce viscosity/damping and make water "lively"
-        // This is a trade-off: less incompressibility vs more energy preservation.
-        // UPDATE: Restored to 15 because 5 was too unstable/dampening with under-relaxation
+        let div_before = self.grid.total_divergence();
+
+        // Pressure solver iterations - for 512x384 grid
+        // 15 iterations: testing further reduction for performance
         self.grid.solve_pressure(15);
         self.grid.apply_pressure_gradient(dt);
+        let t5 = Instant::now();
 
-        // 5b. Re-extrapolate after pressure changed velocities
+        // Diagnostic: check divergence after
+        self.grid.compute_divergence();
+        let div_after = self.grid.total_divergence();
+        if self.frame % 60 == 0 {
+            println!("PRESSURE[frame={}]: div before={:.1}, after={:.1}, reduction={:.1}%",
+                self.frame, div_before, div_after, (1.0 - div_after / div_before.max(0.001)) * 100.0);
+        }
+
+        // 5b. Extrapolate after pressure solve for G2P sampling near boundaries
+        // With fixed extrapolation (skips fluid-adjacent faces), this is safe
         self.grid.extrapolate_velocities(1);
 
         // 5c. Surface damping REMOVED - was causing honey-like behavior
@@ -178,6 +196,7 @@ impl FlipSimulation {
         // Water: gets FLIP velocity
         // Sediment: stores fluid velocity for drag calculation
         self.grid_to_particles(dt);
+        let t6 = Instant::now();
 
         // 6a. Slope flow correction now handled in Grid::apply_gravity()
         // Gravity is applied tangentially near floors at the grid level.
@@ -188,6 +207,7 @@ impl FlipSimulation {
         // 6c. Compute neighbor counts for hindered settling AND stickiness
         // (Merged implementation computes both total and water neighbors in parallel)
         self.compute_neighbor_counts();
+        let t7 = Instant::now();
 
         // 7. Apply forces to sediment (drag + buoyancy + hindered settling)
         // This is proper Lagrangian sediment transport with Richardson-Zaki correction
@@ -208,6 +228,19 @@ impl FlipSimulation {
         // 8d. Enforce pile constraints on ALL particles
         // Catches particles that drifted under piles or were at same level when pile formed
         self.enforce_pile_constraints();
+        let t8 = Instant::now();
+
+        if profile {
+            println!("PROFILE: classify={:.1}ms sdf={:.1}ms p2g={:.1}ms vort={:.1}ms pressure={:.1}ms g2p={:.1}ms neighbor={:.1}ms rest={:.1}ms",
+                (t1-t0).as_secs_f32()*1000.0,
+                (t2-t1).as_secs_f32()*1000.0,
+                (t3-t2).as_secs_f32()*1000.0,
+                (t4-t3).as_secs_f32()*1000.0,
+                (t5-t4).as_secs_f32()*1000.0,
+                (t6-t5).as_secs_f32()*1000.0,
+                (t7-t6).as_secs_f32()*1000.0,
+                (t8-t7).as_secs_f32()*1000.0);
+        }
 
         // 9. Push overlapping particles apart - DISABLED
         // Near-pressure handles incompressibility now. If pressure is strong enough,
@@ -421,6 +454,8 @@ impl FlipSimulation {
         for particle in self.particles.iter_mut() {
             let pos = particle.position;
             let mut velocity = Vec2::ZERO;
+            let mut u_weight_sum = 0.0f32;
+            let mut v_weight_sum = 0.0f32;
 
             // ========== Sample U component (quadratic B-spline) ==========
             // U nodes are at (i * cell_size, (j + 0.5) * cell_size)
@@ -448,6 +483,7 @@ impl FlipSimulation {
 
                     let u_idx = self.grid.u_index(ni as usize, nj as usize);
                     velocity.x += w * self.grid.u[u_idx];
+                    u_weight_sum += w;
                 }
             }
 
@@ -477,7 +513,16 @@ impl FlipSimulation {
 
                     let v_idx = self.grid.v_index(ni as usize, nj as usize);
                     velocity.y += w * self.grid.v[v_idx];
+                    v_weight_sum += w;
                 }
+            }
+
+            // Normalize by weight sum to handle boundary clipping
+            if u_weight_sum > 0.0 {
+                velocity.x /= u_weight_sum;
+            }
+            if v_weight_sum > 0.0 {
+                velocity.y /= v_weight_sum;
             }
 
             particle.old_grid_velocity = velocity;
@@ -525,6 +570,8 @@ impl FlipSimulation {
             // ========== APIC for water particles ==========
             let mut new_velocity = Vec2::ZERO;
             let mut new_c = Mat2::ZERO;
+            let mut u_weight_sum = 0.0f32;
+            let mut v_weight_sum = 0.0f32;
 
             // Sample U component
             let u_pos = pos / cell_size - Vec2::new(0.0, 0.5);
@@ -553,6 +600,7 @@ impl FlipSimulation {
 
                     // Velocity contribution
                     new_velocity.x += w * u_val;
+                    u_weight_sum += w;
 
                     // C matrix contribution: v_i ⊗ (x_i - x_p) * w * D_inv
                     let offset = Vec2::new(
@@ -591,6 +639,7 @@ impl FlipSimulation {
 
                     // Velocity contribution
                     new_velocity.y += w * v_val;
+                    v_weight_sum += w;
 
                     // C matrix contribution (second column from V)
                     let offset = Vec2::new(
@@ -599,6 +648,16 @@ impl FlipSimulation {
                     );
                     new_c.y_axis += offset * (w * v_val * d_inv);
                 }
+            }
+
+            // Normalize by weight sum to handle boundary clipping
+            if u_weight_sum > 0.0 {
+                new_velocity.x /= u_weight_sum;
+                new_c.x_axis /= u_weight_sum;
+            }
+            if v_weight_sum > 0.0 {
+                new_velocity.y /= v_weight_sum;
+                new_c.y_axis /= v_weight_sum;
             }
 
             // FLIP/PIC blend for velocity update

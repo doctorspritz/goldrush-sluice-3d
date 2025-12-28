@@ -1039,11 +1039,12 @@ impl Grid {
     }
 
     /// Mark U and V faces that have valid P2G velocities as "known"
-    /// These are INTERIOR fluid faces (both neighbors are fluid).
-    /// Boundary faces (fluid-air) will be filled by extrapolation.
+    /// These are faces adjacent to at least one fluid cell.
+    /// Both interior (fluid-fluid) and boundary (fluid-air) faces have valid values.
     fn mark_fluid_faces_known(&self, u_known: &mut [bool], v_known: &mut [bool]) {
-        // Mark U faces: known if BOTH adjacent cells are fluid (interior face)
-        // Faces at fluid-air boundary are NOT marked - they get extrapolated
+        // Mark U faces: known if AT LEAST ONE adjacent cell is fluid
+        // Interior faces (fluid-fluid) have P2G values
+        // Boundary faces (fluid-air) have P2G values that pressure solve adjusts
         for j in 0..self.height {
             for i in 0..=self.width {
                 let u_idx = self.u_index(i, j);
@@ -1052,14 +1053,14 @@ impl Grid {
                 let left_fluid = i > 0 && self.cell_type[self.cell_index(i - 1, j)] == CellType::Fluid;
                 let right_fluid = i < self.width && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
 
-                // Only mark if BOTH cells are fluid (interior face has valid P2G value)
-                if left_fluid && right_fluid {
+                // Mark if at least one cell is fluid (both interior and boundary faces)
+                if left_fluid || right_fluid {
                     u_known[u_idx] = true;
                 }
             }
         }
 
-        // Mark V faces: known if BOTH adjacent cells are fluid
+        // Mark V faces: known if AT LEAST ONE adjacent cell is fluid
         for j in 0..=self.height {
             for i in 0..self.width {
                 let v_idx = self.v_index(i, j);
@@ -1067,7 +1068,7 @@ impl Grid {
                 let bottom_fluid = j > 0 && self.cell_type[self.cell_index(i, j - 1)] == CellType::Fluid;
                 let top_fluid = j < self.height && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
 
-                if bottom_fluid && top_fluid {
+                if bottom_fluid || top_fluid {
                     v_known[v_idx] = true;
                 }
             }
@@ -1088,11 +1089,14 @@ impl Grid {
                     continue; // Already known, skip
                 }
 
-                // Don't extrapolate into faces touching solid cells
+                // Don't extrapolate into faces touching solid OR fluid cells
+                // Fluid-adjacent faces already have valid values from P2G/pressure solve
                 let left_solid = i == 0 || self.cell_type[self.cell_index(i - 1, j)] == CellType::Solid;
                 let right_solid = i == self.width || self.cell_type[self.cell_index(i, j)] == CellType::Solid;
-                if left_solid || right_solid {
-                    continue; // Solid boundary - handled by boundary conditions
+                let left_fluid = i > 0 && self.cell_type[self.cell_index(i - 1, j)] == CellType::Fluid;
+                let right_fluid = i < self.width && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
+                if left_solid || right_solid || left_fluid || right_fluid {
+                    continue; // Already has valid value
                 }
 
                 // Average of known cardinal neighbors (staggered U grid)
@@ -1162,11 +1166,14 @@ impl Grid {
                     continue;
                 }
 
-                // Don't extrapolate into faces touching solid cells
+                // Don't extrapolate into faces touching solid OR fluid cells
+                // Fluid-adjacent faces already have valid values from P2G/pressure solve
                 let bottom_solid = j == 0 || self.cell_type[self.cell_index(i, j - 1)] == CellType::Solid;
                 let top_solid = j == self.height || self.cell_type[self.cell_index(i, j)] == CellType::Solid;
-                if bottom_solid || top_solid {
-                    continue; // Solid boundary - handled by boundary conditions
+                let bottom_fluid = j > 0 && self.cell_type[self.cell_index(i, j - 1)] == CellType::Fluid;
+                let top_fluid = j < self.height && self.cell_type[self.cell_index(i, j)] == CellType::Fluid;
+                if bottom_solid || top_solid || bottom_fluid || top_fluid {
+                    continue; // Already has valid value
                 }
 
                 let mut sum = 0.0;

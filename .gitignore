@@ -3,3 +3,4 @@ target/
 *.swp
 .DS_Store
 worktrees/
+cargo-flamegraph.trace/
