@@ -407,6 +407,108 @@ impl Grid {
         Vec2::new(u, v)
     }
 
+    /// Sample velocity using quadratic B-spline (same kernel as APIC/FLIP)
+    /// This MUST be used for FLIP delta calculations to avoid kernel mismatch.
+    pub fn sample_velocity_bspline(&self, pos: Vec2) -> Vec2 {
+        let mut velocity = Vec2::ZERO;
+        let mut u_weight_sum = 0.0f32;
+        let mut v_weight_sum = 0.0f32;
+
+        // ========== Sample U component (quadratic B-spline) ==========
+        let u_pos = pos / self.cell_size - Vec2::new(0.0, 0.5);
+        let base_i = u_pos.x.floor() as i32;
+        let base_j = u_pos.y.floor() as i32;
+        let fx = u_pos.x - base_i as f32;
+        let fy = u_pos.y - base_j as f32;
+
+        let u_wx = [
+            quadratic_bspline_1d(fx + 1.0),
+            quadratic_bspline_1d(fx),
+            quadratic_bspline_1d(fx - 1.0),
+        ];
+        let u_wy = [
+            quadratic_bspline_1d(fy + 1.0),
+            quadratic_bspline_1d(fy),
+            quadratic_bspline_1d(fy - 1.0),
+        ];
+
+        for dj in -1..=1i32 {
+            let nj = base_j + dj;
+            if nj < 0 || nj >= self.height as i32 {
+                continue;
+            }
+            let wy = u_wy[(dj + 1) as usize];
+
+            for di in -1..=1i32 {
+                let ni = base_i + di;
+                if ni < 0 || ni > self.width as i32 {
+                    continue;
+                }
+
+                let w = u_wx[(di + 1) as usize] * wy;
+                if w <= 0.0 {
+                    continue;
+                }
+
+                let u_idx = self.u_index(ni as usize, nj as usize);
+                velocity.x += w * self.u[u_idx];
+                u_weight_sum += w;
+            }
+        }
+
+        // ========== Sample V component (quadratic B-spline) ==========
+        let v_pos = pos / self.cell_size - Vec2::new(0.5, 0.0);
+        let base_i = v_pos.x.floor() as i32;
+        let base_j = v_pos.y.floor() as i32;
+        let fx = v_pos.x - base_i as f32;
+        let fy = v_pos.y - base_j as f32;
+
+        let v_wx = [
+            quadratic_bspline_1d(fx + 1.0),
+            quadratic_bspline_1d(fx),
+            quadratic_bspline_1d(fx - 1.0),
+        ];
+        let v_wy = [
+            quadratic_bspline_1d(fy + 1.0),
+            quadratic_bspline_1d(fy),
+            quadratic_bspline_1d(fy - 1.0),
+        ];
+
+        for dj in -1..=1i32 {
+            let nj = base_j + dj;
+            if nj < 0 || nj > self.height as i32 {
+                continue;
+            }
+            let wy = v_wy[(dj + 1) as usize];
+
+            for di in -1..=1i32 {
+                let ni = base_i + di;
+                if ni < 0 || ni >= self.width as i32 {
+                    continue;
+                }
+
+                let w = v_wx[(di + 1) as usize] * wy;
+                if w <= 0.0 {
+                    continue;
+                }
+
+                let v_idx = self.v_index(ni as usize, nj as usize);
+                velocity.y += w * self.v[v_idx];
+                v_weight_sum += w;
+            }
+        }
+
+        // Normalize
+        if u_weight_sum > 0.0 {
+            velocity.x /= u_weight_sum;
+        }
+        if v_weight_sum > 0.0 {
+            velocity.y /= v_weight_sum;
+        }
+
+        velocity
+    }
+
     /// Sample U component (staggered - sample at left edges)
     fn sample_u(&self, pos: Vec2) -> f32 {
         // U is stored at (i, j+0.5) in cell-space

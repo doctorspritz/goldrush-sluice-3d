@@ -128,7 +128,6 @@ async fn main() {
     let mut paused = false;
     let mut show_velocity = false;
     let mut show_surface_line = false;
-    let mut spawn_mud = false;
     let mut debug_state_colors = false; // D key: Bedload=red, Suspended=blue
     let mut render_mode = RenderMode::Mesh; // Default to Mesh for best performance (batches 8000 particles per draw call)
     let mut metaball_threshold: f32 = 0.08;
@@ -145,18 +144,13 @@ async fn main() {
     // Inlet flow (higher spawn rate for finer grid to maintain ~6-8 particles/cell)
     let mut inlet_vx: f32 = 80.0;
     let mut inlet_vy: f32 = 5.0;
-    let mut spawn_rate: usize = 4;  // Water particles per frame (4x for finer grid)
+    let mut spawn_rate: usize = 40;  // Water particles per frame (10x for strong flow)
 
     // Riffle geometry is in sluice_config (defined earlier)
     let mut riffle_dirty = false; // rebuild terrain when true
 
-    // Sediment blend (spawn every N frames, 0 = disabled)
-    // Target: 10% solids by volume (realistic slurry)
-    // At spawn_rate=4 water/frame, need ~0.44 solids/frame total
-    let mut mud_rate: usize = 10;       // 1 per 10 frames = 0.1/frame
+    // Sediment spawn rate (spawn every N frames, 0 = disabled)
     let mut sand_rate: usize = 4;       // 1 per 4 frames = 0.25/frame
-    let mut magnetite_rate: usize = 20; // 1 per 20 frames = 0.05/frame (black sand)
-    let mut gold_rate: usize = 75;      // 1 per 75 frames = 0.013/frame (trace)
 
     // Global flow multiplier (F/G to adjust) - scales all spawn rates
     let mut flow_multiplier: usize = 1;
@@ -173,9 +167,6 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::V) {
             show_velocity = !show_velocity;
-        }
-        if is_key_pressed(KeyCode::M) {
-            spawn_mud = !spawn_mud;
         }
         if is_key_pressed(KeyCode::R) {
             // Reset simulation with current riffle params
@@ -216,10 +207,10 @@ async fn main() {
 
         // Spawn rate: Up/Down arrows
         if is_key_pressed(KeyCode::Up) {
-            spawn_rate = (spawn_rate + 1).min(10);
+            spawn_rate = (spawn_rate + 5).min(100);
         }
         if is_key_pressed(KeyCode::Down) {
-            spawn_rate = spawn_rate.saturating_sub(1).max(1);
+            spawn_rate = spawn_rate.saturating_sub(5).max(5);
         }
 
         // Flow multiplier: =/- (scales everything together)
@@ -264,18 +255,19 @@ async fn main() {
             debug_state_colors = !debug_state_colors;
         }
 
-        // Sediment rates: 1-4 to cycle
-        if is_key_pressed(KeyCode::Key1) {
-            mud_rate = if mud_rate == 0 { 6 } else if mud_rate > 2 { mud_rate - 2 } else { 0 };
-        }
+        // Sand rate: Key2 to cycle
         if is_key_pressed(KeyCode::Key2) {
             sand_rate = if sand_rate == 0 { 4 } else if sand_rate > 1 { sand_rate - 1 } else { 0 };
         }
-        if is_key_pressed(KeyCode::Key3) {
-            magnetite_rate = if magnetite_rate == 0 { 8 } else if magnetite_rate > 2 { magnetite_rate - 2 } else { 0 };
+
+        // Sand PIC ratio: ]/[ to adjust (0.0 = pure FLIP, 1.0 = pure PIC)
+        if is_key_pressed(KeyCode::RightBracket) {
+            sim.sand_pic_ratio = (sim.sand_pic_ratio + 0.1).min(1.0);
+            eprintln!("Sand PIC ratio: {:.1}", sim.sand_pic_ratio);
         }
-        if is_key_pressed(KeyCode::Key4) {
-            gold_rate = if gold_rate == 0 { 20 } else if gold_rate > 5 { gold_rate - 5 } else { 0 };
+        if is_key_pressed(KeyCode::LeftBracket) {
+            sim.sand_pic_ratio = (sim.sand_pic_ratio - 0.1).max(0.0);
+            eprintln!("Sand PIC ratio: {:.1}", sim.sand_pic_ratio);
         }
 
         // Render mode controls - B cycles through modes
@@ -345,11 +337,7 @@ async fn main() {
             let wx = mx / SCALE;
             let wy = my / SCALE;
 
-            if spawn_mud {
-                sim.spawn_mud(wx, wy, 20.0, 0.0, 3);
-            } else {
-                sim.spawn_water(wx, wy, 20.0, 0.0, 5);
-            }
+            sim.spawn_water(wx, wy, 20.0, 0.0, 5);
         }
 
         // --- UPDATE ---
@@ -364,24 +352,10 @@ async fn main() {
                 // Water (spawn_rate * flow_multiplier per frame)
                 sim.spawn_water(inlet_x, inlet_y, inlet_vx, inlet_vy, spawn_rate * flow_multiplier);
 
-                // Sediments (spawn every N/multiplier frames, 0 = disabled)
-                // Dividing interval by multiplier increases frequency proportionally
-                let effective_mud = mud_rate / flow_multiplier.max(1);
+                // Sand (spawn every N/multiplier frames, 0 = disabled)
                 let effective_sand = sand_rate / flow_multiplier.max(1);
-                let effective_mag = magnetite_rate / flow_multiplier.max(1);
-                let effective_gold = gold_rate / flow_multiplier.max(1);
-
-                if effective_mud > 0 && frame_count % effective_mud as u64 == 0 {
-                    sim.spawn_mud(inlet_x, inlet_y + 3.0, inlet_vx, inlet_vy, 1);
-                }
                 if effective_sand > 0 && frame_count % effective_sand as u64 == 0 {
                     sim.spawn_sand(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
-                }
-                if effective_mag > 0 && frame_count % effective_mag as u64 == 0 {
-                    sim.spawn_magnetite(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
-                }
-                if effective_gold > 0 && frame_count % effective_gold as u64 == 0 {
-                    sim.spawn_gold(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
                 }
             }
 
@@ -500,7 +474,7 @@ async fn main() {
         }
 
         // --- UI ---
-        let (water, mud, sand, magnetite, gold) = sim.particles.count_by_material();
+        let (water, sand) = sim.particles.count_by_material();
 
         // Top status bar
         let mode_str = match render_mode {
@@ -536,21 +510,17 @@ async fn main() {
             10.0, 58.0, 16.0, Color::from_rgba(riffle_color[0], riffle_color[1], riffle_color[2], 255),
         );
         draw_text(
-            &format!("SEDIMENT: mud=1/{} sand=1/{} mag=1/{} gold=1/{}",
-                if mud_rate > 0 { mud_rate.to_string() } else { "off".to_string() },
+            &format!("SAND: 1/{}",
                 if sand_rate > 0 { sand_rate.to_string() } else { "off".to_string() },
-                if magnetite_rate > 0 { magnetite_rate.to_string() } else { "off".to_string() },
-                if gold_rate > 0 { gold_rate.to_string() } else { "off".to_string() },
             ),
             10.0, 74.0, 14.0, Color::from_rgba(255, 215, 0, 200),
         );
 
         // Material counts with slurry percentage
-        let total = water + mud + sand + magnetite + gold;
-        let solids = mud + sand + magnetite + gold;
-        let solids_pct = if total > 0 { (solids as f32 / total as f32) * 100.0 } else { 0.0 };
+        let total = water + sand;
+        let solids_pct = if total > 0 { (sand as f32 / total as f32) * 100.0 } else { 0.0 };
         draw_text(
-            &format!("W:{} M:{} S:{} Mag:{} Au:{} | Solids: {:.1}%", water, mud, sand, magnetite, gold, solids_pct),
+            &format!("Water:{} Sand:{} | Sand: {:.1}%", water, sand, solids_pct),
             10.0, 92.0, 14.0, Color::from_rgba(200, 200, 200, 255),
         );
 
@@ -580,6 +550,12 @@ async fn main() {
             Color::from_rgba(100, 100, 100, 255)
         };
         draw_text(&visc_status, 10.0, 140.0, 14.0, visc_color);
+
+        // Sand PIC ratio
+        draw_text(
+            &format!("SAND PIC: {:.0}% ([/] to adjust)", sim.sand_pic_ratio * 100.0),
+            10.0, 156.0, 14.0, Color::from_rgba(220, 180, 100, 255),
+        );
 
         // Controls - BOTTOM
         draw_text(

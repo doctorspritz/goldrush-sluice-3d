@@ -73,6 +73,13 @@ pub struct FlipSimulation {
     /// Typical values: 0.5-3.0 for visible vortex shedding
     /// Too high: slows entire flow; Too low: no boundary layer separation
     pub viscosity: f32,
+
+    // === Sand Velocity Update ===
+    /// PIC/FLIP ratio for sand particles (0.0 = pure FLIP, 1.0 = pure PIC)
+    /// Higher PIC = sand follows water velocity directly
+    /// Higher FLIP = sand responds to velocity changes, can overshoot
+    /// Recommended: 0.5-0.8 for stable sand transport
+    pub sand_pic_ratio: f32,
 }
 
 impl FlipSimulation {
@@ -113,6 +120,7 @@ impl FlipSimulation {
             // Viscosity for vortex shedding (disabled by default for comparison)
             use_viscosity: false,
             viscosity: 1.0, // Good starting point for Re ~ 300
+            sand_pic_ratio: 0.7, // 70% PIC, 30% FLIP - good balance
         }
     }
 
@@ -199,25 +207,19 @@ impl FlipSimulation {
         self.compute_neighbor_counts();
         let t7 = Instant::now();
 
-        // 7. Apply forces to sediment (drag + buoyancy + hindered settling)
-        // This is proper Lagrangian sediment transport with Richardson-Zaki correction
-        self.apply_sediment_forces(dt);
-
-        // 7b. Near-pressure REMOVED - Clavet SPH inappropriate for FLIP water
+        // 7. Legacy sediment forces DISABLED for Phase 2
+        // Sand now just follows water via FLIP G2P with 0.95 ratio
+        // Two-way coupling happens through mixture density in pressure gradient
+        // self.apply_sediment_forces(dt);
 
         // 8. Advect particles (uses SDF for O(1) collision)
         self.advect_particles(dt);
 
-        // 8b. Update particle states (Suspended ↔ Bedload transitions)
-        self.update_particle_states(dt);
-
-        // 8c. Compute pile heightfield from bedload particles
-        // This must happen AFTER state updates, BEFORE next frame's advection
-        self.compute_pile_heightfield();
-
-        // 8d. Enforce pile constraints on ALL particles
-        // Catches particles that drifted under piles or were at same level when pile formed
-        self.enforce_pile_constraints();
+        // 8b-8d. Legacy bedload system DISABLED for Phase 2
+        // Sand stays in Suspended state, no pile mechanics
+        // self.update_particle_states(dt);
+        // self.compute_pile_heightfield();
+        // self.enforce_pile_constraints();
 
         // Silence unused timing/diagnostic variables (kept for flamegraph profiling)
         let _ = (t0, t1, t2, t3, t4, t5, t6, t7, profile, div_before);
@@ -274,11 +276,12 @@ impl FlipSimulation {
         self.compute_neighbor_counts();
         let t6 = Instant::now();
 
-        self.apply_sediment_forces(dt);
+        // Legacy sediment system DISABLED for Phase 2
+        // self.apply_sediment_forces(dt);
         self.advect_particles(dt);
-        self.update_particle_states(dt);
-        self.compute_pile_heightfield();
-        self.enforce_pile_constraints();
+        // self.update_particle_states(dt);
+        // self.compute_pile_heightfield();
+        // self.enforce_pile_constraints();
         self.particles.remove_out_of_bounds(
             self.grid.width as f32 * self.grid.cell_size,
             self.grid.height as f32 * self.grid.cell_size,
@@ -427,11 +430,10 @@ impl FlipSimulation {
 
                     let idx = self.grid.u_index(ni as usize, nj as usize);
 
-                    // Sand uses linear velocity only (discrete solid, not continuous fluid)
+                    // Sand does NOT contribute velocity to grid - it's carried passively by water
+                    // Two-way coupling happens through mixture density in pressure gradient
                     // Water uses APIC with affine velocity term
-                    if is_sand {
-                        self.u_sum[idx] += vel.x * w;
-                    } else {
+                    if !is_sand {
                         // APIC: offset from particle to grid node (in world coords)
                         let offset = Vec2::new(
                             (ni as f32) * cell_size - pos.x,
@@ -440,8 +442,8 @@ impl FlipSimulation {
                         // Affine velocity contribution: C * offset
                         let affine_vel = c_mat * offset;
                         self.u_sum[idx] += (vel.x + affine_vel.x) * w;
+                        self.u_weight[idx] += w;
                     }
-                    self.u_weight[idx] += w;
 
                     // Volume fraction tracking for two-way coupling
                     if is_sand {
@@ -492,11 +494,10 @@ impl FlipSimulation {
 
                     let idx = self.grid.v_index(ni as usize, nj as usize);
 
-                    // Sand uses linear velocity only (discrete solid, not continuous fluid)
+                    // Sand does NOT contribute velocity to grid - it's carried passively by water
+                    // Two-way coupling happens through mixture density in pressure gradient
                     // Water uses APIC with affine velocity term
-                    if is_sand {
-                        self.v_sum[idx] += vel.y * w;
-                    } else {
+                    if !is_sand {
                         // Offset from particle to grid node (in world coords)
                         let offset = Vec2::new(
                             (ni as f32 + 0.5) * cell_size - pos.x,
@@ -505,8 +506,8 @@ impl FlipSimulation {
                         // Affine velocity contribution
                         let affine_vel = c_mat * offset;
                         self.v_sum[idx] += (vel.y + affine_vel.y) * w;
+                        self.v_weight[idx] += w;
                     }
-                    self.v_weight[idx] += w;
 
                     // Volume fraction tracking for two-way coupling
                     if is_sand {
@@ -565,9 +566,11 @@ impl FlipSimulation {
                     let total_vol = sand_vol + water_vol;
 
                     // Mixture density: ρ_mix = ρ_water * (1 - φ) + ρ_sand * φ
+                    // Capped at 1.5 so water can still push through sand accumulations
                     let rho_mix = if total_vol > 0.0 {
                         let sand_frac = sand_vol / total_vol;
-                        WATER_DENSITY * (1.0 - sand_frac) + SAND_DENSITY * sand_frac
+                        let raw_rho = WATER_DENSITY * (1.0 - sand_frac) + SAND_DENSITY * sand_frac;
+                        raw_rho.min(1.5)  // Cap at 1.5x water density
                     } else {
                         WATER_DENSITY  // Default to water if no particles
                     };
@@ -596,10 +599,11 @@ impl FlipSimulation {
                     let water_vol = self.water_volume_v[v_idx];
                     let total_vol = sand_vol + water_vol;
 
-                    // Mixture density
+                    // Mixture density (capped at 1.5)
                     let rho_mix = if total_vol > 0.0 {
                         let sand_frac = sand_vol / total_vol;
-                        WATER_DENSITY * (1.0 - sand_frac) + SAND_DENSITY * sand_frac
+                        let raw_rho = WATER_DENSITY * (1.0 - sand_frac) + SAND_DENSITY * sand_frac;
+                        raw_rho.min(1.5)
                     } else {
                         WATER_DENSITY
                     };
@@ -751,22 +755,73 @@ impl FlipSimulation {
         let width = self.grid.width;
         let height = self.grid.height;
         let d_inv = apic_d_inverse(cell_size);
+        let sand_pic_ratio = self.sand_pic_ratio;
 
         let grid = &self.grid;
 
         self.particles.list.par_iter_mut().for_each(|particle| {
             let pos = particle.position;
 
-            // Sample velocity from grid using bilinear interpolation
-            let v_grid = grid.sample_velocity(pos);
-
-            // Sand uses FLIP with lower ratio (more responsive to flow changes)
+            // Sand uses high FLIP ratio so it's carried by the flow
             // Skip APIC C matrix update (sand is discrete solid, not continuous fluid)
             if particle.is_sediment() {
-                const SAND_FLIP_RATIO: f32 = 0.8;
-                let grid_delta = v_grid - particle.old_grid_velocity;
-                particle.velocity = particle.velocity + grid_delta * SAND_FLIP_RATIO;
-                particle.old_grid_velocity = v_grid;
+                // CRITICAL: Use B-spline sampling to match store_old_velocities kernel
+                // Bilinear vs B-spline mismatch caused phantom velocity deltas!
+                let v_grid = grid.sample_velocity_bspline(pos);
+                use crate::physics::GRAVITY;
+                use std::sync::atomic::{AtomicU32, Ordering};
+                static DIAG_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+                // Check if sand is in a Fluid cell (has meaningful water velocity to follow)
+                let (ci, cj) = (
+                    (pos.x / cell_size) as usize,
+                    (pos.y / cell_size) as usize,
+                );
+                let cell_idx = cj * width + ci;
+                let cell_type = if cell_idx < grid.cell_type.len() {
+                    grid.cell_type[cell_idx]
+                } else {
+                    CellType::Air
+                };
+
+                if cell_type == CellType::Fluid {
+                    // IN FLUID: Blend between PIC (follow grid) and FLIP (respond to changes)
+                    // Sand should mostly follow the water (PIC), with some FLIP for momentum
+                    // High FLIP causes sand to overshoot when water slows down
+
+                    let old_grid_vel = particle.old_grid_velocity;
+                    let grid_delta = v_grid - old_grid_vel;
+
+                    // PIC: velocity = v_grid
+                    // FLIP: velocity = velocity + delta
+                    // Blend: velocity = PIC_RATIO * v_grid + (1 - PIC_RATIO) * (velocity + delta)
+                    let pic_vel = v_grid;
+                    let flip_vel = particle.velocity + grid_delta;
+                    particle.velocity = sand_pic_ratio * pic_vel + (1.0 - sand_pic_ratio) * flip_vel;
+
+                    particle.old_grid_velocity = v_grid;
+                } else {
+                    // IN AIR: Don't use FLIP (no meaningful water velocity)
+                    // Just maintain current velocity - gravity and settling applied below
+                    // Reset old_grid_velocity so next time we enter fluid, delta is clean
+                    particle.old_grid_velocity = Vec2::ZERO;
+                }
+
+                // DIAGNOSTIC: Only print if sand has significant negative velocity
+                let new_vel = particle.velocity;
+                let count = DIAG_COUNTER.fetch_add(1, Ordering::Relaxed);
+                if new_vel.x < -10.0 && count < 20 {
+                    eprintln!(
+                        "NEG SAND: pos=({:.0},{:.0}) vel=({:.1},{:.1}) v_grid=({:.1},{:.1})",
+                        pos.x, pos.y, new_vel.x, new_vel.y, v_grid.x, v_grid.y
+                    );
+                }
+
+                // Simple settling: sand is denser than water, so it settles
+                // Settling velocity based on density difference: (ρ_sand - ρ_water) / ρ_sand * g * dt
+                // For sand (2.65) vs water (1.0): factor ≈ 0.62
+                const SETTLING_FACTOR: f32 = 0.62;
+                particle.velocity.y += GRAVITY * SETTLING_FACTOR * dt;
                 return;
             }
 
@@ -1105,11 +1160,12 @@ impl FlipSimulation {
     /// - Shear deadzone shields bedload particles from small velocity fluctuations
     fn update_particle_states(&mut self, dt: f32) {
         // Thresholds in normalized units (cells-per-frame)
-        const JAM_THRESHOLD: f32 = 0.15;
-        const UNJAM_THRESHOLD: f32 = 0.40;
-        const SHEAR_DEADZONE: f32 = 0.08;
-        const MIN_JAM_TIME: f32 = 0.20;
-        const JAM_VEL_MAX: f32 = 0.05;
+        // Lowered to make sand easier to re-entrain by water flow
+        const JAM_THRESHOLD: f32 = 0.08;    // Was 0.15 - slower before jamming
+        const UNJAM_THRESHOLD: f32 = 0.12;  // Was 0.40 - easier to unjam
+        const SHEAR_DEADZONE: f32 = 0.02;   // Was 0.08 - more responsive
+        const MIN_JAM_TIME: f32 = 0.10;     // Was 0.20 - faster unjam
+        const JAM_VEL_MAX: f32 = 0.03;      // Was 0.05 - stricter jam
 
         // Per-material shear resistance multiplier
         // Higher = harder to entrain (requires more shear)
@@ -1917,18 +1973,18 @@ impl FlipSimulation {
         self.build_spatial_hash();
         self.compute_neighbor_counts();
 
-        // 8. Sediment forces
-        self.apply_sediment_forces(dt);
+        // 8. Legacy sediment forces DISABLED for Phase 2
+        // self.apply_sediment_forces(dt);
         diagnostics.push(("after_sediment", measure(self, "after_sediment")));
 
         // 9. Advection
         self.advect_particles(dt);
         diagnostics.push(("after_advect", measure(self, "after_advect")));
 
-        // 10. State updates & pile
-        self.update_particle_states(dt);
-        self.compute_pile_heightfield();
-        self.enforce_pile_constraints();
+        // 10. Legacy state/pile DISABLED for Phase 2
+        // self.update_particle_states(dt);
+        // self.compute_pile_heightfield();
+        // self.enforce_pile_constraints();
         diagnostics.push(("final", measure(self, "final")));
 
         // Cleanup
