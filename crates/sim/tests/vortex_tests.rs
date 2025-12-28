@@ -509,3 +509,77 @@ fn test_kinetic_energy_stability() {
     let final_ke = *ke_history.last().unwrap();
     assert!(final_ke > 0.0, "Final kinetic energy should be positive");
 }
+
+/// V11: Vorticity sampling test
+/// Verify that sample_vorticity() correctly interpolates vorticity values
+#[test]
+fn test_vorticity_sampling() {
+    const WIDTH: usize = 16;
+    const HEIGHT: usize = 16;
+    const CELL_SIZE: f32 = 4.0;
+
+    let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+
+    // Initialize solid rotation - produces vorticity proportional to omega
+    // Note: Discretization may scale the actual value
+    let omega = 0.5;
+    sim.initialize_solid_rotation(omega);
+    sim.grid.compute_vorticity();
+
+    // Sample at cell centers - should get non-zero positive vorticity (CCW rotation)
+    let center_x = WIDTH as f32 * CELL_SIZE / 2.0;
+    let center_y = HEIGHT as f32 * CELL_SIZE / 2.0;
+
+    let sampled = sim.grid.sample_vorticity(glam::Vec2::new(center_x, center_y));
+
+    // Vorticity should be positive (CCW rotation) and non-zero
+    assert!(
+        sampled > 0.0,
+        "Solid rotation should have positive vorticity, got {:.2}",
+        sampled
+    );
+    assert!(
+        !sampled.is_nan(),
+        "Vorticity should not be NaN"
+    );
+
+    // Sample at different positions - should be similar (uniform rotation)
+    let pos1 = glam::Vec2::new(center_x + 10.0, center_y);
+    let pos2 = glam::Vec2::new(center_x, center_y + 10.0);
+    let pos3 = glam::Vec2::new(center_x - 10.0, center_y - 10.0);
+
+    let v1 = sim.grid.sample_vorticity(pos1);
+    let v2 = sim.grid.sample_vorticity(pos2);
+    let v3 = sim.grid.sample_vorticity(pos3);
+
+    // All samples should be roughly similar (uniform rotation in bulk)
+    // Allow larger tolerance due to boundary effects
+    let mean = (sampled + v1 + v2 + v3) / 4.0;
+    let max_deviation = [sampled, v1, v2, v3]
+        .iter()
+        .map(|v| (v - mean).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_deviation < mean * 0.5 + 1.0, // Within 50% of mean + small absolute tolerance
+        "Vorticity should be roughly uniform: center={:.2}, v1={:.2}, v2={:.2}, v3={:.2}",
+        sampled,
+        v1,
+        v2,
+        v3
+    );
+
+    // Verify interpolation - sample between cell centers
+    let between_pos = glam::Vec2::new(
+        center_x + CELL_SIZE * 0.25,
+        center_y + CELL_SIZE * 0.25,
+    );
+    let v_between = sim.grid.sample_vorticity(between_pos);
+
+    // Should be smooth (not NaN, roughly in expected range)
+    assert!(!v_between.is_nan(), "Interpolated vorticity should not be NaN");
+    assert!(
+        v_between > 0.0,
+        "Interpolated vorticity should be positive for CCW rotation: got {:.2}",
+        v_between
+    );
+}

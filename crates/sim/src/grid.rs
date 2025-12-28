@@ -509,6 +509,34 @@ impl Grid {
         velocity
     }
 
+    /// Sample vorticity at position using bilinear interpolation
+    /// Vorticity is stored at cell centers (same as pressure, cell_type)
+    pub fn sample_vorticity(&self, pos: Vec2) -> f32 {
+        // Cell center coordinates: center of cell (i,j) is at ((i+0.5)*h, (j+0.5)*h)
+        // So to get cell-space coords for interpolation: x/h - 0.5
+        let x = pos.x / self.cell_size - 0.5;
+        let y = pos.y / self.cell_size - 0.5;
+
+        let i0 = (x.floor() as i32).clamp(0, self.width as i32 - 2) as usize;
+        let j0 = (y.floor() as i32).clamp(0, self.height as i32 - 2) as usize;
+        let i1 = i0 + 1;
+        let j1 = j0 + 1;
+
+        let tx = (x - i0 as f32).clamp(0.0, 1.0);
+        let ty = (y - j0 as f32).clamp(0.0, 1.0);
+
+        // Bilinear interpolation of vorticity
+        let v00 = self.vorticity[j0 * self.width + i0];
+        let v10 = self.vorticity[j0 * self.width + i1];
+        let v01 = self.vorticity[j1 * self.width + i0];
+        let v11 = self.vorticity[j1 * self.width + i1];
+
+        let v0 = v00 * (1.0 - tx) + v10 * tx;
+        let v1 = v01 * (1.0 - tx) + v11 * tx;
+
+        v0 * (1.0 - ty) + v1 * ty
+    }
+
     /// Sample U component (staggered - sample at left edges)
     fn sample_u(&self, pos: Vec2) -> f32 {
         // U is stored at (i, j+0.5) in cell-space

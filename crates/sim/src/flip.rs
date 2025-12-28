@@ -817,11 +817,47 @@ impl FlipSimulation {
                     );
                 }
 
-                // Simple settling: sand is denser than water, so it settles
-                // Settling velocity based on density difference: (ρ_sand - ρ_water) / ρ_sand * g * dt
-                // For sand (2.65) vs water (1.0): factor ≈ 0.62
-                const SETTLING_FACTOR: f32 = 0.62;
-                particle.velocity.y += GRAVITY * SETTLING_FACTOR * dt;
+                // ========== VORTICITY-BASED SUSPENSION ==========
+                // High vorticity regions have turbulent eddies that carry particles upward
+                // This creates realistic suspension where sand swirls in fast-moving water
+                // instead of just dragging along the bottom.
+                //
+                // Physics: Rouse number P = ws / (κ * u*) determines suspension
+                // - P < 2.5: suspended load (turbulence can support particle)
+                // - P > 2.5: bedload (particle settles despite turbulence)
+                // We use vorticity magnitude as a proxy for turbulence intensity.
+
+                // Tunable parameters for vorticity suspension
+                const SETTLING_FACTOR: f32 = 0.62;     // Base settling (unchanged)
+                const VORT_LIFT_SCALE: f32 = 0.3;      // How much vorticity counters settling
+                const VORT_SWIRL_SCALE: f32 = 0.05;    // How much vorticity adds tangential motion
+
+                // Sample vorticity at particle position
+                let vorticity = grid.sample_vorticity(pos);
+                let vort_magnitude = vorticity.abs();
+
+                // 1. LIFT: Reduce settling in high-vorticity regions
+                // Higher vorticity → less settling (particle stays suspended)
+                // Cap lift_factor at 1.0 to prevent particles from rising unnaturally
+                let lift_factor = (vort_magnitude * VORT_LIFT_SCALE).min(1.0);
+                let effective_settling = SETTLING_FACTOR * (1.0 - lift_factor);
+
+                // 2. SWIRL: Add velocity perpendicular to particle motion
+                // Vorticity ω creates rotation - particles should follow eddies
+                // Perpendicular to velocity: (vx, vy) → (-vy, vx)
+                let speed = particle.velocity.length();
+                let swirl_velocity = if speed > 0.1 {
+                    let v_normalized = particle.velocity / speed;
+                    let v_perp = Vec2::new(-v_normalized.y, v_normalized.x);
+                    // Signed vorticity: positive ω → CCW rotation → add CCW perpendicular
+                    v_perp * vorticity * VORT_SWIRL_SCALE
+                } else {
+                    Vec2::ZERO
+                };
+
+                // Apply modified settling + swirl
+                particle.velocity.y += GRAVITY * effective_settling * dt;
+                particle.velocity += swirl_velocity * dt;
                 return;
             }
 
