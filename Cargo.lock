@@ -369,6 +369,7 @@ name = "sim"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "macroquad",
  "rand",
  "rand_chacha",
  "rayon",

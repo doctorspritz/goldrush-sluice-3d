@@ -11,3 +11,4 @@ rayon = "1.8"
 
 [dev-dependencies]
 rand_chacha = "0.3"
+macroquad = "0.4"
