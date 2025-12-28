@@ -1673,7 +1673,11 @@ impl FlipSimulation {
     /// This fixes gaps and artifacts in sediment piles.
     fn collapse_deposited_sediment(&mut self) {
         const MAX_ITERATIONS: usize = 50;
-        const TAN_REPOSE: f32 = 0.577; // tan(30°) - angle of repose for sand
+        // Height difference (in cells) before avalanche triggers
+        // Higher = steeper piles allowed. 2.0 means 2 cells taller than neighbor before spreading
+        const MAX_HEIGHT_DIFF: f32 = 2.0;
+        // Minimum pile height before avalanche logic applies (let small piles accumulate)
+        const MIN_PILE_HEIGHT: usize = 3;
 
         let width = self.grid.width;
         let height = self.grid.height;
@@ -1703,59 +1707,61 @@ impl FlipSimulation {
                             target_j += 1;
                         }
 
-                        // Collapse: move cell down
-                        self.grid.clear_deposited(i, j);
+                        // Only collapse if we have a valid landing spot
                         if target_j < height && !self.grid.is_solid(i, target_j) {
+                            self.grid.clear_deposited(i, j);
                             self.grid.set_deposited(i, target_j);
                             total_collapses += 1;
+                            cells_changed = true;
                         }
-                        cells_changed = true;
+                        // If no valid landing spot, leave the cell where it is
                     }
                 }
             }
 
-            // Phase 2: Angle of repose check (bottom-up)
-            // Move material from steep piles to lower neighbors
-            for j in (1..height - 1).rev() {
-                for i in 1..width - 1 {
-                    if !self.grid.is_deposited(i, j) {
-                        continue;
-                    }
+            // Phase 2: Angle of repose check
+            // Move material from steep piles to the LOWEST neighbor only
+            // Process each column once, not each cell
+            for i in 1..width - 1 {
+                let my_height = self.count_column_deposited(i);
 
-                    // Count deposited cells in this column vs neighbors
-                    let my_col_height = self.count_column_deposited(i);
+                // Skip if pile is too small (let it accumulate first)
+                if my_height < MIN_PILE_HEIGHT {
+                    continue;
+                }
 
-                    // Check left neighbor
-                    if i > 1 {
-                        let left_height = self.count_column_deposited(i - 1);
-                        if my_col_height as f32 - left_height as f32 > TAN_REPOSE {
-                            // Too steep - avalanche one cell left
-                            if let Some(top_j) = self.find_top_deposited_in_column(i) {
-                                let land_j = self.find_landing_j(i - 1);
-                                if land_j < height && !self.grid.is_solid(i - 1, land_j) {
-                                    self.grid.clear_deposited(i, top_j);
-                                    self.grid.set_deposited(i - 1, land_j);
-                                    total_avalanches += 1;
-                                    cells_changed = true;
-                                }
-                            }
-                        }
-                    }
+                // Check both neighbors, avalanche to the LOWEST one only
+                let left_height = if i > 1 {
+                    self.count_column_deposited(i - 1)
+                } else {
+                    usize::MAX // Can't avalanche left at edge
+                };
 
-                    // Check right neighbor
-                    if i < width - 2 {
-                        let right_height = self.count_column_deposited(i + 1);
-                        if my_col_height as f32 - right_height as f32 > TAN_REPOSE {
-                            // Too steep - avalanche one cell right
-                            if let Some(top_j) = self.find_top_deposited_in_column(i) {
-                                let land_j = self.find_landing_j(i + 1);
-                                if land_j < height && !self.grid.is_solid(i + 1, land_j) {
-                                    self.grid.clear_deposited(i, top_j);
-                                    self.grid.set_deposited(i + 1, land_j);
-                                    total_avalanches += 1;
-                                    cells_changed = true;
-                                }
-                            }
+                let right_height = if i < width - 2 {
+                    self.count_column_deposited(i + 1)
+                } else {
+                    usize::MAX // Can't avalanche right at edge
+                };
+
+                // Find the lowest neighbor
+                let (target_i, target_height) = if left_height <= right_height {
+                    (i - 1, left_height)
+                } else {
+                    (i + 1, right_height)
+                };
+
+                // Check if height difference exceeds threshold
+                if target_height < usize::MAX
+                    && my_height as f32 - target_height as f32 > MAX_HEIGHT_DIFF
+                {
+                    // Avalanche one cell to the lower neighbor
+                    if let Some(top_j) = self.find_top_deposited_in_column(i) {
+                        let land_j = self.find_landing_j(target_i);
+                        if land_j < height && !self.grid.is_solid(target_i, land_j) {
+                            self.grid.clear_deposited(i, top_j);
+                            self.grid.set_deposited(target_i, land_j);
+                            total_avalanches += 1;
+                            cells_changed = true;
                         }
                     }
                 }
@@ -1763,18 +1769,13 @@ impl FlipSimulation {
         }
 
         // Update SDF if anything changed
-        if iteration > 1 {
+        if total_collapses > 0 || total_avalanches > 0 {
             self.grid.compute_sdf();
             self.grid.compute_bed_heights();
-
-            // Debug output
-            if self.frame % 60 == 0 && (total_collapses > 0 || total_avalanches > 0) {
-                eprintln!(
-                    "[Collapse] {} iterations, {} collapses, {} avalanches",
-                    iteration, total_collapses, total_avalanches
-                );
-            }
         }
+
+        // Suppress unused variable warnings in release builds
+        let _ = (iteration, total_collapses, total_avalanches);
     }
 
     /// Count deposited cells in a column (from bottom up)
