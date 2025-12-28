@@ -7,4 +7,3 @@ edition = "2021"
 macroquad = "0.4"
 glam = { workspace = true }
 sim = { path = "../sim" }
-dfsph = { path = "../dfsph" }
