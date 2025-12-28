@@ -54,10 +54,13 @@ pub struct FlipSimulation {
     // pile_height[x] = top of bedload pile at column x (in world coordinates)
     pub pile_height: Vec<f32>,
 
-    // === Deposition System ===
-    // Tracks accumulated sediment mass per grid cell
-    // When mass exceeds threshold, cell converts to solid (changes SDF)
-    deposited_mass: Vec<f32>,
+    // === Deposition System (Multi-Material) ===
+    // Tracks accumulated sediment mass per grid cell BY MATERIAL TYPE
+    // When total mass exceeds threshold, cell converts to solid with composition
+    deposited_mass_mud: Vec<f32>,
+    deposited_mass_sand: Vec<f32>,
+    deposited_mass_magnetite: Vec<f32>,
+    deposited_mass_gold: Vec<f32>,
 
     // === Sediment Physics Feature Flags ===
     // Toggle these to compare old vs new physics behavior
@@ -117,8 +120,11 @@ impl FlipSimulation {
             water_neighbor_counts: vec![0; cell_count * 9],
             // Pile heightfield for stacking (one entry per column)
             pile_height: vec![f32::INFINITY; width],
-            // Deposition mass accumulator (one entry per grid cell)
-            deposited_mass: vec![0.0; cell_count],
+            // Deposition mass accumulators per material type
+            deposited_mass_mud: vec![0.0; cell_count],
+            deposited_mass_sand: vec![0.0; cell_count],
+            deposited_mass_magnetite: vec![0.0; cell_count],
+            deposited_mass_gold: vec![0.0; cell_count],
             // Sediment physics feature flags
             use_ferguson_church: true,
             use_hindered_settling: false, // Disabled: neighbor count mismatch crushes settling to 6%
@@ -1395,13 +1401,13 @@ impl FlipSimulation {
         }
     }
 
-    /// Step 8f: Deposit settled sediment onto terrain
+    /// Step 8f: Deposit settled sediment onto terrain (Multi-Material)
     ///
-    /// Detects sand particles that have truly settled (very low velocity,
+    /// Detects sediment particles that have truly settled (very low velocity,
     /// in dense regions near floor) and converts cells to solid when enough
-    /// particles accumulate. Works with DEM settling for proper pile formation.
+    /// particles accumulate. Tracks material composition for mixed beds.
     ///
-    /// This implements deposition without re-entrainment (Phase 1).
+    /// This implements deposition with material tracking for multi-sediment support.
     fn deposit_settled_sediment(&mut self, dt: f32) {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1413,15 +1419,24 @@ impl FlipSimulation {
         // Minimum neighbors for "packed" state (prevents isolated deposits)
         const MIN_NEIGHBORS: u16 = 3;
         // Mass required to convert one cell to solid
-        const MASS_PER_CELL: usize = 4; // Tighter packing with DEM
+        const MASS_PER_CELL: f32 = 4.0; // Tighter packing with DEM
 
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
         let height = self.grid.height;
         let v_scale = cell_size / dt; // Convert cells/frame to velocity units
 
-        // Atomic counters for particle count per cell (parallel-safe)
-        let particle_counts: Vec<AtomicUsize> = (0..width * height)
+        // Atomic counters for particle count per cell PER MATERIAL TYPE (parallel-safe)
+        let mud_counts: Vec<AtomicUsize> = (0..width * height)
+            .map(|_| AtomicUsize::new(0))
+            .collect();
+        let sand_counts: Vec<AtomicUsize> = (0..width * height)
+            .map(|_| AtomicUsize::new(0))
+            .collect();
+        let magnetite_counts: Vec<AtomicUsize> = (0..width * height)
+            .map(|_| AtomicUsize::new(0))
+            .collect();
+        let gold_counts: Vec<AtomicUsize> = (0..width * height)
             .map(|_| AtomicUsize::new(0))
             .collect();
 
@@ -1433,7 +1448,7 @@ impl FlipSimulation {
         let grid = &self.grid;
         let neighbor_counts = &self.neighbor_counts;
 
-        // Phase 1: Identify settled particles and count per cell
+        // Phase 1: Identify settled particles and count per cell BY MATERIAL
         self.particles
             .list
             .par_iter()
@@ -1479,33 +1494,71 @@ impl FlipSimulation {
                     return; // Not packed enough
                 }
 
-                // Count this particle and mark for potential removal
-                particle_counts[cell_idx].fetch_add(1, Ordering::Relaxed);
+                // Count this particle BY MATERIAL TYPE and mark for potential removal
+                match particle.material {
+                    ParticleMaterial::Mud => {
+                        mud_counts[cell_idx].fetch_add(1, Ordering::Relaxed);
+                    }
+                    ParticleMaterial::Sand => {
+                        sand_counts[cell_idx].fetch_add(1, Ordering::Relaxed);
+                    }
+                    ParticleMaterial::Magnetite => {
+                        magnetite_counts[cell_idx].fetch_add(1, Ordering::Relaxed);
+                    }
+                    ParticleMaterial::Gold => {
+                        gold_counts[cell_idx].fetch_add(1, Ordering::Relaxed);
+                    }
+                    ParticleMaterial::Water => {} // Not sediment, should not reach here
+                }
                 remove_flags[idx].store(true, Ordering::Relaxed);
             });
 
-        // Phase 2: Convert cells with enough particles to solid
+        // Phase 2: Convert cells with enough particles to solid (with composition)
         // Collect which cells to convert (to avoid borrow issues)
-        let mut cells_to_convert = Vec::new();
+        let mut cells_to_convert: Vec<(usize, usize, usize, f32, f32, f32, f32)> = Vec::new();
         for j in 0..height {
             for i in 0..width {
                 let idx = j * width + i;
-                let count = particle_counts[idx].load(Ordering::Relaxed);
 
-                // Add this frame's count to accumulated mass
-                self.deposited_mass[idx] += count as f32;
+                // Add this frame's counts to accumulated mass
+                let mud_count = mud_counts[idx].load(Ordering::Relaxed) as f32;
+                let sand_count = sand_counts[idx].load(Ordering::Relaxed) as f32;
+                let magnetite_count = magnetite_counts[idx].load(Ordering::Relaxed) as f32;
+                let gold_count = gold_counts[idx].load(Ordering::Relaxed) as f32;
 
-                // Check if we have enough to solidify
-                if self.deposited_mass[idx] >= MASS_PER_CELL as f32 {
-                    cells_to_convert.push((i, j, idx));
-                    self.deposited_mass[idx] -= MASS_PER_CELL as f32;
+                self.deposited_mass_mud[idx] += mud_count;
+                self.deposited_mass_sand[idx] += sand_count;
+                self.deposited_mass_magnetite[idx] += magnetite_count;
+                self.deposited_mass_gold[idx] += gold_count;
+
+                // Check if we have enough total mass to solidify
+                let total_mass = self.deposited_mass_mud[idx]
+                    + self.deposited_mass_sand[idx]
+                    + self.deposited_mass_magnetite[idx]
+                    + self.deposited_mass_gold[idx];
+
+                if total_mass >= MASS_PER_CELL {
+                    // Calculate composition fractions
+                    let mud_frac = self.deposited_mass_mud[idx] / total_mass;
+                    let sand_frac = self.deposited_mass_sand[idx] / total_mass;
+                    let magnetite_frac = self.deposited_mass_magnetite[idx] / total_mass;
+                    let gold_frac = self.deposited_mass_gold[idx] / total_mass;
+
+                    cells_to_convert.push((i, j, idx, mud_frac, sand_frac, magnetite_frac, gold_frac));
+
+                    // Subtract consumed mass (proportionally)
+                    let consume_ratio = MASS_PER_CELL / total_mass;
+                    self.deposited_mass_mud[idx] *= 1.0 - consume_ratio;
+                    self.deposited_mass_sand[idx] *= 1.0 - consume_ratio;
+                    self.deposited_mass_magnetite[idx] *= 1.0 - consume_ratio;
+                    self.deposited_mass_gold[idx] *= 1.0 - consume_ratio;
                 }
             }
         }
 
-        // Convert cells to deposited (marks as solid + deposited for visualization)
-        for (i, j, _idx) in &cells_to_convert {
-            self.grid.set_deposited(*i, *j);
+        // Convert cells to deposited with composition
+        for (i, j, _idx, mud, sand, magnetite, gold) in &cells_to_convert {
+            self.grid.set_deposited_with_composition(*i, *j, *mud, *sand, *magnetite, *gold);
         }
 
         let cells_converted = cells_to_convert.len();
@@ -1514,7 +1567,7 @@ impl FlipSimulation {
         if cells_converted > 0 {
             // Build set of converted cell indices for fast lookup
             let converted_set: std::collections::HashSet<usize> =
-                cells_to_convert.iter().map(|(_, _, idx)| *idx).collect();
+                cells_to_convert.iter().map(|(_, _, idx, _, _, _, _)| *idx).collect();
 
             // Remove particles that were marked AND are in converted cells
             let particles = &mut self.particles.list;
@@ -1543,20 +1596,21 @@ impl FlipSimulation {
         // Debug output (every 120 frames)
         if self.frame % 120 == 0 && cells_converted > 0 {
             eprintln!(
-                "[Deposition] Converted {} cells to solid",
+                "[Deposition] Converted {} cells to solid (multi-material)",
                 cells_converted
             );
         }
     }
 
-    /// Step 8g: Entrain deposited sediment when flow velocity exceeds threshold
+    /// Step 8g: Entrain deposited sediment when flow velocity exceeds threshold (Multi-Material)
     ///
     /// Checks each deposited cell for high velocity flow above it.
-    /// If velocity exceeds critical threshold, probabilistically removes
-    /// the cell and spawns sand particles to re-enter the flow.
+    /// Uses composition-weighted Shields parameter for entrainment threshold.
+    /// Spawns particles matching the cell's material composition.
     fn entrain_deposited_sediment(&mut self, dt: f32) {
         // === Thresholds ===
-        const CRITICAL_VELOCITY: f32 = 0.5; // cells/frame - any flow erodes
+        const BASE_CRITICAL_VELOCITY: f32 = 0.5; // cells/frame for sand (Shields = 0.045)
+        const BASE_SHIELDS: f32 = 0.045; // Reference Shields for sand
         const BASE_ENTRAINMENT_RATE: f32 = 1.0; // probability scaling - max
         const MAX_PROBABILITY: f32 = 0.95; // cap per frame - nearly instant
         const PARTICLES_PER_CELL: usize = 4; // matches MASS_PER_CELL
@@ -1566,19 +1620,34 @@ impl FlipSimulation {
         let height = self.grid.height;
         let v_scale = cell_size / dt; // Convert to cells/frame
 
-        let mut cells_to_clear: Vec<(usize, usize)> = Vec::new();
-        let mut particles_to_spawn: Vec<(Vec2, Vec2)> = Vec::new(); // (position, velocity)
+        // Store cells and their compositions for spawning
+        struct CellToEntrain {
+            i: usize,
+            j: usize,
+            mud_frac: f32,
+            sand_frac: f32,
+            magnetite_frac: f32,
+            gold_frac: f32,
+            vel_above: Vec2,
+        }
+        let mut cells_to_clear: Vec<CellToEntrain> = Vec::new();
 
         let mut rng = rand::thread_rng();
 
         // Iterate deposited cells
         for j in 1..height - 1 {
-            // Skip boundary rows
             for i in 1..width - 1 {
-                // Skip boundary columns
                 if !self.grid.is_deposited(i, j) {
                     continue;
                 }
+
+                // Get cell composition for Shields-weighted critical velocity
+                let composition = self.grid.deposited[self.grid.cell_index(i, j)];
+                let effective_shields = composition.effective_shields_critical();
+
+                // Scale critical velocity by Shields ratio
+                // Higher Shields = harder to entrain = need faster velocity
+                let critical_velocity = BASE_CRITICAL_VELOCITY * (effective_shields / BASE_SHIELDS);
 
                 // Sample velocity just above the cell
                 let sample_pos = Vec2::new(
@@ -1588,12 +1657,12 @@ impl FlipSimulation {
                 let vel_above = self.grid.sample_velocity(sample_pos);
                 let speed = vel_above.length() / v_scale; // cells/frame
 
-                if speed <= CRITICAL_VELOCITY {
-                    continue; // Not fast enough
+                if speed <= critical_velocity {
+                    continue; // Not fast enough for this material
                 }
 
                 // Compute entrainment probability
-                let excess_ratio = speed / CRITICAL_VELOCITY - 1.0;
+                let excess_ratio = speed / critical_velocity - 1.0;
                 let probability = (BASE_ENTRAINMENT_RATE * excess_ratio).min(MAX_PROBABILITY);
 
                 // Stochastic check
@@ -1604,7 +1673,6 @@ impl FlipSimulation {
                 // Check support: don't entrain if it would leave floating cells above
                 let has_deposit_above = j > 0 && self.grid.is_deposited(i, j - 1);
                 if has_deposit_above {
-                    // Check if there's lateral support for the cell above
                     let left_support = i > 0 && self.grid.is_solid(i - 1, j - 1);
                     let right_support = i < width - 1 && self.grid.is_solid(i + 1, j - 1);
                     if !left_support && !right_support {
@@ -1612,42 +1680,85 @@ impl FlipSimulation {
                     }
                 }
 
-                // Mark for removal
-                cells_to_clear.push((i, j));
-
-                // Queue particle spawns
-                let cell_center = Vec2::new(
-                    (i as f32 + 0.5) * cell_size,
-                    (j as f32 + 0.5) * cell_size,
-                );
-
-                for _ in 0..PARTICLES_PER_CELL {
-                    // Jitter position within cell
-                    let jitter = Vec2::new(
-                        (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
-                        (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
-                    );
-                    let pos = cell_center + jitter;
-
-                    // Initial velocity from grid + slight upward lift
-                    let vel = vel_above * 0.8 + Vec2::new(0.0, -2.0 * v_scale);
-
-                    particles_to_spawn.push((pos, vel));
-                }
+                // Store cell info for entrainment
+                cells_to_clear.push(CellToEntrain {
+                    i,
+                    j,
+                    mud_frac: composition.mud_fraction,
+                    sand_frac: composition.sand_fraction,
+                    magnetite_frac: composition.magnetite_fraction,
+                    gold_frac: composition.gold_fraction,
+                    vel_above,
+                });
             }
         }
 
-        // Clear cells
-        for (i, j) in &cells_to_clear {
-            self.grid.clear_deposited(*i, *j);
-            // Reset accumulated mass for this cell
-            let idx = *j * width + *i;
-            self.deposited_mass[idx] = 0.0;
-        }
+        // Clear cells and spawn particles with correct material types
+        for cell in &cells_to_clear {
+            self.grid.clear_deposited(cell.i, cell.j);
 
-        // Spawn particles
-        for (pos, vel) in &particles_to_spawn {
-            self.particles.spawn_sand(pos.x, pos.y, vel.x, vel.y);
+            // Reset accumulated mass for this cell
+            let idx = cell.j * width + cell.i;
+            self.deposited_mass_mud[idx] = 0.0;
+            self.deposited_mass_sand[idx] = 0.0;
+            self.deposited_mass_magnetite[idx] = 0.0;
+            self.deposited_mass_gold[idx] = 0.0;
+
+            // Spawn particles proportional to composition
+            let cell_center = Vec2::new(
+                (cell.i as f32 + 0.5) * cell_size,
+                (cell.j as f32 + 0.5) * cell_size,
+            );
+
+            // Calculate how many of each material to spawn
+            let num_mud = (PARTICLES_PER_CELL as f32 * cell.mud_frac).round() as usize;
+            let num_sand = (PARTICLES_PER_CELL as f32 * cell.sand_frac).round() as usize;
+            let num_magnetite = (PARTICLES_PER_CELL as f32 * cell.magnetite_frac).round() as usize;
+            let num_gold = (PARTICLES_PER_CELL as f32 * cell.gold_frac).round() as usize;
+
+            // Spawn mud particles
+            for _ in 0..num_mud {
+                let jitter = Vec2::new(
+                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
+                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
+                );
+                let pos = cell_center + jitter;
+                let vel = cell.vel_above * 0.8 + Vec2::new(0.0, -2.0 * v_scale);
+                self.particles.spawn_mud(pos.x, pos.y, vel.x, vel.y);
+            }
+
+            // Spawn sand particles
+            for _ in 0..num_sand {
+                let jitter = Vec2::new(
+                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
+                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
+                );
+                let pos = cell_center + jitter;
+                let vel = cell.vel_above * 0.8 + Vec2::new(0.0, -2.0 * v_scale);
+                self.particles.spawn_sand(pos.x, pos.y, vel.x, vel.y);
+            }
+
+            // Spawn magnetite (black sand) particles
+            for _ in 0..num_magnetite {
+                let jitter = Vec2::new(
+                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
+                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
+                );
+                let pos = cell_center + jitter;
+                let vel = cell.vel_above * 0.8 + Vec2::new(0.0, -2.0 * v_scale);
+                self.particles.spawn_magnetite(pos.x, pos.y, vel.x, vel.y);
+            }
+
+            // Spawn gold particles
+            for _ in 0..num_gold {
+                let jitter = Vec2::new(
+                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
+                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
+                );
+                let pos = cell_center + jitter;
+                let vel = cell.vel_above * 0.8 + Vec2::new(0.0, -2.0 * v_scale);
+                self.particles.spawn_gold(pos.x, pos.y, vel.x, vel.y);
+            }
         }
 
         // Update SDF if terrain changed
@@ -1658,9 +1769,8 @@ impl FlipSimulation {
             // Debug output
             if self.frame % 60 == 0 {
                 eprintln!(
-                    "[Entrainment] Eroded {} cells, spawned {} particles",
-                    cells_to_clear.len(),
-                    particles_to_spawn.len()
+                    "[Entrainment] Eroded {} cells (composition-weighted)",
+                    cells_to_clear.len()
                 );
             }
         }
@@ -1671,6 +1781,7 @@ impl FlipSimulation {
     /// Ensures deposited cells have support underneath (won't float) and
     /// spread according to angle of repose (no steep cliffs).
     /// This fixes gaps and artifacts in sediment piles.
+    /// Preserves material composition when moving cells.
     fn collapse_deposited_sediment(&mut self) {
         const MAX_ITERATIONS: usize = 50;
         // Height difference (in cells) before avalanche triggers
@@ -1709,8 +1820,17 @@ impl FlipSimulation {
 
                         // Only collapse if we have a valid landing spot
                         if target_j < height && !self.grid.is_solid(i, target_j) {
+                            // Preserve composition when moving
+                            let source_idx = self.grid.cell_index(i, j);
+                            let composition = self.grid.deposited[source_idx];
                             self.grid.clear_deposited(i, j);
-                            self.grid.set_deposited(i, target_j);
+                            self.grid.set_deposited_with_composition(
+                                i, target_j,
+                                composition.mud_fraction,
+                                composition.sand_fraction,
+                                composition.magnetite_fraction,
+                                composition.gold_fraction,
+                            );
                             total_collapses += 1;
                             cells_changed = true;
                         }
@@ -1758,8 +1878,17 @@ impl FlipSimulation {
                     if let Some(top_j) = self.find_top_deposited_in_column(i) {
                         let land_j = self.find_landing_j(target_i);
                         if land_j < height && !self.grid.is_solid(target_i, land_j) {
+                            // Preserve composition when avalanching
+                            let source_idx = self.grid.cell_index(i, top_j);
+                            let composition = self.grid.deposited[source_idx];
                             self.grid.clear_deposited(i, top_j);
-                            self.grid.set_deposited(target_i, land_j);
+                            self.grid.set_deposited_with_composition(
+                                target_i, land_j,
+                                composition.mud_fraction,
+                                composition.sand_fraction,
+                                composition.magnetite_fraction,
+                                composition.gold_fraction,
+                            );
                             total_avalanches += 1;
                             cells_changed = true;
                         }
@@ -1799,7 +1928,7 @@ impl FlipSimulation {
         None
     }
 
-    /// Find where a cell would land in a column (lowest non-solid position with support)
+    /// Find landing j position for a falling/avalanching cell
     fn find_landing_j(&self, i: usize) -> usize {
         // Start from bottom and find first empty cell with support below
         for j in (0..self.grid.height).rev() {
@@ -1834,10 +1963,14 @@ impl FlipSimulation {
 
         // Per-material shear resistance multiplier
         // Higher = harder to entrain (requires more shear)
+        // Relative to sand's Shields parameter (0.045)
         fn material_shear_factor(mat: ParticleMaterial) -> f32 {
             match mat {
-                ParticleMaterial::Sand => 1.0,
-                ParticleMaterial::Water => 1.0, // N/A for water
+                ParticleMaterial::Water => 1.0,     // N/A for water
+                ParticleMaterial::Mud => 0.67,      // Shields 0.03 / 0.045 - easier to entrain
+                ParticleMaterial::Sand => 1.0,      // Reference material
+                ParticleMaterial::Magnetite => 1.11, // Shields 0.05 / 0.045 - harder to entrain
+                ParticleMaterial::Gold => 1.22,     // Shields 0.055 / 0.045 - hardest to entrain
             }
         }
 
@@ -2395,6 +2528,58 @@ impl FlipSimulation {
                     );
                 } else {
                     self.particles.spawn_sand(px, py, final_vx, final_vy);
+                }
+            }
+        }
+    }
+
+    /// Spawn magnetite particles (black sand - heavy sediment, settles fast, hard to entrain)
+    pub fn spawn_magnetite(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
+        use crate::particle::ParticleMaterial;
+        let mut rng = rand::thread_rng();
+        let use_variation = self.use_variable_diameter;
+        let variation = self.diameter_variation;
+        for _ in 0..count {
+            let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
+            let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
+            let px = x + offset_x;
+            let py = y + offset_y;
+            if self.is_spawn_safe(px, py) {
+                let final_vx = vx + (rng.gen::<f32>() - 0.5) * 5.0;
+                let final_vy = vy + (rng.gen::<f32>() - 0.5) * 5.0;
+                if use_variation {
+                    self.particles.spawn_with_variation(
+                        px, py, final_vx, final_vy,
+                        ParticleMaterial::Magnetite, variation, rng.gen(),
+                    );
+                } else {
+                    self.particles.spawn_magnetite(px, py, final_vx, final_vy);
+                }
+            }
+        }
+    }
+
+    /// Spawn gold particles (heaviest sediment - settles fastest, hardest to entrain)
+    pub fn spawn_gold(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
+        use crate::particle::ParticleMaterial;
+        let mut rng = rand::thread_rng();
+        let use_variation = self.use_variable_diameter;
+        let variation = self.diameter_variation;
+        for _ in 0..count {
+            let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
+            let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
+            let px = x + offset_x;
+            let py = y + offset_y;
+            if self.is_spawn_safe(px, py) {
+                let final_vx = vx + (rng.gen::<f32>() - 0.5) * 5.0;
+                let final_vy = vy + (rng.gen::<f32>() - 0.5) * 5.0;
+                if use_variation {
+                    self.particles.spawn_with_variation(
+                        px, py, final_vx, final_vy,
+                        ParticleMaterial::Gold, variation, rng.gen(),
+                    );
+                } else {
+                    self.particles.spawn_gold(px, py, final_vx, final_vy);
                 }
             }
         }

@@ -20,11 +20,13 @@ pub enum ParticleState {
 }
 
 /// Material type for particles (affects rendering and settling)
-/// Simplified to Water + Sand for two-way coupling development
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParticleMaterial {
     Water,
-    Sand, // Quartz sand - sediment for two-way coupling
+    Mud,
+    Sand,      // Quartz sand - light sediment
+    Magnetite, // Black sand - medium sediment
+    Gold,      // Heavy sediment - settles fast
 }
 
 impl ParticleMaterial {
@@ -33,15 +35,21 @@ impl ParticleMaterial {
     pub fn density(&self) -> f32 {
         match self {
             Self::Water => 1.0,
-            Self::Sand => 2.65, // Quartz
+            Self::Mud => 2.0,
+            Self::Sand => 2.65,      // Quartz
+            Self::Magnetite => 5.2,  // Black sand
+            Self::Gold => 19.3,      // Gold!
         }
     }
 
     /// RGBA color for rendering
     pub fn color(&self) -> [u8; 4] {
         match self {
-            Self::Water => [50, 140, 240, 100], // Semi-transparent
-            Self::Sand => [194, 178, 128, 255], // Tan
+            Self::Water => [50, 140, 240, 100],   // Semi-transparent for solid visibility
+            Self::Mud => [139, 90, 43, 255],
+            Self::Sand => [194, 178, 128, 255],    // Tan
+            Self::Magnetite => [30, 30, 30, 255],  // Black
+            Self::Gold => [255, 215, 0, 255],      // Gold
         }
     }
 
@@ -49,7 +57,7 @@ impl ParticleMaterial {
     /// Only water participates in the FLIP pressure solve.
     /// Sediment is Lagrangian - carried by fluid via drag forces.
     pub fn is_sediment(&self) -> bool {
-        matches!(self, Self::Sand)
+        matches!(self, Self::Mud | Self::Sand | Self::Magnetite | Self::Gold)
     }
 
     /// Render scale multiplier (1.0 = base size)
@@ -64,8 +72,11 @@ impl ParticleMaterial {
     /// Solids have crisp edges, water is blobby
     pub fn edge_sharpness(&self) -> f32 {
         match self {
-            Self::Water => 0.03, // Soft, blobby
-            Self::Sand => 0.15,  // Distinct grains
+            Self::Water => 0.03,     // Soft, blobby
+            Self::Mud => 0.05,       // Slightly sharper
+            Self::Sand => 0.15,      // Distinct grains
+            Self::Magnetite => 0.20, // Hard particles
+            Self::Gold => 0.25,      // Crispest edges
         }
     }
 
@@ -73,29 +84,41 @@ impl ParticleMaterial {
     /// Lower values = less blending between particles
     pub fn density_contribution(&self) -> f32 {
         match self {
-            Self::Water => 0.04,  // Blends together
-            Self::Sand => 0.025, // More separate
+            Self::Water => 0.04,     // Blends together
+            Self::Mud => 0.035,      // Slightly less
+            Self::Sand => 0.025,     // More separate
+            Self::Magnetite => 0.02, // Distinct particles
+            Self::Gold => 0.015,     // Most distinct
         }
     }
 
     /// Typical particle diameter in simulation units (pixels)
     /// Based on realistic size ranges for each material type
-    /// Smaller diameter = slower settling = stays suspended longer in flow
     #[inline]
     pub fn typical_diameter(&self) -> f32 {
         match self {
-            Self::Water => 0.0, // N/A - water is the fluid
-            Self::Sand => 0.3,  // Very fine sand (silt) - stays suspended in flow
+            Self::Water => 0.0,       // N/A - water is the fluid
+            Self::Mud => 0.5,         // Fine clay/silt particles
+            Self::Sand => 2.0,        // Medium sand grains
+            Self::Magnetite => 1.5,   // Black sand crystals
+            Self::Gold => 0.5,        // Fine gold (high density, small size)
         }
     }
 
     /// Shape factor C₂ for Ferguson-Church settling equation
     /// Higher values = more drag (flakier/less spherical particles)
     /// Reference: Ferguson & Church 2004
+    /// - Smooth spheres: 0.4
+    /// - Natural sand: 1.0
+    /// - Angular grains: 1.2
+    /// - Flaky particles: 1.5-2.0
     pub fn shape_factor(&self) -> f32 {
         match self {
-            Self::Water => 1.0, // N/A
-            Self::Sand => 1.0,  // Natural rounded sand
+            Self::Water => 1.0,       // N/A
+            Self::Mud => 1.2,         // Irregular clay particles
+            Self::Sand => 1.0,        // Natural rounded sand
+            Self::Magnetite => 1.1,   // Angular crystals
+            Self::Gold => 1.8,        // Very flaky (10:1 aspect ratio typical)
         }
     }
 
@@ -104,8 +127,11 @@ impl ParticleMaterial {
     /// Higher values = more resistance to sliding
     pub fn static_friction(&self) -> f32 {
         match self {
-            Self::Water => 0.0, // Water has no friction
-            Self::Sand => 0.5,  // Rough grains
+            Self::Water => 0.0,       // Water has no friction
+            Self::Mud => 0.25,        // Slippery clay
+            Self::Sand => 0.5,        // Rough grains
+            Self::Magnetite => 0.45,  // Angular but smooth
+            Self::Gold => 0.35,       // Smooth metal surface
         }
     }
 
@@ -119,12 +145,15 @@ impl ParticleMaterial {
     /// Critical Shields number (τ*_c) for sediment entrainment
     /// Determines threshold shear stress to mobilize bedload particles
     /// Lower values = easier to move
-    /// Reference: Shields (1936)
+    /// Reference: Shields (1936), with adjustments for particle properties
     #[inline]
     pub fn shields_critical(&self) -> f32 {
         match self {
-            Self::Water => 0.0,   // N/A - water is the fluid
-            Self::Sand => 0.045, // Standard Shields value for sand
+            Self::Water => 0.0,       // N/A - water is the fluid
+            Self::Mud => 0.03,        // Fine particles, easy to suspend
+            Self::Sand => 0.045,      // Standard Shields value for sand
+            Self::Magnetite => 0.05,  // Slightly harder to move
+            Self::Gold => 0.055,      // Heavy particles, harder to entrain
         }
     }
 
@@ -168,12 +197,15 @@ impl ParticleMaterial {
     pub fn friction_coefficient(&self) -> f32 {
         match self {
             Self::Water => 0.0,
+            Self::Mud => 0.4,
             Self::Sand => 0.6,
+            Self::Magnetite => 0.7,
+            Self::Gold => 0.8, // Heavy, high friction
         }
     }
 }
 
-/// A fluid particle - supports water and sand
+/// A fluid particle - supports water, mud, and sediment types
 #[derive(Clone, Copy, Debug)]
 pub struct Particle {
     /// Continuous position in world coordinates
@@ -241,14 +273,34 @@ impl Particle {
         Self::new(position, velocity, ParticleMaterial::Water)
     }
 
+    /// Create a mud particle (denser, settles faster)
+    pub fn mud(position: Vec2, velocity: Vec2) -> Self {
+        Self::new(position, velocity, ParticleMaterial::Mud)
+    }
+
     /// Create a sand particle
     pub fn sand(position: Vec2, velocity: Vec2) -> Self {
         Self::new(position, velocity, ParticleMaterial::Sand)
     }
 
+    /// Create a magnetite particle
+    pub fn magnetite(position: Vec2, velocity: Vec2) -> Self {
+        Self::new(position, velocity, ParticleMaterial::Magnetite)
+    }
+
+    /// Create a gold particle
+    pub fn gold(position: Vec2, velocity: Vec2) -> Self {
+        Self::new(position, velocity, ParticleMaterial::Gold)
+    }
+
     /// Get density (for settling calculations)
     pub fn density(&self) -> f32 {
         self.material.density()
+    }
+
+    /// Check if this is a mud particle (legacy compatibility)
+    pub fn is_mud(&self) -> bool {
+        self.material == ParticleMaterial::Mud
     }
 
     /// Check if this is a sediment particle
@@ -298,8 +350,29 @@ impl Particles {
         ));
     }
 
+    pub fn spawn_mud(&mut self, x: f32, y: f32, vx: f32, vy: f32) {
+        self.list.push(Particle::mud(
+            Vec2::new(x, y),
+            Vec2::new(vx, vy),
+        ));
+    }
+
     pub fn spawn_sand(&mut self, x: f32, y: f32, vx: f32, vy: f32) {
         self.list.push(Particle::sand(
+            Vec2::new(x, y),
+            Vec2::new(vx, vy),
+        ));
+    }
+
+    pub fn spawn_magnetite(&mut self, x: f32, y: f32, vx: f32, vy: f32) {
+        self.list.push(Particle::magnetite(
+            Vec2::new(x, y),
+            Vec2::new(vx, vy),
+        ));
+    }
+
+    pub fn spawn_gold(&mut self, x: f32, y: f32, vx: f32, vy: f32) {
+        self.list.push(Particle::gold(
             Vec2::new(x, y),
             Vec2::new(vx, vy),
         ));
@@ -330,17 +403,23 @@ impl Particles {
         ));
     }
 
-    /// Count particles by material type (water, sand)
-    pub fn count_by_material(&self) -> (usize, usize) {
+    /// Count particles by material type
+    pub fn count_by_material(&self) -> (usize, usize, usize, usize, usize) {
         let mut water = 0;
+        let mut mud = 0;
         let mut sand = 0;
+        let mut magnetite = 0;
+        let mut gold = 0;
         for p in &self.list {
             match p.material {
                 ParticleMaterial::Water => water += 1,
+                ParticleMaterial::Mud => mud += 1,
                 ParticleMaterial::Sand => sand += 1,
+                ParticleMaterial::Magnetite => magnetite += 1,
+                ParticleMaterial::Gold => gold += 1,
             }
         }
-        (water, sand)
+        (water, mud, sand, magnetite, gold)
     }
 
     /// Remove particles outside the simulation bounds
@@ -386,27 +465,72 @@ mod tests {
 
     #[test]
     fn test_density_ordering() {
-        // Sand > Water
-        assert!(ParticleMaterial::Sand.density() > ParticleMaterial::Water.density());
+        // Gold > Magnetite > Sand > Mud > Water
+        assert!(ParticleMaterial::Gold.density() > ParticleMaterial::Magnetite.density());
+        assert!(ParticleMaterial::Magnetite.density() > ParticleMaterial::Sand.density());
+        assert!(ParticleMaterial::Sand.density() > ParticleMaterial::Mud.density());
+        assert!(ParticleMaterial::Mud.density() > ParticleMaterial::Water.density());
     }
 
     #[test]
     fn test_typical_diameter_exists() {
-        // Sand should have positive diameter
+        // All sediment materials should have positive diameter
         assert!(ParticleMaterial::Sand.typical_diameter() > 0.0);
+        assert!(ParticleMaterial::Magnetite.typical_diameter() > 0.0);
+        assert!(ParticleMaterial::Gold.typical_diameter() > 0.0);
+        assert!(ParticleMaterial::Mud.typical_diameter() > 0.0);
         // Water doesn't have a diameter (it's the fluid)
         assert_eq!(ParticleMaterial::Water.typical_diameter(), 0.0);
     }
 
     #[test]
     fn test_shape_factor_exists() {
-        // Sand should have shape factor >= 1.0
+        // All materials should have shape factor >= 1.0
+        // Higher = more drag (flakier particles)
         assert!(ParticleMaterial::Sand.shape_factor() >= 1.0);
+        assert!(ParticleMaterial::Magnetite.shape_factor() >= 1.0);
+        assert!(ParticleMaterial::Gold.shape_factor() >= 1.0);
+    }
+
+    #[test]
+    fn test_gold_is_flakier_than_sand() {
+        // Gold has higher shape factor (flaky) than sand (more spherical)
+        // This means gold has MORE drag per unit area
+        assert!(ParticleMaterial::Gold.shape_factor() > ParticleMaterial::Sand.shape_factor());
     }
 
     // ==========================================================================
     // Phase 2 Tests: Ferguson-Church Settling Velocity
     // ==========================================================================
+
+    #[test]
+    fn test_settling_velocity_density_dominates() {
+        // Even with shape factor penalty, gold settles faster than sand
+        // because density difference (19.3 vs 2.65) overwhelms shape effect
+        let gold_settling = ParticleMaterial::Gold.settling_velocity(1.0);
+        let sand_settling = ParticleMaterial::Sand.settling_velocity(1.0);
+
+        assert!(
+            gold_settling > sand_settling,
+            "Gold ({}) should settle faster than sand ({}) at equal diameter",
+            gold_settling,
+            sand_settling
+        );
+    }
+
+    #[test]
+    fn test_settling_velocity_ordering() {
+        // At equal diameter: Gold > Magnetite > Sand > Mud
+        let diameter = 1.5;
+        let gold = ParticleMaterial::Gold.settling_velocity(diameter);
+        let magnetite = ParticleMaterial::Magnetite.settling_velocity(diameter);
+        let sand = ParticleMaterial::Sand.settling_velocity(diameter);
+        let mud = ParticleMaterial::Mud.settling_velocity(diameter);
+
+        assert!(gold > magnetite, "Gold ({}) > Magnetite ({})", gold, magnetite);
+        assert!(magnetite > sand, "Magnetite ({}) > Sand ({})", magnetite, sand);
+        assert!(sand > mud, "Sand ({}) > Mud ({})", sand, mud);
+    }
 
     #[test]
     fn test_settling_velocity_increases_with_size() {
@@ -421,9 +545,16 @@ mod tests {
 
     #[test]
     fn test_settling_velocity_is_positive() {
-        // Sand settling velocity should be positive (downward)
-        let v = ParticleMaterial::Sand.settling_velocity(1.0);
-        assert!(v > 0.0, "Sand settling velocity should be positive");
+        // All settling velocities should be positive (downward)
+        for material in [
+            ParticleMaterial::Mud,
+            ParticleMaterial::Sand,
+            ParticleMaterial::Magnetite,
+            ParticleMaterial::Gold,
+        ] {
+            let v = material.settling_velocity(1.0);
+            assert!(v > 0.0, "{:?} settling velocity should be positive", material);
+        }
     }
 
     #[test]
@@ -434,16 +565,34 @@ mod tests {
     }
 
     #[test]
-    fn test_fine_sand_settles_slower_than_coarse() {
-        // Fine sand should settle slower than coarse
-        let fine = ParticleMaterial::Sand.settling_velocity(0.1);
-        let coarse = ParticleMaterial::Sand.settling_velocity(2.0);
+    fn test_gold_sand_ratio_approximately_correct() {
+        // Gold (SG=19.3) vs Sand (SG=2.65) at equal size
+        // Density ratio is (19.3-1)/(2.65-1) = 18.3/1.65 ≈ 11
+        // But gold is flakier, so settling ratio should be less
+        // Expect roughly 2-4x faster settling for gold
+        let diameter = 1.0;
+        let gold = ParticleMaterial::Gold.settling_velocity(diameter);
+        let sand = ParticleMaterial::Sand.settling_velocity(diameter);
+        let ratio = gold / sand;
 
         assert!(
-            coarse > fine * 3.0,
-            "Coarse sand ({}) should settle >3x faster than fine sand ({})",
+            ratio > 1.5 && ratio < 6.0,
+            "Gold/sand settling ratio ({:.2}) should be between 1.5 and 6.0",
+            ratio
+        );
+    }
+
+    #[test]
+    fn test_flour_gold_settles_slower_than_coarse_gold() {
+        // Flour gold (<0.1mm equivalent) should settle much slower than coarse
+        let flour = ParticleMaterial::Gold.settling_velocity(0.1);
+        let coarse = ParticleMaterial::Gold.settling_velocity(2.0);
+
+        assert!(
+            coarse > flour * 3.0,
+            "Coarse gold ({}) should settle >3x faster than flour gold ({})",
             coarse,
-            fine
+            flour
         );
     }
 
@@ -490,7 +639,7 @@ mod tests {
     #[test]
     fn test_hindered_settling_applied_to_velocity() {
         // Verify that hindered settling reduces effective settling velocity
-        let base_settling = ParticleMaterial::Sand.settling_velocity(1.0);
+        let base_settling = ParticleMaterial::Gold.settling_velocity(1.0);
 
         // At 20% concentration, settling should be reduced by (1-0.2)^4 ≈ 0.41
         let concentration = 0.2;
@@ -510,6 +659,23 @@ mod tests {
             "Ratio ({:.3}) should be ~{:.3}",
             actual_ratio,
             expected_ratio
+        );
+    }
+
+    #[test]
+    fn test_hindered_settling_preserves_ordering() {
+        // Even with hindered settling, gold should still settle faster than sand
+        let concentration = 0.3; // 30% solids
+        let factor = hindered_settling_factor(concentration);
+
+        let gold_hindered = ParticleMaterial::Gold.settling_velocity(1.0) * factor;
+        let sand_hindered = ParticleMaterial::Sand.settling_velocity(1.0) * factor;
+
+        assert!(
+            gold_hindered > sand_hindered,
+            "Gold ({}) should still settle faster than sand ({}) even when hindered",
+            gold_hindered,
+            sand_hindered
         );
     }
 
@@ -542,8 +708,10 @@ mod tests {
         println!("---------------|----------|----------|---------|------");
 
         for (name, mat) in [
-            ("Water", ParticleMaterial::Water),
+            ("Mud", ParticleMaterial::Mud),
             ("Sand", ParticleMaterial::Sand),
+            ("Magnetite", ParticleMaterial::Magnetite),
+            ("Gold", ParticleMaterial::Gold),
         ] {
             let d = mat.typical_diameter();
             let v = mat.settling_velocity(d);
@@ -557,20 +725,33 @@ mod tests {
             );
         }
 
-        println!("\n=== Size Effect on Sand ===");
+        println!("\n=== Size Effect on Gold ===");
         for size in [0.1, 0.5, 1.0, 2.0, 5.0] {
-            let v = ParticleMaterial::Sand.settling_velocity(size);
-            println!("Sand d={:.1}: {:.2} px/s", size, v);
+            let v = ParticleMaterial::Gold.settling_velocity(size);
+            println!("Gold d={:.1}: {:.2} px/s", size, v);
+        }
+
+        println!("\n=== Gold vs Sand at Equal Sizes ===");
+        for size in [0.5, 1.0, 2.0] {
+            let gold = ParticleMaterial::Gold.settling_velocity(size);
+            let sand = ParticleMaterial::Sand.settling_velocity(size);
+            println!(
+                "d={:.1}: Gold={:.2}, Sand={:.2}, ratio={:.2}x",
+                size,
+                gold,
+                sand,
+                gold / sand
+            );
         }
 
         println!("\n=== Hindered Settling Effect ===");
-        let sand_base = ParticleMaterial::Sand.settling_velocity(1.0);
+        let gold_base = ParticleMaterial::Gold.settling_velocity(1.0);
         for neighbors in [4, 8, 12, 20, 30, 50] {
             let conc = neighbor_count_to_concentration(neighbors, 8.0);
             let factor = hindered_settling_factor(conc);
-            let hindered = sand_base * factor;
+            let hindered = gold_base * factor;
             println!(
-                "Neighbors={:2}: conc={:.2}, factor={:.2}, sand settling={:.2} px/s",
+                "Neighbors={:2}: conc={:.2}, factor={:.2}, gold settling={:.2} px/s",
                 neighbors, conc, factor, hindered
             );
         }
@@ -582,15 +763,24 @@ mod tests {
 
     #[test]
     fn test_friction_coefficients_exist() {
-        // Sand should have positive friction coefficients
-        assert!(
-            ParticleMaterial::Sand.static_friction() > 0.0,
-            "Sand should have positive static friction"
-        );
-        assert!(
-            ParticleMaterial::Sand.dynamic_friction() > 0.0,
-            "Sand should have positive dynamic friction"
-        );
+        // All sediments should have positive friction coefficients
+        for material in [
+            ParticleMaterial::Mud,
+            ParticleMaterial::Sand,
+            ParticleMaterial::Magnetite,
+            ParticleMaterial::Gold,
+        ] {
+            assert!(
+                material.static_friction() > 0.0,
+                "{:?} should have positive static friction",
+                material
+            );
+            assert!(
+                material.dynamic_friction() > 0.0,
+                "{:?} should have positive dynamic friction",
+                material
+            );
+        }
     }
 
     #[test]
@@ -601,20 +791,35 @@ mod tests {
 
     #[test]
     fn test_dynamic_friction_less_than_static() {
-        // Dynamic friction should be less than static for sand
-        assert!(
-            ParticleMaterial::Sand.dynamic_friction() < ParticleMaterial::Sand.static_friction(),
-            "Sand dynamic friction should be less than static"
-        );
+        // Dynamic friction should be less than static for all materials
+        for material in [
+            ParticleMaterial::Mud,
+            ParticleMaterial::Sand,
+            ParticleMaterial::Magnetite,
+            ParticleMaterial::Gold,
+        ] {
+            assert!(
+                material.dynamic_friction() < material.static_friction(),
+                "{:?} dynamic friction should be less than static",
+                material
+            );
+        }
     }
 
     #[test]
     fn test_friction_in_reasonable_range() {
         // Friction coefficients should be between 0 and 1
-        let mu_s = ParticleMaterial::Sand.static_friction();
-        let mu_d = ParticleMaterial::Sand.dynamic_friction();
-        assert!(mu_s <= 1.0, "Sand static friction {} too high", mu_s);
-        assert!(mu_d <= 1.0, "Sand dynamic friction {} too high", mu_d);
+        for material in [
+            ParticleMaterial::Mud,
+            ParticleMaterial::Sand,
+            ParticleMaterial::Magnetite,
+            ParticleMaterial::Gold,
+        ] {
+            let mu_s = material.static_friction();
+            let mu_d = material.dynamic_friction();
+            assert!(mu_s <= 1.0, "{:?} static friction {} too high", material, mu_s);
+            assert!(mu_d <= 1.0, "{:?} dynamic friction {} too high", material, mu_d);
+        }
     }
 
     // ==========================================================================
@@ -623,11 +828,19 @@ mod tests {
 
     #[test]
     fn test_shields_critical_exists() {
-        // Sand should have positive Shields threshold
-        assert!(
-            ParticleMaterial::Sand.shields_critical() > 0.0,
-            "Sand should have positive Shields critical"
-        );
+        // All sediments should have positive Shields threshold
+        for material in [
+            ParticleMaterial::Mud,
+            ParticleMaterial::Sand,
+            ParticleMaterial::Magnetite,
+            ParticleMaterial::Gold,
+        ] {
+            assert!(
+                material.shields_critical() > 0.0,
+                "{:?} should have positive Shields critical",
+                material
+            );
+        }
     }
 
     #[test]
@@ -636,14 +849,36 @@ mod tests {
     }
 
     #[test]
+    fn test_shields_ordering() {
+        // Heavier particles should be harder to entrain (higher Shields)
+        // Gold > Magnetite >= Sand > Mud
+        assert!(
+            ParticleMaterial::Gold.shields_critical() >= ParticleMaterial::Sand.shields_critical(),
+            "Gold should require higher shear to entrain than sand"
+        );
+        assert!(
+            ParticleMaterial::Sand.shields_critical() > ParticleMaterial::Mud.shields_critical(),
+            "Sand should require higher shear to entrain than mud"
+        );
+    }
+
+    #[test]
     fn test_shields_in_physical_range() {
         // Shields criterion typically 0.03-0.06 for most particles
-        let shields = ParticleMaterial::Sand.shields_critical();
-        assert!(
-            shields >= 0.01 && shields <= 0.1,
-            "Sand Shields {} outside physical range [0.01, 0.1]",
-            shields
-        );
+        for material in [
+            ParticleMaterial::Mud,
+            ParticleMaterial::Sand,
+            ParticleMaterial::Magnetite,
+            ParticleMaterial::Gold,
+        ] {
+            let shields = material.shields_critical();
+            assert!(
+                shields >= 0.01 && shields <= 0.1,
+                "{:?} Shields {} outside physical range [0.01, 0.1]",
+                material,
+                shields
+            );
+        }
     }
 
     // ==========================================================================
@@ -658,7 +893,7 @@ mod tests {
 
     #[test]
     fn test_particle_state_can_change() {
-        let mut p = Particle::sand(Vec2::new(0.0, 0.0), Vec2::ZERO);
+        let mut p = Particle::gold(Vec2::new(0.0, 0.0), Vec2::ZERO);
         assert_eq!(p.state, ParticleState::Suspended);
         p.state = ParticleState::Bedload;
         assert_eq!(p.state, ParticleState::Bedload);
@@ -669,7 +904,7 @@ mod tests {
         let p = Particle::with_diameter(
             Vec2::new(0.0, 0.0),
             Vec2::ZERO,
-            ParticleMaterial::Sand,
+            ParticleMaterial::Gold,
             2.0,
         );
         assert_eq!(p.state, ParticleState::Suspended);

@@ -118,7 +118,7 @@ fn test_sediment_settling() {
 
         // Verify there's actually a deposited cell near the floor
         let deposited_count: usize = (0..WIDTH * HEIGHT)
-            .filter(|&idx| sim.grid.deposited[idx])
+            .filter(|&idx| sim.grid.deposited[idx].is_deposited())
             .count();
         assert!(deposited_count > 0, "Deposited sand should create solid cells");
     } else if let Some(idx) = find_sand(&sim) {
