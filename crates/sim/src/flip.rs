@@ -169,9 +169,9 @@ impl FlipSimulation {
         self.grid.compute_divergence();
         let div_before = self.grid.total_divergence();
 
-        // Pressure solver iterations - for 512x384 grid
-        // 15 iterations: testing further reduction for performance
-        self.grid.solve_pressure(15);
+        // Multigrid pressure solver - 2 V-cycles
+        // Testing reduced cycles for faster solve
+        self.grid.solve_pressure_multigrid(2);
         self.grid.apply_pressure_gradient(dt);
         let t5 = Instant::now();
 
@@ -2203,7 +2203,7 @@ impl FlipSimulation {
         let div = self.grid.total_divergence();
         diagnostics.push(("divergence", div));
 
-        self.grid.solve_pressure(15);
+        self.grid.solve_pressure_multigrid(2);
         self.grid.apply_pressure_gradient(dt);
         let grid_u_sum: f32 = self.grid.u.iter().sum();
         let grid_v_sum: f32 = self.grid.v.iter().sum();

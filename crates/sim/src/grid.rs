@@ -58,6 +58,36 @@ pub enum CellType {
     Air,
 }
 
+/// A single level in the multigrid hierarchy
+#[derive(Clone)]
+pub struct MultigridLevel {
+    pub width: usize,
+    pub height: usize,
+    pub pressure: Vec<f32>,
+    pub divergence: Vec<f32>,  // Right-hand side (restricted from finer level)
+    pub residual: Vec<f32>,
+    pub cell_type: Vec<CellType>,
+}
+
+impl MultigridLevel {
+    pub fn new(width: usize, height: usize) -> Self {
+        let cell_count = width * height;
+        Self {
+            width,
+            height,
+            pressure: vec![0.0; cell_count],
+            divergence: vec![0.0; cell_count],
+            residual: vec![0.0; cell_count],
+            cell_type: vec![CellType::Air; cell_count],
+        }
+    }
+
+    #[inline]
+    pub fn cell_index(&self, i: usize, j: usize) -> usize {
+        j * self.width + i
+    }
+}
+
 /// Staggered MAC grid for pressure-velocity simulation
 pub struct Grid {
     pub width: usize,
@@ -97,6 +127,10 @@ pub struct Grid {
     /// Temporary buffer for viscosity diffusion (avoids allocation)
     u_temp: Vec<f32>,
     v_temp: Vec<f32>,
+
+    /// Multigrid hierarchy for fast pressure solve
+    /// Level 0 is finest (same size as main grid), higher levels are coarser
+    mg_levels: Vec<MultigridLevel>,
 }
 
 impl Grid {
@@ -104,6 +138,20 @@ impl Grid {
         let cell_count = width * height;
         let u_count = (width + 1) * height;
         let v_count = width * (height + 1);
+
+        // Build multigrid hierarchy: halve dimensions until either < 16
+        let mut mg_levels = Vec::new();
+        let mut w = width;
+        let mut h = height;
+        while w >= 16 && h >= 16 {
+            mg_levels.push(MultigridLevel::new(w, h));
+            w /= 2;
+            h /= 2;
+        }
+        // Add coarsest level even if small
+        if mg_levels.is_empty() || (w >= 4 && h >= 4) {
+            mg_levels.push(MultigridLevel::new(w, h));
+        }
 
         Self {
             width,
@@ -121,6 +169,7 @@ impl Grid {
             // Pre-allocated buffers for viscosity (avoids per-frame allocation)
             u_temp: vec![0.0; u_count],
             v_temp: vec![0.0; v_count],
+            mg_levels,
         }
     }
 
@@ -1261,5 +1310,344 @@ impl Grid {
         }
 
         momentum
+    }
+
+    // ========================================================================
+    // MULTIGRID PRESSURE SOLVER
+    // ========================================================================
+
+    /// Sync level 0 of multigrid with current grid state
+    fn mg_sync_level_zero(&mut self) {
+        let level = &mut self.mg_levels[0];
+        level.divergence.copy_from_slice(&self.divergence);
+        level.pressure.copy_from_slice(&self.pressure);
+        for (i, &ct) in self.cell_type.iter().enumerate() {
+            level.cell_type[i] = ct;
+        }
+    }
+
+    /// Copy pressure back from level 0 to main grid
+    fn mg_copy_pressure_back(&mut self) {
+        self.pressure.copy_from_slice(&self.mg_levels[0].pressure);
+    }
+
+    /// Restrict residual from fine level to coarse level divergence
+    /// Uses full-weighting stencil for smooth restriction
+    fn mg_restrict(&mut self, fine_level: usize, coarse_level: usize) {
+        let (fine_w, fine_h) = (self.mg_levels[fine_level].width, self.mg_levels[fine_level].height);
+        let (coarse_w, coarse_h) = (self.mg_levels[coarse_level].width, self.mg_levels[coarse_level].height);
+
+        // Clear coarse divergence and copy cell types
+        for j in 0..coarse_h {
+            for i in 0..coarse_w {
+                let c_idx = j * coarse_w + i;
+
+                // Map to fine grid (2:1 ratio)
+                let fi = i * 2;
+                let fj = j * 2;
+
+                // Full-weighting: average 2x2 block of fine residuals
+                let mut sum = 0.0;
+                let mut count = 0;
+                let mut any_fluid = false;
+
+                for dj in 0..2 {
+                    for di in 0..2 {
+                        let fii = fi + di;
+                        let fjj = fj + dj;
+                        if fii < fine_w && fjj < fine_h {
+                            let f_idx = fjj * fine_w + fii;
+                            if self.mg_levels[fine_level].cell_type[f_idx] == CellType::Fluid {
+                                sum += self.mg_levels[fine_level].residual[f_idx];
+                                count += 1;
+                                any_fluid = true;
+                            }
+                        }
+                    }
+                }
+
+                // Coarse cell is fluid if any fine cell is fluid
+                self.mg_levels[coarse_level].cell_type[c_idx] = if any_fluid {
+                    CellType::Fluid
+                } else {
+                    // Check if any solid
+                    let mut any_solid = false;
+                    for dj in 0..2 {
+                        for di in 0..2 {
+                            let fii = fi + di;
+                            let fjj = fj + dj;
+                            if fii < fine_w && fjj < fine_h {
+                                let f_idx = fjj * fine_w + fii;
+                                if self.mg_levels[fine_level].cell_type[f_idx] == CellType::Solid {
+                                    any_solid = true;
+                                }
+                            }
+                        }
+                    }
+                    if any_solid { CellType::Solid } else { CellType::Air }
+                };
+
+                self.mg_levels[coarse_level].divergence[c_idx] = if count > 0 {
+                    sum / count as f32
+                } else {
+                    0.0
+                };
+            }
+        }
+    }
+
+    /// Prolongate correction from coarse level to fine level
+    /// Uses bilinear interpolation
+    fn mg_prolongate(&mut self, coarse_level: usize, fine_level: usize) {
+        let (fine_w, fine_h) = (self.mg_levels[fine_level].width, self.mg_levels[fine_level].height);
+        let (coarse_w, coarse_h) = (self.mg_levels[coarse_level].width, self.mg_levels[coarse_level].height);
+
+        for fj in 0..fine_h {
+            for fi in 0..fine_w {
+                let f_idx = fj * fine_w + fi;
+
+                // Skip non-fluid cells
+                if self.mg_levels[fine_level].cell_type[f_idx] != CellType::Fluid {
+                    continue;
+                }
+
+                // Map to coarse grid coordinates (with fractional part)
+                let cx = fi as f32 / 2.0;
+                let cy = fj as f32 / 2.0;
+
+                // Bilinear interpolation indices
+                let ci0 = (cx.floor() as usize).min(coarse_w.saturating_sub(1));
+                let cj0 = (cy.floor() as usize).min(coarse_h.saturating_sub(1));
+                let ci1 = (ci0 + 1).min(coarse_w - 1);
+                let cj1 = (cj0 + 1).min(coarse_h - 1);
+
+                let tx = cx - ci0 as f32;
+                let ty = cy - cj0 as f32;
+
+                // Get coarse pressures
+                let p00 = self.mg_levels[coarse_level].pressure[cj0 * coarse_w + ci0];
+                let p10 = self.mg_levels[coarse_level].pressure[cj0 * coarse_w + ci1];
+                let p01 = self.mg_levels[coarse_level].pressure[cj1 * coarse_w + ci0];
+                let p11 = self.mg_levels[coarse_level].pressure[cj1 * coarse_w + ci1];
+
+                // Bilinear interpolation
+                let correction = (1.0 - tx) * (1.0 - ty) * p00
+                               + tx * (1.0 - ty) * p10
+                               + (1.0 - tx) * ty * p01
+                               + tx * ty * p11;
+
+                // ADD correction to fine pressure
+                self.mg_levels[fine_level].pressure[f_idx] += correction;
+            }
+        }
+    }
+
+    /// Compute residual: r = divergence - Laplacian(pressure)
+    /// Uses same stencil as original solver: Neumann mirroring for solid/boundary
+    fn mg_compute_residual(&mut self, level: usize) {
+        let w = self.mg_levels[level].width;
+        let h = self.mg_levels[level].height;
+
+        for j in 0..h {
+            for i in 0..w {
+                let idx = j * w + i;
+
+                if self.mg_levels[level].cell_type[idx] != CellType::Fluid {
+                    self.mg_levels[level].residual[idx] = 0.0;
+                    continue;
+                }
+
+                let p_center = self.mg_levels[level].pressure[idx];
+
+                // Get neighbor pressures with Neumann mirroring for solid/boundary
+                // (same as original solve_pressure)
+                let p_left = if i > 0 {
+                    let n_idx = j * w + (i - 1);
+                    if self.mg_levels[level].cell_type[n_idx] == CellType::Solid {
+                        p_center // Neumann: mirror
+                    } else {
+                        self.mg_levels[level].pressure[n_idx]
+                    }
+                } else {
+                    p_center // Boundary: Neumann mirror
+                };
+
+                let p_right = if i + 1 < w {
+                    let n_idx = j * w + (i + 1);
+                    if self.mg_levels[level].cell_type[n_idx] == CellType::Solid {
+                        p_center
+                    } else {
+                        self.mg_levels[level].pressure[n_idx]
+                    }
+                } else {
+                    p_center
+                };
+
+                let p_bottom = if j > 0 {
+                    let n_idx = (j - 1) * w + i;
+                    if self.mg_levels[level].cell_type[n_idx] == CellType::Solid {
+                        p_center
+                    } else {
+                        self.mg_levels[level].pressure[n_idx]
+                    }
+                } else {
+                    p_center
+                };
+
+                let p_top = if j + 1 < h {
+                    let n_idx = (j + 1) * w + i;
+                    if self.mg_levels[level].cell_type[n_idx] == CellType::Solid {
+                        p_center
+                    } else {
+                        self.mg_levels[level].pressure[n_idx]
+                    }
+                } else {
+                    p_center
+                };
+
+                // Laplacian: (p_L + p_R + p_B + p_T - 4*p) with h=1
+                let laplacian = p_left + p_right + p_bottom + p_top - 4.0 * p_center;
+
+                self.mg_levels[level].residual[idx] = self.mg_levels[level].divergence[idx] - laplacian;
+            }
+        }
+    }
+
+    /// Gauss-Seidel smoothing on a multigrid level
+    /// Uses same stencil as original solver: always 4 neighbors with Neumann mirroring
+    fn mg_smooth(&mut self, level: usize, iterations: usize) {
+        let w = self.mg_levels[level].width;
+        let h = self.mg_levels[level].height;
+
+        for _ in 0..iterations {
+            // Red-black ordering
+            for color in 0..2 {
+                for j in 0..h {
+                    for i in 0..w {
+                        if (i + j) % 2 != color {
+                            continue;
+                        }
+
+                        let idx = j * w + i;
+                        if self.mg_levels[level].cell_type[idx] != CellType::Fluid {
+                            self.mg_levels[level].pressure[idx] = 0.0;
+                            continue;
+                        }
+
+                        let p_center = self.mg_levels[level].pressure[idx];
+
+                        // Get neighbor pressures with Neumann mirroring for solid/boundary
+                        let p_left = if i > 0 {
+                            let n_idx = j * w + (i - 1);
+                            if self.mg_levels[level].cell_type[n_idx] == CellType::Solid {
+                                p_center
+                            } else {
+                                self.mg_levels[level].pressure[n_idx]
+                            }
+                        } else {
+                            p_center
+                        };
+
+                        let p_right = if i + 1 < w {
+                            let n_idx = j * w + (i + 1);
+                            if self.mg_levels[level].cell_type[n_idx] == CellType::Solid {
+                                p_center
+                            } else {
+                                self.mg_levels[level].pressure[n_idx]
+                            }
+                        } else {
+                            p_center
+                        };
+
+                        let p_bottom = if j > 0 {
+                            let n_idx = (j - 1) * w + i;
+                            if self.mg_levels[level].cell_type[n_idx] == CellType::Solid {
+                                p_center
+                            } else {
+                                self.mg_levels[level].pressure[n_idx]
+                            }
+                        } else {
+                            p_center
+                        };
+
+                        let p_top = if j + 1 < h {
+                            let n_idx = (j + 1) * w + i;
+                            if self.mg_levels[level].cell_type[n_idx] == CellType::Solid {
+                                p_center
+                            } else {
+                                self.mg_levels[level].pressure[n_idx]
+                            }
+                        } else {
+                            p_center
+                        };
+
+                        // GS update: p = (p_L + p_R + p_B + p_T - div) / 4
+                        let div = self.mg_levels[level].divergence[idx];
+                        self.mg_levels[level].pressure[idx] = (p_left + p_right + p_bottom + p_top - div) * 0.25;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Clear pressure on a level (before coarse solve)
+    fn mg_clear_pressure(&mut self, level: usize) {
+        for p in &mut self.mg_levels[level].pressure {
+            *p = 0.0;
+        }
+    }
+
+    /// V-cycle multigrid iteration
+    fn mg_v_cycle(&mut self, level: usize) {
+        let max_level = self.mg_levels.len() - 1;
+        let pre_smooth = 3;
+        let post_smooth = 3;
+        let coarse_solve = 20;
+
+        // Pre-smoothing
+        self.mg_smooth(level, pre_smooth);
+
+        if level == max_level {
+            // Coarsest level: solve more thoroughly
+            self.mg_smooth(level, coarse_solve);
+        } else {
+            // Compute residual
+            self.mg_compute_residual(level);
+
+            // Restrict residual to coarser grid
+            self.mg_restrict(level, level + 1);
+
+            // Clear coarse pressure
+            self.mg_clear_pressure(level + 1);
+
+            // Recurse
+            self.mg_v_cycle(level + 1);
+
+            // Prolongate correction
+            self.mg_prolongate(level + 1, level);
+
+            // Post-smoothing
+            self.mg_smooth(level, post_smooth);
+        }
+    }
+
+    /// Solve pressure using multigrid V-cycles
+    pub fn solve_pressure_multigrid(&mut self, num_cycles: usize) {
+        if self.mg_levels.is_empty() {
+            // Fallback to regular solver
+            self.solve_pressure(15);
+            return;
+        }
+
+        // Sync grid state to level 0
+        self.mg_sync_level_zero();
+
+        // Run V-cycles
+        for _ in 0..num_cycles {
+            self.mg_v_cycle(0);
+        }
+
+        // Copy result back
+        self.mg_copy_pressure_back();
     }
 }
