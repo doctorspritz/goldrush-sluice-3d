@@ -128,6 +128,9 @@ pub struct Grid {
     u_temp: Vec<f32>,
     v_temp: Vec<f32>,
 
+    /// Pre-allocated buffer for inner SDF (avoids 512KB allocation per frame)
+    inner_sdf: Vec<f32>,
+
     /// Multigrid hierarchy for fast pressure solve
     /// Level 0 is finest (same size as main grid), higher levels are coarser
     mg_levels: Vec<MultigridLevel>,
@@ -169,6 +172,8 @@ impl Grid {
             // Pre-allocated buffers for viscosity (avoids per-frame allocation)
             u_temp: vec![0.0; u_count],
             v_temp: vec![0.0; v_count],
+            // Pre-allocated buffer for inner SDF computation
+            inner_sdf: vec![0.0; cell_count],
             mg_levels,
         }
     }
@@ -177,18 +182,18 @@ impl Grid {
     /// Call this after terrain changes (set_solid calls)
     ///
     /// Returns: negative inside solid, zero at surface, positive outside
+    ///
+    /// Optimization: Uses pre-allocated inner_sdf buffer and single sweep pass.
     pub fn compute_sdf(&mut self) {
         let w = self.width;
         let h = self.height;
         let cell_size = self.cell_size;
         let len = self.sdf.len();
 
-        // We need two distance fields:
-        // 1. Distance to nearest solid (valid in air, 0 in solid) -> self.sdf
-        // 2. Distance to nearest air (valid in solid, 0 in air) -> inner_sdf
-        let mut inner_sdf = vec![f32::MAX; len];
+        // Use pre-allocated buffer for inner SDF
+        let inner_sdf = &mut self.inner_sdf;
 
-        // Initialize
+        // Initialize both distance fields
         for idx in 0..len {
             if self.cell_type[idx] == CellType::Solid {
                 // Solid: Outer dist = 0, Inner dist = MAX
@@ -196,74 +201,62 @@ impl Grid {
                 inner_sdf[idx] = f32::MAX;
             } else {
                 // Air/Fluid: Outer dist = MAX, Inner dist = 0
-                self.sdf[idx] = f32::MAX; 
+                self.sdf[idx] = f32::MAX;
                 inner_sdf[idx] = 0.0;
             }
         }
 
-        // Fast sweeping: propagate distances
-        // We sweep both fields simultaneously for efficiency
-        let offsets: [(i32, i32, f32); 4] = [
-            (1, 0, cell_size),   // right
-            (-1, 0, cell_size),  // left
-            (0, 1, cell_size),   // down
-            (0, -1, cell_size),  // up
-        ];
+        // Fast sweeping: single forward+backward pass
+        // Sufficient for sluice geometry (simple convex-ish shapes)
 
-        // 4 passes (2 forward/backward pairs) for robust convergence
-        for _ in 0..2 {
-            // Forward sweep (Top-Left -> Bottom-Right)
-            for j in 0..h {
-                for i in 0..w {
-                    let idx = j * w + i;
-                    let mut min_outer = self.sdf[idx];
-                    let mut min_inner = inner_sdf[idx];
+        // Forward sweep (Top-Left -> Bottom-Right)
+        for j in 0..h {
+            for i in 0..w {
+                let idx = j * w + i;
+                let mut min_outer = self.sdf[idx];
+                let mut min_inner = inner_sdf[idx];
 
-                    // Check neighbors (Left and Up are causal for this sweep)
-                    if i > 0 {
-                        let nidx = idx - 1; // Left
-                        min_outer = min_outer.min(self.sdf[nidx] + cell_size);
-                        min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
-                    }
-                    if j > 0 {
-                        let nidx = idx - w; // Up
-                        min_outer = min_outer.min(self.sdf[nidx] + cell_size);
-                        min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
-                    }
-                    
-                    self.sdf[idx] = min_outer;
-                    inner_sdf[idx] = min_inner;
+                if i > 0 {
+                    let nidx = idx - 1;
+                    min_outer = min_outer.min(self.sdf[nidx] + cell_size);
+                    min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
                 }
+                if j > 0 {
+                    let nidx = idx - w;
+                    min_outer = min_outer.min(self.sdf[nidx] + cell_size);
+                    min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
+                }
+
+                self.sdf[idx] = min_outer;
+                inner_sdf[idx] = min_inner;
             }
+        }
 
-            // Backward sweep (Bottom-Right -> Top-Left)
-            for j in (0..h).rev() {
-                for i in (0..w).rev() {
-                    let idx = j * w + i;
-                    let mut min_outer = self.sdf[idx];
-                    let mut min_inner = inner_sdf[idx];
+        // Backward sweep (Bottom-Right -> Top-Left)
+        for j in (0..h).rev() {
+            for i in (0..w).rev() {
+                let idx = j * w + i;
+                let mut min_outer = self.sdf[idx];
+                let mut min_inner = inner_sdf[idx];
 
-                    if i < w - 1 {
-                        let nidx = idx + 1; // Right
-                        min_outer = min_outer.min(self.sdf[nidx] + cell_size);
-                        min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
-                    }
-                    if j < h - 1 {
-                        let nidx = idx + w; // Down
-                        min_outer = min_outer.min(self.sdf[nidx] + cell_size);
-                        min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
-                    }
-
-                    self.sdf[idx] = min_outer;
-                    inner_sdf[idx] = min_inner;
+                if i < w - 1 {
+                    let nidx = idx + 1;
+                    min_outer = min_outer.min(self.sdf[nidx] + cell_size);
+                    min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
                 }
+                if j < h - 1 {
+                    let nidx = idx + w;
+                    min_outer = min_outer.min(self.sdf[nidx] + cell_size);
+                    min_inner = min_inner.min(inner_sdf[nidx] + cell_size);
+                }
+
+                self.sdf[idx] = min_outer;
+                inner_sdf[idx] = min_inner;
             }
         }
 
         // Combine: SDF = Outer - Inner
         for idx in 0..len {
-            // If solid: Outer=0, Inner=dist -> SDF = -dist
-            // If air: Outer=dist, Inner=0 -> SDF = dist
             self.sdf[idx] = self.sdf[idx] - inner_sdf[idx];
         }
     }

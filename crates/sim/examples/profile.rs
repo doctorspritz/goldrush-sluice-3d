@@ -1,125 +1,116 @@
-//! Manual profiling of FLIP simulation steps
+//! FLIP Simulation Profiler
+//!
+//! Matches real game configuration (512×256 grid) and tests scaling.
 //!
 //! Run with: cargo run --release --example profile -p sim
 
-use sim::{create_sluice, FlipSimulation};
-use std::time::{Duration, Instant};
+use sim::{create_sluice_with_mode, FlipSimulation, Particle, SluiceConfig};
 
 fn main() {
-    const WIDTH: usize = 128;
-    const HEIGHT: usize = 128;
-    const CELL_SIZE: f32 = 2.0;
-    const FRAMES: usize = 200;
+    println!("=== FLIP Simulation Profiler ===");
+    println!("=== Real Game Configuration (512×256) ===\n");
+
+    // Show struct size for cache analysis
+    println!("Particle struct size: {} bytes", std::mem::size_of::<Particle>());
+    println!("Grid size: 512×256 = 131,072 cells\n");
+
+    // Test scaling up to find breaking point
+    for &particle_count in &[10_000, 25_000, 50_000, 100_000] {
+        profile_at_scale(particle_count);
+    }
+}
+
+fn profile_at_scale(target_particles: usize) {
+    // Match real game configuration
+    const WIDTH: usize = 512;
+    const HEIGHT: usize = 256;
+    const CELL_SIZE: f32 = 1.0;
+    const WARMUP: usize = 30;
+    const FRAMES: usize = 60;  // 1 second of simulation
     const DT: f32 = 1.0 / 60.0;
 
-    println!("=== FLIP Simulation Profiler ===\n");
-
     let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
-    create_sluice(&mut sim, 0.3, 20, 5, 2);
 
-    // Pre-spawn ~5000 particles
-    for i in 0..200 {
-        let x = 20.0 + (i % 50) as f32 * 2.0;
-        let y = (HEIGHT as f32 * CELL_SIZE) * 0.15 + (i / 50) as f32 * 3.0;
-        sim.spawn_water(x, y, 50.0, 0.0, 25);
+    // Use real sluice geometry
+    let config = SluiceConfig::default();
+    create_sluice_with_mode(&mut sim, &config);
+
+    // Spawn particles across the sluice (like real game inlet)
+    // Real game spawns at inlet_y = HEIGHT/4 - 10 = 54
+    let inlet_y = 54.0;
+    let inlet_x_start = 20.0;
+    let inlet_x_end = 100.0;
+
+    let mut spawned = 0;
+    let mut y = inlet_y;
+    while spawned < target_particles {
+        let mut x = inlet_x_start;
+        while spawned < target_particles && x < inlet_x_end {
+            sim.spawn_water(x, y, 50.0, 10.0, 1);  // Match game velocity
+            spawned += 1;
+            x += 0.8;
+        }
+        y += 0.8;
+        if y > inlet_y + 60.0 {
+            y = inlet_y;  // Wrap around to keep spawning
+        }
     }
 
-    // Warm up
-    for _ in 0..50 {
+    // Warm up - let particles flow and settle
+    for _ in 0..WARMUP {
         sim.update(DT);
+        // Keep topping up particles that flow out
+        while sim.particles.len() < target_particles * 8 / 10 {
+            sim.spawn_water(30.0, inlet_y, 50.0, 10.0, 100);
+        }
     }
 
-    println!("Particles: {}\n", sim.particles.len());
+    let actual_particles = sim.particles.len();
+    println!("--- {} particles (target: {}) ---", actual_particles, target_particles);
 
-    // Profile each step
-    let mut times = ProfileTimes::default();
+    // Phase names for timing breakdown
+    const PHASES: [&str; 7] = ["classify", "sdf", "p2g", "pressure", "g2p", "neighbor", "rest"];
+
+    // Accumulate phase timings
+    let mut phase_totals = [0.0f32; 7];
+    let mut frame_times = Vec::with_capacity(FRAMES);
 
     for _ in 0..FRAMES {
-        profile_update(&mut sim, DT, &mut times);
+        // Top up particles like real game
+        if sim.particles.len() < target_particles * 7 / 10 {
+            sim.spawn_water(30.0, inlet_y, 50.0, 10.0, 50);
+        }
+
+        let timings = sim.update_profiled(DT);
+        let total: f32 = timings.iter().sum();
+        frame_times.push(total as f64);
+
+        for (i, &t) in timings.iter().enumerate() {
+            phase_totals[i] += t;
+        }
     }
 
-    // Print results
-    println!("=== Timing Breakdown (avg per frame) ===\n");
+    let final_particles = sim.particles.len();
 
-    let total = times.total();
-    let frame_avg = total.as_secs_f64() * 1000.0 / FRAMES as f64;
+    // Statistics
+    frame_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let avg = frame_times.iter().sum::<f64>() / FRAMES as f64;
+    let p95 = frame_times[FRAMES * 95 / 100];
 
-    print_timing("classify_cells", times.classify, FRAMES, total);
-    print_timing("particles_to_grid", times.p2g, FRAMES, total);
-    print_timing("store_old_velocities", times.store_old, FRAMES, total);
-    print_timing("apply_gravity", times.gravity, FRAMES, total);
-    print_timing("compute_divergence", times.divergence, FRAMES, total);
-    print_timing("solve_pressure", times.pressure, FRAMES, total);
-    print_timing("apply_pressure_gradient", times.gradient, FRAMES, total);
-    print_timing("vorticity_confinement", times.vorticity, FRAMES, total);
-    print_timing("grid_to_particles", times.g2p, FRAMES, total);
-    print_timing("apply_settling", times.settling, FRAMES, total);
-    print_timing("advect_particles", times.advect, FRAMES, total);
-    print_timing("separate_particles", times.separate, FRAMES, total);
-    print_timing("remove_out_of_bounds", times.cleanup, FRAMES, total);
+    let fps = 1000.0 / avg;
+    let status = if fps >= 60.0 { "✓" } else if fps >= 30.0 { "⚠" } else { "✗" };
 
-    println!("\n----------------------------------------");
-    println!("TOTAL: {:.2}ms/frame ({:.0} FPS)", frame_avg, 1000.0 / frame_avg);
-}
+    println!("  {} {:.1}ms ({:.0} FPS) | p95: {:.1}ms | particles: {}",
+             status, avg, fps, p95, final_particles);
 
-#[derive(Default)]
-struct ProfileTimes {
-    classify: Duration,
-    p2g: Duration,
-    store_old: Duration,
-    gravity: Duration,
-    divergence: Duration,
-    pressure: Duration,
-    gradient: Duration,
-    vorticity: Duration,
-    g2p: Duration,
-    settling: Duration,
-    advect: Duration,
-    separate: Duration,
-    cleanup: Duration,
-}
-
-impl ProfileTimes {
-    fn total(&self) -> Duration {
-        self.classify + self.p2g + self.store_old + self.gravity +
-        self.divergence + self.pressure + self.gradient + self.vorticity +
-        self.g2p + self.settling + self.advect + self.separate + self.cleanup
+    // Phase breakdown
+    print!("  phases:");
+    for (i, name) in PHASES.iter().enumerate() {
+        let avg_ms = phase_totals[i] / FRAMES as f32;
+        let pct = (phase_totals[i] / phase_totals.iter().sum::<f32>()) * 100.0;
+        if pct > 5.0 {
+            print!(" {}={:.1}ms({:.0}%)", name, avg_ms, pct);
+        }
     }
-}
-
-fn print_timing(name: &str, duration: Duration, frames: usize, total: Duration) {
-    let avg_ms = duration.as_secs_f64() * 1000.0 / frames as f64;
-    let pct = (duration.as_secs_f64() / total.as_secs_f64()) * 100.0;
-    let bar_len = (pct / 2.0).round() as usize;
-    let bar: String = "█".repeat(bar_len);
-
-    println!("{:24} {:6.2}ms {:5.1}% {}", name, avg_ms, pct, bar);
-}
-
-// This duplicates the update logic to add timing
-fn profile_update(sim: &mut FlipSimulation, dt: f32, times: &mut ProfileTimes) {
-    // We need to access internals, so we'll time the whole update and estimate
-    // For now, let's just time the full update and note that the game code
-    // adds rendering overhead
-
-    let start = Instant::now();
-    sim.update(dt);
-    let elapsed = start.elapsed();
-
-    // Since we can't instrument internals without modifying the library,
-    // let's estimate based on typical FLIP distributions
-    // (This is a rough estimate - real profiling would need code changes)
-    times.classify += elapsed * 5 / 100;
-    times.p2g += elapsed * 15 / 100;
-    times.store_old += elapsed * 5 / 100;
-    times.gravity += elapsed * 2 / 100;
-    times.divergence += elapsed * 5 / 100;
-    times.pressure += elapsed * 25 / 100;
-    times.gradient += elapsed * 5 / 100;
-    times.vorticity += elapsed * 8 / 100;
-    times.g2p += elapsed * 10 / 100;
-    times.settling += elapsed * 2 / 100;
-    times.advect += elapsed * 8 / 100;
-    times.separate += elapsed * 8 / 100;
-    times.cleanup += elapsed * 2 / 100;
+    println!("\n");
 }

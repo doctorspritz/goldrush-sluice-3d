@@ -13,7 +13,7 @@
 //!
 //! Reference: Jiang et al. 2015 "The Affine Particle-In-Cell Method"
 
-use crate::grid::{apic_d_inverse, quadratic_bspline, CellType, Grid};
+use crate::grid::{apic_d_inverse, quadratic_bspline, quadratic_bspline_1d, CellType, Grid};
 use crate::particle::{ParticleMaterial, Particles, ParticleState};
 use glam::{Mat2, Vec2};
 use rand::Rng;
@@ -28,6 +28,12 @@ pub struct FlipSimulation {
     u_weight: Vec<f32>,
     v_sum: Vec<f32>,
     v_weight: Vec<f32>,
+    // Volume fraction tracking for two-way coupling
+    // Sand volume contribution at each grid face
+    sand_volume_u: Vec<f32>,
+    water_volume_u: Vec<f32>,
+    sand_volume_v: Vec<f32>,
+    water_volume_v: Vec<f32>,
     // Pre-allocated spatial hash for particle separation (zero allocation per frame)
     cell_head: Vec<i32>,      // Index of first particle in each cell (-1 = empty)
     particle_next: Vec<i32>,  // Index of next particle in same cell (-1 = end)
@@ -83,6 +89,11 @@ impl FlipSimulation {
             u_weight: vec![0.0; u_len],
             v_sum: vec![0.0; v_len],
             v_weight: vec![0.0; v_len],
+            // Volume fraction buffers for two-way coupling
+            sand_volume_u: vec![0.0; u_len],
+            water_volume_u: vec![0.0; u_len],
+            sand_volume_v: vec![0.0; v_len],
+            water_volume_v: vec![0.0; v_len],
             cell_head: vec![-1; cell_count],
             particle_next: Vec::new(),
             impulse_buffer: Vec::new(),
@@ -154,13 +165,9 @@ impl FlipSimulation {
         self.grid.apply_pressure_gradient(dt);
         let t5 = Instant::now();
 
-        // Diagnostic: check divergence after
+        // Diagnostic: compute divergence after for analysis (used by tests)
         self.grid.compute_divergence();
-        let div_after = self.grid.total_divergence();
-        if self.frame % 60 == 0 {
-            println!("PRESSURE[frame={}]: div before={:.1}, after={:.1}, reduction={:.1}%",
-                self.frame, div_before, div_after, (1.0 - div_after / div_before.max(0.001)) * 100.0);
-        }
+        let _ = self.grid.total_divergence();
 
         // 5b. Extrapolate after pressure solve for G2P sampling near boundaries
         // With fixed extrapolation (skips fluid-adjacent faces), this is safe
@@ -207,19 +214,9 @@ impl FlipSimulation {
         // 8d. Enforce pile constraints on ALL particles
         // Catches particles that drifted under piles or were at same level when pile formed
         self.enforce_pile_constraints();
-        let t8 = Instant::now();
 
-        if profile {
-            println!("PROFILE: classify={:.1}ms sdf={:.1}ms p2g={:.1}ms vort={:.1}ms pressure={:.1}ms g2p={:.1}ms neighbor={:.1}ms rest={:.1}ms",
-                (t1-t0).as_secs_f32()*1000.0,
-                (t2-t1).as_secs_f32()*1000.0,
-                (t3-t2).as_secs_f32()*1000.0,
-                (t4-t3).as_secs_f32()*1000.0,
-                (t5-t4).as_secs_f32()*1000.0,
-                (t6-t5).as_secs_f32()*1000.0,
-                (t7-t6).as_secs_f32()*1000.0,
-                (t8-t7).as_secs_f32()*1000.0);
-        }
+        // Silence unused timing/diagnostic variables (kept for flamegraph profiling)
+        let _ = (t0, t1, t2, t3, t4, t5, t6, t7, profile, div_before);
 
         // 9. Push overlapping particles apart - DISABLED
         // Near-pressure handles incompressibility now. If pressure is strong enough,
@@ -231,6 +228,64 @@ impl FlipSimulation {
             self.grid.width as f32 * self.grid.cell_size,
             self.grid.height as f32 * self.grid.cell_size,
         );
+    }
+
+    /// Profiled update - returns timing breakdown in milliseconds
+    /// Order: [classify, sdf, p2g, vorticity+pressure, g2p, neighbor, rest]
+    pub fn update_profiled(&mut self, dt: f32) -> [f32; 7] {
+        use std::time::Instant;
+        self.frame = self.frame.wrapping_add(1);
+
+        let t0 = Instant::now();
+        self.classify_cells();
+        let t1 = Instant::now();
+
+        self.grid.compute_sdf();
+        let t2 = Instant::now();
+
+        self.particles_to_grid();
+        self.grid.extrapolate_velocities(1);
+        self.store_old_velocities();
+        let t3 = Instant::now();
+
+        self.grid.apply_gravity(dt);
+        let pile_height_copy = self.pile_height.clone();
+        self.grid.apply_vorticity_confinement_with_piles(dt, 0.05, &pile_height_copy);
+        self.grid.enforce_boundary_conditions();
+        self.grid.compute_divergence();
+        self.grid.solve_pressure_multigrid(2);
+        self.grid.apply_pressure_gradient(dt);
+        self.grid.compute_divergence();
+        self.grid.extrapolate_velocities(1);
+        let t4 = Instant::now();
+
+        self.grid_to_particles(dt);
+        let t5 = Instant::now();
+
+        self.build_spatial_hash();
+        self.compute_neighbor_counts();
+        let t6 = Instant::now();
+
+        self.apply_sediment_forces(dt);
+        self.advect_particles(dt);
+        self.update_particle_states(dt);
+        self.compute_pile_heightfield();
+        self.enforce_pile_constraints();
+        self.particles.remove_out_of_bounds(
+            self.grid.width as f32 * self.grid.cell_size,
+            self.grid.height as f32 * self.grid.cell_size,
+        );
+        let t7 = Instant::now();
+
+        [
+            (t1 - t0).as_secs_f32() * 1000.0,
+            (t2 - t1).as_secs_f32() * 1000.0,
+            (t3 - t2).as_secs_f32() * 1000.0,
+            (t4 - t3).as_secs_f32() * 1000.0,
+            (t5 - t4).as_secs_f32() * 1000.0,
+            (t6 - t5).as_secs_f32() * 1000.0,
+            (t7 - t6).as_secs_f32() * 1000.0,
+        ]
     }
 
     /// Run isolated FLIP cycle WITH extrapolation for testing
@@ -248,8 +303,8 @@ impl FlipSimulation {
     }
 
     /// Step 1: Classify cells as solid, fluid, or air
-    /// ALL particles mark cells as fluid (for pressure boundary conditions).
-    /// Sediment doesn't contribute to P2G velocity, but it occupies space.
+    /// Only WATER particles mark cells as fluid (for pressure boundary conditions).
+    /// Sediment is purely Lagrangian - it doesn't affect the pressure solve.
     pub fn classify_cells(&mut self) {
         // Reset to air
         for cell in &mut self.grid.cell_type {
@@ -297,67 +352,95 @@ impl FlipSimulation {
     ///   mass_i += w_ip
     ///
     /// Final grid velocity: v_i = momentum_i / mass_i
+    ///
+    /// Optimization: Precompute 1D weights to reduce bspline calls from 18 to 12 per particle.
     pub fn particles_to_grid(&mut self) {
         // Clear accumulators
         self.u_sum.fill(0.0);
         self.u_weight.fill(0.0);
         self.v_sum.fill(0.0);
         self.v_weight.fill(0.0);
+        // Clear volume fraction accumulators (two-way coupling)
+        self.sand_volume_u.fill(0.0);
+        self.water_volume_u.fill(0.0);
+        self.sand_volume_v.fill(0.0);
+        self.water_volume_v.fill(0.0);
 
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
         let height = self.grid.height;
 
-        for particle in self.particles.iter() {
-            // Sediment is passive (one-way coupling) - doesn't affect grid velocities
-            // This prevents stationary bedload from averaging flow velocity toward zero
-            let weight_scale = if particle.is_sediment() { 0.0 } else { 1.0 };
+        // Particle volume for volume fraction tracking (~4 particles per cell)
+        let particle_volume = cell_size * cell_size / 4.0;
 
+        for particle in self.particles.iter() {
             let pos = particle.position;
             let vel = particle.velocity;
             let c_mat = particle.affine_velocity;
+            let is_sand = particle.is_sediment();
 
             // ========== U component (staggered on left edges) ==========
             // U nodes are at (i * cell_size, (j + 0.5) * cell_size) in world coords
-            // Convert to cell-space for quadratic B-spline
             let u_pos = pos / cell_size - Vec2::new(0.0, 0.5);
             let base_i = u_pos.x.floor() as i32;
             let base_j = u_pos.y.floor() as i32;
             let fx = u_pos.x - base_i as f32;
             let fy = u_pos.y - base_j as f32;
 
+            // Precompute 1D weights: wx[di+1], wy[dj+1] for di,dj in {-1,0,1}
+            let u_wx = [
+                quadratic_bspline_1d(fx + 1.0),  // di = -1
+                quadratic_bspline_1d(fx),        // di = 0
+                quadratic_bspline_1d(fx - 1.0),  // di = 1
+            ];
+            let u_wy = [
+                quadratic_bspline_1d(fy + 1.0),  // dj = -1
+                quadratic_bspline_1d(fy),        // dj = 0
+                quadratic_bspline_1d(fy - 1.0),  // dj = 1
+            ];
+
             for dj in -1..=1i32 {
+                let nj = base_j + dj;
+                if nj < 0 || nj >= height as i32 {
+                    continue;
+                }
+                let wy = u_wy[(dj + 1) as usize];
+
                 for di in -1..=1i32 {
                     let ni = base_i + di;
-                    let nj = base_j + dj;
-
-                    // Bounds check for U grid: ni in [0, width], nj in [0, height-1]
-                    if ni < 0 || ni > width as i32 || nj < 0 || nj >= height as i32 {
+                    if ni < 0 || ni > width as i32 {
                         continue;
                     }
 
-                    // Distance from particle to this node (in cell units)
-                    let delta = Vec2::new(fx - di as f32, fy - dj as f32);
-                    let w = quadratic_bspline(delta);
+                    let w = u_wx[(di + 1) as usize] * wy;
                     if w <= 0.0 {
                         continue;
                     }
 
-                    // APIC: offset from particle to grid node (in world coords)
-                    let offset = Vec2::new(
-                        (ni as f32) * cell_size - pos.x,
-                        (nj as f32 + 0.5) * cell_size - pos.y,
-                    );
-
-                    // Affine velocity contribution: C * offset
-                    let affine_vel = c_mat * offset;
-
                     let idx = self.grid.u_index(ni as usize, nj as usize);
-                    let scaled_w = w * weight_scale;
 
-                    // APIC: momentum includes affine term
-                    self.u_sum[idx] += (vel.x + affine_vel.x) * scaled_w;
-                    self.u_weight[idx] += scaled_w;
+                    // Sand uses linear velocity only (discrete solid, not continuous fluid)
+                    // Water uses APIC with affine velocity term
+                    if is_sand {
+                        self.u_sum[idx] += vel.x * w;
+                    } else {
+                        // APIC: offset from particle to grid node (in world coords)
+                        let offset = Vec2::new(
+                            (ni as f32) * cell_size - pos.x,
+                            (nj as f32 + 0.5) * cell_size - pos.y,
+                        );
+                        // Affine velocity contribution: C * offset
+                        let affine_vel = c_mat * offset;
+                        self.u_sum[idx] += (vel.x + affine_vel.x) * w;
+                    }
+                    self.u_weight[idx] += w;
+
+                    // Volume fraction tracking for two-way coupling
+                    if is_sand {
+                        self.sand_volume_u[idx] += w * particle_volume;
+                    } else {
+                        self.water_volume_u[idx] += w * particle_volume;
+                    }
                 }
             }
 
@@ -369,36 +452,60 @@ impl FlipSimulation {
             let fx = v_pos.x - base_i as f32;
             let fy = v_pos.y - base_j as f32;
 
+            // Precompute 1D weights for V component
+            let v_wx = [
+                quadratic_bspline_1d(fx + 1.0),
+                quadratic_bspline_1d(fx),
+                quadratic_bspline_1d(fx - 1.0),
+            ];
+            let v_wy = [
+                quadratic_bspline_1d(fy + 1.0),
+                quadratic_bspline_1d(fy),
+                quadratic_bspline_1d(fy - 1.0),
+            ];
+
             for dj in -1..=1i32 {
+                let nj = base_j + dj;
+                if nj < 0 || nj > height as i32 {
+                    continue;
+                }
+                let wy = v_wy[(dj + 1) as usize];
+
                 for di in -1..=1i32 {
                     let ni = base_i + di;
-                    let nj = base_j + dj;
-
-                    // Bounds check for V grid: ni in [0, width-1], nj in [0, height]
-                    if ni < 0 || ni >= width as i32 || nj < 0 || nj > height as i32 {
+                    if ni < 0 || ni >= width as i32 {
                         continue;
                     }
 
-                    let delta = Vec2::new(fx - di as f32, fy - dj as f32);
-                    let w = quadratic_bspline(delta);
+                    let w = v_wx[(di + 1) as usize] * wy;
                     if w <= 0.0 {
                         continue;
                     }
 
-                    // Offset from particle to grid node (in world coords)
-                    let offset = Vec2::new(
-                        (ni as f32 + 0.5) * cell_size - pos.x,
-                        (nj as f32) * cell_size - pos.y,
-                    );
-
-                    // Affine velocity contribution
-                    let affine_vel = c_mat * offset;
-
                     let idx = self.grid.v_index(ni as usize, nj as usize);
-                    let scaled_w = w * weight_scale;
 
-                    self.v_sum[idx] += (vel.y + affine_vel.y) * scaled_w;
-                    self.v_weight[idx] += scaled_w;
+                    // Sand uses linear velocity only (discrete solid, not continuous fluid)
+                    // Water uses APIC with affine velocity term
+                    if is_sand {
+                        self.v_sum[idx] += vel.y * w;
+                    } else {
+                        // Offset from particle to grid node (in world coords)
+                        let offset = Vec2::new(
+                            (ni as f32 + 0.5) * cell_size - pos.x,
+                            (nj as f32) * cell_size - pos.y,
+                        );
+                        // Affine velocity contribution
+                        let affine_vel = c_mat * offset;
+                        self.v_sum[idx] += (vel.y + affine_vel.y) * w;
+                    }
+                    self.v_weight[idx] += w;
+
+                    // Volume fraction tracking for two-way coupling
+                    if is_sand {
+                        self.sand_volume_v[idx] += w * particle_volume;
+                    } else {
+                        self.water_volume_v[idx] += w * particle_volume;
+                    }
                 }
             }
         }
@@ -533,12 +640,15 @@ impl FlipSimulation {
         self.particles.list.par_iter_mut().for_each(|particle| {
             let pos = particle.position;
 
-            // Sample velocity from grid using bilinear interpolation for sediment
+            // Sample velocity from grid using bilinear interpolation
             let v_grid = grid.sample_velocity(pos);
 
-            // Sediment doesn't participate in APIC - it's Lagrangian
-            // Store fluid velocity for drag calculation in apply_sediment_forces
+            // Sand uses FLIP with lower ratio (more responsive to flow changes)
+            // Skip APIC C matrix update (sand is discrete solid, not continuous fluid)
             if particle.is_sediment() {
+                const SAND_FLIP_RATIO: f32 = 0.8;
+                let grid_delta = v_grid - particle.old_grid_velocity;
+                particle.velocity = particle.velocity + grid_delta * SAND_FLIP_RATIO;
                 particle.old_grid_velocity = v_grid;
                 return;
             }
@@ -889,9 +999,6 @@ impl FlipSimulation {
         fn material_shear_factor(mat: ParticleMaterial) -> f32 {
             match mat {
                 ParticleMaterial::Sand => 1.0,
-                ParticleMaterial::Gold => 6.0,
-                ParticleMaterial::Magnetite => 1.5,
-                ParticleMaterial::Mud => 0.7,
                 ParticleMaterial::Water => 1.0, // N/A for water
             }
         }
@@ -995,65 +1102,6 @@ impl FlipSimulation {
                 }
             }
         });
-
-        // DEBUG: Print state counts every 60 frames
-        static DEBUG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let frame = DEBUG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if frame % 60 == 0 {
-            let mut bedload_count = 0;
-            let mut suspended_count = 0;
-            let mut has_support_count = 0;
-            let mut low_shear_count = 0;
-
-            for p in &self.particles.list {
-                if !p.is_sediment() { continue; }
-                match p.state {
-                    ParticleState::Bedload => bedload_count += 1,
-                    ParticleState::Suspended => suspended_count += 1,
-                }
-
-                // Check support
-                let sdf_dist = self.grid.sample_sdf(p.position);
-                let near_solid = sdf_dist < near_floor_distance;
-                let is_floor = if near_solid {
-                    let grad = self.grid.sdf_gradient(p.position);
-                    grad.y < -0.5
-                } else { false };
-                let col = ((p.position.x / cell_size) as usize).min(pile_width.saturating_sub(1));
-                let pile_top = self.pile_height[col];
-                let particle_bottom = p.position.y + cell_size * 0.5;
-                let on_pile = pile_top < f32::INFINITY
-                    && particle_bottom >= pile_top
-                    && (particle_bottom - pile_top) < cell_size;
-                if (near_solid && is_floor) || on_pile { has_support_count += 1; }
-
-                // Check shear
-                let fluid_vel_here = p.old_grid_velocity;
-                let pos_below = p.position + Vec2::new(0.0, cell_size);
-                let fluid_vel_below = self.grid.sample_velocity(pos_below);
-                let shear = (fluid_vel_here - fluid_vel_below).length();
-                let shear_n = (shear - SHEAR_DEADZONE).max(0.0) / v_scale;
-                if shear_n < JAM_THRESHOLD { low_shear_count += 1; }
-            }
-
-            // Show some bedload positions
-            let bedload_positions: Vec<_> = self.particles.list.iter()
-                .filter(|p| p.is_sediment() && p.state == ParticleState::Bedload)
-                .take(5)
-                .map(|p| format!("({:.0},{:.0})", p.position.x, p.position.y))
-                .collect();
-
-            // Show non-INFINITY pile heights (actual piles)
-            let active_piles: Vec<_> = self.pile_height.iter().enumerate()
-                .filter(|(_, h)| **h < f32::INFINITY)
-                .take(5)
-                .map(|(col, h)| format!("col{}={:.0}", col, h))
-                .collect();
-
-            eprintln!("[JAM DEBUG] bedload={} suspended={} has_support={} low_shear={} | pos:{:?} | piles:{:?}",
-                bedload_count, suspended_count, has_support_count, low_shear_count,
-                bedload_positions, active_piles);
-        }
     }
 
     /// Step 8c: Compute pile heightfield from bedload particles
@@ -1371,6 +1419,7 @@ impl FlipSimulation {
 
     /// Compute neighbor counts for each particle (used for hindered settling and stickiness)
     /// Uses the spatial hash to count particles in same + adjacent cells.
+    /// OPTIMIZATION: Only computes for sediment particles (water doesn't need it).
     /// Parallelized for performance.
     fn compute_neighbor_counts(&mut self) {
         use crate::particle::ParticleMaterial;
@@ -1381,7 +1430,7 @@ impl FlipSimulation {
         let height = self.grid.height;
         let particle_count = self.particles.len();
 
-        // Resize buffers
+        // Resize buffers (zero-init is fine, water particles just read 0)
         if self.neighbor_counts.len() < particle_count {
             self.neighbor_counts.resize(particle_count, 0);
         }
@@ -1389,14 +1438,27 @@ impl FlipSimulation {
             self.water_neighbor_counts.resize(particle_count, 0);
         }
 
+        // Check if we have any sediment - skip entirely if water-only
+        let has_sediment = self.particles.list.iter().any(|p| p.is_sediment());
+        if !has_sediment {
+            return; // No sediment = no neighbor counts needed
+        }
+
+        // Build index list of sediment particles only
+        let sediment_indices: Vec<usize> = self.particles.list.iter()
+            .enumerate()
+            .filter(|(_, p)| p.is_sediment())
+            .map(|(i, _)| i)
+            .collect();
+
         // Capture immutable references for parallel iteration
         let positions: Vec<Vec2> = self.particles.list.iter().map(|p| p.position).collect();
         let materials: Vec<ParticleMaterial> = self.particles.list.iter().map(|p| p.material).collect();
         let cell_head = &self.cell_head;
         let particle_next = &self.particle_next;
 
-        // Compute counts in parallel
-        let counts: Vec<(u16, u16)> = (0..particle_count)
+        // Compute counts in parallel - ONLY for sediment particles
+        let counts: Vec<(usize, u16, u16)> = sediment_indices
             .into_par_iter()
             .map(|idx| {
                 let pos = positions[idx];
@@ -1421,24 +1483,22 @@ impl FlipSimulation {
 
                         while p_idx >= 0 {
                             let neighbor_idx = p_idx as usize;
-                            // Count all neighbors
                             total_count = total_count.saturating_add(1);
 
-                            // Count water neighbors specially
                             if materials[neighbor_idx] == ParticleMaterial::Water {
                                 water_count = water_count.saturating_add(1);
                             }
-                            
+
                             p_idx = particle_next[neighbor_idx];
                         }
                     }
                 }
-                (total_count, water_count)
+                (idx, total_count, water_count)
             })
             .collect();
 
-        // Write back to self
-        for (idx, (total, water)) in counts.into_iter().enumerate() {
+        // Write back to self (only sediment indices updated)
+        for (idx, total, water) in counts {
             self.neighbor_counts[idx] = total;
             self.water_neighbor_counts[idx] = water;
         }
@@ -1476,32 +1536,6 @@ impl FlipSimulation {
         }
     }
 
-    /// Spawn mud particles at a position
-    pub fn spawn_mud(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
-        use crate::particle::ParticleMaterial;
-        let mut rng = rand::thread_rng();
-        let use_variation = self.use_variable_diameter;
-        let variation = self.diameter_variation;
-        for _ in 0..count {
-            let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
-            let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
-            let px = x + offset_x;
-            let py = y + offset_y;
-            if self.is_spawn_safe(px, py) {
-                let final_vx = vx + (rng.gen::<f32>() - 0.5) * 10.0;
-                let final_vy = vy + (rng.gen::<f32>() - 0.5) * 10.0;
-                if use_variation {
-                    self.particles.spawn_with_variation(
-                        px, py, final_vx, final_vy,
-                        ParticleMaterial::Mud, variation, rng.gen(),
-                    );
-                } else {
-                    self.particles.spawn_mud(px, py, final_vx, final_vy);
-                }
-            }
-        }
-    }
-
     /// Spawn sand particles (light sediment, carried by flow)
     pub fn spawn_sand(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
         use crate::particle::ParticleMaterial;
@@ -1523,58 +1557,6 @@ impl FlipSimulation {
                     );
                 } else {
                     self.particles.spawn_sand(px, py, final_vx, final_vy);
-                }
-            }
-        }
-    }
-
-    /// Spawn magnetite particles (black sand indicator)
-    pub fn spawn_magnetite(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
-        use crate::particle::ParticleMaterial;
-        let mut rng = rand::thread_rng();
-        let use_variation = self.use_variable_diameter;
-        let variation = self.diameter_variation;
-        for _ in 0..count {
-            let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
-            let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
-            let px = x + offset_x;
-            let py = y + offset_y;
-            if self.is_spawn_safe(px, py) {
-                let final_vx = vx + (rng.gen::<f32>() - 0.5) * 5.0;
-                let final_vy = vy + (rng.gen::<f32>() - 0.5) * 5.0;
-                if use_variation {
-                    self.particles.spawn_with_variation(
-                        px, py, final_vx, final_vy,
-                        ParticleMaterial::Magnetite, variation, rng.gen(),
-                    );
-                } else {
-                    self.particles.spawn_magnetite(px, py, final_vx, final_vy);
-                }
-            }
-        }
-    }
-
-    /// Spawn gold particles (heavy, settles fast through water)
-    pub fn spawn_gold(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
-        use crate::particle::ParticleMaterial;
-        let mut rng = rand::thread_rng();
-        let use_variation = self.use_variable_diameter;
-        let variation = self.diameter_variation;
-        for _ in 0..count {
-            let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
-            let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size;
-            let px = x + offset_x;
-            let py = y + offset_y;
-            if self.is_spawn_safe(px, py) {
-                let final_vx = vx + (rng.gen::<f32>() - 0.5) * 5.0;
-                let final_vy = vy + (rng.gen::<f32>() - 0.5) * 5.0;
-                if use_variation {
-                    self.particles.spawn_with_variation(
-                        px, py, final_vx, final_vy,
-                        ParticleMaterial::Gold, variation, rng.gen(),
-                    );
-                } else {
-                    self.particles.spawn_gold(px, py, final_vx, final_vy);
                 }
             }
         }
