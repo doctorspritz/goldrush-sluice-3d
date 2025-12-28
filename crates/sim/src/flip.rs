@@ -240,6 +240,10 @@ impl FlipSimulation {
         // Cells with velocity above threshold spawn particles and clear
         self.entrain_deposited_sediment(dt);
 
+        // 8h. Collapse: ensure deposited cells have support and follow angle of repose
+        // Fixes gaps and artifacts by making piles physically stable
+        self.collapse_deposited_sediment();
+
         // 8b-8d. Legacy bedload system DISABLED for Phase 2
         // Sand stays in Suspended state, no pile mechanics
         // self.update_particle_states(dt);
@@ -1770,6 +1774,172 @@ impl FlipSimulation {
                 );
             }
         }
+    }
+
+    /// Step 8h: Collapse and avalanche deposited sediment
+    ///
+    /// Ensures deposited cells have support underneath (won't float) and
+    /// spread according to angle of repose (no steep cliffs).
+    /// This fixes gaps and artifacts in sediment piles.
+    /// Preserves material composition when moving cells.
+    fn collapse_deposited_sediment(&mut self) {
+        const MAX_ITERATIONS: usize = 50;
+        // Height difference (in cells) before avalanche triggers
+        // Higher = steeper piles allowed. 2.0 means 2 cells taller than neighbor before spreading
+        const MAX_HEIGHT_DIFF: f32 = 2.0;
+        // Minimum pile height before avalanche logic applies (let small piles accumulate)
+        const MIN_PILE_HEIGHT: usize = 3;
+
+        let width = self.grid.width;
+        let height = self.grid.height;
+
+        let mut cells_changed = true;
+        let mut iteration = 0;
+        let mut total_collapses = 0;
+        let mut total_avalanches = 0;
+
+        while cells_changed && iteration < MAX_ITERATIONS {
+            cells_changed = false;
+            iteration += 1;
+
+            // Phase 1: Support check (bottom-up to handle chains)
+            // Scan from bottom to top so collapsed cells can support ones above
+            for j in (1..height - 1).rev() {
+                for i in 1..width - 1 {
+                    if !self.grid.is_deposited(i, j) {
+                        continue;
+                    }
+
+                    // Check support: cell below must be solid
+                    if !self.grid.is_solid(i, j + 1) {
+                        // Find landing position (first supported cell below)
+                        let mut target_j = j + 1;
+                        while target_j + 1 < height && !self.grid.is_solid(i, target_j + 1) {
+                            target_j += 1;
+                        }
+
+                        // Only collapse if we have a valid landing spot
+                        if target_j < height && !self.grid.is_solid(i, target_j) {
+                            // Preserve composition when moving
+                            let source_idx = self.grid.cell_index(i, j);
+                            let composition = self.grid.deposited[source_idx];
+                            self.grid.clear_deposited(i, j);
+                            self.grid.set_deposited_with_composition(
+                                i, target_j,
+                                composition.mud_fraction,
+                                composition.sand_fraction,
+                                composition.magnetite_fraction,
+                                composition.gold_fraction,
+                            );
+                            total_collapses += 1;
+                            cells_changed = true;
+                        }
+                        // If no valid landing spot, leave the cell where it is
+                    }
+                }
+            }
+
+            // Phase 2: Angle of repose check
+            // Move material from steep piles to the LOWEST neighbor only
+            // Process each column once, not each cell
+            for i in 1..width - 1 {
+                let my_height = self.count_column_deposited(i);
+
+                // Skip if pile is too small (let it accumulate first)
+                if my_height < MIN_PILE_HEIGHT {
+                    continue;
+                }
+
+                // Check both neighbors, avalanche to the LOWEST one only
+                let left_height = if i > 1 {
+                    self.count_column_deposited(i - 1)
+                } else {
+                    usize::MAX // Can't avalanche left at edge
+                };
+
+                let right_height = if i < width - 2 {
+                    self.count_column_deposited(i + 1)
+                } else {
+                    usize::MAX // Can't avalanche right at edge
+                };
+
+                // Find the lowest neighbor
+                let (target_i, target_height) = if left_height <= right_height {
+                    (i - 1, left_height)
+                } else {
+                    (i + 1, right_height)
+                };
+
+                // Check if height difference exceeds threshold
+                if target_height < usize::MAX
+                    && my_height as f32 - target_height as f32 > MAX_HEIGHT_DIFF
+                {
+                    // Avalanche one cell to the lower neighbor
+                    if let Some(top_j) = self.find_top_deposited_in_column(i) {
+                        let land_j = self.find_landing_j(target_i);
+                        if land_j < height && !self.grid.is_solid(target_i, land_j) {
+                            // Preserve composition when avalanching
+                            let source_idx = self.grid.cell_index(i, top_j);
+                            let composition = self.grid.deposited[source_idx];
+                            self.grid.clear_deposited(i, top_j);
+                            self.grid.set_deposited_with_composition(
+                                target_i, land_j,
+                                composition.mud_fraction,
+                                composition.sand_fraction,
+                                composition.magnetite_fraction,
+                                composition.gold_fraction,
+                            );
+                            total_avalanches += 1;
+                            cells_changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update SDF if anything changed
+        if total_collapses > 0 || total_avalanches > 0 {
+            self.grid.compute_sdf();
+            self.grid.compute_bed_heights();
+        }
+
+        // Suppress unused variable warnings in release builds
+        let _ = (iteration, total_collapses, total_avalanches);
+    }
+
+    /// Count deposited cells in a column (from bottom up)
+    fn count_column_deposited(&self, i: usize) -> usize {
+        let mut count = 0;
+        for j in 0..self.grid.height {
+            if self.grid.is_deposited(i, j) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Find the topmost deposited cell in a column (lowest j value)
+    fn find_top_deposited_in_column(&self, i: usize) -> Option<usize> {
+        for j in 0..self.grid.height {
+            if self.grid.is_deposited(i, j) {
+                return Some(j);
+            }
+        }
+        None
+    }
+
+    /// Find landing j position for a falling/avalanching cell
+    fn find_landing_j(&self, i: usize) -> usize {
+        // Start from bottom and find first empty cell with support below
+        for j in (0..self.grid.height).rev() {
+            if !self.grid.is_solid(i, j) {
+                // Check if supported (at bottom or has solid below)
+                if j + 1 >= self.grid.height || self.grid.is_solid(i, j + 1) {
+                    return j;
+                }
+            }
+        }
+        self.grid.height - 1 // Bottom of grid
     }
 
     /// Step 7b: Update particle states (Suspended ↔ Bedload)

@@ -444,6 +444,23 @@ async fn main() {
             RenderMode::Mesh => draw_particles_mesh(&sim.particles, SCALE, fast_particle_size),
         }
 
+        // Draw deposited sediment cells ON TOP of particles (so visible in all render modes)
+        // Uses composition-based coloring for mixed-material beds
+        for j in 0..sim.grid.height {
+            for i in 0..sim.grid.width {
+                if sim.grid.is_deposited(i, j) {
+                    let x = i as f32 * CELL_SIZE * SCALE;
+                    let y = j as f32 * CELL_SIZE * SCALE;
+                    let size = CELL_SIZE * SCALE;
+                    // Get composition-based color from the deposited cell
+                    let cell = &sim.grid.deposited[sim.grid.cell_index(i, j)];
+                    let rgba = cell.color();
+                    let deposit_color = Color::from_rgba(rgba[0], rgba[1], rgba[2], rgba[3]);
+                    draw_rectangle(x, y, size, size, deposit_color);
+                }
+            }
+        }
+
         // Draw velocity field on top (optional debug visualization)
         if show_velocity {
             let spacing = 4;
