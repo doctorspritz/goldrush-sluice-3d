@@ -112,6 +112,10 @@ pub struct Grid {
     /// Solid terrain (persistent, set from level geometry)
     pub solid: Vec<bool>,
 
+    /// Deposited sediment (cells converted from settled particles)
+    /// Separate from `solid` to enable distinct visualization
+    pub deposited: Vec<bool>,
+
     /// Signed distance field to nearest solid (negative inside, positive outside)
     /// Precomputed when terrain changes for O(1) collision queries
     pub sdf: Vec<f32>,
@@ -174,6 +178,7 @@ impl Grid {
             divergence: vec![0.0; cell_count],
             cell_type: vec![CellType::Air; cell_count],
             solid: vec![false; cell_count],
+            deposited: vec![false; cell_count],
             sdf: vec![f32::MAX; cell_count],  // Will be computed after terrain setup
             vorticity: vec![0.0; cell_count],
             bed_height: vec![0.0; width],
@@ -390,6 +395,33 @@ impl Grid {
             return true; // Out of bounds is solid
         }
         self.solid[self.cell_index(i, j)]
+    }
+
+    /// Mark cell as deposited sediment (also marks as solid)
+    pub fn set_deposited(&mut self, i: usize, j: usize) {
+        if i < self.width && j < self.height {
+            let idx = self.cell_index(i, j);
+            self.solid[idx] = true;
+            self.deposited[idx] = true;
+        }
+    }
+
+    /// Check if cell is deposited sediment
+    pub fn is_deposited(&self, i: usize, j: usize) -> bool {
+        if i >= self.width || j >= self.height {
+            return false;
+        }
+        self.deposited[self.cell_index(i, j)]
+    }
+
+    /// Clear deposited status and solid flag for a cell
+    /// Used during entrainment when flow velocity exceeds threshold
+    pub fn clear_deposited(&mut self, i: usize, j: usize) {
+        if i < self.width && j < self.height {
+            let idx = self.cell_index(i, j);
+            self.solid[idx] = false;
+            self.deposited[idx] = false;
+        }
     }
 
     /// Check if cell contains fluid (for drift-flux coupling)

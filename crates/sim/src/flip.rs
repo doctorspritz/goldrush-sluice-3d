@@ -54,6 +54,11 @@ pub struct FlipSimulation {
     // pile_height[x] = top of bedload pile at column x (in world coordinates)
     pub pile_height: Vec<f32>,
 
+    // === Deposition System ===
+    // Tracks accumulated sediment mass per grid cell
+    // When mass exceeds threshold, cell converts to solid (changes SDF)
+    deposited_mass: Vec<f32>,
+
     // === Sediment Physics Feature Flags ===
     // Toggle these to compare old vs new physics behavior
     /// Use Ferguson-Church settling velocity (vs simple density-based)
@@ -112,6 +117,8 @@ impl FlipSimulation {
             water_neighbor_counts: vec![0; cell_count * 9],
             // Pile heightfield for stacking (one entry per column)
             pile_height: vec![f32::INFINITY; width],
+            // Deposition mass accumulator (one entry per grid cell)
+            deposited_mass: vec![0.0; cell_count],
             // Sediment physics feature flags
             use_ferguson_church: true,
             use_hindered_settling: false, // Disabled: neighbor count mismatch crushes settling to 6%
@@ -214,6 +221,18 @@ impl FlipSimulation {
 
         // 8. Advect particles (uses SDF for O(1) collision)
         self.advect_particles(dt);
+
+        // 8e. DEM settling: slow particles near floor get contact forces
+        // This enables proper pile formation through particle-particle contacts
+        self.apply_dem_settling(dt);
+
+        // 8f. Deposition: stable piles become solid terrain
+        // Particles with very low velocity in dense regions convert to solid
+        self.deposit_settled_sediment(dt);
+
+        // 8g. Entrainment: high flow erodes deposited cells
+        // Cells with velocity above threshold spawn particles and clear
+        self.entrain_deposited_sediment(dt);
 
         // 8b-8d. Legacy bedload system DISABLED for Phase 2
         // Sand stays in Suspended state, no pile mechanics
@@ -1182,6 +1201,465 @@ impl FlipSimulation {
                     particle.velocity *= MAX_VELOCITY / speed;
                 }
             });
+    }
+
+    /// Step 8e: Apply DEM contact forces for settling particles
+    ///
+    /// Particles with low velocity near floor/other settled particles use
+    /// DEM-style contact physics to stack properly and form coherent piles.
+    /// Fast-moving particles continue to use FLIP (handled elsewhere).
+    fn apply_dem_settling(&mut self, dt: f32) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // === Thresholds ===
+        // Velocity threshold for "settling" mode (cells/frame)
+        const SETTLING_VEL_THRESHOLD: f32 = 0.3;
+        // Distance to floor/pile to be considered settling
+        const SETTLING_DIST_CELLS: f32 = 2.0;
+        // Contact spring stiffness (higher = stiffer contacts)
+        const CONTACT_STIFFNESS: f32 = 2000.0;
+        // Damping ratio (0-1, higher = more energy dissipation)
+        const DAMPING_RATIO: f32 = 0.5;
+        // Friction coefficient (tangential resistance)
+        const FRICTION_COEFF: f32 = 0.6;
+        // Particle radius for contact detection
+        const PARTICLE_RADIUS_CELLS: f32 = 0.5;
+
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let height = self.grid.height;
+        let v_scale = cell_size / dt;
+
+        let particle_radius = PARTICLE_RADIUS_CELLS * cell_size;
+        let contact_dist = particle_radius * 2.0;
+        let contact_dist_sq = contact_dist * contact_dist;
+
+        // Identify which particles are in settling mode
+        let settling_flags: Vec<AtomicBool> = (0..self.particles.list.len())
+            .map(|_| AtomicBool::new(false))
+            .collect();
+
+        let grid = &self.grid;
+
+        // Mark settling particles (parallel)
+        self.particles.list.par_iter().enumerate().for_each(|(idx, p)| {
+            if !p.is_sediment() {
+                return;
+            }
+
+            let vel_n = p.velocity.length() / v_scale;
+            if vel_n > SETTLING_VEL_THRESHOLD {
+                return;
+            }
+
+            // Check if near floor (SDF) or has support
+            let sdf_dist = grid.sample_sdf(p.position);
+            if sdf_dist < SETTLING_DIST_CELLS * cell_size {
+                settling_flags[idx].store(true, Ordering::Relaxed);
+            }
+        });
+
+        // Pre-allocate force buffer
+        let particle_count = self.particles.list.len();
+        let mut forces: Vec<Vec2> = vec![Vec2::ZERO; particle_count];
+
+        // Compute contact forces between settling particles
+        for idx in 0..particle_count {
+            if !settling_flags[idx].load(Ordering::Relaxed) {
+                continue;
+            }
+
+            let p_i = &self.particles.list[idx];
+            let pos_i = p_i.position;
+            let vel_i = p_i.velocity;
+
+            let gi = ((pos_i.x / cell_size) as i32).max(0).min(width as i32 - 1);
+            let gj = ((pos_i.y / cell_size) as i32).max(0).min(height as i32 - 1);
+
+            // Check 3x3 neighborhood
+            for dj in -1i32..=1 {
+                for di in -1i32..=1 {
+                    let ni = gi + di;
+                    let nj = gj + dj;
+
+                    if ni < 0 || nj < 0 || ni >= width as i32 || nj >= height as i32 {
+                        continue;
+                    }
+
+                    let cell_idx = (nj as usize) * width + (ni as usize);
+                    let mut j = self.cell_head[cell_idx];
+
+                    while j >= 0 {
+                        let j_idx = j as usize;
+                        j = self.particle_next[j_idx];
+
+                        // Only process pairs once and skip self
+                        if j_idx <= idx {
+                            continue;
+                        }
+
+                        // Both particles must be settling for DEM contact
+                        if !settling_flags[j_idx].load(Ordering::Relaxed) {
+                            continue;
+                        }
+
+                        let p_j = &self.particles.list[j_idx];
+                        let pos_j = p_j.position;
+                        let vel_j = p_j.velocity;
+
+                        let diff = pos_i - pos_j;
+                        let dist_sq = diff.length_squared();
+
+                        if dist_sq >= contact_dist_sq || dist_sq < 0.0001 {
+                            continue;
+                        }
+
+                        let dist = dist_sq.sqrt();
+                        let overlap = contact_dist - dist;
+                        let normal = diff / dist; // Points from j to i
+
+                        // Relative velocity
+                        let rel_vel = vel_i - vel_j;
+                        let normal_vel = rel_vel.dot(normal);
+                        let tangent_vel = rel_vel - normal * normal_vel;
+
+                        // Spring-damper normal force
+                        let spring_force = CONTACT_STIFFNESS * overlap;
+                        let damping_force = DAMPING_RATIO * 2.0 * (CONTACT_STIFFNESS).sqrt() * normal_vel;
+                        let normal_force_mag = (spring_force - damping_force).max(0.0);
+                        let normal_force = normal * normal_force_mag;
+
+                        // Friction (Coulomb model)
+                        let max_friction = FRICTION_COEFF * normal_force_mag;
+                        let tangent_speed = tangent_vel.length();
+                        let friction_force = if tangent_speed > 0.001 {
+                            let friction_dir = -tangent_vel / tangent_speed;
+                            friction_dir * max_friction.min(tangent_speed * CONTACT_STIFFNESS * 0.5)
+                        } else {
+                            Vec2::ZERO
+                        };
+
+                        let total_force = normal_force + friction_force;
+
+                        // Apply equal and opposite forces
+                        forces[idx] += total_force;
+                        forces[j_idx] -= total_force;
+                    }
+                }
+            }
+
+            // Floor contact (SDF-based)
+            let sdf_dist = grid.sample_sdf(pos_i);
+            if sdf_dist < particle_radius && sdf_dist > -particle_radius {
+                let floor_normal = -grid.sdf_gradient(pos_i); // Points away from solid
+                let floor_overlap = particle_radius - sdf_dist;
+
+                if floor_overlap > 0.0 {
+                    // Normal force against floor
+                    let floor_normal_vel = vel_i.dot(floor_normal);
+                    let spring_f = CONTACT_STIFFNESS * floor_overlap * 1.5; // Stiffer floor
+                    let damp_f = DAMPING_RATIO * 2.0 * (CONTACT_STIFFNESS * 1.5).sqrt() * floor_normal_vel;
+                    let floor_force_mag = (spring_f - damp_f).max(0.0);
+
+                    forces[idx] += floor_normal * floor_force_mag;
+
+                    // Floor friction
+                    let tangent = Vec2::new(-floor_normal.y, floor_normal.x);
+                    let tangent_vel = vel_i.dot(tangent);
+                    let floor_friction = FRICTION_COEFF * floor_force_mag;
+                    if tangent_vel.abs() > 0.001 {
+                        forces[idx] -= tangent * tangent_vel.signum() * floor_friction.min(tangent_vel.abs() * CONTACT_STIFFNESS);
+                    }
+                }
+            }
+        }
+
+        // Apply forces to velocities (only settling particles)
+        let mass = 1.0; // Normalized mass
+        for idx in 0..particle_count {
+            if settling_flags[idx].load(Ordering::Relaxed) {
+                let accel = forces[idx] / mass;
+                self.particles.list[idx].velocity += accel * dt;
+
+                // Clamp velocity to prevent instability
+                let max_vel = v_scale * 0.5;
+                let speed = self.particles.list[idx].velocity.length();
+                if speed > max_vel {
+                    self.particles.list[idx].velocity *= max_vel / speed;
+                }
+            }
+        }
+    }
+
+    /// Step 8f: Deposit settled sediment onto terrain
+    ///
+    /// Detects sand particles that have truly settled (very low velocity,
+    /// in dense regions near floor) and converts cells to solid when enough
+    /// particles accumulate. Works with DEM settling for proper pile formation.
+    ///
+    /// This implements deposition without re-entrainment (Phase 1).
+    fn deposit_settled_sediment(&mut self, dt: f32) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // === Thresholds ===
+        // Velocity threshold: must be truly at rest (very low)
+        const VELOCITY_THRESHOLD: f32 = 0.05; // cells/frame - tighter for stable deposits
+        // Distance to floor for deposition eligibility
+        const FLOOR_DISTANCE_CELLS: f32 = 1.0; // Must be right on floor
+        // Minimum neighbors for "packed" state (prevents isolated deposits)
+        const MIN_NEIGHBORS: u16 = 3;
+        // Mass required to convert one cell to solid
+        const MASS_PER_CELL: usize = 4; // Tighter packing with DEM
+
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let height = self.grid.height;
+        let v_scale = cell_size / dt; // Convert cells/frame to velocity units
+
+        // Atomic counters for particle count per cell (parallel-safe)
+        let particle_counts: Vec<AtomicUsize> = (0..width * height)
+            .map(|_| AtomicUsize::new(0))
+            .collect();
+
+        // Track which particles to remove (by index)
+        let remove_flags: Vec<std::sync::atomic::AtomicBool> = (0..self.particles.list.len())
+            .map(|_| std::sync::atomic::AtomicBool::new(false))
+            .collect();
+
+        let grid = &self.grid;
+        let neighbor_counts = &self.neighbor_counts;
+
+        // Phase 1: Identify settled particles and count per cell
+        self.particles
+            .list
+            .par_iter()
+            .enumerate()
+            .for_each(|(idx, particle)| {
+                // Only deposit sediment particles
+                if !particle.is_sediment() {
+                    return;
+                }
+
+                // Check velocity (normalized to cells/frame)
+                let vel_normalized = particle.velocity.length() / v_scale;
+                if vel_normalized > VELOCITY_THRESHOLD {
+                    return; // Moving too fast
+                }
+
+                // Check distance to floor
+                let sdf_dist = grid.sample_sdf(particle.position);
+                let floor_dist = FLOOR_DISTANCE_CELLS * cell_size;
+                if sdf_dist > floor_dist {
+                    return; // Too far from floor
+                }
+
+                // Check floor surface (gradient pointing up = floor, not wall)
+                let grad = grid.sdf_gradient(particle.position);
+                if grad.y > -0.3 {
+                    return; // Wall or ceiling, not floor
+                }
+
+                // Find the cell to deposit into (cell containing particle)
+                let ci = ((particle.position.x / cell_size) as usize).min(width - 1);
+                let cj = ((particle.position.y / cell_size) as usize).min(height - 1);
+                let cell_idx = cj * width + ci;
+
+                // Don't deposit into already-solid cells
+                if grid.is_solid(ci, cj) {
+                    return;
+                }
+
+                // Check neighbor count (use pre-computed from compute_neighbor_counts)
+                // Only deposit if particle is in a packed region
+                if idx < neighbor_counts.len() && neighbor_counts[idx] < MIN_NEIGHBORS {
+                    return; // Not packed enough
+                }
+
+                // Count this particle and mark for potential removal
+                particle_counts[cell_idx].fetch_add(1, Ordering::Relaxed);
+                remove_flags[idx].store(true, Ordering::Relaxed);
+            });
+
+        // Phase 2: Convert cells with enough particles to solid
+        // Collect which cells to convert (to avoid borrow issues)
+        let mut cells_to_convert = Vec::new();
+        for j in 0..height {
+            for i in 0..width {
+                let idx = j * width + i;
+                let count = particle_counts[idx].load(Ordering::Relaxed);
+
+                // Add this frame's count to accumulated mass
+                self.deposited_mass[idx] += count as f32;
+
+                // Check if we have enough to solidify
+                if self.deposited_mass[idx] >= MASS_PER_CELL as f32 {
+                    cells_to_convert.push((i, j, idx));
+                    self.deposited_mass[idx] -= MASS_PER_CELL as f32;
+                }
+            }
+        }
+
+        // Convert cells to deposited (marks as solid + deposited for visualization)
+        for (i, j, _idx) in &cells_to_convert {
+            self.grid.set_deposited(*i, *j);
+        }
+
+        let cells_converted = cells_to_convert.len();
+
+        // Phase 3: Remove particles that were in converted cells
+        if cells_converted > 0 {
+            // Build set of converted cell indices for fast lookup
+            let converted_set: std::collections::HashSet<usize> =
+                cells_to_convert.iter().map(|(_, _, idx)| *idx).collect();
+
+            // Remove particles that were marked AND are in converted cells
+            let particles = &mut self.particles.list;
+            let mut write_idx = 0;
+            for read_idx in 0..particles.len() {
+                let should_remove = if remove_flags[read_idx].load(Ordering::Relaxed) {
+                    let p = &particles[read_idx];
+                    let ci = ((p.position.x / cell_size) as usize).min(width - 1);
+                    let cj = ((p.position.y / cell_size) as usize).min(height - 1);
+                    let cell_idx = cj * width + ci;
+                    converted_set.contains(&cell_idx)
+                } else {
+                    false
+                };
+
+                if !should_remove {
+                    if write_idx != read_idx {
+                        particles.swap(write_idx, read_idx);
+                    }
+                    write_idx += 1;
+                }
+            }
+            particles.truncate(write_idx);
+        }
+
+        // Debug output (every 120 frames)
+        if self.frame % 120 == 0 && cells_converted > 0 {
+            eprintln!(
+                "[Deposition] Converted {} cells to solid",
+                cells_converted
+            );
+        }
+    }
+
+    /// Step 8g: Entrain deposited sediment when flow velocity exceeds threshold
+    ///
+    /// Checks each deposited cell for high velocity flow above it.
+    /// If velocity exceeds critical threshold, probabilistically removes
+    /// the cell and spawns sand particles to re-enter the flow.
+    fn entrain_deposited_sediment(&mut self, dt: f32) {
+        // === Thresholds ===
+        const CRITICAL_VELOCITY: f32 = 0.5; // cells/frame - any flow erodes
+        const BASE_ENTRAINMENT_RATE: f32 = 1.0; // probability scaling - max
+        const MAX_PROBABILITY: f32 = 0.95; // cap per frame - nearly instant
+        const PARTICLES_PER_CELL: usize = 4; // matches MASS_PER_CELL
+
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let height = self.grid.height;
+        let v_scale = cell_size / dt; // Convert to cells/frame
+
+        let mut cells_to_clear: Vec<(usize, usize)> = Vec::new();
+        let mut particles_to_spawn: Vec<(Vec2, Vec2)> = Vec::new(); // (position, velocity)
+
+        let mut rng = rand::thread_rng();
+
+        // Iterate deposited cells
+        for j in 1..height - 1 {
+            // Skip boundary rows
+            for i in 1..width - 1 {
+                // Skip boundary columns
+                if !self.grid.is_deposited(i, j) {
+                    continue;
+                }
+
+                // Sample velocity just above the cell
+                let sample_pos = Vec2::new(
+                    (i as f32 + 0.5) * cell_size,
+                    (j as f32 - 0.5) * cell_size, // Half cell above
+                );
+                let vel_above = self.grid.sample_velocity(sample_pos);
+                let speed = vel_above.length() / v_scale; // cells/frame
+
+                if speed <= CRITICAL_VELOCITY {
+                    continue; // Not fast enough
+                }
+
+                // Compute entrainment probability
+                let excess_ratio = speed / CRITICAL_VELOCITY - 1.0;
+                let probability = (BASE_ENTRAINMENT_RATE * excess_ratio).min(MAX_PROBABILITY);
+
+                // Stochastic check
+                if rng.gen::<f32>() >= probability {
+                    continue; // Not entrained this frame
+                }
+
+                // Check support: don't entrain if it would leave floating cells above
+                let has_deposit_above = j > 0 && self.grid.is_deposited(i, j - 1);
+                if has_deposit_above {
+                    // Check if there's lateral support for the cell above
+                    let left_support = i > 0 && self.grid.is_solid(i - 1, j - 1);
+                    let right_support = i < width - 1 && self.grid.is_solid(i + 1, j - 1);
+                    if !left_support && !right_support {
+                        continue; // Would create floating deposit
+                    }
+                }
+
+                // Mark for removal
+                cells_to_clear.push((i, j));
+
+                // Queue particle spawns
+                let cell_center = Vec2::new(
+                    (i as f32 + 0.5) * cell_size,
+                    (j as f32 + 0.5) * cell_size,
+                );
+
+                for _ in 0..PARTICLES_PER_CELL {
+                    // Jitter position within cell
+                    let jitter = Vec2::new(
+                        (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
+                        (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
+                    );
+                    let pos = cell_center + jitter;
+
+                    // Initial velocity from grid + slight upward lift
+                    let vel = vel_above * 0.8 + Vec2::new(0.0, -2.0 * v_scale);
+
+                    particles_to_spawn.push((pos, vel));
+                }
+            }
+        }
+
+        // Clear cells
+        for (i, j) in &cells_to_clear {
+            self.grid.clear_deposited(*i, *j);
+            // Reset accumulated mass for this cell
+            let idx = *j * width + *i;
+            self.deposited_mass[idx] = 0.0;
+        }
+
+        // Spawn particles
+        for (pos, vel) in &particles_to_spawn {
+            self.particles.spawn_sand(pos.x, pos.y, vel.x, vel.y);
+        }
+
+        // Update SDF if terrain changed
+        if !cells_to_clear.is_empty() {
+            self.grid.compute_sdf();
+            self.grid.compute_bed_heights();
+
+            // Debug output
+            if self.frame % 60 == 0 {
+                eprintln!(
+                    "[Entrainment] Eroded {} cells, spawned {} particles",
+                    cells_to_clear.len(),
+                    particles_to_spawn.len()
+                );
+            }
+        }
     }
 
     /// Step 7b: Update particle states (Suspended ↔ Bedload)
