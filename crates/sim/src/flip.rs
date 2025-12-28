@@ -188,6 +188,10 @@ impl FlipSimulation {
         self.grid.solve_pressure_multigrid(2);
         // Two-way coupling: use mixture density for pressure gradient
         self.apply_pressure_gradient_two_way(dt);
+
+        // 5a. Porosity-based drag: water slows in dense particle regions
+        // This replaces rigid cell-based deposition with continuous resistance
+        self.apply_porosity_drag(dt);
         let t5 = Instant::now();
 
         // Diagnostic: compute divergence after for analysis (used by tests)
@@ -232,17 +236,11 @@ impl FlipSimulation {
         // This enables proper pile formation through particle-particle contacts
         self.apply_dem_settling(dt);
 
-        // 8f. Deposition: stable piles become solid terrain
-        // Particles with very low velocity in dense regions convert to solid
-        self.deposit_settled_sediment(dt);
-
-        // 8g. Entrainment: high flow erodes deposited cells
-        // Cells with velocity above threshold spawn particles and clear
-        self.entrain_deposited_sediment(dt);
-
-        // 8h. Collapse: ensure deposited cells have support and follow angle of repose
-        // Fixes gaps and artifacts by making piles physically stable
-        self.collapse_deposited_sediment();
+        // 8f-8h. Cell-based deposition DISABLED for porosity model
+        // Particles stay as particles - piles affect water through porosity drag
+        // self.deposit_settled_sediment(dt);
+        // self.entrain_deposited_sediment(dt);
+        // self.collapse_deposited_sediment();
 
         // 8b-8d. Legacy bedload system DISABLED for Phase 2
         // Sand stays in Suspended state, no pile mechanics
@@ -254,9 +252,9 @@ impl FlipSimulation {
         let _ = (t0, t1, t2, t3, t4, t5, t6, t7, profile, div_before);
 
         // 9. Push overlapping particles apart - DISABLED
-        // Near-pressure handles incompressibility now. If pressure is strong enough,
-        // particles won't overlap and we don't need explicit collision.
-        // self.push_particles_apart(1);
+        // Causes brownian jitter. DEM settling handles pile formation for slow particles.
+        // Pressure solver handles incompressibility for flowing particles.
+        // self.push_particles_apart(2);
 
         // Clean up particles that left the simulation
         self.particles.remove_out_of_bounds(
@@ -639,6 +637,76 @@ impl FlipSimulation {
 
                     let grad = (self.grid.pressure[idx_top] - self.grid.pressure[idx_bottom]) * scale;
                     self.grid.v[v_idx] -= grad / rho_mix;
+                }
+            }
+        }
+    }
+
+    /// Apply porosity-based drag to grid velocities
+    ///
+    /// In dense particle regions, water experiences resistance (Darcy flow).
+    /// This replaces rigid cell-based deposition with continuous drag:
+    /// - Low particle density → water flows freely
+    /// - High particle density → water slows/stops (pile acts like porous wall)
+    ///
+    /// The drag is applied exponentially: v *= exp(-drag_rate * sand_fraction * dt)
+    /// At high sand fraction (~0.6), velocity decays rapidly toward zero.
+    fn apply_porosity_drag(&mut self, dt: f32) {
+        // Drag coefficient: controls how strongly particles resist flow
+        // Higher = more resistance, piles act more like solid walls
+        // Typical range: 50-200 for visible pile effect
+        const DRAG_COEFFICIENT: f32 = 100.0;
+
+        // Threshold: below this sand fraction, no drag (sparse particles don't block)
+        const DRAG_THRESHOLD: f32 = 0.2;
+
+        // Maximum sand fraction (random close packing limit)
+        const MAX_SAND_FRACTION: f32 = 0.64;
+
+        // Apply drag to U velocities (horizontal)
+        for j in 0..self.grid.height {
+            for i in 1..self.grid.width {
+                let u_idx = self.grid.u_index(i, j);
+                let sand_vol = self.sand_volume_u[u_idx];
+                let total_vol = sand_vol + self.water_volume_u[u_idx];
+
+                if total_vol > 0.0 {
+                    // Sand fraction by volume
+                    let sand_frac = (sand_vol / total_vol).min(MAX_SAND_FRACTION);
+
+                    // Only apply drag above threshold
+                    if sand_frac > DRAG_THRESHOLD {
+                        // Normalized fraction above threshold (0 at threshold, 1 at max)
+                        let excess = (sand_frac - DRAG_THRESHOLD) / (MAX_SAND_FRACTION - DRAG_THRESHOLD);
+
+                        // Exponential decay: stronger drag at higher concentration
+                        // Using squared excess for nonlinear response (gentle at low, strong at high)
+                        let drag_rate = DRAG_COEFFICIENT * excess * excess;
+                        let damping = (-drag_rate * dt).exp();
+
+                        self.grid.u[u_idx] *= damping;
+                    }
+                }
+            }
+        }
+
+        // Apply drag to V velocities (vertical)
+        for j in 1..self.grid.height {
+            for i in 0..self.grid.width {
+                let v_idx = self.grid.v_index(i, j);
+                let sand_vol = self.sand_volume_v[v_idx];
+                let total_vol = sand_vol + self.water_volume_v[v_idx];
+
+                if total_vol > 0.0 {
+                    let sand_frac = (sand_vol / total_vol).min(MAX_SAND_FRACTION);
+
+                    if sand_frac > DRAG_THRESHOLD {
+                        let excess = (sand_frac - DRAG_THRESHOLD) / (MAX_SAND_FRACTION - DRAG_THRESHOLD);
+                        let drag_rate = DRAG_COEFFICIENT * excess * excess;
+                        let damping = (-drag_rate * dt).exp();
+
+                        self.grid.v[v_idx] *= damping;
+                    }
                 }
             }
         }
@@ -1230,73 +1298,71 @@ impl FlipSimulation {
             });
     }
 
-    /// Step 8e: Apply DEM contact forces for settling particles
+    /// Step 8e: Apply DEM contact forces for ALL sediment particles
     ///
-    /// Particles with low velocity near floor/other settled particles use
-    /// DEM-style contact physics to stack properly and form coherent piles.
-    /// Fast-moving particles continue to use FLIP (handled elsewhere).
+    /// All sediment particles get collision detection to prevent overlap.
+    /// This replaces cell-based deposition with continuous particle piles.
+    /// Water particles are excluded (handled by pressure solver).
     fn apply_dem_settling(&mut self, dt: f32) {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        // === Thresholds ===
-        // Velocity threshold for "settling" mode (cells/frame)
-        const SETTLING_VEL_THRESHOLD: f32 = 0.3;
-        // Distance to floor/pile to be considered settling
-        const SETTLING_DIST_CELLS: f32 = 2.0;
-        // Contact spring stiffness (higher = stiffer contacts)
-        const CONTACT_STIFFNESS: f32 = 2000.0;
-        // Damping ratio (0-1, higher = more energy dissipation)
-        const DAMPING_RATIO: f32 = 0.5;
+        // === Contact Parameters ===
+        // Contact spring stiffness (higher = stiffer contacts, less overlap)
+        const CONTACT_STIFFNESS: f32 = 3000.0;
+        // Damping ratio (0-1, higher = more energy dissipation, less bounce)
+        const DAMPING_RATIO: f32 = 0.7;
         // Friction coefficient (tangential resistance)
-        const FRICTION_COEFF: f32 = 0.6;
+        const FRICTION_COEFF: f32 = 0.5;
         // Particle radius for contact detection
         const PARTICLE_RADIUS_CELLS: f32 = 0.5;
+        // Velocity threshold - particles moving faster than this have reduced DEM
+        const FLOW_VELOCITY_THRESHOLD: f32 = 15.0; // px/s - particles flowing faster are "suspended"
+        // Floor distance - DEM is stronger near the floor
+        const FLOOR_PROXIMITY_CELLS: f32 = 3.0;
 
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
         let height = self.grid.height;
-        let v_scale = cell_size / dt;
 
         let particle_radius = PARTICLE_RADIUS_CELLS * cell_size;
         let contact_dist = particle_radius * 2.0;
         let contact_dist_sq = contact_dist * contact_dist;
 
-        // Identify which particles are in settling mode
-        let settling_flags: Vec<AtomicBool> = (0..self.particles.list.len())
-            .map(|_| AtomicBool::new(false))
-            .collect();
-
-        let grid = &self.grid;
-
-        // Mark settling particles (parallel)
-        self.particles.list.par_iter().enumerate().for_each(|(idx, p)| {
-            if !p.is_sediment() {
-                return;
-            }
-
-            let vel_n = p.velocity.length() / v_scale;
-            if vel_n > SETTLING_VEL_THRESHOLD {
-                return;
-            }
-
-            // Check if near floor (SDF) or has support
-            let sdf_dist = grid.sample_sdf(p.position);
-            if sdf_dist < SETTLING_DIST_CELLS * cell_size {
-                settling_flags[idx].store(true, Ordering::Relaxed);
-            }
-        });
-
-        // Pre-allocate force buffer
+        // Pre-allocate force buffer and DEM strength per particle
         let particle_count = self.particles.list.len();
         let mut forces: Vec<Vec2> = vec![Vec2::ZERO; particle_count];
+        let mut dem_strength: Vec<f32> = vec![0.0; particle_count];
 
-        // Compute contact forces between settling particles
+        // First pass: compute DEM strength based on velocity and floor proximity
         for idx in 0..particle_count {
-            if !settling_flags[idx].load(Ordering::Relaxed) {
+            let p = &self.particles.list[idx];
+            if !p.is_sediment() {
                 continue;
             }
 
+            // Velocity-based: fast particles have weak DEM (they're being carried)
+            let speed = p.velocity.length();
+            let velocity_factor = (1.0 - (speed / FLOW_VELOCITY_THRESHOLD).min(1.0)).max(0.0);
+
+            // Floor proximity: stronger DEM near floor
+            let floor_dist = self.grid.sample_sdf(p.position) / cell_size;
+            let floor_factor = (1.0 - (floor_dist / FLOOR_PROXIMITY_CELLS).max(0.0)).max(0.0);
+
+            // Density factor: heavier particles get more DEM (they settle more)
+            let density_factor = (p.material.density() / 2.65).min(3.0); // Normalize to sand
+
+            // Combined strength: must be slow AND near floor for strong DEM
+            // Heavy particles get DEM even when faster
+            dem_strength[idx] = velocity_factor.max(floor_factor * 0.5) * density_factor.sqrt();
+        }
+
+        // Compute contact forces between sediment particles
+        for idx in 0..particle_count {
             let p_i = &self.particles.list[idx];
+
+            // Only sediment particles with some DEM strength
+            if !p_i.is_sediment() || dem_strength[idx] < 0.01 {
+                continue;
+            }
+
             let pos_i = p_i.position;
             let vel_i = p_i.velocity;
 
@@ -1325,12 +1391,11 @@ impl FlipSimulation {
                             continue;
                         }
 
-                        // Both particles must be settling for DEM contact
-                        if !settling_flags[j_idx].load(Ordering::Relaxed) {
+                        // Other particle must also be sediment
+                        let p_j = &self.particles.list[j_idx];
+                        if !p_j.is_sediment() {
                             continue;
                         }
-
-                        let p_j = &self.particles.list[j_idx];
                         let pos_j = p_j.position;
                         let vel_j = p_j.velocity;
 
@@ -1368,21 +1433,44 @@ impl FlipSimulation {
 
                         let total_force = normal_force + friction_force;
 
-                        // Apply equal and opposite forces
-                        forces[idx] += total_force;
-                        forces[j_idx] -= total_force;
+                        // Get densities for mass-weighted force distribution
+                        let density_i = p_i.material.density();
+                        let density_j = p_j.material.density();
+                        let total_density = density_i + density_j;
+
+                        // Distribute force inversely by mass (lighter particles move more)
+                        // This makes heavier particles "sink through" lighter ones
+                        let ratio_i = density_j / total_density; // lighter i -> bigger ratio
+                        let ratio_j = density_i / total_density; // lighter j -> bigger ratio
+
+                        // Scale by DEM strength - fast-moving particles have weaker DEM
+                        let strength = (dem_strength[idx] * dem_strength[j_idx]).sqrt();
+
+                        forces[idx] += total_force * ratio_i * strength;
+                        forces[j_idx] -= total_force * ratio_j * strength;
+
+                        // Buoyancy-like sinking: heavy particles push down on light ones
+                        // When particles are stacked, heavier one sinks
+                        let density_diff = density_i - density_j;
+                        if density_diff.abs() > 0.1 && strength > 0.1 {
+                            // Vertical component: heavier pushes lighter up, sinks itself down
+                            let buoyancy_strength = 50.0; // Tune this
+                            let buoyancy = Vec2::new(0.0, -buoyancy_strength * density_diff * overlap);
+                            forces[idx] += buoyancy * ratio_i * strength;
+                            forces[j_idx] -= buoyancy * ratio_j * strength;
+                        }
                     }
                 }
             }
 
-            // Floor contact (SDF-based)
-            let sdf_dist = grid.sample_sdf(pos_i);
+            // Floor contact (SDF-based) - always applied (can't go through floor)
+            let sdf_dist = self.grid.sample_sdf(pos_i);
             if sdf_dist < particle_radius && sdf_dist > -particle_radius {
-                let floor_normal = -grid.sdf_gradient(pos_i); // Points away from solid
+                let floor_normal = -self.grid.sdf_gradient(pos_i); // Points away from solid
                 let floor_overlap = particle_radius - sdf_dist;
 
                 if floor_overlap > 0.0 {
-                    // Normal force against floor
+                    // Normal force against floor - always full strength
                     let floor_normal_vel = vel_i.dot(floor_normal);
                     let spring_f = CONTACT_STIFFNESS * floor_overlap * 1.5; // Stiffer floor
                     let damp_f = DAMPING_RATIO * 2.0 * (CONTACT_STIFFNESS * 1.5).sqrt() * floor_normal_vel;
@@ -1390,26 +1478,28 @@ impl FlipSimulation {
 
                     forces[idx] += floor_normal * floor_force_mag;
 
-                    // Floor friction
+                    // Floor friction - scaled by DEM strength so flowing particles slide easier
                     let tangent = Vec2::new(-floor_normal.y, floor_normal.x);
                     let tangent_vel = vel_i.dot(tangent);
-                    let floor_friction = FRICTION_COEFF * floor_force_mag;
+                    let friction_strength = dem_strength[idx].max(0.2); // Min 20% friction
+                    let floor_friction = FRICTION_COEFF * floor_force_mag * friction_strength;
                     if tangent_vel.abs() > 0.001 {
-                        forces[idx] -= tangent * tangent_vel.signum() * floor_friction.min(tangent_vel.abs() * CONTACT_STIFFNESS);
+                        forces[idx] -= tangent * tangent_vel.signum() * floor_friction.min(tangent_vel.abs() * CONTACT_STIFFNESS * friction_strength);
                     }
                 }
             }
         }
 
-        // Apply forces to velocities (only settling particles)
+        // Apply forces to velocities for all sediment particles
         let mass = 1.0; // Normalized mass
+        let max_vel = cell_size / dt * 0.5; // Max velocity for stability
+
         for idx in 0..particle_count {
-            if settling_flags[idx].load(Ordering::Relaxed) {
+            if forces[idx] != Vec2::ZERO && self.particles.list[idx].is_sediment() {
                 let accel = forces[idx] / mass;
                 self.particles.list[idx].velocity += accel * dt;
 
                 // Clamp velocity to prevent instability
-                let max_vel = v_scale * 0.5;
                 let speed = self.particles.list[idx].velocity.length();
                 if speed > max_vel {
                     self.particles.list[idx].velocity *= max_vel / speed;

@@ -55,7 +55,7 @@ async fn main() {
 
     // Initial sluice configuration
     let mut sluice_config = SluiceConfig {
-        slope: 0.25,
+        slope: 0.12, // Shallower gradient for better sediment settling
         riffle_spacing: 60,
         riffle_height: 6,
         riffle_width: 4,
@@ -152,6 +152,7 @@ async fn main() {
     // Sediment spawn rate (spawn every N frames, 0 = disabled)
     let mut sand_rate: usize = 4;       // 1 per 4 frames = 0.25/frame
     let mut magnetite_rate: usize = 8;  // 1 per 8 frames = heavier material spawns less
+    let mut gold_rate: usize = 20;      // 1 per 20 frames = rare, very heavy
 
     // Global flow multiplier (F/G to adjust) - scales all spawn rates
     let mut flow_multiplier: usize = 1;
@@ -195,7 +196,7 @@ async fn main() {
             if is_key_down(KeyCode::LeftShift) {
                 inlet_vy = (inlet_vy + 5.0).min(80.0);
             } else {
-                inlet_vx = (inlet_vx + 5.0).min(100.0);
+                inlet_vx = (inlet_vx + 5.0).min(200.0); // Higher max for testing
             }
         }
         if is_key_pressed(KeyCode::Left) {
@@ -264,6 +265,11 @@ async fn main() {
         // Magnetite (black sand) rate: Key3 to cycle
         if is_key_pressed(KeyCode::Key3) {
             magnetite_rate = if magnetite_rate == 0 { 8 } else if magnetite_rate > 1 { magnetite_rate - 1 } else { 0 };
+        }
+
+        // Gold rate: Key4 to cycle
+        if is_key_pressed(KeyCode::Key4) {
+            gold_rate = if gold_rate == 0 { 20 } else if gold_rate > 5 { gold_rate - 5 } else { 0 };
         }
 
         // Sand PIC ratio: ]/[ to adjust (0.0 = pure FLIP, 1.0 = pure PIC)
@@ -368,6 +374,12 @@ async fn main() {
                 let effective_magnetite = magnetite_rate / flow_multiplier.max(1);
                 if effective_magnetite > 0 && frame_count % effective_magnetite as u64 == 0 {
                     sim.spawn_magnetite(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
+                }
+
+                // Gold (spawn every N/multiplier frames, 0 = disabled) - rare and heavy!
+                let effective_gold = gold_rate / flow_multiplier.max(1);
+                if effective_gold > 0 && frame_count % effective_gold as u64 == 0 {
+                    sim.spawn_gold(inlet_x, inlet_y, inlet_vx, inlet_vy, 1);
                 }
             }
 

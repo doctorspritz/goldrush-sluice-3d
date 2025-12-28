@@ -216,10 +216,12 @@ impl ParticleRenderer {
 
         let size = self.particle_scale * screen_scale;
 
-        // Draw order: water, sand
+        // Draw order: water, sand, magnetite, gold
         let materials = [
             sim::ParticleMaterial::Water,
             sim::ParticleMaterial::Sand,
+            sim::ParticleMaterial::Magnetite,
+            sim::ParticleMaterial::Gold,
         ];
 
         for mat in materials {
@@ -258,10 +260,12 @@ impl ParticleRenderer {
 
         let size = self.particle_scale * screen_scale;
 
-        // Draw order: water, sand
+        // Draw order: water, sand, magnetite, gold
         let materials = [
             sim::ParticleMaterial::Water,
             sim::ParticleMaterial::Sand,
+            sim::ParticleMaterial::Magnetite,
+            sim::ParticleMaterial::Gold,
         ];
 
         for mat in materials {
@@ -418,10 +422,12 @@ impl MetaballRenderer {
 
         gl_use_material(&self.density_material);
 
-        // Draw order: water, sand
+        // Draw order: water, sand, magnetite, gold
         let materials = [
             sim::ParticleMaterial::Water,
             sim::ParticleMaterial::Sand,
+            sim::ParticleMaterial::Magnetite,
+            sim::ParticleMaterial::Gold,
         ];
 
         for mat in materials {
@@ -495,10 +501,12 @@ impl MetaballRenderer {
 
         gl_use_material(&self.density_material);
 
-        // Draw order: water, sand
+        // Draw order: water, sand, magnetite, gold
         let materials = [
             sim::ParticleMaterial::Water,
             sim::ParticleMaterial::Sand,
+            sim::ParticleMaterial::Magnetite,
+            sim::ParticleMaterial::Gold,
         ];
 
         for mat in materials {
