@@ -9,118 +9,64 @@
 
 use glam::Vec2;
 
+use crate::particle::ParticleMaterial;
+
 // ============================================================================
-// DEPOSITED CELL COMPOSITION (Multi-material bed support)
+// DEPOSITED CELL (Single-material per cell for correct entrainment)
 // ============================================================================
 
-/// Material composition of a deposited sediment cell.
-/// Tracks what fraction of each sediment type makes up this cell.
-/// Enables mixed-material beds with composition-dependent entrainment.
+/// Single-material deposited sediment cell.
+/// Each cell contains ONE material type, enabling correct selective entrainment:
+/// - Sand cells entrain at Shields 0.045 (easy)
+/// - Magnetite cells entrain at Shields 0.07 (harder)
+/// - Gold cells entrain at Shields 0.09 (hardest)
+/// Natural stratification happens because heavier materials settle faster.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DepositedCell {
-    /// Fraction of mud (0.0-1.0)
-    pub mud_fraction: f32,
-    /// Fraction of quartz sand (0.0-1.0)
-    pub sand_fraction: f32,
-    /// Fraction of magnetite/black sand (0.0-1.0)
-    pub magnetite_fraction: f32,
-    /// Fraction of gold (0.0-1.0)
-    pub gold_fraction: f32,
+    /// The material type in this cell (None = not deposited)
+    pub material: Option<ParticleMaterial>,
 }
 
 impl DepositedCell {
     /// Check if this cell has any deposited material
     #[inline]
     pub fn is_deposited(&self) -> bool {
-        self.total_fraction() > 0.0
+        self.material.is_some()
     }
 
-    /// Total fraction of all materials (should sum to 1.0 when deposited)
-    #[inline]
-    pub fn total_fraction(&self) -> f32 {
-        self.mud_fraction + self.sand_fraction + self.magnetite_fraction + self.gold_fraction
-    }
-
-    /// Weighted average Shields parameter for entrainment
+    /// Shields parameter for entrainment (exact value for this material)
     /// Higher values = harder to entrain
     pub fn effective_shields_critical(&self) -> f32 {
-        let total = self.total_fraction();
-        if total <= 0.0 {
-            return 0.045; // Default to sand
+        match self.material {
+            Some(mat) => mat.shields_critical(),
+            None => 0.045, // Default to sand
         }
-
-        // Shields values for each material (from particle.rs)
-        const MUD_SHIELDS: f32 = 0.03;
-        const SAND_SHIELDS: f32 = 0.045;
-        const MAGNETITE_SHIELDS: f32 = 0.07;  // ~55% harder to entrain than sand
-        const GOLD_SHIELDS: f32 = 0.09;       // 2× harder to entrain than sand
-
-        (self.mud_fraction * MUD_SHIELDS
-            + self.sand_fraction * SAND_SHIELDS
-            + self.magnetite_fraction * MAGNETITE_SHIELDS
-            + self.gold_fraction * GOLD_SHIELDS)
-            / total
     }
 
-    /// Weighted average density for physics/visualization
+    /// Density for physics/visualization (exact value for this material)
     pub fn effective_density(&self) -> f32 {
-        let total = self.total_fraction();
-        if total <= 0.0 {
-            return 2.65; // Default to sand
+        match self.material {
+            Some(mat) => mat.density(),
+            None => 2.65, // Default to sand
         }
-
-        // Densities from particle.rs
-        const MUD_DENSITY: f32 = 2.0;
-        const SAND_DENSITY: f32 = 2.65;
-        const MAGNETITE_DENSITY: f32 = 5.2;
-        const GOLD_DENSITY: f32 = 19.3;
-
-        (self.mud_fraction * MUD_DENSITY
-            + self.sand_fraction * SAND_DENSITY
-            + self.magnetite_fraction * MAGNETITE_DENSITY
-            + self.gold_fraction * GOLD_DENSITY)
-            / total
     }
 
-    /// Blend color based on composition for rendering
+    /// Color for rendering (exact color for this material)
     pub fn color(&self) -> [u8; 4] {
-        let total = self.total_fraction();
-        if total <= 0.0 {
-            return [194, 178, 128, 255]; // Default sand color
+        match self.material {
+            Some(mat) => mat.color(),
+            None => [194, 178, 128, 255], // Default sand color
         }
-
-        // Colors from particle.rs
-        let mud_color = [139u8, 90, 43, 255];
-        let sand_color = [194u8, 178, 128, 255];
-        let magnetite_color = [30u8, 30, 30, 255];
-        let gold_color = [255u8, 215, 0, 255];
-
-        // Weighted blend
-        let r = (self.mud_fraction * mud_color[0] as f32
-            + self.sand_fraction * sand_color[0] as f32
-            + self.magnetite_fraction * magnetite_color[0] as f32
-            + self.gold_fraction * gold_color[0] as f32)
-            / total;
-        let g = (self.mud_fraction * mud_color[1] as f32
-            + self.sand_fraction * sand_color[1] as f32
-            + self.magnetite_fraction * magnetite_color[1] as f32
-            + self.gold_fraction * gold_color[1] as f32)
-            / total;
-        let b = (self.mud_fraction * mud_color[2] as f32
-            + self.sand_fraction * sand_color[2] as f32
-            + self.magnetite_fraction * magnetite_color[2] as f32
-            + self.gold_fraction * gold_color[2] as f32)
-            / total;
-
-        [r as u8, g as u8, b as u8, 255]
     }
 
-    /// Clear all material fractions
+    /// Clear deposited material
     pub fn clear(&mut self) {
-        self.mud_fraction = 0.0;
-        self.sand_fraction = 0.0;
-        self.magnetite_fraction = 0.0;
-        self.gold_fraction = 0.0;
+        self.material = None;
+    }
+
+    /// Get the material type (for entrainment spawning)
+    pub fn get_material(&self) -> Option<ParticleMaterial> {
+        self.material
     }
 }
 
@@ -513,32 +459,20 @@ impl Grid {
         self.solid[self.cell_index(i, j)]
     }
 
-    /// Mark cell as deposited sediment with material composition (also marks as solid)
-    /// Fractions should sum to 1.0
-    pub fn set_deposited_with_composition(
-        &mut self,
-        i: usize,
-        j: usize,
-        mud: f32,
-        sand: f32,
-        magnetite: f32,
-        gold: f32,
-    ) {
+    /// Mark cell as deposited sediment with a specific material (also marks as solid)
+    pub fn set_deposited_with_material(&mut self, i: usize, j: usize, material: ParticleMaterial) {
         if i < self.width && j < self.height {
             let idx = self.cell_index(i, j);
             self.solid[idx] = true;
             self.deposited[idx] = DepositedCell {
-                mud_fraction: mud,
-                sand_fraction: sand,
-                magnetite_fraction: magnetite,
-                gold_fraction: gold,
+                material: Some(material),
             };
         }
     }
 
     /// Mark cell as deposited sediment (legacy: assumes pure sand)
     pub fn set_deposited(&mut self, i: usize, j: usize) {
-        self.set_deposited_with_composition(i, j, 0.0, 1.0, 0.0, 0.0);
+        self.set_deposited_with_material(i, j, ParticleMaterial::Sand);
     }
 
     /// Check if cell is deposited sediment
@@ -549,7 +483,7 @@ impl Grid {
         self.deposited[self.cell_index(i, j)].is_deposited()
     }
 
-    /// Get deposited cell composition (returns reference for reading fractions)
+    /// Get deposited cell (returns reference for reading material type)
     pub fn get_deposited(&self, i: usize, j: usize) -> Option<&DepositedCell> {
         if i >= self.width || j >= self.height {
             return None;

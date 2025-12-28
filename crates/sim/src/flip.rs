@@ -1530,9 +1530,9 @@ impl FlipSimulation {
                 remove_flags[idx].store(true, Ordering::Relaxed);
             });
 
-        // Phase 2: Convert cells with enough particles to solid (with composition)
+        // Phase 2: Convert cells with enough particles to solid (single dominant material)
         // Collect which cells to convert (to avoid borrow issues)
-        let mut cells_to_convert: Vec<(usize, usize, usize, f32, f32, f32, f32)> = Vec::new();
+        let mut cells_to_convert: Vec<(usize, usize, usize, ParticleMaterial)> = Vec::new();
         for j in 0..height {
             for i in 0..width {
                 let idx = j * width + i;
@@ -1555,27 +1555,37 @@ impl FlipSimulation {
                     + self.deposited_mass_gold[idx];
 
                 if total_mass >= MASS_PER_CELL {
-                    // Calculate composition fractions
-                    let mud_frac = self.deposited_mass_mud[idx] / total_mass;
-                    let sand_frac = self.deposited_mass_sand[idx] / total_mass;
-                    let magnetite_frac = self.deposited_mass_magnetite[idx] / total_mass;
-                    let gold_frac = self.deposited_mass_gold[idx] / total_mass;
+                    // Pick the DOMINANT material (highest mass fraction)
+                    // This enables correct selective entrainment:
+                    // - Sand cells have Shields 0.045 (easy to entrain)
+                    // - Magnetite cells have Shields 0.07 (harder)
+                    // - Gold cells have Shields 0.09 (hardest)
+                    let masses = [
+                        (self.deposited_mass_mud[idx], ParticleMaterial::Mud),
+                        (self.deposited_mass_sand[idx], ParticleMaterial::Sand),
+                        (self.deposited_mass_magnetite[idx], ParticleMaterial::Magnetite),
+                        (self.deposited_mass_gold[idx], ParticleMaterial::Gold),
+                    ];
+                    let dominant_material = masses
+                        .iter()
+                        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+                        .map(|(_, mat)| *mat)
+                        .unwrap_or(ParticleMaterial::Sand);
 
-                    cells_to_convert.push((i, j, idx, mud_frac, sand_frac, magnetite_frac, gold_frac));
+                    cells_to_convert.push((i, j, idx, dominant_material));
 
-                    // Subtract consumed mass (proportionally)
-                    let consume_ratio = MASS_PER_CELL / total_mass;
-                    self.deposited_mass_mud[idx] *= 1.0 - consume_ratio;
-                    self.deposited_mass_sand[idx] *= 1.0 - consume_ratio;
-                    self.deposited_mass_magnetite[idx] *= 1.0 - consume_ratio;
-                    self.deposited_mass_gold[idx] *= 1.0 - consume_ratio;
+                    // Clear ALL accumulated mass for this cell (clean slate)
+                    self.deposited_mass_mud[idx] = 0.0;
+                    self.deposited_mass_sand[idx] = 0.0;
+                    self.deposited_mass_magnetite[idx] = 0.0;
+                    self.deposited_mass_gold[idx] = 0.0;
                 }
             }
         }
 
-        // Convert cells to deposited with composition
-        for (i, j, _idx, mud, sand, magnetite, gold) in &cells_to_convert {
-            self.grid.set_deposited_with_composition(*i, *j, *mud, *sand, *magnetite, *gold);
+        // Convert cells to deposited with single material
+        for (i, j, _idx, material) in &cells_to_convert {
+            self.grid.set_deposited_with_material(*i, *j, *material);
         }
 
         let cells_converted = cells_to_convert.len();
@@ -1584,7 +1594,7 @@ impl FlipSimulation {
         if cells_converted > 0 {
             // Build set of converted cell indices for fast lookup
             let converted_set: std::collections::HashSet<usize> =
-                cells_to_convert.iter().map(|(_, _, idx, _, _, _, _)| *idx).collect();
+                cells_to_convert.iter().map(|(_, _, idx, _)| *idx).collect();
 
             // Remove particles that were marked AND are in converted cells
             let particles = &mut self.particles.list;
@@ -1613,17 +1623,22 @@ impl FlipSimulation {
         // Debug output (every 120 frames)
         if self.frame % 120 == 0 && cells_converted > 0 {
             eprintln!(
-                "[Deposition] Converted {} cells to solid (multi-material)",
+                "[Deposition] Converted {} cells to solid (single-material)",
                 cells_converted
             );
         }
     }
 
-    /// Step 8g: Entrain deposited sediment when flow velocity exceeds threshold (Multi-Material)
+    /// Step 8g: Entrain deposited sediment when flow velocity exceeds threshold (Single-Material)
     ///
     /// Checks each deposited cell for high velocity flow above it.
-    /// Uses composition-weighted Shields parameter for entrainment threshold.
-    /// Spawns particles matching the cell's material composition.
+    /// Uses the cell's material Shields parameter for entrainment threshold.
+    /// Spawns all particles of the cell's single material type.
+    ///
+    /// This enables correct selective entrainment:
+    /// - Sand cells (Shields 0.045) wash away first
+    /// - Magnetite cells (Shields 0.07) resist 56% more flow
+    /// - Gold cells (Shields 0.09) resist 2× more than sand
     fn entrain_deposited_sediment(&mut self, dt: f32) {
         // === Thresholds ===
         const BASE_CRITICAL_VELOCITY: f32 = 0.5; // cells/frame for sand (Shields = 0.045)
@@ -1637,14 +1652,11 @@ impl FlipSimulation {
         let height = self.grid.height;
         let v_scale = cell_size / dt; // Convert to cells/frame
 
-        // Store cells and their compositions for spawning
+        // Store cells and their material for spawning
         struct CellToEntrain {
             i: usize,
             j: usize,
-            mud_frac: f32,
-            sand_frac: f32,
-            magnetite_frac: f32,
-            gold_frac: f32,
+            material: ParticleMaterial,
             vel_above: Vec2,
         }
         let mut cells_to_clear: Vec<CellToEntrain> = Vec::new();
@@ -1658,9 +1670,13 @@ impl FlipSimulation {
                     continue;
                 }
 
-                // Get cell composition for Shields-weighted critical velocity
+                // Get cell's material for exact Shields threshold
                 let composition = self.grid.deposited[self.grid.cell_index(i, j)];
-                let effective_shields = composition.effective_shields_critical();
+                let material = match composition.get_material() {
+                    Some(mat) => mat,
+                    None => continue, // No material, skip
+                };
+                let effective_shields = material.shields_critical();
 
                 // Scale critical velocity by Shields ratio
                 // Higher Shields = harder to entrain = need faster velocity
@@ -1701,16 +1717,13 @@ impl FlipSimulation {
                 cells_to_clear.push(CellToEntrain {
                     i,
                     j,
-                    mud_frac: composition.mud_fraction,
-                    sand_frac: composition.sand_fraction,
-                    magnetite_frac: composition.magnetite_fraction,
-                    gold_frac: composition.gold_fraction,
+                    material,
                     vel_above,
                 });
             }
         }
 
-        // Clear cells and spawn particles with correct material types
+        // Clear cells and spawn particles with the cell's material type
         for cell in &cells_to_clear {
             self.grid.clear_deposited(cell.i, cell.j);
 
@@ -1721,24 +1734,18 @@ impl FlipSimulation {
             self.deposited_mass_magnetite[idx] = 0.0;
             self.deposited_mass_gold[idx] = 0.0;
 
-            // Spawn particles proportional to composition
+            // Spawn particles of the cell's single material type
             let cell_center = Vec2::new(
                 (cell.i as f32 + 0.5) * cell_size,
                 (cell.j as f32 + 0.5) * cell_size,
             );
 
-            // Calculate how many of each material to spawn
-            let num_mud = (PARTICLES_PER_CELL as f32 * cell.mud_frac).round() as usize;
-            let num_sand = (PARTICLES_PER_CELL as f32 * cell.sand_frac).round() as usize;
-            let num_magnetite = (PARTICLES_PER_CELL as f32 * cell.magnetite_frac).round() as usize;
-            let num_gold = (PARTICLES_PER_CELL as f32 * cell.gold_frac).round() as usize;
-
             // Entrained particles get flow velocity with small random perturbation
             // No violent upward kick - just inherit the flow that eroded them
             let base_vel = cell.vel_above * 0.7; // Inherit 70% of flow velocity
 
-            // Spawn mud particles
-            for _ in 0..num_mud {
+            // Spawn all particles of the same material
+            for _ in 0..PARTICLES_PER_CELL {
                 let jitter = Vec2::new(
                     (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
                     (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
@@ -1749,52 +1756,14 @@ impl FlipSimulation {
                     (rng.gen::<f32>() - 0.5) * 10.0,
                 );
                 let vel = base_vel + vel_jitter;
-                self.particles.spawn_mud(pos.x, pos.y, vel.x, vel.y);
-            }
 
-            // Spawn sand particles
-            for _ in 0..num_sand {
-                let jitter = Vec2::new(
-                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
-                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
-                );
-                let pos = cell_center + jitter;
-                let vel_jitter = Vec2::new(
-                    (rng.gen::<f32>() - 0.5) * 10.0,
-                    (rng.gen::<f32>() - 0.5) * 10.0,
-                );
-                let vel = base_vel + vel_jitter;
-                self.particles.spawn_sand(pos.x, pos.y, vel.x, vel.y);
-            }
-
-            // Spawn magnetite (black sand) particles
-            for _ in 0..num_magnetite {
-                let jitter = Vec2::new(
-                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
-                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
-                );
-                let pos = cell_center + jitter;
-                let vel_jitter = Vec2::new(
-                    (rng.gen::<f32>() - 0.5) * 10.0,
-                    (rng.gen::<f32>() - 0.5) * 10.0,
-                );
-                let vel = base_vel + vel_jitter;
-                self.particles.spawn_magnetite(pos.x, pos.y, vel.x, vel.y);
-            }
-
-            // Spawn gold particles
-            for _ in 0..num_gold {
-                let jitter = Vec2::new(
-                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
-                    (rng.gen::<f32>() - 0.5) * cell_size * 0.6,
-                );
-                let pos = cell_center + jitter;
-                let vel_jitter = Vec2::new(
-                    (rng.gen::<f32>() - 0.5) * 10.0,
-                    (rng.gen::<f32>() - 0.5) * 10.0,
-                );
-                let vel = base_vel + vel_jitter;
-                self.particles.spawn_gold(pos.x, pos.y, vel.x, vel.y);
+                match cell.material {
+                    ParticleMaterial::Mud => self.particles.spawn_mud(pos.x, pos.y, vel.x, vel.y),
+                    ParticleMaterial::Sand => self.particles.spawn_sand(pos.x, pos.y, vel.x, vel.y),
+                    ParticleMaterial::Magnetite => self.particles.spawn_magnetite(pos.x, pos.y, vel.x, vel.y),
+                    ParticleMaterial::Gold => self.particles.spawn_gold(pos.x, pos.y, vel.x, vel.y),
+                    ParticleMaterial::Water => {} // Should never happen
+                }
             }
         }
 
@@ -1806,7 +1775,7 @@ impl FlipSimulation {
             // Debug output
             if self.frame % 60 == 0 {
                 eprintln!(
-                    "[Entrainment] Eroded {} cells (composition-weighted)",
+                    "[Entrainment] Eroded {} cells (single-material)",
                     cells_to_clear.len()
                 );
             }
@@ -1857,19 +1826,15 @@ impl FlipSimulation {
 
                         // Only collapse if we have a valid landing spot
                         if target_j < height && !self.grid.is_solid(i, target_j) {
-                            // Preserve composition when moving
+                            // Preserve material when moving
                             let source_idx = self.grid.cell_index(i, j);
                             let composition = self.grid.deposited[source_idx];
-                            self.grid.clear_deposited(i, j);
-                            self.grid.set_deposited_with_composition(
-                                i, target_j,
-                                composition.mud_fraction,
-                                composition.sand_fraction,
-                                composition.magnetite_fraction,
-                                composition.gold_fraction,
-                            );
-                            total_collapses += 1;
-                            cells_changed = true;
+                            if let Some(material) = composition.get_material() {
+                                self.grid.clear_deposited(i, j);
+                                self.grid.set_deposited_with_material(i, target_j, material);
+                                total_collapses += 1;
+                                cells_changed = true;
+                            }
                         }
                         // If no valid landing spot, leave the cell where it is
                     }
@@ -1915,19 +1880,15 @@ impl FlipSimulation {
                     if let Some(top_j) = self.find_top_deposited_in_column(i) {
                         let land_j = self.find_landing_j(target_i);
                         if land_j < height && !self.grid.is_solid(target_i, land_j) {
-                            // Preserve composition when avalanching
+                            // Preserve material when avalanching
                             let source_idx = self.grid.cell_index(i, top_j);
                             let composition = self.grid.deposited[source_idx];
-                            self.grid.clear_deposited(i, top_j);
-                            self.grid.set_deposited_with_composition(
-                                target_i, land_j,
-                                composition.mud_fraction,
-                                composition.sand_fraction,
-                                composition.magnetite_fraction,
-                                composition.gold_fraction,
-                            );
-                            total_avalanches += 1;
-                            cells_changed = true;
+                            if let Some(material) = composition.get_material() {
+                                self.grid.clear_deposited(i, top_j);
+                                self.grid.set_deposited_with_material(target_i, land_j, material);
+                                total_avalanches += 1;
+                                cells_changed = true;
+                            }
                         }
                     }
                 }
