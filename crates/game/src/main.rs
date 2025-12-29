@@ -257,6 +257,16 @@ async fn main() {
             debug_state_colors = !debug_state_colors;
         }
 
+        // Slope control: Z (decrease = shallower), Shift+Z (increase = steeper)
+        if is_key_pressed(KeyCode::Z) {
+            if is_key_down(KeyCode::LeftShift) {
+                sluice_config.slope = (sluice_config.slope + 0.02).min(0.5);
+            } else {
+                sluice_config.slope = (sluice_config.slope - 0.02).max(0.0);
+            }
+            riffle_dirty = true;
+        }
+
         // Sand rate: Key2 to cycle
         if is_key_pressed(KeyCode::Key2) {
             sand_rate = if sand_rate == 0 { 4 } else if sand_rate > 1 { sand_rate - 1 } else { 0 };
@@ -544,8 +554,10 @@ async fn main() {
         );
         // Riffle mode with mode-specific color
         let riffle_color = sluice_config.riffle_mode.debug_color();
+        let slope_degrees = sluice_config.slope.atan().to_degrees();
         draw_text(
-            &format!("RIFFLES: {} | spacing={} height={} width={}",
+            &format!("SLUICE: {:.1}° | {} | spacing={} height={} width={}",
+                slope_degrees,
                 sluice_config.riffle_mode.name(),
                 sluice_config.riffle_spacing, sluice_config.riffle_height, sluice_config.riffle_width),
             10.0, 58.0, 16.0, Color::from_rgba(riffle_color[0], riffle_color[1], riffle_color[2], 255),
@@ -602,7 +614,7 @@ async fn main() {
 
         // Controls - BOTTOM
         draw_text(
-            "←→ vx | Shift+←→ vy | ↑↓ spawn | +/- flow×  | Q/A spacing | W/S height | E/D width",
+            "←→ vx | Shift+←→ vy | ↑↓ spawn | +/- flow× | Z/Shift+Z slope | Q/A spacing | W/S height | E/D width",
             10.0, screen_height() - 90.0, 14.0, GRAY,
         );
         draw_text(
