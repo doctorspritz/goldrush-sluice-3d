@@ -639,12 +639,13 @@ void main() {
 "#;
 
 /// Density accumulation shader with soft gaussian falloff
-/// Uses vertex color for per-particle color (batched rendering)
+/// Uses uniform for water color (vertex color not reliably passed through custom materials)
 const FAST_DENSITY_FRAG: &str = r#"#version 100
 precision mediump float;
 
 varying lowp vec2 v_uv;
-varying lowp vec4 v_color;
+
+uniform lowp vec4 waterColor;
 
 void main() {
     vec2 center = vec2(0.5, 0.5);
@@ -654,7 +655,7 @@ void main() {
     float density = exp(-dist * dist * 4.0);
 
     // Output: RGB weighted by density, A is density
-    gl_FragColor = vec4(v_color.rgb * density, density);
+    gl_FragColor = vec4(waterColor.rgb * density, density);
 }
 "#;
 
@@ -772,13 +773,16 @@ impl FastMetaballRenderer {
         let half_w = width / 2;
         let half_h = height / 2;
 
-        // Density pass - additive blending with vertex colors
+        // Density pass - additive blending with water color uniform
         let density_material = load_material(
             ShaderSource::Glsl {
                 vertex: FAST_DENSITY_VERT,
                 fragment: FAST_DENSITY_FRAG,
             },
             MaterialParams {
+                uniforms: vec![
+                    UniformDesc::new("waterColor", UniformType::Float4),
+                ],
                 pipeline_params: PipelineParams {
                     color_blend: Some(BlendState::new(
                         Equation::Add,
@@ -873,7 +877,7 @@ impl FastMetaballRenderer {
             screen_h: height as f32,
             half_w: half_w as f32,
             half_h: half_h as f32,
-            particle_scale: 8.0,  // Slightly larger for half-res
+            particle_scale: 3.5,  // Smaller metaballs (half-res so effective 7.0)
             threshold: 0.06,
         }
     }
@@ -986,6 +990,15 @@ impl FastMetaballRenderer {
         clear_background(Color::new(0.0, 0.0, 0.0, 0.0));
 
         gl_use_material(&self.density_material);
+
+        // Set water color uniform (steel blue)
+        let [r, g, b, _] = sim::ParticleMaterial::Water.color();
+        self.density_material.set_uniform("waterColor", [
+            r as f32 / 255.0,
+            g as f32 / 255.0,
+            b as f32 / 255.0,
+            1.0f32,
+        ]);
 
         self.draw_water_density_meshes(particles, screen_scale);
 
@@ -1136,7 +1149,7 @@ impl FastMetaballRenderer {
                 let mesh = Mesh {
                     vertices: std::mem::take(&mut vertices),
                     indices: std::mem::take(&mut indices),
-                    texture: None,
+                    texture: Some(self.white_texture.clone()),
                 };
                 draw_mesh(&mesh);
                 vertices.reserve(MAX_PER_BATCH * 4);
@@ -1150,7 +1163,7 @@ impl FastMetaballRenderer {
             let mesh = Mesh {
                 vertices,
                 indices,
-                texture: None,
+                texture: Some(self.white_texture.clone()),
             };
             draw_mesh(&mesh);
         }

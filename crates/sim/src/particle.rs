@@ -61,11 +61,12 @@ impl ParticleMaterial {
     }
 
     /// Render scale multiplier (1.0 = base size)
-    /// Normalized for development - all particles same size for ratio visibility
+    /// Water particles are small (fluid packets), sediment grains are full size
     pub fn render_scale(&self) -> f32 {
-        1.0 // Normalized: all materials same size during development
-        // Original values for production:
-        // Water => 1.0, Mud => 0.85, Sand => 0.5, Magnetite => 0.45, Gold => 0.4
+        match self {
+            Self::Water => 0.5,  // Small fluid packets
+            _ => 1.0,            // All sediment full size
+        }
     }
 
     /// Edge sharpness for metaball rendering (higher = harder borders)

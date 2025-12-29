@@ -1,6 +1,6 @@
 # Rendering Improvements Plan
 
-## Status: Phase 1 Complete
+## Status: Phase 1 Complete (with fixes)
 
 **FastMetaballRenderer implemented with:**
 - Half-resolution (640x320) density buffer
@@ -9,7 +9,12 @@
 - Surface shader with gradient-based normals + specular
 - Mesh batching for sediment
 
-**Performance:** ~43-48 FPS at 17K particles (vs ~35 FPS old Metaball mode)
+**Fixes applied (2025-12-29):**
+- Fixed water color: Now uses uniform for water color (steel blue) instead of vertex colors which weren't passing through custom materials correctly
+- Fixed metaball size: Reduced particle_scale from 8.0 to 3.5 (effective ~7.0 at full-res)
+- Added white texture to sediment mesh batches for proper batching
+
+**Performance:** ~46-50 FPS at ~5K particles, ~43-48 FPS at 17K particles (vs ~35 FPS old Metaball mode)
 
 ---
 

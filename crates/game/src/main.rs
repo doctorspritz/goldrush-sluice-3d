@@ -6,7 +6,7 @@
 mod render;
 
 use macroquad::prelude::*;
-use render::{MetaballRenderer, ParticleRenderer, FastMetaballRenderer, draw_particles_fast, draw_particles_fast_debug, draw_particles_rect, draw_particles_mesh};
+use render::{ParticleRenderer, draw_particles_fast_debug, draw_particles_rect, draw_particles_mesh};
 use sim::{
     create_sluice_with_mode, FlipSimulation, RiffleMode, SluiceConfig,
     compute_surface_heightfield,
@@ -15,13 +15,10 @@ use sim::{
 /// Rendering mode selection
 #[derive(Clone, Copy, PartialEq)]
 enum RenderMode {
-    FastMetaball,  // Optimized: half-res + blur + batching (NEW - best balance)
-    Metaball,      // Two-pass metaball (slowest, best look)
-    Hybrid,        // Water as metaballs, Solids as specific shapes
+    Mesh,          // Single mesh with vertex colors (fastest)
     Shader,        // Per-particle shader circles
     FastCircle,    // macroquad draw_circle batching
     FastRect,      // macroquad draw_rectangle batching
-    Mesh,          // Single mesh with vertex colors (fastest)
 }
 
 // Simulation size (high resolution for better vortex formation)
@@ -48,12 +45,8 @@ async fn main() {
     // Create simulation
     let mut sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
 
-    // Create GPU particle renderers
+    // Create GPU particle renderer
     let particle_renderer = ParticleRenderer::new();
-    let screen_w = (SIM_WIDTH as f32 * CELL_SIZE * SCALE) as u32;
-    let screen_h = (SIM_HEIGHT as f32 * CELL_SIZE * SCALE) as u32;
-    let mut metaball_renderer = MetaballRenderer::new(screen_w, screen_h);
-    let mut fast_metaball_renderer = FastMetaballRenderer::new(screen_w, screen_h);
 
     // Initial sluice configuration
     let mut sluice_config = SluiceConfig {
@@ -131,10 +124,10 @@ async fn main() {
     let mut show_velocity = false;
     let mut show_surface_line = false;
     let mut debug_state_colors = false; // D key: Bedload=red, Suspended=blue
-    let mut render_mode = RenderMode::FastMetaball; // Default to FastMetaball for best visual/performance balance
-    let mut metaball_threshold: f32 = 0.08;
-    let mut metaball_scale: f32 = 6.0;
-    let mut fast_particle_size: f32 = CELL_SIZE * SCALE * 1.5;  // Larger for visibility
+    let mut render_mode = RenderMode::FastRect; // Default to FastRect - fastest and cleanest
+    // Zoom level (scroll wheel to adjust)
+    let mut zoom: f32 = SCALE;
+    let mut fast_particle_size: f32 = CELL_SIZE * zoom * 1.5;  // Larger for visibility
     let mut frame_count = 0u64;
     let mut fps_samples: Vec<i32> = Vec::new();
     let start_time = std::time::Instant::now();
@@ -301,34 +294,11 @@ async fn main() {
         // Render mode controls - B cycles through modes
         if is_key_pressed(KeyCode::B) {
             render_mode = match render_mode {
-                RenderMode::FastMetaball => RenderMode::Metaball,
-                RenderMode::Metaball => RenderMode::Hybrid,
-                RenderMode::Hybrid => RenderMode::Shader,
+                RenderMode::Mesh => RenderMode::Shader,
                 RenderMode::Shader => RenderMode::FastCircle,
                 RenderMode::FastCircle => RenderMode::FastRect,
                 RenderMode::FastRect => RenderMode::Mesh,
-                RenderMode::Mesh => RenderMode::FastMetaball,
             };
-        }
-        if is_key_pressed(KeyCode::T) {
-            metaball_threshold = (metaball_threshold + 0.02).min(0.5);
-            metaball_renderer.set_threshold(metaball_threshold);
-            fast_metaball_renderer.set_threshold(metaball_threshold);
-        }
-        if is_key_pressed(KeyCode::G) {
-            metaball_threshold = (metaball_threshold - 0.02).max(0.02);
-            metaball_renderer.set_threshold(metaball_threshold);
-            fast_metaball_renderer.set_threshold(metaball_threshold);
-        }
-        if is_key_pressed(KeyCode::Y) {
-            metaball_scale = (metaball_scale + 2.0).min(30.0);
-            metaball_renderer.set_particle_scale(metaball_scale);
-            fast_metaball_renderer.set_particle_scale(metaball_scale);
-        }
-        if is_key_pressed(KeyCode::H) {
-            metaball_scale = (metaball_scale - 2.0).max(6.0);
-            metaball_renderer.set_particle_scale(metaball_scale);
-            fast_metaball_renderer.set_particle_scale(metaball_scale);
         }
 
         // Particle size tuning: 9/0 to adjust
@@ -337,6 +307,18 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::Key0) {
             fast_particle_size = (fast_particle_size + 0.5).min(8.0);
+        }
+
+        // Zoom control: scroll wheel or +/- keys
+        let (_, scroll_y) = mouse_wheel();
+        if scroll_y != 0.0 {
+            zoom = (zoom + scroll_y * 0.2).clamp(0.5, 6.0);
+        }
+        if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
+            zoom = (zoom + 0.25).min(6.0);
+        }
+        if is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::KpSubtract) {
+            zoom = (zoom - 0.25).max(0.5);
         }
 
         // Viscosity controls: I to toggle, O/P to adjust
@@ -367,8 +349,8 @@ async fn main() {
         // Mouse spawning (left-click for manual testing)
         if is_mouse_button_down(MouseButton::Left) {
             let (mx, my) = mouse_position();
-            let wx = mx / SCALE;
-            let wy = my / SCALE;
+            let wx = mx / zoom;
+            let wy = my / zoom;
 
             sim.spawn_water(wx, wy, 20.0, 0.0, 5);
         }
@@ -376,8 +358,8 @@ async fn main() {
         // Right-click to set emitter position
         if is_mouse_button_pressed(MouseButton::Right) {
             let (mx, my) = mouse_position();
-            let wx = mx / SCALE;
-            let wy = my / SCALE;
+            let wx = mx / zoom;
+            let wy = my / zoom;
 
             // Clamp to valid bounds
             inlet_x = wx.clamp(2.0, (SIM_WIDTH - 50) as f32);
@@ -461,36 +443,25 @@ async fn main() {
             WHITE,
             DrawTextureParams {
                 dest_size: Some(vec2(
-                    RENDER_WIDTH as f32 * SCALE,
-                    RENDER_HEIGHT as f32 * SCALE,
+                    RENDER_WIDTH as f32 * zoom,
+                    RENDER_HEIGHT as f32 * zoom,
                 )),
                 ..Default::default()
             },
         );
 
         // Draw emitter position indicator
-        let emit_screen_x = inlet_x * SCALE;
-        let emit_screen_y = inlet_y * SCALE;
+        let emit_screen_x = inlet_x * zoom;
+        let emit_screen_y = inlet_y * zoom;
         draw_circle(emit_screen_x, emit_screen_y, 6.0, Color::from_rgba(100, 200, 255, 200));
         draw_circle_lines(emit_screen_x, emit_screen_y, 10.0, 2.0, Color::from_rgba(255, 255, 255, 150));
 
         // Draw particles with selected renderer
         match render_mode {
-            RenderMode::FastMetaball => {
-                // Optimized: half-res density + blur + batching
-                fast_metaball_renderer.draw(&sim.particles, SCALE);
-            }
-            RenderMode::Hybrid => {
-                // Pass 1: Water as metaballs for fluid look
-                metaball_renderer.draw_filtered(&sim.particles, SCALE, true);
-                // Pass 2: Solids as sharp sprites for clarity
-                particle_renderer.draw_filtered(&sim.particles, SCALE, false);
-            }
-            RenderMode::Metaball => metaball_renderer.draw(&sim.particles, SCALE),
-            RenderMode::Shader => particle_renderer.draw_sorted(&sim.particles, SCALE),
-            RenderMode::FastCircle => draw_particles_fast_debug(&sim.particles, SCALE, fast_particle_size, debug_state_colors),
-            RenderMode::FastRect => draw_particles_rect(&sim.particles, SCALE, fast_particle_size),
-            RenderMode::Mesh => draw_particles_mesh(&sim.particles, SCALE, fast_particle_size),
+            RenderMode::Mesh => draw_particles_mesh(&sim.particles, zoom, fast_particle_size),
+            RenderMode::Shader => particle_renderer.draw_sorted(&sim.particles, zoom),
+            RenderMode::FastCircle => draw_particles_fast_debug(&sim.particles, zoom, fast_particle_size, debug_state_colors),
+            RenderMode::FastRect => draw_particles_rect(&sim.particles, zoom, fast_particle_size),
         }
 
         // Draw deposited sediment cells ON TOP of particles (so visible in all render modes)
@@ -498,9 +469,9 @@ async fn main() {
         for j in 0..sim.grid.height {
             for i in 0..sim.grid.width {
                 if sim.grid.is_deposited(i, j) {
-                    let x = i as f32 * CELL_SIZE * SCALE;
-                    let y = j as f32 * CELL_SIZE * SCALE;
-                    let size = CELL_SIZE * SCALE;
+                    let x = i as f32 * CELL_SIZE * zoom;
+                    let y = j as f32 * CELL_SIZE * zoom;
+                    let size = CELL_SIZE * zoom;
                     // Get composition-based color from the deposited cell
                     let cell = &sim.grid.deposited[sim.grid.cell_index(i, j)];
                     let rgba = cell.color();
@@ -515,8 +486,8 @@ async fn main() {
             let spacing = 4;
             for j in (0..sim.grid.height).step_by(spacing) {
                 for i in (0..sim.grid.width).step_by(spacing) {
-                    let x = (i as f32 + 0.5) * CELL_SIZE * SCALE;
-                    let y = (j as f32 + 0.5) * CELL_SIZE * SCALE;
+                    let x = (i as f32 + 0.5) * CELL_SIZE * zoom;
+                    let y = (j as f32 + 0.5) * CELL_SIZE * zoom;
 
                     let pos = glam::Vec2::new(
                         (i as f32 + 0.5) * CELL_SIZE,
@@ -525,8 +496,8 @@ async fn main() {
                     let vel = sim.grid.sample_velocity(pos);
 
                     let vscale = 0.5;
-                    let vx = vel.x * vscale * SCALE;
-                    let vy = vel.y * vscale * SCALE;
+                    let vx = vel.x * vscale * zoom;
+                    let vy = vel.y * vscale * zoom;
 
                     draw_line(x, y, x + vx, y + vy, 1.0, Color::from_rgba(255, 255, 255, 100));
                 }
@@ -539,10 +510,10 @@ async fn main() {
             let surface_color = Color::from_rgba(100, 200, 255, 200);
 
             for i in 1..sim.grid.width {
-                let x0 = (i - 1) as f32 * CELL_SIZE * SCALE;
-                let x1 = i as f32 * CELL_SIZE * SCALE;
-                let y0 = surface[i - 1] * SCALE;
-                let y1 = surface[i] * SCALE;
+                let x0 = (i - 1) as f32 * CELL_SIZE * zoom;
+                let x1 = i as f32 * CELL_SIZE * zoom;
+                let y0 = surface[i - 1] * zoom;
+                let y1 = surface[i] * zoom;
 
                 // Only draw if valid (not MAX)
                 if y0 < screen_height() && y1 < screen_height() {
@@ -557,13 +528,10 @@ async fn main() {
 
         // Top status bar
         let mode_str = match render_mode {
-            RenderMode::FastMetaball => "FAST-META",
-            RenderMode::Metaball => "METABALL",
-            RenderMode::Hybrid => "HYBRID",
+            RenderMode::Mesh => "MESH",
             RenderMode::Shader => "SHADER",
-            RenderMode::FastCircle => "FAST-CIRCLE",
-            RenderMode::FastRect => "FAST-RECT",
-            RenderMode::Mesh => "MESH-BATCH",
+            RenderMode::FastCircle => "CIRCLE",
+            RenderMode::FastRect => "RECT",
         };
         draw_text(
             &format!(
@@ -608,14 +576,6 @@ async fn main() {
                 water, sand, magnetite, gold, solids_pct),
             10.0, 92.0, 14.0, Color::from_rgba(200, 200, 200, 255),
         );
-
-        // Metaball params (when active)
-        if render_mode == RenderMode::FastMetaball || render_mode == RenderMode::Metaball || render_mode == RenderMode::Hybrid {
-            draw_text(
-                &format!("METABALL: threshold={:.2} scale={:.0}", metaball_threshold, metaball_scale),
-                10.0, 108.0, 14.0, Color::from_rgba(180, 100, 255, 255),
-            );
-        }
 
         // Particle size
         draw_text(
@@ -663,8 +623,8 @@ async fn main() {
         // === CURSOR DEBUG ===
         {
             let (mx, my) = mouse_position();
-            let wx = mx / SCALE;
-            let wy = my / SCALE;
+            let wx = mx / zoom;
+            let wy = my / zoom;
             let col = (wx / CELL_SIZE) as usize;
 
             // Get pile height at cursor column
