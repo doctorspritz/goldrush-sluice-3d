@@ -248,9 +248,24 @@ impl GpuPressureSolver {
         };
         gpu.queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 
-        // Initialize pressure to 0
-        let zeros = vec![0.0f32; (self.width * self.height) as usize];
-        gpu.queue.write_buffer(&self.pressure_buffer, 0, bytemuck::cast_slice(&zeros));
+        // Clear pressure to 0 using a pre-allocated buffer would be faster,
+        // but for now we do a simple clear
+        gpu.queue.write_buffer(&self.pressure_buffer, 0, &vec![0u8; (self.width * self.height * 4) as usize]);
+    }
+
+    /// Upload with warm start from previous pressure
+    pub fn upload_warm(&self, gpu: &GpuContext, divergence: &[f32], cell_type: &[u32], pressure: &[f32], omega: f32) {
+        gpu.queue.write_buffer(&self.divergence_buffer, 0, bytemuck::cast_slice(divergence));
+        gpu.queue.write_buffer(&self.cell_type_buffer, 0, bytemuck::cast_slice(cell_type));
+        gpu.queue.write_buffer(&self.pressure_buffer, 0, bytemuck::cast_slice(pressure));
+
+        let params = PressureParams {
+            width: self.width,
+            height: self.height,
+            omega,
+            _padding: 0,
+        };
+        gpu.queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
     }
 
     /// Run pressure solve iterations on GPU

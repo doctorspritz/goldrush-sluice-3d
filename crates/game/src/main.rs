@@ -154,17 +154,59 @@ impl App {
         // Run simulation with profiling
         let dt = 1.0 / 60.0;
 
-        // CPU simulation (GPU pressure solver integration is TODO)
-        // The GPU pressure solver requires careful synchronization:
-        // 1. CPU: classify_cells, compute_sdf, P2G, extrapolate, store_old
-        // 2. CPU: apply_gravity, vorticity, boundary
-        // 3. CPU: compute_divergence
-        // 4. GPU: pressure solve
-        // 5. CPU: apply_pressure_gradient, G2P, advect
-        // For now, use CPU simulation with GPU rendering
-        let timings = self.sim.update_profiled(dt);
-        for (i, t) in timings.iter().enumerate() {
-            self.profile_accum[i] += t;
+        // Try GPU pressure solve if available
+        if let (Some(gpu), Some(solver)) = (&self.gpu, &self.pressure_solver) {
+            use std::time::Instant;
+
+            // Phase 1: CPU prepares for pressure solve
+            let pre_timings = self.sim.prepare_pressure_solve(dt);
+
+            // Phase 2: GPU pressure solve with warm start
+            let press_start = Instant::now();
+
+            // Convert cell types to u32 for GPU
+            let cell_types: Vec<u32> = self
+                .sim
+                .grid
+                .cell_type
+                .iter()
+                .map(|&ct| ct as u32)
+                .collect();
+
+            // Upload with warm start from previous pressure
+            solver.upload_warm(
+                gpu,
+                &self.sim.grid.divergence,
+                &cell_types,
+                &self.sim.grid.pressure,
+                1.9,
+            );
+
+            // Run GPU pressure solve (30 iterations with warm start)
+            solver.solve(gpu, 30);
+
+            // Download pressure results
+            solver.download(gpu, &mut self.sim.grid.pressure);
+
+            let press_time = press_start.elapsed().as_secs_f32() * 1000.0;
+
+            // Phase 3: CPU finishes simulation
+            let post_timings = self.sim.finalize_after_pressure(dt);
+
+            // Combine timings: [classify, sdf, p2g, press, g2p, neigh, rest]
+            self.profile_accum[0] += pre_timings[0];
+            self.profile_accum[1] += pre_timings[1];
+            self.profile_accum[2] += pre_timings[2];
+            self.profile_accum[3] += press_time;
+            self.profile_accum[4] += post_timings[1]; // g2p
+            self.profile_accum[5] += post_timings[2]; // neigh
+            self.profile_accum[6] += post_timings[3]; // rest
+        } else {
+            // CPU fallback
+            let timings = self.sim.update_profiled(dt);
+            for (i, t) in timings.iter().enumerate() {
+                self.profile_accum[i] += t;
+            }
         }
 
         self.profile_count += 1;

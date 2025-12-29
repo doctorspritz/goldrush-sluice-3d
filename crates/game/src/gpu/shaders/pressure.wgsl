@@ -13,10 +13,10 @@ struct Params {
 @group(0) @binding(2) var<storage, read> cell_type: array<u32>;
 @group(0) @binding(3) var<uniform> params: Params;
 
-// Cell type constants (matching sim crate)
-const CELL_AIR: u32 = 0u;
-const CELL_FLUID: u32 = 1u;
-const CELL_SOLID: u32 = 2u;
+// Cell type constants (matching sim crate CellType enum order)
+const CELL_SOLID: u32 = 0u;  // CellType::Solid
+const CELL_FLUID: u32 = 1u;  // CellType::Fluid
+const CELL_AIR: u32 = 2u;    // CellType::Air
 
 fn get_index(i: u32, j: u32) -> u32 {
     return j * params.width + i;
