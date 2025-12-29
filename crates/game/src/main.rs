@@ -76,6 +76,15 @@ impl App {
         };
         create_sluice_with_mode(&mut sim, &sluice_config);
 
+        // TEST: Add barrier at end of sluice to stress-test pressure solver
+        let barrier_x = SIM_WIDTH - 10; // 10 cells from right edge
+        for j in 0..SIM_HEIGHT {
+            for i in barrier_x..SIM_WIDTH {
+                let idx = j * SIM_WIDTH + i;
+                sim.grid.solid[idx] = true;
+            }
+        }
+
         Self {
             gpu: None,
             particle_renderer: None,
@@ -147,9 +156,9 @@ impl App {
                 .spawn_gold(self.inlet_x, self.inlet_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
-        // Remove particles at outflow
-        let outflow_x = (SIM_WIDTH as f32 - 5.0) * CELL_SIZE;
-        self.sim.particles.list.retain(|p| p.position.x < outflow_x);
+        // Remove particles at outflow - DISABLED for barrier test
+        // let outflow_x = (SIM_WIDTH as f32 - 5.0) * CELL_SIZE;
+        // self.sim.particles.list.retain(|p| p.position.x < outflow_x);
 
         // Run simulation with profiling
         let dt = 1.0 / 60.0;
@@ -486,7 +495,7 @@ impl ApplicationHandler for App {
         let gpu = pollster::block_on(GpuContext::new(window.clone()));
 
         // Create renderers
-        let particle_renderer = ParticleRenderer::new(&gpu, 100_000);
+        let particle_renderer = ParticleRenderer::new(&gpu, 300_000);
         let pressure_solver =
             GpuPressureSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32);
 
