@@ -61,11 +61,12 @@ impl ParticleMaterial {
     }
 
     /// Render scale multiplier (1.0 = base size)
-    /// Normalized for development - all particles same size for ratio visibility
+    /// Water particles are small (fluid packets), sediment grains are full size
     pub fn render_scale(&self) -> f32 {
-        1.0 // Normalized: all materials same size during development
-        // Original values for production:
-        // Water => 1.0, Mud => 0.85, Sand => 0.5, Magnetite => 0.45, Gold => 0.4
+        match self {
+            Self::Water => 0.5,  // Small fluid packets
+            _ => 1.0,            // All sediment full size
+        }
     }
 
     /// Edge sharpness for metaball rendering (higher = harder borders)
@@ -503,6 +504,20 @@ impl Particles {
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Particle> {
         self.list.iter_mut()
+    }
+
+    /// Sort particles by grid cell index for cache-friendly P2G transfer.
+    ///
+    /// Particles accessing the same/nearby grid cells are grouped together,
+    /// improving memory locality during particle-to-grid transfers.
+    ///
+    /// Uses unstable sort (faster than stable, order within same cell doesn't matter).
+    pub fn sort_by_cell_index(&mut self, cell_size: f32, grid_width: usize) {
+        self.list.sort_unstable_by_key(|p| {
+            let i = (p.position.x / cell_size) as usize;
+            let j = (p.position.y / cell_size) as usize;
+            j * grid_width + i
+        });
     }
 }
 

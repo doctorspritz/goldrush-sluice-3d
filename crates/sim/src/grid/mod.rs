@@ -138,6 +138,7 @@ pub struct MultigridLevel {
     pub width: usize,
     pub height: usize,
     pub pressure: Vec<f32>,
+    pub pressure_temp: Vec<f32>,  // For Jacobi iteration (read old, write new)
     pub divergence: Vec<f32>,  // Right-hand side (restricted from finer level)
     pub residual: Vec<f32>,
     pub cell_type: Vec<CellType>,
@@ -150,6 +151,7 @@ impl MultigridLevel {
             width,
             height,
             pressure: vec![0.0; cell_count],
+            pressure_temp: vec![0.0; cell_count],
             divergence: vec![0.0; cell_count],
             residual: vec![0.0; cell_count],
             cell_type: vec![CellType::Air; cell_count],
@@ -1658,6 +1660,74 @@ impl Grid {
         }
     }
 
+    /// Jacobi smoothing on a multigrid level (parallelizable with rayon)
+    ///
+    /// Unlike Gauss-Seidel, Jacobi reads only from old values, allowing full parallelization.
+    /// Trade-off: needs ~2x iterations for same convergence, but uses all cores.
+    /// Uses pre-allocated pressure_temp buffer to avoid allocation per iteration.
+    fn mg_smooth_jacobi(&mut self, level: usize, iterations: usize) {
+        use rayon::prelude::*;
+
+        let level_data = &mut self.mg_levels[level];
+        let w = level_data.width;
+        let h = level_data.height;
+
+        for _ in 0..iterations {
+            // Copy current pressure to temp (source for this iteration)
+            level_data.pressure_temp.copy_from_slice(&level_data.pressure);
+
+            // Get references for parallel iteration
+            let src = &level_data.pressure_temp;
+            let cell_type = &level_data.cell_type;
+            let divergence = &level_data.divergence;
+
+            // Parallel Jacobi iteration: read from temp, write to pressure
+            level_data.pressure.par_iter_mut().enumerate().for_each(|(idx, dst_p)| {
+                if cell_type[idx] != CellType::Fluid {
+                    *dst_p = 0.0;
+                    return;
+                }
+
+                let i = idx % w;
+                let j = idx / w;
+                let p_center = src[idx];
+
+                // Get neighbor pressures with Neumann mirroring
+                let p_left = if i > 0 {
+                    let n_idx = j * w + (i - 1);
+                    if cell_type[n_idx] == CellType::Solid { p_center } else { src[n_idx] }
+                } else {
+                    p_center
+                };
+
+                let p_right = if i + 1 < w {
+                    let n_idx = j * w + (i + 1);
+                    if cell_type[n_idx] == CellType::Solid { p_center } else { src[n_idx] }
+                } else {
+                    p_center
+                };
+
+                let p_bottom = if j > 0 {
+                    let n_idx = (j - 1) * w + i;
+                    if cell_type[n_idx] == CellType::Solid { p_center } else { src[n_idx] }
+                } else {
+                    p_center
+                };
+
+                let p_top = if j + 1 < h {
+                    let n_idx = (j + 1) * w + i;
+                    if cell_type[n_idx] == CellType::Solid { p_center } else { src[n_idx] }
+                } else {
+                    p_center
+                };
+
+                // Jacobi update: p_new = (neighbors - div) / 4
+                let div = divergence[idx];
+                *dst_p = (p_left + p_right + p_bottom + p_top - div) * 0.25;
+            });
+        }
+    }
+
     /// Clear pressure on a level (before coarse solve)
     fn mg_clear_pressure(&mut self, level: usize) {
         for p in &mut self.mg_levels[level].pressure {
@@ -1672,7 +1742,7 @@ impl Grid {
         let post_smooth = 10;
         let coarse_solve = 50;
 
-        // Pre-smoothing
+        // Pre-smoothing (Gauss-Seidel - faster for small grids)
         self.mg_smooth(level, pre_smooth);
 
         if level == max_level {

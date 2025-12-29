@@ -15,7 +15,6 @@ impl FlipSimulation {
     /// Also projects suspended particles onto pile heightfield (pile as floor constraint)
     pub fn advect_particles_impl(&mut self, dt: f32) {
         let cell_size = self.grid.cell_size;
-        let width = self.grid.width;
         let height = self.grid.height;
         let margin = cell_size;
         // max_x not used - right boundary is open for outflow

@@ -384,6 +384,7 @@ impl FlipSimulation {
         self.grid.solve_pressure_multigrid(4);
         // Two-way coupling: use mixture density for pressure gradient
         self.apply_pressure_gradient_two_way(dt);
+        self.apply_porosity_drag(dt);
         self.grid.compute_divergence();
         self.grid.extrapolate_velocities(1);
         let t4 = Instant::now();
@@ -395,12 +396,8 @@ impl FlipSimulation {
         self.compute_neighbor_counts();
         let t6 = Instant::now();
 
-        // Legacy sediment system DISABLED for Phase 2
-        // self.apply_sediment_forces(dt);
         self.advect_particles(dt);
-        // self.update_particle_states(dt);
-        // self.compute_pile_heightfield();
-        // self.enforce_pile_constraints();
+        self.apply_dem_settling(dt);
         self.particles.remove_out_of_bounds(
             self.grid.width as f32 * self.grid.cell_size,
             self.grid.height as f32 * self.grid.cell_size,
@@ -415,6 +412,82 @@ impl FlipSimulation {
             (t5 - t4).as_secs_f32() * 1000.0,
             (t6 - t5).as_secs_f32() * 1000.0,
             (t7 - t6).as_secs_f32() * 1000.0,
+        ]
+    }
+
+    /// Phase 1: Prepare for pressure solve
+    /// Does classify, SDF, P2G, forces, and computes divergence
+    /// After this, grid.divergence and grid.cell_type are ready for GPU pressure solve
+    /// Returns timings: [classify, sdf, p2g]
+    pub fn prepare_pressure_solve(&mut self, dt: f32) -> [f32; 3] {
+        use std::time::Instant;
+        self.frame = self.frame.wrapping_add(1);
+
+        let t0 = Instant::now();
+        self.classify_cells();
+        let t1 = Instant::now();
+
+        self.grid.compute_sdf();
+        let t2 = Instant::now();
+
+        self.particles_to_grid();
+        self.grid.extrapolate_velocities(1);
+        self.store_old_velocities();
+        let t3 = Instant::now();
+
+        // Apply forces before pressure solve
+        self.grid.apply_gravity(dt);
+        {
+            let grid = &mut self.grid;
+            let pile_height = &self.pile_height;
+            grid.apply_vorticity_confinement_with_piles(dt, 0.05, pile_height);
+        }
+        self.grid.enforce_boundary_conditions();
+        self.grid.compute_divergence();
+        // Now grid.divergence and grid.cell_type are ready for GPU pressure solve
+
+        [
+            (t1 - t0).as_secs_f32() * 1000.0,
+            (t2 - t1).as_secs_f32() * 1000.0,
+            (t3 - t2).as_secs_f32() * 1000.0,
+        ]
+    }
+
+    /// Phase 2: Finalize after pressure solve
+    /// Assumes grid.pressure has been solved (either CPU or GPU)
+    /// Does pressure gradient, G2P, neighbor, advection
+    /// Returns timings: [pressure_apply, g2p, neighbor, rest]
+    pub fn finalize_after_pressure(&mut self, dt: f32) -> [f32; 4] {
+        use std::time::Instant;
+
+        let t0 = Instant::now();
+        // Apply the pressure gradient
+        self.apply_pressure_gradient_two_way(dt);
+        self.apply_porosity_drag(dt);
+        self.grid.compute_divergence();
+        self.grid.extrapolate_velocities(1);
+        let t1 = Instant::now();
+
+        self.grid_to_particles(dt);
+        let t2 = Instant::now();
+
+        self.build_spatial_hash();
+        self.compute_neighbor_counts();
+        let t3 = Instant::now();
+
+        self.advect_particles(dt);
+        self.apply_dem_settling(dt);
+        self.particles.remove_out_of_bounds(
+            self.grid.width as f32 * self.grid.cell_size,
+            self.grid.height as f32 * self.grid.cell_size,
+        );
+        let t4 = Instant::now();
+
+        [
+            (t1 - t0).as_secs_f32() * 1000.0,
+            (t2 - t1).as_secs_f32() * 1000.0,
+            (t3 - t2).as_secs_f32() * 1000.0,
+            (t4 - t3).as_secs_f32() * 1000.0,
         ]
     }
 
@@ -486,6 +559,12 @@ impl FlipSimulation {
     ///
     /// Optimization: Precompute 1D weights to reduce bspline calls from 18 to 12 per particle.
     pub fn particles_to_grid(&mut self) {
+        // DISABLED: Sorting adds overhead that outweighs cache locality benefit
+        // At 40k particles, sort costs ~3-4ms but only saves ~1-2ms in P2G
+        // Keeping code for reference in case larger particle counts benefit
+        // if self.frame % 16 == 0 {
+        //     self.particles.sort_by_cell_index(self.grid.cell_size, self.grid.width);
+        // }
         self.particles_to_grid_impl();
     }
 
