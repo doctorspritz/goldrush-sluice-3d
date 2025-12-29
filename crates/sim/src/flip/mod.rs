@@ -25,8 +25,10 @@ mod transfer;
 // Re-exports for backwards compatibility
 // (will be populated as methods are moved)
 
+use crate::dem::DemSimulation;
 use crate::grid::{apic_d_inverse, quadratic_bspline, quadratic_bspline_1d, CellType, Grid};
 use crate::particle::{ParticleMaterial, Particles, ParticleState};
+use crate::physics::GRAVITY;
 use glam::{Mat2, Vec2};
 use rand::Rng;
 use rayon::prelude::*;
@@ -100,6 +102,12 @@ pub struct FlipSimulation {
     /// Higher FLIP = sand responds to velocity changes, can overshoot
     /// Recommended: 0.5-0.8 for stable sand transport
     pub sand_pic_ratio: f32,
+
+    // === Unified DEM for Granular Materials ===
+    /// Handles both bedload in water and dry particle physics
+    pub dem: DemSimulation,
+    /// Use unified DEM instead of legacy apply_dem_settling
+    pub use_unified_dem: bool,
 }
 
 impl FlipSimulation {
@@ -146,6 +154,9 @@ impl FlipSimulation {
             use_viscosity: false,
             viscosity: 1.0, // Good starting point for Re ~ 300
             sand_pic_ratio: 0.7, // 70% PIC, 30% FLIP - good balance
+            // Unified DEM
+            dem: DemSimulation::new(),
+            use_unified_dem: true, // Enable unified DEM by default
         }
     }
 
@@ -243,9 +254,23 @@ impl FlipSimulation {
         // 8. Advect particles (uses SDF for O(1) collision)
         self.advect_particles(dt);
 
-        // 8e. DEM settling: slow particles near floor get contact forces
-        // This enables proper pile formation through particle-particle contacts
-        self.apply_dem_settling(dt);
+        // 8e. DEM settling: particle contacts for pile formation
+        // Unified DEM handles both bedload in water and dry granular materials
+        let has_water = self.particles.iter().any(|p| p.material == ParticleMaterial::Water);
+        if self.use_unified_dem {
+            self.dem.update(
+                &mut self.particles,
+                &self.grid,
+                &self.cell_head,
+                &self.particle_next,
+                dt,
+                GRAVITY,
+                has_water,
+            );
+        } else {
+            // Legacy DEM (for comparison/fallback)
+            self.apply_dem_settling(dt);
+        }
 
         // 8f-8h. Cell-based deposition DISABLED for porosity model
         // Particles stay as particles - piles affect water through porosity drag
@@ -272,6 +297,61 @@ impl FlipSimulation {
             self.grid.width as f32 * self.grid.cell_size,
             self.grid.height as f32 * self.grid.cell_size,
         );
+    }
+
+    /// Check if simulation has any water particles
+    pub fn has_water(&self) -> bool {
+        self.particles.iter().any(|p| p.material == ParticleMaterial::Water)
+    }
+
+    /// Update for dry-only simulations (no water particles)
+    ///
+    /// Skips FLIP grid operations entirely - pure DEM granular physics.
+    /// Much faster than full update when only sediment is present.
+    pub fn update_dry(&mut self, dt: f32) {
+        self.frame = self.frame.wrapping_add(1);
+
+        // 1. Update SDF for collision
+        self.grid.compute_sdf();
+
+        // 2. Build spatial hash for neighbor queries
+        self.build_spatial_hash();
+
+        // 3. Run unified DEM with full gravity (no buoyancy)
+        self.dem.update(
+            &mut self.particles,
+            &self.grid,
+            &self.cell_head,
+            &self.particle_next,
+            dt,
+            GRAVITY,
+            false, // in_water = false
+        );
+
+        // 4. Advect non-sleeping particles
+        for p in self.particles.iter_mut() {
+            if p.state != ParticleState::Bedload {
+                p.position += p.velocity * dt;
+
+                // SDF collision
+                let sdf = self.grid.sample_sdf(p.position);
+                if sdf < 0.0 {
+                    let grad = self.grid.sdf_gradient(p.position);
+                    p.position -= grad * sdf;
+                }
+            }
+        }
+
+        // 5. Cleanup
+        self.particles.remove_out_of_bounds(
+            self.grid.width as f32 * self.grid.cell_size,
+            self.grid.height as f32 * self.grid.cell_size,
+        );
+    }
+
+    /// Get count of sleeping particles (for performance metrics)
+    pub fn sleeping_particle_count(&self) -> usize {
+        self.dem.sleeping_count()
     }
 
     /// Profiled update - returns timing breakdown in milliseconds
