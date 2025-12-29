@@ -334,6 +334,67 @@ impl FlipSimulation {
         ]
     }
 
+    /// Profiled update that skips CPU pressure solve (for GPU pressure solver)
+    /// Assumes pressure has already been solved externally and is in grid.pressure
+    /// Order: [classify, sdf, p2g, pressure_apply, g2p, neighbor, rest]
+    pub fn update_profiled_skip_pressure(&mut self, dt: f32) -> [f32; 7] {
+        use std::time::Instant;
+        self.frame = self.frame.wrapping_add(1);
+
+        let t0 = Instant::now();
+        self.classify_cells();
+        let t1 = Instant::now();
+
+        self.grid.compute_sdf();
+        let t2 = Instant::now();
+
+        self.particles_to_grid();
+        self.grid.extrapolate_velocities(1);
+        self.store_old_velocities();
+        let t3 = Instant::now();
+
+        self.grid.apply_gravity(dt);
+        {
+            let grid = &mut self.grid;
+            let pile_height = &self.pile_height;
+            grid.apply_vorticity_confinement_with_piles(dt, 0.05, pile_height);
+        }
+        self.grid.enforce_boundary_conditions();
+        self.grid.compute_divergence();
+        // SKIP: self.grid.solve_pressure_multigrid(4); - done externally on GPU
+        // Apply the externally-computed pressure gradient
+        self.apply_pressure_gradient_two_way(dt);
+        self.apply_porosity_drag(dt);
+        self.grid.compute_divergence();
+        self.grid.extrapolate_velocities(1);
+        let t4 = Instant::now();
+
+        self.grid_to_particles(dt);
+        let t5 = Instant::now();
+
+        self.build_spatial_hash();
+        self.compute_neighbor_counts();
+        let t6 = Instant::now();
+
+        self.advect_particles(dt);
+        self.apply_dem_settling(dt);
+        self.particles.remove_out_of_bounds(
+            self.grid.width as f32 * self.grid.cell_size,
+            self.grid.height as f32 * self.grid.cell_size,
+        );
+        let t7 = Instant::now();
+
+        [
+            (t1 - t0).as_secs_f32() * 1000.0,
+            (t2 - t1).as_secs_f32() * 1000.0,
+            (t3 - t2).as_secs_f32() * 1000.0,
+            (t4 - t3).as_secs_f32() * 1000.0,
+            (t5 - t4).as_secs_f32() * 1000.0,
+            (t6 - t5).as_secs_f32() * 1000.0,
+            (t7 - t6).as_secs_f32() * 1000.0,
+        ]
+    }
+
     /// Run isolated FLIP cycle WITH extrapolation for testing
     /// P2G → extrapolate → store_old → G2P (NO forces, NO pressure)
     ///
