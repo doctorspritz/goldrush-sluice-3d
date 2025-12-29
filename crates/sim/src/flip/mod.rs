@@ -206,8 +206,8 @@ impl FlipSimulation {
         self.grid.compute_divergence();
         let div_before = self.grid.total_divergence();
 
-        // Multigrid pressure solver - 4 V-cycles for better convergence
-        self.grid.solve_pressure_multigrid(4);
+        // Multigrid pressure solver - 8 V-cycles for better convergence
+        self.grid.solve_pressure_multigrid(8);
         // Two-way coupling: use mixture density for pressure gradient
         self.apply_pressure_gradient_two_way(dt);
 
@@ -218,7 +218,8 @@ impl FlipSimulation {
 
         // Diagnostic: compute divergence after for analysis (used by tests)
         self.grid.compute_divergence();
-        let _ = self.grid.total_divergence();
+        let div_after = self.grid.total_divergence();
+
 
         // 5b. Extrapolate after pressure solve for G2P sampling near boundaries
         // With fixed extrapolation (skips fluid-adjacent faces), this is safe
@@ -441,20 +442,21 @@ impl FlipSimulation {
         }
 
         // Mark solid cells from terrain
-    for j in 0..self.grid.height {
-        for i in 0..self.grid.width {
-            let idx = self.grid.cell_index(i, j);
-            
-            // Explicitly mark boundaries as solid
-            // 0 is Top (Open), Height-1 is Bottom (Floor)
-            // 0 and Width-1 are Walls
-            let is_boundary = i == 0 || i == self.grid.width - 1 || j == self.grid.height - 1;
-            
-            if is_boundary || self.grid.is_solid(i, j) {
-                self.grid.cell_type[idx] = CellType::Solid;
+        for j in 0..self.grid.height {
+            for i in 0..self.grid.width {
+                let idx = self.grid.cell_index(i, j);
+
+                // Explicitly mark boundaries as solid
+                // Left wall (i==0) and bottom (j==height-1) are solid
+                // Right wall (i==width-1) is OPEN for outlet flow
+                // Top (j==0) is open for surface
+                let is_boundary = i == 0 || j == self.grid.height - 1;
+
+                if is_boundary || self.grid.is_solid(i, j) {
+                    self.grid.cell_type[idx] = CellType::Solid;
+                }
             }
         }
-    }
 
         // Mark fluid cells - only WATER particles mark cells as fluid
         // Sediment in air should NOT mark cells as fluid
@@ -491,7 +493,7 @@ impl FlipSimulation {
     ///
     /// Higher sand fraction → higher mixture density → smaller acceleration
     /// This is what causes sand-laden flow to move slower than clear water
-    fn apply_pressure_gradient_two_way(&mut self, dt: f32) {
+    pub fn apply_pressure_gradient_two_way(&mut self, dt: f32) {
         self.apply_pressure_gradient_two_way_impl(dt);
     }
 
@@ -504,7 +506,7 @@ impl FlipSimulation {
     ///
     /// The drag is applied exponentially: v *= exp(-drag_rate * sand_fraction * dt)
     /// At high sand fraction (~0.6), velocity decays rapidly toward zero.
-    fn apply_porosity_drag(&mut self, dt: f32) {
+    pub fn apply_porosity_drag(&mut self, dt: f32) {
         self.apply_porosity_drag_impl(dt);
     }
 
@@ -517,7 +519,7 @@ impl FlipSimulation {
     /// Optimizations:
     /// - Parallelized with rayon (particles are independent)
     /// - Precomputed 1D weights (reduces bspline calls from 18 to 12)
-    fn store_old_velocities(&mut self) {
+    pub fn store_old_velocities(&mut self) {
         self.store_old_velocities_impl();
     }
 
@@ -535,7 +537,7 @@ impl FlipSimulation {
     /// - Sediment: Only samples fluid velocity for drag calculation (Lagrangian)
     /// - Water: Gets grid velocity and updates C matrix (APIC)
     /// - Sediment: Only samples fluid velocity for drag calculation (Lagrangian)
-    fn grid_to_particles(&mut self, dt: f32) {
+    pub fn grid_to_particles(&mut self, dt: f32) {
         self.grid_to_particles_impl(dt);
     }
 
@@ -721,7 +723,7 @@ impl FlipSimulation {
     /// Step 8: Advect particles with SDF-based collision detection
     /// Uses precomputed signed distance field for O(1) collision queries
     /// Also projects suspended particles onto pile heightfield (pile as floor constraint)
-    fn advect_particles(&mut self, dt: f32) {
+    pub fn advect_particles(&mut self, dt: f32) {
         self.advect_particles_impl(dt);
     }
 
@@ -740,7 +742,7 @@ impl FlipSimulation {
     }
 
     /// Build linked-cell list for spatial hashing (zero allocations after warmup)
-    fn build_spatial_hash(&mut self) {
+    pub fn build_spatial_hash(&mut self) {
         self.build_spatial_hash_impl();
     }
 
@@ -748,7 +750,7 @@ impl FlipSimulation {
     /// Uses the spatial hash to count particles in same + adjacent cells.
     /// OPTIMIZATION: Only computes for sediment particles (water doesn't need it).
     /// Parallelized for performance.
-    fn compute_neighbor_counts(&mut self) {
+    pub fn compute_neighbor_counts(&mut self) {
         self.compute_neighbor_counts_impl();
     }
 

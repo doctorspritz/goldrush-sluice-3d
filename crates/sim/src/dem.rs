@@ -45,15 +45,15 @@ pub struct DemParams {
 impl Default for DemParams {
     fn default() -> Self {
         Self {
-            contact_stiffness: 1500.0,       // Moderate stiffness
-            damping_ratio: 2.0,              // Overdamped (>1) - no oscillation, fast settling
+            contact_stiffness: 2000.0,       // Stiffer for faster response
+            damping_ratio: 2.5,              // More overdamped - very fast settling
             friction_coeff: 0.6,
-            static_friction_threshold: 3.0,  // Below this: static friction regime
-            sleep_threshold: 2.0,            // Below this + support: sleep
-            wake_threshold: 5.0,             // Above this: wake up
+            static_friction_threshold: 2.0,  // Below this: static friction regime
+            sleep_threshold: 1.0,            // Very low - aggressive sleep
+            wake_threshold: 3.0,             // Lower wake threshold for responsiveness
             particle_radius_cells: 0.5,
-            min_support_neighbors: 2,        // Need 2+ neighbors below to sleep
-            velocity_damping: 0.95,          // 5% velocity reduction per frame
+            min_support_neighbors: 1,        // Only need 1 neighbor to sleep
+            velocity_damping: 0.90,          // 10% velocity reduction per frame - faster settling
             use_jitter: true,                // Enable surface roughness
         }
     }
@@ -71,6 +71,10 @@ pub struct DemSimulation {
     is_sleeping: Vec<bool>,
     /// Frame counter for time-varying jitter
     frame: u32,
+    /// Wake flags for this frame (set when sleeping particle is impacted)
+    wake_flags: Vec<bool>,
+    /// Pre-collision positions (for PBD velocity derivation)
+    pre_solve_positions: Vec<Vec2>,
 }
 
 impl DemSimulation {
@@ -81,6 +85,8 @@ impl DemSimulation {
             support_counts: Vec::new(),
             is_sleeping: Vec::new(),
             frame: 0,
+            wake_flags: Vec::new(),
+            pre_solve_positions: Vec::new(),
         }
     }
 
@@ -125,6 +131,47 @@ impl DemSimulation {
         base_gravity: f32,
         in_water: bool,
     ) {
+        let water_level = if in_water { f32::MAX } else { -1.0 };
+        self.update_with_water_level(particles, grid, cell_head, particle_next, dt, base_gravity, water_level);
+    }
+
+    /// Run DEM physics with a water surface level
+    ///
+    /// Particles below water_level (higher Y in screen coords) experience buoyancy.
+    /// Pass -1.0 for no water, f32::MAX for fully submerged.
+    pub fn update_with_water_level(
+        &mut self,
+        particles: &mut Particles,
+        grid: &Grid,
+        cell_head: &[i32],
+        particle_next: &[i32],
+        dt: f32,
+        base_gravity: f32,
+        water_level: f32,
+    ) {
+        // No FLIP coupling - use water_level based detection
+        self.update_coupled(particles, grid, cell_head, particle_next, dt, base_gravity, Some(water_level), false);
+    }
+
+    /// Run DEM physics fully coupled with FLIP water simulation
+    ///
+    /// Uses the grid's velocity field (u, v) to apply drag to sediment particles.
+    /// Particles in fluid cells experience buoyancy and drag toward water velocity.
+    ///
+    /// # Arguments
+    /// - `water_level`: Optional explicit water level. If None, uses grid cell types.
+    /// - `use_flip_velocities`: If true, sample grid.u/v for water velocity drag.
+    pub fn update_coupled(
+        &mut self,
+        particles: &mut Particles,
+        grid: &Grid,
+        cell_head: &[i32],
+        particle_next: &[i32],
+        dt: f32,
+        base_gravity: f32,
+        water_level: Option<f32>,
+        use_flip_velocities: bool,
+    ) {
         self.frame = self.frame.wrapping_add(1);
 
         let particle_count = particles.len();
@@ -143,10 +190,13 @@ impl DemSimulation {
         self.forces.resize(particle_count, Vec2::ZERO);
         self.support_counts.resize(particle_count, 0);
         self.is_sleeping.resize(particle_count, false);
+        self.wake_flags.resize(particle_count, false);
+        self.pre_solve_positions.resize(particle_count, Vec2::ZERO);
 
-        // Reset forces
+        // Reset forces and wake flags
         self.forces.fill(Vec2::ZERO);
         self.support_counts.fill(0);
+        self.wake_flags.fill(false);
 
         // === Pass 1: Compute support counts (neighbors below) ===
         self.compute_support_counts(
@@ -160,18 +210,19 @@ impl DemSimulation {
         // === Pass 2: Determine sleep states ===
         self.update_sleep_states(particles, grid, particle_radius);
 
-        // === Pass 3: Compute contact forces ===
-        self.compute_contact_forces(
+        // === Pass 3: Simple integration - gravity, move, collide ===
+        self.integrate_and_collide_coupled(
             particles,
             grid,
-            cell_head,
-            particle_next,
-            contact_dist_sq,
+            dt,
+            base_gravity,
+            water_level,
+            use_flip_velocities,
             particle_radius,
         );
 
-        // === Pass 4: Apply gravity and integrate ===
-        self.integrate(particles, grid, dt, base_gravity, in_water, particle_radius);
+        // === Pass 6: Apply wake flags ===
+        self.apply_wake_flags();
     }
 
     /// Count neighbors below each particle (for support/sleep detection)
@@ -267,11 +318,14 @@ impl DemSimulation {
 
             if self.is_sleeping[idx] {
                 // Currently sleeping - check for wake condition
-                if speed > self.params.wake_threshold {
+                // Wake if: velocity too high OR flagged for wake by impact OR lost support
+                let lost_support = !has_support && !near_floor;
+                if speed > self.params.wake_threshold || self.wake_flags[idx] || lost_support {
                     self.is_sleeping[idx] = false;
                 }
             } else {
                 // Currently awake - check for sleep condition
+                // More aggressive: use very low threshold
                 if speed < self.params.sleep_threshold && (has_support || near_floor) {
                     self.is_sleeping[idx] = true;
                 }
@@ -279,185 +333,402 @@ impl DemSimulation {
         }
     }
 
-    /// Compute contact forces between particles and with floor
-    fn compute_contact_forces(
-        &mut self,
-        particles: &Particles,
-        grid: &Grid,
-        cell_head: &[i32],
-        particle_next: &[i32],
-        contact_dist_sq: f32,
-        particle_radius: f32,
-    ) {
-        let cell_size = grid.cell_size;
-        let width = grid.width;
-        let height = grid.height;
-        let contact_dist = contact_dist_sq.sqrt();
-
-        let stiffness = self.params.contact_stiffness;
-        let damping = self.params.damping_ratio;
-        let friction = self.params.friction_coeff;
-        let static_threshold = self.params.static_friction_threshold;
-
-        for idx in 0..particles.len() {
-            let p_i = &particles.list[idx];
-            if !p_i.is_sediment() {
-                continue;
+    /// Apply wake flags after force computation (called after integrate)
+    fn apply_wake_flags(&mut self) {
+        for idx in 0..self.wake_flags.len() {
+            if self.wake_flags[idx] && self.is_sleeping[idx] {
+                self.is_sleeping[idx] = false;
             }
+        }
+    }
 
-            // Sleeping particles still receive forces (to detect wake conditions)
-            // but we can skip some computations
+    /// OLD: Position-based collision resolution (PBD style)
+    #[allow(dead_code)]
+    fn resolve_collisions_pbd(
+        &mut self,
+        particles: &mut Particles,
+        grid: &Grid,
+        _cell_head: &[i32],
+        _particle_next: &[i32],
+        particle_radius: f32,
+        iterations: usize,
+    ) {
+        let contact_dist = particle_radius * 2.0;
+        let contact_dist_sq = contact_dist * contact_dist;
+        let n = particles.len();
 
-            let pos_i = p_i.position;
-            let vel_i = if self.is_sleeping[idx] { Vec2::ZERO } else { p_i.velocity };
-            let density_i = p_i.material.density();
+        for _iter in 0..iterations {
+            // Brute-force O(n²) for debugging - TODO: use spatial hash
+            for idx in 0..n {
+                if !particles.list[idx].is_sediment() {
+                    continue;
+                }
 
-            let gi = ((pos_i.x / cell_size) as i32).clamp(0, width as i32 - 1);
-            let gj = ((pos_i.y / cell_size) as i32).clamp(0, height as i32 - 1);
-
-            // === Particle-particle contacts ===
-            for dj in -1i32..=1 {
-                for di in -1i32..=1 {
-                    let ni = gi + di;
-                    let nj = gj + dj;
-
-                    if ni < 0 || ni >= width as i32 || nj < 0 || nj >= height as i32 {
+                for j_idx in (idx + 1)..n {
+                    if !particles.list[j_idx].is_sediment() {
                         continue;
                     }
 
-                    let cell_idx = (nj as usize) * width + (ni as usize);
-                    let mut j = cell_head[cell_idx];
+                    // Get CURRENT positions
+                    let pos_i = particles.list[idx].position;
+                    let pos_j = particles.list[j_idx].position;
+                    let diff = pos_i - pos_j;
+                    let dist_sq = diff.length_squared();
 
-                    while j >= 0 {
-                        let j_idx = j as usize;
-                        j = particle_next[j_idx];
+                    if dist_sq >= contact_dist_sq || dist_sq < 0.0001 {
+                        continue;
+                    }
 
-                        // Only process pairs once
-                        if j_idx <= idx {
-                            continue;
-                        }
+                    let dist = dist_sq.sqrt();
+                    let overlap = contact_dist - dist;
 
-                        let p_j = &particles.list[j_idx];
-                        if !p_j.is_sediment() {
-                            continue;
-                        }
+                    if overlap > 0.0 {
+                        let normal = diff / dist;
+                        let density_i = particles.list[idx].material.density();
+                        let density_j = particles.list[j_idx].material.density();
 
-                        let pos_j = p_j.position;
-                        let vel_j = if self.is_sleeping[j_idx] { Vec2::ZERO } else { p_j.velocity };
-                        let density_j = p_j.material.density();
-
-                        let diff = pos_i - pos_j;
-                        let dist_sq = diff.length_squared();
-
-                        if dist_sq >= contact_dist_sq || dist_sq < 0.0001 {
-                            continue;
-                        }
-
-                        let dist = dist_sq.sqrt();
-                        let overlap = contact_dist - dist;
-                        let mut normal = diff / dist;
-
-                        // Time-varying jitter for vertical contacts
-                        // Prevents perfect horizontal sliding on stacked particles
-                        if self.params.use_jitter && normal.y.abs() > 0.95 {
-                            let seed = (self.frame as usize)
-                                .wrapping_mul(17)
-                                .wrapping_add(idx.wrapping_mul(7))
-                                .wrapping_add(j_idx.wrapping_mul(13));
-                            let jitter = ((seed % 100) as f32 / 100.0 - 0.5) * 0.3;
-                            let jittered = Vec2::new(normal.x + jitter, normal.y);
-                            normal = jittered.normalize();
-                        }
-
-                        // Relative velocity
-                        let rel_vel = vel_i - vel_j;
-                        let normal_vel = rel_vel.dot(normal);
-                        let tangent_vel = rel_vel - normal * normal_vel;
-                        let tangent_speed = tangent_vel.length();
-
-                        // Spring-damper normal force
-                        let spring_f = stiffness * overlap;
-                        let damp_f = damping * 2.0 * stiffness.sqrt() * normal_vel;
-                        let normal_force_mag = (spring_f - damp_f).max(0.0);
-
-                        // Friction force (static vs dynamic regime)
-                        let max_friction = friction * normal_force_mag;
-                        let friction_force = if tangent_speed < static_threshold {
-                            // Static friction: spring-like "sticking"
-                            let stick_force = -tangent_vel * stiffness * 0.3;
-                            let stick_mag = stick_force.length();
-                            if stick_mag > max_friction {
-                                stick_force * (max_friction / stick_mag)
-                            } else {
-                                stick_force
-                            }
-                        } else if tangent_speed > 0.001 {
-                            // Dynamic friction: Coulomb sliding
-                            -tangent_vel.normalize() * max_friction
-                        } else {
-                            Vec2::ZERO
-                        };
-
-                        let total_force = normal * normal_force_mag + friction_force;
-
-                        // Mass-weighted distribution (lighter moves more)
+                        // Mass-weighted position correction
+                        // ratios sum to 1.0, so each particle gets its share of the full overlap
                         let total_density = density_i + density_j;
-                        let ratio_i = density_j / total_density;
+                        let ratio_i = density_j / total_density;  // lighter particle moves more
                         let ratio_j = density_i / total_density;
 
-                        self.forces[idx] += total_force * ratio_i;
-                        self.forces[j_idx] -= total_force * ratio_j;
+                        // Full overlap correction - mass ratios distribute it
+                        // With equal masses: each moves overlap * 0.5, total = overlap (full separation)
+                        particles.list[idx].position += normal * overlap * ratio_i;
+                        particles.list[j_idx].position -= normal * overlap * ratio_j;
+
+                        // Wake sleeping particle if hit by moving particle
+                        if self.is_sleeping[j_idx] && !self.is_sleeping[idx] {
+                            self.wake_flags[j_idx] = true;
+                        }
+                        if self.is_sleeping[idx] && !self.is_sleeping[j_idx] {
+                            self.wake_flags[idx] = true;
+                        }
                     }
                 }
             }
 
-            // === Floor contact (SDF-based) ===
-            let sdf = grid.sample_sdf(pos_i);
-            if sdf < particle_radius && sdf > -particle_radius * 2.0 {
-                let floor_normal = -grid.sdf_gradient(pos_i);
-                let floor_overlap = particle_radius - sdf;
+            // Floor collision (SDF-based)
+            for idx in 0..particles.len() {
+                let p = &mut particles.list[idx];
+                if !p.is_sediment() {
+                    continue;
+                }
 
-                if floor_overlap > 0.0 && floor_normal.length_squared() > 0.001 {
-                    let floor_normal = floor_normal.normalize();
+                let sdf = grid.sample_sdf(p.position);
+                if sdf < particle_radius {
+                    let grad = grid.sdf_gradient(p.position);
+                    if grad.length_squared() > 0.001 {
+                        let push_dist = particle_radius - sdf + 0.2;
+                        let push_dir = grad.normalize();
+                        p.position += push_dir * push_dist;
 
-                    // Normal force
-                    let normal_vel = vel_i.dot(floor_normal);
-                    let spring_f = stiffness * 1.5 * floor_overlap; // Stiffer floor
-                    let damp_f = damping * 2.0 * (stiffness * 1.5).sqrt() * normal_vel;
-                    let floor_force_mag = (spring_f - damp_f).max(0.0);
+                        // Zero velocity into floor
+                        let normal_vel = p.velocity.dot(push_dir);
+                        if normal_vel < 0.0 {
+                            p.velocity -= push_dir * normal_vel * 0.9; // Keep tiny bit for settling
+                        }
 
-                    self.forces[idx] += floor_normal * floor_force_mag;
-
-                    // Floor friction
-                    let tangent = Vec2::new(-floor_normal.y, floor_normal.x);
-                    let tangent_vel = vel_i.dot(tangent);
-                    let tangent_speed = tangent_vel.abs();
-
-                    // Material-specific friction
-                    let mat_friction = p_i.material.friction_coefficient();
-                    let max_friction = mat_friction * floor_force_mag;
-
-                    let friction_force = if tangent_speed < static_threshold {
-                        // Static: resist all motion
-                        -tangent * tangent_vel * stiffness * 0.3
-                    } else {
-                        // Dynamic: Coulomb
-                        -tangent * tangent_vel.signum() * max_friction
-                    };
-
-                    // Clamp friction to not exceed tangent velocity elimination
-                    let friction_mag = friction_force.length();
-                    if friction_mag > max_friction {
-                        self.forces[idx] += friction_force * (max_friction / friction_mag);
-                    } else {
-                        self.forces[idx] += friction_force;
+                        // Apply friction - reduce tangent velocity
+                        let tangent = Vec2::new(-push_dir.y, push_dir.x);
+                        let tangent_vel = p.velocity.dot(tangent);
+                        p.velocity -= tangent * tangent_vel * self.params.friction_coeff;
                     }
                 }
             }
         }
     }
 
-    /// Apply gravity and integrate velocities/positions
+    /// Simple integration with FLIP coupling support
+    /// Handles gravity, water drag, FLIP velocity sampling, and collisions
+    fn integrate_and_collide_coupled(
+        &mut self,
+        particles: &mut Particles,
+        grid: &Grid,
+        dt: f32,
+        base_gravity: f32,
+        water_level: Option<f32>,
+        use_flip_velocities: bool,
+        particle_radius: f32,
+    ) {
+        let contact_dist = particle_radius * 2.0;
+        let n = particles.len();
+        let cell_size = grid.cell_size;
+
+        // Drag coefficient for FLIP coupling
+        // Higher = sediment follows water more closely
+        let flip_drag_coeff = 8.0;
+
+        // Step 1: Apply gravity, water drag, and integrate
+        for idx in 0..n {
+            let p = &mut particles.list[idx];
+            if !p.is_sediment() {
+                continue;
+            }
+
+            // Skip sleeping particles on floor
+            if self.is_sleeping[idx] {
+                let sdf = grid.sample_sdf(p.position);
+                if sdf < particle_radius * 1.5 {
+                    p.velocity = Vec2::ZERO;
+                    p.state = ParticleState::Bedload;
+                    continue;
+                } else {
+                    self.is_sleeping[idx] = false;
+                }
+            }
+
+            // Determine if particle is in water
+            let in_water = if let Some(wl) = water_level {
+                p.position.y > wl
+            } else {
+                // Use grid cell type - check if nearby cells have water
+                let gi = (p.position.x / cell_size) as usize;
+                let gj = (p.position.y / cell_size) as usize;
+                gi < grid.width && gj < grid.height &&
+                    grid.cell_type[gj * grid.width + gi] == crate::grid::CellType::Fluid
+            };
+
+            // Gravity with buoyancy
+            let g_eff = Self::effective_gravity(base_gravity, p.material, in_water);
+            p.velocity.y += g_eff * dt;
+
+            // Water drag - either from FLIP velocities or basic damping
+            if in_water {
+                if use_flip_velocities {
+                    // Sample water velocity from FLIP grid
+                    let water_vel = grid.sample_velocity(p.position);
+
+                    // Apply drag toward water velocity
+                    // Lighter particles (lower density) follow water more
+                    let density = p.material.density();
+                    let drag_factor = flip_drag_coeff / density;
+
+                    let vel_diff = water_vel - p.velocity;
+                    p.velocity += vel_diff * drag_factor * dt;
+                }
+
+                // Extra damping in water
+                p.velocity *= self.params.velocity_damping * 0.85;
+            } else {
+                // Air damping
+                p.velocity *= self.params.velocity_damping;
+            }
+
+            // Move
+            p.position += p.velocity * dt;
+        }
+
+        // Step 2: Resolve particle-particle collisions (multiple passes)
+        // Relaxation prevents overcorrection jitter in dense piles
+        let relaxation = 0.6;
+
+        for _iter in 0..4 {
+            for idx in 0..n {
+                if !particles.list[idx].is_sediment() {
+                    continue;
+                }
+
+                let i_sleeping = self.is_sleeping[idx];
+
+                for j_idx in (idx + 1)..n {
+                    if !particles.list[j_idx].is_sediment() {
+                        continue;
+                    }
+
+                    let j_sleeping = self.is_sleeping[j_idx];
+
+                    // Skip if BOTH are sleeping - they're stable
+                    if i_sleeping && j_sleeping {
+                        continue;
+                    }
+
+                    let pos_i = particles.list[idx].position;
+                    let pos_j = particles.list[j_idx].position;
+                    let diff = pos_i - pos_j;
+                    let dist_sq = diff.length_squared();
+
+                    if dist_sq >= contact_dist * contact_dist || dist_sq < 0.0001 {
+                        continue;
+                    }
+
+                    let dist = dist_sq.sqrt();
+                    let overlap = contact_dist - dist;
+
+                    if overlap > 0.0 {
+                        let normal = diff / dist;
+
+                        // Push apart with relaxation to prevent jitter
+                        let push = overlap * 0.5 * relaxation;
+                        particles.list[idx].position += normal * push;
+                        particles.list[j_idx].position -= normal * push;
+
+                        // Kill relative velocity along collision normal
+                        let vel_i = particles.list[idx].velocity;
+                        let vel_j = particles.list[j_idx].velocity;
+                        let rel_vel = vel_i - vel_j;
+                        let rel_normal = rel_vel.dot(normal);
+
+                        // Only if approaching
+                        if rel_normal < 0.0 {
+                            // Inelastic collision - remove approaching velocity
+                            particles.list[idx].velocity -= normal * rel_normal * 0.5;
+                            particles.list[j_idx].velocity += normal * rel_normal * 0.5;
+                        }
+
+                        // Wake sleeping particle if hit by moving particle
+                        if j_sleeping && !i_sleeping {
+                            self.wake_flags[j_idx] = true;
+                        }
+                        if i_sleeping && !j_sleeping {
+                            self.wake_flags[idx] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 3: Floor collision
+        for idx in 0..n {
+            let p = &mut particles.list[idx];
+            if !p.is_sediment() {
+                continue;
+            }
+
+            let sdf = grid.sample_sdf(p.position);
+            if sdf < particle_radius {
+                let grad = grid.sdf_gradient(p.position);
+                if grad.length_squared() > 0.001 {
+                    let push_dir = grad.normalize();
+                    let push_dist = particle_radius - sdf + 0.1;
+                    p.position += push_dir * push_dist;
+
+                    // Zero velocity into floor
+                    let normal_vel = p.velocity.dot(push_dir);
+                    if normal_vel < 0.0 {
+                        p.velocity -= push_dir * normal_vel;
+                    }
+
+                    // Friction
+                    let tangent = Vec2::new(-push_dir.y, push_dir.x);
+                    let tangent_vel = p.velocity.dot(tangent);
+                    p.velocity -= tangent * tangent_vel * self.params.friction_coeff;
+                }
+            }
+
+            // Update state and sleep
+            let speed = p.velocity.length();
+            if speed < 0.5 {
+                p.velocity = Vec2::ZERO;
+            }
+
+            let sdf = grid.sample_sdf(p.position);
+            let on_floor = sdf < particle_radius * 1.5;
+            let has_support = self.support_counts[idx] >= self.params.min_support_neighbors as u16;
+
+            if on_floor || has_support {
+                p.state = ParticleState::Bedload;
+                if speed < self.params.sleep_threshold {
+                    self.is_sleeping[idx] = true;
+                }
+            } else {
+                p.state = ParticleState::Suspended;
+            }
+        }
+    }
+
+    /// OLD: PBD Step 1: Apply gravity and predict positions
+    #[allow(dead_code)]
+    fn integrate_pbd(
+        &mut self,
+        particles: &mut Particles,
+        grid: &Grid,
+        dt: f32,
+        base_gravity: f32,
+        in_water: bool,
+        particle_radius: f32,
+    ) {
+        for idx in 0..particles.len() {
+            let p = &mut particles.list[idx];
+            if !p.is_sediment() {
+                continue;
+            }
+
+            // Sleeping particles on floor: skip
+            if self.is_sleeping[idx] {
+                let sdf = grid.sample_sdf(p.position);
+                if sdf < particle_radius * 1.5 {
+                    p.velocity = Vec2::ZERO;
+                    p.state = ParticleState::Bedload;
+                    continue;
+                } else {
+                    // Floating sleeper - wake it
+                    self.is_sleeping[idx] = false;
+                }
+            }
+
+            // Apply gravity
+            let g_eff = Self::effective_gravity(base_gravity, p.material, in_water);
+            p.velocity.y += g_eff * dt;
+
+            // Apply velocity damping
+            p.velocity *= self.params.velocity_damping;
+
+            // Integrate position
+            p.position += p.velocity * dt;
+        }
+    }
+
+    /// OLD: PBD Step 3: Finalize - derive velocities from position changes, update states
+    #[allow(dead_code)]
+    fn finalize_pbd(
+        &mut self,
+        particles: &mut Particles,
+        grid: &Grid,
+        particle_radius: f32,
+        dt: f32,
+    ) {
+        for idx in 0..particles.len() {
+            let p = &mut particles.list[idx];
+            if !p.is_sediment() {
+                continue;
+            }
+
+            // Core PBD: derive velocity from position change
+            // This ensures velocity is consistent with where particle ended up
+            let old_pos = self.pre_solve_positions[idx];
+            let pos_delta = p.position - old_pos;
+            p.velocity = pos_delta / dt;
+
+            // Apply damping after deriving velocity
+            p.velocity *= self.params.velocity_damping;
+
+            let speed = p.velocity.length();
+
+            // Snap very slow to zero
+            if speed < 0.5 {
+                p.velocity = Vec2::ZERO;
+            }
+
+            // Update state
+            let sdf = grid.sample_sdf(p.position);
+            let on_floor = sdf < particle_radius * 1.5;
+            let has_support = self.support_counts[idx] >= self.params.min_support_neighbors as u16;
+
+            if on_floor || has_support {
+                p.state = ParticleState::Bedload;
+                if speed < self.params.sleep_threshold {
+                    self.is_sleeping[idx] = true;
+                }
+            } else {
+                p.state = ParticleState::Suspended;
+            }
+        }
+    }
+
+    /// OLD: Apply gravity and integrate velocities/positions (kept for reference)
+    #[allow(dead_code)]
     fn integrate(
         &mut self,
         particles: &mut Particles,
@@ -476,12 +747,22 @@ impl DemSimulation {
                 continue;
             }
 
-            // Sleeping particles: zero velocity, skip integration
+            // Sleeping particles on floor: zero velocity, skip integration
+            // Sleeping particles NOT on floor: apply gravity (they'll fall and wake on impact)
+            let sdf = grid.sample_sdf(p.position);
+            let on_floor = sdf < particle_radius * 1.5;
+
             if self.is_sleeping[idx] {
-                p.velocity = Vec2::ZERO;
-                // Update state to Bedload (settled)
-                p.state = ParticleState::Bedload;
-                continue;
+                if on_floor {
+                    // Truly at rest - zero velocity
+                    p.velocity = Vec2::ZERO;
+                    p.state = ParticleState::Bedload;
+                    continue;
+                } else {
+                    // Sleeping but floating - wake up!
+                    self.is_sleeping[idx] = false;
+                    // Fall through to normal integration
+                }
             }
 
             // Apply gravity (effective gravity accounts for buoyancy)
@@ -504,24 +785,38 @@ impl DemSimulation {
                 p.velocity *= max_vel / speed;
             }
 
+            // Snap very slow velocities to zero to prevent micro-drift
+            if speed < 0.5 {
+                p.velocity = Vec2::ZERO;
+            }
+
             // Integrate position
             p.position += p.velocity * dt;
 
-            // Resolve floor penetration
+            // Resolve floor penetration - robust collision
             let sdf = grid.sample_sdf(p.position);
-            if sdf < particle_radius * 0.5 {
+            if sdf < particle_radius {
                 let grad = grid.sdf_gradient(p.position);
                 if grad.length_squared() > 0.001 {
-                    let push_out = (particle_radius * 0.5 - sdf) * grad.normalize();
-                    p.position -= push_out;
+                    // Gradient points AWAY from solid, so ADD to push particle out
+                    let push_dist = particle_radius - sdf + 0.1; // Small margin
+                    let push_dir = grad.normalize();
+                    p.position += push_dir * push_dist;
+
+                    // Also zero out velocity component into the wall
+                    let normal_vel = p.velocity.dot(push_dir);
+                    if normal_vel < 0.0 {
+                        p.velocity -= push_dir * normal_vel;
+                    }
                 }
             }
 
-            // Update state based on velocity
-            let sdf = grid.sample_sdf(p.position);
-            let on_floor = sdf < particle_radius * 1.5;
+            // Update state based on velocity and floor contact
+            let final_sdf = grid.sample_sdf(p.position);
+            let final_on_floor = final_sdf < particle_radius * 1.5;
+            let final_speed = p.velocity.length();
 
-            if on_floor && speed < self.params.sleep_threshold * 2.0 {
+            if final_on_floor && final_speed < self.params.sleep_threshold * 2.0 {
                 p.state = ParticleState::Bedload;
             } else {
                 p.state = ParticleState::Suspended;

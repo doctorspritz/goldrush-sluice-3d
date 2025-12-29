@@ -18,7 +18,7 @@ impl FlipSimulation {
         let width = self.grid.width;
         let height = self.grid.height;
         let margin = cell_size;
-        let max_x = width as f32 * cell_size - margin;
+        // max_x not used - right boundary is open for outflow
         let max_y = height as f32 * cell_size - margin;
 
         let grid = &self.grid;
@@ -101,10 +101,12 @@ impl FlipSimulation {
                 }
 
                 // Final bounds clamp (per substep to keep it contained)
-                p.position.x = p.position.x.clamp(margin, max_x);
+                // Note: Right boundary (x >= max_x) is OPEN for outflow - let particles exit
+                // They will be deleted by remove_out_of_bounds when x >= width * cell_size
+                p.position.x = p.position.x.max(margin); // Left wall only
                 p.position.y = p.position.y.clamp(margin, max_y);
 
-                if p.position.x <= margin || p.position.x >= max_x {
+                if p.position.x <= margin {
                     p.velocity.x = 0.0;
                 }
                 if p.position.y <= margin || p.position.y >= max_y {
