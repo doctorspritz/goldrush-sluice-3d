@@ -8,6 +8,13 @@
 //! Instead of one draw call per particle, we batch all particles of each
 //! material type into a single Mesh and draw with one call per material.
 //! This reduces draw calls from N to 5 (one per material type).
+//!
+//! ## FastMetaballRenderer
+//! Optimized metaball rendering with:
+//! - Half-resolution density buffer
+//! - Mesh batching for density pass (not per-particle draw calls)
+//! - Separable Gaussian blur for smooth edges
+//! - Gradient-based surface normals for lighting
 
 use macroquad::prelude::*;
 use macroquad::miniquad::{BlendState, Equation, BlendFactor, BlendValue};
@@ -565,6 +572,588 @@ impl MetaballRenderer {
         );
 
         gl_use_default_material();
+    }
+}
+
+// ============================================================================
+// OPTIMIZED METABALL RENDERER
+// ============================================================================
+
+/// Horizontal Gaussian blur shader
+const BLUR_H_FRAG: &str = r#"#version 100
+precision mediump float;
+
+varying lowp vec2 v_uv;
+
+uniform sampler2D Texture;
+uniform lowp vec2 texelSize;
+
+void main() {
+    // Flip Y for render target coordinate system
+    vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);
+
+    // 9-tap Gaussian kernel (sigma ~2.0)
+    // Weights: 0.05, 0.09, 0.12, 0.15, 0.18, 0.15, 0.12, 0.09, 0.05
+    vec4 sum = vec4(0.0);
+    sum += texture2D(Texture, uv + vec2(-4.0 * texelSize.x, 0.0)) * 0.05;
+    sum += texture2D(Texture, uv + vec2(-3.0 * texelSize.x, 0.0)) * 0.09;
+    sum += texture2D(Texture, uv + vec2(-2.0 * texelSize.x, 0.0)) * 0.12;
+    sum += texture2D(Texture, uv + vec2(-1.0 * texelSize.x, 0.0)) * 0.15;
+    sum += texture2D(Texture, uv) * 0.18;
+    sum += texture2D(Texture, uv + vec2(1.0 * texelSize.x, 0.0)) * 0.15;
+    sum += texture2D(Texture, uv + vec2(2.0 * texelSize.x, 0.0)) * 0.12;
+    sum += texture2D(Texture, uv + vec2(3.0 * texelSize.x, 0.0)) * 0.09;
+    sum += texture2D(Texture, uv + vec2(4.0 * texelSize.x, 0.0)) * 0.05;
+
+    gl_FragColor = sum;
+}
+"#;
+
+/// Vertical Gaussian blur shader
+const BLUR_V_FRAG: &str = r#"#version 100
+precision mediump float;
+
+varying lowp vec2 v_uv;
+
+uniform sampler2D Texture;
+uniform lowp vec2 texelSize;
+
+void main() {
+    // Flip Y for render target coordinate system
+    vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);
+
+    // 9-tap Gaussian kernel (sigma ~2.0)
+    vec4 sum = vec4(0.0);
+    sum += texture2D(Texture, uv + vec2(0.0, -4.0 * texelSize.y)) * 0.05;
+    sum += texture2D(Texture, uv + vec2(0.0, -3.0 * texelSize.y)) * 0.09;
+    sum += texture2D(Texture, uv + vec2(0.0, -2.0 * texelSize.y)) * 0.12;
+    sum += texture2D(Texture, uv + vec2(0.0, -1.0 * texelSize.y)) * 0.15;
+    sum += texture2D(Texture, uv) * 0.18;
+    sum += texture2D(Texture, uv + vec2(0.0, 1.0 * texelSize.y)) * 0.15;
+    sum += texture2D(Texture, uv + vec2(0.0, 2.0 * texelSize.y)) * 0.12;
+    sum += texture2D(Texture, uv + vec2(0.0, 3.0 * texelSize.y)) * 0.09;
+    sum += texture2D(Texture, uv + vec2(0.0, 4.0 * texelSize.y)) * 0.05;
+
+    gl_FragColor = sum;
+}
+"#;
+
+/// Density accumulation shader with soft gaussian falloff
+/// Uses vertex color for per-particle color (batched rendering)
+const FAST_DENSITY_FRAG: &str = r#"#version 100
+precision mediump float;
+
+varying lowp vec2 v_uv;
+varying lowp vec4 v_color;
+
+void main() {
+    vec2 center = vec2(0.5, 0.5);
+    float dist = length(v_uv - center) * 2.0;
+
+    // Gaussian-like falloff
+    float density = exp(-dist * dist * 4.0);
+
+    // Output: RGB weighted by density, A is density
+    gl_FragColor = vec4(v_color.rgb * density, density);
+}
+"#;
+
+/// Vertex shader that passes vertex color to fragment shader
+const FAST_DENSITY_VERT: &str = r#"#version 100
+attribute vec3 position;
+attribute vec2 texcoord;
+attribute vec4 color;
+
+varying lowp vec2 v_uv;
+varying lowp vec4 v_color;
+
+uniform mat4 Model;
+uniform mat4 Projection;
+
+void main() {
+    gl_Position = Projection * Model * vec4(position, 1.0);
+    v_uv = texcoord;
+    v_color = color;
+}
+"#;
+
+/// Surface shader with gradient-based lighting and translucency
+const SURFACE_FRAG: &str = r#"#version 100
+precision mediump float;
+
+varying lowp vec2 v_uv;
+
+uniform sampler2D Texture;
+uniform lowp float threshold;
+uniform lowp vec2 texelSize;
+
+void main() {
+    vec2 uv = vec2(v_uv.x, 1.0 - v_uv.y);
+    vec4 center = texture2D(Texture, uv);
+    float density = center.a;
+
+    // Discard below threshold
+    if (density < threshold) {
+        discard;
+    }
+
+    // Recover base color
+    vec3 baseColor = center.rgb / max(density, 0.001);
+
+    // Calculate gradient for pseudo-normal (Sobel-like)
+    float left = texture2D(Texture, uv - vec2(texelSize.x, 0.0)).a;
+    float right = texture2D(Texture, uv + vec2(texelSize.x, 0.0)).a;
+    float up = texture2D(Texture, uv - vec2(0.0, texelSize.y)).a;
+    float down = texture2D(Texture, uv + vec2(0.0, texelSize.y)).a;
+
+    vec2 gradient = vec2(right - left, down - up);
+    float gradMag = length(gradient);
+
+    // Simple directional light from top-left
+    vec3 lightDir = normalize(vec3(-0.5, -0.7, 0.5));
+    vec3 normal = normalize(vec3(-gradient.x, -gradient.y, 0.3));
+    float diffuse = max(dot(normal, lightDir), 0.0);
+
+    // Specular highlight
+    vec3 viewDir = vec3(0.0, 0.0, 1.0);
+    vec3 halfVec = normalize(lightDir + viewDir);
+    float spec = pow(max(dot(normal, halfVec), 0.0), 32.0);
+
+    // Edge detection for rim
+    float edge = smoothstep(threshold, threshold + 0.05, density);
+    float rim = 1.0 - edge;
+
+    // Combine lighting
+    vec3 ambient = baseColor * 0.4;
+    vec3 diffuseColor = baseColor * diffuse * 0.5;
+    vec3 specColor = vec3(1.0) * spec * 0.3;
+    vec3 rimColor = baseColor * rim * 0.2;
+
+    vec3 finalColor = ambient + diffuseColor + specColor + rimColor;
+
+    // Translucency based on density (thicker = more opaque)
+    float alpha = smoothstep(threshold, threshold + 0.15, density) * 0.85 + 0.1;
+
+    gl_FragColor = vec4(finalColor, alpha);
+}
+"#;
+
+/// Optimized metaball renderer with mesh batching and blur
+/// Uses half-resolution for density/blur, upscales to screen
+pub struct FastMetaballRenderer {
+    density_material: Material,
+    blur_h_material: Material,
+    blur_v_material: Material,
+    surface_material: Material,
+    /// Half-res render target for density
+    density_rt: RenderTarget,
+    /// Half-res render target for horizontal blur output
+    blur_h_rt: RenderTarget,
+    /// Half-res render target for vertical blur output (final density)
+    blur_v_rt: RenderTarget,
+    /// 1x1 white texture for UV mapping
+    white_texture: Texture2D,
+    /// Full screen dimensions
+    screen_w: f32,
+    screen_h: f32,
+    /// Half-res dimensions
+    half_w: f32,
+    half_h: f32,
+    /// Particle visual scale
+    particle_scale: f32,
+    /// Density threshold for surface
+    threshold: f32,
+}
+
+impl FastMetaballRenderer {
+    /// Create a new optimized metaball renderer
+    /// Uses half-resolution for density/blur passes
+    pub fn new(width: u32, height: u32) -> Self {
+        let half_w = width / 2;
+        let half_h = height / 2;
+
+        // Density pass - additive blending with vertex colors
+        let density_material = load_material(
+            ShaderSource::Glsl {
+                vertex: FAST_DENSITY_VERT,
+                fragment: FAST_DENSITY_FRAG,
+            },
+            MaterialParams {
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::One,
+                        BlendFactor::One,
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .expect("Failed to load fast density shader");
+
+        // Horizontal blur
+        let blur_h_material = load_material(
+            ShaderSource::Glsl {
+                vertex: VERTEX_SHADER,
+                fragment: BLUR_H_FRAG,
+            },
+            MaterialParams {
+                uniforms: vec![
+                    UniformDesc::new("texelSize", UniformType::Float2),
+                ],
+                ..Default::default()
+            },
+        )
+        .expect("Failed to load blur H shader");
+
+        // Vertical blur
+        let blur_v_material = load_material(
+            ShaderSource::Glsl {
+                vertex: VERTEX_SHADER,
+                fragment: BLUR_V_FRAG,
+            },
+            MaterialParams {
+                uniforms: vec![
+                    UniformDesc::new("texelSize", UniformType::Float2),
+                ],
+                ..Default::default()
+            },
+        )
+        .expect("Failed to load blur V shader");
+
+        // Surface shader with lighting
+        let surface_material = load_material(
+            ShaderSource::Glsl {
+                vertex: VERTEX_SHADER,
+                fragment: SURFACE_FRAG,
+            },
+            MaterialParams {
+                uniforms: vec![
+                    UniformDesc::new("threshold", UniformType::Float1),
+                    UniformDesc::new("texelSize", UniformType::Float2),
+                ],
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Value(BlendValue::SourceAlpha),
+                        BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .expect("Failed to load surface shader");
+
+        // Create half-res render targets
+        let density_rt = render_target(half_w, half_h);
+        density_rt.texture.set_filter(FilterMode::Linear);
+
+        let blur_h_rt = render_target(half_w, half_h);
+        blur_h_rt.texture.set_filter(FilterMode::Linear);
+
+        let blur_v_rt = render_target(half_w, half_h);
+        blur_v_rt.texture.set_filter(FilterMode::Linear);
+
+        // White texture for UV mapping
+        let white_img = Image::gen_image_color(1, 1, WHITE);
+        let white_texture = Texture2D::from_image(&white_img);
+
+        Self {
+            density_material,
+            blur_h_material,
+            blur_v_material,
+            surface_material,
+            density_rt,
+            blur_h_rt,
+            blur_v_rt,
+            white_texture,
+            screen_w: width as f32,
+            screen_h: height as f32,
+            half_w: half_w as f32,
+            half_h: half_h as f32,
+            particle_scale: 8.0,  // Slightly larger for half-res
+            threshold: 0.06,
+        }
+    }
+
+    /// Set particle visual scale
+    pub fn set_particle_scale(&mut self, scale: f32) {
+        self.particle_scale = scale;
+    }
+
+    /// Set density threshold
+    pub fn set_threshold(&mut self, threshold: f32) {
+        self.threshold = threshold;
+    }
+
+    /// Draw water particles as batched meshes for density pass
+    fn draw_water_density_meshes(&self, particles: &Particles, screen_scale: f32) {
+        const MAX_PER_BATCH: usize = 8000;
+
+        let half_scale = screen_scale * 0.5; // Half-res coordinates
+        let base_size = self.particle_scale * half_scale;
+
+        let mut vertices: Vec<Vertex> = Vec::with_capacity(MAX_PER_BATCH * 4);
+        let mut indices: Vec<u16> = Vec::with_capacity(MAX_PER_BATCH * 6);
+        let mut count = 0usize;
+
+        for particle in particles.iter() {
+            if particle.material != sim::ParticleMaterial::Water {
+                continue;
+            }
+
+            let x = particle.position.x * half_scale;
+            let y = particle.position.y * half_scale;
+            let [r, g, b, _] = particle.material.color();
+            let color = Color::from_rgba(r, g, b, 255);
+            let size = base_size * particle.material.render_scale();
+            let half = size / 2.0;
+
+            let base_idx = (count * 4) as u16;
+
+            // Quad vertices with UVs for gaussian falloff
+            vertices.push(Vertex {
+                position: vec3(x - half, y - half, 0.0),
+                uv: vec2(0.0, 0.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+            vertices.push(Vertex {
+                position: vec3(x + half, y - half, 0.0),
+                uv: vec2(1.0, 0.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+            vertices.push(Vertex {
+                position: vec3(x + half, y + half, 0.0),
+                uv: vec2(1.0, 1.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+            vertices.push(Vertex {
+                position: vec3(x - half, y + half, 0.0),
+                uv: vec2(0.0, 1.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+
+            indices.push(base_idx);
+            indices.push(base_idx + 1);
+            indices.push(base_idx + 2);
+            indices.push(base_idx);
+            indices.push(base_idx + 2);
+            indices.push(base_idx + 3);
+
+            count += 1;
+
+            // Flush batch if full
+            if count >= MAX_PER_BATCH {
+                let mesh = Mesh {
+                    vertices: std::mem::take(&mut vertices),
+                    indices: std::mem::take(&mut indices),
+                    texture: Some(self.white_texture.clone()),
+                };
+                draw_mesh(&mesh);
+                vertices.reserve(MAX_PER_BATCH * 4);
+                indices.reserve(MAX_PER_BATCH * 6);
+                count = 0;
+            }
+        }
+
+        // Draw remaining
+        if !vertices.is_empty() {
+            let mesh = Mesh {
+                vertices,
+                indices,
+                texture: Some(self.white_texture.clone()),
+            };
+            draw_mesh(&mesh);
+        }
+    }
+
+    /// Render water particles with metaball effect
+    pub fn draw_water(&self, particles: &Particles, screen_scale: f32) {
+        // Pass 1: Render density to half-res target
+        set_camera(&Camera2D {
+            zoom: vec2(2.0 / self.half_w, -2.0 / self.half_h),
+            target: vec2(self.half_w / 2.0, self.half_h / 2.0),
+            render_target: Some(self.density_rt.clone()),
+            ..Default::default()
+        });
+
+        clear_background(Color::new(0.0, 0.0, 0.0, 0.0));
+
+        gl_use_material(&self.density_material);
+
+        self.draw_water_density_meshes(particles, screen_scale);
+
+        gl_use_default_material();
+
+        // Pass 2: Horizontal blur
+        set_camera(&Camera2D {
+            zoom: vec2(2.0 / self.half_w, -2.0 / self.half_h),
+            target: vec2(self.half_w / 2.0, self.half_h / 2.0),
+            render_target: Some(self.blur_h_rt.clone()),
+            ..Default::default()
+        });
+
+        clear_background(Color::new(0.0, 0.0, 0.0, 0.0));
+
+        gl_use_material(&self.blur_h_material);
+        self.blur_h_material.set_uniform("texelSize", [1.0 / self.half_w, 1.0 / self.half_h]);
+
+        draw_texture_ex(
+            &self.density_rt.texture,
+            0.0,
+            0.0,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(self.half_w, self.half_h)),
+                ..Default::default()
+            },
+        );
+
+        gl_use_default_material();
+
+        // Pass 3: Vertical blur
+        set_camera(&Camera2D {
+            zoom: vec2(2.0 / self.half_w, -2.0 / self.half_h),
+            target: vec2(self.half_w / 2.0, self.half_h / 2.0),
+            render_target: Some(self.blur_v_rt.clone()),
+            ..Default::default()
+        });
+
+        clear_background(Color::new(0.0, 0.0, 0.0, 0.0));
+
+        gl_use_material(&self.blur_v_material);
+        self.blur_v_material.set_uniform("texelSize", [1.0 / self.half_w, 1.0 / self.half_h]);
+
+        draw_texture_ex(
+            &self.blur_h_rt.texture,
+            0.0,
+            0.0,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(self.half_w, self.half_h)),
+                ..Default::default()
+            },
+        );
+
+        gl_use_default_material();
+
+        // Pass 4: Render to screen with surface shader
+        set_default_camera();
+
+        gl_use_material(&self.surface_material);
+        self.surface_material.set_uniform("threshold", self.threshold);
+        self.surface_material.set_uniform("texelSize", [1.0 / self.half_w, 1.0 / self.half_h]);
+
+        draw_texture_ex(
+            &self.blur_v_rt.texture,
+            0.0,
+            0.0,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(self.screen_w, self.screen_h)),
+                ..Default::default()
+            },
+        );
+
+        gl_use_default_material();
+    }
+
+    /// Render all particles (water as metaballs, sediment as mesh-batched)
+    pub fn draw(&self, particles: &Particles, screen_scale: f32) {
+        // Draw water with metaball effect
+        self.draw_water(particles, screen_scale);
+
+        // Draw sediment on top as batched mesh quads
+        self.draw_sediment(particles, screen_scale);
+    }
+
+    /// Draw sediment particles as batched mesh quads
+    fn draw_sediment(&self, particles: &Particles, screen_scale: f32) {
+        const MAX_PER_BATCH: usize = 8000;
+
+        let base_size = self.particle_scale * screen_scale * 0.5;
+
+        let mut vertices: Vec<Vertex> = Vec::with_capacity(MAX_PER_BATCH * 4);
+        let mut indices: Vec<u16> = Vec::with_capacity(MAX_PER_BATCH * 6);
+        let mut count = 0usize;
+
+        for particle in particles.iter() {
+            if !particle.is_sediment() {
+                continue;
+            }
+
+            let x = particle.position.x * screen_scale;
+            let y = particle.position.y * screen_scale;
+            let [r, g, b, a] = particle.material.color();
+            let color = Color::from_rgba(r, g, b, a);
+            let size = base_size * particle.material.render_scale();
+            let half = size / 2.0;
+
+            let base_idx = (count * 4) as u16;
+
+            vertices.push(Vertex {
+                position: vec3(x - half, y - half, 0.0),
+                uv: vec2(0.0, 0.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+            vertices.push(Vertex {
+                position: vec3(x + half, y - half, 0.0),
+                uv: vec2(1.0, 0.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+            vertices.push(Vertex {
+                position: vec3(x + half, y + half, 0.0),
+                uv: vec2(1.0, 1.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+            vertices.push(Vertex {
+                position: vec3(x - half, y + half, 0.0),
+                uv: vec2(0.0, 1.0),
+                color: color.into(),
+                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            });
+
+            indices.push(base_idx);
+            indices.push(base_idx + 1);
+            indices.push(base_idx + 2);
+            indices.push(base_idx);
+            indices.push(base_idx + 2);
+            indices.push(base_idx + 3);
+
+            count += 1;
+
+            // Flush batch if full
+            if count >= MAX_PER_BATCH {
+                let mesh = Mesh {
+                    vertices: std::mem::take(&mut vertices),
+                    indices: std::mem::take(&mut indices),
+                    texture: None,
+                };
+                draw_mesh(&mesh);
+                vertices.reserve(MAX_PER_BATCH * 4);
+                indices.reserve(MAX_PER_BATCH * 6);
+                count = 0;
+            }
+        }
+
+        // Draw remaining
+        if !vertices.is_empty() {
+            let mesh = Mesh {
+                vertices,
+                indices,
+                texture: None,
+            };
+            draw_mesh(&mesh);
+        }
     }
 }
 
