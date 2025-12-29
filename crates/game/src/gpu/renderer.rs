@@ -1,4 +1,5 @@
 use bytemuck::{Pod, Zeroable};
+use sim::grid::Grid;
 use sim::particle::{ParticleMaterial, Particles};
 
 use super::GpuContext;
@@ -25,10 +26,12 @@ struct Uniforms {
 /// GPU-based particle renderer
 pub struct ParticleRenderer {
     pipeline: wgpu::RenderPipeline,
-    instance_buffer: wgpu::Buffer,
+    particle_buffer: wgpu::Buffer,
+    terrain_buffer: wgpu::Buffer,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
     max_particles: usize,
+    max_terrain_cells: usize,
 }
 
 impl ParticleRenderer {
@@ -136,19 +139,30 @@ impl ParticleRenderer {
             });
 
         // Instance buffer for particles
-        let instance_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        let particle_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Particle Instance Buffer"),
             size: (max_particles * std::mem::size_of::<ParticleInstance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
+        // Separate buffer for terrain (static, larger)
+        let max_terrain_cells = 512 * 256; // Full grid
+        let terrain_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Terrain Instance Buffer"),
+            size: (max_terrain_cells * std::mem::size_of::<ParticleInstance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             pipeline,
-            instance_buffer,
+            particle_buffer,
+            terrain_buffer,
             uniform_buffer,
             uniform_bind_group,
             max_particles,
+            max_terrain_cells,
         }
     }
 
@@ -168,11 +182,12 @@ impl ParticleRenderer {
         let world_height = height as f32 / screen_scale;
 
         // Orthographic projection: world coords -> NDC
+        // Note: wgpu uses top-left origin, so we flip Y
         let projection = [
             [2.0 / world_width, 0.0, 0.0, 0.0],
-            [0.0, 2.0 / world_height, 0.0, 0.0],
+            [0.0, -2.0 / world_height, 0.0, 0.0],  // Flip Y
             [0.0, 0.0, 1.0, 0.0],
-            [-1.0, -1.0, 0.0, 1.0],
+            [-1.0, 1.0, 0.0, 1.0],  // Y offset flipped
         ];
 
         let uniforms = Uniforms {
@@ -183,49 +198,56 @@ impl ParticleRenderer {
         gpu.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // Build instance data
-        let particle_count = particles.len().min(self.max_particles);
-        let mut instances: Vec<ParticleInstance> = Vec::with_capacity(particle_count);
+        // Build instance data - WATER ONLY for now
+        let mut instances: Vec<ParticleInstance> = Vec::with_capacity(self.max_particles);
 
-        for i in 0..particle_count {
-            let p = &particles.list[i];
-            let pos = p.position;
-            let material = p.material;
-            let size = if p.diameter > 0.0 { p.diameter } else { p.material.typical_diameter() };
+        for p in &particles.list {
+            // Only render water particles
+            if p.material != ParticleMaterial::Water {
+                continue;
+            }
 
-            let color = match material {
-                ParticleMaterial::Water => [0.2, 0.5, 0.9, 0.8],
-                ParticleMaterial::Sand => [0.76, 0.70, 0.50, 1.0],      // Sandy tan
-                ParticleMaterial::Magnetite => [0.15, 0.15, 0.15, 1.0], // Dark gray/black
-                ParticleMaterial::Gold => [1.0, 0.84, 0.0, 1.0],        // Gold
-                ParticleMaterial::Mud => [0.45, 0.35, 0.25, 1.0],       // Muddy brown
-            };
+            // Water has typical_diameter() = 0, use cell_size as default
+            let size = 0.8;  // ~cell_size, visible but not huge
 
             instances.push(ParticleInstance {
-                position: [pos.x, pos.y],
-                color,
-                size: size * base_particle_size * screen_scale,
+                position: [p.position.x, p.position.y],
+                color: [0.3, 0.6, 1.0, 0.8],  // Blue water
+                size,
                 _padding: 0.0,
             });
+
+            if instances.len() >= self.max_particles {
+                break;
+            }
+        }
+
+        // Debug output
+        static mut FRAME: u32 = 0;
+        unsafe {
+            FRAME += 1;
+            if FRAME % 120 == 1 {
+                eprintln!("WATER: {} particles rendered", instances.len());
+            }
         }
 
         if instances.is_empty() {
             return;
         }
 
-        // Upload instance data
+        // Upload to particle buffer
         gpu.queue
-            .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
+            .write_buffer(&self.particle_buffer, 0, bytemuck::cast_slice(&instances));
 
         // Render pass
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Particle Render Pass"),
+                label: Some("Water Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load, // Don't clear - we want to draw over background
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -236,9 +258,102 @@ impl ParticleRenderer {
 
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-            // Draw 6 vertices (2 triangles = quad) per instance
+            render_pass.set_vertex_buffer(0, self.particle_buffer.slice(..));
             render_pass.draw(0..6, 0..instances.len() as u32);
+        }
+    }
+
+    /// Draw terrain (solid cells) as colored blocks
+    pub fn draw_terrain(
+        &self,
+        gpu: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        grid: &Grid,
+        cell_size: f32,
+        screen_scale: f32,
+    ) {
+        // Update uniforms with orthographic projection
+        let (width, height) = gpu.size;
+        let world_width = width as f32 / screen_scale;
+        let world_height = height as f32 / screen_scale;
+
+        let projection = [
+            [2.0 / world_width, 0.0, 0.0, 0.0],
+            [0.0, -2.0 / world_height, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [-1.0, 1.0, 0.0, 1.0],
+        ];
+
+        let uniforms = Uniforms {
+            projection,
+            viewport_size: [width as f32, height as f32],
+            _padding: [0.0; 2],
+        };
+        gpu.queue
+            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+        // Build instance data for solid cells
+        let mut instances: Vec<ParticleInstance> = Vec::new();
+        let terrain_color = [0.45, 0.35, 0.25, 1.0]; // Lighter brown terrain
+
+        for j in 0..grid.height {
+            for i in 0..grid.width {
+                let idx = j * grid.width + i;
+                if grid.solid[idx] {
+                    // Cell center position
+                    let x = (i as f32 + 0.5) * cell_size;
+                    let y = (j as f32 + 0.5) * cell_size;
+
+                    instances.push(ParticleInstance {
+                        position: [x, y],
+                        color: terrain_color,
+                        size: cell_size * 1.05, // Slightly larger to avoid gaps
+                        _padding: 0.0,
+                    });
+                }
+            }
+        }
+
+        // Debug: print terrain count occasionally
+        static mut FRAME: u32 = 0;
+        unsafe {
+            FRAME += 1;
+            if FRAME % 120 == 1 {
+                eprintln!("TERRAIN: {} solid cells", instances.len());
+            }
+        }
+
+        if instances.is_empty() {
+            return;
+        }
+
+        // Limit to buffer size
+        let count = instances.len().min(self.max_terrain_cells);
+        gpu.queue
+            .write_buffer(&self.terrain_buffer, 0, bytemuck::cast_slice(&instances[..count]));
+
+        // Render pass
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Terrain Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            render_pass.set_pipeline(&self.pipeline);
+            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.terrain_buffer.slice(..));
+            render_pass.draw(0..6, 0..count as u32);
         }
     }
 }

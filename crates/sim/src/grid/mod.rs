@@ -716,8 +716,9 @@ impl Grid {
 
         for iter in 0..max_iterations {
             // Red pass (i+j even) - can use updated values immediately
+            // Include right boundary (width-1) for open outflow
             for j in 1..self.height - 1 {
-                for i in 1..self.width - 1 {
+                for i in 1..self.width {
                     if (i + j) % 2 == 0 {
                         self.update_pressure_cell(i, j, h_sq);
                     }
@@ -725,7 +726,7 @@ impl Grid {
             }
             // Black pass (i+j odd) - uses updated red values
             for j in 1..self.height - 1 {
-                for i in 1..self.width - 1 {
+                for i in 1..self.width {
                     if (i + j) % 2 != 0 {
                         self.update_pressure_cell(i, j, h_sq);
                     }
@@ -743,6 +744,7 @@ impl Grid {
     }
 
     /// Update a single pressure cell (helper for Red-Black GS)
+    /// Right boundary (i == width-1) uses Dirichlet BC (p=0) for open outflow
     #[inline]
     fn update_pressure_cell(&mut self, i: usize, j: usize, h_sq: f32) {
         let idx = self.cell_index(i, j);
@@ -752,54 +754,82 @@ impl Grid {
             return;
         }
 
-        let p = self.pressure[idx];
+        // Count active (non-solid) neighbors and sum their pressures
+        // Neumann BC (dp/dn = 0): exclude solid neighbors from both sum AND count
+        // Right boundary uses Dirichlet BC (p=0) for open outflow
+        let mut neighbor_sum = 0.0f32;
+        let mut neighbor_count = 0.0f32;
 
-        // Neighbor pressures (solid boundaries use Neumann BC: dp/dn = 0)
-        let p_left = if self.cell_type[self.cell_index(i - 1, j)] == CellType::Solid {
-            p
+        // Left neighbor
+        if i > 0 {
+            let left_idx = self.cell_index(i - 1, j);
+            if self.cell_type[left_idx] != CellType::Solid {
+                neighbor_sum += self.pressure[left_idx];
+                neighbor_count += 1.0;
+            }
+        }
+
+        // Right neighbor - open boundary at i == width-1
+        // Treat as p=0 (Dirichlet BC for free outflow)
+        if i + 1 < self.width {
+            let right_idx = self.cell_index(i + 1, j);
+            if self.cell_type[right_idx] != CellType::Solid {
+                neighbor_sum += self.pressure[right_idx];
+                neighbor_count += 1.0;
+            }
         } else {
-            self.pressure[self.cell_index(i - 1, j)]
-        };
-        let p_right = if self.cell_type[self.cell_index(i + 1, j)] == CellType::Solid {
-            p
-        } else {
-            self.pressure[self.cell_index(i + 1, j)]
-        };
-        let p_bottom = if self.cell_type[self.cell_index(i, j - 1)] == CellType::Solid {
-            p
-        } else {
-            self.pressure[self.cell_index(i, j - 1)]
-        };
-        let p_top = if self.cell_type[self.cell_index(i, j + 1)] == CellType::Solid {
-            p
-        } else {
-            self.pressure[self.cell_index(i, j + 1)]
-        };
+            // Open outflow: right boundary neighbor has p=0 (Dirichlet BC)
+            // This allows flow to exit freely without pressure buildup
+            neighbor_sum += 0.0; // p = 0 at outlet
+            neighbor_count += 1.0;
+        }
+
+        // Bottom neighbor
+        if j > 0 {
+            let bottom_idx = self.cell_index(i, j - 1);
+            if self.cell_type[bottom_idx] != CellType::Solid {
+                neighbor_sum += self.pressure[bottom_idx];
+                neighbor_count += 1.0;
+            }
+        }
+
+        // Top neighbor
+        if j + 1 < self.height {
+            let top_idx = self.cell_index(i, j + 1);
+            if self.cell_type[top_idx] != CellType::Solid {
+                neighbor_sum += self.pressure[top_idx];
+                neighbor_count += 1.0;
+            }
+        }
 
         let div = self.divergence[idx];
 
-        // Gauss-Seidel update for ∇²p = div
-        // Discretized: (p_L + p_R + p_B + p_T - 4*p) / h² = div
-        // Solving for p: p = (p_L + p_R + p_B + p_T - h²*div) / 4
-        self.pressure[idx] = (p_left + p_right + p_bottom + p_top - h_sq * div) * 0.25;
+        // Gauss-Seidel update for ∇²p = div with proper Neumann BC
+        // Only divide by the number of active neighbors
+        if neighbor_count > 0.0 {
+            self.pressure[idx] = (neighbor_sum - h_sq * div) / neighbor_count;
+        } else {
+            self.pressure[idx] = 0.0;
+        }
     }
 
     /// Compute maximum residual of pressure equation: |∇²p - div|
+    /// Includes right boundary with Dirichlet BC (p=0) for open outflow
     fn compute_max_residual(&self, h_sq: f32) -> f32 {
         let mut max_residual = 0.0f32;
 
         for j in 1..self.height - 1 {
-            for i in 1..self.width - 1 {
+            for i in 1..self.width {
                 let idx = self.cell_index(i, j);
                 if self.cell_type[idx] != CellType::Fluid {
                     continue;
                 }
 
                 let p = self.pressure[idx];
-                let p_left = self.pressure[self.cell_index(i - 1, j)];
-                let p_right = self.pressure[self.cell_index(i + 1, j)];
-                let p_bottom = self.pressure[self.cell_index(i, j - 1)];
-                let p_top = self.pressure[self.cell_index(i, j + 1)];
+                let p_left = if i > 0 { self.pressure[self.cell_index(i - 1, j)] } else { 0.0 };
+                let p_right = if i + 1 < self.width { self.pressure[self.cell_index(i + 1, j)] } else { 0.0 }; // Open boundary
+                let p_bottom = if j > 0 { self.pressure[self.cell_index(i, j - 1)] } else { 0.0 };
+                let p_top = if j + 1 < self.height { self.pressure[self.cell_index(i, j + 1)] } else { 0.0 };
 
                 // Laplacian: (p_L + p_R + p_B + p_T - 4*p) / h²
                 let laplacian = (p_left + p_right + p_bottom + p_top - 4.0 * p) / h_sq;

@@ -216,12 +216,15 @@ impl Grid {
     /// from corrupting the pressure solve
     pub fn enforce_boundary_conditions(&mut self) {
         // Zero u velocities at solid walls
+        // Note: Right boundary (i == self.width) is OPEN for outflow
         for j in 0..self.height {
             for i in 0..=self.width {
                 let u_idx = self.u_index(i, j);
                 // Check cells on either side of this u face
+                // Left boundary (i==0) is solid wall
+                // Right boundary (i==width) is OPEN for outlet flow
                 let left_solid = i == 0 || self.is_solid(i - 1, j);
-                let right_solid = i == self.width || self.is_solid(i, j);
+                let right_solid = i < self.width && self.is_solid(i, j);
                 if left_solid || right_solid {
                     self.u[u_idx] = 0.0;
                 }

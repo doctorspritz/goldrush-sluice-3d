@@ -154,7 +154,11 @@ impl App {
         // Run simulation with profiling
         let dt = 1.0 / 60.0;
 
-        // Try GPU pressure solve if available
+        // TODO: Debug GPU pressure solver - produces similar divergence numbers but
+        // visually worse results than CPU. Keep CPU for now until GPU is fixed.
+        // See diagnostics: GPU div_out=6-16, CPU div_out=2-20, but CPU looks correct.
+        let use_gpu_pressure = false;
+        if use_gpu_pressure {
         if let (Some(gpu), Some(solver)) = (&self.gpu, &self.pressure_solver) {
             use std::time::Instant;
 
@@ -190,8 +194,32 @@ impl App {
 
             let press_time = press_start.elapsed().as_secs_f32() * 1000.0;
 
-            // Phase 3: CPU finishes simulation
+            // Store input divergence for diagnostics
+            let pre_max_div = self.sim.grid.divergence.iter().cloned().fold(0.0f32, |a, b| a.max(b.abs()));
+
+            // Phase 3: CPU finishes simulation (applies pressure to velocities)
             let post_timings = self.sim.finalize_after_pressure(dt);
+
+            // DIAGNOSTICS: Check pressure solve quality
+            if self.frame_count % 60 == 0 {
+                // Check for NaN/inf in pressure
+                let nan_count = self.sim.grid.pressure.iter().filter(|p| p.is_nan()).count();
+                let inf_count = self.sim.grid.pressure.iter().filter(|p| p.is_infinite()).count();
+                let max_p = self.sim.grid.pressure.iter().cloned().fold(0.0f32, f32::max);
+                let min_p = self.sim.grid.pressure.iter().cloned().fold(0.0f32, f32::min);
+
+                // Compute divergence AFTER pressure applied to velocities (should be ~0)
+                self.sim.grid.compute_divergence();
+                let post_max_div = self.sim.grid.divergence.iter().cloned().fold(0.0f32, |a, b| a.max(b.abs()));
+
+                // Check max velocity
+                let max_vel = self.sim.particles.list.iter()
+                    .map(|p| p.velocity.length())
+                    .fold(0.0f32, f32::max);
+
+                eprintln!("GPU: div_in={:.2} -> div_out={:.2} | p[{:.1}..{:.1}] nan={} inf={} | vel={:.1}",
+                    pre_max_div, post_max_div, min_p, max_p, nan_count, inf_count, max_vel);
+            }
 
             // Combine timings: [classify, sdf, p2g, press, g2p, neigh, rest]
             self.profile_accum[0] += pre_timings[0];
@@ -201,11 +229,22 @@ impl App {
             self.profile_accum[4] += post_timings[1]; // g2p
             self.profile_accum[5] += post_timings[2]; // neigh
             self.profile_accum[6] += post_timings[3]; // rest
+        }
         } else {
             // CPU fallback
             let timings = self.sim.update_profiled(dt);
             for (i, t) in timings.iter().enumerate() {
                 self.profile_accum[i] += t;
+            }
+
+            // CPU diagnostics
+            if self.frame_count % 60 == 0 {
+                self.sim.grid.compute_divergence();
+                let max_div = self.sim.grid.divergence.iter().cloned().fold(0.0f32, |a, b| a.max(b.abs()));
+                let max_vel = self.sim.particles.list.iter()
+                    .map(|p| p.velocity.length())
+                    .fold(0.0f32, f32::max);
+                eprintln!("CPU: div_out={:.4} | vel={:.1}", max_div, max_vel);
             }
         }
 
@@ -268,9 +307,9 @@ impl App {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.08,
-                            g: 0.08,
-                            b: 0.12,
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.2,  // Dark blue background
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -282,7 +321,17 @@ impl App {
             });
         }
 
-        // Draw particles
+        // STEP 2: Terrain + water only (separate buffers now)
+        renderer.draw_terrain(
+            gpu,
+            &mut encoder,
+            &view,
+            &self.sim.grid,
+            CELL_SIZE,
+            self.zoom,
+        );
+
+        // Water particles (filtered in renderer)
         renderer.draw(
             gpu,
             &mut encoder,

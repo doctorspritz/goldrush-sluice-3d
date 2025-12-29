@@ -46,9 +46,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     let quad_pos = quad_positions[input.vertex_index];
     let uv = quad_uvs[input.vertex_index];
 
-    // Scale quad by particle size (in world units)
-    let size_world = input.size / uniforms.viewport_size.x * 2.0;
-    let world_pos = input.position + quad_pos * size_world;
+    // input.size is in world units, scale the quad
+    let world_pos = input.position + quad_pos * input.size;
 
     var output: VertexOutput;
     output.position = uniforms.projection * vec4<f32>(world_pos, 0.0, 1.0);
