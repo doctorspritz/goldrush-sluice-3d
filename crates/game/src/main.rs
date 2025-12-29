@@ -132,7 +132,9 @@ async fn main() {
     let mut render_mode = RenderMode::Mesh; // Default to Mesh for best performance (batches 8000 particles per draw call)
     let mut metaball_threshold: f32 = 0.08;
     let mut metaball_scale: f32 = 6.0;
-    let mut fast_particle_size: f32 = CELL_SIZE * SCALE * 1.5;  // Larger for visibility
+    // Zoom level (scroll wheel to adjust)
+    let mut zoom: f32 = SCALE;
+    let mut fast_particle_size: f32 = CELL_SIZE * zoom * 1.5;  // Larger for visibility
     let mut frame_count = 0u64;
     let mut fps_samples: Vec<i32> = Vec::new();
     let start_time = std::time::Instant::now();
@@ -344,6 +346,21 @@ async fn main() {
             sim.viscosity = (sim.viscosity + 0.25).min(5.0);
         }
 
+        // Zoom: scroll wheel or +/- keys
+        let scroll = mouse_wheel().1;
+        if scroll != 0.0 {
+            zoom = (zoom + scroll * 0.2).clamp(1.5, 6.0);
+            fast_particle_size = CELL_SIZE * zoom * 1.5;
+        }
+        if is_key_pressed(KeyCode::Minus) && !is_key_down(KeyCode::LeftShift) {
+            zoom = (zoom - 0.5).max(1.5);
+            fast_particle_size = CELL_SIZE * zoom * 1.5;
+        }
+        if is_key_pressed(KeyCode::Equal) && !is_key_down(KeyCode::LeftShift) {
+            zoom = (zoom + 0.5).min(6.0);
+            fast_particle_size = CELL_SIZE * zoom * 1.5;
+        }
+
         // Rebuild terrain if riffle params changed
         if riffle_dirty {
             riffle_dirty = false;
@@ -360,8 +377,8 @@ async fn main() {
         // Mouse spawning (left-click for manual testing)
         if is_mouse_button_down(MouseButton::Left) {
             let (mx, my) = mouse_position();
-            let wx = mx / SCALE;
-            let wy = my / SCALE;
+            let wx = mx / zoom;
+            let wy = my / zoom;
 
             sim.spawn_water(wx, wy, 20.0, 0.0, 5);
         }
@@ -369,8 +386,8 @@ async fn main() {
         // Right-click to set emitter position
         if is_mouse_button_pressed(MouseButton::Right) {
             let (mx, my) = mouse_position();
-            let wx = mx / SCALE;
-            let wy = my / SCALE;
+            let wx = mx / zoom;
+            let wy = my / zoom;
 
             // Clamp to valid bounds
             inlet_x = wx.clamp(2.0, (SIM_WIDTH - 50) as f32);
@@ -454,16 +471,16 @@ async fn main() {
             WHITE,
             DrawTextureParams {
                 dest_size: Some(vec2(
-                    RENDER_WIDTH as f32 * SCALE,
-                    RENDER_HEIGHT as f32 * SCALE,
+                    RENDER_WIDTH as f32 * zoom,
+                    RENDER_HEIGHT as f32 * zoom,
                 )),
                 ..Default::default()
             },
         );
 
         // Draw emitter position indicator
-        let emit_screen_x = inlet_x * SCALE;
-        let emit_screen_y = inlet_y * SCALE;
+        let emit_screen_x = inlet_x * zoom;
+        let emit_screen_y = inlet_y * zoom;
         draw_circle(emit_screen_x, emit_screen_y, 6.0, Color::from_rgba(100, 200, 255, 200));
         draw_circle_lines(emit_screen_x, emit_screen_y, 10.0, 2.0, Color::from_rgba(255, 255, 255, 150));
 
@@ -471,18 +488,18 @@ async fn main() {
         match render_mode {
             RenderMode::Hybrid => {
                 // Pass 1: Water as metaballs for fluid look
-                metaball_renderer.draw_filtered(&sim.particles, SCALE, true);
+                metaball_renderer.draw_filtered(&sim.particles, zoom, true);
                 // Pass 2: Solids as sharp sprites for clarity
-                particle_renderer.draw_filtered(&sim.particles, SCALE, false);
+                particle_renderer.draw_filtered(&sim.particles, zoom, false);
             }
             // Legacy modes use full draw (passing true/false doesn't matter for non-filtered methods if we didn't update them,
-            // but we only updated filtered ones. Wait, I only added `draw_filtered`. 
+            // but we only updated filtered ones. Wait, I only added `draw_filtered`.
             // The original `draw` methods still exist and draw everything.
-            RenderMode::Metaball => metaball_renderer.draw(&sim.particles, SCALE), 
-            RenderMode::Shader => particle_renderer.draw_sorted(&sim.particles, SCALE),
-            RenderMode::FastCircle => draw_particles_fast_debug(&sim.particles, SCALE, fast_particle_size, debug_state_colors),
-            RenderMode::FastRect => draw_particles_rect(&sim.particles, SCALE, fast_particle_size),
-            RenderMode::Mesh => draw_particles_mesh(&sim.particles, SCALE, fast_particle_size),
+            RenderMode::Metaball => metaball_renderer.draw(&sim.particles, zoom),
+            RenderMode::Shader => particle_renderer.draw_sorted(&sim.particles, zoom),
+            RenderMode::FastCircle => draw_particles_fast_debug(&sim.particles, zoom, fast_particle_size, debug_state_colors),
+            RenderMode::FastRect => draw_particles_rect(&sim.particles, zoom, fast_particle_size),
+            RenderMode::Mesh => draw_particles_mesh(&sim.particles, zoom, fast_particle_size),
         }
 
         // Draw deposited sediment cells ON TOP of particles (so visible in all render modes)
@@ -490,9 +507,9 @@ async fn main() {
         for j in 0..sim.grid.height {
             for i in 0..sim.grid.width {
                 if sim.grid.is_deposited(i, j) {
-                    let x = i as f32 * CELL_SIZE * SCALE;
-                    let y = j as f32 * CELL_SIZE * SCALE;
-                    let size = CELL_SIZE * SCALE;
+                    let x = i as f32 * CELL_SIZE * zoom;
+                    let y = j as f32 * CELL_SIZE * zoom;
+                    let size = CELL_SIZE * zoom;
                     // Get composition-based color from the deposited cell
                     let cell = &sim.grid.deposited[sim.grid.cell_index(i, j)];
                     let rgba = cell.color();
@@ -507,8 +524,8 @@ async fn main() {
             let spacing = 4;
             for j in (0..sim.grid.height).step_by(spacing) {
                 for i in (0..sim.grid.width).step_by(spacing) {
-                    let x = (i as f32 + 0.5) * CELL_SIZE * SCALE;
-                    let y = (j as f32 + 0.5) * CELL_SIZE * SCALE;
+                    let x = (i as f32 + 0.5) * CELL_SIZE * zoom;
+                    let y = (j as f32 + 0.5) * CELL_SIZE * zoom;
 
                     let pos = glam::Vec2::new(
                         (i as f32 + 0.5) * CELL_SIZE,
@@ -517,8 +534,8 @@ async fn main() {
                     let vel = sim.grid.sample_velocity(pos);
 
                     let vscale = 0.5;
-                    let vx = vel.x * vscale * SCALE;
-                    let vy = vel.y * vscale * SCALE;
+                    let vx = vel.x * vscale * zoom;
+                    let vy = vel.y * vscale * zoom;
 
                     draw_line(x, y, x + vx, y + vy, 1.0, Color::from_rgba(255, 255, 255, 100));
                 }
@@ -531,10 +548,10 @@ async fn main() {
             let surface_color = Color::from_rgba(100, 200, 255, 200);
 
             for i in 1..sim.grid.width {
-                let x0 = (i - 1) as f32 * CELL_SIZE * SCALE;
-                let x1 = i as f32 * CELL_SIZE * SCALE;
-                let y0 = surface[i - 1] * SCALE;
-                let y1 = surface[i] * SCALE;
+                let x0 = (i - 1) as f32 * CELL_SIZE * zoom;
+                let x1 = i as f32 * CELL_SIZE * zoom;
+                let y0 = surface[i - 1] * zoom;
+                let y1 = surface[i] * zoom;
 
                 // Only draw if valid (not MAX)
                 if y0 < screen_height() && y1 < screen_height() {
@@ -558,11 +575,12 @@ async fn main() {
         };
         draw_text(
             &format!(
-                "Particles: {} | FPS: {} | {} | {}",
+                "Particles: {} | FPS: {} | {} | {} | Zoom: {:.1}x",
                 sim.particles.len(),
                 get_fps(),
                 if paused { "PAUSED" } else { "Running" },
-                mode_str
+                mode_str,
+                zoom
             ),
             10.0, 20.0, 18.0, WHITE,
         );
@@ -654,8 +672,8 @@ async fn main() {
         // === CURSOR DEBUG ===
         {
             let (mx, my) = mouse_position();
-            let wx = mx / SCALE;
-            let wy = my / SCALE;
+            let wx = mx / zoom;
+            let wy = my / zoom;
             let col = (wx / CELL_SIZE) as usize;
 
             // Get pile height at cursor column

@@ -13,7 +13,7 @@ use macroquad::prelude::*;
 use macroquad::miniquad::{BlendState, Equation, BlendFactor, BlendValue};
 use macroquad::models::{Mesh, Vertex, draw_mesh};
 use sim::Particles;
-use sim::particle::ParticleState;
+use sim::particle::{Particle, ParticleState};
 
 /// Vertex shader for particle circles
 const VERTEX_SHADER: &str = r#"#version 100
@@ -577,6 +577,23 @@ pub fn draw_particles_fast(particles: &Particles, screen_scale: f32, base_size: 
 
 /// Fast renderer with optional debug state coloring
 /// Two-pass: water first (background), then sediment on top (foreground)
+/// Calculate render size based on particle diameter
+/// Sediment uses diameter, water uses fixed scale
+#[inline]
+fn particle_render_size(particle: &Particle, base_size: f32) -> f32 {
+    if particle.is_sediment() {
+        // Diameter ranges: Sand/Mag ~1.4-2.6, Gold ~0.35-0.65
+        // Map to visual scale: smallest (0.3) -> 0.5x, largest (3.0) -> 2.0x
+        // Using sqrt for more visible small particle differences
+        let diameter = particle.effective_diameter();
+        let diameter_scale = (diameter / 1.5).sqrt().clamp(0.4, 2.0);
+        base_size * diameter_scale
+    } else {
+        // Water uses fixed size
+        base_size
+    }
+}
+
 pub fn draw_particles_fast_debug(particles: &Particles, screen_scale: f32, base_size: f32, debug_state: bool) {
     // Pass 1: Draw water particles first (background)
     for particle in particles.iter() {
@@ -585,7 +602,7 @@ pub fn draw_particles_fast_debug(particles: &Particles, screen_scale: f32, base_
         }
         let x = particle.position.x * screen_scale;
         let y = particle.position.y * screen_scale;
-        let size = base_size * particle.material.render_scale();
+        let size = particle_render_size(particle, base_size);
         let [r, g, b, a] = particle.material.color();
         let color = Color::from_rgba(r, g, b, a);
         draw_circle(x, y, size, color);
@@ -598,7 +615,7 @@ pub fn draw_particles_fast_debug(particles: &Particles, screen_scale: f32, base_
         }
         let x = particle.position.x * screen_scale;
         let y = particle.position.y * screen_scale;
-        let size = base_size * particle.material.render_scale();
+        let size = particle_render_size(particle, base_size);
 
         let color = if debug_state {
             // Debug mode: Bedload = red, Suspended = blue
@@ -627,7 +644,7 @@ pub fn draw_particles_rect(particles: &Particles, screen_scale: f32, base_size: 
         let y = particle.position.y * screen_scale;
         let [r, g, b, a] = particle.material.color();
         let color = Color::from_rgba(r, g, b, a);
-        let size = base_size * particle.material.render_scale();
+        let size = particle_render_size(particle, base_size);
         draw_rectangle(x - size/2.0, y - size/2.0, size, size, color);
     }
 
@@ -640,7 +657,7 @@ pub fn draw_particles_rect(particles: &Particles, screen_scale: f32, base_size: 
         let y = particle.position.y * screen_scale;
         let [r, g, b, a] = particle.material.color();
         let color = Color::from_rgba(r, g, b, a);
-        let size = base_size * particle.material.render_scale();
+        let size = particle_render_size(particle, base_size);
         draw_rectangle(x - size/2.0, y - size/2.0, size, size, color);
     }
 }
@@ -670,7 +687,7 @@ pub fn draw_particles_mesh(particles: &Particles, screen_scale: f32, base_size: 
             let y = particle.position.y * screen_scale;
             let [r, g, b, a] = particle.material.color();
             let color = Color::from_rgba(r, g, b, a);
-            let size = base_size * particle.material.render_scale();
+            let size = particle_render_size(particle, base_size);
 
             let half = size / 2.0;
             let base_idx = (local_i * 4) as u16;
