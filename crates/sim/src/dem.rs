@@ -35,19 +35,26 @@ pub struct DemParams {
     pub particle_radius_cells: f32,
     /// Minimum neighbors below for sleep eligibility
     pub min_support_neighbors: usize,
+    /// Global velocity damping per frame (0.95 = 5% reduction/frame)
+    /// Dissipates wave energy even when not in contact
+    pub velocity_damping: f32,
+    /// Enable surface roughness jitter for vertical contacts
+    pub use_jitter: bool,
 }
 
 impl Default for DemParams {
     fn default() -> Self {
         Self {
-            contact_stiffness: 2000.0,
-            damping_ratio: 0.8,              // Overdamped - no oscillation
+            contact_stiffness: 1500.0,       // Moderate stiffness
+            damping_ratio: 2.0,              // Overdamped (>1) - no oscillation, fast settling
             friction_coeff: 0.6,
             static_friction_threshold: 3.0,  // Below this: static friction regime
             sleep_threshold: 2.0,            // Below this + support: sleep
             wake_threshold: 5.0,             // Above this: wake up
             particle_radius_cells: 0.5,
             min_support_neighbors: 2,        // Need 2+ neighbors below to sleep
+            velocity_damping: 0.95,          // 5% velocity reduction per frame
+            use_jitter: true,                // Enable surface roughness
         }
     }
 }
@@ -62,6 +69,8 @@ pub struct DemSimulation {
     support_counts: Vec<u16>,
     /// Pre-allocated sleeping flag buffer
     is_sleeping: Vec<bool>,
+    /// Frame counter for time-varying jitter
+    frame: u32,
 }
 
 impl DemSimulation {
@@ -71,6 +80,7 @@ impl DemSimulation {
             forces: Vec::new(),
             support_counts: Vec::new(),
             is_sleeping: Vec::new(),
+            frame: 0,
         }
     }
 
@@ -115,6 +125,8 @@ impl DemSimulation {
         base_gravity: f32,
         in_water: bool,
     ) {
+        self.frame = self.frame.wrapping_add(1);
+
         let particle_count = particles.len();
         if particle_count == 0 {
             return;
@@ -343,7 +355,19 @@ impl DemSimulation {
 
                         let dist = dist_sq.sqrt();
                         let overlap = contact_dist - dist;
-                        let normal = diff / dist;
+                        let mut normal = diff / dist;
+
+                        // Time-varying jitter for vertical contacts
+                        // Prevents perfect horizontal sliding on stacked particles
+                        if self.params.use_jitter && normal.y.abs() > 0.95 {
+                            let seed = (self.frame as usize)
+                                .wrapping_mul(17)
+                                .wrapping_add(idx.wrapping_mul(7))
+                                .wrapping_add(j_idx.wrapping_mul(13));
+                            let jitter = ((seed % 100) as f32 / 100.0 - 0.5) * 0.3;
+                            let jittered = Vec2::new(normal.x + jitter, normal.y);
+                            normal = jittered.normalize();
+                        }
 
                         // Relative velocity
                         let rel_vel = vel_i - vel_j;
@@ -470,10 +494,27 @@ impl DemSimulation {
             // Integrate velocity
             p.velocity += accel * dt;
 
+            // Global velocity damping - dissipates wave energy even without contact
+            // This is crucial for settling: 0.95 = 5% velocity reduction per frame
+            p.velocity *= self.params.velocity_damping;
+
             // Clamp velocity for stability
             let speed = p.velocity.length();
             if speed > max_vel {
                 p.velocity *= max_vel / speed;
+            }
+
+            // Integrate position
+            p.position += p.velocity * dt;
+
+            // Resolve floor penetration
+            let sdf = grid.sample_sdf(p.position);
+            if sdf < particle_radius * 0.5 {
+                let grad = grid.sdf_gradient(p.position);
+                if grad.length_squared() > 0.001 {
+                    let push_out = (particle_radius * 0.5 - sdf) * grad.normalize();
+                    p.position -= push_out;
+                }
             }
 
             // Update state based on velocity
