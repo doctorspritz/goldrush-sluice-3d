@@ -122,6 +122,30 @@ impl ParticleMaterial {
         }
     }
 
+    /// Typical sphericity for this material
+    /// 1.0 = perfect sphere, lower = flatter/more elongated
+    pub fn typical_sphericity(&self) -> f32 {
+        match self {
+            Self::Water => 1.0,       // N/A
+            Self::Mud => 0.7,         // Irregular clay
+            Self::Sand => 0.85,       // Rounded grains
+            Self::Magnetite => 0.65,  // Angular crystals
+            Self::Gold => 0.35,       // Very flat flakes
+        }
+    }
+
+    /// Typical roughness for this material
+    /// 0.0 = smooth, 1.0 = very rough
+    pub fn typical_roughness(&self) -> f32 {
+        match self {
+            Self::Water => 0.0,       // N/A
+            Self::Mud => 0.4,         // Moderate
+            Self::Sand => 0.5,        // Rough grains
+            Self::Magnetite => 0.6,   // Angular, rough
+            Self::Gold => 0.2,        // Smooth metal surface
+        }
+    }
+
     /// Static friction coefficient for bed contact
     /// Controls how easily particles slide along the sluice floor
     /// Higher values = more resistance to sliding
@@ -222,6 +246,12 @@ pub struct Particle {
     /// Particle diameter in simulation units (for Ferguson-Church settling)
     /// If 0.0, uses material.typical_diameter() as fallback
     pub diameter: f32,
+    /// Sphericity: 1.0 = perfect sphere, 0.3 = flat/flaky
+    /// Affects drag and visual representation
+    pub sphericity: f32,
+    /// Roughness: 0.0 = smooth, 1.0 = very rough
+    /// Affects bed friction and entrainment
+    pub roughness: f32,
     /// Transport state (suspended vs bedload) for friction mechanics
     pub state: ParticleState,
     /// Time spent in bedload state (seconds) - used for hysteresis
@@ -230,7 +260,7 @@ pub struct Particle {
 }
 
 impl Particle {
-    /// Create a particle with specified material (uses typical diameter)
+    /// Create a particle with specified material (uses typical diameter and shape)
     pub fn new(position: Vec2, velocity: Vec2, material: ParticleMaterial) -> Self {
         Self {
             position,
@@ -239,12 +269,14 @@ impl Particle {
             old_grid_velocity: Vec2::ZERO,
             material,
             diameter: material.typical_diameter(),
+            sphericity: material.typical_sphericity(),
+            roughness: material.typical_roughness(),
             state: ParticleState::Suspended,
             jam_time: 0.0,
         }
     }
 
-    /// Create a particle with specified material and diameter
+    /// Create a particle with specified material and diameter (uses typical shape)
     pub fn with_diameter(position: Vec2, velocity: Vec2, material: ParticleMaterial, diameter: f32) -> Self {
         Self {
             position,
@@ -253,6 +285,31 @@ impl Particle {
             old_grid_velocity: Vec2::ZERO,
             material,
             diameter,
+            sphericity: material.typical_sphericity(),
+            roughness: material.typical_roughness(),
+            state: ParticleState::Suspended,
+            jam_time: 0.0,
+        }
+    }
+
+    /// Create a particle with full customization
+    pub fn with_properties(
+        position: Vec2,
+        velocity: Vec2,
+        material: ParticleMaterial,
+        diameter: f32,
+        sphericity: f32,
+        roughness: f32,
+    ) -> Self {
+        Self {
+            position,
+            velocity,
+            affine_velocity: Mat2::ZERO,
+            old_grid_velocity: Vec2::ZERO,
+            material,
+            diameter,
+            sphericity,
+            roughness,
             state: ParticleState::Suspended,
             jam_time: 0.0,
         }
