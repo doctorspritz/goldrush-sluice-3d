@@ -13,6 +13,18 @@
 //!
 //! Reference: Jiang et al. 2015 "The Affine Particle-In-Cell Method"
 
+// Submodules (methods will be moved here incrementally)
+mod advection;
+mod diagnostics;
+mod pile;
+mod pressure;
+mod sediment;
+mod spawning;
+mod transfer;
+
+// Re-exports for backwards compatibility
+// (will be populated as methods are moved)
+
 use crate::grid::{apic_d_inverse, quadratic_bspline, quadratic_bspline_1d, CellType, Grid};
 use crate::particle::{ParticleMaterial, Particles, ParticleState};
 use glam::{Mat2, Vec2};

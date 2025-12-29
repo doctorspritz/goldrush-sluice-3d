@@ -7,6 +7,18 @@
 //!
 //! APIC requires quadratic B-spline kernels for momentum-conserving transfers.
 
+// Submodules (methods will be moved here incrementally)
+mod cell_types;
+mod extrapolation;
+mod interp;
+mod pressure;
+mod sdf;
+mod velocity;
+mod vorticity;
+
+// Re-exports for backwards compatibility
+// (will be populated as methods are moved)
+
 use glam::Vec2;
 
 use crate::particle::ParticleMaterial;
