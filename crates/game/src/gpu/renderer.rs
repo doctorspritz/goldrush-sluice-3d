@@ -198,21 +198,29 @@ impl ParticleRenderer {
         gpu.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // Build instance data - WATER ONLY for now
+        // Build instance data - ALL particle types
         let mut instances: Vec<ParticleInstance> = Vec::with_capacity(self.max_particles);
 
         for p in &particles.list {
-            // Only render water particles
-            if p.material != ParticleMaterial::Water {
-                continue;
-            }
+            // Get color from material (u8 RGBA -> f32 RGBA)
+            let rgba = p.material.color();
+            let color = [
+                rgba[0] as f32 / 255.0,
+                rgba[1] as f32 / 255.0,
+                rgba[2] as f32 / 255.0,
+                rgba[3] as f32 / 255.0,
+            ];
 
-            // Water has typical_diameter() = 0, use cell_size as default
-            let size = 0.8;  // ~cell_size, visible but not huge
+            // Size based on material type
+            let size = if p.material.is_sediment() {
+                p.diameter.max(0.8) // Use particle diameter for sediment
+            } else {
+                0.6 // Smaller water particles
+            };
 
             instances.push(ParticleInstance {
                 position: [p.position.x, p.position.y],
-                color: [0.3, 0.6, 1.0, 0.8],  // Blue water
+                color,
                 size,
                 _padding: 0.0,
             });
@@ -227,7 +235,7 @@ impl ParticleRenderer {
         unsafe {
             FRAME += 1;
             if FRAME % 120 == 1 {
-                eprintln!("WATER: {} particles rendered", instances.len());
+                eprintln!("PARTICLES: {} rendered", instances.len());
             }
         }
 
@@ -242,7 +250,7 @@ impl ParticleRenderer {
         // Render pass
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Water Render Pass"),
+                label: Some("Particle Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     resolve_target: None,
