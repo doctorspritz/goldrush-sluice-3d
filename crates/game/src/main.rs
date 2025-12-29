@@ -141,6 +141,10 @@ async fn main() {
     let _target_frame_time = std::time::Duration::from_secs_f64(1.0 / 60.0);
 
     // === TUNABLE PARAMETERS ===
+    // Inlet position (right-click to set)
+    let mut inlet_x: f32 = 5.0;
+    let mut inlet_y: f32 = (SIM_HEIGHT / 4 - 10) as f32;
+
     // Inlet flow (higher spawn rate for finer grid to maintain ~6-8 particles/cell)
     let mut inlet_vx: f32 = 80.0;
     let mut inlet_vy: f32 = 5.0;
@@ -257,6 +261,16 @@ async fn main() {
             debug_state_colors = !debug_state_colors;
         }
 
+        // Slope control: Z (decrease = shallower), Shift+Z (increase = steeper)
+        if is_key_pressed(KeyCode::Z) {
+            if is_key_down(KeyCode::LeftShift) {
+                sluice_config.slope = (sluice_config.slope + 0.02).min(0.5);
+            } else {
+                sluice_config.slope = (sluice_config.slope - 0.02).max(0.0);
+            }
+            riffle_dirty = true;
+        }
+
         // Sand rate: Key2 to cycle
         if is_key_pressed(KeyCode::Key2) {
             sand_rate = if sand_rate == 0 { 4 } else if sand_rate > 1 { sand_rate - 1 } else { 0 };
@@ -343,7 +357,7 @@ async fn main() {
             );
         }
 
-        // Mouse spawning
+        // Mouse spawning (left-click for manual testing)
         if is_mouse_button_down(MouseButton::Left) {
             let (mx, my) = mouse_position();
             let wx = mx / SCALE;
@@ -352,15 +366,25 @@ async fn main() {
             sim.spawn_water(wx, wy, 20.0, 0.0, 5);
         }
 
+        // Right-click to set emitter position
+        if is_mouse_button_pressed(MouseButton::Right) {
+            let (mx, my) = mouse_position();
+            let wx = mx / SCALE;
+            let wy = my / SCALE;
+
+            // Clamp to valid bounds
+            inlet_x = wx.clamp(2.0, (SIM_WIDTH - 50) as f32);
+            // Calculate floor height at inlet_x
+            let base_floor = (SIM_HEIGHT / 4) as f32;
+            let floor_at_x = base_floor + (inlet_x - sluice_config.slick_plate_len as f32).max(0.0) * sluice_config.slope;
+            inlet_y = wy.clamp(5.0, floor_at_x - 5.0);
+        }
+
         // --- UPDATE ---
         if !paused {
             // Spawn water and sediments using tunable parameters
             // flow_multiplier scales everything: more water, more frequent sediments
             {
-                let inlet_x = 5.0;
-                // Spawn above the floor (base_height = SIM_HEIGHT/4)
-                let inlet_y = (SIM_HEIGHT / 4 - 10) as f32;
-
                 // Water (spawn_rate * flow_multiplier per frame)
                 sim.spawn_water(inlet_x, inlet_y, inlet_vx, inlet_vy, spawn_rate * flow_multiplier);
 
@@ -436,6 +460,12 @@ async fn main() {
                 ..Default::default()
             },
         );
+
+        // Draw emitter position indicator
+        let emit_screen_x = inlet_x * SCALE;
+        let emit_screen_y = inlet_y * SCALE;
+        draw_circle(emit_screen_x, emit_screen_y, 6.0, Color::from_rgba(100, 200, 255, 200));
+        draw_circle_lines(emit_screen_x, emit_screen_y, 10.0, 2.0, Color::from_rgba(255, 255, 255, 150));
 
         // Draw particles with selected renderer
         match render_mode {
@@ -539,13 +569,16 @@ async fn main() {
 
         // Current parameters - LEFT SIDE
         draw_text(
-            &format!("FLOW: vx={:.0} vy={:.0} rate={} x{}", inlet_vx, inlet_vy, spawn_rate, flow_multiplier),
+            &format!("EMITTER: ({:.0},{:.0}) vx={:.0} vy={:.0} rate={} x{}",
+                inlet_x, inlet_y, inlet_vx, inlet_vy, spawn_rate, flow_multiplier),
             10.0, 42.0, 16.0, Color::from_rgba(100, 200, 255, 255),
         );
         // Riffle mode with mode-specific color
         let riffle_color = sluice_config.riffle_mode.debug_color();
+        let slope_degrees = sluice_config.slope.atan().to_degrees();
         draw_text(
-            &format!("RIFFLES: {} | spacing={} height={} width={}",
+            &format!("SLUICE: {:.1}° | {} | spacing={} height={} width={}",
+                slope_degrees,
                 sluice_config.riffle_mode.name(),
                 sluice_config.riffle_spacing, sluice_config.riffle_height, sluice_config.riffle_width),
             10.0, 58.0, 16.0, Color::from_rgba(riffle_color[0], riffle_color[1], riffle_color[2], 255),
@@ -602,15 +635,15 @@ async fn main() {
 
         // Controls - BOTTOM
         draw_text(
-            "←→ vx | Shift+←→ vy | ↑↓ spawn | +/- flow×  | Q/A spacing | W/S height | E/D width",
+            "Right-click=Emitter | ←→ vx | Shift+←→ vy | ↑↓ spawn | +/- flow× | Z/Shift+Z slope",
             10.0, screen_height() - 90.0, 14.0, GRAY,
         );
         draw_text(
-            "[N]=Riffle Mode | [L]=Surface Line | [B]=Render | T/G threshold | Y/H scale",
+            "Q/A spacing | W/S height | E/D width | [N]=Riffle Mode | [L]=Surface | [B]=Render",
             10.0, screen_height() - 74.0, 14.0, GRAY,
         );
         draw_text(
-            "5/6 H | 7/8 rest | 9/0 size | [I]=Viscosity | O/P ν",
+            "T/G threshold | Y/H scale | 9/0 size | [I]=Viscosity | O/P ν",
             10.0, screen_height() - 58.0, 14.0, GRAY,
         );
         draw_text(
