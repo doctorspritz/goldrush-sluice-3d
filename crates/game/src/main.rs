@@ -6,7 +6,7 @@
 mod render;
 
 use macroquad::prelude::*;
-use render::{MetaballRenderer, ParticleRenderer, draw_particles_fast, draw_particles_fast_debug, draw_particles_rect, draw_particles_mesh};
+use render::{ParticleRenderer, draw_particles_fast_debug, draw_particles_rect, draw_particles_mesh};
 use sim::{
     create_sluice_with_mode, FlipSimulation, RiffleMode, SluiceConfig,
     compute_surface_heightfield,
@@ -15,12 +15,10 @@ use sim::{
 /// Rendering mode selection
 #[derive(Clone, Copy, PartialEq)]
 enum RenderMode {
-    Metaball,      // Two-pass metaball (slowest, best look)
-    Hybrid,        // Water as metaballs, Solids as specific shapes
+    Mesh,          // Single mesh with vertex colors (fastest)
     Shader,        // Per-particle shader circles
     FastCircle,    // macroquad draw_circle batching
     FastRect,      // macroquad draw_rectangle batching
-    Mesh,          // Single mesh with vertex colors (fastest)
 }
 
 // Simulation size (high resolution for better vortex formation)
@@ -47,11 +45,8 @@ async fn main() {
     // Create simulation
     let mut sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
 
-    // Create GPU particle renderers
+    // Create GPU particle renderer
     let particle_renderer = ParticleRenderer::new();
-    let screen_w = (SIM_WIDTH as f32 * CELL_SIZE * SCALE) as u32;
-    let screen_h = (SIM_HEIGHT as f32 * CELL_SIZE * SCALE) as u32;
-    let mut metaball_renderer = MetaballRenderer::new(screen_w, screen_h);
 
     // Initial sluice configuration
     let mut sluice_config = SluiceConfig {
@@ -129,9 +124,7 @@ async fn main() {
     let mut show_velocity = false;
     let mut show_surface_line = false;
     let mut debug_state_colors = false; // D key: Bedload=red, Suspended=blue
-    let mut render_mode = RenderMode::Mesh; // Default to Mesh for best performance (batches 8000 particles per draw call)
-    let mut metaball_threshold: f32 = 0.08;
-    let mut metaball_scale: f32 = 6.0;
+    let mut render_mode = RenderMode::FastRect; // Default to FastRect - fastest and cleanest
     // Zoom level (scroll wheel to adjust)
     let mut zoom: f32 = SCALE;
     let mut fast_particle_size: f32 = CELL_SIZE * zoom * 1.5;  // Larger for visibility
@@ -301,29 +294,11 @@ async fn main() {
         // Render mode controls - B cycles through modes
         if is_key_pressed(KeyCode::B) {
             render_mode = match render_mode {
-                RenderMode::Hybrid => RenderMode::Metaball,
-                RenderMode::Metaball => RenderMode::Shader,
+                RenderMode::Mesh => RenderMode::Shader,
                 RenderMode::Shader => RenderMode::FastCircle,
                 RenderMode::FastCircle => RenderMode::FastRect,
                 RenderMode::FastRect => RenderMode::Mesh,
-                RenderMode::Mesh => RenderMode::Hybrid,
             };
-        }
-        if is_key_pressed(KeyCode::T) {
-            metaball_threshold = (metaball_threshold + 0.02).min(0.5);
-            metaball_renderer.set_threshold(metaball_threshold);
-        }
-        if is_key_pressed(KeyCode::G) {
-            metaball_threshold = (metaball_threshold - 0.02).max(0.02);
-            metaball_renderer.set_threshold(metaball_threshold);
-        }
-        if is_key_pressed(KeyCode::Y) {
-            metaball_scale = (metaball_scale + 2.0).min(30.0);
-            metaball_renderer.set_particle_scale(metaball_scale);
-        }
-        if is_key_pressed(KeyCode::H) {
-            metaball_scale = (metaball_scale - 2.0).max(6.0);
-            metaball_renderer.set_particle_scale(metaball_scale);
         }
 
         // Particle size tuning: 9/0 to adjust
@@ -332,6 +307,18 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::Key0) {
             fast_particle_size = (fast_particle_size + 0.5).min(8.0);
+        }
+
+        // Zoom control: scroll wheel or +/- keys
+        let (_, scroll_y) = mouse_wheel();
+        if scroll_y != 0.0 {
+            zoom = (zoom + scroll_y * 0.2).clamp(0.5, 6.0);
+        }
+        if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
+            zoom = (zoom + 0.25).min(6.0);
+        }
+        if is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::KpSubtract) {
+            zoom = (zoom - 0.25).max(0.5);
         }
 
         // Viscosity controls: I to toggle, O/P to adjust
@@ -486,20 +473,10 @@ async fn main() {
 
         // Draw particles with selected renderer
         match render_mode {
-            RenderMode::Hybrid => {
-                // Pass 1: Water as metaballs for fluid look
-                metaball_renderer.draw_filtered(&sim.particles, zoom, true);
-                // Pass 2: Solids as sharp sprites for clarity
-                particle_renderer.draw_filtered(&sim.particles, zoom, false);
-            }
-            // Legacy modes use full draw (passing true/false doesn't matter for non-filtered methods if we didn't update them,
-            // but we only updated filtered ones. Wait, I only added `draw_filtered`.
-            // The original `draw` methods still exist and draw everything.
-            RenderMode::Metaball => metaball_renderer.draw(&sim.particles, zoom),
+            RenderMode::Mesh => draw_particles_mesh(&sim.particles, zoom, fast_particle_size),
             RenderMode::Shader => particle_renderer.draw_sorted(&sim.particles, zoom),
             RenderMode::FastCircle => draw_particles_fast_debug(&sim.particles, zoom, fast_particle_size, debug_state_colors),
             RenderMode::FastRect => draw_particles_rect(&sim.particles, zoom, fast_particle_size),
-            RenderMode::Mesh => draw_particles_mesh(&sim.particles, zoom, fast_particle_size),
         }
 
         // Draw deposited sediment cells ON TOP of particles (so visible in all render modes)
@@ -566,12 +543,10 @@ async fn main() {
 
         // Top status bar
         let mode_str = match render_mode {
-            RenderMode::Metaball => "METABALL",
-            RenderMode::Hybrid => "HYBRID",
+            RenderMode::Mesh => "MESH",
             RenderMode::Shader => "SHADER",
-            RenderMode::FastCircle => "FAST-CIRCLE",
-            RenderMode::FastRect => "FAST-RECT",
-            RenderMode::Mesh => "MESH-BATCH",
+            RenderMode::FastCircle => "CIRCLE",
+            RenderMode::FastRect => "RECT",
         };
         draw_text(
             &format!(
@@ -617,14 +592,6 @@ async fn main() {
                 water, sand, magnetite, gold, solids_pct),
             10.0, 92.0, 14.0, Color::from_rgba(200, 200, 200, 255),
         );
-
-        // Metaball params (when active)
-        if render_mode == RenderMode::Metaball || render_mode == RenderMode::Hybrid {
-            draw_text(
-                &format!("METABALL: threshold={:.2} scale={:.0}", metaball_threshold, metaball_scale),
-                10.0, 108.0, 14.0, Color::from_rgba(180, 100, 255, 255),
-            );
-        }
 
         // Particle size
         draw_text(
