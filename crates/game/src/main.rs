@@ -132,6 +132,10 @@ async fn main() {
     let mut fps_samples: Vec<i32> = Vec::new();
     let start_time = std::time::Instant::now();
 
+    // Profiling accumulator: [classify, sdf, p2g, pressure, g2p, neighbor, rest]
+    let mut profile_accum = [0.0f32; 7];
+    let mut profile_count = 0u32;
+
     // Frame timing (no artificial limiting - vsync handles it)
     let _target_frame_time = std::time::Duration::from_secs_f64(1.0 / 60.0);
 
@@ -418,8 +422,14 @@ async fn main() {
             // Run simulation step with timing
             let sim_start = std::time::Instant::now();
             let dt = 1.0 / 60.0;
-            sim.update(dt);
+            let timings = sim.update_profiled(dt);
             let sim_time = sim_start.elapsed();
+
+            // Accumulate profile timings
+            for (i, t) in timings.iter().enumerate() {
+                profile_accum[i] += t;
+            }
+            profile_count += 1;
 
             frame_count += 1;
 
@@ -443,8 +453,19 @@ async fn main() {
                 let fps = get_fps();
                 fps_samples.push(fps);
                 let elapsed = start_time.elapsed().as_secs();
-                println!("t={:3}s: {:5} p, fps={:3}, sim={:4.1}ms, div={:4.1}",
-                    elapsed, sim.particles.len(), fps, sim_time.as_secs_f32() * 1000.0, div);
+
+                // Compute average timings over accumulated frames
+                let n = profile_count.max(1) as f32;
+                let avg: Vec<f32> = profile_accum.iter().map(|&t| t / n).collect();
+                let total: f32 = avg.iter().sum();
+
+                println!("t={:3}s: {:6} p, fps={:3}, sim={:5.1}ms | classify:{:4.2} sdf:{:4.2} p2g:{:4.2} press:{:5.2} g2p:{:4.2} neigh:{:4.2} rest:{:4.2}",
+                    elapsed, sim.particles.len(), fps, total,
+                    avg[0], avg[1], avg[2], avg[3], avg[4], avg[5], avg[6]);
+
+                // Reset accumulator
+                profile_accum = [0.0; 7];
+                profile_count = 0;
             }
         }
 

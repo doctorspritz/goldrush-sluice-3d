@@ -303,6 +303,7 @@ impl FlipSimulation {
         self.grid.solve_pressure_multigrid(4);
         // Two-way coupling: use mixture density for pressure gradient
         self.apply_pressure_gradient_two_way(dt);
+        self.apply_porosity_drag(dt);
         self.grid.compute_divergence();
         self.grid.extrapolate_velocities(1);
         let t4 = Instant::now();
@@ -314,12 +315,8 @@ impl FlipSimulation {
         self.compute_neighbor_counts();
         let t6 = Instant::now();
 
-        // Legacy sediment system DISABLED for Phase 2
-        // self.apply_sediment_forces(dt);
         self.advect_particles(dt);
-        // self.update_particle_states(dt);
-        // self.compute_pile_heightfield();
-        // self.enforce_pile_constraints();
+        self.apply_dem_settling(dt);
         self.particles.remove_out_of_bounds(
             self.grid.width as f32 * self.grid.cell_size,
             self.grid.height as f32 * self.grid.cell_size,
