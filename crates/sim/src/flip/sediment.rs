@@ -867,7 +867,7 @@ impl FlipSimulation {
     }
 
     /// Count deposited cells in a column (from bottom up)
-    fn count_column_deposited_impl(&self, i: usize) -> usize {
+    pub fn count_column_deposited_impl(&self, i: usize) -> usize {
         let mut count = 0;
         for j in 0..self.grid.height {
             if self.grid.is_deposited(i, j) {
@@ -878,7 +878,7 @@ impl FlipSimulation {
     }
 
     /// Find the topmost deposited cell in a column (lowest j value)
-    fn find_top_deposited_in_column_impl(&self, i: usize) -> Option<usize> {
+    pub fn find_top_deposited_in_column_impl(&self, i: usize) -> Option<usize> {
         for j in 0..self.grid.height {
             if self.grid.is_deposited(i, j) {
                 return Some(j);
@@ -888,7 +888,7 @@ impl FlipSimulation {
     }
 
     /// Find landing j position for a falling/avalanching cell
-    fn find_landing_j_impl(&self, i: usize) -> usize {
+    pub fn find_landing_j_impl(&self, i: usize) -> usize {
         // Start from bottom and find first empty cell with support below
         for j in (0..self.grid.height).rev() {
             if !self.grid.is_solid(i, j) {
