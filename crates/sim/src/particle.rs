@@ -505,6 +505,20 @@ impl Particles {
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Particle> {
         self.list.iter_mut()
     }
+
+    /// Sort particles by grid cell index for cache-friendly P2G transfer.
+    ///
+    /// Particles accessing the same/nearby grid cells are grouped together,
+    /// improving memory locality during particle-to-grid transfers.
+    ///
+    /// Uses unstable sort (faster than stable, order within same cell doesn't matter).
+    pub fn sort_by_cell_index(&mut self, cell_size: f32, grid_width: usize) {
+        self.list.sort_unstable_by_key(|p| {
+            let i = (p.position.x / cell_size) as usize;
+            let j = (p.position.y / cell_size) as usize;
+            j * grid_width + i
+        });
+    }
 }
 
 impl Default for Particles {

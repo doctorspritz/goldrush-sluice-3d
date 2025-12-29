@@ -401,6 +401,12 @@ impl FlipSimulation {
     ///
     /// Optimization: Precompute 1D weights to reduce bspline calls from 18 to 12 per particle.
     pub fn particles_to_grid(&mut self) {
+        // DISABLED: Sorting adds overhead that outweighs cache locality benefit
+        // At 40k particles, sort costs ~3-4ms but only saves ~1-2ms in P2G
+        // Keeping code for reference in case larger particle counts benefit
+        // if self.frame % 16 == 0 {
+        //     self.particles.sort_by_cell_index(self.grid.cell_size, self.grid.width);
+        // }
         self.particles_to_grid_impl();
     }
 
