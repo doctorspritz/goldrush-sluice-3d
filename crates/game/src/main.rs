@@ -5,7 +5,7 @@
 
 mod gpu;
 
-use gpu::{p2g::GpuP2gSolver, pressure::GpuPressureSolver, renderer::ParticleRenderer, GpuContext};
+use gpu::{g2p::GpuG2pSolver, p2g::GpuP2gSolver, pressure::GpuPressureSolver, renderer::ParticleRenderer, GpuContext};
 use sim::{create_sluice_with_mode, FlipSimulation, RiffleMode, SluiceConfig};
 use std::sync::Arc;
 use winit::{
@@ -29,6 +29,7 @@ struct App {
     particle_renderer: Option<ParticleRenderer>,
     pressure_solver: Option<GpuPressureSolver>,
     p2g_solver: Option<GpuP2gSolver>,
+    g2p_solver: Option<GpuG2pSolver>,
     window: Option<Arc<Window>>,
 
     // Simulation
@@ -62,8 +63,9 @@ struct App {
     // Keyboard state for modifiers
     shift_down: bool,
 
-    // GPU P2G toggle
+    // GPU toggles
     use_gpu_p2g: bool,
+    use_gpu_g2p: bool,
 }
 
 impl App {
@@ -94,6 +96,7 @@ impl App {
             particle_renderer: None,
             pressure_solver: None,
             p2g_solver: None,
+            g2p_solver: None,
             window: None,
             sim,
             sluice_config,
@@ -116,7 +119,8 @@ impl App {
             profile_accum: [0.0; 7],
             profile_count: 0,
             shift_down: false,
-            use_gpu_p2g: true, // Start with GPU P2G enabled
+            use_gpu_p2g: true,  // Start with GPU P2G enabled
+            use_gpu_g2p: true,  // Start with GPU G2P enabled
         }
     }
 
@@ -246,7 +250,7 @@ impl App {
             self.profile_accum[6] += post_timings[3]; // rest
         }
         } else if self.use_gpu_p2g {
-            // GPU P2G path
+            // GPU P2G path (optionally with GPU G2P)
             if let (Some(gpu), Some(p2g_solver)) = (&self.gpu, &self.p2g_solver) {
                 use std::time::Instant;
 
@@ -264,34 +268,64 @@ impl App {
                 );
                 let p2g_time = p2g_start.elapsed().as_secs_f32() * 1000.0;
 
-                // Phase 1c: Complete P2G phase (extrapolate, forces, divergence)
+                // Phase 1c: Complete P2G phase (extrapolate, store_old, forces, divergence)
+                // Note: This now also stores grid.u_old/v_old for GPU G2P FLIP delta
                 self.sim.complete_p2g_phase(dt);
 
-                // Phase 2: CPU pressure solve (multigrid, same as update_profiled)
+                // Phase 2: CPU pressure solve (multigrid)
                 let press_start = Instant::now();
                 self.sim.grid.solve_pressure_multigrid(4);
                 let press_time = press_start.elapsed().as_secs_f32() * 1000.0;
 
-                // Phase 3: Finalize (G2P, advection, etc.)
-                let post_timings = self.sim.finalize_after_pressure(dt);
+                // Phase 3a: Pre-G2P (apply pressure gradient to grid)
+                let pre_g2p_time = self.sim.finalize_pre_g2p(dt);
+
+                // Phase 3b: Hybrid G2P (GPU for water, CPU for sediment)
+                let g2p_start = Instant::now();
+                if self.use_gpu_g2p {
+                    if let Some(g2p_solver) = &self.g2p_solver {
+                        // GPU G2P for water particles
+                        g2p_solver.execute(
+                            gpu,
+                            &mut self.sim.particles.list,
+                            &self.sim.grid.u,
+                            &self.sim.grid.v,
+                            &self.sim.grid.u_old,
+                            &self.sim.grid.v_old,
+                            CELL_SIZE,
+                            dt,
+                        );
+                    }
+                    // CPU G2P for sediment only (preserves all sediment physics)
+                    self.sim.grid_to_particles_sediment_only(dt);
+                } else {
+                    // Full CPU G2P for all particles
+                    self.sim.grid_to_particles(dt);
+                }
+                let g2p_time = g2p_start.elapsed().as_secs_f32() * 1000.0;
+
+                // Phase 3c: Post-G2P (advection, neighbor, DEM)
+                let post_g2p_timings = self.sim.finalize_post_g2p(dt);
 
                 // Combine timings: [classify, sdf, p2g, press, g2p, neigh, rest]
-                self.profile_accum[0] += pre_timings[0]; // classify
-                self.profile_accum[1] += pre_timings[1]; // sdf
-                self.profile_accum[2] += p2g_time;       // p2g (GPU)
-                self.profile_accum[3] += press_time;     // pressure
-                self.profile_accum[4] += post_timings[1]; // g2p
-                self.profile_accum[5] += post_timings[2]; // neigh
-                self.profile_accum[6] += post_timings[3]; // rest
+                self.profile_accum[0] += pre_timings[0];  // classify
+                self.profile_accum[1] += pre_timings[1];  // sdf
+                self.profile_accum[2] += p2g_time;        // p2g (GPU)
+                self.profile_accum[3] += press_time + pre_g2p_time;  // pressure + pre-g2p
+                self.profile_accum[4] += g2p_time;        // g2p (GPU/CPU hybrid)
+                self.profile_accum[5] += post_g2p_timings[0]; // neigh
+                self.profile_accum[6] += post_g2p_timings[1]; // rest
 
-                // GPU P2G diagnostics
+                // GPU diagnostics
                 if self.frame_count % 60 == 0 {
                     self.sim.grid.compute_divergence();
                     let max_div = self.sim.grid.divergence.iter().cloned().fold(0.0f32, |a, b| a.max(b.abs()));
                     let max_vel = self.sim.particles.list.iter()
                         .map(|p| p.velocity.length())
                         .fold(0.0f32, f32::max);
-                    eprintln!("GPU_P2G: div_out={:.4} | vel={:.1} | p2g={:.2}ms", max_div, max_vel, p2g_time);
+                    let g2p_mode = if self.use_gpu_g2p { "GPU" } else { "CPU" };
+                    eprintln!("GPU_P2G + {}_G2P: div_out={:.4} | vel={:.1} | p2g={:.2}ms g2p={:.2}ms",
+                        g2p_mode, max_div, max_vel, p2g_time, g2p_time);
                 }
             }
         } else {
@@ -529,6 +563,10 @@ impl App {
                 self.use_gpu_p2g = !self.use_gpu_p2g;
                 log::info!("GPU P2G: {}", if self.use_gpu_p2g { "ENABLED" } else { "DISABLED" });
             }
+            KeyCode::KeyG => {
+                self.use_gpu_g2p = !self.use_gpu_g2p;
+                log::info!("GPU G2P: {}", if self.use_gpu_g2p { "ENABLED" } else { "DISABLED" });
+            }
             _ => {}
         }
     }
@@ -553,18 +591,20 @@ impl ApplicationHandler for App {
         // Initialize GPU (blocking on async)
         let gpu = pollster::block_on(GpuContext::new(window.clone()));
 
-        // Create renderers
+        // Create renderers and GPU compute solvers
         let particle_renderer = ParticleRenderer::new(&gpu, 300_000);
         let pressure_solver =
             GpuPressureSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32);
         let p2g_solver = GpuP2gSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32, 300_000);
+        let g2p_solver = GpuG2pSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32, 300_000);
 
         self.particle_renderer = Some(particle_renderer);
         self.pressure_solver = Some(pressure_solver);
         self.p2g_solver = Some(p2g_solver);
+        self.g2p_solver = Some(g2p_solver);
         self.gpu = Some(gpu);
 
-        log::info!("GPU initialized successfully (P2G solver ready)");
+        log::info!("GPU initialized successfully (P2G + G2P solvers ready)");
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {

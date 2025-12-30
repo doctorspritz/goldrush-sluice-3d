@@ -212,6 +212,11 @@ pub struct Grid {
     /// Pre-allocated buffer for inner SDF (avoids 512KB allocation per frame)
     inner_sdf: Vec<f32>,
 
+    /// Old grid velocities for GPU G2P FLIP delta calculation
+    /// Stored after P2G but before forces are applied
+    pub u_old: Vec<f32>,
+    pub v_old: Vec<f32>,
+
     /// Pre-allocated buffers for velocity extrapolation (avoids ~1MB allocation per frame)
     u_known: Vec<bool>,
     v_known: Vec<bool>,
@@ -264,6 +269,9 @@ impl Grid {
             v_temp: vec![0.0; v_count],
             // Pre-allocated buffer for inner SDF computation
             inner_sdf: vec![0.0; cell_count],
+            // Old velocities for GPU G2P FLIP delta
+            u_old: vec![0.0; u_count],
+            v_old: vec![0.0; v_count],
             // Pre-allocated buffers for velocity extrapolation
             u_known: vec![false; u_count],
             v_known: vec![false; v_count],
