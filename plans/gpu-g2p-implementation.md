@@ -473,9 +473,85 @@ GPU benefit comes from parallelism, not from avoiding atomics.
 3. **Stability**: No velocity explosions or NaN propagation
 4. **Integration**: Drop-in replacement in simulation loop
 
+---
+
+## DEM Integration Considerations
+
+The simulation pipeline after G2P is:
+```
+G2P → advect_particles → apply_dem_settling → remove_out_of_bounds
+```
+
+DEM (`dem.rs`) handles sediment particle-particle collisions with:
+- Spatial hash neighbor queries (O(n) with hash, O(n²) without)
+- Spring-damper contact model
+- Sleep system for stable particles
+- 4 collision resolution iterations per frame
+
+### Current Timing
+
+DEM is hidden in the "rest" phase of `update_profiled()`:
+```
+Phase 7 "rest": advect + DEM + bounds check
+```
+
+At high sediment counts, DEM can become significant (~5-15ms for 100k sediment particles).
+
+### GPU G2P + DEM Options
+
+**Option A: Hybrid (Recommended for MVP)**
+```
+GPU P2G → GPU G2P → readback → CPU advect → CPU DEM
+```
+- Simpler: only G2P on GPU, rest stays CPU
+- Sync point after G2P (readback particle velocities)
+- DEM uses existing spatial hash infrastructure
+
+**Option B: Full GPU Pipeline (Future)**
+```
+GPU P2G → GPU G2P → GPU advect → GPU DEM → (no readback until render)
+```
+- Eliminates sync stalls
+- Requires GPU spatial hash (parallel construction)
+- GPU DEM is complex (atomic updates for contacts, sleep state)
+
+### GPU DEM Complexity
+
+If GPU DEM is needed later:
+
+1. **Spatial Hash on GPU**
+   - Parallel cell assignment (counting sort or radix sort)
+   - Build cell head/next linked lists with atomics
+   - Reference: [NVIDIA particle simulation](https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-32-broad-phase-collision-detection-cuda)
+
+2. **Contact Resolution**
+   - Each particle checks neighbors in parallel
+   - Atomic force accumulation (similar to P2G)
+   - Multiple iterations for stability
+
+3. **Sleep System**
+   - Track per-particle sleep state
+   - Atomic wake flags when impacted
+   - Skip sleeping particles in shader
+
+**Estimated effort**: GPU DEM is 2-3x more complex than GPU G2P.
+
+### Recommendation
+
+For the GPU G2P implementation:
+1. **Phase 1-3**: Implement GPU G2P with CPU DEM (Option A)
+2. **Profile**: Measure if DEM becomes the new bottleneck
+3. **Phase 5 (optional)**: GPU DEM if DEM > 10ms at target particle counts
+
+The current DEM has a sleep system that reduces work for settled particles, so GPU acceleration may not be critical unless you have many actively colliding sediment particles.
+
+---
+
 ## References
 
 - Existing GPU P2G: `crates/game/src/gpu/p2g.rs`
 - CPU G2P: `crates/sim/src/flip/transfer.rs:334-612`
+- CPU DEM: `crates/sim/src/dem.rs`
 - [blub G2P shader](https://github.com/Wumpf/blub/blob/main/shaders/simulation/g2p.wgsl)
 - [APIC paper](https://www.math.ucla.edu/~jteran/papers/JSSTS15.pdf) - C matrix formula
+- [NVIDIA GPU Particle Sim](https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-32-broad-phase-collision-detection-cuda) - GPU spatial hash
