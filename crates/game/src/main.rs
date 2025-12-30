@@ -152,28 +152,29 @@ impl App {
             );
         }
 
-        // Sediments spawn from middle emitter
-        let mid_emitter_y = self.inlet_y - ((self.num_emitters / 2) as f32 * EMITTER_SPACING);
+        // Sediments spawn from all emitters (cycled round-robin)
+        let emitter_idx = (self.frame_count as usize) % self.num_emitters;
+        let sediment_y = self.inlet_y - (emitter_idx as f32 * EMITTER_SPACING);
 
         // Sand
         let effective_sand = self.sand_rate / self.flow_multiplier.max(1);
         if effective_sand > 0 && self.frame_count % effective_sand as u64 == 0 {
             self.sim
-                .spawn_sand(self.inlet_x, mid_emitter_y, self.inlet_vx, self.inlet_vy, 1);
+                .spawn_sand(self.inlet_x, sediment_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
         // Magnetite
         let effective_magnetite = self.magnetite_rate / self.flow_multiplier.max(1);
         if effective_magnetite > 0 && self.frame_count % effective_magnetite as u64 == 0 {
             self.sim
-                .spawn_magnetite(self.inlet_x, mid_emitter_y, self.inlet_vx, self.inlet_vy, 1);
+                .spawn_magnetite(self.inlet_x, sediment_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
         // Gold
         let effective_gold = self.gold_rate / self.flow_multiplier.max(1);
         if effective_gold > 0 && self.frame_count % effective_gold as u64 == 0 {
             self.sim
-                .spawn_gold(self.inlet_x, mid_emitter_y, self.inlet_vx, self.inlet_vy, 1);
+                .spawn_gold(self.inlet_x, sediment_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
         // Remove particles at outflow - DISABLED for barrier test
