@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use sim::grid::Grid;
-use sim::particle::{ParticleMaterial, Particles};
+use sim::particle::Particles;
 
 use super::GpuContext;
 
@@ -12,6 +12,16 @@ struct ParticleInstance {
     color: [f32; 4],
     size: f32,
     _padding: f32,
+}
+
+/// Vertex data for terrain rectangles (supports non-square shapes)
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct TerrainInstance {
+    position: [f32; 2], // Center of rectangle
+    color: [f32; 4],
+    size_x: f32, // Width
+    size_y: f32, // Height
 }
 
 /// Uniforms for the particle shader
@@ -26,12 +36,13 @@ struct Uniforms {
 /// GPU-based particle renderer
 pub struct ParticleRenderer {
     pipeline: wgpu::RenderPipeline,
+    terrain_pipeline: wgpu::RenderPipeline,
     particle_buffer: wgpu::Buffer,
     terrain_buffer: wgpu::Buffer,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
     max_particles: usize,
-    max_terrain_cells: usize,
+    max_terrain_rects: usize,
     // Terrain caching - avoid rebuilding static geometry every frame
     cached_terrain_count: usize,
     terrain_dirty: bool,
@@ -141,6 +152,74 @@ impl ParticleRenderer {
                 cache: None,
             });
 
+        // Terrain shader and pipeline (solid rectangles)
+        let terrain_shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Terrain Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/terrain.wgsl").into()),
+            });
+
+        let terrain_pipeline = gpu
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Terrain Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &terrain_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<TerrainInstance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &[
+                            // position
+                            wgpu::VertexAttribute {
+                                offset: 0,
+                                shader_location: 0,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            // color
+                            wgpu::VertexAttribute {
+                                offset: 8,
+                                shader_location: 1,
+                                format: wgpu::VertexFormat::Float32x4,
+                            },
+                            // size_x
+                            wgpu::VertexAttribute {
+                                offset: 24,
+                                shader_location: 2,
+                                format: wgpu::VertexFormat::Float32,
+                            },
+                            // size_y
+                            wgpu::VertexAttribute {
+                                offset: 28,
+                                shader_location: 3,
+                                format: wgpu::VertexFormat::Float32,
+                            },
+                        ],
+                    }],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &terrain_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: gpu.surface_format(),
+                        blend: None, // Solid terrain, no blending needed
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
         // Instance buffer for particles
         let particle_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Particle Instance Buffer"),
@@ -149,23 +228,24 @@ impl ParticleRenderer {
             mapped_at_creation: false,
         });
 
-        // Separate buffer for terrain (static, larger)
-        let max_terrain_cells = 512 * 256; // Full grid
+        // Terrain buffer (RLE rectangles - much smaller than full grid)
+        let max_terrain_rects = 10000; // Enough for RLE terrain
         let terrain_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Terrain Instance Buffer"),
-            size: (max_terrain_cells * std::mem::size_of::<ParticleInstance>()) as u64,
+            size: (max_terrain_rects * std::mem::size_of::<TerrainInstance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         Self {
             pipeline,
+            terrain_pipeline,
             particle_buffer,
             terrain_buffer,
             uniform_buffer,
             uniform_bind_group,
             max_particles,
-            max_terrain_cells,
+            max_terrain_rects,
             cached_terrain_count: 0,
             terrain_dirty: true, // Force initial build
         }
@@ -312,31 +392,51 @@ impl ParticleRenderer {
         gpu.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // Only rebuild terrain buffer if dirty
+        // Only rebuild terrain buffer if dirty - use RLE to merge horizontal runs
         if self.terrain_dirty {
-            let mut instances: Vec<ParticleInstance> = Vec::new();
+            let mut instances: Vec<TerrainInstance> = Vec::new();
             let terrain_color = [0.45, 0.35, 0.25, 1.0]; // Lighter brown terrain
 
+            // RLE: scan each row and merge consecutive solid cells into rectangles
             for j in 0..grid.height {
-                for i in 0..grid.width {
-                    let idx = j * grid.width + i;
-                    if grid.solid[idx] {
-                        // Cell center position
-                        let x = (i as f32 + 0.5) * cell_size;
+                let mut run_start: Option<usize> = None;
+
+                for i in 0..=grid.width {
+                    let is_solid = if i < grid.width {
+                        let idx = j * grid.width + i;
+                        grid.solid[idx]
+                    } else {
+                        false // End of row triggers final run
+                    };
+
+                    if is_solid {
+                        if run_start.is_none() {
+                            run_start = Some(i);
+                        }
+                    } else if let Some(start) = run_start {
+                        // End of run - emit rectangle
+                        let run_len = i - start;
+                        let width = run_len as f32 * cell_size;
+                        let height = cell_size;
+
+                        // Rectangle center
+                        let x = (start as f32 + run_len as f32 / 2.0) * cell_size;
                         let y = (j as f32 + 0.5) * cell_size;
 
-                        instances.push(ParticleInstance {
+                        instances.push(TerrainInstance {
                             position: [x, y],
                             color: terrain_color,
-                            size: cell_size * 1.05, // Slightly larger to avoid gaps
-                            _padding: 0.0,
+                            size_x: width * 1.02, // Slight overlap to avoid gaps
+                            size_y: height * 1.02,
                         });
+
+                        run_start = None;
                     }
                 }
             }
 
             // Update cached count and upload to GPU
-            self.cached_terrain_count = instances.len().min(self.max_terrain_cells);
+            self.cached_terrain_count = instances.len().min(self.max_terrain_rects);
             if self.cached_terrain_count > 0 {
                 gpu.queue.write_buffer(
                     &self.terrain_buffer,
@@ -346,14 +446,18 @@ impl ParticleRenderer {
             }
 
             self.terrain_dirty = false;
-            eprintln!("TERRAIN: cached {} solid cells", self.cached_terrain_count);
+            eprintln!(
+                "TERRAIN: {} rectangles (RLE from {} rows)",
+                self.cached_terrain_count,
+                grid.height
+            );
         }
 
         if self.cached_terrain_count == 0 {
             return;
         }
 
-        // Render pass using cached data
+        // Render pass using cached data with terrain pipeline
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Terrain Render Pass"),
@@ -370,7 +474,7 @@ impl ParticleRenderer {
                 occlusion_query_set: None,
             });
 
-            render_pass.set_pipeline(&self.pipeline);
+            render_pass.set_pipeline(&self.terrain_pipeline);
             render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.terrain_buffer.slice(..));
             render_pass.draw(0..6, 0..self.cached_terrain_count as u32);
