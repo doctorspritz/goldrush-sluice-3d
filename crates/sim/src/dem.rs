@@ -49,7 +49,7 @@ pub struct DemParams {
 impl Default for DemParams {
     fn default() -> Self {
         Self {
-            contact_stiffness: 5000.0,       // Stiffer for proper packing
+            contact_stiffness: 20000.0,      // Must overpower gravity for stable packing
             damping_ratio: 0.7,              // Critically damped
             friction_coeff: 0.6,             // Legacy fallback
             tangent_stiffness_ratio: 0.4,    // k_t = 0.4 * k_n
@@ -527,7 +527,7 @@ impl DemSimulation {
             let g_eff = Self::effective_gravity(base_gravity, p.material, in_water);
             p.velocity.y += g_eff * dt;
 
-            // Water drag
+            // Water drag OR global damping (not both)
             if in_water {
                 if use_flip_velocities {
                     let water_vel = grid.sample_velocity(p.position);
@@ -536,8 +536,11 @@ impl DemSimulation {
                     let vel_diff = water_vel - p.velocity;
                     p.velocity += vel_diff * drag_factor * dt;
                 }
-                // Light damping in water (friction handles most dissipation now)
+                // Light damping in water
                 p.velocity *= 0.995;
+            } else {
+                // Global velocity damping only for DRY sediments (not in water)
+                p.velocity *= self.params.velocity_damping;
             }
 
             // Move
@@ -640,9 +643,16 @@ impl DemSimulation {
                                 };
                                 let f_t_max = mu * f_n;
 
-                                // Tangential force: spring-like resistance clamped by Coulomb
-                                let f_t_spring = k_t * v_t.abs() * dt;
-                                let f_t = f_t_spring.min(f_t_max) * (-v_t.signum());
+                                // Proper Coulomb friction: viscous damping clamped by μ*F_n
+                                let v_t_mag = v_t.abs();
+                                let f_t = if v_t_mag > 1e-6 {
+                                    // Viscous resistance (no dt - that's added in impulse calculation)
+                                    let damping_force = k_t * v_t_mag;
+                                    let friction_force = damping_force.min(f_t_max);
+                                    -friction_force * v_t.signum()  // Oppose motion
+                                } else {
+                                    0.0
+                                };
 
                                 // Total impulse
                                 let impulse_n = normal * f_n * dt;

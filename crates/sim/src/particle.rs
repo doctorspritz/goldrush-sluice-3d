@@ -216,18 +216,7 @@ impl ParticleMaterial {
 
         numerator / denominator
     }
-
-    /// Friction coefficient for sliding on the floor
-    /// Higher values = stops faster
-    pub fn friction_coefficient(&self) -> f32 {
-        match self {
-            Self::Water => 0.0,
-            Self::Mud => 0.4,
-            Self::Sand => 0.6,
-            Self::Magnetite => 0.7,
-            Self::Gold => 0.8, // Heavy, high friction
-        }
-    }
+    // NOTE: friction_coefficient() removed - use static_friction() and dynamic_friction() instead
 }
 
 /// A fluid particle - supports water, mud, and sediment types

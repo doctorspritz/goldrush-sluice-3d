@@ -382,6 +382,107 @@ impl App {
             self.profile_accum = [0.0; 7];
             self.profile_count = 0;
         }
+
+        // Sediment diagnostics every 10 seconds
+        if self.frame_count % 600 == 0 {
+            self.print_sediment_diagnostics();
+        }
+    }
+
+    /// Analyze sediment behavior for DEM validation
+    fn print_sediment_diagnostics(&self) {
+        use sim::particle::ParticleMaterial;
+
+        let particles = &self.sim.particles.list;
+
+        // Count by type
+        let mut gold_count = 0usize;
+        let mut sand_count = 0usize;
+        let mut magnetite_count = 0usize;
+        let mut mud_count = 0usize;
+        let mut water_count = 0usize;
+
+        // Velocity stats for sediments
+        let mut sediment_vel_sum = 0.0f32;
+        let mut sediment_vel_max = 0.0f32;
+        let mut settled_count = 0usize; // vel < 5 px/s
+        let mut moving_count = 0usize;  // vel >= 5 px/s
+
+        // Stratification: track average Y position by material
+        let mut gold_y_sum = 0.0f32;
+        let mut sand_y_sum = 0.0f32;
+        let mut magnetite_y_sum = 0.0f32;
+
+        // Pile height tracking (sample columns)
+        let mut max_sediment_y = 0.0f32;
+
+        const SETTLED_THRESHOLD: f32 = 5.0; // px/s
+
+        for p in particles {
+            let vel_mag = p.velocity.length();
+
+            match p.material {
+                ParticleMaterial::Water => water_count += 1,
+                ParticleMaterial::Gold => {
+                    gold_count += 1;
+                    gold_y_sum += p.position.y;
+                    sediment_vel_sum += vel_mag;
+                    sediment_vel_max = sediment_vel_max.max(vel_mag);
+                    if vel_mag < SETTLED_THRESHOLD { settled_count += 1; } else { moving_count += 1; }
+                    max_sediment_y = max_sediment_y.max(p.position.y);
+                }
+                ParticleMaterial::Sand => {
+                    sand_count += 1;
+                    sand_y_sum += p.position.y;
+                    sediment_vel_sum += vel_mag;
+                    sediment_vel_max = sediment_vel_max.max(vel_mag);
+                    if vel_mag < SETTLED_THRESHOLD { settled_count += 1; } else { moving_count += 1; }
+                    max_sediment_y = max_sediment_y.max(p.position.y);
+                }
+                ParticleMaterial::Magnetite => {
+                    magnetite_count += 1;
+                    magnetite_y_sum += p.position.y;
+                    sediment_vel_sum += vel_mag;
+                    sediment_vel_max = sediment_vel_max.max(vel_mag);
+                    if vel_mag < SETTLED_THRESHOLD { settled_count += 1; } else { moving_count += 1; }
+                    max_sediment_y = max_sediment_y.max(p.position.y);
+                }
+                ParticleMaterial::Mud => {
+                    mud_count += 1;
+                    sediment_vel_sum += vel_mag;
+                    if vel_mag < SETTLED_THRESHOLD { settled_count += 1; } else { moving_count += 1; }
+                }
+            }
+        }
+
+        let total_sediment = gold_count + sand_count + magnetite_count + mud_count;
+        if total_sediment == 0 {
+            eprintln!("\n=== SEDIMENT DIAGNOSTICS === (no sediments yet)");
+            return;
+        }
+
+        // Compute averages
+        let avg_sediment_vel = sediment_vel_sum / total_sediment as f32;
+        let gold_avg_y = if gold_count > 0 { gold_y_sum / gold_count as f32 } else { 0.0 };
+        let sand_avg_y = if sand_count > 0 { sand_y_sum / sand_count as f32 } else { 0.0 };
+        let magnetite_avg_y = if magnetite_count > 0 { magnetite_y_sum / magnetite_count as f32 } else { 0.0 };
+        let settled_pct = 100.0 * settled_count as f32 / total_sediment as f32;
+
+        // Stratification check: gold should be LOWER (smaller Y) than sand
+        // In our coordinate system, Y increases downward (toward floor)
+        let stratification_ok = gold_count == 0 || sand_count == 0 || gold_avg_y >= sand_avg_y;
+
+        eprintln!("\n=== SEDIMENT DIAGNOSTICS ===");
+        eprintln!("Counts: gold={} sand={} magnetite={} mud={} water={}",
+            gold_count, sand_count, magnetite_count, mud_count, water_count);
+        eprintln!("Velocity: avg={:.1} max={:.1} px/s | settled(<5)={:.0}% moving={:.0}%",
+            avg_sediment_vel, sediment_vel_max, settled_pct, 100.0 - settled_pct);
+        eprintln!("Avg Y pos: gold={:.1} magnetite={:.1} sand={:.1} (lower=deeper)",
+            gold_avg_y, magnetite_avg_y, sand_avg_y);
+        eprintln!("Stratification: {} (gold should be >= sand Y)",
+            if stratification_ok { "GOOD" } else { "BAD - gold floating!" });
+        eprintln!("Pile height: max_y={:.1}", max_sediment_y);
+        eprintln!("============================\n");
     }
 
     fn render(&mut self) {
