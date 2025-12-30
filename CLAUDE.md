@@ -58,6 +58,21 @@ Working System + New Code = Problem
 - Commit working states frequently
 - Never make large refactors without user approval
 
+### PERFORMANCE TESTING - USE REALISTIC SCALES
+
+**Short tests with few particles tell us NOTHING.**
+
+When testing performance optimizations:
+- Run simulation for **at least 60 seconds** (preferably 2+ minutes)
+- Use **100k+ particles** minimum, ideally 500k-1M
+- Wait for steady state (particle count stabilizes)
+- Measure after warmup, not during initial ramp-up
+
+**BAD test:** 5 seconds, 5000 particles → "looks faster!"
+**GOOD test:** 2 minutes, 500k particles → actual FPS comparison
+
+The goal is 1 million particles. Optimize for that, not for toy demos.
+
 ## Project: Goldrush Fluid Miner
 
 FLIP/APIC fluid simulation with sediment transport.
