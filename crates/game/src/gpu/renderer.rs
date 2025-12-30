@@ -32,6 +32,9 @@ pub struct ParticleRenderer {
     uniform_bind_group: wgpu::BindGroup,
     max_particles: usize,
     max_terrain_cells: usize,
+    // Terrain caching - avoid rebuilding static geometry every frame
+    cached_terrain_count: usize,
+    terrain_dirty: bool,
 }
 
 impl ParticleRenderer {
@@ -163,7 +166,14 @@ impl ParticleRenderer {
             uniform_bind_group,
             max_particles,
             max_terrain_cells,
+            cached_terrain_count: 0,
+            terrain_dirty: true, // Force initial build
         }
+    }
+
+    /// Mark terrain as dirty (call when solid cells change)
+    pub fn invalidate_terrain(&mut self) {
+        self.terrain_dirty = true;
     }
 
     /// Update particle data and render
@@ -272,8 +282,9 @@ impl ParticleRenderer {
     }
 
     /// Draw terrain (solid cells) as colored blocks
+    /// Uses cached geometry - only rebuilds when terrain_dirty is true
     pub fn draw_terrain(
-        &self,
+        &mut self,
         gpu: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
@@ -301,47 +312,48 @@ impl ParticleRenderer {
         gpu.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // Build instance data for solid cells
-        let mut instances: Vec<ParticleInstance> = Vec::new();
-        let terrain_color = [0.45, 0.35, 0.25, 1.0]; // Lighter brown terrain
+        // Only rebuild terrain buffer if dirty
+        if self.terrain_dirty {
+            let mut instances: Vec<ParticleInstance> = Vec::new();
+            let terrain_color = [0.45, 0.35, 0.25, 1.0]; // Lighter brown terrain
 
-        for j in 0..grid.height {
-            for i in 0..grid.width {
-                let idx = j * grid.width + i;
-                if grid.solid[idx] {
-                    // Cell center position
-                    let x = (i as f32 + 0.5) * cell_size;
-                    let y = (j as f32 + 0.5) * cell_size;
+            for j in 0..grid.height {
+                for i in 0..grid.width {
+                    let idx = j * grid.width + i;
+                    if grid.solid[idx] {
+                        // Cell center position
+                        let x = (i as f32 + 0.5) * cell_size;
+                        let y = (j as f32 + 0.5) * cell_size;
 
-                    instances.push(ParticleInstance {
-                        position: [x, y],
-                        color: terrain_color,
-                        size: cell_size * 1.05, // Slightly larger to avoid gaps
-                        _padding: 0.0,
-                    });
+                        instances.push(ParticleInstance {
+                            position: [x, y],
+                            color: terrain_color,
+                            size: cell_size * 1.05, // Slightly larger to avoid gaps
+                            _padding: 0.0,
+                        });
+                    }
                 }
             }
-        }
 
-        // Debug: print terrain count occasionally
-        static mut FRAME: u32 = 0;
-        unsafe {
-            FRAME += 1;
-            if FRAME % 120 == 1 {
-                eprintln!("TERRAIN: {} solid cells", instances.len());
+            // Update cached count and upload to GPU
+            self.cached_terrain_count = instances.len().min(self.max_terrain_cells);
+            if self.cached_terrain_count > 0 {
+                gpu.queue.write_buffer(
+                    &self.terrain_buffer,
+                    0,
+                    bytemuck::cast_slice(&instances[..self.cached_terrain_count]),
+                );
             }
+
+            self.terrain_dirty = false;
+            eprintln!("TERRAIN: cached {} solid cells", self.cached_terrain_count);
         }
 
-        if instances.is_empty() {
+        if self.cached_terrain_count == 0 {
             return;
         }
 
-        // Limit to buffer size
-        let count = instances.len().min(self.max_terrain_cells);
-        gpu.queue
-            .write_buffer(&self.terrain_buffer, 0, bytemuck::cast_slice(&instances[..count]));
-
-        // Render pass
+        // Render pass using cached data
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Terrain Render Pass"),
@@ -361,7 +373,7 @@ impl ParticleRenderer {
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.terrain_buffer.slice(..));
-            render_pass.draw(0..6, 0..count as u32);
+            render_pass.draw(0..6, 0..self.cached_terrain_count as u32);
         }
     }
 }

@@ -284,7 +284,7 @@ impl App {
 
     fn render(&mut self) {
         let Some(gpu) = &self.gpu else { return };
-        let Some(renderer) = &self.particle_renderer else {
+        let Some(renderer) = &mut self.particle_renderer else {
             return;
         };
 
