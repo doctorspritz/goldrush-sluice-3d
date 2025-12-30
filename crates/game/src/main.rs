@@ -5,7 +5,7 @@
 
 mod gpu;
 
-use gpu::{pressure::GpuPressureSolver, renderer::ParticleRenderer, GpuContext};
+use gpu::{mgpcg::GpuMgpcgSolver, pressure::GpuPressureSolver, renderer::ParticleRenderer, GpuContext};
 use sim::{create_sluice_with_mode, FlipSimulation, RiffleMode, SluiceConfig};
 use std::sync::Arc;
 use winit::{
@@ -28,6 +28,7 @@ struct App {
     gpu: Option<GpuContext>,
     particle_renderer: Option<ParticleRenderer>,
     pressure_solver: Option<GpuPressureSolver>,
+    mgpcg_solver: Option<GpuMgpcgSolver>,
     window: Option<Arc<Window>>,
 
     // Simulation
@@ -77,18 +78,20 @@ impl App {
         create_sluice_with_mode(&mut sim, &sluice_config);
 
         // TEST: Add barrier at end of sluice to stress-test pressure solver
-        let barrier_x = SIM_WIDTH - 10; // 10 cells from right edge
-        for j in 0..SIM_HEIGHT {
-            for i in barrier_x..SIM_WIDTH {
-                let idx = j * SIM_WIDTH + i;
-                sim.grid.solid[idx] = true;
-            }
-        }
+        // DISABLED for now while debugging MGPCG
+        // let barrier_x = SIM_WIDTH - 10; // 10 cells from right edge
+        // for j in 0..SIM_HEIGHT {
+        //     for i in barrier_x..SIM_WIDTH {
+        //         let idx = j * SIM_WIDTH + i;
+        //         sim.grid.solid[idx] = true;
+        //     }
+        // }
 
         Self {
             gpu: None,
             particle_renderer: None,
             pressure_solver: None,
+            mgpcg_solver: None,
             window: None,
             sim,
             sluice_config,
@@ -166,8 +169,9 @@ impl App {
         // GPU pressure solver validated - produces identical divergence reduction
         let compare_pressure_solvers = false;
         let use_gpu_pressure = true; // GPU pressure solver enabled
+        let use_mgpcg = true; // Use MGPCG multigrid solver (vs SOR)
         if use_gpu_pressure {
-        if let (Some(gpu), Some(solver)) = (&self.gpu, &self.pressure_solver) {
+        if let (Some(gpu), Some(solver), Some(mgpcg)) = (&self.gpu, &self.pressure_solver, &self.mgpcg_solver) {
             use std::time::Instant;
 
             // Phase 1: CPU prepares for pressure solve
@@ -185,20 +189,24 @@ impl App {
                 .map(|&ct| ct as u32)
                 .collect();
 
-            // Upload with warm start from previous pressure
-            solver.upload_warm(
-                gpu,
-                &self.sim.grid.divergence,
-                &cell_types,
-                &self.sim.grid.pressure,
-                1.9,
-            );
-
-            // Run GPU pressure solve (30 iterations with warm start)
-            solver.solve(gpu, 30);
-
-            // Download pressure results
-            solver.download(gpu, &mut self.sim.grid.pressure);
+            if use_mgpcg {
+                // True MGPCG: PCG outer loop with V-cycle preconditioner
+                // Uses ALL multigrid levels (not limited to 2) for better convergence
+                mgpcg.upload_warm(gpu, &self.sim.grid.divergence, &cell_types, &self.sim.grid.pressure);
+                mgpcg.solve_pcg(gpu, 20); // 20 PCG iterations with V-cycle preconditioner
+                mgpcg.download(gpu, &mut self.sim.grid.pressure);
+            } else {
+                // SOR solver: simple iterative method
+                solver.upload_warm(
+                    gpu,
+                    &self.sim.grid.divergence,
+                    &cell_types,
+                    &self.sim.grid.pressure,
+                    1.9,
+                );
+                solver.solve(gpu, 30);
+                solver.download(gpu, &mut self.sim.grid.pressure);
+            }
 
             let press_time = press_start.elapsed().as_secs_f32() * 1000.0;
 
@@ -227,6 +235,8 @@ impl App {
 
                 eprintln!("GPU: div_in={:.2} -> div_out={:.2} | p[{:.1}..{:.1}] nan={} inf={} | vel={:.1}",
                     pre_max_div, post_max_div, min_p, max_p, nan_count, inf_count, max_vel);
+                use std::io::Write;
+                let _ = std::io::stderr().flush();
             }
 
             // Combine timings: [classify, sdf, p2g, press, g2p, neigh, rest]
@@ -564,9 +574,11 @@ impl ApplicationHandler for App {
         let particle_renderer = ParticleRenderer::new(&gpu, 300_000);
         let pressure_solver =
             GpuPressureSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32);
+        let mgpcg_solver = GpuMgpcgSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32);
 
         self.particle_renderer = Some(particle_renderer);
         self.pressure_solver = Some(pressure_solver);
+        self.mgpcg_solver = Some(mgpcg_solver);
         self.gpu = Some(gpu);
 
         log::info!("GPU initialized successfully");

@@ -88,7 +88,8 @@ fn laplacian_at(i: u32, j: u32) -> f32 {
 // Grid operations (2D)
 // ============================================================================
 
-// Compute residual: buffer_d = buffer_b - Laplacian(buffer_a)
+// Compute residual: buffer_d = -div - (-Laplacian(buffer_a)) = Laplacian(p) - div
+// This formulation gives r = b - A*x where A = -Laplacian (positive semi-definite)
 // buffer_a = pressure, buffer_b = divergence, buffer_c = cell_type, buffer_d = residual
 @compute @workgroup_size(8, 8)
 fn compute_pcg_residual(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -106,10 +107,13 @@ fn compute_pcg_residual(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    buffer_d[idx] = buffer_b[idx] - laplacian_at(i, j);
+    // r = Laplacian(p) - div (note: swapped from before)
+    // This makes the system positive semi-definite for CG
+    buffer_d[idx] = laplacian_at(i, j) - buffer_b[idx];
 }
 
-// Apply Laplacian: buffer_d = Laplacian(buffer_a)
+// Apply operator A = -Laplacian: buffer_d = -Laplacian(buffer_a)
+// This makes A positive semi-definite for CG convergence
 // buffer_a = p, buffer_c = cell_type, buffer_d = Ap
 @compute @workgroup_size(8, 8)
 fn apply_laplacian(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -127,7 +131,8 @@ fn apply_laplacian(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    buffer_d[idx] = laplacian_at(i, j);
+    // Return -Laplacian(p) to make the operator positive semi-definite
+    buffer_d[idx] = -laplacian_at(i, j);
 }
 
 // ============================================================================
@@ -154,14 +159,14 @@ fn xpay(@builtin(global_invocation_id) id: vec3<u32>) {
     buffer_a[idx] = buffer_b[idx] + params.alpha * buffer_a[idx];
 }
 
-// buffer_a = buffer_b
+// buffer_a = alpha * buffer_b (scaled copy, use alpha=1.0 for regular copy, alpha=-1.0 for negate)
 @compute @workgroup_size(256)
 fn copy_buffer(@builtin(global_invocation_id) id: vec3<u32>) {
     let idx = id.x;
     if (idx >= params.length) {
         return;
     }
-    buffer_a[idx] = buffer_b[idx];
+    buffer_a[idx] = params.alpha * buffer_b[idx];
 }
 
 // ============================================================================
@@ -205,6 +210,7 @@ fn dot_partial(
 
 // Finalize dot product by summing partial sums in buffer_d
 // Reads from buffer_d, writes final sum to buffer_d[0]
+// Handles grids up to 16M cells (64K workgroups = 64K partial sums)
 @compute @workgroup_size(256)
 fn dot_finalize(
     @builtin(local_invocation_id) local_id: vec3<u32>
@@ -212,16 +218,17 @@ fn dot_finalize(
     let tid = local_id.x;
     let num_partials = (params.length + 255u) / 256u;
 
-    // Load partial sums from buffer_d
-    if (tid < num_partials) {
-        shared_data[tid] = buffer_d[tid];
-    } else {
-        shared_data[tid] = 0.0;
+    // Each thread sums multiple partial sums in a strided loop
+    // This handles cases where num_partials > 256 (e.g., 512x512 grid = 1024 partials)
+    var local_sum = 0.0;
+    for (var i = tid; i < num_partials; i += 256u) {
+        local_sum += buffer_d[i];
     }
+    shared_data[tid] = local_sum;
 
     workgroupBarrier();
 
-    // Reduce
+    // Parallel reduction in shared memory
     for (var s = 128u; s > 0u; s = s >> 1u) {
         if (tid < s) {
             shared_data[tid] += shared_data[tid + s];

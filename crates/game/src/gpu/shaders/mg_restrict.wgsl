@@ -38,7 +38,7 @@ fn coarse_index(i: u32, j: u32) -> u32 {
 // Each coarse cell maps to a 2x2 block of fine cells
 // Full-weighting restriction: average the fluid cells in the 2x2 block
 @compute @workgroup_size(8, 8)
-fn restrict(@builtin(global_invocation_id) id: vec3<u32>) {
+fn mg_restrict(@builtin(global_invocation_id) id: vec3<u32>) {
     let ci = id.x;  // Coarse cell x
     let cj = id.y;  // Coarse cell y
 
@@ -77,12 +77,12 @@ fn restrict(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let c_idx = coarse_index(ci, cj);
 
-    // Set coarse divergence as average of fine residuals
-    // If no fluid cells, set to 0
+    // Set coarse divergence as AVERAGE of fine residuals
+    // This ensures restriction R and prolongation P satisfy R ≈ c·Pᵀ
+    // Since prolongation uses bilinear interpolation (weights sum to 1),
+    // restriction must also preserve amplitude via averaging
     if (count > 0u) {
-        // Full-weighting: multiply by 4/count to maintain consistent scaling
-        // For multigrid, we want to preserve the total residual
-        coarse_divergence[c_idx] = sum;  // Sum (not average) preserves total
+        coarse_divergence[c_idx] = sum / f32(count);  // Average preserves amplitude
     } else {
         coarse_divergence[c_idx] = 0.0;
     }
