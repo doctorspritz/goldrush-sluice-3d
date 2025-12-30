@@ -29,70 +29,59 @@ fn get_index(i: u32, j: u32) -> u32 {
     return j * params.width + i;
 }
 
-fn get_pressure(i: u32, j: u32) -> f32 {
-    if (i >= params.width || j >= params.height) {
-        return 0.0;
-    }
-    let ct = cell_type[get_index(i, j)];
-    if (ct == CELL_SOLID) {
-        return 0.0;  // Neumann BC
-    }
-    return pressure[get_index(i, j)];
-}
-
-// Compute Laplacian(pressure) at cell (i, j)
-// Uses the same stencil as the smoother: variable neighbor count for Neumann BCs
+// Compute Laplacian(pressure) at cell (i, j) using fixed 4-neighbor stencil
+// Uses Neumann BC: dp/dn = 0, implemented by mirroring pressure at boundaries/solids
+// Must match the stencil used by smoother (mg_smooth.wgsl) and PCG (pcg_ops.wgsl)
 fn laplacian(i: u32, j: u32) -> f32 {
     let idx = get_index(i, j);
     let p_center = pressure[idx];
 
-    var lap = 0.0;
-    var neighbor_count = 0.0;
+    // Gather neighbor pressures with Neumann BC (mirror at solid/boundary)
+    // Always use 4 neighbors for consistent stencil
 
-    // Left
+    // Left - mirror if at boundary or solid
+    var p_left = p_center;
     if (i > 0u) {
-        let left_type = cell_type[get_index(i - 1u, j)];
-        if (left_type != CELL_SOLID) {
-            lap += get_pressure(i - 1u, j) - p_center;
-            neighbor_count += 1.0;
+        let left_idx = get_index(i - 1u, j);
+        if (cell_type[left_idx] != CELL_SOLID) {
+            p_left = pressure[left_idx];
         }
     }
 
-    // Right
+    // Right - mirror if at boundary or solid
+    var p_right = p_center;
     if (i < params.width - 1u) {
-        let right_type = cell_type[get_index(i + 1u, j)];
-        if (right_type != CELL_SOLID) {
-            lap += get_pressure(i + 1u, j) - p_center;
-            neighbor_count += 1.0;
+        let right_idx = get_index(i + 1u, j);
+        if (cell_type[right_idx] != CELL_SOLID) {
+            p_right = pressure[right_idx];
         }
     }
 
-    // Down
+    // Down - mirror if at boundary or solid
+    var p_down = p_center;
     if (j > 0u) {
-        let down_type = cell_type[get_index(i, j - 1u)];
-        if (down_type != CELL_SOLID) {
-            lap += get_pressure(i, j - 1u) - p_center;
-            neighbor_count += 1.0;
+        let down_idx = get_index(i, j - 1u);
+        if (cell_type[down_idx] != CELL_SOLID) {
+            p_down = pressure[down_idx];
         }
     }
 
-    // Up
+    // Up - mirror if at boundary or solid
+    var p_up = p_center;
     if (j < params.height - 1u) {
-        let up_type = cell_type[get_index(i, j + 1u)];
-        if (up_type != CELL_SOLID) {
-            lap += get_pressure(i, j + 1u) - p_center;
-            neighbor_count += 1.0;
+        let up_idx = get_index(i, j + 1u);
+        if (cell_type[up_idx] != CELL_SOLID) {
+            p_up = pressure[up_idx];
         }
     }
 
-    // If no neighbors, Laplacian is 0
-    // For interior fluid cells, this simplifies to:
-    // lap = (p_left + p_right + p_down + p_up - 4*p_center)
-    // but we use variable neighbor count for Neumann BCs
-    return lap;
+    // Laplacian = (p_L + p_R + p_D + p_U - 4*p_center)
+    return p_left + p_right + p_down + p_up - 4.0 * p_center;
 }
 
 // Compute residual r = b - Ax at each cell
+// For the pressure equation: Laplacian(p) = div
+// Residual: r = div - Laplacian(p)
 @compute @workgroup_size(8, 8)
 fn compute_residual(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = id.x;
@@ -110,19 +99,8 @@ fn compute_residual(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    // r = b - Ax
-    // For the pressure equation: Laplacian(p) = div
-    // So: r = div - Laplacian(p)
-    //
-    // But wait - our Gauss-Seidel update is:
-    //   p_new = (sum_neighbors - div) / neighbor_count
-    // Which solves: neighbor_count * p = sum_neighbors - div
-    // Or: sum_neighbors - neighbor_count * p = div
-    //
-    // The residual for this is: r = div - (sum_neighbors - neighbor_count * p)
-    //                             = div - Laplacian(p) where Laplacian uses this form
-    //
-    // Using our laplacian function which computes sum_neighbors - neighbor_count * p:
+    // r = b - Ax = div - Laplacian(p)
+    // Uses fixed 4-neighbor Laplacian with Neumann BC mirroring
     residual[idx] = divergence[idx] - laplacian(i, j);
 }
 

@@ -46,8 +46,8 @@ fn get_pressure(i: u32, j: u32) -> f32 {
     return pressure[get_index(i, j)];
 }
 
-// Gauss-Seidel update for a single cell
-// Returns the updated pressure value
+// Gauss-Seidel update for a single cell using fixed 4-neighbor stencil
+// Uses Neumann BC: dp/dn = 0, implemented by mirroring pressure at boundaries/solids
 fn gs_update(i: u32, j: u32) {
     let idx = get_index(i, j);
 
@@ -56,50 +56,51 @@ fn gs_update(i: u32, j: u32) {
         return;
     }
 
-    // Gather neighbor pressures with Neumann BC handling
-    var sum_neighbors = 0.0;
-    var neighbor_count = 0.0;
+    let p_center = pressure[idx];
 
-    // Left neighbor
+    // Gather neighbor pressures with Neumann BC (mirror at solid/boundary)
+    // Always use 4 neighbors to match PCG Laplacian stencil
+
+    // Left neighbor - mirror if at boundary or solid
+    var p_left = p_center;
     if (i > 0u) {
-        let left_type = cell_type[get_index(i - 1u, j)];
-        if (left_type != CELL_SOLID) {
-            sum_neighbors += get_pressure(i - 1u, j);
-            neighbor_count += 1.0;
+        let left_idx = get_index(i - 1u, j);
+        if (cell_type[left_idx] != CELL_SOLID) {
+            p_left = pressure[left_idx];
         }
     }
 
-    // Right neighbor
+    // Right neighbor - mirror if at boundary or solid
+    var p_right = p_center;
     if (i < params.width - 1u) {
-        let right_type = cell_type[get_index(i + 1u, j)];
-        if (right_type != CELL_SOLID) {
-            sum_neighbors += get_pressure(i + 1u, j);
-            neighbor_count += 1.0;
+        let right_idx = get_index(i + 1u, j);
+        if (cell_type[right_idx] != CELL_SOLID) {
+            p_right = pressure[right_idx];
         }
     }
 
-    // Down neighbor
+    // Down neighbor - mirror if at boundary or solid
+    var p_down = p_center;
     if (j > 0u) {
-        let down_type = cell_type[get_index(i, j - 1u)];
-        if (down_type != CELL_SOLID) {
-            sum_neighbors += get_pressure(i, j - 1u);
-            neighbor_count += 1.0;
+        let down_idx = get_index(i, j - 1u);
+        if (cell_type[down_idx] != CELL_SOLID) {
+            p_down = pressure[down_idx];
         }
     }
 
-    // Up neighbor
+    // Up neighbor - mirror if at boundary or solid
+    var p_up = p_center;
     if (j < params.height - 1u) {
-        let up_type = cell_type[get_index(i, j + 1u)];
-        if (up_type != CELL_SOLID) {
-            sum_neighbors += get_pressure(i, j + 1u);
-            neighbor_count += 1.0;
+        let up_idx = get_index(i, j + 1u);
+        if (cell_type[up_idx] != CELL_SOLID) {
+            p_up = pressure[up_idx];
         }
     }
 
-    // Gauss-Seidel update: p = (sum_neighbors - div) / neighbor_count
-    if (neighbor_count > 0.0) {
-        pressure[idx] = (sum_neighbors - divergence[idx]) / neighbor_count;
-    }
+    // Gauss-Seidel update with fixed 4-neighbor stencil:
+    // Solves: (p_L + p_R + p_D + p_U - 4*p) = div
+    // => p = (p_L + p_R + p_D + p_U - div) / 4
+    pressure[idx] = (p_left + p_right + p_down + p_up - divergence[idx]) * 0.25;
 }
 
 // Process "red" cells: (i + j) % 2 == 0

@@ -42,54 +42,62 @@ fn get_pressure(i: u32, j: u32) -> f32 {
     return buffer_a[idx];
 }
 
-// Compute Laplacian of buffer_a at (i, j)
+// Compute Laplacian of buffer_a at (i, j) using fixed 4-neighbor stencil
+// Uses Neumann BC: dp/dn = 0, implemented by mirroring pressure at boundaries/solids
 fn laplacian_at(i: u32, j: u32) -> f32 {
     let idx = get_index(i, j);
     let p_center = buffer_a[idx];
 
-    var lap = 0.0;
+    // Gather neighbor pressures with Neumann BC (mirror at solid/boundary)
+    // Always use 4 neighbors for consistent stencil with smoother
 
-    // Left
+    // Left - mirror if at boundary or solid
+    var p_left = p_center;
     if (i > 0u) {
         let left_idx = get_index(i - 1u, j);
         if (get_cell_type(left_idx) != CELL_SOLID) {
-            lap += get_pressure(i - 1u, j) - p_center;
+            p_left = buffer_a[left_idx];
         }
     }
 
-    // Right
+    // Right - mirror if at boundary or solid
+    var p_right = p_center;
     if (i < params.width - 1u) {
         let right_idx = get_index(i + 1u, j);
         if (get_cell_type(right_idx) != CELL_SOLID) {
-            lap += get_pressure(i + 1u, j) - p_center;
+            p_right = buffer_a[right_idx];
         }
     }
 
-    // Down
+    // Down - mirror if at boundary or solid
+    var p_down = p_center;
     if (j > 0u) {
         let down_idx = get_index(i, j - 1u);
         if (get_cell_type(down_idx) != CELL_SOLID) {
-            lap += get_pressure(i, j - 1u) - p_center;
+            p_down = buffer_a[down_idx];
         }
     }
 
-    // Up
+    // Up - mirror if at boundary or solid
+    var p_up = p_center;
     if (j < params.height - 1u) {
         let up_idx = get_index(i, j + 1u);
         if (get_cell_type(up_idx) != CELL_SOLID) {
-            lap += get_pressure(i, j + 1u) - p_center;
+            p_up = buffer_a[up_idx];
         }
     }
 
-    return lap;
+    // Laplacian = (p_L + p_R + p_D + p_U - 4*p_center)
+    return p_left + p_right + p_down + p_up - 4.0 * p_center;
 }
 
 // ============================================================================
 // Grid operations (2D)
 // ============================================================================
 
-// Compute residual: buffer_d = -div - (-Laplacian(buffer_a)) = Laplacian(p) - div
-// This formulation gives r = b - A*x where A = -Laplacian (positive semi-definite)
+// Compute residual: r = b - A*x where A = -Laplacian, b = -div
+// The pressure equation is: Laplacian(p) = div, which becomes (-Laplacian)p = -div
+// So: r = b - Ax = (-div) - (-Laplacian(p)) = Laplacian(p) - div
 // buffer_a = pressure, buffer_b = divergence, buffer_c = cell_type, buffer_d = residual
 @compute @workgroup_size(8, 8)
 fn compute_pcg_residual(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -107,8 +115,7 @@ fn compute_pcg_residual(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    // r = Laplacian(p) - div (note: swapped from before)
-    // This makes the system positive semi-definite for CG
+    // r = b - Ax = (-div) - (-Laplacian(p)) = Laplacian(p) - div
     buffer_d[idx] = laplacian_at(i, j) - buffer_b[idx];
 }
 

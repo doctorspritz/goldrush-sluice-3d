@@ -169,7 +169,7 @@ impl App {
         // GPU pressure solver validated - produces identical divergence reduction
         let compare_pressure_solvers = false;
         let use_gpu_pressure = true; // GPU pressure solver enabled
-        let use_mgpcg = true; // Use MGPCG multigrid solver (vs SOR)
+        let use_mgpcg = false; // ARCHIVED: MGPCG has sync overhead issues. Use SOR instead.
         if use_gpu_pressure {
         if let (Some(gpu), Some(solver), Some(mgpcg)) = (&self.gpu, &self.pressure_solver, &self.mgpcg_solver) {
             use std::time::Instant;
