@@ -22,6 +22,10 @@ const SIM_HEIGHT: usize = 256;
 const CELL_SIZE: f32 = 1.0;
 const SCALE: f32 = 2.5;
 
+// Emitter configuration
+const PARTICLES_PER_EMITTER: usize = 10;
+const EMITTER_SPACING: f32 = 3.0; // Cells between emitters
+
 /// Application state
 struct App {
     // Rendering
@@ -43,7 +47,7 @@ struct App {
     inlet_y: f32,
     inlet_vx: f32,
     inlet_vy: f32,
-    spawn_rate: usize,
+    num_emitters: usize,
     flow_multiplier: usize,
     sand_rate: usize,
     magnetite_rate: usize,
@@ -106,7 +110,7 @@ impl App {
             inlet_y: (SIM_HEIGHT / 4 - 10) as f32,
             inlet_vx: 80.0,
             inlet_vy: 5.0,
-            spawn_rate: 40,
+            num_emitters: 4,
             flow_multiplier: 1,
             sand_rate: 4,
             magnetite_rate: 8,
@@ -136,34 +140,40 @@ impl App {
             self.sim.spawn_water(wx, wy, 20.0, 0.0, 5);
         }
 
-        // Spawn water and sediments
-        self.sim.spawn_water(
-            self.inlet_x,
-            self.inlet_y,
-            self.inlet_vx,
-            self.inlet_vy,
-            self.spawn_rate * self.flow_multiplier,
-        );
+        // Spawn water from multiple emitters (spaced vertically)
+        for i in 0..self.num_emitters {
+            let emitter_y = self.inlet_y - (i as f32 * EMITTER_SPACING);
+            self.sim.spawn_water(
+                self.inlet_x,
+                emitter_y,
+                self.inlet_vx,
+                self.inlet_vy,
+                PARTICLES_PER_EMITTER * self.flow_multiplier,
+            );
+        }
+
+        // Sediments spawn from middle emitter
+        let mid_emitter_y = self.inlet_y - ((self.num_emitters / 2) as f32 * EMITTER_SPACING);
 
         // Sand
         let effective_sand = self.sand_rate / self.flow_multiplier.max(1);
         if effective_sand > 0 && self.frame_count % effective_sand as u64 == 0 {
             self.sim
-                .spawn_sand(self.inlet_x, self.inlet_y, self.inlet_vx, self.inlet_vy, 1);
+                .spawn_sand(self.inlet_x, mid_emitter_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
         // Magnetite
         let effective_magnetite = self.magnetite_rate / self.flow_multiplier.max(1);
         if effective_magnetite > 0 && self.frame_count % effective_magnetite as u64 == 0 {
             self.sim
-                .spawn_magnetite(self.inlet_x, self.inlet_y, self.inlet_vx, self.inlet_vy, 1);
+                .spawn_magnetite(self.inlet_x, mid_emitter_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
         // Gold
         let effective_gold = self.gold_rate / self.flow_multiplier.max(1);
         if effective_gold > 0 && self.frame_count % effective_gold as u64 == 0 {
             self.sim
-                .spawn_gold(self.inlet_x, self.inlet_y, self.inlet_vx, self.inlet_vy, 1);
+                .spawn_gold(self.inlet_x, mid_emitter_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
         // Remove particles at outflow - DISABLED for barrier test
@@ -486,8 +496,8 @@ impl App {
                     self.inlet_vx = (self.inlet_vx - 5.0).max(20.0);
                 }
             }
-            KeyCode::ArrowUp => self.spawn_rate = (self.spawn_rate + 5).min(100),
-            KeyCode::ArrowDown => self.spawn_rate = self.spawn_rate.saturating_sub(5).max(5),
+            KeyCode::ArrowUp => self.num_emitters = (self.num_emitters + 1).min(20),
+            KeyCode::ArrowDown => self.num_emitters = self.num_emitters.saturating_sub(1).max(1),
             KeyCode::Equal => {
                 if !self.shift_down {
                     self.zoom = (self.zoom + 0.25).min(6.0);
