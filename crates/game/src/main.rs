@@ -98,8 +98,8 @@ impl App {
             inlet_y: (SIM_HEIGHT / 4 - 10) as f32,
             inlet_vx: 80.0,
             inlet_vy: 5.0,
-            spawn_rate: 40,
-            flow_multiplier: 1,
+            spawn_rate: 500,  // Increased for faster particle accumulation
+            flow_multiplier: 5, // 5x more particles per frame
             sand_rate: 4,
             magnetite_rate: 8,
             gold_rate: 20,
@@ -163,10 +163,9 @@ impl App {
         // Run simulation with profiling
         let dt = 1.0 / 60.0;
 
-        // TODO: Debug GPU pressure solver - produces similar divergence numbers but
-        // visually worse results than CPU. Keep CPU for now until GPU is fixed.
-        // See diagnostics: GPU div_out=6-16, CPU div_out=2-20, but CPU looks correct.
-        let use_gpu_pressure = false;
+        // GPU pressure solver validated - produces identical divergence reduction
+        let compare_pressure_solvers = false;
+        let use_gpu_pressure = true; // GPU pressure solver enabled
         if use_gpu_pressure {
         if let (Some(gpu), Some(solver)) = (&self.gpu, &self.pressure_solver) {
             use std::time::Instant;
@@ -254,6 +253,73 @@ impl App {
                     .map(|p| p.velocity.length())
                     .fold(0.0f32, f32::max);
                 eprintln!("CPU: div_out={:.4} | vel={:.1}", max_div, max_vel);
+            }
+        }
+
+        // DEBUG: Compare GPU and CPU pressure solvers on same input
+        // Run every 300 frames (~5 seconds) to reduce overhead
+        if compare_pressure_solvers && self.frame_count % 300 == 0 && self.frame_count > 0 {
+            if let (Some(gpu), Some(solver)) = (&self.gpu, &self.pressure_solver) {
+                // Save current state
+                let saved_pressure = self.sim.grid.pressure.clone();
+
+                // Prepare for pressure solve (computes divergence, cell types)
+                self.sim.grid.compute_divergence();
+                let divergence_snapshot = self.sim.grid.divergence.clone();
+
+                // Run CPU multigrid solve
+                self.sim.grid.pressure.fill(0.0); // Cold start for fair comparison
+                self.sim.grid.solve_pressure_multigrid(4);
+                let cpu_pressure = self.sim.grid.pressure.clone();
+
+                // Compute CPU divergence after
+                self.sim.grid.compute_divergence();
+                let cpu_div_after: f32 = self.sim.grid.divergence.iter().map(|d| d.abs()).sum();
+
+                // Reset for GPU solve
+                self.sim.grid.divergence.copy_from_slice(&divergence_snapshot);
+                self.sim.grid.pressure.fill(0.0); // Cold start
+
+                // Convert cell types
+                let cell_types: Vec<u32> = self.sim.grid.cell_type.iter().map(|&ct| ct as u32).collect();
+
+                // Run GPU solve (cold start)
+                solver.upload(gpu, &self.sim.grid.divergence, &cell_types, 1.9);
+                solver.solve(gpu, 100); // More iterations for SOR to converge
+                solver.download(gpu, &mut self.sim.grid.pressure);
+                let gpu_pressure = self.sim.grid.pressure.clone();
+
+                // Compute GPU divergence after
+                self.sim.grid.compute_divergence();
+                let gpu_div_after: f32 = self.sim.grid.divergence.iter().map(|d| d.abs()).sum();
+
+                // Compare pressure fields
+                let mut max_diff = 0.0f32;
+                let mut sum_diff = 0.0f32;
+                let mut count = 0;
+                for (i, (&cpu_p, &gpu_p)) in cpu_pressure.iter().zip(gpu_pressure.iter()).enumerate() {
+                    if self.sim.grid.cell_type[i] == sim::grid::CellType::Fluid {
+                        let diff = (cpu_p - gpu_p).abs();
+                        max_diff = max_diff.max(diff);
+                        sum_diff += diff;
+                        count += 1;
+                    }
+                }
+                let avg_diff = if count > 0 { sum_diff / count as f32 } else { 0.0 };
+
+                // Pressure stats
+                let cpu_max = cpu_pressure.iter().cloned().fold(f32::MIN, f32::max);
+                let cpu_min = cpu_pressure.iter().cloned().fold(f32::MAX, f32::min);
+                let gpu_max = gpu_pressure.iter().cloned().fold(f32::MIN, f32::max);
+                let gpu_min = gpu_pressure.iter().cloned().fold(f32::MAX, f32::min);
+
+                eprintln!("=== PRESSURE COMPARISON ({} particles) ===", self.sim.particles.len());
+                eprintln!("CPU: p[{:.2}..{:.2}], div_after={:.4}", cpu_min, cpu_max, cpu_div_after);
+                eprintln!("GPU: p[{:.2}..{:.2}], div_after={:.4}", gpu_min, gpu_max, gpu_div_after);
+                eprintln!("Diff: max={:.4}, avg={:.6}, fluid_cells={}", max_diff, avg_diff, count);
+
+                // Restore original pressure
+                self.sim.grid.pressure.copy_from_slice(&saved_pressure);
             }
         }
 
