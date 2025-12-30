@@ -206,8 +206,8 @@ impl FlipSimulation {
         self.grid.compute_divergence();
         let div_before = self.grid.total_divergence();
 
-        // Multigrid pressure solver - 8 V-cycles for better convergence
-        self.grid.solve_pressure_multigrid(8);
+        // Multigrid pressure solver - 2 V-cycles (fast, acceptable divergence)
+        self.grid.solve_pressure_multigrid(2);
         // Two-way coupling: use mixture density for pressure gradient
         self.apply_pressure_gradient_two_way(dt);
 

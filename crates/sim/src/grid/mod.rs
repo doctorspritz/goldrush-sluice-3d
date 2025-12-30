@@ -1738,9 +1738,9 @@ impl Grid {
     /// V-cycle multigrid iteration
     fn mg_v_cycle(&mut self, level: usize) {
         let max_level = self.mg_levels.len() - 1;
-        let pre_smooth = 10;
-        let post_smooth = 10;
-        let coarse_solve = 50;
+        let pre_smooth = 3;
+        let post_smooth = 3;
+        let coarse_solve = 20;
 
         // Pre-smoothing (Gauss-Seidel - faster for small grids)
         self.mg_smooth(level, pre_smooth);
