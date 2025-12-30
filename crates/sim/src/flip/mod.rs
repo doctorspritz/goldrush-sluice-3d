@@ -453,6 +453,45 @@ impl FlipSimulation {
         ]
     }
 
+    /// Phase 1a: Prepare for external P2G (e.g., GPU P2G)
+    /// Does classify and SDF only. Caller is responsible for running P2G
+    /// and then calling complete_p2g_phase().
+    /// Returns timings: [classify, sdf]
+    pub fn prepare_for_p2g(&mut self) -> [f32; 2] {
+        use std::time::Instant;
+        self.frame = self.frame.wrapping_add(1);
+
+        let t0 = Instant::now();
+        self.classify_cells();
+        let t1 = Instant::now();
+
+        self.grid.compute_sdf();
+        let t2 = Instant::now();
+
+        [
+            (t1 - t0).as_secs_f32() * 1000.0,
+            (t2 - t1).as_secs_f32() * 1000.0,
+        ]
+    }
+
+    /// Phase 1b: Complete P2G phase after external P2G (e.g., GPU P2G)
+    /// Assumes grid.u and grid.v have been filled by external P2G.
+    /// Does extrapolate, store_old, forces, and computes divergence.
+    pub fn complete_p2g_phase(&mut self, dt: f32) {
+        self.grid.extrapolate_velocities(1);
+        self.store_old_velocities();
+
+        // Apply forces before pressure solve
+        self.grid.apply_gravity(dt);
+        {
+            let grid = &mut self.grid;
+            let pile_height = &self.pile_height;
+            grid.apply_vorticity_confinement_with_piles(dt, 0.05, pile_height);
+        }
+        self.grid.enforce_boundary_conditions();
+        self.grid.compute_divergence();
+    }
+
     /// Phase 2: Finalize after pressure solve
     /// Assumes grid.pressure has been solved (either CPU or GPU)
     /// Does pressure gradient, G2P, neighbor, advection
