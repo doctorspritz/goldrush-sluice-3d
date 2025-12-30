@@ -459,12 +459,18 @@ impl App {
                 // Reset simulation
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
+                if let Some(ref mut renderer) = self.particle_renderer {
+                    renderer.invalidate_terrain();
+                }
             }
             KeyCode::KeyC => self.sim.particles.list.clear(),
             KeyCode::KeyN => {
                 self.sluice_config.riffle_mode = self.sluice_config.riffle_mode.next();
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
+                if let Some(ref mut renderer) = self.particle_renderer {
+                    renderer.invalidate_terrain();
+                }
             }
             KeyCode::ArrowRight => {
                 if self.shift_down {
@@ -503,23 +509,35 @@ impl App {
                     (self.sluice_config.riffle_spacing + 10).min(120);
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
+                if let Some(ref mut renderer) = self.particle_renderer {
+                    renderer.invalidate_terrain();
+                }
             }
             KeyCode::KeyA => {
                 self.sluice_config.riffle_spacing =
                     self.sluice_config.riffle_spacing.saturating_sub(10).max(30);
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
+                if let Some(ref mut renderer) = self.particle_renderer {
+                    renderer.invalidate_terrain();
+                }
             }
             KeyCode::KeyW => {
                 self.sluice_config.riffle_height = (self.sluice_config.riffle_height + 2).min(16);
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
+                if let Some(ref mut renderer) = self.particle_renderer {
+                    renderer.invalidate_terrain();
+                }
             }
             KeyCode::KeyS => {
                 self.sluice_config.riffle_height =
                     self.sluice_config.riffle_height.saturating_sub(2).max(4);
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
+                if let Some(ref mut renderer) = self.particle_renderer {
+                    renderer.invalidate_terrain();
+                }
             }
             KeyCode::KeyZ => {
                 if self.shift_down {
@@ -529,6 +547,9 @@ impl App {
                 }
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
+                if let Some(ref mut renderer) = self.particle_renderer {
+                    renderer.invalidate_terrain();
+                }
             }
             KeyCode::Digit2 => {
                 self.sand_rate = if self.sand_rate == 0 {
