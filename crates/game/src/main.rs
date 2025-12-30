@@ -177,9 +177,11 @@ impl App {
                 .spawn_gold(self.inlet_x, sediment_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
-        // Remove particles at outflow - DISABLED for barrier test
-        // let outflow_x = (SIM_WIDTH as f32 - 5.0) * CELL_SIZE;
-        // self.sim.particles.list.retain(|p| p.position.x < outflow_x);
+        // Remove water at outflow (keep sediments to test packing)
+        let outflow_x = (SIM_WIDTH as f32 - 5.0) * CELL_SIZE;
+        self.sim.particles.list.retain(|p| {
+            p.position.x < outflow_x || p.is_sediment()
+        });
 
         // Run simulation with profiling
         let dt = 1.0 / 60.0;
@@ -624,11 +626,11 @@ impl ApplicationHandler for App {
         let gpu = pollster::block_on(GpuContext::new(window.clone()));
 
         // Create renderers and GPU compute solvers
-        let particle_renderer = ParticleRenderer::new(&gpu, 300_000);
+        let particle_renderer = ParticleRenderer::new(&gpu, 500_000);
         let pressure_solver =
             GpuPressureSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32);
-        let p2g_solver = GpuP2gSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32, 300_000);
-        let g2p_solver = GpuG2pSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32, 300_000);
+        let p2g_solver = GpuP2gSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32, 500_000);
+        let g2p_solver = GpuG2pSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32, 500_000);
 
         self.particle_renderer = Some(particle_renderer);
         self.pressure_solver = Some(pressure_solver);
