@@ -12,12 +12,15 @@ impl FlipSimulation {
     ///
     /// Higher sand fraction -> higher mixture density -> smaller acceleration
     /// This is what causes sand-laden flow to move slower than clear water
+    ///
+    /// Phase 1 enhancement: Uses actual material density instead of hardcoded sand density.
+    /// Gold beds (density 19.3) will divert water flow much more than sand beds (density 2.65).
     pub(crate) fn apply_pressure_gradient_two_way_impl(&mut self, _dt: f32) {
         let scale = 1.0 / self.grid.cell_size;
 
         // Density constants
         const WATER_DENSITY: f32 = 1.0;
-        const SAND_DENSITY: f32 = 2.65;
+        const FALLBACK_SEDIMENT_DENSITY: f32 = 2.65; // Used when no sediment present
 
         // Update U velocities (horizontal)
         for j in 0..self.grid.height {
@@ -33,16 +36,24 @@ impl FlipSimulation {
                     self.grid.u[u_idx] = 0.0;
                 } else if left_type == CellType::Fluid || right_type == CellType::Fluid {
                     // Compute sand fraction at this face
-                    let sand_vol = self.sand_volume_u[u_idx];
+                    let sediment_vol = self.sand_volume_u[u_idx];
                     let water_vol = self.water_volume_u[u_idx];
-                    let total_vol = sand_vol + water_vol;
+                    let total_vol = sediment_vol + water_vol;
 
-                    // Mixture density: rho_mix = rho_water * (1 - phi) + rho_sand * phi
-                    // Capped at 1.5 so water can still push through sand accumulations
+                    // Compute actual sediment density from weighted sum
+                    // This reflects the actual material composition (gold vs sand vs magnetite)
+                    let avg_sediment_density = if sediment_vol > 0.0 {
+                        self.sediment_density_sum_u[u_idx] / sediment_vol
+                    } else {
+                        FALLBACK_SEDIMENT_DENSITY
+                    };
+
+                    // Mixture density: rho_mix = rho_water * (1 - phi) + rho_sediment * phi
+                    // Cap at 20.0 to allow heavy materials (gold=19.3) to properly affect flow
                     let rho_mix = if total_vol > 0.0 {
-                        let sand_frac = sand_vol / total_vol;
-                        let raw_rho = WATER_DENSITY * (1.0 - sand_frac) + SAND_DENSITY * sand_frac;
-                        raw_rho.min(1.5) // Cap at 1.5x water density
+                        let sediment_frac = sediment_vol / total_vol;
+                        let raw_rho = WATER_DENSITY * (1.0 - sediment_frac) + avg_sediment_density * sediment_frac;
+                        raw_rho.min(20.0) // Cap at 20x water density (allows gold beds)
                     } else {
                         WATER_DENSITY // Default to water if no particles
                     };
@@ -68,15 +79,22 @@ impl FlipSimulation {
                     self.grid.v[v_idx] = 0.0;
                 } else if bottom_type == CellType::Fluid || top_type == CellType::Fluid {
                     // Compute sand fraction at this face
-                    let sand_vol = self.sand_volume_v[v_idx];
+                    let sediment_vol = self.sand_volume_v[v_idx];
                     let water_vol = self.water_volume_v[v_idx];
-                    let total_vol = sand_vol + water_vol;
+                    let total_vol = sediment_vol + water_vol;
 
-                    // Mixture density (capped at 1.5)
+                    // Compute actual sediment density from weighted sum
+                    let avg_sediment_density = if sediment_vol > 0.0 {
+                        self.sediment_density_sum_v[v_idx] / sediment_vol
+                    } else {
+                        FALLBACK_SEDIMENT_DENSITY
+                    };
+
+                    // Mixture density (cap at 20.0 for heavy materials)
                     let rho_mix = if total_vol > 0.0 {
-                        let sand_frac = sand_vol / total_vol;
-                        let raw_rho = WATER_DENSITY * (1.0 - sand_frac) + SAND_DENSITY * sand_frac;
-                        raw_rho.min(1.5)
+                        let sediment_frac = sediment_vol / total_vol;
+                        let raw_rho = WATER_DENSITY * (1.0 - sediment_frac) + avg_sediment_density * sediment_frac;
+                        raw_rho.min(20.0)
                     } else {
                         WATER_DENSITY
                     };

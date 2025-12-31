@@ -44,11 +44,15 @@ pub struct FlipSimulation {
     v_sum: Vec<f32>,
     v_weight: Vec<f32>,
     // Volume fraction tracking for two-way coupling
-    // Sand volume contribution at each grid face
-    sand_volume_u: Vec<f32>,
-    water_volume_u: Vec<f32>,
-    sand_volume_v: Vec<f32>,
-    water_volume_v: Vec<f32>,
+    // Sand volume contribution at each grid face (pub for tests)
+    pub sand_volume_u: Vec<f32>,
+    pub water_volume_u: Vec<f32>,
+    pub sand_volume_v: Vec<f32>,
+    pub water_volume_v: Vec<f32>,
+    // Weighted density tracking for material-aware mixture density
+    // Sum of (particle_volume * particle_density) at each face
+    pub sediment_density_sum_u: Vec<f32>,
+    pub sediment_density_sum_v: Vec<f32>,
     // Pre-allocated spatial hash for particle separation (zero allocation per frame)
     cell_head: Vec<i32>,      // Index of first particle in each cell (-1 = empty)
     particle_next: Vec<i32>,  // Index of next particle in same cell (-1 = end)
@@ -138,6 +142,9 @@ impl FlipSimulation {
             water_volume_u: vec![0.0; u_len],
             sand_volume_v: vec![0.0; v_len],
             water_volume_v: vec![0.0; v_len],
+            // Weighted density buffers for material-aware mixture density
+            sediment_density_sum_u: vec![0.0; u_len],
+            sediment_density_sum_v: vec![0.0; v_len],
             cell_head: vec![-1; cell_count],
             particle_next: Vec::new(),
             impulse_buffer: Vec::new(),

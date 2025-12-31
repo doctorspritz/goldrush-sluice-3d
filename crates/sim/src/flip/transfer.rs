@@ -38,6 +38,9 @@ impl FlipSimulation {
         self.water_volume_u.fill(0.0);
         self.sand_volume_v.fill(0.0);
         self.water_volume_v.fill(0.0);
+        // Clear weighted density accumulators (material-aware mixture density)
+        self.sediment_density_sum_u.fill(0.0);
+        self.sediment_density_sum_v.fill(0.0);
 
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
@@ -110,6 +113,8 @@ impl FlipSimulation {
                     // Volume fraction tracking for two-way coupling
                     if is_sand {
                         self.sand_volume_u[idx] += w * particle_volume;
+                        // Track weighted density for material-aware mixture density
+                        self.sediment_density_sum_u[idx] += w * particle_volume * particle.material.density();
                     } else {
                         self.water_volume_u[idx] += w * particle_volume;
                     }
@@ -174,6 +179,8 @@ impl FlipSimulation {
                     // Volume fraction tracking for two-way coupling
                     if is_sand {
                         self.sand_volume_v[idx] += w * particle_volume;
+                        // Track weighted density for material-aware mixture density
+                        self.sediment_density_sum_v[idx] += w * particle_volume * particle.material.density();
                     } else {
                         self.water_volume_v[idx] += w * particle_volume;
                     }
