@@ -58,7 +58,7 @@ impl Default for DemParams {
             wake_threshold: 3.0,             // Lower wake threshold for responsiveness
             particle_radius_cells: 0.5,      // Legacy fallback
             min_support_neighbors: 1,        // Only need 1 neighbor to sleep
-            velocity_damping: 0.98,          // Less damping needed with friction
+            velocity_damping: 0.95,          // 5% per frame instead of 2% - faster settling
             use_jitter: true,                // Enable surface roughness
             use_material_properties: true,   // Use per-material radius/mass/friction
         }
@@ -571,6 +571,19 @@ impl DemSimulation {
             } else {
                 // Global velocity damping only for DRY sediments (not in water)
                 p.velocity *= self.params.velocity_damping;
+
+                // Support-based damping: particles with support below them settle faster
+                let has_support = self.support_counts[idx] >= self.params.min_support_neighbors as u16;
+                if has_support {
+                    let speed = p.velocity.length();
+                    if speed < 5.0 {
+                        p.velocity *= 0.5;
+                    } else if speed < 15.0 {
+                        p.velocity *= 0.8;
+                    } else if speed < 30.0 {
+                        p.velocity *= 0.9;  // Light damping for faster particles too
+                    }
+                }
             }
 
             // Move
