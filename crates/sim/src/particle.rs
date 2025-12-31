@@ -105,11 +105,11 @@ impl ParticleMaterial {
     pub fn typical_diameter(&self) -> f32 {
         match self {
             Self::Water => 0.0,       // N/A - water is the fluid
-            Self::Mud => 0.5,         // Fine clay/silt particles
-            Self::Sand => 2.0,        // Medium sand grains
-            Self::Magnetite => 2.0,   // Black sand - same size, settles faster due to density
+            Self::Mud => 0.3,         // Fine clay/silt particles
+            Self::Sand => 0.8,        // Fine sand grains
+            Self::Magnetite => 0.5,   // Very fine black sand, similar to gold
             Self::Gold => 0.5,        // Fine gold (high density, small size)
-            Self::Gravel => 1.5,      // Sub-particle diameter (clump is larger)
+            Self::Gravel => 3.0,      // Coarse gravel - only large material
         }
     }
 
