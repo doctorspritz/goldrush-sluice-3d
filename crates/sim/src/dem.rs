@@ -650,15 +650,28 @@ impl DemSimulation {
                                 };
                                 let f_t_max = mu * f_n;
 
-                                // Proper Coulomb friction: viscous damping clamped by μ*F_n
+                                // Coulomb friction with static threshold
+                                // Problem: pure viscous damping (k_t * v_t) gives tiny forces for slow particles,
+                                // allowing them to creep forever. True static friction locks slow particles.
+                                const STATIC_VELOCITY_THRESHOLD: f32 = 0.5; // cells/frame - below this, stop completely
+
                                 let v_t_mag = v_t.abs();
-                                let f_t = if v_t_mag > 1e-6 {
-                                    // Viscous resistance (no dt - that's added in impulse calculation)
+                                let f_t = if v_t_mag < 1e-6 {
+                                    0.0  // No relative motion
+                                } else if v_t_mag < STATIC_VELOCITY_THRESHOLD {
+                                    // Static friction regime: apply stopping force
+                                    // Force needed to zero velocity in one timestep: F = m * v / dt
+                                    // But we're computing force, then multiplying by dt for impulse,
+                                    // so stopping_force = m_eff * v_t / dt, impulse = stopping_force * dt = m_eff * v_t
+                                    // To avoid dt dependency here, just use large damping
+                                    let stopping_force = k_t * STATIC_VELOCITY_THRESHOLD; // Same as if at threshold
+                                    let friction_force = stopping_force.min(f_t_max);
+                                    -friction_force * v_t.signum()
+                                } else {
+                                    // Dynamic friction: viscous damping clamped by μ*F_n
                                     let damping_force = k_t * v_t_mag;
                                     let friction_force = damping_force.min(f_t_max);
-                                    -friction_force * v_t.signum()  // Oppose motion
-                                } else {
-                                    0.0
+                                    -friction_force * v_t.signum()
                                 };
 
                                 // Total impulse
@@ -714,7 +727,8 @@ impl DemSimulation {
                         p.velocity -= push_dir * normal_vel;
                     }
 
-                    // Floor friction using material property
+                    // Floor friction using material property with static threshold
+                    // Same fix as particle-particle: slow particles get stopped completely
                     let mu = if use_material {
                         p.material.static_friction()
                     } else {
@@ -722,7 +736,15 @@ impl DemSimulation {
                     };
                     let tangent = Vec2::new(-push_dir.y, push_dir.x);
                     let tangent_vel = p.velocity.dot(tangent);
-                    p.velocity -= tangent * tangent_vel * mu;
+
+                    const STATIC_VELOCITY_THRESHOLD: f32 = 0.5;
+                    if tangent_vel.abs() < STATIC_VELOCITY_THRESHOLD {
+                        // Static friction: stop completely
+                        p.velocity -= tangent * tangent_vel;
+                    } else {
+                        // Dynamic friction: reduce by mu fraction
+                        p.velocity -= tangent * tangent_vel * mu;
+                    }
                 }
             }
 
