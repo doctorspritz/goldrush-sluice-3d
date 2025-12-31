@@ -558,16 +558,8 @@ impl DemSimulation {
                 }
                 // Light damping in water
                 p.velocity *= 0.995;
-
-                // STRATIFICATION FORCE: Heavy particles sink through lighter ones
-                // This applies to ALL submerged sediment, not just sleeping particles.
-                // Average sediment density ~5 (mix of sand 2.65, magnetite 5.2, gold 19.3)
-                // Gold (19.3) gets stronger downward force (+Y), sand gets upward force (-Y)
-                const AVG_SEDIMENT_DENSITY: f32 = 5.0;
-                const STRATIFICATION_STRENGTH: f32 = 15.0; // px/s² acceleration
-                let density = p.material.density();
-                let strat_accel = (density - AVG_SEDIMENT_DENSITY) / density * STRATIFICATION_STRENGTH;
-                p.velocity.y += strat_accel * dt;
+                // Natural stratification emerges from Ferguson-Church settling velocity
+                // differences applied in G2P transfer (transfer.rs)
             } else {
                 // Global velocity damping only for DRY sediments (not in water)
                 p.velocity *= self.params.velocity_damping;
