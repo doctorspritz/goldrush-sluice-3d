@@ -306,12 +306,15 @@ impl FlipSimulation {
                         forces[j_idx] -= total_force * ratio_j;
 
                         // Buoyancy-like sinking: heavy particles push down on light ones
+                        // When density_diff > 0 (i heavier than j):
+                        // - Particle i should sink DOWN (+Y direction)
+                        // - Particle j should get pushed UP (-Y direction)
                         let density_diff = density_i - density_j;
                         if density_diff.abs() > 0.1 {
-                            // Heavier pushes lighter up, sinks itself down
                             let buoyancy_strength = 50.0;
+                            // +Y = down (gravity direction), so positive pushes heavy down
                             let buoyancy =
-                                Vec2::new(0.0, -buoyancy_strength * density_diff * overlap);
+                                Vec2::new(0.0, buoyancy_strength * density_diff * overlap);
                             forces[idx] += buoyancy * ratio_i;
                             forces[j_idx] -= buoyancy * ratio_j;
                         }
