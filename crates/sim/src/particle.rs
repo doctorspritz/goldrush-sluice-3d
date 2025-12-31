@@ -45,7 +45,7 @@ impl ParticleMaterial {
     /// RGBA color for rendering
     pub fn color(&self) -> [u8; 4] {
         match self {
-            Self::Water => [70, 160, 255, 180],    // More visible blue, less transparent
+            Self::Water => [70, 160, 255, 40],     // Nearly invisible - sediment clearly visible
             Self::Mud => [160, 100, 50, 255],      // Brighter brown
             Self::Sand => [245, 240, 230, 255],    // Pale white/cream
             Self::Magnetite => [50, 50, 55, 255],  // Dark gray (not pure black)
