@@ -12,7 +12,7 @@ pub fn advect_particles(particles: &mut Particles3D, dt: f32) {
     }
 }
 
-/// Clamp particles to domain boundaries and reflect velocities.
+/// Clamp particles to domain boundaries and handle solid collisions via SDF.
 pub fn enforce_particle_boundaries(particles: &mut Particles3D, grid: &Grid3D) {
     let min = Vec3::splat(grid.cell_size * 0.5);
     let max = Vec3::new(
@@ -22,17 +22,15 @@ pub fn enforce_particle_boundaries(particles: &mut Particles3D, grid: &Grid3D) {
     );
 
     for particle in &mut particles.list {
-        // X bounds
+        // Domain bounds
         if particle.position.x < min.x {
             particle.position.x = min.x;
-            particle.velocity.x = particle.velocity.x.abs() * 0.1; // Damped reflection
+            particle.velocity.x = particle.velocity.x.abs() * 0.1;
         }
         if particle.position.x > max.x {
             particle.position.x = max.x;
             particle.velocity.x = -particle.velocity.x.abs() * 0.1;
         }
-
-        // Y bounds (floor and ceiling)
         if particle.position.y < min.y {
             particle.position.y = min.y;
             particle.velocity.y = particle.velocity.y.abs() * 0.1;
@@ -41,8 +39,6 @@ pub fn enforce_particle_boundaries(particles: &mut Particles3D, grid: &Grid3D) {
             particle.position.y = max.y;
             particle.velocity.y = -particle.velocity.y.abs() * 0.1;
         }
-
-        // Z bounds
         if particle.position.z < min.z {
             particle.position.z = min.z;
             particle.velocity.z = particle.velocity.z.abs() * 0.1;
@@ -50,6 +46,22 @@ pub fn enforce_particle_boundaries(particles: &mut Particles3D, grid: &Grid3D) {
         if particle.position.z > max.z {
             particle.position.z = max.z;
             particle.velocity.z = -particle.velocity.z.abs() * 0.1;
+        }
+
+        // SDF collision with solid geometry
+        let sdf = grid.sample_sdf(particle.position);
+        if sdf < 0.0 {
+            // Particle is inside solid - push out along gradient
+            let normal = grid.sdf_gradient(particle.position);
+            let penetration = -sdf + grid.cell_size * 0.1; // Small margin
+            particle.position += normal * penetration;
+
+            // Reflect velocity component into solid
+            let vel_into_solid = particle.velocity.dot(normal);
+            if vel_into_solid < 0.0 {
+                // Remove velocity into solid, add small bounce
+                particle.velocity -= normal * vel_into_solid * 1.1;
+            }
         }
     }
 }

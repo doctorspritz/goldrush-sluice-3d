@@ -10,7 +10,7 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
@@ -51,10 +51,13 @@ struct App {
     sim: FlipSimulation3D,
     paused: bool,
     camera_angle: f32,
+    camera_pitch: f32,
     camera_distance: f32,
-    camera_height: f32,
     frame: u32,
     solid_instances: Vec<ParticleInstance>,
+    // Mouse drag state
+    mouse_pressed: bool,
+    last_mouse_pos: Option<(f64, f64)>,
 }
 
 struct GpuState {
@@ -75,7 +78,7 @@ impl App {
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
         sim.gravity = Vec3::new(0.0, -9.8, 0.0);
         sim.flip_ratio = 0.97;
-        sim.pressure_iterations = 40;
+        sim.pressure_iterations = 100;
 
         // Create sluice geometry
         let config = SluiceConfig {
@@ -95,18 +98,20 @@ impl App {
 
         println!("Spawned {} particles", sim.particle_count());
         println!("Solid cells: {}", solid_instances.len());
-        println!("Controls: SPACE=pause, LEFT/RIGHT=rotate, UP/DOWN=zoom, R=reset, ESC=quit");
+        println!("Controls: SPACE=pause, R=reset, ESC=quit, Click+Drag=rotate, Scroll=zoom");
 
         Self {
             window: None,
             gpu: None,
             sim,
             paused: false,
-            camera_angle: 0.3,
-            camera_distance: 4.0,
-            camera_height: 1.5,
+            camera_angle: std::f32::consts::FRAC_PI_2, // Side-on view (90 degrees)
+            camera_pitch: 0.3,                          // Slight elevation
+            camera_distance: 3.5,
             frame: 0,
             solid_instances,
+            mouse_pressed: false,
+            last_mouse_pos: None,
         }
     }
 
@@ -163,7 +168,7 @@ impl App {
         self.sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
         self.sim.gravity = Vec3::new(0.0, -9.8, 0.0);
         self.sim.flip_ratio = 0.97;
-        self.sim.pressure_iterations = 40;
+        self.sim.pressure_iterations = 100;
 
         let config = SluiceConfig {
             slope: 0.12,
@@ -372,17 +377,19 @@ impl App {
             self.frame += 1;
         }
 
-        // Camera - look at center of sluice
+        // Camera - look at center of sluice (spherical coordinates)
         let center = Vec3::new(
             GRID_WIDTH as f32 * CELL_SIZE * 0.5,
             GRID_HEIGHT as f32 * CELL_SIZE * 0.3,
             GRID_DEPTH as f32 * CELL_SIZE * 0.5,
         );
+        // Spherical: angle = azimuth (horizontal), pitch = elevation
+        let cos_pitch = self.camera_pitch.cos();
         let camera_pos = center
             + Vec3::new(
-                self.camera_angle.cos() * self.camera_distance,
-                self.camera_height,
-                self.camera_angle.sin() * self.camera_distance,
+                self.camera_angle.cos() * cos_pitch * self.camera_distance,
+                self.camera_pitch.sin() * self.camera_distance,
+                self.camera_angle.sin() * cos_pitch * self.camera_distance,
             );
 
         let view = Mat4::look_at_rh(camera_pos, center, Vec3::Y);
@@ -497,16 +504,41 @@ impl ApplicationHandler for App {
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::Space) => self.paused = !self.paused,
                         PhysicalKey::Code(KeyCode::KeyR) => self.reset_sim(),
-                        PhysicalKey::Code(KeyCode::ArrowLeft) => self.camera_angle -= 0.1,
-                        PhysicalKey::Code(KeyCode::ArrowRight) => self.camera_angle += 0.1,
-                        PhysicalKey::Code(KeyCode::ArrowUp) => {
-                            self.camera_distance = (self.camera_distance - 0.3).max(1.0)
-                        }
-                        PhysicalKey::Code(KeyCode::ArrowDown) => self.camera_distance += 0.3,
                         PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
                         _ => {}
                     }
                 }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if button == MouseButton::Left {
+                    self.mouse_pressed = state == ElementState::Pressed;
+                    if !self.mouse_pressed {
+                        self.last_mouse_pos = None;
+                    }
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                if self.mouse_pressed {
+                    if let Some((last_x, last_y)) = self.last_mouse_pos {
+                        let dx = (position.x - last_x) as f32;
+                        let dy = (position.y - last_y) as f32;
+
+                        // Horizontal drag rotates camera angle
+                        self.camera_angle += dx * 0.01;
+
+                        // Vertical drag adjusts pitch (clamped to avoid gimbal lock)
+                        self.camera_pitch = (self.camera_pitch - dy * 0.01)
+                            .clamp(-1.4, 1.4); // ~80 degrees up/down
+                    }
+                    self.last_mouse_pos = Some((position.x, position.y));
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let scroll = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.1,
+                };
+                self.camera_distance = (self.camera_distance - scroll * 0.3).clamp(1.0, 20.0);
             }
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {

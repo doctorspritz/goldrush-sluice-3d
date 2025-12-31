@@ -113,7 +113,7 @@ impl FlipSimulation3D {
         pressure::enforce_boundary_conditions(&mut self.grid);
         pressure::compute_divergence(&mut self.grid);
         pressure::solve_pressure_jacobi(&mut self.grid, self.pressure_iterations);
-        pressure::apply_pressure_gradient(&mut self.grid, dt);
+        pressure::apply_pressure_gradient(&mut self.grid);
 
         // 6. G2P: Transfer grid velocities back to particles
         transfer::grid_to_particles(&self.grid, &mut self.particles, self.flip_ratio);

@@ -54,26 +54,60 @@ impl Default for SluiceConfig {
 ///      inlet        outlet
 ///            X ->
 /// ```
-pub fn create_sluice(sim: &mut FlipSimulation3D, config: &SluiceConfig) {
+pub fn create_sluice(sim: &mut FlipSimulation3D, _config: &SluiceConfig) {
     let width = sim.grid.width;
     let height = sim.grid.height;
     let depth = sim.grid.depth;
-    let dx = sim.grid.cell_size;
 
     // Clear existing solids
     sim.grid.clear_solids();
 
-    // 1. Create floor with slope
-    // Floor height increases as X increases (water flows downhill from high X to low X,
-    // or we tilt the other way: water enters at low X, exits at high X going downhill)
-    // Let's do: floor is higher at X=0 (inlet), lower at X=width (outlet)
-    // So water flows in +X direction, downhill
-    for i in 0..width {
-        // Floor height at this X position (in cells, from bottom)
-        let floor_y = ((width - 1 - i) as f32 * config.slope) as usize;
-        let floor_y = floor_y.min(height - 3); // Leave room for water
+    // Simple box: floor + 4 walls (closed), inlet at top of one wall
+    let wall_height = height * 2 / 3; // Walls go 2/3 up
 
-        // Fill floor cells
+    // Floor (y=0)
+    for i in 0..width {
+        for k in 0..depth {
+            sim.grid.set_solid(i, 0, k);
+        }
+    }
+
+    // All 4 walls - completely solid (no exit)
+    for j in 1..wall_height {
+        // Left wall (x=0)
+        for k in 0..depth {
+            sim.grid.set_solid(0, j, k);
+        }
+        // Right wall (x=width-1) - BLOCKED
+        for k in 0..depth {
+            sim.grid.set_solid(width - 1, j, k);
+        }
+        // Front wall (z=0)
+        for i in 0..width {
+            sim.grid.set_solid(i, j, 0);
+        }
+        // Back wall (z=depth-1)
+        for i in 0..width {
+            sim.grid.set_solid(i, j, depth - 1);
+        }
+    }
+
+    // Compute SDF
+    sim.grid.compute_sdf();
+}
+
+/// Original sluice with slope - for later
+pub fn create_sluice_sloped(sim: &mut FlipSimulation3D, config: &SluiceConfig) {
+    let width = sim.grid.width;
+    let height = sim.grid.height;
+    let depth = sim.grid.depth;
+
+    sim.grid.clear_solids();
+
+    // Floor with slope
+    for i in 0..width {
+        let floor_y = ((width - 1 - i) as f32 * config.slope) as usize;
+        let floor_y = floor_y.min(height - 3);
         for k in 0..depth {
             for j in 0..=floor_y {
                 sim.grid.set_solid(i, j, k);
@@ -81,22 +115,15 @@ pub fn create_sluice(sim: &mut FlipSimulation3D, config: &SluiceConfig) {
         }
     }
 
-    // 2. Create side walls (z=0 and z=depth-1)
+    // Side walls
+    let wall_height = 6;
     for i in 0..width {
-        for j in 0..height {
-            sim.grid.set_solid(i, j, 0);
-            sim.grid.set_solid(i, j, depth - 1);
-        }
-    }
-
-    // 3. Create left wall (inlet side) - but leave opening for water entry
-    let inlet_bottom = ((width - 1) as f32 * config.slope) as usize + 1;
-    let inlet_top = inlet_bottom + height / 3; // Opening is 1/3 of height
-    for k in 0..depth {
-        for j in 0..height {
-            // Wall except for inlet opening
-            if j < inlet_bottom || j > inlet_top {
-                sim.grid.set_solid(0, j, k);
+        let floor_y = ((width - 1 - i) as f32 * config.slope) as usize;
+        for dy in 0..wall_height {
+            let j = floor_y + 1 + dy;
+            if j < height {
+                sim.grid.set_solid(i, j, 0);
+                sim.grid.set_solid(i, j, depth - 1);
             }
         }
     }
@@ -137,13 +164,15 @@ pub fn create_sluice(sim: &mut FlipSimulation3D, config: &SluiceConfig) {
 pub fn spawn_inlet_water(sim: &mut FlipSimulation3D, count: usize, velocity: glam::Vec3) {
     let dx = sim.grid.cell_size;
     let width = sim.grid.width;
+    let height = sim.grid.height;
     let depth = sim.grid.depth;
 
-    // Inlet position: near X=0, in the opening
-    let inlet_bottom = ((width - 1) as f32 * 0.15) as usize + 1; // Match default slope
-    let inlet_x = 2.0 * dx; // Just inside inlet
+    // Spawn above the box (walls are 2/3 height, spawn at 3/4 height)
+    let spawn_y = (height as f32 * 0.75) * dx;
+    let spawn_x = (width as f32 * 0.5) * dx; // Center of box
+    let spawn_z = (depth as f32 * 0.5) * dx; // Center of box
 
-    // Spawn particles in a grid pattern at inlet
+    // Spawn particles in a grid pattern
     let particles_per_side = (count as f32).cbrt().ceil() as usize;
     let spacing = dx * 0.4;
 
@@ -155,10 +184,14 @@ pub fn spawn_inlet_water(sim: &mut FlipSimulation3D, count: usize, velocity: gla
                     return;
                 }
 
+                // Center the spawn block around spawn_x, spawn_z
+                let offset_i = pi as f32 - particles_per_side as f32 / 2.0;
+                let offset_k = pk as f32 - particles_per_side as f32 / 2.0;
+
                 let pos = glam::Vec3::new(
-                    inlet_x + pi as f32 * spacing,
-                    (inlet_bottom as f32 + 1.0 + pj as f32 * 0.5) * dx,
-                    (1.0 + pk as f32 * (depth as f32 - 2.0) / particles_per_side as f32) * dx,
+                    spawn_x + offset_i * spacing,
+                    spawn_y + pj as f32 * spacing,
+                    spawn_z + offset_k * spacing,
                 );
 
                 // Check if position is valid (not inside solid)

@@ -38,103 +38,94 @@ pub fn compute_divergence(grid: &mut Grid3D) {
     }
 }
 
-/// Solve pressure Poisson equation using Jacobi iteration.
+/// Solve pressure Poisson equation using Red-Black Gauss-Seidel.
 ///
-/// Laplacian(p) = div(v)
-///
-/// 6-neighbor stencil:
-/// p[i,j,k] = (sum of 6 neighbors - dx^2 * div) / count
+/// 2x faster convergence than Jacobi - updates in-place using latest neighbor values.
+/// Uses Neumann boundary conditions at solid walls (dp/dn = 0).
 pub fn solve_pressure_jacobi(grid: &mut Grid3D, iterations: usize) {
-    let scale = grid.cell_size * grid.cell_size;
-
-    // Need to double-buffer for true Jacobi (not Gauss-Seidel)
-    let mut pressure_new = grid.pressure.clone();
+    let h_sq = grid.cell_size * grid.cell_size;
 
     for _ in 0..iterations {
+        // Red pass: cells where (i+j+k) is even
         for k in 0..grid.depth {
             for j in 0..grid.height {
                 for i in 0..grid.width {
-                    let idx = grid.cell_index(i, j, k);
-
-                    if grid.cell_type[idx] != CellType::Fluid {
-                        continue;
-                    }
-
-                    let mut sum = 0.0;
-                    let mut count = 0;
-
-                    // -X neighbor
-                    if i > 0 {
-                        let nidx = grid.cell_index(i - 1, j, k);
-                        if grid.cell_type[nidx] != CellType::Solid {
-                            sum += grid.pressure[nidx];
-                            count += 1;
-                        }
-                    }
-
-                    // +X neighbor
-                    if i + 1 < grid.width {
-                        let nidx = grid.cell_index(i + 1, j, k);
-                        if grid.cell_type[nidx] != CellType::Solid {
-                            sum += grid.pressure[nidx];
-                            count += 1;
-                        }
-                    }
-
-                    // -Y neighbor
-                    if j > 0 {
-                        let nidx = grid.cell_index(i, j - 1, k);
-                        if grid.cell_type[nidx] != CellType::Solid {
-                            sum += grid.pressure[nidx];
-                            count += 1;
-                        }
-                    }
-
-                    // +Y neighbor
-                    if j + 1 < grid.height {
-                        let nidx = grid.cell_index(i, j + 1, k);
-                        if grid.cell_type[nidx] != CellType::Solid {
-                            sum += grid.pressure[nidx];
-                            count += 1;
-                        }
-                    }
-
-                    // -Z neighbor
-                    if k > 0 {
-                        let nidx = grid.cell_index(i, j, k - 1);
-                        if grid.cell_type[nidx] != CellType::Solid {
-                            sum += grid.pressure[nidx];
-                            count += 1;
-                        }
-                    }
-
-                    // +Z neighbor
-                    if k + 1 < grid.depth {
-                        let nidx = grid.cell_index(i, j, k + 1);
-                        if grid.cell_type[nidx] != CellType::Solid {
-                            sum += grid.pressure[nidx];
-                            count += 1;
-                        }
-                    }
-
-                    if count > 0 {
-                        pressure_new[idx] = (sum - scale * grid.divergence[idx]) / count as f32;
+                    if (i + j + k) % 2 == 0 {
+                        update_pressure_cell(grid, i, j, k, h_sq);
                     }
                 }
             }
         }
 
-        // Swap buffers
-        std::mem::swap(&mut grid.pressure, &mut pressure_new);
+        // Black pass: cells where (i+j+k) is odd
+        for k in 0..grid.depth {
+            for j in 0..grid.height {
+                for i in 0..grid.width {
+                    if (i + j + k) % 2 != 0 {
+                        update_pressure_cell(grid, i, j, k, h_sq);
+                    }
+                }
+            }
+        }
     }
 }
 
+/// Update a single pressure cell using Gauss-Seidel with Neumann BCs.
+#[inline]
+fn update_pressure_cell(grid: &mut Grid3D, i: usize, j: usize, k: usize, h_sq: f32) {
+    let idx = grid.cell_index(i, j, k);
+
+    if grid.cell_type[idx] != CellType::Fluid {
+        grid.pressure[idx] = 0.0;
+        return;
+    }
+
+    let p = grid.pressure[idx];
+
+    // Neighbor pressures with Neumann BC at solids (dp/dn = 0 means use current pressure)
+    let p_xm = if i > 0 {
+        let nidx = grid.cell_index(i - 1, j, k);
+        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
+    } else { p };
+
+    let p_xp = if i + 1 < grid.width {
+        let nidx = grid.cell_index(i + 1, j, k);
+        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
+    } else { p };
+
+    let p_ym = if j > 0 {
+        let nidx = grid.cell_index(i, j - 1, k);
+        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
+    } else { p };
+
+    let p_yp = if j + 1 < grid.height {
+        let nidx = grid.cell_index(i, j + 1, k);
+        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
+    } else { p };
+
+    let p_zm = if k > 0 {
+        let nidx = grid.cell_index(i, j, k - 1);
+        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
+    } else { p };
+
+    let p_zp = if k + 1 < grid.depth {
+        let nidx = grid.cell_index(i, j, k + 1);
+        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
+    } else { p };
+
+    // 6-neighbor Laplacian: (sum of neighbors - 6*p) / h^2 = div
+    // Solve for p: p = (sum of neighbors - h^2 * div) / 6
+    let div = grid.divergence[idx];
+    grid.pressure[idx] = (p_xm + p_xp + p_ym + p_yp + p_zm + p_zp - h_sq * div) / 6.0;
+}
+
 /// Apply pressure gradient to make velocity field divergence-free.
-/// v_new = v_old - dt * grad(p) / rho
 ///
-/// For unit density, this simplifies to: v -= grad(p) * dt
-pub fn apply_pressure_gradient(grid: &mut Grid3D, dt: f32) {
-    let scale = dt / grid.cell_size;
+/// Uses pseudo-pressure formulation: v_new = v - ∇p / dx
+/// The pseudo-pressure from ∇²p = div gives the exact velocity correction needed.
+/// NO dt factor - that was the bug causing water to compress instead of fill!
+pub fn apply_pressure_gradient(grid: &mut Grid3D) {
+    let scale = 1.0 / grid.cell_size;
 
     // U velocities (between cells in X direction)
     for k in 0..grid.depth {
@@ -228,13 +219,13 @@ pub fn apply_pressure_gradient(grid: &mut Grid3D, dt: f32) {
     }
 }
 
-/// Enforce boundary conditions: zero velocity at domain edges.
+/// Enforce boundary conditions: zero velocity at domain edges AND solid faces.
 pub fn enforce_boundary_conditions(grid: &mut Grid3D) {
     let width = grid.width;
     let height = grid.height;
     let depth = grid.depth;
 
-    // U boundaries (i=0 and i=width)
+    // Domain edge U boundaries (i=0 and i=width)
     for k in 0..depth {
         for j in 0..height {
             let idx0 = grid.u_index(0, j, k);
@@ -244,7 +235,7 @@ pub fn enforce_boundary_conditions(grid: &mut Grid3D) {
         }
     }
 
-    // V boundaries (j=0 and j=height)
+    // Domain edge V boundaries (j=0 and j=height)
     for k in 0..depth {
         for i in 0..width {
             let idx0 = grid.v_index(i, 0, k);
@@ -254,13 +245,39 @@ pub fn enforce_boundary_conditions(grid: &mut Grid3D) {
         }
     }
 
-    // W boundaries (k=0 and k=depth)
+    // Domain edge W boundaries (k=0 and k=depth)
     for j in 0..height {
         for i in 0..width {
             let idx0 = grid.w_index(i, j, 0);
             let idx1 = grid.w_index(i, j, depth);
             grid.w[idx0] = 0.0;
             grid.w[idx1] = 0.0;
+        }
+    }
+
+    // Zero velocities at ALL solid cell faces (internal walls)
+    for k in 0..depth {
+        for j in 0..height {
+            for i in 0..width {
+                let idx = grid.cell_index(i, j, k);
+                if grid.cell_type[idx] == CellType::Solid {
+                    // Pre-compute indices to avoid borrow issues
+                    let u_left = grid.u_index(i, j, k);
+                    let u_right = grid.u_index(i + 1, j, k);
+                    let v_bottom = grid.v_index(i, j, k);
+                    let v_top = grid.v_index(i, j + 1, k);
+                    let w_back = grid.w_index(i, j, k);
+                    let w_front = grid.w_index(i, j, k + 1);
+
+                    // Zero all 6 face velocities of this solid cell
+                    grid.u[u_left] = 0.0;
+                    grid.u[u_right] = 0.0;
+                    grid.v[v_bottom] = 0.0;
+                    grid.v[v_top] = 0.0;
+                    grid.w[w_back] = 0.0;
+                    grid.w[w_front] = 0.0;
+                }
+            }
         }
     }
 }
