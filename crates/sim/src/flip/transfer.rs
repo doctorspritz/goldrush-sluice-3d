@@ -388,18 +388,14 @@ impl FlipSimulation {
                     // Clamped to prevent over-damping (max 0.9 per frame for stability)
                     let drag_rate = (drag_coeff * DRAG_STRENGTH * dt).min(0.9);
 
-                    // Apply drag toward water velocity (horizontal coupling)
-                    // Heavy particles (low drag_rate) resist following water horizontally
-                    // Light particles (high drag_rate) follow water velocity quickly
-                    particle.velocity += (v_grid - particle.velocity) * drag_rate;
-
-                    // Apply settling directly (not through drag)
-                    // This ensures heavy particles settle despite their low drag rate
-                    // settling_velocity is terminal velocity - apply as rate toward terminal
-                    let settling_vel = particle.material.settling_velocity(particle.effective_diameter());
-                    let settling_rate = 0.1; // How fast we approach terminal settling velocity
-                    let target_y_vel = v_grid.y - settling_vel; // Water downward + settling
-                    particle.velocity.y += (target_y_vel - particle.velocity.y) * settling_rate;
+                    // Apply drag toward water velocity (HORIZONTAL ONLY)
+                    // Heavy particles (low drag_rate) resist horizontal flow → stay in riffles
+                    // Light particles (high drag_rate) follow horizontal flow → wash away
+                    //
+                    // VERTICAL motion is handled ONLY by the vorticity settling section below.
+                    // This ensures heavy particles settle faster regardless of drag_rate.
+                    particle.velocity.x += (v_grid.x - particle.velocity.x) * drag_rate;
+                    // NO vertical drag here - settling is material-specific in vorticity section
 
                     particle.old_grid_velocity = v_grid;
                 } else {
@@ -685,14 +681,9 @@ impl FlipSimulation {
                 let drag_coeff = RHO_WATER / rho_particle;
                 let drag_rate = (drag_coeff * DRAG_STRENGTH * dt).min(0.9);
 
-                // Apply drag toward water velocity (horizontal coupling)
-                particle.velocity += (v_grid - particle.velocity) * drag_rate;
-
-                // Apply settling directly (not through drag)
-                let settling_vel = particle.material.settling_velocity(particle.effective_diameter());
-                let settling_rate = 0.1;
-                let target_y_vel = v_grid.y - settling_vel;
-                particle.velocity.y += (target_y_vel - particle.velocity.y) * settling_rate;
+                // Apply drag toward water velocity (HORIZONTAL ONLY)
+                // Vertical settling is material-specific in vorticity section below
+                particle.velocity.x += (v_grid.x - particle.velocity.x) * drag_rate;
 
                 particle.old_grid_velocity = v_grid;
             } else {

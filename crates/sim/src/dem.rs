@@ -501,12 +501,32 @@ impl DemSimulation {
 
             let radius = get_radius(p);
 
-            // Skip sleeping particles on floor
+            // Sleeping particles on floor: still apply settling force for stratification
+            // Heavy particles (gold) should sink through lighter particles (sand)
             if self.is_sleeping[idx] {
                 let sdf = grid.sample_sdf(p.position);
                 if sdf < radius * 1.5 {
-                    p.velocity = Vec2::ZERO;
+                    // On floor - stop horizontal motion but allow vertical settling
+                    p.velocity.x = 0.0;
                     p.state = ParticleState::Bedload;
+
+                    // Apply tiny settling velocity based on density difference from average
+                    // This allows heavy particles to slowly sink through lighter ones
+                    let in_water = if let Some(wl) = water_level {
+                        p.position.y > wl
+                    } else {
+                        true // assume in water for sluice
+                    };
+                    if in_water {
+                        let density = p.material.density();
+                        // Average sediment density ~5 (mix of sand 2.65, magnetite 5.2, gold 19.3)
+                        const AVG_SEDIMENT_DENSITY: f32 = 5.0;
+                        // Settling rate: heavier than average sinks, lighter than average rises
+                        // Scale: gold (19.3) gets +0.5 px/s, sand (2.65) gets -0.2 px/s
+                        let settling_rate = (density - AVG_SEDIMENT_DENSITY) * 0.035;
+                        p.velocity.y = settling_rate;
+                        p.position.y += p.velocity.y * dt;
+                    }
                     continue;
                 } else {
                     self.is_sleeping[idx] = false;
@@ -538,6 +558,16 @@ impl DemSimulation {
                 }
                 // Light damping in water
                 p.velocity *= 0.995;
+
+                // STRATIFICATION FORCE: Heavy particles sink through lighter ones
+                // This applies to ALL submerged sediment, not just sleeping particles.
+                // Average sediment density ~5 (mix of sand 2.65, magnetite 5.2, gold 19.3)
+                // Gold (19.3) gets stronger downward force (+Y), sand gets upward force (-Y)
+                const AVG_SEDIMENT_DENSITY: f32 = 5.0;
+                const STRATIFICATION_STRENGTH: f32 = 15.0; // px/s² acceleration
+                let density = p.material.density();
+                let strat_accel = (density - AVG_SEDIMENT_DENSITY) / density * STRATIFICATION_STRENGTH;
+                p.velocity.y += strat_accel * dt;
             } else {
                 // Global velocity damping only for DRY sediments (not in water)
                 p.velocity *= self.params.velocity_damping;
@@ -749,9 +779,16 @@ impl DemSimulation {
             }
 
             // Update state and sleep
+            // Only zero horizontal velocity - allow vertical settling for stratification
             let speed = p.velocity.length();
             if speed < 0.5 {
-                p.velocity = Vec2::ZERO;
+                // Stop horizontal sliding but keep vertical for density stratification
+                p.velocity.x = 0.0;
+                // Apply density-based settling for bedload particles
+                let density = p.material.density();
+                const AVG_SEDIMENT_DENSITY: f32 = 5.0;
+                let settling_rate = (density - AVG_SEDIMENT_DENSITY) * 0.035;
+                p.velocity.y = settling_rate;
             }
 
             let sdf = grid.sample_sdf(p.position);

@@ -1381,18 +1381,25 @@ impl FlipSimulation {
         self.max_velocity() * dt / self.grid.cell_size
     }
 
-    /// Print sediment pile stability diagnostics.
+    /// Print sediment pile stability diagnostics with Rouse number analysis.
     ///
-    /// Categorizes sediment particles by velocity:
-    /// - Static: < 0.01 cells/frame (truly at rest)
-    /// - Creeping: 0.01-0.1 cells/frame (slow sliding - the problem we're diagnosing)
-    /// - Moving: > 0.1 cells/frame (actively flowing)
+    /// Shows:
+    /// - Velocity distribution (static/creeping/moving)
+    /// - Bedload vs Suspended state counts
+    /// - Average Rouse number per material (higher = more likely bedload)
     ///
-    /// Ideal piles should have near-zero creeping particles.
+    /// Ideal piles should have near-zero creeping particles and appropriate
+    /// Rouse numbers (>2.5 for bedload, <0.8 for suspended).
     pub fn print_sediment_diagnostics(&self) {
-        // Velocity thresholds (in cells/frame, assuming dt=1/60 and cell_size=1)
-        const STATIC_THRESHOLD: f32 = 0.01;  // < this = truly at rest
-        const CREEP_THRESHOLD: f32 = 0.1;    // between static and this = creeping
+        use crate::particle::ParticleState;
+
+        // Velocity thresholds (in cells/frame)
+        const STATIC_THRESHOLD: f32 = 0.01;
+        const CREEP_THRESHOLD: f32 = 0.1;
+
+        // Rouse number constants
+        const VON_KARMAN: f32 = 0.4;
+        const MIN_SHEAR_VELOCITY: f32 = 0.5;
 
         let cell_size = self.grid.cell_size;
 
@@ -1402,12 +1409,18 @@ impl FlipSimulation {
             static_count: usize,
             creep_count: usize,
             moving_count: usize,
+            bedload_count: usize,
+            suspended_count: usize,
             velocity_sum: f32,
+            rouse_sum: f32,
         }
 
         impl MaterialStats {
             fn new() -> Self {
-                Self { total: 0, static_count: 0, creep_count: 0, moving_count: 0, velocity_sum: 0.0 }
+                Self {
+                    total: 0, static_count: 0, creep_count: 0, moving_count: 0,
+                    bedload_count: 0, suspended_count: 0, velocity_sum: 0.0, rouse_sum: 0.0
+                }
             }
         }
 
@@ -1425,6 +1438,21 @@ impl FlipSimulation {
             // Velocity in cells/frame
             let v = p.velocity.length() / cell_size;
 
+            // Compute Rouse number for this particle
+            let fluid_vel_here = p.old_grid_velocity;
+            let pos_below = p.position + glam::Vec2::new(0.0, cell_size);
+            let fluid_vel_below = self.grid.sample_velocity(pos_below);
+            let velocity_gradient = (fluid_vel_here - fluid_vel_below).length();
+            let shear_velocity = (velocity_gradient * 0.5).max(MIN_SHEAR_VELOCITY);
+
+            let diameter = if self.use_variable_diameter {
+                p.effective_diameter()
+            } else {
+                p.material.typical_diameter()
+            };
+            let settling_velocity = p.material.settling_velocity(diameter);
+            let rouse = settling_velocity / (VON_KARMAN * shear_velocity);
+
             let stats = match p.material {
                 ParticleMaterial::Gold => &mut gold,
                 ParticleMaterial::Sand => &mut sand,
@@ -1436,6 +1464,7 @@ impl FlipSimulation {
 
             stats.total += 1;
             stats.velocity_sum += v;
+            stats.rouse_sum += rouse;
 
             if v < STATIC_THRESHOLD {
                 stats.static_count += 1;
@@ -1443,6 +1472,11 @@ impl FlipSimulation {
                 stats.creep_count += 1;
             } else {
                 stats.moving_count += 1;
+            }
+
+            match p.state {
+                ParticleState::Bedload => stats.bedload_count += 1,
+                ParticleState::Suspended => stats.suspended_count += 1,
             }
         }
 
@@ -1457,22 +1491,28 @@ impl FlipSimulation {
             + gravel.creep_count + mud.creep_count;
         let total_moving = gold.moving_count + sand.moving_count + magnetite.moving_count
             + gravel.moving_count + mud.moving_count;
+        let total_bedload = gold.bedload_count + sand.bedload_count + magnetite.bedload_count
+            + gravel.bedload_count + mud.bedload_count;
 
-        println!("SEDIMENT: {} | static: {} ({:.0}%) | creep: {} ({:.0}%) | moving: {} ({:.0}%)",
+        println!("SEDIMENT: {} | static: {} ({:.0}%) | creep: {} ({:.0}%) | moving: {} ({:.0}%) | bedload: {} ({:.0}%)",
             total,
             total_static, 100.0 * total_static as f32 / total as f32,
             total_creep, 100.0 * total_creep as f32 / total as f32,
             total_moving, 100.0 * total_moving as f32 / total as f32,
+            total_bedload, 100.0 * total_bedload as f32 / total as f32,
         );
 
-        // Per-material breakdown (only if material has particles)
+        // Per-material breakdown with Rouse number
         let print_material = |name: &str, s: &MaterialStats| {
             if s.total == 0 { return; }
             let avg_v = s.velocity_sum / s.total as f32;
-            println!("  {:<10} {:>5} | static: {:>4} ({:>3.0}%) | creep: {:>4} | avg_v: {:.4}",
+            let avg_rouse = s.rouse_sum / s.total as f32;
+            let bedload_pct = 100.0 * s.bedload_count as f32 / s.total as f32;
+            println!("  {:<10} {:>5} | static: {:>4} ({:>3.0}%) | bedload: {:>4} ({:>3.0}%) | Rouse: {:.2} | avg_v: {:.4}",
                 name, s.total,
                 s.static_count, 100.0 * s.static_count as f32 / s.total as f32,
-                s.creep_count, avg_v
+                s.bedload_count, bedload_pct,
+                avg_rouse, avg_v
             );
         };
 
