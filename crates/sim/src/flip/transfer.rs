@@ -453,11 +453,17 @@ impl FlipSimulation {
                 // Higher vorticity → less settling (particle stays suspended)
                 // Only apply lift if vorticity is significant (reduces noise-driven suspension)
                 const MIN_VORT_FOR_LIFT: f32 = 0.5; // Threshold to filter noise
-                let lift_factor = if vort_magnitude > MIN_VORT_FOR_LIFT {
+                let base_lift = if vort_magnitude > MIN_VORT_FOR_LIFT {
                     ((vort_magnitude - MIN_VORT_FOR_LIFT) * VORT_LIFT_SCALE).min(1.0)
                 } else {
                     0.0
                 };
+
+                // Scale lift by inverse density (Rouse number effect):
+                // Heavy particles (gold ρ=19.3): lift reduced by 1/19.3 ≈ 0.05 → settles despite turbulence
+                // Light particles (sand ρ=2.65): lift reduced by 1/2.65 ≈ 0.38 → can be suspended
+                let density_lift_scale = (1.0 / particle.material.density()).min(0.5);
+                let lift_factor = base_lift * density_lift_scale;
                 let effective_settling = settling_factor * (1.0 - lift_factor);
 
                 // 2. SWIRL: Add velocity perpendicular to particle motion
@@ -707,11 +713,14 @@ impl FlipSimulation {
 
             // 1. LIFT: Reduce settling in high-vorticity regions
             const MIN_VORT_FOR_LIFT: f32 = 0.5;
-            let lift_factor = if vort_magnitude > MIN_VORT_FOR_LIFT {
+            let base_lift = if vort_magnitude > MIN_VORT_FOR_LIFT {
                 ((vort_magnitude - MIN_VORT_FOR_LIFT) * VORT_LIFT_SCALE).min(1.0)
             } else {
                 0.0
             };
+            // Scale lift by inverse density (heavy particles resist suspension)
+            let density_lift_scale = (1.0 / particle.material.density()).min(0.5);
+            let lift_factor = base_lift * density_lift_scale;
             let effective_settling = settling_factor * (1.0 - lift_factor);
 
             // 2. SWIRL: Add velocity perpendicular to particle motion
