@@ -25,6 +25,7 @@ mod transfer;
 // Re-exports for backwards compatibility
 // (will be populated as methods are moved)
 
+use crate::clump::{Clump, ClumpTemplate};
 use crate::dem::DemSimulation;
 use crate::grid::{apic_d_inverse, quadratic_bspline, quadratic_bspline_1d, CellType, Grid};
 use crate::particle::{ParticleMaterial, Particles, ParticleState};
@@ -108,6 +109,14 @@ pub struct FlipSimulation {
     pub dem: DemSimulation,
     /// Use unified DEM instead of legacy apply_dem_settling
     pub use_unified_dem: bool,
+
+    // === Gravel Clump System ===
+    /// Pre-computed clump templates (generated once at initialization)
+    pub clump_templates: Vec<ClumpTemplate>,
+    /// Active clumps in the simulation
+    pub clumps: Vec<Clump>,
+    /// Next clump ID to assign
+    next_clump_id: u32,
 }
 
 impl FlipSimulation {
@@ -157,6 +166,11 @@ impl FlipSimulation {
             // Unified DEM
             dem: DemSimulation::new(),
             use_unified_dem: true, // Enable unified DEM by default
+            // Gravel clump system
+            // Generate templates with: particle_spacing = 0.4 * cell_size, particle_mass = 1.0
+            clump_templates: ClumpTemplate::generate_all(cell_size * 0.4, 1.0),
+            clumps: Vec::new(),
+            next_clump_id: 1, // Start at 1 so 0 means "not in a clump"
         }
     }
 
@@ -273,7 +287,13 @@ impl FlipSimulation {
             self.apply_dem_settling(dt);
         }
 
-        // 8f-8h. Cell-based deposition DISABLED for porosity model
+        // 8f. Update clump rigid body physics
+        // Aggregates forces from DEM, integrates rigid body motion, syncs particles
+        if !self.clumps.is_empty() {
+            self.update_clumps(dt);
+        }
+
+        // 8g-8i. Cell-based deposition DISABLED for porosity model
         // Particles stay as particles - piles affect water through porosity drag
         // self.deposit_settled_sediment(dt);
         // self.entrain_deposited_sediment(dt);
@@ -1022,6 +1042,287 @@ impl FlipSimulation {
                     self.particles.spawn_gold(px, py, final_vx, final_vy);
                 }
             }
+        }
+    }
+
+    /// Spawn gravel clumps (rigid particle groups)
+    ///
+    /// Each clump consists of 4-25 particles that move together as a rigid body.
+    /// Shape is randomly selected from round (rolls) and flat (slides/catches).
+    pub fn spawn_gravel(&mut self, x: f32, y: f32, vx: f32, vy: f32, count: usize) {
+        use crate::clump::Clump;
+        use crate::particle::Particle;
+        use std::f32::consts::TAU;
+
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..count {
+            // Random template selection (weighted toward smaller clumps)
+            // Use weights: 2x2 = 40%, 3x3 = 30%, 4x4 = 20%, 5x5 = 10%
+            let template_idx = {
+                let r: f32 = rng.gen();
+                if r < 0.4 {
+                    rng.gen_range(0..2) // Round2x2 or Flat2x2
+                } else if r < 0.7 {
+                    rng.gen_range(2..4) // Round3x3 or Flat3x3 (indices 1,5 -> 2,3 after +2)
+                } else if r < 0.9 {
+                    rng.gen_range(4..6) // Round4x4 or Flat4x4
+                } else {
+                    rng.gen_range(6..8) // Round5x5 or Flat5x5
+                }
+            };
+
+            // Offset spawn position
+            let offset_x = (rng.gen::<f32>() - 0.5) * self.grid.cell_size * 2.0;
+            let offset_y = (rng.gen::<f32>() - 0.5) * self.grid.cell_size * 2.0;
+            let clump_x = x + offset_x;
+            let clump_y = y + offset_y;
+
+            // Check if center position is safe
+            if !self.is_spawn_safe(clump_x, clump_y) {
+                continue;
+            }
+
+            // Random initial rotation
+            let rotation = rng.gen::<f32>() * TAU;
+
+            // Get template and create clump
+            let template = &self.clump_templates[template_idx];
+            let clump_id = self.next_clump_id;
+            self.next_clump_id += 1;
+
+            // Spawn particles for this clump
+            let mut particle_indices = Vec::with_capacity(template.local_offsets.len());
+            let (sin_r, cos_r) = rotation.sin_cos();
+
+            // Use bounding_radius * 2 to get the full clump diameter
+            // This makes clumps render at their actual physical size
+            let sub_particle_diameter = template.bounding_radius * 2.0;
+
+            for local_offset in &template.local_offsets {
+                // Rotate offset
+                let world_offset = Vec2::new(
+                    cos_r * local_offset.x - sin_r * local_offset.y,
+                    sin_r * local_offset.x + cos_r * local_offset.y,
+                );
+
+                let pos = Vec2::new(clump_x, clump_y) + world_offset;
+
+                let mut p = Particle::with_diameter(
+                    pos,
+                    Vec2::new(vx, vy),
+                    ParticleMaterial::Gravel,
+                    sub_particle_diameter,
+                );
+                p.clump_id = clump_id;
+
+                particle_indices.push(self.particles.list.len());
+                self.particles.list.push(p);
+            }
+
+            // Create clump rigid body
+            let clump = Clump::new(
+                clump_id,
+                Vec2::new(clump_x, clump_y),
+                Vec2::new(vx, vy),
+                rotation,
+                template_idx,
+                particle_indices,
+            );
+
+            self.clumps.push(clump);
+        }
+    }
+
+    // ========================================================================
+    // CLUMP RIGID BODY PHYSICS
+    // ========================================================================
+
+    /// Update all clumps as rigid bodies
+    ///
+    /// This handles:
+    /// 1. Aggregating forces from constituent particles (from DEM pass)
+    /// 2. Computing net torque about center of mass
+    /// 3. Integrating rigid body motion (position, rotation, velocities)
+    /// 4. Syncing particle positions/velocities from clump state
+    pub fn update_clumps(&mut self, dt: f32) {
+        use crate::physics::GRAVITY;
+
+        for clump_idx in 0..self.clumps.len() {
+            let clump = &self.clumps[clump_idx];
+            let template = &self.clump_templates[clump.template_idx];
+
+            // Skip sleeping clumps
+            if clump.is_sleeping {
+                continue;
+            }
+
+            // 1. Compute net force and torque from particles
+            let (net_force, net_torque) = self.compute_clump_forces(clump_idx);
+
+            // 2. Add gravity (applied to center of mass)
+            // Use gravel material's buoyancy-reduced gravity
+            let in_water = self.has_water();
+            let g_eff = crate::dem::DemSimulation::effective_gravity(
+                GRAVITY,
+                ParticleMaterial::Gravel,
+                in_water,
+            );
+            let gravity_force = Vec2::new(0.0, g_eff * template.mass);
+
+            let total_force = net_force + gravity_force;
+
+            // 3. Integrate rigid body motion
+            let clump = &mut self.clumps[clump_idx];
+
+            // Linear motion: a = F/m, v += a*dt, x += v*dt
+            let acceleration = total_force / template.mass;
+            clump.velocity += acceleration * dt;
+            clump.position += clump.velocity * dt;
+
+            // Angular motion: α = τ/I, ω += α*dt, θ += ω*dt
+            let angular_acceleration = net_torque / template.inertia;
+            clump.angular_velocity += angular_acceleration * dt;
+            clump.angular_velocity *= 0.98; // Angular damping
+            clump.rotation += clump.angular_velocity * dt;
+
+            // 4. Sync particle positions from clump state
+            self.sync_clump_particles(clump_idx);
+
+            // 5. Handle floor collision for the clump
+            self.resolve_clump_floor_collision(clump_idx, dt);
+        }
+    }
+
+    /// Compute aggregate force and torque on a clump from its particles
+    ///
+    /// Forces are sampled from DEM collision results on each particle.
+    /// Torque = Σ r_i × F_i where r_i is offset from center of mass.
+    fn compute_clump_forces(&self, clump_idx: usize) -> (Vec2, f32) {
+        let clump = &self.clumps[clump_idx];
+        let template = &self.clump_templates[clump.template_idx];
+
+        let mut net_force = Vec2::ZERO;
+        let mut net_torque = 0.0;
+
+        // For each particle in the clump, get its DEM-computed force
+        for (local_idx, &particle_idx) in clump.particle_indices.iter().enumerate() {
+            if particle_idx >= self.particles.len() {
+                continue;
+            }
+
+            // Get the particle's velocity change from DEM as a proxy for force
+            // Note: DEM modifies velocities directly, so we estimate force from
+            // the difference between particle velocity and clump velocity
+            let particle = &self.particles.list[particle_idx];
+            let expected_vel = clump.get_particle_velocity(template, local_idx);
+            let vel_diff = particle.velocity - expected_vel;
+
+            // Estimate force: F = m * (Δv / dt) ≈ m * Δv (for small dt)
+            // We use velocity difference as a proxy for impulse
+            let particle_mass = template.mass / template.local_offsets.len() as f32;
+            let force = vel_diff * particle_mass * 60.0; // Scale factor for dt ≈ 1/60
+
+            net_force += force;
+
+            // Compute torque: τ = r × F (2D cross product: r.x * F.y - r.y * F.x)
+            let r = clump.get_rotated_offset(template, local_idx);
+            net_torque += r.x * force.y - r.y * force.x;
+        }
+
+        (net_force, net_torque)
+    }
+
+    /// Sync particle positions and velocities from clump state
+    fn sync_clump_particles(&mut self, clump_idx: usize) {
+        let clump = &self.clumps[clump_idx];
+        let template = &self.clump_templates[clump.template_idx];
+
+        for (local_idx, &particle_idx) in clump.particle_indices.iter().enumerate() {
+            if particle_idx >= self.particles.list.len() {
+                continue;
+            }
+
+            // Update position from clump transform
+            let new_pos = clump.get_particle_world_position(template, local_idx);
+            self.particles.list[particle_idx].position = new_pos;
+
+            // Update velocity (includes rotational component)
+            let new_vel = clump.get_particle_velocity(template, local_idx);
+            self.particles.list[particle_idx].velocity = new_vel;
+        }
+    }
+
+    /// Resolve floor collisions for a clump
+    ///
+    /// Uses SDF to detect floor penetration and applies:
+    /// - Position correction to push clump out of floor
+    /// - Velocity damping for floor contact
+    /// - Friction to slow tangential motion
+    fn resolve_clump_floor_collision(&mut self, clump_idx: usize, dt: f32) {
+        let clump = &self.clumps[clump_idx];
+        let template = &self.clump_templates[clump.template_idx];
+        let cell_size = self.grid.cell_size;
+        let particle_radius = ParticleMaterial::Gravel.typical_diameter() * 0.5 * cell_size;
+
+        // Check all particles for floor penetration
+        let mut total_push = Vec2::ZERO;
+        let mut contact_count = 0;
+        let mut avg_normal = Vec2::ZERO;
+
+        for (local_idx, &particle_idx) in clump.particle_indices.iter().enumerate() {
+            if particle_idx >= self.particles.list.len() {
+                continue;
+            }
+
+            let pos = clump.get_particle_world_position(template, local_idx);
+            let sdf = self.grid.sample_sdf(pos);
+
+            if sdf < particle_radius {
+                let grad = self.grid.sdf_gradient(pos);
+                if grad.length_squared() > 0.001 {
+                    let push_dir = grad.normalize();
+                    let push_dist = particle_radius - sdf + 0.1;
+                    total_push += push_dir * push_dist;
+                    avg_normal += push_dir;
+                    contact_count += 1;
+                }
+            }
+        }
+
+        if contact_count > 0 {
+            let clump = &mut self.clumps[clump_idx];
+
+            // Apply position correction (average of all contacts)
+            clump.position += total_push / contact_count as f32;
+
+            // Zero out velocity into floor
+            avg_normal = avg_normal.normalize_or_zero();
+            let normal_vel = clump.velocity.dot(avg_normal);
+            if normal_vel < 0.0 {
+                clump.velocity -= avg_normal * normal_vel * 0.8; // Some restitution
+            }
+
+            // Apply friction
+            let mu = ParticleMaterial::Gravel.static_friction();
+            let tangent = Vec2::new(-avg_normal.y, avg_normal.x);
+            let tangent_vel = clump.velocity.dot(tangent);
+            clump.velocity -= tangent * tangent_vel * mu * 0.5;
+
+            // Reduce angular velocity on floor contact
+            clump.angular_velocity *= 0.9;
+
+            // Check for sleeping condition
+            let speed = clump.velocity.length();
+            let angular_speed = clump.angular_velocity.abs();
+            if speed < 1.0 && angular_speed < 0.1 {
+                clump.velocity = Vec2::ZERO;
+                clump.angular_velocity = 0.0;
+                clump.is_sleeping = true;
+            }
+
+            // Sync particles after collision resolution
+            self.sync_clump_particles(clump_idx);
         }
     }
 

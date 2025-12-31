@@ -54,6 +54,7 @@ struct App {
     sand_rate: usize,
     magnetite_rate: usize,
     gold_rate: usize,
+    gravel_rate: usize,
     fast_particle_size: f32,
 
     // Mouse state
@@ -119,6 +120,7 @@ impl App {
             sand_rate: 4,
             magnetite_rate: 8,
             gold_rate: 20,
+            gravel_rate: 0,  // Disabled by default, press 5 to enable
             fast_particle_size: CELL_SIZE * SCALE * 1.5,
             mouse_pos: (0.0, 0.0),
             mouse_left_down: false,
@@ -179,6 +181,13 @@ impl App {
         if effective_gold > 0 && self.frame_count % effective_gold as u64 == 0 {
             self.sim
                 .spawn_gold(self.inlet_x, sediment_y, self.inlet_vx, self.inlet_vy, 1);
+        }
+
+        // Gravel (rigid clumps)
+        let effective_gravel = self.gravel_rate / self.flow_multiplier.max(1);
+        if effective_gravel > 0 && self.frame_count % effective_gravel as u64 == 0 {
+            self.sim
+                .spawn_gravel(self.inlet_x, sediment_y, self.inlet_vx * 0.5, self.inlet_vy, 1);
         }
 
         // Remove particles at outflow - DISABLED for barrier test
@@ -503,6 +512,11 @@ impl App {
                         if vel_mag < SETTLED_THRESHOLD { riffle_settled += 1; }
                     }
                 }
+                ParticleMaterial::Gravel => {
+                    // Gravel clumps are handled separately, skip for now in diagnostics
+                    sediment_vel_sum += vel_mag;
+                    if vel_mag < SETTLED_THRESHOLD { settled_count += 1; } else { moving_count += 1; }
+                }
             }
         }
 
@@ -739,6 +753,16 @@ impl App {
                 } else {
                     0
                 };
+            }
+            KeyCode::Digit5 => {
+                // Toggle gravel spawning (cycles through rates: 0 -> 30 -> 15 -> 0)
+                self.gravel_rate = match self.gravel_rate {
+                    0 => 30,   // Spawn 1 clump every 30 frames (2 per second)
+                    30 => 15,  // Spawn 1 clump every 15 frames (4 per second)
+                    15 => 8,   // Spawn 1 clump every 8 frames (~8 per second)
+                    _ => 0,    // Off
+                };
+                log::info!("Gravel rate: {} (1 clump every N frames)", self.gravel_rate);
             }
             KeyCode::Digit9 => self.fast_particle_size = (self.fast_particle_size - 0.5).max(1.0),
             KeyCode::Digit0 => self.fast_particle_size = (self.fast_particle_size + 0.5).min(8.0),

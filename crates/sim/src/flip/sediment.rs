@@ -484,7 +484,7 @@ impl FlipSimulation {
                     ParticleMaterial::Gold => {
                         gold_counts[cell_idx].fetch_add(1, Ordering::Relaxed);
                     }
-                    ParticleMaterial::Water => {} // Not sediment, should not reach here
+                    ParticleMaterial::Water | ParticleMaterial::Gravel => {} // Not depositing materials
                 }
                 remove_flags[idx].store(true, Ordering::Relaxed);
             });
@@ -726,7 +726,7 @@ impl FlipSimulation {
                         self.particles.spawn_magnetite(pos.x, pos.y, vel.x, vel.y)
                     }
                     ParticleMaterial::Gold => self.particles.spawn_gold(pos.x, pos.y, vel.x, vel.y),
-                    ParticleMaterial::Water => {} // Should never happen
+                    ParticleMaterial::Water | ParticleMaterial::Gravel => {} // Should never happen
                 }
             }
         }
@@ -933,6 +933,7 @@ impl FlipSimulation {
                 ParticleMaterial::Sand => 1.0,       // Reference material
                 ParticleMaterial::Magnetite => 1.56, // Shields 0.07 / 0.045 - much harder to entrain
                 ParticleMaterial::Gold => 2.0,       // Shields 0.09 / 0.045 - hardest to entrain
+                ParticleMaterial::Gravel => 1.33,    // Shields 0.06 / 0.045 - between sand and magnetite
             }
         }
 

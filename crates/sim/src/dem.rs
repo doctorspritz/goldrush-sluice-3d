@@ -594,6 +594,13 @@ impl DemSimulation {
                                 continue;
                             }
 
+                            // Skip intra-clump collisions (particles in same clump don't collide)
+                            let clump_i = particles.list[idx].clump_id;
+                            let clump_j = particles.list[j_idx].clump_id;
+                            if clump_i != 0 && clump_i == clump_j {
+                                continue;
+                            }
+
                             let j_sleeping = self.is_sleeping[j_idx];
 
                             // Skip if BOTH are sleeping

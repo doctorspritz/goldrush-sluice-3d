@@ -27,6 +27,7 @@ pub enum ParticleMaterial {
     Sand,      // Quartz sand - light sediment
     Magnetite, // Black sand - medium sediment
     Gold,      // Heavy sediment - settles fast
+    Gravel,    // Rigid clumps - larger rocks that pack and block riffles
 }
 
 impl ParticleMaterial {
@@ -39,6 +40,7 @@ impl ParticleMaterial {
             Self::Sand => 2.65,      // Quartz
             Self::Magnetite => 5.2,  // Black sand
             Self::Gold => 19.3,      // Gold!
+            Self::Gravel => 2.6,     // Similar to quartz, slightly denser
         }
     }
 
@@ -50,6 +52,7 @@ impl ParticleMaterial {
             Self::Sand => [245, 240, 230, 255],    // Pale white/cream
             Self::Magnetite => [50, 50, 55, 255],  // Dark gray (not pure black)
             Self::Gold => [200, 150, 30, 255],     // Deep rich gold
+            Self::Gravel => [128, 128, 128, 255],  // Medium gray
         }
     }
 
@@ -57,7 +60,7 @@ impl ParticleMaterial {
     /// Only water participates in the FLIP pressure solve.
     /// Sediment is Lagrangian - carried by fluid via drag forces.
     pub fn is_sediment(&self) -> bool {
-        matches!(self, Self::Mud | Self::Sand | Self::Magnetite | Self::Gold)
+        matches!(self, Self::Mud | Self::Sand | Self::Magnetite | Self::Gold | Self::Gravel)
     }
 
     /// Render scale multiplier (1.0 = base size)
@@ -65,6 +68,7 @@ impl ParticleMaterial {
     pub fn render_scale(&self) -> f32 {
         match self {
             Self::Water => 0.5,  // Small fluid packets
+            Self::Gravel => 0.8, // Slightly smaller render (individual sub-particles)
             _ => 1.0,            // All sediment full size
         }
     }
@@ -78,6 +82,7 @@ impl ParticleMaterial {
             Self::Sand => 0.15,      // Distinct grains
             Self::Magnetite => 0.20, // Hard particles
             Self::Gold => 0.25,      // Crispest edges
+            Self::Gravel => 0.22,    // Hard rocks
         }
     }
 
@@ -90,6 +95,7 @@ impl ParticleMaterial {
             Self::Sand => 0.025,     // More separate
             Self::Magnetite => 0.02, // Distinct particles
             Self::Gold => 0.015,     // Most distinct
+            Self::Gravel => 0.018,   // Distinct rocks
         }
     }
 
@@ -103,6 +109,7 @@ impl ParticleMaterial {
             Self::Sand => 2.0,        // Medium sand grains
             Self::Magnetite => 2.0,   // Black sand - same size, settles faster due to density
             Self::Gold => 0.5,        // Fine gold (high density, small size)
+            Self::Gravel => 1.5,      // Sub-particle diameter (clump is larger)
         }
     }
 
@@ -120,6 +127,7 @@ impl ParticleMaterial {
             Self::Sand => 1.0,        // Natural rounded sand
             Self::Magnetite => 1.1,   // Angular crystals
             Self::Gold => 1.8,        // Very flaky (10:1 aspect ratio typical)
+            Self::Gravel => 1.3,      // Angular, chunky rocks
         }
     }
 
@@ -132,6 +140,7 @@ impl ParticleMaterial {
             Self::Sand => 0.85,       // Rounded grains
             Self::Magnetite => 0.65,  // Angular crystals
             Self::Gold => 0.35,       // Very flat flakes
+            Self::Gravel => 0.7,      // Variable (round or flat clumps)
         }
     }
 
@@ -144,6 +153,7 @@ impl ParticleMaterial {
             Self::Sand => 0.5,        // Rough grains
             Self::Magnetite => 0.6,   // Angular, rough
             Self::Gold => 0.2,        // Smooth metal surface
+            Self::Gravel => 0.7,      // Very rough rocks
         }
     }
 
@@ -157,6 +167,7 @@ impl ParticleMaterial {
             Self::Sand => 0.5,        // Rough grains
             Self::Magnetite => 0.45,  // Angular but smooth
             Self::Gold => 0.35,       // Smooth metal surface
+            Self::Gravel => 0.6,      // High friction - angular, rough
         }
     }
 
@@ -179,6 +190,7 @@ impl ParticleMaterial {
             Self::Sand => 0.045,      // Standard Shields value for sand
             Self::Magnetite => 0.07,  // ~55% harder to entrain than sand (heavy, angular)
             Self::Gold => 0.09,       // Heaviest - hardest to entrain (2× sand)
+            Self::Gravel => 0.06,     // Between sand and magnetite
         }
     }
 
@@ -247,6 +259,9 @@ pub struct Particle {
     /// Time spent in bedload state (seconds) - used for hysteresis
     /// Particles must be bedload for MIN_JAM_TIME before unjamming
     pub jam_time: f32,
+    /// Clump ID for gravel particles (0 = not in a clump)
+    /// Particles with the same non-zero clump_id move together as a rigid body
+    pub clump_id: u32,
 }
 
 impl Particle {
@@ -263,6 +278,7 @@ impl Particle {
             roughness: material.typical_roughness(),
             state: ParticleState::Suspended,
             jam_time: 0.0,
+            clump_id: 0,
         }
     }
 
@@ -279,6 +295,7 @@ impl Particle {
             roughness: material.typical_roughness(),
             state: ParticleState::Suspended,
             jam_time: 0.0,
+            clump_id: 0,
         }
     }
 
@@ -302,6 +319,7 @@ impl Particle {
             roughness,
             state: ParticleState::Suspended,
             jam_time: 0.0,
+            clump_id: 0,
         }
     }
 
@@ -338,6 +356,11 @@ impl Particle {
     /// Create a gold particle
     pub fn gold(position: Vec2, velocity: Vec2) -> Self {
         Self::new(position, velocity, ParticleMaterial::Gold)
+    }
+
+    /// Create a gravel particle (sub-particle of a clump)
+    pub fn gravel(position: Vec2, velocity: Vec2) -> Self {
+        Self::new(position, velocity, ParticleMaterial::Gravel)
     }
 
     /// Get density (for settling calculations)
@@ -451,12 +474,13 @@ impl Particles {
     }
 
     /// Count particles by material type
-    pub fn count_by_material(&self) -> (usize, usize, usize, usize, usize) {
+    pub fn count_by_material(&self) -> (usize, usize, usize, usize, usize, usize) {
         let mut water = 0;
         let mut mud = 0;
         let mut sand = 0;
         let mut magnetite = 0;
         let mut gold = 0;
+        let mut gravel = 0;
         for p in &self.list {
             match p.material {
                 ParticleMaterial::Water => water += 1,
@@ -464,9 +488,10 @@ impl Particles {
                 ParticleMaterial::Sand => sand += 1,
                 ParticleMaterial::Magnetite => magnetite += 1,
                 ParticleMaterial::Gold => gold += 1,
+                ParticleMaterial::Gravel => gravel += 1,
             }
         }
-        (water, mud, sand, magnetite, gold)
+        (water, mud, sand, magnetite, gold, gravel)
     }
 
     /// Remove particles outside the simulation bounds

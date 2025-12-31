@@ -15,6 +15,7 @@ pub mod particle;
 pub mod sluice;
 pub mod pbf;
 pub mod dem;
+pub mod clump;
 
 pub use flip::FlipSimulation;
 pub use grid::{CellType, Grid};
@@ -26,3 +27,4 @@ pub use sluice::{
 };
 pub use pbf::{PbfSimulation, PbfParticle};
 pub use dem::{DemSimulation, DemParams};
+pub use clump::{Clump, ClumpShape, ClumpTemplate};

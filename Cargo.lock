@@ -599,6 +599,7 @@ dependencies = [
  "log",
  "pollster",
  "sim",
+ "sim3d",
  "wgpu",
  "winit",
 ]
@@ -1786,6 +1787,16 @@ dependencies = [
  "rand_chacha",
  "rayon",
  "rustc-hash 2.1.1",
+]
+
+[[package]]
+name = "sim3d"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "rand",
+ "rand_chacha",
+ "rayon",
 ]
 
 [[package]]
