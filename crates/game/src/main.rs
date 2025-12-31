@@ -5,7 +5,10 @@
 
 mod gpu;
 
-use gpu::{g2p::GpuG2pSolver, p2g::GpuP2gSolver, pressure::GpuPressureSolver, renderer::ParticleRenderer, GpuContext};
+use gpu::{
+    g2p::GpuG2pSolver, mgpcg::GpuMgpcgSolver, p2g::GpuP2gSolver,
+    pressure::GpuPressureSolver, renderer::ParticleRenderer, GpuContext,
+};
 use sim::{create_sluice_with_mode, FlipSimulation, RiffleMode, SluiceConfig};
 use std::sync::Arc;
 use winit::{
@@ -21,10 +24,8 @@ const SIM_WIDTH: usize = 512;
 const SIM_HEIGHT: usize = 256;
 const CELL_SIZE: f32 = 1.0;
 const SCALE: f32 = 2.5;
-
-// Emitter configuration
-const PARTICLES_PER_EMITTER: usize = 10;
 const EMITTER_SPACING: f32 = 3.0; // Cells between emitters
+const PARTICLES_PER_EMITTER: usize = 10;
 
 /// Application state
 struct App {
@@ -32,6 +33,7 @@ struct App {
     gpu: Option<GpuContext>,
     particle_renderer: Option<ParticleRenderer>,
     pressure_solver: Option<GpuPressureSolver>,
+    mgpcg_solver: Option<GpuMgpcgSolver>,
     p2g_solver: Option<GpuP2gSolver>,
     g2p_solver: Option<GpuG2pSolver>,
     window: Option<Arc<Window>>,
@@ -48,7 +50,7 @@ struct App {
     inlet_vx: f32,
     inlet_vy: f32,
     num_emitters: usize,
-    flow_multiplier: usize,
+    flow_multiplier: usize,  // Multiplier for particles per emitter
     sand_rate: usize,
     magnetite_rate: usize,
     gold_rate: usize,
@@ -67,7 +69,7 @@ struct App {
     // Keyboard state for modifiers
     shift_down: bool,
 
-    // GPU toggles
+    // GPU compute toggles
     use_gpu_p2g: bool,
     use_gpu_g2p: bool,
 }
@@ -87,18 +89,20 @@ impl App {
         create_sluice_with_mode(&mut sim, &sluice_config);
 
         // TEST: Add barrier at end of sluice to stress-test pressure solver
-        let barrier_x = SIM_WIDTH - 10; // 10 cells from right edge
-        for j in 0..SIM_HEIGHT {
-            for i in barrier_x..SIM_WIDTH {
-                let idx = j * SIM_WIDTH + i;
-                sim.grid.solid[idx] = true;
-            }
-        }
+        // DISABLED for now while debugging MGPCG
+        // let barrier_x = SIM_WIDTH - 10; // 10 cells from right edge
+        // for j in 0..SIM_HEIGHT {
+        //     for i in barrier_x..SIM_WIDTH {
+        //         let idx = j * SIM_WIDTH + i;
+        //         sim.grid.solid[idx] = true;
+        //     }
+        // }
 
         Self {
             gpu: None,
             particle_renderer: None,
             pressure_solver: None,
+            mgpcg_solver: None,
             p2g_solver: None,
             g2p_solver: None,
             window: None,
@@ -140,7 +144,7 @@ impl App {
             self.sim.spawn_water(wx, wy, 20.0, 0.0, 5);
         }
 
-        // Spawn water from multiple emitters (spaced vertically)
+        // Spawn water from multiple emitters (spaced vertically like master branch)
         for i in 0..self.num_emitters {
             let emitter_y = self.inlet_y - (i as f32 * EMITTER_SPACING);
             self.sim.spawn_water(
@@ -152,7 +156,7 @@ impl App {
             );
         }
 
-        // Sediments spawn from all emitters (cycled round-robin)
+        // Sediments spawn from emitters (cycled round-robin)
         let emitter_idx = (self.frame_count as usize) % self.num_emitters;
         let sediment_y = self.inlet_y - (emitter_idx as f32 * EMITTER_SPACING);
 
@@ -177,92 +181,14 @@ impl App {
                 .spawn_gold(self.inlet_x, sediment_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
-        // Remove water at outflow (keep sediments to test packing)
-        let outflow_x = (SIM_WIDTH as f32 - 5.0) * CELL_SIZE;
-        self.sim.particles.list.retain(|p| {
-            p.position.x < outflow_x || p.is_sediment()
-        });
+        // Remove particles at outflow - DISABLED for barrier test
+        // let outflow_x = (SIM_WIDTH as f32 - 5.0) * CELL_SIZE;
+        // self.sim.particles.list.retain(|p| p.position.x < outflow_x);
 
         // Run simulation with profiling
         let dt = 1.0 / 60.0;
 
-        // TODO: Debug GPU pressure solver - produces similar divergence numbers but
-        // visually worse results than CPU. Keep CPU for now until GPU is fixed.
-        // See diagnostics: GPU div_out=6-16, CPU div_out=2-20, but CPU looks correct.
-        let use_gpu_pressure = false;
-        if use_gpu_pressure {
-        if let (Some(gpu), Some(solver)) = (&self.gpu, &self.pressure_solver) {
-            use std::time::Instant;
-
-            // Phase 1: CPU prepares for pressure solve
-            let pre_timings = self.sim.prepare_pressure_solve(dt);
-
-            // Phase 2: GPU pressure solve with warm start
-            let press_start = Instant::now();
-
-            // Convert cell types to u32 for GPU
-            let cell_types: Vec<u32> = self
-                .sim
-                .grid
-                .cell_type
-                .iter()
-                .map(|&ct| ct as u32)
-                .collect();
-
-            // Upload with warm start from previous pressure
-            solver.upload_warm(
-                gpu,
-                &self.sim.grid.divergence,
-                &cell_types,
-                &self.sim.grid.pressure,
-                1.9,
-            );
-
-            // Run GPU pressure solve (30 iterations with warm start)
-            solver.solve(gpu, 30);
-
-            // Download pressure results
-            solver.download(gpu, &mut self.sim.grid.pressure);
-
-            let press_time = press_start.elapsed().as_secs_f32() * 1000.0;
-
-            // Store input divergence for diagnostics
-            let pre_max_div = self.sim.grid.divergence.iter().cloned().fold(0.0f32, |a, b| a.max(b.abs()));
-
-            // Phase 3: CPU finishes simulation (applies pressure to velocities)
-            let post_timings = self.sim.finalize_after_pressure(dt);
-
-            // DIAGNOSTICS: Check pressure solve quality
-            if self.frame_count % 60 == 0 {
-                // Check for NaN/inf in pressure
-                let nan_count = self.sim.grid.pressure.iter().filter(|p| p.is_nan()).count();
-                let inf_count = self.sim.grid.pressure.iter().filter(|p| p.is_infinite()).count();
-                let max_p = self.sim.grid.pressure.iter().cloned().fold(0.0f32, f32::max);
-                let min_p = self.sim.grid.pressure.iter().cloned().fold(0.0f32, f32::min);
-
-                // Compute divergence AFTER pressure applied to velocities (should be ~0)
-                self.sim.grid.compute_divergence();
-                let post_max_div = self.sim.grid.divergence.iter().cloned().fold(0.0f32, |a, b| a.max(b.abs()));
-
-                // Check max velocity
-                let max_vel = self.sim.particles.list.iter()
-                    .map(|p| p.velocity.length())
-                    .fold(0.0f32, f32::max);
-
-                eprintln!("GPU: div_in={:.2} -> div_out={:.2} | p[{:.1}..{:.1}] nan={} inf={} | vel={:.1}",
-                    pre_max_div, post_max_div, min_p, max_p, nan_count, inf_count, max_vel);
-            }
-
-            // Combine timings: [classify, sdf, p2g, press, g2p, neigh, rest]
-            self.profile_accum[0] += pre_timings[0];
-            self.profile_accum[1] += pre_timings[1];
-            self.profile_accum[2] += pre_timings[2];
-            self.profile_accum[3] += press_time;
-            self.profile_accum[4] += post_timings[1]; // g2p
-            self.profile_accum[5] += post_timings[2]; // neigh
-            self.profile_accum[6] += post_timings[3]; // rest
-        }
-        } else if self.use_gpu_p2g {
+        if self.use_gpu_p2g {
             // GPU P2G path (optionally with GPU G2P)
             if let (Some(gpu), Some(p2g_solver)) = (&self.gpu, &self.p2g_solver) {
                 use std::time::Instant;
@@ -317,19 +243,10 @@ impl App {
                 }
                 let g2p_time = g2p_start.elapsed().as_secs_f32() * 1000.0;
 
-                // Phase 3c: Post-G2P (advection, neighbor, DEM)
-                let post_g2p_timings = self.sim.finalize_post_g2p(dt);
+                // Phase 3c: Finalize (advection, DEM, cleanup)
+                let post_timings = self.sim.finalize_post_g2p(dt);
 
-                // Combine timings: [classify, sdf, p2g, press, g2p, neigh, rest]
-                self.profile_accum[0] += pre_timings[0];  // classify
-                self.profile_accum[1] += pre_timings[1];  // sdf
-                self.profile_accum[2] += p2g_time;        // p2g (GPU)
-                self.profile_accum[3] += press_time + pre_g2p_time;  // pressure + pre-g2p
-                self.profile_accum[4] += g2p_time;        // g2p (GPU/CPU hybrid)
-                self.profile_accum[5] += post_g2p_timings[0]; // neigh
-                self.profile_accum[6] += post_g2p_timings[1]; // rest
-
-                // GPU diagnostics
+                // Diagnostics
                 if self.frame_count % 60 == 0 {
                     self.sim.grid.compute_divergence();
                     let max_div = self.sim.grid.divergence.iter().cloned().fold(0.0f32, |a, b| a.max(b.abs()));
@@ -340,6 +257,15 @@ impl App {
                     eprintln!("GPU_P2G + {}_G2P: div_out={:.4} | vel={:.1} | p2g={:.2}ms g2p={:.2}ms",
                         g2p_mode, max_div, max_vel, p2g_time, g2p_time);
                 }
+
+                // Timings: [classify, sdf, p2g, press, g2p, neigh, rest]
+                self.profile_accum[0] += pre_timings[0];
+                self.profile_accum[1] += pre_timings[1];
+                self.profile_accum[2] += p2g_time;
+                self.profile_accum[3] += press_time + pre_g2p_time;
+                self.profile_accum[4] += g2p_time;
+                self.profile_accum[5] += post_timings[0];
+                self.profile_accum[6] += post_timings[1];
             }
         } else {
             // CPU fallback
@@ -356,6 +282,74 @@ impl App {
                     .map(|p| p.velocity.length())
                     .fold(0.0f32, f32::max);
                 eprintln!("CPU: div_out={:.4} | vel={:.1}", max_div, max_vel);
+            }
+        }
+
+        // DEBUG: Compare GPU and CPU pressure solvers on same input
+        // Run every 300 frames (~5 seconds) to reduce overhead
+        let compare_pressure_solvers = false; // Disabled for now
+        if compare_pressure_solvers && self.frame_count % 300 == 0 && self.frame_count > 0 {
+            if let (Some(gpu), Some(solver)) = (&self.gpu, &self.pressure_solver) {
+                // Save current state
+                let saved_pressure = self.sim.grid.pressure.clone();
+
+                // Prepare for pressure solve (computes divergence, cell types)
+                self.sim.grid.compute_divergence();
+                let divergence_snapshot = self.sim.grid.divergence.clone();
+
+                // Run CPU multigrid solve
+                self.sim.grid.pressure.fill(0.0); // Cold start for fair comparison
+                self.sim.grid.solve_pressure_multigrid(4);
+                let cpu_pressure = self.sim.grid.pressure.clone();
+
+                // Compute CPU divergence after
+                self.sim.grid.compute_divergence();
+                let cpu_div_after: f32 = self.sim.grid.divergence.iter().map(|d| d.abs()).sum();
+
+                // Reset for GPU solve
+                self.sim.grid.divergence.copy_from_slice(&divergence_snapshot);
+                self.sim.grid.pressure.fill(0.0); // Cold start
+
+                // Convert cell types
+                let cell_types: Vec<u32> = self.sim.grid.cell_type.iter().map(|&ct| ct as u32).collect();
+
+                // Run GPU solve (cold start)
+                solver.upload(gpu, &self.sim.grid.divergence, &cell_types, 1.9);
+                solver.solve(gpu, 100); // More iterations for SOR to converge
+                solver.download(gpu, &mut self.sim.grid.pressure);
+                let gpu_pressure = self.sim.grid.pressure.clone();
+
+                // Compute GPU divergence after
+                self.sim.grid.compute_divergence();
+                let gpu_div_after: f32 = self.sim.grid.divergence.iter().map(|d| d.abs()).sum();
+
+                // Compare pressure fields
+                let mut max_diff = 0.0f32;
+                let mut sum_diff = 0.0f32;
+                let mut count = 0;
+                for (i, (&cpu_p, &gpu_p)) in cpu_pressure.iter().zip(gpu_pressure.iter()).enumerate() {
+                    if self.sim.grid.cell_type[i] == sim::grid::CellType::Fluid {
+                        let diff = (cpu_p - gpu_p).abs();
+                        max_diff = max_diff.max(diff);
+                        sum_diff += diff;
+                        count += 1;
+                    }
+                }
+                let avg_diff = if count > 0 { sum_diff / count as f32 } else { 0.0 };
+
+                // Pressure stats
+                let cpu_max = cpu_pressure.iter().cloned().fold(f32::MIN, f32::max);
+                let cpu_min = cpu_pressure.iter().cloned().fold(f32::MAX, f32::min);
+                let gpu_max = gpu_pressure.iter().cloned().fold(f32::MIN, f32::max);
+                let gpu_min = gpu_pressure.iter().cloned().fold(f32::MAX, f32::min);
+
+                eprintln!("=== PRESSURE COMPARISON ({} particles) ===", self.sim.particles.len());
+                eprintln!("CPU: p[{:.2}..{:.2}], div_after={:.4}", cpu_min, cpu_max, cpu_div_after);
+                eprintln!("GPU: p[{:.2}..{:.2}], div_after={:.4}", gpu_min, gpu_max, gpu_div_after);
+                eprintln!("Diff: max={:.4}, avg={:.6}, fluid_cells={}", max_diff, avg_diff, count);
+
+                // Restore original pressure
+                self.sim.grid.pressure.copy_from_slice(&saved_pressure);
             }
         }
 
@@ -391,29 +385,44 @@ impl App {
 
     /// Analyze sediment behavior for DEM validation
     fn print_sediment_diagnostics(&self) {
-        use sim::particle::ParticleMaterial;
+        use sim::particle::{ParticleMaterial, ParticleState};
 
         let particles = &self.sim.particles.list;
+        let grid = &self.sim.grid;
 
-        // Count by type
+        // Count by type (all sediments)
         let mut gold_count = 0usize;
         let mut sand_count = 0usize;
         let mut magnetite_count = 0usize;
         let mut mud_count = 0usize;
         let mut water_count = 0usize;
 
-        // Velocity stats for sediments
+        // Velocity stats for ALL sediments
         let mut sediment_vel_sum = 0.0f32;
         let mut sediment_vel_max = 0.0f32;
         let mut settled_count = 0usize; // vel < 5 px/s
         let mut moving_count = 0usize;  // vel >= 5 px/s
 
-        // Stratification: track average Y position by material
+        // RIFFLE ZONE: Only sediments near floor (SDF < 3 cells OR Bedload state)
+        // This excludes suspended particles in water flow
+        const RIFFLE_SDF_THRESHOLD: f32 = 3.0; // cells from floor
+        let mut riffle_count = 0usize;
+        let mut riffle_settled = 0usize;
+        let mut riffle_vel_sum = 0.0f32;
+        let mut riffle_vel_max = 0.0f32;
+        let mut riffle_gold_y_sum = 0.0f32;
+        let mut riffle_gold_count = 0usize;
+        let mut riffle_sand_y_sum = 0.0f32;
+        let mut riffle_sand_count = 0usize;
+        let mut riffle_magnetite_y_sum = 0.0f32;
+        let mut riffle_magnetite_count = 0usize;
+
+        // Stratification: track average Y position by material (all)
         let mut gold_y_sum = 0.0f32;
         let mut sand_y_sum = 0.0f32;
         let mut magnetite_y_sum = 0.0f32;
 
-        // Pile height tracking (sample columns)
+        // Pile height tracking
         let mut max_sediment_y = 0.0f32;
 
         const SETTLED_THRESHOLD: f32 = 5.0; // px/s
@@ -430,6 +439,17 @@ impl App {
                     sediment_vel_max = sediment_vel_max.max(vel_mag);
                     if vel_mag < SETTLED_THRESHOLD { settled_count += 1; } else { moving_count += 1; }
                     max_sediment_y = max_sediment_y.max(p.position.y);
+
+                    // Check if in riffle zone
+                    let sdf = grid.sample_sdf(p.position);
+                    if sdf < RIFFLE_SDF_THRESHOLD || p.state == ParticleState::Bedload {
+                        riffle_count += 1;
+                        riffle_vel_sum += vel_mag;
+                        riffle_vel_max = riffle_vel_max.max(vel_mag);
+                        if vel_mag < SETTLED_THRESHOLD { riffle_settled += 1; }
+                        riffle_gold_y_sum += p.position.y;
+                        riffle_gold_count += 1;
+                    }
                 }
                 ParticleMaterial::Sand => {
                     sand_count += 1;
@@ -438,6 +458,17 @@ impl App {
                     sediment_vel_max = sediment_vel_max.max(vel_mag);
                     if vel_mag < SETTLED_THRESHOLD { settled_count += 1; } else { moving_count += 1; }
                     max_sediment_y = max_sediment_y.max(p.position.y);
+
+                    // Check if in riffle zone
+                    let sdf = grid.sample_sdf(p.position);
+                    if sdf < RIFFLE_SDF_THRESHOLD || p.state == ParticleState::Bedload {
+                        riffle_count += 1;
+                        riffle_vel_sum += vel_mag;
+                        riffle_vel_max = riffle_vel_max.max(vel_mag);
+                        if vel_mag < SETTLED_THRESHOLD { riffle_settled += 1; }
+                        riffle_sand_y_sum += p.position.y;
+                        riffle_sand_count += 1;
+                    }
                 }
                 ParticleMaterial::Magnetite => {
                     magnetite_count += 1;
@@ -446,11 +477,31 @@ impl App {
                     sediment_vel_max = sediment_vel_max.max(vel_mag);
                     if vel_mag < SETTLED_THRESHOLD { settled_count += 1; } else { moving_count += 1; }
                     max_sediment_y = max_sediment_y.max(p.position.y);
+
+                    // Check if in riffle zone
+                    let sdf = grid.sample_sdf(p.position);
+                    if sdf < RIFFLE_SDF_THRESHOLD || p.state == ParticleState::Bedload {
+                        riffle_count += 1;
+                        riffle_vel_sum += vel_mag;
+                        riffle_vel_max = riffle_vel_max.max(vel_mag);
+                        if vel_mag < SETTLED_THRESHOLD { riffle_settled += 1; }
+                        riffle_magnetite_y_sum += p.position.y;
+                        riffle_magnetite_count += 1;
+                    }
                 }
                 ParticleMaterial::Mud => {
                     mud_count += 1;
                     sediment_vel_sum += vel_mag;
                     if vel_mag < SETTLED_THRESHOLD { settled_count += 1; } else { moving_count += 1; }
+
+                    // Check if in riffle zone
+                    let sdf = grid.sample_sdf(p.position);
+                    if sdf < RIFFLE_SDF_THRESHOLD || p.state == ParticleState::Bedload {
+                        riffle_count += 1;
+                        riffle_vel_sum += vel_mag;
+                        riffle_vel_max = riffle_vel_max.max(vel_mag);
+                        if vel_mag < SETTLED_THRESHOLD { riffle_settled += 1; }
+                    }
                 }
             }
         }
@@ -461,27 +512,45 @@ impl App {
             return;
         }
 
-        // Compute averages
+        // Compute averages for ALL sediments
         let avg_sediment_vel = sediment_vel_sum / total_sediment as f32;
         let gold_avg_y = if gold_count > 0 { gold_y_sum / gold_count as f32 } else { 0.0 };
         let sand_avg_y = if sand_count > 0 { sand_y_sum / sand_count as f32 } else { 0.0 };
         let magnetite_avg_y = if magnetite_count > 0 { magnetite_y_sum / magnetite_count as f32 } else { 0.0 };
         let settled_pct = 100.0 * settled_count as f32 / total_sediment as f32;
 
-        // Stratification check: gold should be LOWER (smaller Y) than sand
-        // In our coordinate system, Y increases downward (toward floor)
+        // Compute averages for RIFFLE ZONE only
+        let riffle_vel_avg = if riffle_count > 0 { riffle_vel_sum / riffle_count as f32 } else { 0.0 };
+        let riffle_settled_pct = if riffle_count > 0 { 100.0 * riffle_settled as f32 / riffle_count as f32 } else { 0.0 };
+        let riffle_gold_avg_y = if riffle_gold_count > 0 { riffle_gold_y_sum / riffle_gold_count as f32 } else { 0.0 };
+        let riffle_sand_avg_y = if riffle_sand_count > 0 { riffle_sand_y_sum / riffle_sand_count as f32 } else { 0.0 };
+        let riffle_magnetite_avg_y = if riffle_magnetite_count > 0 { riffle_magnetite_y_sum / riffle_magnetite_count as f32 } else { 0.0 };
+
+        // Stratification check for riffle zone (gold should be HIGHER Y = deeper)
+        let riffle_strat_ok = riffle_gold_count == 0 || riffle_sand_count == 0 || riffle_gold_avg_y >= riffle_sand_avg_y;
+
+        // Overall stratification check
         let stratification_ok = gold_count == 0 || sand_count == 0 || gold_avg_y >= sand_avg_y;
 
         eprintln!("\n=== SEDIMENT DIAGNOSTICS ===");
         eprintln!("Counts: gold={} sand={} magnetite={} mud={} water={}",
             gold_count, sand_count, magnetite_count, mud_count, water_count);
-        eprintln!("Velocity: avg={:.1} max={:.1} px/s | settled(<5)={:.0}% moving={:.0}%",
+        eprintln!("ALL: vel avg={:.1} max={:.1} px/s | settled(<5)={:.0}% moving={:.0}%",
             avg_sediment_vel, sediment_vel_max, settled_pct, 100.0 - settled_pct);
-        eprintln!("Avg Y pos: gold={:.1} magnetite={:.1} sand={:.1} (lower=deeper)",
+        eprintln!("Avg Y (all): gold={:.1} magnetite={:.1} sand={:.1}",
             gold_avg_y, magnetite_avg_y, sand_avg_y);
-        eprintln!("Stratification: {} (gold should be >= sand Y)",
-            if stratification_ok { "GOOD" } else { "BAD - gold floating!" });
-        eprintln!("Pile height: max_y={:.1}", max_sediment_y);
+        eprintln!("Stratification (all): {}", if stratification_ok { "GOOD" } else { "BAD" });
+        eprintln!("--- RIFFLE ZONE (SDF<3 or Bedload) ---");
+        eprintln!("Riffle: {} sediments ({:.0}% of total)",
+            riffle_count, 100.0 * riffle_count as f32 / total_sediment as f32);
+        eprintln!("Riffle vel: avg={:.1} max={:.1} px/s | settled={:.0}%",
+            riffle_vel_avg, riffle_vel_max, riffle_settled_pct);
+        eprintln!("Riffle Y: gold={:.1}({}) mag={:.1}({}) sand={:.1}({})",
+            riffle_gold_avg_y, riffle_gold_count,
+            riffle_magnetite_avg_y, riffle_magnetite_count,
+            riffle_sand_avg_y, riffle_sand_count);
+        eprintln!("Riffle stratification: {} (gold should be >= sand Y)",
+            if riffle_strat_ok { "GOOD" } else { "BAD" });
         eprintln!("============================\n");
     }
 
@@ -573,18 +642,12 @@ impl App {
                 // Reset simulation
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
-                if let Some(ref mut renderer) = self.particle_renderer {
-                    renderer.invalidate_terrain();
-                }
             }
             KeyCode::KeyC => self.sim.particles.list.clear(),
             KeyCode::KeyN => {
                 self.sluice_config.riffle_mode = self.sluice_config.riffle_mode.next();
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
-                if let Some(ref mut renderer) = self.particle_renderer {
-                    renderer.invalidate_terrain();
-                }
             }
             KeyCode::ArrowRight => {
                 if self.shift_down {
@@ -600,7 +663,7 @@ impl App {
                     self.inlet_vx = (self.inlet_vx - 5.0).max(20.0);
                 }
             }
-            KeyCode::ArrowUp => self.num_emitters = (self.num_emitters + 1).min(20),
+            KeyCode::ArrowUp => self.num_emitters = (self.num_emitters + 1).min(8),
             KeyCode::ArrowDown => self.num_emitters = self.num_emitters.saturating_sub(1).max(1),
             KeyCode::Equal => {
                 if !self.shift_down {
@@ -623,35 +686,23 @@ impl App {
                     (self.sluice_config.riffle_spacing + 10).min(120);
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
-                if let Some(ref mut renderer) = self.particle_renderer {
-                    renderer.invalidate_terrain();
-                }
             }
             KeyCode::KeyA => {
                 self.sluice_config.riffle_spacing =
                     self.sluice_config.riffle_spacing.saturating_sub(10).max(30);
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
-                if let Some(ref mut renderer) = self.particle_renderer {
-                    renderer.invalidate_terrain();
-                }
             }
             KeyCode::KeyW => {
                 self.sluice_config.riffle_height = (self.sluice_config.riffle_height + 2).min(16);
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
-                if let Some(ref mut renderer) = self.particle_renderer {
-                    renderer.invalidate_terrain();
-                }
             }
             KeyCode::KeyS => {
                 self.sluice_config.riffle_height =
                     self.sluice_config.riffle_height.saturating_sub(2).max(4);
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
-                if let Some(ref mut renderer) = self.particle_renderer {
-                    renderer.invalidate_terrain();
-                }
             }
             KeyCode::KeyZ => {
                 if self.shift_down {
@@ -661,9 +712,6 @@ impl App {
                 }
                 self.sim = FlipSimulation::new(SIM_WIDTH, SIM_HEIGHT, CELL_SIZE);
                 create_sluice_with_mode(&mut self.sim, &self.sluice_config);
-                if let Some(ref mut renderer) = self.particle_renderer {
-                    renderer.invalidate_terrain();
-                }
             }
             KeyCode::Digit2 => {
                 self.sand_rate = if self.sand_rate == 0 {
@@ -730,11 +778,13 @@ impl ApplicationHandler for App {
         let particle_renderer = ParticleRenderer::new(&gpu, 500_000);
         let pressure_solver =
             GpuPressureSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32);
+        let mgpcg_solver = GpuMgpcgSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32);
         let p2g_solver = GpuP2gSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32, 500_000);
         let g2p_solver = GpuG2pSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32, 500_000);
 
         self.particle_renderer = Some(particle_renderer);
         self.pressure_solver = Some(pressure_solver);
+        self.mgpcg_solver = Some(mgpcg_solver);
         self.p2g_solver = Some(p2g_solver);
         self.g2p_solver = Some(g2p_solver);
         self.gpu = Some(gpu);

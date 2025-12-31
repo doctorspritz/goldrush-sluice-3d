@@ -206,8 +206,8 @@ impl FlipSimulation {
         self.grid.compute_divergence();
         let div_before = self.grid.total_divergence();
 
-        // Multigrid pressure solver - 2 V-cycles (fast, acceptable divergence)
-        self.grid.solve_pressure_multigrid(2);
+        // Multigrid pressure solver - 4 V-cycles
+        self.grid.solve_pressure_multigrid(4);
         // Two-way coupling: use mixture density for pressure gradient
         self.apply_pressure_gradient_two_way(dt);
 
@@ -497,44 +497,6 @@ impl FlipSimulation {
         self.grid.compute_divergence();
     }
 
-    /// Phase 2: Finalize after pressure solve
-    /// Assumes grid.pressure has been solved (either CPU or GPU)
-    /// Does pressure gradient, G2P, neighbor, advection
-    /// Returns timings: [pressure_apply, g2p, neighbor, rest]
-    pub fn finalize_after_pressure(&mut self, dt: f32) -> [f32; 4] {
-        use std::time::Instant;
-
-        let t0 = Instant::now();
-        // Apply the pressure gradient
-        self.apply_pressure_gradient_two_way(dt);
-        self.apply_porosity_drag(dt);
-        self.grid.compute_divergence();
-        self.grid.extrapolate_velocities(1);
-        let t1 = Instant::now();
-
-        self.grid_to_particles(dt);
-        let t2 = Instant::now();
-
-        self.build_spatial_hash();
-        self.compute_neighbor_counts();
-        let t3 = Instant::now();
-
-        self.advect_particles(dt);
-        self.apply_dem_settling(dt);
-        self.particles.remove_out_of_bounds(
-            self.grid.width as f32 * self.grid.cell_size,
-            self.grid.height as f32 * self.grid.cell_size,
-        );
-        let t4 = Instant::now();
-
-        [
-            (t1 - t0).as_secs_f32() * 1000.0,
-            (t2 - t1).as_secs_f32() * 1000.0,
-            (t3 - t2).as_secs_f32() * 1000.0,
-            (t4 - t3).as_secs_f32() * 1000.0,
-        ]
-    }
-
     /// Phase 2a: Apply pressure to grid velocities (before G2P)
     /// Call this before GPU/CPU G2P. Returns timing for pressure application.
     pub fn finalize_pre_g2p(&mut self, dt: f32) -> f32 {
@@ -570,6 +532,44 @@ impl FlipSimulation {
         [
             (t1 - t0).as_secs_f32() * 1000.0,
             (t2 - t1).as_secs_f32() * 1000.0,
+        ]
+    }
+
+    /// Phase 2: Finalize after pressure solve
+    /// Assumes grid.pressure has been solved (either CPU or GPU)
+    /// Does pressure gradient, G2P, neighbor, advection
+    /// Returns timings: [pressure_apply, g2p, neighbor, rest]
+    pub fn finalize_after_pressure(&mut self, dt: f32) -> [f32; 4] {
+        use std::time::Instant;
+
+        let t0 = Instant::now();
+        // Apply the pressure gradient
+        self.apply_pressure_gradient_two_way(dt);
+        self.apply_porosity_drag(dt);
+        self.grid.compute_divergence();
+        self.grid.extrapolate_velocities(1);
+        let t1 = Instant::now();
+
+        self.grid_to_particles(dt);
+        let t2 = Instant::now();
+
+        self.build_spatial_hash();
+        self.compute_neighbor_counts();
+        let t3 = Instant::now();
+
+        self.advect_particles(dt);
+        self.apply_dem_settling(dt);
+        self.particles.remove_out_of_bounds(
+            self.grid.width as f32 * self.grid.cell_size,
+            self.grid.height as f32 * self.grid.cell_size,
+        );
+        let t4 = Instant::now();
+
+        [
+            (t1 - t0).as_secs_f32() * 1000.0,
+            (t2 - t1).as_secs_f32() * 1000.0,
+            (t3 - t2).as_secs_f32() * 1000.0,
+            (t4 - t3).as_secs_f32() * 1000.0,
         ]
     }
 
