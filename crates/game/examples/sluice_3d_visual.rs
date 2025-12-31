@@ -49,6 +49,7 @@ struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
     sim: FlipSimulation3D,
+    sluice_config: SluiceConfig,
     paused: bool,
     camera_angle: f32,
     camera_pitch: f32,
@@ -81,20 +82,20 @@ impl App {
         sim.pressure_iterations = 100;
 
         // Create sluice geometry
-        let config = SluiceConfig {
+        let sluice_config = SluiceConfig {
             slope: 0.12,
             slick_plate_len: 10,
             riffle_spacing: 8,
             riffle_height: 2,
             riffle_width: 1,
         };
-        create_sluice(&mut sim, &config);
+        create_sluice(&mut sim, &sluice_config);
 
         // Collect solid cell positions for rendering
         let solid_instances = Self::collect_solids(&sim);
 
-        // Spawn initial water
-        spawn_inlet_water(&mut sim, 500, Vec3::new(1.5, 0.0, 0.0));
+        // Spawn initial water at inlet
+        spawn_inlet_water(&mut sim, &sluice_config, 500, Vec3::new(1.5, 0.0, 0.0));
 
         println!("Spawned {} particles", sim.particle_count());
         println!("Solid cells: {}", solid_instances.len());
@@ -104,6 +105,7 @@ impl App {
             window: None,
             gpu: None,
             sim,
+            sluice_config,
             paused: false,
             camera_angle: std::f32::consts::FRAC_PI_2, // Side-on view (90 degrees)
             camera_pitch: 0.3,                          // Slight elevation
@@ -170,17 +172,10 @@ impl App {
         self.sim.flip_ratio = 0.97;
         self.sim.pressure_iterations = 100;
 
-        let config = SluiceConfig {
-            slope: 0.12,
-            slick_plate_len: 10,
-            riffle_spacing: 8,
-            riffle_height: 2,
-            riffle_width: 1,
-        };
-        create_sluice(&mut self.sim, &config);
+        create_sluice(&mut self.sim, &self.sluice_config);
         self.solid_instances = Self::collect_solids(&self.sim);
 
-        spawn_inlet_water(&mut self.sim, 500, Vec3::new(1.5, 0.0, 0.0));
+        spawn_inlet_water(&mut self.sim, &self.sluice_config, 500, Vec3::new(1.5, 0.0, 0.0));
         self.frame = 0;
     }
 
@@ -371,7 +366,7 @@ impl App {
 
             // Continuously spawn water at inlet
             if self.frame % 3 == 0 && self.sim.particle_count() < MAX_PARTICLES - 100 {
-                spawn_inlet_water(&mut self.sim, 20, Vec3::new(1.5, 0.0, 0.0));
+                spawn_inlet_water(&mut self.sim, &self.sluice_config, 20, Vec3::new(1.5, 0.0, 0.0));
             }
 
             self.frame += 1;
