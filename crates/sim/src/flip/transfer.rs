@@ -388,18 +388,18 @@ impl FlipSimulation {
                     // Clamped to prevent over-damping (max 0.9 per frame for stability)
                     let drag_rate = (drag_coeff * DRAG_STRENGTH * dt).min(0.9);
 
-                    // Target velocity: water velocity + settling slip
-                    // Settling slip is the terminal velocity (px/s) downward relative to water
-                    // This creates a "slip velocity" where the particle settles through the water
-                    let settling_vel = particle.material.settling_velocity(particle.effective_diameter());
-                    let settling_slip = Vec2::new(0.0, -settling_vel);
+                    // Apply drag toward water velocity (horizontal coupling)
+                    // Heavy particles (low drag_rate) resist following water horizontally
+                    // Light particles (high drag_rate) follow water velocity quickly
+                    particle.velocity += (v_grid - particle.velocity) * drag_rate;
 
-                    // Apply drag: exponential approach toward target
-                    // v_new = v + (v_target - v) * drag_rate
-                    // Heavy particles (low drag_rate) will maintain their own velocity longer
-                    // Light particles (high drag_rate) will quickly match water + settling
-                    let v_target = v_grid + settling_slip;
-                    particle.velocity += (v_target - particle.velocity) * drag_rate;
+                    // Apply settling directly (not through drag)
+                    // This ensures heavy particles settle despite their low drag rate
+                    // settling_velocity is terminal velocity - apply as rate toward terminal
+                    let settling_vel = particle.material.settling_velocity(particle.effective_diameter());
+                    let settling_rate = 0.1; // How fast we approach terminal settling velocity
+                    let target_y_vel = v_grid.y - settling_vel; // Water downward + settling
+                    particle.velocity.y += (target_y_vel - particle.velocity.y) * settling_rate;
 
                     particle.old_grid_velocity = v_grid;
                 } else {
@@ -685,11 +685,14 @@ impl FlipSimulation {
                 let drag_coeff = RHO_WATER / rho_particle;
                 let drag_rate = (drag_coeff * DRAG_STRENGTH * dt).min(0.9);
 
-                let settling_vel = particle.material.settling_velocity(particle.effective_diameter());
-                let settling_slip = Vec2::new(0.0, -settling_vel);
+                // Apply drag toward water velocity (horizontal coupling)
+                particle.velocity += (v_grid - particle.velocity) * drag_rate;
 
-                let v_target = v_grid + settling_slip;
-                particle.velocity += (v_target - particle.velocity) * drag_rate;
+                // Apply settling directly (not through drag)
+                let settling_vel = particle.material.settling_velocity(particle.effective_diameter());
+                let settling_rate = 0.1;
+                let target_y_vel = v_grid.y - settling_vel;
+                particle.velocity.y += (target_y_vel - particle.velocity.y) * settling_rate;
 
                 particle.old_grid_velocity = v_grid;
             } else {
