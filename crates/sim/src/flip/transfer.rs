@@ -349,7 +349,6 @@ impl FlipSimulation {
                 // CRITICAL: Use B-spline sampling to match store_old_velocities kernel
                 // Bilinear vs B-spline mismatch caused phantom velocity deltas!
                 let v_grid = grid.sample_velocity_bspline(pos);
-                use crate::physics::GRAVITY;
                 use std::sync::atomic::{AtomicU32, Ordering};
                 static DIAG_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -388,14 +387,15 @@ impl FlipSimulation {
                     // Clamped to prevent over-damping (max 0.9 per frame for stability)
                     let drag_rate = (drag_coeff * DRAG_STRENGTH * dt).min(0.9);
 
-                    // Apply drag toward water velocity (HORIZONTAL ONLY)
-                    // Heavy particles (low drag_rate) resist horizontal flow → stay in riffles
-                    // Light particles (high drag_rate) follow horizontal flow → wash away
+                    // Apply FULL 2D drag toward water velocity
+                    // Heavy particles (low drag_rate) resist flow → stay in riffles
+                    // Light particles (high drag_rate) follow flow → wash away
                     //
-                    // VERTICAL motion is handled ONLY by the vorticity settling section below.
-                    // This ensures heavy particles settle faster regardless of drag_rate.
-                    particle.velocity.x += (v_grid.x - particle.velocity.x) * drag_rate;
-                    // NO vertical drag here - settling is material-specific in vorticity section
+                    // This includes vertical drag so particles follow eddies and upwellings.
+                    // Settling is then applied RELATIVE to water velocity (after drag).
+                    let drag_vec = v_grid - particle.velocity;
+                    particle.velocity.x += drag_vec.x * drag_rate;
+                    particle.velocity.y += drag_vec.y * drag_rate;
 
                     particle.old_grid_velocity = v_grid;
                 } else {
@@ -430,16 +430,8 @@ impl FlipSimulation {
                 const VORT_SWIRL_SCALE: f32 = 0.05;    // How much vorticity adds tangential motion
 
                 // Material-specific settling using Ferguson-Church formula
-                // Different materials settle at different rates based on density and size
+                // This is the TERMINAL settling velocity (px/s) relative to water
                 let settling_velocity = particle.material.settling_velocity(particle.effective_diameter());
-
-                // Convert terminal velocity to acceleration factor
-                // settling_velocity is terminal velocity (px/s), we want fraction of gravity
-                // Factor = v_terminal / (g * tau) where tau is relaxation time
-                // For simplicity, normalize so that reference settling gives reasonable behavior
-                const REFERENCE_SETTLING: f32 = 28.0;  // Sand at typical diameter
-                const BASE_FACTOR: f32 = 0.62;         // Original tuned value for sand
-                let settling_factor = BASE_FACTOR * (settling_velocity / REFERENCE_SETTLING);
 
                 // Sample vorticity at particle position
                 let vorticity = grid.sample_vorticity(pos);
@@ -460,7 +452,7 @@ impl FlipSimulation {
                 // Light particles (sand ρ=2.65): lift reduced by 1/2.65 ≈ 0.38 → can be suspended
                 let density_lift_scale = (1.0 / particle.material.density()).min(0.5);
                 let lift_factor = base_lift * density_lift_scale;
-                let effective_settling = settling_factor * (1.0 - lift_factor);
+                let effective_settling = settling_velocity * (1.0 - lift_factor);
 
                 // 2. SWIRL: Add velocity perpendicular to particle motion
                 // Only apply swirl if there's actual flow (not in calm water)
@@ -476,8 +468,11 @@ impl FlipSimulation {
                     Vec2::ZERO
                 };
 
-                // Apply modified settling + swirl
-                particle.velocity.y += GRAVITY * effective_settling * dt;
+                // Apply settling RELATIVE to water velocity (downward in particle frame)
+                // After 2D drag, particle is mostly following water. Settling is the additional
+                // downward motion that the particle has due to its density.
+                // settling_velocity is positive (downward), so we ADD it to y (y+ is down in sim coords)
+                particle.velocity.y += effective_settling * dt;
                 particle.velocity += swirl_velocity * dt;
                 return;
             }
@@ -659,7 +654,6 @@ impl FlipSimulation {
 
             // CRITICAL: Use B-spline sampling to match store_old_velocities kernel
             let v_grid = grid.sample_velocity_bspline(pos);
-            use crate::physics::GRAVITY;
 
             // Check if sand is in a Fluid cell (has meaningful water velocity to follow)
             let (ci, cj) = (
@@ -681,9 +675,12 @@ impl FlipSimulation {
                 let drag_coeff = RHO_WATER / rho_particle;
                 let drag_rate = (drag_coeff * DRAG_STRENGTH * dt).min(0.9);
 
-                // Apply drag toward water velocity (HORIZONTAL ONLY)
-                // Vertical settling is material-specific in vorticity section below
-                particle.velocity.x += (v_grid.x - particle.velocity.x) * drag_rate;
+                // Apply FULL 2D drag toward water velocity
+                // This includes vertical drag so particles follow eddies and upwellings.
+                // Settling is then applied RELATIVE to water velocity (after drag).
+                let drag_vec = v_grid - particle.velocity;
+                particle.velocity.x += drag_vec.x * drag_rate;
+                particle.velocity.y += drag_vec.y * drag_rate;
 
                 particle.old_grid_velocity = v_grid;
             } else {
@@ -696,10 +693,8 @@ impl FlipSimulation {
             const VORT_SWIRL_SCALE: f32 = 0.05;
 
             // Material-specific settling using Ferguson-Church formula
+            // This is the TERMINAL settling velocity (px/s) relative to water
             let settling_velocity = particle.material.settling_velocity(particle.effective_diameter());
-            const REFERENCE_SETTLING: f32 = 28.0;
-            const BASE_FACTOR: f32 = 0.62;
-            let settling_factor = BASE_FACTOR * (settling_velocity / REFERENCE_SETTLING);
 
             // Sample vorticity at particle position
             let vorticity = grid.sample_vorticity(pos);
@@ -715,7 +710,7 @@ impl FlipSimulation {
             // Scale lift by inverse density (heavy particles resist suspension)
             let density_lift_scale = (1.0 / particle.material.density()).min(0.5);
             let lift_factor = base_lift * density_lift_scale;
-            let effective_settling = settling_factor * (1.0 - lift_factor);
+            let effective_settling = settling_velocity * (1.0 - lift_factor);
 
             // 2. SWIRL: Add velocity perpendicular to particle motion
             const MIN_VORT_FOR_SWIRL: f32 = 1.0;
@@ -728,8 +723,8 @@ impl FlipSimulation {
                 Vec2::ZERO
             };
 
-            // Apply modified settling + swirl
-            particle.velocity.y += GRAVITY * effective_settling * dt;
+            // Apply settling RELATIVE to water velocity (downward in particle frame)
+            particle.velocity.y += effective_settling * dt;
             particle.velocity += swirl_velocity * dt;
         });
     }
