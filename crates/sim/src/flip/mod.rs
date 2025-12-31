@@ -293,7 +293,12 @@ impl FlipSimulation {
             self.update_clumps(dt);
         }
 
-        // 8g-8i. Cell-based deposition DISABLED for porosity model
+        // 8g. Sediment diagnostics - print pile stability every 120 frames
+        if profile {
+            self.print_sediment_diagnostics();
+        }
+
+        // 8h-8j. Cell-based deposition DISABLED for porosity model
         // Particles stay as particles - piles affect water through porosity drag
         // self.deposit_settled_sediment(dt);
         // self.entrain_deposited_sediment(dt);
@@ -1374,6 +1379,108 @@ impl FlipSimulation {
     /// Should be < 1 for stability, < 0.5 for high-fidelity vortices
     pub fn compute_cfl(&self, dt: f32) -> f32 {
         self.max_velocity() * dt / self.grid.cell_size
+    }
+
+    /// Print sediment pile stability diagnostics.
+    ///
+    /// Categorizes sediment particles by velocity:
+    /// - Static: < 0.01 cells/frame (truly at rest)
+    /// - Creeping: 0.01-0.1 cells/frame (slow sliding - the problem we're diagnosing)
+    /// - Moving: > 0.1 cells/frame (actively flowing)
+    ///
+    /// Ideal piles should have near-zero creeping particles.
+    pub fn print_sediment_diagnostics(&self) {
+        // Velocity thresholds (in cells/frame, assuming dt=1/60 and cell_size=1)
+        const STATIC_THRESHOLD: f32 = 0.01;  // < this = truly at rest
+        const CREEP_THRESHOLD: f32 = 0.1;    // between static and this = creeping
+
+        let cell_size = self.grid.cell_size;
+
+        // Per-material stats
+        struct MaterialStats {
+            total: usize,
+            static_count: usize,
+            creep_count: usize,
+            moving_count: usize,
+            velocity_sum: f32,
+        }
+
+        impl MaterialStats {
+            fn new() -> Self {
+                Self { total: 0, static_count: 0, creep_count: 0, moving_count: 0, velocity_sum: 0.0 }
+            }
+        }
+
+        let mut gold = MaterialStats::new();
+        let mut sand = MaterialStats::new();
+        let mut magnetite = MaterialStats::new();
+        let mut gravel = MaterialStats::new();
+        let mut mud = MaterialStats::new();
+
+        for p in self.particles.iter() {
+            if !p.is_sediment() {
+                continue;
+            }
+
+            // Velocity in cells/frame
+            let v = p.velocity.length() / cell_size;
+
+            let stats = match p.material {
+                ParticleMaterial::Gold => &mut gold,
+                ParticleMaterial::Sand => &mut sand,
+                ParticleMaterial::Magnetite => &mut magnetite,
+                ParticleMaterial::Gravel => &mut gravel,
+                ParticleMaterial::Mud => &mut mud,
+                _ => continue,
+            };
+
+            stats.total += 1;
+            stats.velocity_sum += v;
+
+            if v < STATIC_THRESHOLD {
+                stats.static_count += 1;
+            } else if v < CREEP_THRESHOLD {
+                stats.creep_count += 1;
+            } else {
+                stats.moving_count += 1;
+            }
+        }
+
+        let total = gold.total + sand.total + magnetite.total + gravel.total + mud.total;
+        if total == 0 {
+            return;
+        }
+
+        let total_static = gold.static_count + sand.static_count + magnetite.static_count
+            + gravel.static_count + mud.static_count;
+        let total_creep = gold.creep_count + sand.creep_count + magnetite.creep_count
+            + gravel.creep_count + mud.creep_count;
+        let total_moving = gold.moving_count + sand.moving_count + magnetite.moving_count
+            + gravel.moving_count + mud.moving_count;
+
+        println!("SEDIMENT: {} | static: {} ({:.0}%) | creep: {} ({:.0}%) | moving: {} ({:.0}%)",
+            total,
+            total_static, 100.0 * total_static as f32 / total as f32,
+            total_creep, 100.0 * total_creep as f32 / total as f32,
+            total_moving, 100.0 * total_moving as f32 / total as f32,
+        );
+
+        // Per-material breakdown (only if material has particles)
+        let print_material = |name: &str, s: &MaterialStats| {
+            if s.total == 0 { return; }
+            let avg_v = s.velocity_sum / s.total as f32;
+            println!("  {:<10} {:>5} | static: {:>4} ({:>3.0}%) | creep: {:>4} | avg_v: {:.4}",
+                name, s.total,
+                s.static_count, 100.0 * s.static_count as f32 / s.total as f32,
+                s.creep_count, avg_v
+            );
+        };
+
+        print_material("Gold:", &gold);
+        print_material("Sand:", &sand);
+        print_material("Magnetite:", &magnetite);
+        print_material("Gravel:", &gravel);
+        print_material("Mud:", &mud);
     }
 
     /// Initialize velocity field for Taylor-Green vortex test
