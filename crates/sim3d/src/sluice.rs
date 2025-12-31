@@ -131,8 +131,20 @@ pub fn create_sluice(sim: &mut FlipSimulation3D, config: &SluiceConfig) {
 
 /// Spawn water at the inlet (high end of sluice) with given velocity.
 ///
+/// Multiple horizontal emitters span the full width (Z) of the channel.
 /// The inlet is at x=0 where the floor is highest. Water spawns just above
 /// the floor and flows downhill toward the outlet at x=width-1.
+///
+/// Top view of emitters:
+/// ```text
+/// wall +-------------------+
+///      | * * * * * * * *   |  <- emitters span Z
+/// Z    |                   |
+///      |                   |
+/// wall +-------------------+
+///      inlet          outlet
+///            X ->
+/// ```
 pub fn spawn_inlet_water(sim: &mut FlipSimulation3D, config: &SluiceConfig, count: usize, velocity: glam::Vec3) {
     let dx = sim.grid.cell_size;
     let width = sim.grid.width;
@@ -141,30 +153,43 @@ pub fn spawn_inlet_water(sim: &mut FlipSimulation3D, config: &SluiceConfig, coun
     // Inlet is at x=0, floor height is (width-1) * slope
     let inlet_floor_y = ((width - 1) as f32 * config.slope) as usize;
 
-    // Spawn just above the floor, inside the channel (not in the walls)
-    let spawn_x = 2.0 * dx;  // Just past the inlet wall
-    let spawn_y_base = (inlet_floor_y as f32 + 2.0) * dx;  // Above floor
-    let spawn_z = (depth as f32 * 0.5) * dx;  // Center of channel
+    // Spawn position: just past inlet wall, above floor
+    let spawn_x = 2.0 * dx;
+    let spawn_y_base = (inlet_floor_y as f32 + 2.0) * dx;
 
-    // Spawn particles in a small block
-    let particles_per_side = (count as f32).cbrt().ceil() as usize;
-    let spacing = dx * 0.4;
+    // Number of emitters across the width (inside side walls)
+    let num_emitters = (depth - 2).max(1); // depth-2 to stay inside walls
+    let particles_per_emitter = (count / num_emitters).max(1);
+
+    // Spacing between emitters
+    let z_start = 1.5 * dx;  // Just inside front wall
+    let z_end = (depth as f32 - 1.5) * dx;  // Just inside back wall
+    let z_span = z_end - z_start;
 
     let mut spawned = 0;
-    for pi in 0..particles_per_side {
-        for pj in 0..particles_per_side {
-            for pk in 0..particles_per_side {
+    for emitter in 0..num_emitters {
+        // Position this emitter along Z
+        let t = if num_emitters > 1 {
+            emitter as f32 / (num_emitters - 1) as f32
+        } else {
+            0.5
+        };
+        let emitter_z = z_start + t * z_span;
+
+        // Spawn a small cluster at each emitter
+        let cluster_size = (particles_per_emitter as f32).sqrt().ceil() as usize;
+        let spacing = dx * 0.3;
+
+        for pi in 0..cluster_size {
+            for pj in 0..cluster_size {
                 if spawned >= count {
                     return;
                 }
 
-                // Center the spawn block in Z, stack vertically in Y
-                let offset_k = pk as f32 - particles_per_side as f32 / 2.0;
-
                 let pos = glam::Vec3::new(
                     spawn_x + pi as f32 * spacing,
                     spawn_y_base + pj as f32 * spacing,
-                    spawn_z + offset_k * spacing,
+                    emitter_z,
                 );
 
                 // Check if position is valid (not inside solid)
