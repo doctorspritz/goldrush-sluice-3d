@@ -323,12 +323,12 @@ impl ParticleRenderer {
             }
         }
 
-        // Debug: print terrain count occasionally
+        // Debug: print terrain count occasionally (TODO: use RLE like main branch)
         static mut FRAME: u32 = 0;
         unsafe {
             FRAME += 1;
             if FRAME % 120 == 1 {
-                eprintln!("TERRAIN: {} solid cells", instances.len());
+                eprintln!("TERRAIN: {} solid cells (TODO: use RLE)", instances.len());
             }
         }
 

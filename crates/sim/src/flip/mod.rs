@@ -206,8 +206,8 @@ impl FlipSimulation {
         self.grid.compute_divergence();
         let div_before = self.grid.total_divergence();
 
-        // Multigrid pressure solver - 8 V-cycles for better convergence
-        self.grid.solve_pressure_multigrid(8);
+        // Multigrid pressure solver - 4 V-cycles (match main.rs)
+        self.grid.solve_pressure_multigrid(4);
         // Two-way coupling: use mixture density for pressure gradient
         self.apply_pressure_gradient_two_way(dt);
 
@@ -450,6 +450,88 @@ impl FlipSimulation {
             (t1 - t0).as_secs_f32() * 1000.0,
             (t2 - t1).as_secs_f32() * 1000.0,
             (t3 - t2).as_secs_f32() * 1000.0,
+        ]
+    }
+
+    /// Phase 1a: Prepare for external P2G (e.g., GPU P2G)
+    /// Does classify and SDF only. Caller is responsible for running P2G
+    /// and then calling complete_p2g_phase().
+    /// Returns timings: [classify, sdf]
+    pub fn prepare_for_p2g(&mut self) -> [f32; 2] {
+        use std::time::Instant;
+        self.frame = self.frame.wrapping_add(1);
+
+        let t0 = Instant::now();
+        self.classify_cells();
+        let t1 = Instant::now();
+
+        self.grid.compute_sdf();
+        let t2 = Instant::now();
+
+        [
+            (t1 - t0).as_secs_f32() * 1000.0,
+            (t2 - t1).as_secs_f32() * 1000.0,
+        ]
+    }
+
+    /// Phase 1b: Complete P2G phase after external P2G (e.g., GPU P2G)
+    /// Assumes grid.u and grid.v have been filled by external P2G.
+    /// Does extrapolate, store_old, forces, and computes divergence.
+    pub fn complete_p2g_phase(&mut self, dt: f32) {
+        self.grid.extrapolate_velocities(1);
+
+        // Store old velocities for FLIP delta:
+        // - Grid-level: for GPU G2P (stores to grid.u_old, grid.v_old)
+        // - Particle-level: for CPU G2P (stores to particle.old_grid_velocity)
+        self.grid.store_old_velocities_grid();
+        self.store_old_velocities();
+
+        // Apply forces before pressure solve
+        self.grid.apply_gravity(dt);
+        {
+            let grid = &mut self.grid;
+            let pile_height = &self.pile_height;
+            grid.apply_vorticity_confinement_with_piles(dt, 0.05, pile_height);
+        }
+        self.grid.enforce_boundary_conditions();
+        self.grid.compute_divergence();
+    }
+
+    /// Phase 2a: Apply pressure to grid velocities (before G2P)
+    /// Call this before GPU/CPU G2P. Returns timing for pressure application.
+    pub fn finalize_pre_g2p(&mut self, dt: f32) -> f32 {
+        use std::time::Instant;
+        let t0 = Instant::now();
+
+        self.apply_pressure_gradient_two_way(dt);
+        self.apply_porosity_drag(dt);
+        self.grid.compute_divergence();
+        self.grid.extrapolate_velocities(1);
+
+        (Instant::now() - t0).as_secs_f32() * 1000.0
+    }
+
+    /// Phase 2b: Finalize after G2P transfer (advection, neighbor, DEM)
+    /// Call this after GPU/CPU G2P. Returns timings: [neighbor, rest]
+    pub fn finalize_post_g2p(&mut self, dt: f32) -> [f32; 2] {
+        use std::time::Instant;
+
+        let t0 = Instant::now();
+        self.build_spatial_hash();
+        self.compute_neighbor_counts();
+        let t1 = Instant::now();
+
+        self.advect_particles(dt);
+        self.apply_dem_settling(dt);
+        self.particles.remove_out_of_bounds(
+            self.grid.width as f32 * self.grid.cell_size,
+            self.grid.height as f32 * self.grid.cell_size,
+        );
+        let t2 = Instant::now();
+
+        [
+            (t1 - t0).as_secs_f32() * 1000.0,
+            (t2 - t1).as_secs_f32() * 1000.0,
         ]
     }
 

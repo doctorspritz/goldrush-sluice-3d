@@ -244,4 +244,17 @@ impl Grid {
             }
         }
     }
+
+    /// Store current grid velocities to u_old/v_old for GPU G2P FLIP delta.
+    ///
+    /// This should be called after P2G but before forces (gravity, pressure) are applied.
+    /// GPU G2P will then compute FLIP delta = (new_grid - old_grid) using these stored values.
+    ///
+    /// This is a simple CPU copy (~500KB for 512x256 grid) which is fast enough.
+    /// For reference, the grid copy takes <0.1ms while GPU G2P target is 2ms.
+    #[inline]
+    pub fn store_old_velocities_grid(&mut self) {
+        self.u_old.copy_from_slice(&self.u);
+        self.v_old.copy_from_slice(&self.v);
+    }
 }

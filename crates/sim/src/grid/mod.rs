@@ -177,6 +177,11 @@ pub struct Grid {
     /// Size: width * (height+1)
     pub v: Vec<f32>,
 
+    /// Old grid velocities for GPU G2P FLIP delta calculation
+    /// Stored after P2G but before forces are applied
+    pub u_old: Vec<f32>,
+    pub v_old: Vec<f32>,
+
     /// Pressure at cell centers
     pub pressure: Vec<f32>,
     /// Divergence at cell centers (computed during solve)
@@ -251,6 +256,9 @@ impl Grid {
             cell_size,
             u: vec![0.0; u_count],
             v: vec![0.0; v_count],
+            // Old velocities for GPU G2P FLIP delta
+            u_old: vec![0.0; u_count],
+            v_old: vec![0.0; v_count],
             pressure: vec![0.0; cell_count],
             divergence: vec![0.0; cell_count],
             cell_type: vec![CellType::Air; cell_count],
@@ -1738,9 +1746,9 @@ impl Grid {
     /// V-cycle multigrid iteration
     fn mg_v_cycle(&mut self, level: usize) {
         let max_level = self.mg_levels.len() - 1;
-        let pre_smooth = 10;
-        let post_smooth = 10;
-        let coarse_solve = 50;
+        let pre_smooth = 3;  // Match main branch
+        let post_smooth = 3;
+        let coarse_solve = 20;
 
         // Pre-smoothing (Gauss-Seidel - faster for small grids)
         self.mg_smooth(level, pre_smooth);

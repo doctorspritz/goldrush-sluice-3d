@@ -5,7 +5,10 @@
 
 mod gpu;
 
-use gpu::{mgpcg::GpuMgpcgSolver, pressure::GpuPressureSolver, renderer::ParticleRenderer, GpuContext};
+use gpu::{
+    g2p::GpuG2pSolver, mgpcg::GpuMgpcgSolver, p2g::GpuP2gSolver,
+    pressure::GpuPressureSolver, renderer::ParticleRenderer, GpuContext,
+};
 use sim::{create_sluice_with_mode, FlipSimulation, RiffleMode, SluiceConfig};
 use std::sync::Arc;
 use winit::{
@@ -21,6 +24,8 @@ const SIM_WIDTH: usize = 512;
 const SIM_HEIGHT: usize = 256;
 const CELL_SIZE: f32 = 1.0;
 const SCALE: f32 = 2.5;
+const EMITTER_SPACING: f32 = 3.0; // Cells between emitters
+const PARTICLES_PER_EMITTER: usize = 10;
 
 /// Application state
 struct App {
@@ -29,6 +34,8 @@ struct App {
     particle_renderer: Option<ParticleRenderer>,
     pressure_solver: Option<GpuPressureSolver>,
     mgpcg_solver: Option<GpuMgpcgSolver>,
+    p2g_solver: Option<GpuP2gSolver>,
+    g2p_solver: Option<GpuG2pSolver>,
     window: Option<Arc<Window>>,
 
     // Simulation
@@ -42,8 +49,8 @@ struct App {
     inlet_y: f32,
     inlet_vx: f32,
     inlet_vy: f32,
-    spawn_rate: usize,
-    flow_multiplier: usize,
+    num_emitters: usize,
+    flow_multiplier: usize,  // Multiplier for particles per emitter
     sand_rate: usize,
     magnetite_rate: usize,
     gold_rate: usize,
@@ -61,6 +68,10 @@ struct App {
 
     // Keyboard state for modifiers
     shift_down: bool,
+
+    // GPU compute toggles
+    use_gpu_p2g: bool,
+    use_gpu_g2p: bool,
 }
 
 impl App {
@@ -92,6 +103,8 @@ impl App {
             particle_renderer: None,
             pressure_solver: None,
             mgpcg_solver: None,
+            p2g_solver: None,
+            g2p_solver: None,
             window: None,
             sim,
             sluice_config,
@@ -101,8 +114,8 @@ impl App {
             inlet_y: (SIM_HEIGHT / 4 - 10) as f32,
             inlet_vx: 80.0,
             inlet_vy: 5.0,
-            spawn_rate: 500,  // Increased for faster particle accumulation
-            flow_multiplier: 5, // 5x more particles per frame
+            num_emitters: 4,      // Multiple emitters spaced vertically
+            flow_multiplier: 1,   // Multiplier for PARTICLES_PER_EMITTER
             sand_rate: 4,
             magnetite_rate: 8,
             gold_rate: 20,
@@ -114,6 +127,8 @@ impl App {
             profile_accum: [0.0; 7],
             profile_count: 0,
             shift_down: false,
+            use_gpu_p2g: true,  // Start with GPU P2G enabled
+            use_gpu_g2p: true,  // Start with GPU G2P enabled
         }
     }
 
@@ -129,34 +144,41 @@ impl App {
             self.sim.spawn_water(wx, wy, 20.0, 0.0, 5);
         }
 
-        // Spawn water and sediments
-        self.sim.spawn_water(
-            self.inlet_x,
-            self.inlet_y,
-            self.inlet_vx,
-            self.inlet_vy,
-            self.spawn_rate * self.flow_multiplier,
-        );
+        // Spawn water from multiple emitters (spaced vertically like master branch)
+        for i in 0..self.num_emitters {
+            let emitter_y = self.inlet_y - (i as f32 * EMITTER_SPACING);
+            self.sim.spawn_water(
+                self.inlet_x,
+                emitter_y,
+                self.inlet_vx,
+                self.inlet_vy,
+                PARTICLES_PER_EMITTER * self.flow_multiplier,
+            );
+        }
+
+        // Sediments spawn from emitters (cycled round-robin)
+        let emitter_idx = (self.frame_count as usize) % self.num_emitters;
+        let sediment_y = self.inlet_y - (emitter_idx as f32 * EMITTER_SPACING);
 
         // Sand
         let effective_sand = self.sand_rate / self.flow_multiplier.max(1);
         if effective_sand > 0 && self.frame_count % effective_sand as u64 == 0 {
             self.sim
-                .spawn_sand(self.inlet_x, self.inlet_y, self.inlet_vx, self.inlet_vy, 1);
+                .spawn_sand(self.inlet_x, sediment_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
         // Magnetite
         let effective_magnetite = self.magnetite_rate / self.flow_multiplier.max(1);
         if effective_magnetite > 0 && self.frame_count % effective_magnetite as u64 == 0 {
             self.sim
-                .spawn_magnetite(self.inlet_x, self.inlet_y, self.inlet_vx, self.inlet_vy, 1);
+                .spawn_magnetite(self.inlet_x, sediment_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
         // Gold
         let effective_gold = self.gold_rate / self.flow_multiplier.max(1);
         if effective_gold > 0 && self.frame_count % effective_gold as u64 == 0 {
             self.sim
-                .spawn_gold(self.inlet_x, self.inlet_y, self.inlet_vx, self.inlet_vy, 1);
+                .spawn_gold(self.inlet_x, sediment_y, self.inlet_vx, self.inlet_vy, 1);
         }
 
         // Remove particles at outflow - DISABLED for barrier test
@@ -166,88 +188,85 @@ impl App {
         // Run simulation with profiling
         let dt = 1.0 / 60.0;
 
-        // GPU pressure solver validated - produces identical divergence reduction
-        let compare_pressure_solvers = false;
-        let use_gpu_pressure = true; // GPU pressure solver enabled
-        let use_mgpcg = false; // ARCHIVED: MGPCG has sync overhead issues. Use SOR instead.
-        if use_gpu_pressure {
-        if let (Some(gpu), Some(solver), Some(mgpcg)) = (&self.gpu, &self.pressure_solver, &self.mgpcg_solver) {
-            use std::time::Instant;
+        if self.use_gpu_p2g {
+            // GPU P2G path (optionally with GPU G2P)
+            if let (Some(gpu), Some(p2g_solver)) = (&self.gpu, &self.p2g_solver) {
+                use std::time::Instant;
 
-            // Phase 1: CPU prepares for pressure solve
-            let pre_timings = self.sim.prepare_pressure_solve(dt);
+                // Phase 1a: Classify + SDF (CPU)
+                let pre_timings = self.sim.prepare_for_p2g();
 
-            // Phase 2: GPU pressure solve with warm start
-            let press_start = Instant::now();
-
-            // Convert cell types to u32 for GPU
-            let cell_types: Vec<u32> = self
-                .sim
-                .grid
-                .cell_type
-                .iter()
-                .map(|&ct| ct as u32)
-                .collect();
-
-            if use_mgpcg {
-                // True MGPCG: PCG outer loop with V-cycle preconditioner
-                // Uses ALL multigrid levels (not limited to 2) for better convergence
-                mgpcg.upload_warm(gpu, &self.sim.grid.divergence, &cell_types, &self.sim.grid.pressure);
-                mgpcg.solve_pcg(gpu, 20); // 20 PCG iterations with V-cycle preconditioner
-                mgpcg.download(gpu, &mut self.sim.grid.pressure);
-            } else {
-                // SOR solver: simple iterative method
-                solver.upload_warm(
+                // Phase 1b: GPU P2G
+                let p2g_start = Instant::now();
+                p2g_solver.execute(
                     gpu,
-                    &self.sim.grid.divergence,
-                    &cell_types,
-                    &self.sim.grid.pressure,
-                    1.9,
+                    &self.sim.particles.list,
+                    CELL_SIZE,
+                    &mut self.sim.grid.u,
+                    &mut self.sim.grid.v,
                 );
-                solver.solve(gpu, 30);
-                solver.download(gpu, &mut self.sim.grid.pressure);
+                let p2g_time = p2g_start.elapsed().as_secs_f32() * 1000.0;
+
+                // Phase 1c: Complete P2G phase (extrapolate, store_old, forces, divergence)
+                // Note: This now also stores grid.u_old/v_old for GPU G2P FLIP delta
+                self.sim.complete_p2g_phase(dt);
+
+                // Phase 2: CPU pressure solve (multigrid)
+                let press_start = Instant::now();
+                self.sim.grid.solve_pressure_multigrid(4);
+                let press_time = press_start.elapsed().as_secs_f32() * 1000.0;
+
+                // Phase 3a: Pre-G2P (apply pressure gradient to grid)
+                let pre_g2p_time = self.sim.finalize_pre_g2p(dt);
+
+                // Phase 3b: Hybrid G2P (GPU for water, CPU for sediment)
+                let g2p_start = Instant::now();
+                if self.use_gpu_g2p {
+                    if let Some(g2p_solver) = &self.g2p_solver {
+                        // GPU G2P for water particles
+                        g2p_solver.execute(
+                            gpu,
+                            &mut self.sim.particles.list,
+                            &self.sim.grid.u,
+                            &self.sim.grid.v,
+                            &self.sim.grid.u_old,
+                            &self.sim.grid.v_old,
+                            CELL_SIZE,
+                            dt,
+                        );
+                    }
+                    // CPU G2P for sediment only (preserves all sediment physics)
+                    self.sim.grid_to_particles_sediment_only(dt);
+                } else {
+                    // Full CPU G2P for all particles
+                    self.sim.grid_to_particles(dt);
+                }
+                let g2p_time = g2p_start.elapsed().as_secs_f32() * 1000.0;
+
+                // Phase 3c: Finalize (advection, DEM, cleanup)
+                let post_timings = self.sim.finalize_post_g2p(dt);
+
+                // Diagnostics
+                if self.frame_count % 60 == 0 {
+                    self.sim.grid.compute_divergence();
+                    let max_div = self.sim.grid.divergence.iter().cloned().fold(0.0f32, |a, b| a.max(b.abs()));
+                    let max_vel = self.sim.particles.list.iter()
+                        .map(|p| p.velocity.length())
+                        .fold(0.0f32, f32::max);
+                    let g2p_mode = if self.use_gpu_g2p { "GPU" } else { "CPU" };
+                    eprintln!("GPU_P2G + {}_G2P: div_out={:.4} | vel={:.1} | p2g={:.2}ms g2p={:.2}ms",
+                        g2p_mode, max_div, max_vel, p2g_time, g2p_time);
+                }
+
+                // Timings: [classify, sdf, p2g, press, g2p, neigh, rest]
+                self.profile_accum[0] += pre_timings[0];
+                self.profile_accum[1] += pre_timings[1];
+                self.profile_accum[2] += p2g_time;
+                self.profile_accum[3] += press_time + pre_g2p_time;
+                self.profile_accum[4] += g2p_time;
+                self.profile_accum[5] += post_timings[0];
+                self.profile_accum[6] += post_timings[1];
             }
-
-            let press_time = press_start.elapsed().as_secs_f32() * 1000.0;
-
-            // Store input divergence for diagnostics
-            let pre_max_div = self.sim.grid.divergence.iter().cloned().fold(0.0f32, |a, b| a.max(b.abs()));
-
-            // Phase 3: CPU finishes simulation (applies pressure to velocities)
-            let post_timings = self.sim.finalize_after_pressure(dt);
-
-            // DIAGNOSTICS: Check pressure solve quality
-            if self.frame_count % 60 == 0 {
-                // Check for NaN/inf in pressure
-                let nan_count = self.sim.grid.pressure.iter().filter(|p| p.is_nan()).count();
-                let inf_count = self.sim.grid.pressure.iter().filter(|p| p.is_infinite()).count();
-                let max_p = self.sim.grid.pressure.iter().cloned().fold(0.0f32, f32::max);
-                let min_p = self.sim.grid.pressure.iter().cloned().fold(0.0f32, f32::min);
-
-                // Compute divergence AFTER pressure applied to velocities (should be ~0)
-                self.sim.grid.compute_divergence();
-                let post_max_div = self.sim.grid.divergence.iter().cloned().fold(0.0f32, |a, b| a.max(b.abs()));
-
-                // Check max velocity
-                let max_vel = self.sim.particles.list.iter()
-                    .map(|p| p.velocity.length())
-                    .fold(0.0f32, f32::max);
-
-                eprintln!("GPU: div_in={:.2} -> div_out={:.2} | p[{:.1}..{:.1}] nan={} inf={} | vel={:.1}",
-                    pre_max_div, post_max_div, min_p, max_p, nan_count, inf_count, max_vel);
-                use std::io::Write;
-                let _ = std::io::stderr().flush();
-            }
-
-            // Combine timings: [classify, sdf, p2g, press, g2p, neigh, rest]
-            self.profile_accum[0] += pre_timings[0];
-            self.profile_accum[1] += pre_timings[1];
-            self.profile_accum[2] += pre_timings[2];
-            self.profile_accum[3] += press_time;
-            self.profile_accum[4] += post_timings[1]; // g2p
-            self.profile_accum[5] += post_timings[2]; // neigh
-            self.profile_accum[6] += post_timings[3]; // rest
-        }
         } else {
             // CPU fallback
             let timings = self.sim.update_profiled(dt);
@@ -268,6 +287,7 @@ impl App {
 
         // DEBUG: Compare GPU and CPU pressure solvers on same input
         // Run every 300 frames (~5 seconds) to reduce overhead
+        let compare_pressure_solvers = false; // Disabled for now
         if compare_pressure_solvers && self.frame_count % 300 == 0 && self.frame_count > 0 {
             if let (Some(gpu), Some(solver)) = (&self.gpu, &self.pressure_solver) {
                 // Save current state
@@ -467,8 +487,8 @@ impl App {
                     self.inlet_vx = (self.inlet_vx - 5.0).max(20.0);
                 }
             }
-            KeyCode::ArrowUp => self.spawn_rate = (self.spawn_rate + 5).min(100),
-            KeyCode::ArrowDown => self.spawn_rate = self.spawn_rate.saturating_sub(5).max(5),
+            KeyCode::ArrowUp => self.num_emitters = (self.num_emitters + 1).min(8),
+            KeyCode::ArrowDown => self.num_emitters = self.num_emitters.saturating_sub(1).max(1),
             KeyCode::Equal => {
                 if !self.shift_down {
                     self.zoom = (self.zoom + 0.25).min(6.0);
@@ -546,6 +566,14 @@ impl App {
             }
             KeyCode::Digit9 => self.fast_particle_size = (self.fast_particle_size - 0.5).max(1.0),
             KeyCode::Digit0 => self.fast_particle_size = (self.fast_particle_size + 0.5).min(8.0),
+            KeyCode::KeyP => {
+                self.use_gpu_p2g = !self.use_gpu_p2g;
+                log::info!("GPU P2G: {}", if self.use_gpu_p2g { "ENABLED" } else { "DISABLED" });
+            }
+            KeyCode::KeyG => {
+                self.use_gpu_g2p = !self.use_gpu_g2p;
+                log::info!("GPU G2P: {}", if self.use_gpu_g2p { "ENABLED" } else { "DISABLED" });
+            }
             _ => {}
         }
     }
@@ -570,18 +598,22 @@ impl ApplicationHandler for App {
         // Initialize GPU (blocking on async)
         let gpu = pollster::block_on(GpuContext::new(window.clone()));
 
-        // Create renderers
-        let particle_renderer = ParticleRenderer::new(&gpu, 300_000);
+        // Create renderers and GPU compute solvers
+        let particle_renderer = ParticleRenderer::new(&gpu, 500_000);
         let pressure_solver =
             GpuPressureSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32);
         let mgpcg_solver = GpuMgpcgSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32);
+        let p2g_solver = GpuP2gSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32, 500_000);
+        let g2p_solver = GpuG2pSolver::new(&gpu, SIM_WIDTH as u32, SIM_HEIGHT as u32, 500_000);
 
         self.particle_renderer = Some(particle_renderer);
         self.pressure_solver = Some(pressure_solver);
         self.mgpcg_solver = Some(mgpcg_solver);
+        self.p2g_solver = Some(p2g_solver);
+        self.g2p_solver = Some(g2p_solver);
         self.gpu = Some(gpu);
 
-        log::info!("GPU initialized successfully");
+        log::info!("GPU initialized successfully (P2G + G2P solvers ready)");
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {

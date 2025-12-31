@@ -609,4 +609,99 @@ impl FlipSimulation {
             }
         });
     }
+
+    /// G2P for sediment particles only (called when GPU handles water G2P)
+    ///
+    /// This preserves all sediment physics:
+    /// - FLIP/PIC blend with sand_pic_ratio
+    /// - old_grid_velocity tracking for FLIP delta
+    /// - Vorticity-based suspension (lift + swirl)
+    /// - Material-specific settling velocity
+    ///
+    /// Water particles are SKIPPED - they should be handled by GPU G2P.
+    pub fn grid_to_particles_sediment_only(&mut self, dt: f32) {
+        let cell_size = self.grid.cell_size;
+        let width = self.grid.width;
+        let sand_pic_ratio = self.sand_pic_ratio;
+
+        let grid = &self.grid;
+
+        self.particles.list.par_iter_mut().for_each(|particle| {
+            // ONLY process sediment particles
+            if !particle.is_sediment() {
+                return;
+            }
+
+            let pos = particle.position;
+
+            // CRITICAL: Use B-spline sampling to match store_old_velocities kernel
+            let v_grid = grid.sample_velocity_bspline(pos);
+            use crate::physics::GRAVITY;
+
+            // Check if sand is in a Fluid cell (has meaningful water velocity to follow)
+            let (ci, cj) = (
+                (pos.x / cell_size) as usize,
+                (pos.y / cell_size) as usize,
+            );
+            let cell_idx = cj * width + ci;
+            let cell_type = if cell_idx < grid.cell_type.len() {
+                grid.cell_type[cell_idx]
+            } else {
+                CellType::Air
+            };
+
+            if cell_type == CellType::Fluid {
+                // IN FLUID: Blend between PIC (follow grid) and FLIP (respond to changes)
+                let old_grid_vel = particle.old_grid_velocity;
+                let grid_delta = v_grid - old_grid_vel;
+
+                let pic_vel = v_grid;
+                let flip_vel = particle.velocity + grid_delta;
+                particle.velocity = sand_pic_ratio * pic_vel + (1.0 - sand_pic_ratio) * flip_vel;
+
+                particle.old_grid_velocity = v_grid;
+            } else {
+                // IN AIR: Don't use FLIP (no meaningful water velocity)
+                particle.old_grid_velocity = Vec2::ZERO;
+            }
+
+            // ========== VORTICITY-BASED SUSPENSION ==========
+            const VORT_LIFT_SCALE: f32 = 0.3;
+            const VORT_SWIRL_SCALE: f32 = 0.05;
+
+            // Material-specific settling using Ferguson-Church formula
+            let settling_velocity = particle.material.settling_velocity(particle.effective_diameter());
+            const REFERENCE_SETTLING: f32 = 28.0;
+            const BASE_FACTOR: f32 = 0.62;
+            let settling_factor = BASE_FACTOR * (settling_velocity / REFERENCE_SETTLING);
+
+            // Sample vorticity at particle position
+            let vorticity = grid.sample_vorticity(pos);
+            let vort_magnitude = vorticity.abs();
+
+            // 1. LIFT: Reduce settling in high-vorticity regions
+            const MIN_VORT_FOR_LIFT: f32 = 0.5;
+            let lift_factor = if vort_magnitude > MIN_VORT_FOR_LIFT {
+                ((vort_magnitude - MIN_VORT_FOR_LIFT) * VORT_LIFT_SCALE).min(1.0)
+            } else {
+                0.0
+            };
+            let effective_settling = settling_factor * (1.0 - lift_factor);
+
+            // 2. SWIRL: Add velocity perpendicular to particle motion
+            const MIN_VORT_FOR_SWIRL: f32 = 1.0;
+            let speed = particle.velocity.length();
+            let swirl_velocity = if speed > 5.0 && vort_magnitude > MIN_VORT_FOR_SWIRL {
+                let v_normalized = particle.velocity / speed;
+                let v_perp = Vec2::new(-v_normalized.y, v_normalized.x);
+                v_perp * vorticity * VORT_SWIRL_SCALE
+            } else {
+                Vec2::ZERO
+            };
+
+            // Apply modified settling + swirl
+            particle.velocity.y += GRAVITY * effective_settling * dt;
+            particle.velocity += swirl_velocity * dt;
+        });
+    }
 }
