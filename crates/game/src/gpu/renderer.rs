@@ -301,9 +301,9 @@ impl ParticleRenderer {
                 rgba[3] as f32 / 255.0,
             ];
 
-            // Size based on material type
+            // Size based on material type - use actual particle diameter
             let size = if p.material.is_sediment() {
-                p.diameter.max(0.8) // Use particle diameter for sediment
+                p.diameter // Use actual particle diameter for sediment
             } else {
                 0.6 // Smaller water particles
             };
