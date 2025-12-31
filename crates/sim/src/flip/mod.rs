@@ -304,11 +304,12 @@ impl FlipSimulation {
         // self.entrain_deposited_sediment(dt);
         // self.collapse_deposited_sediment();
 
-        // 8b-8d. Legacy bedload system DISABLED for Phase 2
-        // Sand stays in Suspended state, no pile mechanics
-        // self.update_particle_states(dt);
-        // self.compute_pile_heightfield();
-        // self.enforce_pile_constraints();
+        // 8b. Update particle states (Rouse/Shields-based transitions)
+        self.update_particle_states(dt);
+
+        // 8c-8d. Pile mechanics (compute heightfield and enforce constraints)
+        self.compute_pile_heightfield();
+        self.enforce_pile_constraints();
 
         // Silence unused timing/diagnostic variables (kept for flamegraph profiling)
         let _ = (t0, t1, t2, t3, t4, t5, t6, t7, profile, div_before);
