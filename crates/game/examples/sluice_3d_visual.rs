@@ -113,31 +113,45 @@ impl App {
     fn collect_solids(sim: &FlipSimulation3D) -> Vec<ParticleInstance> {
         let mut instances = Vec::new();
         let dx = sim.grid.cell_size;
+        let width = sim.grid.width;
+        let height = sim.grid.height;
+        let depth = sim.grid.depth;
 
-        for k in 0..sim.grid.depth {
-            for j in 0..sim.grid.height {
-                for i in 0..sim.grid.width {
-                    if sim.grid.is_solid(i, j, k) {
-                        // Only render surface solid cells (not internal ones)
-                        let has_air_neighbor =
-                            (i > 0 && !sim.grid.is_solid(i-1, j, k)) ||
-                            (i + 1 < sim.grid.width && !sim.grid.is_solid(i+1, j, k)) ||
-                            (j > 0 && !sim.grid.is_solid(i, j-1, k)) ||
-                            (j + 1 < sim.grid.height && !sim.grid.is_solid(i, j+1, k)) ||
-                            (k > 0 && !sim.grid.is_solid(i, j, k-1)) ||
-                            (k + 1 < sim.grid.depth && !sim.grid.is_solid(i, j, k+1));
+        for k in 0..depth {
+            for j in 0..height {
+                for i in 0..width {
+                    if !sim.grid.is_solid(i, j, k) {
+                        continue;
+                    }
 
-                        if has_air_neighbor {
-                            let pos = Vec3::new(
-                                (i as f32 + 0.5) * dx,
-                                (j as f32 + 0.5) * dx,
-                                (k as f32 + 0.5) * dx,
-                            );
-                            instances.push(ParticleInstance {
-                                position: pos.to_array(),
-                                color: [0.4, 0.35, 0.3, 1.0], // Brown/tan for terrain
-                            });
-                        }
+                    // Skip interior side walls (z=0 and z=depth-1) - too many cells
+                    // Only render at the very edges of the sluice
+                    let is_side_wall = k == 0 || k == depth - 1;
+                    let is_edge = i == 0 || i == width - 1 || j == 0;
+
+                    if is_side_wall && !is_edge {
+                        continue; // Skip interior side wall cells
+                    }
+
+                    // Only render cells with an air neighbor (surface cells)
+                    let has_air_neighbor =
+                        (i > 0 && !sim.grid.is_solid(i - 1, j, k))
+                            || (i + 1 < width && !sim.grid.is_solid(i + 1, j, k))
+                            || (j > 0 && !sim.grid.is_solid(i, j - 1, k))
+                            || (j + 1 < height && !sim.grid.is_solid(i, j + 1, k))
+                            || (k > 0 && !sim.grid.is_solid(i, j, k - 1))
+                            || (k + 1 < depth && !sim.grid.is_solid(i, j, k + 1));
+
+                    if has_air_neighbor {
+                        let pos = Vec3::new(
+                            (i as f32 + 0.5) * dx,
+                            (j as f32 + 0.5) * dx,
+                            (k as f32 + 0.5) * dx,
+                        );
+                        instances.push(ParticleInstance {
+                            position: pos.to_array(),
+                            color: [0.4, 0.35, 0.3, 1.0], // Brown/tan for terrain
+                        });
                     }
                 }
             }
