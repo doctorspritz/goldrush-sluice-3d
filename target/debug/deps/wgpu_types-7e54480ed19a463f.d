@@ -1,0 +1,10 @@
+/Users/simonheikkila/Documents/antigravity-dev/goldrush-sluice-walls/target/debug/deps/wgpu_types-7e54480ed19a463f.d: /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/lib.rs /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/assertions.rs /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/counters.rs /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/math.rs
+
+/Users/simonheikkila/Documents/antigravity-dev/goldrush-sluice-walls/target/debug/deps/libwgpu_types-7e54480ed19a463f.rlib: /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/lib.rs /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/assertions.rs /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/counters.rs /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/math.rs
+
+/Users/simonheikkila/Documents/antigravity-dev/goldrush-sluice-walls/target/debug/deps/libwgpu_types-7e54480ed19a463f.rmeta: /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/lib.rs /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/assertions.rs /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/counters.rs /Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/math.rs
+
+/Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/lib.rs:
+/Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/assertions.rs:
+/Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/counters.rs:
+/Users/simonheikkila/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-23.0.0/src/math.rs:
