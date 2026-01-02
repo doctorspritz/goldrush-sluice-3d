@@ -19,12 +19,12 @@ use winit::{
     window::{Window, WindowId},
 };
 
-// Simple grid - smaller for testing
-const GRID_WIDTH: usize = 32;
-const GRID_HEIGHT: usize = 32;
+// Longer sluice - 3x length, less height
+const GRID_WIDTH: usize = 96;   // 3x longer
+const GRID_HEIGHT: usize = 16;  // Half height
 const GRID_DEPTH: usize = 16;
 const CELL_SIZE: f32 = 0.05;
-const MAX_PARTICLES: usize = 50000;
+const MAX_PARTICLES: usize = 300000;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -100,19 +100,19 @@ fn create_closed_box(sim: &mut FlipSimulation3D) {
     let depth = sim.grid.depth;
 
     // Slope parameters: floor height varies from left to right
-    let floor_height_left = 8;   // 8 cells high on left side
-    let floor_height_right = 2;  // 2 cells high on right side
+    let floor_height_left = 4;   // 4 cells high on left side
+    let floor_height_right = 1;  // 1 cell high on right side
 
-    // Riffle parameters
-    let riffle_spacing = 6;      // Riffles every 6 cells
+    // Riffle parameters - more frequent riffles to slow water uniformly
+    let riffle_spacing = 6;      // Riffles every 6 cells (more frequent)
     let riffle_height = 2;       // Riffles are 2 cells tall
-    let riffle_start_x = 8;      // Start riffles after this X position
-    let riffle_end_x = width - 4; // Stop riffles before exit
+    let riffle_start_x = 12;     // Start riffles after this X position
+    let riffle_end_x = width - 8; // Stop riffles before exit
 
     // Exit parameters (opening at right wall)
     let exit_start_z = depth / 4;
     let exit_end_z = 3 * depth / 4;
-    let exit_height = 6;  // Exit opening is 6 cells tall
+    let exit_height = 4;  // Exit opening is 4 cells tall
 
     for k in 0..depth {
         for j in 0..height {
@@ -152,6 +152,27 @@ fn create_closed_box(sim: &mut FlipSimulation3D) {
     let num_riffles = ((riffle_end_x - riffle_start_x) / riffle_spacing) as usize;
     println!("Created sluice: slope {}→{} cells, {} riffles, exit at right wall",
              floor_height_left, floor_height_right, num_riffles);
+
+    // Verify solid cell pattern for X=50-65 (the problematic region)
+    println!("Verifying solid cells for X=50-65 (should see riffles at 52-53, 62-63):");
+    for i in 50..=65 {
+        let t = i as f32 / (width - 1) as f32;
+        let floor_height_at_x = floor_height_left as f32 * (1.0 - t) + floor_height_right as f32 * t;
+        let floor_j = floor_height_at_x as usize;
+
+        let is_riffle_x = i >= riffle_start_x && i < riffle_end_x &&
+            (i - riffle_start_x) % riffle_spacing < 2;
+
+        let mut solid_count = 0;
+        for j in 0..height {
+            if sim.grid.is_solid(i, j, depth / 2) { // Check middle Z
+                solid_count += 1;
+            }
+        }
+
+        let riffle_str = if is_riffle_x { "RIFFLE" } else { "------" };
+        println!("  X={:2}: floor_j={}, solids={:2}, {}", i, floor_j, solid_count, riffle_str);
+    }
 }
 
 /// Spawn water block in the center, raised above floor
@@ -268,10 +289,10 @@ impl App {
         let cell_size = CELL_SIZE;
         let max_to_spawn = (MAX_PARTICLES - self.sim.particles.len()).min(count);
 
-        // Emit from left side, above the sloped floor (floor is 8 cells high on left)
+        // Emit from left side, above the sloped floor (floor is 4 cells high on left)
         let emit_x = 3.0 * cell_size;  // Near left wall
         let center_z = GRID_DEPTH as f32 * cell_size * 0.5;
-        let emit_y = 12.0 * cell_size; // Above the 8-cell high left floor
+        let emit_y = 6.0 * cell_size; // Above the 4-cell high left floor
 
         // Emit in a small region
         let spread_x = 2.0 * cell_size;
@@ -358,6 +379,42 @@ impl App {
         (avg_vel, max_vel, max_y, max_x)
     }
 
+    /// Print particle density by X region (every 10 cells)
+    fn print_x_region_density(&self) {
+        let cell_size = CELL_SIZE;
+        let mut region_counts = [0u32; 10]; // 10 regions for 96 cells (each ~10 cells wide)
+
+        for p in &self.sim.particles.list {
+            let region = ((p.position.x / cell_size) / 10.0).min(9.0) as usize;
+            region_counts[region] += 1;
+        }
+
+        // Print as bar chart with riffle markers
+        // Riffles at X=12-13, 22-23, 32-33, 42-43, 52-53, 62-63, 72-73, 82-83
+        print!("X-Density: ");
+        for (i, count) in region_counts.iter().enumerate() {
+            let normalized = (*count as f32 / 35000.0).min(1.0); // Normalize to ~35k particles per region
+            let bars = (normalized * 10.0) as usize;
+            let has_riffle = i >= 1 && i < 9; // Regions 1-8 have riffles
+            let riffle_marker = if has_riffle { 'R' } else { ' ' };
+            print!("[{}{:10}]", riffle_marker, "█".repeat(bars));
+        }
+        println!();
+
+        // Print detailed counts for problematic region 4-7 (X=40-79)
+        let mut detail_counts = [0u32; 8]; // X=40-47, 48-55, 56-63, 64-71 (8-cell bins)
+        for p in &self.sim.particles.list {
+            let x_cell = (p.position.x / cell_size) as i32;
+            if x_cell >= 40 && x_cell < 72 {
+                let bin = ((x_cell - 40) / 4) as usize;
+                if bin < 8 {
+                    detail_counts[bin] += 1;
+                }
+            }
+        }
+        println!("  Detail X40-71: {:?} (riffles at 42-43, 52-53, 62-63)", detail_counts);
+    }
+
     fn render(&mut self) {
         if self.gpu.is_none() || self.window.is_none() {
             return;
@@ -368,8 +425,8 @@ impl App {
             let dt = 1.0 / 60.0;
 
             // Emit particles from top of box
-            if self.emitter_enabled && self.frame % 2 == 0 {
-                self.emit_particles(50); // 50 particles every other frame
+            if self.emitter_enabled {
+                self.emit_particles(150); // 150 particles every frame (3x more)
             }
 
             if self.use_gpu_sim {
@@ -449,12 +506,12 @@ impl App {
                     // Calculate sloped floor height at this x position
                     let t = (p.position.x / cell_size) / (GRID_WIDTH as f32 - 1.0);
                     let t = t.clamp(0.0, 1.0);
-                    let floor_height = 8.0 * (1.0 - t) + 2.0 * t; // 8 cells left, 2 cells right
+                    let floor_height = 4.0 * (1.0 - t) + 1.0 * t; // 4 cells left, 1 cell right
 
                     // Check if particle is on a riffle (riffles are 2 cells tall, spaced every 6 cells)
                     let i = (p.position.x / cell_size) as usize;
-                    let riffle_start = 8;
-                    let riffle_end = GRID_WIDTH - 4;
+                    let riffle_start = 12;
+                    let riffle_end = GRID_WIDTH - 8;
                     let is_on_riffle = i >= riffle_start && i < riffle_end &&
                         (i - riffle_start) % 6 < 2;
                     let riffle_add = if is_on_riffle { 2.0 } else { 0.0 };
@@ -464,7 +521,7 @@ impl App {
                     // Exit zone (right wall, middle Z section, lower part)
                     let exit_start_z = GRID_DEPTH as f32 * cell_size / 4.0;
                     let exit_end_z = GRID_DEPTH as f32 * cell_size * 3.0 / 4.0;
-                    let exit_max_y = (floor_height + 6.0) * cell_size;  // Exit is 6 cells tall
+                    let exit_max_y = (floor_height + 4.0) * cell_size;  // Exit is 4 cells tall
                     let is_in_exit_zone = p.position.z >= exit_start_z && p.position.z < exit_end_z
                         && p.position.y < exit_max_y;
 
@@ -525,6 +582,11 @@ impl App {
                 max_y,
                 max_x,
             );
+        }
+
+        // Print X-region density every 500 frames (less verbose now that distribution is fixed)
+        if self.frame % 500 == 0 && self.frame > 0 {
+            self.print_x_region_density();
         }
 
         // Create particle instances
