@@ -343,6 +343,13 @@ impl App {
             MAX_PARTICLES,
         );
 
+        // Upload floor heights to GPU for terrain-aware boundary conditions
+        // This allows GPU BC shader to zero velocities at riffle walls, not just y=0
+        let floor_heights_u32: Vec<u32> = self.floor_heights.iter()
+            .map(|&h| h as u32)
+            .collect();
+        gpu_flip.upload_floor_heights(&queue, &floor_heights_u32);
+
         self.gpu = Some(GpuState {
             surface,
             device,

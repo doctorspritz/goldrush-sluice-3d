@@ -78,6 +78,7 @@ pub struct GpuFlip3D {
     bc_w_pipeline: wgpu::ComputePipeline,
     bc_bind_group: wgpu::BindGroup,
     bc_params_buffer: wgpu::Buffer,
+    floor_heights_buffer: wgpu::Buffer,
 
     // Velocity clamping shaders (for CFL stability before pressure solve)
     clamp_u_pipeline: wgpu::ComputePipeline,
@@ -270,6 +271,15 @@ impl GpuFlip3D {
             mapped_at_creation: false,
         });
 
+        // Floor heights buffer for terrain-aware boundary conditions
+        // Stores floor height (in cells) for each (i, k) grid position
+        let floor_heights_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Floor Heights 3D"),
+            size: (width * depth) as u64 * std::mem::size_of::<u32>() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let bc_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("BC 3D Bind Group Layout"),
             entries: &[
@@ -323,6 +333,16 @@ impl GpuFlip3D {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -335,6 +355,7 @@ impl GpuFlip3D {
                 wgpu::BindGroupEntry { binding: 2, resource: p2g.grid_u_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: p2g.grid_v_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: p2g.grid_w_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: floor_heights_buffer.as_entire_binding() },
             ],
         });
 
@@ -493,6 +514,7 @@ impl GpuFlip3D {
             bc_w_pipeline,
             bc_bind_group,
             bc_params_buffer,
+            floor_heights_buffer,
             clamp_u_pipeline,
             clamp_v_pipeline,
             clamp_w_pipeline,
@@ -824,6 +846,20 @@ impl GpuFlip3D {
     /// Debug: read back pressure and divergence from GPU
     pub fn debug_read_pressure(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> (Vec<f32>, Vec<f32>) {
         self.pressure.debug_read_pressure(device, queue)
+    }
+
+    /// Upload floor heights for terrain-aware boundary conditions
+    ///
+    /// floor_heights is a [width * depth] array where:
+    /// - Index = k * width + i
+    /// - Value = number of cells from y=0 to floor surface at (i, k)
+    ///
+    /// This enables the GPU BC shader to zero velocities at riffle walls
+    /// and terrain surfaces, not just at y=0.
+    pub fn upload_floor_heights(&self, queue: &wgpu::Queue, floor_heights: &[u32]) {
+        assert_eq!(floor_heights.len(), (self.width * self.depth) as usize,
+            "floor_heights must be width * depth");
+        queue.write_buffer(&self.floor_heights_buffer, 0, bytemuck::cast_slice(floor_heights));
     }
 
     fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer, output: &mut [f32]) {
