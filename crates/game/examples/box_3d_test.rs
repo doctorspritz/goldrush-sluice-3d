@@ -105,9 +105,11 @@ fn create_closed_box(sim: &mut FlipSimulation3D) {
 
     // Riffle parameters - more frequent riffles to slow water uniformly
     let riffle_spacing = 6;      // Riffles every 6 cells (more frequent)
-    let riffle_height = 2;       // Riffles are 2 cells tall
+    let riffle_height = 3;       // TEST: 3 cells tall to investigate overflow issue
     let riffle_start_x = 12;     // Start riffles after this X position
     let riffle_end_x = width - 8; // Stop riffles before exit
+
+    println!("RIFFLE TEST: Using riffle_height={} to investigate overflow", riffle_height);
 
     // Exit parameters (opening at right wall)
     let exit_start_z = depth / 4;
@@ -290,9 +292,11 @@ impl App {
         let max_to_spawn = (MAX_PARTICLES - self.sim.particles.len()).min(count);
 
         // Emit from left side, above the sloped floor (floor is 4 cells high on left)
+        // With 3-cell riffles, first riffle top is at floor_j + 3 ≈ 4+3=7
+        // Need to emit ABOVE riffle tops so water can flow over
         let emit_x = 3.0 * cell_size;  // Near left wall
         let center_z = GRID_DEPTH as f32 * cell_size * 0.5;
-        let emit_y = 6.0 * cell_size; // Above the 4-cell high left floor
+        let emit_y = 8.0 * cell_size; // Above riffle tops (floor=4 + riffle=3 + 1 = 8)
 
         // Emit in a small region
         let spread_x = 2.0 * cell_size;
@@ -377,6 +381,30 @@ impl App {
         let avg_vel = if count > 0.0 { sum_vel / count } else { Vec3::ZERO };
 
         (avg_vel, max_vel, max_y, max_x)
+    }
+
+    /// Print max water height per X region to diagnose overflow issues
+    fn print_water_height_profile(&self) {
+        let cell_size = CELL_SIZE;
+        let mut max_y_per_region = [0.0f32; 10];
+        let mut count_per_region = [0u32; 10];
+
+        for p in &self.sim.particles.list {
+            let region = ((p.position.x / cell_size) / 10.0).min(9.0) as usize;
+            max_y_per_region[region] = max_y_per_region[region].max(p.position.y);
+            count_per_region[region] += 1;
+        }
+
+        // Calculate riffle tops for each region
+        // First riffle at X=12, spacing=6, so riffles at 12-13, 18-19, 24-25, ...
+        print!("Height profile (riffle top at ~j=7): ");
+        for (i, (max_y, count)) in max_y_per_region.iter().zip(count_per_region.iter()).enumerate() {
+            let max_j = max_y / cell_size;
+            let bar_len = ((max_j / 10.0) * 5.0) as usize;
+            let overflow = if max_j > 7.0 { "↑" } else { " " };
+            print!("[{:2}|{:5}|{:1}]", max_j as i32, count, overflow);
+        }
+        println!();
     }
 
     /// Print particle density by X region (every 10 cells)
@@ -508,13 +536,14 @@ impl App {
                     let t = t.clamp(0.0, 1.0);
                     let floor_height = 4.0 * (1.0 - t) + 1.0 * t; // 4 cells left, 1 cell right
 
-                    // Check if particle is on a riffle (riffles are 2 cells tall, spaced every 6 cells)
+                    // Check if particle is on a riffle (riffles are 3 cells tall, spaced every 6 cells)
+                    // MUST MATCH riffle_height in create_closed_box!
                     let i = (p.position.x / cell_size) as usize;
                     let riffle_start = 12;
                     let riffle_end = GRID_WIDTH - 8;
                     let is_on_riffle = i >= riffle_start && i < riffle_end &&
                         (i - riffle_start) % 6 < 2;
-                    let riffle_add = if is_on_riffle { 2.0 } else { 0.0 };
+                    let riffle_add = if is_on_riffle { 3.0 } else { 0.0 }; // 3-cell riffles for test
 
                     let min_y = (floor_height + riffle_add + 0.51) * cell_size;
 
@@ -582,6 +611,11 @@ impl App {
                 max_y,
                 max_x,
             );
+        }
+
+        // Print height profile frequently to track overflow behavior
+        if self.frame % 100 == 0 && self.frame > 0 {
+            self.print_water_height_profile();
         }
 
         // Print X-region density every 500 frames (less verbose now that distribution is fixed)
