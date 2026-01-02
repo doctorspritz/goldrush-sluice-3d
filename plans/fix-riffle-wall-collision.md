@@ -215,6 +215,18 @@ struct Uniforms {
 | 2025-01-02 | Initial investigation | Found particles climbing walls |
 | 2025-01-02 | Added CPU collision hack | Partial fix, timing wrong |
 | 2025-01-02 | Research & root cause | GPU BC missing floor_heights |
+| 2025-01-02 | **IMPLEMENTED Solution A** | GPU floor_heights buffer working |
+
+## Implementation Complete
+
+**Commit:** `eb6b78b` - feat: GPU terrain-aware boundary conditions for riffle walls
+
+Changes:
+- `enforce_bc_3d.wgsl` - Added floor_heights buffer, riffle wall detection
+- `flip_3d.rs` - Added floor_heights_buffer, upload method
+- `sluice_riffles.rs` - Upload floor_heights on GPU init
+
+Test result: X velocity decreased from 1.23 → 0.15 as particles pool at riffles.
 
 ## Resources
 
