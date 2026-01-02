@@ -1,7 +1,11 @@
+pub mod flip_3d;
 pub mod g2p;
+pub mod g2p_3d;
 pub mod mgpcg;
 pub mod p2g;
+pub mod p2g_3d;
 pub mod pressure;
+pub mod pressure_3d;
 pub mod renderer;
 
 use std::sync::Arc;

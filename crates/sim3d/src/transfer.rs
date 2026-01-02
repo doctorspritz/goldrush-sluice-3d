@@ -282,6 +282,10 @@ pub fn particles_to_grid(grid: &mut Grid3D, particles: &Particles3D, buffers: &m
 ///
 /// Reconstructs the affine velocity matrix C for angular momentum conservation.
 /// Uses FLIP/PIC blending for stability.
+///
+/// IMPORTANT: Normalizes by weight sum to handle boundary particles correctly.
+/// Near boundaries, some stencil nodes are out-of-bounds, so weights don't sum to 1.0.
+/// Without normalization, velocity gets artificially dampened.
 pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio: f32) {
     let cell_size = grid.cell_size;
     let inv_cell_size = 1.0 / cell_size;
@@ -293,6 +297,9 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
 
         let mut new_vel = Vec3::ZERO;
         let mut new_c = Mat3::ZERO;
+        let mut u_delta = 0.0f32;
+        let mut v_delta = 0.0f32;
+        let mut w_delta = 0.0f32;
 
         // ===== Sample U component =====
         let u_pos = pos * inv_cell_size - Vec3::new(0.0, 0.5, 0.5);
@@ -320,6 +327,8 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
 
         let mut u_sum = 0.0f32;
         let mut u_old_sum = 0.0f32;
+        let mut u_weight_sum = 0.0f32;
+        let mut u_c_axis = Vec3::ZERO;
 
         for dk in -1i32..=1 {
             for dj in -1i32..=1 {
@@ -328,6 +337,7 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                     let nj = u_base_j + dj;
                     let nk = u_base_k + dk;
 
+                    // Bounds check for U array: (width+1) x height x depth
                     if ni < 0
                         || ni > grid.width as i32
                         || nj < 0
@@ -335,6 +345,12 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                         || nk < 0
                         || nk >= grid.depth as i32
                     {
+                        continue;
+                    }
+
+                    // CRITICAL: Skip solid faces - they have zero velocity and would
+                    // drag down the weighted average, causing velocity decay
+                    if grid.is_u_face_solid(ni, nj, nk) {
                         continue;
                     }
 
@@ -352,17 +368,22 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
 
                     u_sum += u_val * w;
                     u_old_sum += u_old_val * w;
+                    u_weight_sum += w;
 
                     // APIC C matrix contribution (first column for U)
                     let node_pos = grid.u_position(ni as usize, nj as usize, nk as usize);
                     let offset = node_pos - pos;
-                    new_c.x_axis += d_inv * w * u_val * offset;
+                    u_c_axis += d_inv * w * u_val * offset;
                 }
             }
         }
 
-        new_vel.x = u_sum;
-        let u_delta = u_sum - u_old_sum;
+        // Normalize U by weight sum (now excludes solid faces)
+        if u_weight_sum > 1e-6 {
+            new_vel.x = u_sum / u_weight_sum;
+            u_delta = (u_sum - u_old_sum) / u_weight_sum;
+            new_c.x_axis = u_c_axis / u_weight_sum;
+        }
 
         // ===== Sample V component =====
         let v_pos = pos * inv_cell_size - Vec3::new(0.5, 0.0, 0.5);
@@ -390,6 +411,8 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
 
         let mut v_sum = 0.0f32;
         let mut v_old_sum = 0.0f32;
+        let mut v_weight_sum = 0.0f32;
+        let mut v_c_axis = Vec3::ZERO;
 
         for dk in -1i32..=1 {
             for dj in -1i32..=1 {
@@ -398,6 +421,7 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                     let nj = v_base_j + dj;
                     let nk = v_base_k + dk;
 
+                    // Bounds check for V array: width x (height+1) x depth
                     if ni < 0
                         || ni >= grid.width as i32
                         || nj < 0
@@ -405,6 +429,11 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                         || nk < 0
                         || nk >= grid.depth as i32
                     {
+                        continue;
+                    }
+
+                    // Skip solid faces
+                    if grid.is_v_face_solid(ni, nj, nk) {
                         continue;
                     }
 
@@ -422,17 +451,22 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
 
                     v_sum += v_val * w;
                     v_old_sum += v_old_val * w;
+                    v_weight_sum += w;
 
                     // APIC C matrix contribution (second column for V)
                     let node_pos = grid.v_position(ni as usize, nj as usize, nk as usize);
                     let offset = node_pos - pos;
-                    new_c.y_axis += d_inv * w * v_val * offset;
+                    v_c_axis += d_inv * w * v_val * offset;
                 }
             }
         }
 
-        new_vel.y = v_sum;
-        let v_delta = v_sum - v_old_sum;
+        // Normalize V by weight sum (excludes solid faces)
+        if v_weight_sum > 1e-6 {
+            new_vel.y = v_sum / v_weight_sum;
+            v_delta = (v_sum - v_old_sum) / v_weight_sum;
+            new_c.y_axis = v_c_axis / v_weight_sum;
+        }
 
         // ===== Sample W component =====
         let w_pos = pos * inv_cell_size - Vec3::new(0.5, 0.5, 0.0);
@@ -460,6 +494,8 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
 
         let mut w_sum = 0.0f32;
         let mut w_old_sum = 0.0f32;
+        let mut w_weight_sum = 0.0f32;
+        let mut w_c_axis = Vec3::ZERO;
 
         for dk in -1i32..=1 {
             for dj in -1i32..=1 {
@@ -468,6 +504,7 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                     let nj = w_base_j + dj;
                     let nk = w_base_k + dk;
 
+                    // Bounds check for W array: width x height x (depth+1)
                     if ni < 0
                         || ni >= grid.width as i32
                         || nj < 0
@@ -475,6 +512,11 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                         || nk < 0
                         || nk > grid.depth as i32
                     {
+                        continue;
+                    }
+
+                    // Skip solid faces
+                    if grid.is_w_face_solid(ni, nj, nk) {
                         continue;
                     }
 
@@ -492,24 +534,43 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
 
                     w_sum += w_val * w;
                     w_old_sum += w_old_val * w;
+                    w_weight_sum += w;
 
                     // APIC C matrix contribution (third column for W)
                     let node_pos = grid.w_position(ni as usize, nj as usize, nk as usize);
                     let offset = node_pos - pos;
-                    new_c.z_axis += d_inv * w * w_val * offset;
+                    w_c_axis += d_inv * w * w_val * offset;
                 }
             }
         }
 
-        new_vel.z = w_sum;
-        let w_delta = w_sum - w_old_sum;
+        // Normalize W by weight sum (excludes solid faces)
+        if w_weight_sum > 1e-6 {
+            new_vel.z = w_sum / w_weight_sum;
+            w_delta = (w_sum - w_old_sum) / w_weight_sum;
+            new_c.z_axis = w_c_axis / w_weight_sum;
+        }
 
         // FLIP/PIC blend
         let grid_delta = Vec3::new(u_delta, v_delta, w_delta);
         let flip_velocity = old_vel + grid_delta;
         let pic_velocity = new_vel;
 
-        particle.velocity = flip_ratio * flip_velocity + (1.0 - flip_ratio) * pic_velocity;
+        let mut final_vel = flip_ratio * flip_velocity + (1.0 - flip_ratio) * pic_velocity;
+
+        // Clamp velocity to prevent numerical explosion
+        const MAX_VELOCITY: f32 = 20.0; // m/s - reasonable max for water flow
+        let speed = final_vel.length();
+        if speed > MAX_VELOCITY {
+            final_vel = final_vel * (MAX_VELOCITY / speed);
+        }
+
+        // Safety: NaN/Inf check
+        if !final_vel.is_finite() {
+            final_vel = Vec3::ZERO;
+        }
+
+        particle.velocity = final_vel;
         particle.affine_velocity = new_c;
         particle.old_grid_velocity = new_vel;
     }

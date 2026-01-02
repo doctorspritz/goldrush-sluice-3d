@@ -202,6 +202,71 @@ pub fn spawn_inlet_water(sim: &mut FlipSimulation3D, config: &SluiceConfig, coun
     }
 }
 
+/// Spawn sediment at the inlet with given density.
+///
+/// Sediment densities:
+/// - Sand: 2.65
+/// - Magnetite (black sand): 5.2
+/// - Gold: 19.3
+pub fn spawn_inlet_sediment(
+    sim: &mut FlipSimulation3D,
+    config: &SluiceConfig,
+    count: usize,
+    velocity: glam::Vec3,
+    density: f32,
+) {
+    let dx = sim.grid.cell_size;
+    let width = sim.grid.width;
+    let depth = sim.grid.depth;
+
+    // Inlet is at x=0, floor height is (width-1) * slope
+    let inlet_floor_y = ((width - 1) as f32 * config.slope) as usize;
+
+    // Spawn position: just past inlet wall, above floor
+    let spawn_x = 2.0 * dx;
+    let spawn_y_base = (inlet_floor_y as f32 + 2.0) * dx;
+
+    // Number of emitters across the width (inside side walls)
+    let num_emitters = (depth - 2).max(1);
+    let particles_per_emitter = (count / num_emitters).max(1);
+
+    let z_start = 1.5 * dx;
+    let z_end = (depth as f32 - 1.5) * dx;
+    let z_span = z_end - z_start;
+
+    let mut spawned = 0;
+    for emitter in 0..num_emitters {
+        let t = if num_emitters > 1 {
+            emitter as f32 / (num_emitters - 1) as f32
+        } else {
+            0.5
+        };
+        let emitter_z = z_start + t * z_span;
+
+        let cluster_size = (particles_per_emitter as f32).sqrt().ceil() as usize;
+        let spacing = dx * 0.3;
+
+        for pi in 0..cluster_size {
+            for pj in 0..cluster_size {
+                if spawned >= count {
+                    return;
+                }
+
+                let pos = glam::Vec3::new(
+                    spawn_x + pi as f32 * spacing,
+                    spawn_y_base + pj as f32 * spacing,
+                    emitter_z,
+                );
+
+                if sim.grid.sample_sdf(pos) > 0.0 {
+                    sim.spawn_sediment(pos, velocity, density);
+                    spawned += 1;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

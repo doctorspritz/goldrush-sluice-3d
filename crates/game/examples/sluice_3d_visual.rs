@@ -1,12 +1,15 @@
-//! 3D Sluice Box - Visual Demo
+//! 3D Sluice Box - Visual Demo (GPU Accelerated)
 //!
 //! Renders a 3D sluice box simulation with continuous water inlet.
+//! Uses GPU compute shaders for the FLIP simulation.
 //! Run with: cargo run --example sluice_3d_visual --release
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+use game::gpu::flip_3d::GpuFlip3D;
+use glam::{Mat3, Mat4, Vec3};
 use sim3d::{create_sluice, spawn_inlet_water, FlipSimulation3D, SluiceConfig};
 use std::sync::Arc;
+use std::time::Instant;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -16,13 +19,13 @@ use winit::{
     window::{Window, WindowId},
 };
 
-// Longer, narrower sluice
-const GRID_WIDTH: usize = 64;  // Flow direction (X)
-const GRID_HEIGHT: usize = 24; // Vertical (Y)
-const GRID_DEPTH: usize = 12;  // Width (Z)
-const CELL_SIZE: f32 = 0.05;
-const MAX_PARTICLES: usize = 100000;
-const MAX_SOLIDS: usize = 20000;
+// Fine grid for vortex resolution - need 5+ cells per riffle height
+const GRID_WIDTH: usize = 200;  // Flow direction (X)
+const GRID_HEIGHT: usize = 80;  // Vertical (Y)
+const GRID_DEPTH: usize = 40;   // Width (Z)
+const CELL_SIZE: f32 = 0.016;   // Fine enough for vortices (~5 cells per riffle)
+const MAX_PARTICLES: usize = 800000;  // More particles for finer grid
+const MAX_SOLIDS: usize = 100000;  // More solid cells with finer grid
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -48,6 +51,7 @@ struct Uniforms {
 struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
+    gpu_flip: Option<GpuFlip3D>,
     sim: FlipSimulation3D,
     sluice_config: SluiceConfig,
     paused: bool,
@@ -56,9 +60,20 @@ struct App {
     camera_distance: f32,
     frame: u32,
     solid_instances: Vec<ParticleInstance>,
+    // Particle data for GPU
+    positions: Vec<Vec3>,
+    velocities: Vec<Vec3>,
+    c_matrices: Vec<Mat3>,
+    cell_types: Vec<u32>,
+    use_gpu_sim: bool,
     // Mouse drag state
     mouse_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
+    // FPS tracking
+    last_fps_time: Instant,
+    fps_frame_count: u32,
+    current_fps: f32,
+    max_frames: u32,
 }
 
 struct GpuState {
@@ -79,15 +94,24 @@ impl App {
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
         sim.gravity = Vec3::new(0.0, -9.8, 0.0);
         sim.flip_ratio = 0.97;
-        sim.pressure_iterations = 100;
+        // CRITICAL: For a 200-cell-wide grid, pressure information propagates ~1 cell/iteration.
+        // Need at least width iterations for full convergence. Using 500 for headroom.
+        sim.pressure_iterations = 500;
 
         // Create sluice geometry
+        // CRITICAL: riffle_height MUST be < water depth above floor!
+        // - Water spawns at floor + 2 cells (see sluice.rs spawn_inlet_water)
+        // - If riffle_height >= 2, water can't naturally flow over riffles
+        // - Water would need to BUILD UP behind each riffle, losing energy
+        // - Setting riffle_height = 1 ensures water depth (2) > riffle height (1)
+        // Test with very short riffles to verify water CAN flow through the channel
+        // If this works, the issue is with riffle height blocking flow
         let sluice_config = SluiceConfig {
-            slope: 0.12,
-            slick_plate_len: 10,
-            riffle_spacing: 8,
-            riffle_height: 2,
-            riffle_width: 1,
+            slope: 0.10,            // 10% grade
+            slick_plate_len: 20,    // Flat inlet section
+            riffle_spacing: 16,     // Space between riffles
+            riffle_height: 4,       // TALLER - test if water stacks to overflow
+            riffle_width: 2,        // Thicker riffles
         };
         create_sluice(&mut sim, &sluice_config);
 
@@ -95,88 +119,103 @@ impl App {
         let solid_instances = Self::collect_solids(&sim);
 
         // Spawn initial water at inlet
-        spawn_inlet_water(&mut sim, &sluice_config, 500, Vec3::new(1.5, 0.0, 0.0));
+        spawn_inlet_water(&mut sim, &sluice_config, 2000, Vec3::new(1.5, 0.0, 0.0));
 
         println!("Spawned {} particles", sim.particle_count());
         println!("Solid cells: {}", solid_instances.len());
-        println!("Controls: SPACE=pause, R=reset, ESC=quit, Click+Drag=rotate, Scroll=zoom");
+        println!("Controls: SPACE=pause, R=reset, G=toggle GPU/CPU, ESC=quit, Click+Drag=rotate, Scroll=zoom");
+        println!("Running GPU simulation for 30000 frames...");
 
         Self {
             window: None,
             gpu: None,
+            gpu_flip: None,
             sim,
             sluice_config,
             paused: false,
-            camera_angle: std::f32::consts::FRAC_PI_2, // Side-on view (90 degrees)
-            camera_pitch: 0.3,                          // Slight elevation
-            camera_distance: 3.5,
+            camera_angle: 0.8,  // Angled view to see flow along X and depth along Z
+            camera_pitch: 0.5,  // Higher elevation to see the slope
+            camera_distance: 4.5,  // Farther out to see the whole sluice
             frame: 0,
             solid_instances,
+            positions: Vec::new(),
+            velocities: Vec::new(),
+            c_matrices: Vec::new(),
+            cell_types: Vec::new(),
+            use_gpu_sim: true,  // GPU mode - testing with fixes
             mouse_pressed: false,
             last_mouse_pos: None,
+            last_fps_time: Instant::now(),
+            fps_frame_count: 0,
+            current_fps: 0.0,
+            max_frames: 30000,
         }
     }
 
     fn collect_solids(sim: &FlipSimulation3D) -> Vec<ParticleInstance> {
-        let mut instances = Vec::new();
+        let mut solids = Vec::new();
         let dx = sim.grid.cell_size;
-        let width = sim.grid.width;
-        let height = sim.grid.height;
-        let depth = sim.grid.depth;
+        let w = sim.grid.width;
+        let h = sim.grid.height;
+        let d = sim.grid.depth;
 
-        for k in 0..depth {
-            for j in 0..height {
-                for i in 0..width {
-                    if !sim.grid.is_solid(i, j, k) {
+        // Only render surface solid cells (cells with at least one non-solid neighbor)
+        // This dramatically reduces the number of rendered solids
+        for k in 0..d {
+            for j in 0..h {
+                for i in 0..w {
+                    let idx = sim.grid.cell_index(i, j, k);
+                    if !sim.grid.solid[idx] {
                         continue;
                     }
 
-                    // Skip interior side walls (z=0 and z=depth-1) - too many cells
-                    // Only render at the very edges of the sluice
-                    let is_side_wall = k == 0 || k == depth - 1;
-                    let is_edge = i == 0 || i == width - 1 || j == 0;
+                    // Check if this is a surface cell (has at least one air/fluid neighbor)
+                    let is_surface =
+                        (i == 0 || !sim.grid.is_solid(i - 1, j, k)) ||
+                        (i == w - 1 || !sim.grid.is_solid(i + 1, j, k)) ||
+                        (j == 0 || !sim.grid.is_solid(i, j - 1, k)) ||
+                        (j == h - 1 || !sim.grid.is_solid(i, j + 1, k)) ||
+                        (k == 0 || !sim.grid.is_solid(i, j, k - 1)) ||
+                        (k == d - 1 || !sim.grid.is_solid(i, j, k + 1));
 
-                    if is_side_wall && !is_edge {
-                        continue; // Skip interior side wall cells
+                    if !is_surface {
+                        continue;
                     }
 
-                    // Only render cells with an air neighbor (surface cells)
-                    let has_air_neighbor =
-                        (i > 0 && !sim.grid.is_solid(i - 1, j, k))
-                            || (i + 1 < width && !sim.grid.is_solid(i + 1, j, k))
-                            || (j > 0 && !sim.grid.is_solid(i, j - 1, k))
-                            || (j + 1 < height && !sim.grid.is_solid(i, j + 1, k))
-                            || (k > 0 && !sim.grid.is_solid(i, j, k - 1))
-                            || (k + 1 < depth && !sim.grid.is_solid(i, j, k + 1));
-
-                    if has_air_neighbor {
-                        let pos = Vec3::new(
-                            (i as f32 + 0.5) * dx,
-                            (j as f32 + 0.5) * dx,
-                            (k as f32 + 0.5) * dx,
-                        );
-                        instances.push(ParticleInstance {
-                            position: pos.to_array(),
-                            color: [0.4, 0.35, 0.3, 1.0], // Brown/tan for terrain
-                        });
-                    }
+                    // Cell center position
+                    let pos = [
+                        (i as f32 + 0.5) * dx,
+                        (j as f32 + 0.5) * dx,
+                        (k as f32 + 0.5) * dx,
+                    ];
+                    // Brown/gray color for solid cells
+                    solids.push(ParticleInstance {
+                        position: pos,
+                        color: [0.45, 0.38, 0.32, 1.0],
+                    });
                 }
             }
         }
-        instances
+        solids
     }
 
     fn reset_sim(&mut self) {
         self.sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
         self.sim.gravity = Vec3::new(0.0, -9.8, 0.0);
         self.sim.flip_ratio = 0.97;
-        self.sim.pressure_iterations = 100;
+        self.sim.pressure_iterations = 500;  // Must match new() - need 500 for 200-wide grid
 
         create_sluice(&mut self.sim, &self.sluice_config);
         self.solid_instances = Self::collect_solids(&self.sim);
 
         spawn_inlet_water(&mut self.sim, &self.sluice_config, 500, Vec3::new(1.5, 0.0, 0.0));
         self.frame = 0;
+
+        // Clear GPU particle data
+        self.positions.clear();
+        self.velocities.clear();
+        self.c_matrices.clear();
+        self.cell_types.clear();
     }
 
     async fn init_gpu(&mut self, window: Arc<Window>) {
@@ -198,8 +237,21 @@ impl App {
             .await
             .unwrap();
 
+        // Request higher limits for GPU compute (need 11+ storage buffers per stage for P2G 3D)
+        let mut limits = wgpu::Limits::default();
+        limits.max_storage_buffers_per_shader_stage = 16;
+        limits.max_storage_buffer_binding_size = 256 * 1024 * 1024; // 256 MB
+
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("GPU Device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: limits,
+                    memory_hints: wgpu::MemoryHints::Performance,
+                },
+                None,
+            )
             .await
             .unwrap();
 
@@ -340,6 +392,17 @@ impl App {
             cache: None,
         });
 
+        // Create GPU FLIP simulation
+        let gpu_flip = GpuFlip3D::new(
+            &device,
+            GRID_WIDTH as u32,
+            GRID_HEIGHT as u32,
+            GRID_DEPTH as u32,
+            CELL_SIZE,
+            MAX_PARTICLES,
+        );
+        self.gpu_flip = Some(gpu_flip);
+
         self.gpu = Some(GpuState {
             surface,
             device,
@@ -360,22 +423,219 @@ impl App {
 
         // Update simulation
         if !self.paused {
-            for _ in 0..2 {
-                self.sim.update(1.0 / 120.0);
+            let dt = 1.0 / 120.0;
+            let substeps = 2;
+
+            if self.use_gpu_sim {
+                if let Some(gpu_flip) = &self.gpu_flip {
+                    for _ in 0..substeps {
+                        // Sync particle data from CPU sim to GPU format
+                        let particle_count = self.sim.particles.list.len();
+                        self.positions.clear();
+                        self.velocities.clear();
+                        self.c_matrices.clear();
+
+                        self.positions.reserve(particle_count);
+                        self.velocities.reserve(particle_count);
+                        self.c_matrices.reserve(particle_count);
+
+                        for p in &self.sim.particles.list {
+                            self.positions.push(p.position);
+                            self.velocities.push(p.velocity);
+                            self.c_matrices.push(p.affine_velocity);
+                        }
+
+                        // Build cell types from grid
+                        let w = self.sim.grid.width;
+                        let h = self.sim.grid.height;
+                        let d = self.sim.grid.depth;
+                        self.cell_types.clear();
+                        self.cell_types.resize(w * h * d, 0); // 0 = air
+
+                        // Mark solid and fluid cells
+                        for k in 0..d {
+                            for j in 0..h {
+                                for i in 0..w {
+                                    let idx = k * w * h + j * w + i;
+                                    if self.sim.grid.is_solid(i, j, k) {
+                                        self.cell_types[idx] = 2; // solid
+                                    }
+                                }
+                            }
+                        }
+
+                        // Mark fluid cells based on particle presence
+                        for p in &self.sim.particles.list {
+                            let i = (p.position.x / CELL_SIZE).floor() as i32;
+                            let j = (p.position.y / CELL_SIZE).floor() as i32;
+                            let k = (p.position.z / CELL_SIZE).floor() as i32;
+                            if i >= 0 && i < w as i32 && j >= 0 && j < h as i32 && k >= 0 && k < d as i32 {
+                                let idx = k as usize * w * h + j as usize * w + i as usize;
+                                if self.cell_types[idx] != 2 {
+                                    self.cell_types[idx] = 1; // fluid
+                                }
+                            }
+                        }
+
+                        // Run GPU FLIP step
+                        // Use the sim's pressure_iterations setting (should be 500 for large grids)
+                        gpu_flip.step(
+                            &gpu.device,
+                            &gpu.queue,
+                            &self.positions,
+                            &mut self.velocities,
+                            &mut self.c_matrices,
+                            &self.cell_types,
+                            dt,
+                            -9.8,
+                            self.sim.pressure_iterations as u32,
+                        );
+
+                        // Copy velocities back to particles, apply settling, and advect
+                        let gravity = -9.8_f32;
+                        let settling_factor = 0.05; // Drag-limited settling rate
+
+                        for (idx, p) in self.sim.particles.list.iter_mut().enumerate() {
+                            if idx < self.velocities.len() {
+                                p.velocity = self.velocities[idx];
+                                p.affine_velocity = self.c_matrices[idx];
+                            }
+
+                            // Density-based settling: heavier particles sink faster
+                            // Settling velocity = (ρ_p - ρ_water) / ρ_water * g * factor
+                            if p.density > 1.0 {
+                                let buoyancy_ratio = (p.density - 1.0) / p.density;
+                                let settling_vel = buoyancy_ratio * gravity * settling_factor;
+                                p.velocity.y += settling_vel * dt;
+                            }
+
+                            // Advect particle
+                            p.position += p.velocity * dt;
+
+                            // Domain boundary handling (same as CPU path)
+                            let min = CELL_SIZE * 0.5;
+                            let max_z = (d as f32 - 0.5) * CELL_SIZE;
+                            // Note: x and y max are OPEN boundaries (outlet, top) - handled by retain below
+
+                            // Inlet (x=0): CLOSED - bounce back
+                            if p.position.x < min {
+                                p.position.x = min;
+                                p.velocity.x = p.velocity.x.abs() * 0.1;
+                            }
+                            // Outlet (x=max): OPEN - let particles exit
+
+                            // Floor (y=0): CLOSED - bounce
+                            if p.position.y < min {
+                                p.position.y = min;
+                                p.velocity.y = p.velocity.y.abs() * 0.1;
+                            }
+                            // Top (y=max): OPEN - let particles exit
+
+                            // Side walls (z): CLOSED - bounce
+                            if p.position.z < min {
+                                p.position.z = min;
+                                p.velocity.z = p.velocity.z.abs() * 0.1;
+                            }
+                            if p.position.z > max_z {
+                                p.position.z = max_z;
+                                p.velocity.z = -p.velocity.z.abs() * 0.1;
+                            }
+
+                            // SDF-based collision with solid geometry (same as CPU path)
+                            let sdf = self.sim.grid.sample_sdf(p.position);
+                            if sdf < 0.0 {
+                                // Particle is inside solid - push out along gradient
+                                let normal = self.sim.grid.sdf_gradient(p.position);
+                                let penetration = -sdf + CELL_SIZE * 0.1; // Small margin
+                                p.position += normal * penetration;
+
+                                // Reflect ONLY velocity component into solid
+                                let vel_into_solid = p.velocity.dot(normal);
+                                if vel_into_solid < 0.0 {
+                                    // Remove velocity into solid, add small bounce
+                                    p.velocity -= normal * vel_into_solid * 1.1;
+                                }
+                            }
+                        }
+
+                        // Remove particles that went out of bounds or have invalid velocities
+                        self.sim.particles.list.retain(|p| {
+                            p.position.x > 0.0
+                                && p.position.x < (w as f32 - 1.0) * CELL_SIZE
+                                && p.position.y > 0.0
+                                && p.position.y < (h as f32 - 1.0) * CELL_SIZE
+                                && p.position.z > 0.0
+                                && p.position.z < (d as f32 - 1.0) * CELL_SIZE
+                                && p.velocity.is_finite()
+                                && p.position.is_finite()
+                        });
+                    }
+                }
+            } else {
+                // CPU simulation fallback
+                for _ in 0..substeps {
+                    self.sim.update(dt);
+                }
             }
 
-            // Continuously spawn water at inlet
-            if self.frame % 3 == 0 && self.sim.particle_count() < MAX_PARTICLES - 100 {
-                spawn_inlet_water(&mut self.sim, &self.sluice_config, 20, Vec3::new(1.5, 0.0, 0.0));
+            // Continuously spawn water at inlet (water-only mode)
+            if self.frame % 2 == 0 && self.sim.particle_count() < MAX_PARTICLES - 500 {
+                let inlet_vel = Vec3::new(1.5, 0.0, 0.0);
+                spawn_inlet_water(&mut self.sim, &self.sluice_config, 50, inlet_vel);
             }
 
             self.frame += 1;
+            self.fps_frame_count += 1;
+
+            // FPS tracking - print every second
+            let now = Instant::now();
+            let elapsed = now.duration_since(self.last_fps_time).as_secs_f32();
+            if elapsed >= 1.0 {
+                self.current_fps = self.fps_frame_count as f32 / elapsed;
+                let avg_vel: Vec3 = if !self.sim.particles.list.is_empty() {
+                    self.sim.particles.list.iter()
+                        .map(|p| p.velocity)
+                        .fold(Vec3::ZERO, |a, b| a + b) / self.sim.particles.list.len() as f32
+                } else {
+                    Vec3::ZERO
+                };
+                let max_vel = self.sim.particles.list.iter()
+                    .map(|p| p.velocity.length())
+                    .fold(0.0f32, f32::max);
+                // Track water level (max Y) to see if water is building up
+                let max_y = self.sim.particles.list.iter()
+                    .map(|p| p.position.y)
+                    .fold(0.0f32, f32::max);
+                let max_x = self.sim.particles.list.iter()
+                    .map(|p| p.position.x)
+                    .fold(0.0f32, f32::max);
+                println!(
+                    "Frame {:5}/{} | FPS: {:5.1} | Particles: {:6} | AvgVel: ({:6.2},{:6.2},{:6.2}) | MaxVel: {:5.2} | MaxY: {:5.3} | MaxX: {:5.3}",
+                    self.frame, self.max_frames, self.current_fps,
+                    self.sim.particle_count(),
+                    avg_vel.x, avg_vel.y, avg_vel.z, max_vel, max_y, max_x
+                );
+                self.fps_frame_count = 0;
+                self.last_fps_time = now;
+            }
+
+            // Stop at max frames
+            if self.frame >= self.max_frames {
+                println!("\n=== SIMULATION COMPLETE: {} frames ===", self.frame);
+                println!("Final particle count: {}", self.sim.particle_count());
+                self.paused = true;
+            }
         }
 
-        // Camera - look at center of sluice (spherical coordinates)
+        // Camera - look at center of sluice channel (where water flows)
+        // Floor at inlet (x=0) is at y ≈ (width-1)*slope = 19.9 cells
+        // Floor at outlet (x=width) is at y = 0
+        // Look at middle of the slope
+        let mid_x = GRID_WIDTH as f32 * CELL_SIZE * 0.5;
+        let floor_at_mid = ((GRID_WIDTH as f32 - 1.0) * 0.5 * self.sluice_config.slope) * CELL_SIZE;
         let center = Vec3::new(
-            GRID_WIDTH as f32 * CELL_SIZE * 0.5,
-            GRID_HEIGHT as f32 * CELL_SIZE * 0.3,
+            mid_x,
+            floor_at_mid + CELL_SIZE * 3.0,  // A few cells above floor
             GRID_DEPTH as f32 * CELL_SIZE * 0.5,
         );
         // Spherical: angle = azimuth (horizontal), pitch = elevation
@@ -401,7 +661,7 @@ impl App {
         };
         gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // Update water particle instances
+        // Update particle instances with colors based on density
         let water_instances: Vec<ParticleInstance> = self
             .sim
             .particles
@@ -409,11 +669,28 @@ impl App {
             .iter()
             .take(MAX_PARTICLES)
             .map(|p| {
-                let speed = p.velocity.length();
-                let t = (speed / 3.0).min(1.0);
+                // Color based on particle density
+                let color = if p.density > 10.0 {
+                    // Gold (density ~19.3) - rich gold color
+                    [0.85, 0.65, 0.1, 1.0]
+                } else if p.density > 4.0 {
+                    // Magnetite (density ~5.2) - dark gray
+                    [0.2, 0.2, 0.22, 1.0]
+                } else if p.density > 2.0 {
+                    // Sand (density ~2.65) - pale tan
+                    [0.95, 0.9, 0.8, 1.0]
+                } else if p.density > 1.5 {
+                    // Mud (density ~2.0) - brown
+                    [0.6, 0.4, 0.2, 1.0]
+                } else {
+                    // Water (density 1.0) - blue with speed variation
+                    let speed = p.velocity.length();
+                    let t = (speed / 3.0).min(1.0);
+                    [0.2 + t * 0.2, 0.4 + t * 0.3, 0.85, 0.75]
+                };
                 ParticleInstance {
                     position: p.position.to_array(),
-                    color: [0.2 + t * 0.2, 0.4 + t * 0.3, 0.85, 0.75],
+                    color,
                 }
             })
             .collect();
@@ -499,6 +776,13 @@ impl ApplicationHandler for App {
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::Space) => self.paused = !self.paused,
                         PhysicalKey::Code(KeyCode::KeyR) => self.reset_sim(),
+                        PhysicalKey::Code(KeyCode::KeyG) => {
+                            self.use_gpu_sim = !self.use_gpu_sim;
+                            println!(
+                                "Simulation mode: {}",
+                                if self.use_gpu_sim { "GPU" } else { "CPU" }
+                            );
+                        }
                         PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
                         _ => {}
                     }

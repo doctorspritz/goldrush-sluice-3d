@@ -231,6 +231,76 @@ impl Grid3D {
         }
     }
 
+    /// Check if a cell at signed indices is solid (for boundary checks).
+    #[inline]
+    pub fn is_solid_signed(&self, i: i32, j: i32, k: i32) -> bool {
+        if i < 0 || j < 0 || k < 0 {
+            return true; // Out of bounds on negative side = solid wall
+        }
+        if i >= self.width as i32 || j >= self.height as i32 || k >= self.depth as i32 {
+            return false; // Out of bounds on positive side = open boundary
+        }
+        self.solid[self.cell_index(i as usize, j as usize, k as usize)]
+    }
+
+    /// Check if U-face at (i,j,k) is on a solid boundary.
+    /// U-face separates cells (i-1,j,k) and (i,j,k).
+    /// Returns true if we should skip this face in G2P sampling.
+    #[inline]
+    pub fn is_u_face_solid(&self, i: i32, j: i32, k: i32) -> bool {
+        // Domain boundaries
+        if i <= 0 {
+            return true; // Inlet boundary - zeroed, skip
+        }
+        if j < 0 || j >= self.height as i32 || k < 0 || k >= self.depth as i32 {
+            return true; // Out of bounds in Y or Z
+        }
+        if i >= self.width as i32 {
+            return false; // Outlet boundary - OPEN, don't skip
+        }
+
+        // Check adjacent cells
+        let left_solid = self.is_solid_signed(i - 1, j, k);
+        let right_solid = self.is_solid_signed(i, j, k);
+        left_solid || right_solid
+    }
+
+    /// Check if V-face at (i,j,k) is on a solid boundary.
+    /// V-face separates cells (i,j-1,k) and (i,j,k).
+    #[inline]
+    pub fn is_v_face_solid(&self, i: i32, j: i32, k: i32) -> bool {
+        if i < 0 || i >= self.width as i32 || k < 0 || k >= self.depth as i32 {
+            return true; // Out of bounds in X or Z
+        }
+        if j <= 0 {
+            return true; // Floor boundary - zeroed, skip
+        }
+        if j >= self.height as i32 {
+            return false; // Top boundary - OPEN, don't skip
+        }
+
+        let bottom_solid = self.is_solid_signed(i, j - 1, k);
+        let top_solid = self.is_solid_signed(i, j, k);
+        bottom_solid || top_solid
+    }
+
+    /// Check if W-face at (i,j,k) is on a solid boundary.
+    /// W-face separates cells (i,j,k-1) and (i,j,k).
+    #[inline]
+    pub fn is_w_face_solid(&self, i: i32, j: i32, k: i32) -> bool {
+        if i < 0 || i >= self.width as i32 || j < 0 || j >= self.height as i32 {
+            return true; // Out of bounds in X or Y
+        }
+        // Both Z boundaries are closed walls
+        if k <= 0 || k >= self.depth as i32 {
+            return true; // Side walls - zeroed, skip
+        }
+
+        let back_solid = self.is_solid_signed(i, j, k - 1);
+        let front_solid = self.is_solid_signed(i, j, k);
+        back_solid || front_solid
+    }
+
     // ========== Reset/clear ==========
 
     /// Clear all velocities to zero.

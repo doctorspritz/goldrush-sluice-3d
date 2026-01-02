@@ -13,22 +13,40 @@ pub struct Particle3D {
     pub affine_velocity: Mat3,
     /// Grid velocity at particle position from previous step (for FLIP delta)
     pub old_grid_velocity: Vec3,
+    /// Density relative to water (1.0 = water, 2.65 = sand, 19.3 = gold)
+    pub density: f32,
 }
 
 impl Particle3D {
-    /// Create a new particle at the given position with initial velocity.
+    /// Create a new water particle at the given position with initial velocity.
     pub fn new(position: Vec3, velocity: Vec3) -> Self {
+        Self::with_density(position, velocity, 1.0)
+    }
+
+    /// Create a new particle with specified density.
+    pub fn with_density(position: Vec3, velocity: Vec3, density: f32) -> Self {
         Self {
             position,
             velocity,
             affine_velocity: Mat3::ZERO,
             old_grid_velocity: Vec3::ZERO,
+            density,
         }
     }
 
-    /// Create a stationary particle at the given position.
+    /// Create a stationary water particle at the given position.
     pub fn at(position: Vec3) -> Self {
         Self::new(position, Vec3::ZERO)
+    }
+
+    /// Create a stationary sediment particle with specified density.
+    pub fn sediment_at(position: Vec3, density: f32) -> Self {
+        Self::with_density(position, Vec3::ZERO, density)
+    }
+
+    /// Is this a sediment particle (denser than water)?
+    pub fn is_sediment(&self) -> bool {
+        self.density > 1.0
     }
 }
 
@@ -56,14 +74,24 @@ impl Particles3D {
         }
     }
 
-    /// Add a particle with the given position and velocity.
+    /// Add a water particle with the given position and velocity.
     pub fn spawn(&mut self, position: Vec3, velocity: Vec3) {
         self.list.push(Particle3D::new(position, velocity));
     }
 
-    /// Add a stationary particle.
+    /// Add a particle with specified density.
+    pub fn spawn_with_density(&mut self, position: Vec3, velocity: Vec3, density: f32) {
+        self.list.push(Particle3D::with_density(position, velocity, density));
+    }
+
+    /// Add a stationary water particle.
     pub fn spawn_at(&mut self, position: Vec3) {
         self.list.push(Particle3D::at(position));
+    }
+
+    /// Add a stationary sediment particle with specified density.
+    pub fn spawn_sediment(&mut self, position: Vec3, density: f32) {
+        self.list.push(Particle3D::sediment_at(position, density));
     }
 
     /// Number of particles.

@@ -39,7 +39,7 @@ pub mod transfer;
 pub use glam::{Mat3, Vec3};
 pub use grid::{CellType, Grid3D};
 pub use particle::{Particle3D, Particles3D};
-pub use sluice::{create_sluice, spawn_inlet_water, SluiceConfig};
+pub use sluice::{create_sluice, spawn_inlet_sediment, spawn_inlet_water, SluiceConfig};
 
 use transfer::TransferBuffers;
 
@@ -91,6 +91,11 @@ impl FlipSimulation3D {
         self.particles.spawn(position, velocity);
     }
 
+    /// Spawn a sediment particle with given density.
+    pub fn spawn_sediment(&mut self, position: Vec3, velocity: Vec3, density: f32) {
+        self.particles.spawn_with_density(position, velocity, density);
+    }
+
     /// Run one simulation step.
     pub fn update(&mut self, dt: f32) {
         if self.particles.is_empty() {
@@ -103,24 +108,36 @@ impl FlipSimulation3D {
         // 2. P2G: Transfer particle velocities to grid
         transfer::particles_to_grid(&mut self.grid, &self.particles, &mut self.transfer_buffers);
 
-        // 3. Store old velocities for FLIP delta
+        // 3. Apply boundary conditions BEFORE storing old velocities
+        // This ensures particles near walls don't lose velocity due to BC enforcement
+        pressure::enforce_boundary_conditions(&mut self.grid);
+
+        // 4. Store old velocities for FLIP delta (after BC so delta is correct)
         self.grid.store_old_velocities();
 
-        // 4. Apply gravity to grid velocities
+        // 5. Apply gravity to grid velocities
         self.apply_gravity(dt);
 
-        // 5. Pressure projection (make velocity divergence-free)
-        pressure::enforce_boundary_conditions(&mut self.grid);
+        // 5.5. Clamp grid velocities BEFORE pressure solve for CFL stability
+        // This ensures the pressure solver operates on stable input and its
+        // divergence-free output is not invalidated by post-solve clamping.
+        self.clamp_grid_velocities();
+
+        // 6. Pressure projection (make velocity divergence-free)
         pressure::compute_divergence(&mut self.grid);
         pressure::solve_pressure_jacobi(&mut self.grid, self.pressure_iterations);
         pressure::apply_pressure_gradient(&mut self.grid);
+        pressure::enforce_boundary_conditions(&mut self.grid);
 
-        // 6. G2P: Transfer grid velocities back to particles
+        // 7. G2P: Transfer grid velocities back to particles
         transfer::grid_to_particles(&self.grid, &mut self.particles, self.flip_ratio);
 
-        // 7. Advect particles
+        // 8. Advect particles
         advection::advect_particles(&mut self.particles, dt);
         advection::enforce_particle_boundaries(&mut self.particles, &self.grid);
+
+        // 9. Remove particles that exited through open boundaries
+        advection::remove_exited_particles(&mut self.particles, &self.grid);
 
         self.frame += 1;
     }
@@ -166,6 +183,29 @@ impl FlipSimulation3D {
             for w in &mut self.grid.w {
                 *w += gravity_z;
             }
+        }
+    }
+
+    /// Clamp grid velocities to maintain CFL stability.
+    ///
+    /// Without clamping, grid velocities can explode to astronomical values
+    /// (10^26 m/s observed) when particles interact with complex solid geometry.
+    /// This causes the simulation to become numerically unstable.
+    ///
+    /// CFL condition: max_vel < dx/dt
+    /// For typical parameters (dx=0.025m, dt=1/120s): max_vel < 3 m/s
+    /// We clamp to 10 m/s to allow some headroom while staying stable.
+    fn clamp_grid_velocities(&mut self) {
+        const MAX_GRID_VEL: f32 = 10.0;
+
+        for u in &mut self.grid.u {
+            *u = u.clamp(-MAX_GRID_VEL, MAX_GRID_VEL);
+        }
+        for v in &mut self.grid.v {
+            *v = v.clamp(-MAX_GRID_VEL, MAX_GRID_VEL);
+        }
+        for w in &mut self.grid.w {
+            *w = w.clamp(-MAX_GRID_VEL, MAX_GRID_VEL);
         }
     }
 
