@@ -93,3 +93,79 @@ cargo test -p sim                     # Tests
 ## Documentation
 
 See `docs/solutions/` for documented problems and solutions.
+
+---
+
+## CURRENT WORK: Two-State DEM Implementation
+
+### Master Plan Location
+**`/Users/simonheikkila/.claude/plans/dynamic-crunching-cloud.md`**
+
+Read this plan BEFORE making any changes. It contains the full physics model and implementation levels.
+
+### The Core Problem
+Current DEM uses `my_fraction = mass_i / (mass_i + mass_j)` which is NEVER ZERO.
+This means sleeping particles STILL GET PUSHED. This is fundamentally wrong.
+
+**The fix:** Two-state model where STATIC particles skip physics entirely until force exceeds threshold.
+
+### Implementation Levels (SEQUENTIAL - NO SKIPPING)
+
+| Level | Description | Exit Gate |
+|-------|-------------|-----------|
+| 0 | Clean slate (DONE) | git clean, build passes, existing tests pass |
+| 1 | Add static_state buffer | Buffer exists, bound to shader, no regression |
+| 2 | Static particle freeze | Static particles have ZERO position change |
+| 3 | Dynamic→Static transition | Slow+supported particles become static |
+| 4 | Force-threshold wake | Gold on sand stays on top, bulldozer wakes pile |
+| 5 | Coulomb friction | Angle of repose = arctan(μ) ± 5° |
+| 6 | Wake propagation | Support removal causes cascade wake |
+
+### BULLETPROOF PROTOCOL - MANDATORY
+
+1. **ONE CHANGE AT A TIME** - Single logical change, test, commit if pass, fix if fail
+2. **NO QUICK FIXES** - If something breaks, the NEW code is wrong. Debug it.
+3. **TESTS ARE LAW** - Failing test = cannot proceed. Never modify passing tests.
+4. **REGRESSION = ROLLBACK** - If previously passing test fails: `git checkout -- <file>`
+5. **EACH LEVEL COMPLETE** - All exit gate tests must pass before next level
+
+### DOOM LOOP PREVENTION
+
+STOP and ask user if:
+- More than 3 attempts to fix a failing test
+- Touching code not in current level
+- Adding mechanisms not in plan
+- Modifying a passing test
+- "Quick fix" or "temporary workaround" being considered
+
+### Key Files for This Work
+
+| File | Purpose |
+|------|---------|
+| `crates/game/src/gpu/dem.rs` | Add static_state buffer, static_frames buffer |
+| `crates/game/src/gpu/shaders/dem_forces.wgsl` | Two-state logic, force-threshold wake, Coulomb friction |
+| `crates/game/tests/gpu_dem_settling.rs` | Test suite for each level |
+| `todos/dem-implementation.md` | Structured progress tracking |
+
+### Test Commands
+
+```bash
+# Run settling tests (required for each level)
+cargo test -p game --release --test gpu_dem_settling
+
+# Run specific test
+cargo test -p game --release --test gpu_dem_settling test_name
+
+# Visual verification
+cargo run --example sediment_stages_visual -p game --release
+```
+
+### Physics Constants (from plan)
+
+```
+MU_STATIC = 0.6 (sand), 0.7 (gravel)
+Angle of repose = arctan(μ) = 31° (sand), 35° (gravel)
+STATIC_THRESHOLD = 1.0 px/s (speed below which to start static transition)
+STATIC_DELAY = 30 frames (how long slow+supported before becoming static)
+Wake threshold = μ × weight (force needed to wake static particle)
+```
