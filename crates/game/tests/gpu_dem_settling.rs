@@ -400,3 +400,13 @@ fn test_no_midair_pause() {
         "Particle paused mid-air! This indicates broken support propagation."
     );
 }
+
+// NOTE: Tests for "gold falls faster" and "gold sinks through sand" were REMOVED
+// because they tested for physically incorrect behavior:
+//
+// 1. In vacuum/no-drag, ALL objects fall at the same acceleration (g=9.8m/s²)
+//    Terminal velocity differences only exist with air resistance.
+//
+// 2. Settled granular material acts as a SOLID. Gold sitting on a sand pile
+//    stays on top. Density stratification only occurs with AGITATION
+//    (water flow, vibration, shaking table).

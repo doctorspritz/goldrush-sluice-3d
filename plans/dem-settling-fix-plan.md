@@ -297,12 +297,14 @@ cargo run --example dem_settling_diagnostic -p game --release
 
 **Changes made to `dem_forces.wgsl`:**
 
-1. **Floor collision slop (lines 265-275):** Instead of +0.3 margin, allow 10% penetration as stable zone
-2. **Removed near_floor heuristic (lines 312-314):** Only floor_contact or chain_support count as supported
-3. **Full sleep threshold for chain support (line 207):** Require `SLEEP_THRESHOLD` not `SLEEP_THRESHOLD/2`
-4. **Added tangential friction (lines 228-242):** Coulomb friction for angle of repose
-5. **Reduced damping from 0.3 to 0.7 (line 296):** Allows lateral sliding
-6. **Reduced mass multiplier from 50x to 3x (line 213):** Allows pile restructuring
+1. **Floor collision slop (lines 277-305):** Instead of +0.3 margin, allow 10% penetration as stable zone
+2. **Removed near_floor heuristic (lines 324-329):** Only floor_contact or chain_support count as supported
+3. **Full sleep threshold for chain support (line 222):** Require `SLEEP_THRESHOLD` not `SLEEP_THRESHOLD/2`
+4. **Added tangential friction (lines 243-257):** Coulomb friction for angle of repose
+5. **Reduced damping from 0.3 to 0.7 (line 311):** Allows lateral sliding
+6. **Reduced mass multiplier from 50x to 3x (line 228):** Allows pile restructuring
+7. **Skip gravity for sleeping floor particles (lines 133-144):** Prevents jitter cycle where sleeping
+   particles get gravity → move down → hit floor → get pushed up → repeat
 
 **Headless diagnostic test:** `crates/game/examples/dem_settling_diagnostic.rs`
 - Test 1: Column pour → spread 202.5, aspect ratio 69.52 ✅

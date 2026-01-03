@@ -130,8 +130,18 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // 1. Apply gravity and integrate (only on first iteration)
     if (params.iteration == 0u) {
-        let g_eff = effective_gravity(material, in_water);
-        vel.y += g_eff * params.dt;
+        // Skip gravity for sleeping floor particles (gravity balanced by normal force)
+        // This prevents jitter where sleeping particles: get gravity → move down →
+        // hit floor → get pushed up → repeat
+        let sdf_now = sample_sdf(pos);
+        let grad_now = sdf_gradient(pos);
+        let on_floor_now = sdf_now < radius * 1.1 && grad_now.y > 0.5;  // Must be horizontal floor
+        let skip_gravity = is_sleeping && on_floor_now;
+
+        if (!skip_gravity) {
+            let g_eff = effective_gravity(material, in_water);
+            vel.y += g_eff * params.dt;
+        }
         pos += vel * params.dt;
     }
 
