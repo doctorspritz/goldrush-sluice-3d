@@ -106,6 +106,11 @@ impl GpuDemSolver {
         Self::new_internal(&gpu.device, grid_width, grid_height, max_particles)
     }
 
+    /// Create solver for headless testing (no GpuContext needed)
+    pub fn new_headless(device: &wgpu::Device, _queue: &wgpu::Queue, grid_width: u32, grid_height: u32, max_particles: usize) -> Self {
+        Self::new_internal(device, grid_width, grid_height, max_particles)
+    }
+
     fn new_internal(device: &wgpu::Device, grid_width: u32, grid_height: u32, max_particles: usize) -> Self {
         let grid_size = grid_width * grid_height;
 
@@ -669,6 +674,11 @@ impl GpuDemSolver {
         gpu.queue.write_buffer(&self.sdf_buffer, 0, bytemuck::cast_slice(sdf));
     }
 
+    /// Upload SDF for headless testing
+    pub fn upload_sdf_headless(&self, _device: &wgpu::Device, queue: &wgpu::Queue, sdf: &[f32]) {
+        queue.write_buffer(&self.sdf_buffer, 0, bytemuck::cast_slice(sdf));
+    }
+
     /// Execute GPU DEM for sediment particles
     pub fn execute(
         &mut self,
@@ -856,6 +866,179 @@ impl GpuDemSolver {
         self.download_particles(gpu, particles, &sediment_indices);
     }
 
+    /// Execute GPU DEM for headless testing
+    pub fn execute_headless(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        particles: &mut Particles,
+        cell_size: f32,
+        dt: f32,
+        gravity: f32,
+        water_level: f32,
+    ) {
+        // Filter to sediment particles only
+        let sediment_indices: Vec<usize> = particles
+            .list
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.is_sediment())
+            .map(|(i, _)| i)
+            .collect();
+
+        let particle_count = sediment_indices.len();
+        if particle_count == 0 {
+            return;
+        }
+
+        // Upload particle data
+        self.upload_particles_headless(queue, particles, &sediment_indices, cell_size);
+
+        // Upload parameters
+        let bin_params = BinParams {
+            cell_size,
+            grid_width: self.grid_width,
+            grid_height: self.grid_height,
+            particle_count: particle_count as u32,
+        };
+        queue.write_buffer(&self.bin_params_buffer, 0, bytemuck::bytes_of(&bin_params));
+
+        let clear_params = ClearParams {
+            grid_size: self.grid_size + 1,
+            _pad1: 0,
+            _pad2: 0,
+            _pad3: 0,
+        };
+        queue.write_buffer(&self.clear_params_buffer, 0, bytemuck::bytes_of(&clear_params));
+
+        let mut dem_params = DemParams {
+            cell_size,
+            grid_width: self.grid_width,
+            grid_height: self.grid_height,
+            particle_count: particle_count as u32,
+            dt,
+            gravity,
+            contact_stiffness: 2000.0,
+            damping_ratio: 0.7,
+            friction_coeff: 0.6,
+            velocity_damping: 0.98,
+            sdf_width: self.grid_width,
+            sdf_height: self.grid_height,
+            water_level,
+            iteration: 0,
+        };
+        queue.write_buffer(&self.dem_params_buffer, 0, bytemuck::bytes_of(&dem_params));
+
+        // Phase 1: Clear bin counts
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("DEM Headless Encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("DEM Bin Clear"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.bin_clear_pipeline);
+            pass.set_bind_group(0, &self.bin_clear_bind_group, &[]);
+            let workgroups = (self.grid_size + 1 + 255) / 256;
+            pass.dispatch_workgroups(workgroups, 1, 1);
+        }
+
+        // Phase 2: Count particles per bin
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("DEM Bin Count"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.bin_count_pipeline);
+            pass.set_bind_group(0, &self.bin_count_bind_group, &[]);
+            let workgroups = (particle_count as u32 + 255) / 256;
+            pass.dispatch_workgroups(workgroups, 1, 1);
+        }
+
+        encoder.copy_buffer_to_buffer(
+            &self.bin_counts_buffer,
+            0,
+            &self.bin_counts_staging,
+            0,
+            ((self.grid_size + 1) * 4) as u64,
+        );
+
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // Read bin counts and compute prefix sum on CPU
+        {
+            let slice = self.bin_counts_staging.slice(..);
+            slice.map_async(wgpu::MapMode::Read, |_| {});
+            device.poll(wgpu::Maintain::Wait);
+
+            let data = slice.get_mapped_range();
+            let counts: &[u32] = bytemuck::cast_slice(&data);
+
+            self.bin_offsets_cpu[0] = 0;
+            for i in 0..self.grid_size as usize {
+                self.bin_offsets_cpu[i + 1] = self.bin_offsets_cpu[i] + counts[i];
+            }
+
+            drop(data);
+            self.bin_counts_staging.unmap();
+        }
+
+        queue.write_buffer(&self.bin_offsets_buffer, 0, bytemuck::cast_slice(&self.bin_offsets_cpu));
+        queue.write_buffer(&self.bin_counters_buffer, 0, &vec![0u8; ((self.grid_size + 1) * 4) as usize]);
+
+        // Phase 3: Insert particles into sorted array
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("DEM Headless Encoder 2"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("DEM Bin Insert"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.bin_insert_pipeline);
+            pass.set_bind_group(0, &self.bin_insert_bind_group, &[]);
+            let workgroups = (particle_count as u32 + 255) / 256;
+            pass.dispatch_workgroups(workgroups, 1, 1);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // Phase 4: Compute DEM forces with multiple iterations
+        const CONSTRAINT_ITERATIONS: u32 = 4;
+        for iter in 0..CONSTRAINT_ITERATIONS {
+            dem_params.iteration = iter;
+            queue.write_buffer(&self.dem_params_buffer, 0, bytemuck::bytes_of(&dem_params));
+
+            let mut iter_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("DEM Forces Iter"),
+            });
+            {
+                let mut pass = iter_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("DEM Forces"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.dem_forces_pipeline);
+                pass.set_bind_group(0, &self.dem_forces_bind_group, &[]);
+                let workgroups = (particle_count as u32 + 255) / 256;
+                pass.dispatch_workgroups(workgroups, 1, 1);
+            }
+            queue.submit(std::iter::once(iter_encoder.finish()));
+        }
+
+        // Copy results to staging
+        let pos_size = (particle_count * std::mem::size_of::<[f32; 2]>()) as u64;
+        let vel_size = (particle_count * std::mem::size_of::<[f32; 2]>()) as u64;
+        let mut copy_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("DEM Copy"),
+        });
+        copy_encoder.copy_buffer_to_buffer(&self.positions_buffer, 0, &self.positions_staging, 0, pos_size);
+        copy_encoder.copy_buffer_to_buffer(&self.velocities_buffer, 0, &self.velocities_staging, 0, vel_size);
+        queue.submit(std::iter::once(copy_encoder.finish()));
+
+        // Download results
+        self.download_particles_headless(device, particles, &sediment_indices);
+    }
+
     fn upload_particles(&self, gpu: &GpuContext, particles: &Particles, indices: &[usize], cell_size: f32) {
         let mut positions: Vec<[f32; 2]> = Vec::with_capacity(indices.len());
         let mut velocities: Vec<[f32; 2]> = Vec::with_capacity(indices.len());
@@ -875,6 +1058,26 @@ impl GpuDemSolver {
         gpu.queue.write_buffer(&self.velocities_buffer, 0, bytemuck::cast_slice(&velocities));
         gpu.queue.write_buffer(&self.radii_buffer, 0, bytemuck::cast_slice(&radii));
         gpu.queue.write_buffer(&self.materials_buffer, 0, bytemuck::cast_slice(&materials));
+    }
+
+    fn upload_particles_headless(&self, queue: &wgpu::Queue, particles: &Particles, indices: &[usize], cell_size: f32) {
+        let mut positions: Vec<[f32; 2]> = Vec::with_capacity(indices.len());
+        let mut velocities: Vec<[f32; 2]> = Vec::with_capacity(indices.len());
+        let mut radii: Vec<f32> = Vec::with_capacity(indices.len());
+        let mut materials: Vec<u32> = Vec::with_capacity(indices.len());
+
+        for &i in indices {
+            let p = &particles.list[i];
+            positions.push([p.position.x, p.position.y]);
+            velocities.push([p.velocity.x, p.velocity.y]);
+            radii.push(p.material.typical_diameter() * 0.35 * cell_size);
+            materials.push(Self::material_to_u32(p.material));
+        }
+
+        queue.write_buffer(&self.positions_buffer, 0, bytemuck::cast_slice(&positions));
+        queue.write_buffer(&self.velocities_buffer, 0, bytemuck::cast_slice(&velocities));
+        queue.write_buffer(&self.radii_buffer, 0, bytemuck::cast_slice(&radii));
+        queue.write_buffer(&self.materials_buffer, 0, bytemuck::cast_slice(&materials));
     }
 
     fn download_particles(&self, gpu: &GpuContext, particles: &mut Particles, indices: &[usize]) {
@@ -904,6 +1107,48 @@ impl GpuDemSolver {
             let slice = self.velocities_staging.slice(..(particle_count * 8) as u64);
             slice.map_async(wgpu::MapMode::Read, |_| {});
             gpu.device.poll(wgpu::Maintain::Wait);
+
+            let data = slice.get_mapped_range();
+            let velocities: &[[f32; 2]] = bytemuck::cast_slice(&data);
+
+            for (local_idx, &global_idx) in indices.iter().enumerate() {
+                let p = &mut particles.list[global_idx];
+                p.velocity.x = velocities[local_idx][0];
+                p.velocity.y = velocities[local_idx][1];
+            }
+
+            drop(data);
+            self.velocities_staging.unmap();
+        }
+    }
+
+    fn download_particles_headless(&self, device: &wgpu::Device, particles: &mut Particles, indices: &[usize]) {
+        let particle_count = indices.len();
+
+        // Map and read positions
+        {
+            let slice = self.positions_staging.slice(..(particle_count * 8) as u64);
+            slice.map_async(wgpu::MapMode::Read, |_| {});
+            device.poll(wgpu::Maintain::Wait);
+
+            let data = slice.get_mapped_range();
+            let positions: &[[f32; 2]] = bytemuck::cast_slice(&data);
+
+            for (local_idx, &global_idx) in indices.iter().enumerate() {
+                let p = &mut particles.list[global_idx];
+                p.position.x = positions[local_idx][0];
+                p.position.y = positions[local_idx][1];
+            }
+
+            drop(data);
+            self.positions_staging.unmap();
+        }
+
+        // Map and read velocities
+        {
+            let slice = self.velocities_staging.slice(..(particle_count * 8) as u64);
+            slice.map_async(wgpu::MapMode::Read, |_| {});
+            device.poll(wgpu::Maintain::Wait);
 
             let data = slice.get_mapped_range();
             let velocities: &[[f32; 2]] = bytemuck::cast_slice(&data);

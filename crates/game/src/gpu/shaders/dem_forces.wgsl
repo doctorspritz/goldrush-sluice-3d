@@ -94,6 +94,16 @@ fn effective_gravity(material: u32, in_water: bool) -> f32 {
     return params.gravity * buoyancy_factor;
 }
 
+// Hash function for surface roughness simulation
+// Returns value in range [-1, 1]
+fn hash_noise(seed: u32) -> f32 {
+    var h = seed;
+    h = h ^ (h >> 16u);
+    h = h * 0x45d9f3bu;
+    h = h ^ (h >> 16u);
+    return f32(h & 0xFFFFu) / 32767.5 - 1.0;
+}
+
 @compute @workgroup_size(256)
 fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= params.particle_count) {
@@ -175,13 +185,20 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                 if (dist_sq < contact_dist * contact_dist && dist_sq > 0.0001) {
                     let dist = sqrt(dist_sq);
                     let overlap = contact_dist - dist;
-                    let normal = diff / dist;
+                    var normal = diff / dist;
 
                     // Skip tiny overlaps for sleeping particles (prevents creep)
                     let overlap_threshold = select(0.0, radius * 0.1, was_sleeping);
                     if (overlap < overlap_threshold) {
                         continue;
                     }
+
+                    // Surface roughness: add small random perturbation to normal
+                    // This prevents perfect vertical stacking and enables angle of repose
+                    let roughness_seed = idx * 31u + j_idx * 17u + params.iteration;
+                    let roughness = hash_noise(roughness_seed) * 0.15;  // ~8 degree max deviation
+                    let perp = vec2(-normal.y, normal.x);
+                    normal = normalize(normal + perp * roughness);
 
                     // Mass-weighted separation: heavy particles move less
                     let density_i = DENSITIES[min(material, 5u)];
@@ -190,7 +207,6 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                     let mass_j = density_j * radius_j * radius_j;
 
                     // Check if j is part of a settled pile (stationary = part of stable structure)
-                    // Settled particles resist being pushed - they're locked by friction/support
                     let vel_j = velocities[j_idx];
                     let j_speed_sq = dot(vel_j, vel_j);
                     let j_is_stationary = j_speed_sq < 25.0;  // ~5 px/s
@@ -200,17 +216,16 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                         should_wake = true;
                     }
 
-                    // Support propagation: check if neighbor BELOW us is supported
-                    // Only count support from particles that are actually below us
+                    // Support propagation: check if neighbor BELOW us is truly supported
                     let j_sleep = sleep_counters[j_idx];
                     let j_is_below = normal.y > 0.3;  // neighbor is below if normal points up
-                    if (j_is_below && j_sleep >= SLEEP_THRESHOLD / 2u) {
+                    if (j_is_below && j_sleep >= SLEEP_THRESHOLD) {
                         supported_contacts += 1u;
                     }
 
-                    // Stationary particles resist displacement (pile structure)
-                    // 50x mass = essentially immovable (gold moves 87%, sand 13%)
-                    let j_mass_multiplier = select(1.0, 50.0, j_is_stationary);
+                    // Stationary particles resist displacement but can still be pushed
+                    // 3x mass = moderate resistance, allows pile restructuring
+                    let j_mass_multiplier = select(1.0, 3.0, j_is_stationary);
                     let effective_mass_j = mass_j * j_mass_multiplier;
                     let total_mass = mass_i + effective_mass_j;
                     let my_fraction = effective_mass_j / total_mass;
@@ -225,7 +240,23 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                         has_support_below = true;
                     }
 
-                    // Also accumulate velocity correction
+                    // Tangential friction - allows particles to SLIDE past each other
+                    // This is critical for angle of repose behavior
+                    let tangent = vec2(-normal.y, normal.x);
+                    let rel_vel = vel - vel_j;
+                    let v_tangent = dot(rel_vel, tangent);
+                    let v_normal = dot(rel_vel, -normal);
+
+                    // Coulomb friction: tangential force <= mu * normal force
+                    // Only apply if there's relative tangential motion
+                    let mu_ij = (mu + FRICTIONS[min(material_j, 5u)]) * 0.5;  // Average friction
+                    if (abs(v_tangent) > 0.1 && v_normal > 0.0) {
+                        let max_friction = mu_ij * v_normal;
+                        let friction_impulse = min(abs(v_tangent) * 0.5, max_friction);
+                        accumulated_vel_correction -= tangent * sign(v_tangent) * friction_impulse * my_fraction;
+                    }
+
+                    // Also accumulate velocity correction for normal direction
                     let v_into = dot(vel, -normal);
                     if (v_into > 0.0) {
                         accumulated_vel_correction += normal * v_into;
@@ -243,14 +274,20 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
         vel += accumulated_vel_correction * avg_factor;
     }
 
-    // 5. Floor/SDF collision
+    // 5. Floor/SDF collision with penetration tolerance ("slop")
+    // Slop creates a stable equilibrium zone where particles can rest
+    // See: Box2D/Erin Catto approach - "allow some penetration to avoid contact breaking"
     let sdf = sample_sdf(pos);
+    let slop = radius * 0.1;  // Allow 10% penetration as stable zone
+
     if (sdf < radius) {
         let grad = sdf_gradient(pos);
         let penetration = radius - sdf;
 
-        // Push out of floor
-        pos += grad * (penetration + 0.3);
+        // Only correct penetration beyond the slop zone
+        // Particles settle INTO the slop, not bounce above it
+        let correction = max(penetration - slop, 0.0);
+        pos += grad * correction;
 
         floor_contact = true;
 
@@ -268,11 +305,12 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     // 6. Damp velocity for particles with contact
+    // Use moderate damping - too strong kills lateral sliding needed for angle of repose
     let has_contact = floor_contact || has_support_below;
     if (has_contact) {
-        vel *= 0.3;  // Strong damping when in contact
+        vel *= 0.7;  // Moderate damping - allows sliding while dissipating energy
     } else if (particle_contact_count > 2u) {
-        vel *= 0.8;  // Light damping for buried particles
+        vel *= 0.9;  // Light damping for particles with multiple contacts
     }
 
     // 7. Support propagation sleep system
@@ -282,11 +320,11 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     // - No support = counter decays (can't sleep mid-air)
 
     let speed_sq = dot(vel, vel);
-    let sdf_at_old = sample_sdf(old_pos);
-    let near_floor = sdf_at_old < radius * 2.0;
 
-    // True support: floor OR chain from supported neighbor below
-    let has_floor_support = floor_contact || near_floor;
+    // True support: ONLY actual floor contact OR chain from supported neighbor below
+    // Removed "near_floor" heuristic - it caused mid-air pauses near vertical walls
+    // because SDF doesn't distinguish floors from walls
+    let has_floor_support = floor_contact;  // Must actually touch floor
     let has_chain_support = supported_contacts >= 1u;
     let truly_supported = has_floor_support || has_chain_support;
 
