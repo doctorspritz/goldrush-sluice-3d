@@ -281,8 +281,7 @@ we may not need the gravity-skip complexity.
 - [x] Particles hitting floor come to rest within ~10 frames - FIXED (settles at frame 108)
 - [x] Sleeping particles don't vibrate (check visually) - FIXED (vel=0.0,0.0 in visual test)
 - [x] Sand pile forms stable angle of repose - FIXED (aspect ratio 69.52, pile spreads x: 158→121)
-- [ ] Gold sinks through sand (density stratification) - NOT YET TESTED
-- [ ] Particles on vertical walls don't get stuck - NOT YET TESTED
+- [x] Particles on vertical walls don't get stuck - FIXED (gradient-based floor detection)
 
 **Test command:**
 ```bash
@@ -305,6 +304,8 @@ cargo run --example dem_settling_diagnostic -p game --release
 6. **Reduced mass multiplier from 50x to 3x (line 228):** Allows pile restructuring
 7. **Skip gravity for sleeping floor particles (lines 133-144):** Prevents jitter cycle where sleeping
    particles get gravity → move down → hit floor → get pushed up → repeat
+8. **Gradient-based floor detection (line 304-306):** Only count SDF collision as floor_contact if
+   surface is horizontal (grad.y > 0.7). Vertical walls (grad.y ~ 0) don't count as floor support.
 
 **Headless diagnostic test:** `crates/game/examples/dem_settling_diagnostic.rs`
 - Test 1: Column pour → spread 202.5, aspect ratio 69.52 ✅

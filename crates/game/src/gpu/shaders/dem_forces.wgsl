@@ -135,7 +135,9 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
         // hit floor → get pushed up → repeat
         let sdf_now = sample_sdf(pos);
         let grad_now = sdf_gradient(pos);
-        let on_floor_now = sdf_now < radius * 1.1 && grad_now.y > 0.5;  // Must be horizontal floor
+        // Require nearly horizontal surface (grad.y > 0.9) to avoid corners where
+        // diagonal gradient (0.707, 0.707) could falsely trigger floor detection
+        let on_floor_now = sdf_now < radius * 1.1 && grad_now.y > 0.9;
         let skip_gravity = is_sleeping && on_floor_now;
 
         if (!skip_gravity) {
@@ -299,7 +301,9 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
         let correction = max(penetration - slop, 0.0);
         pos += grad * correction;
 
-        floor_contact = true;
+        // Only count as floor contact if surface is roughly horizontal (grad.y > 0.7)
+        // Vertical walls (grad.y ~ 0) should NOT count as floor support
+        floor_contact = grad.y > 0.7;
 
         // Zero velocity into floor
         let v_into_floor = dot(vel, -grad);

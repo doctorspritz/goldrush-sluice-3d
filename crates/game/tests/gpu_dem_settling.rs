@@ -401,6 +401,82 @@ fn test_no_midair_pause() {
     );
 }
 
+/// Test 4: Particles Near Vertical Walls Don't Get Stuck
+///
+/// Particles falling next to a vertical wall should fall normally and reach
+/// the floor, not pause mid-air or get stuck to the wall.
+///
+/// This tests:
+/// - Gradient-based floor detection correctly identifies walls as NOT floors
+/// - Sleep system doesn't trigger near walls (grad.y < 0.5 for vertical surfaces)
+#[test]
+fn test_vertical_wall_no_stuck() {
+    let result = pollster::block_on(async {
+        let Some(gpu) = create_test_gpu().await else {
+            println!("SKIP: No GPU adapter available");
+            return None;
+        };
+
+        let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+        build_box(&mut sim);
+        let mut dem =
+            GpuDemSolver::new_headless(&gpu.device, &gpu.queue, WIDTH as u32, HEIGHT as u32, 1000);
+
+        // Drop particles RIGHT NEXT to the left wall (within 1 cell)
+        let wall_x = 3.0 * CELL_SIZE; // Just past the 2-cell thick wall
+        let drop_y = 20.0 * CELL_SIZE;
+        let floor_y = (HEIGHT as f32 - 3.0) * CELL_SIZE;
+
+        for i in 0..5 {
+            sim.particles.list.push(Particle::new(
+                Vec2::new(wall_x + i as f32 * CELL_SIZE * 0.5, drop_y + i as f32 * CELL_SIZE),
+                Vec2::ZERO,
+                ParticleMaterial::Sand,
+            ));
+        }
+
+        // Run simulation for 200 frames - enough time to fall
+        for _ in 0..200 {
+            sim.grid.compute_sdf();
+            dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+            dem.execute_headless(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.particles,
+                CELL_SIZE,
+                DT,
+                GRAVITY,
+                -1.0,
+            );
+        }
+
+        // Check all particles reached floor (not stuck mid-air)
+        let all_reached_floor = sim.particles.iter().all(|p| {
+            p.position.y > floor_y - CELL_SIZE * 2.0 // Within 2 cells of floor
+        });
+
+        let min_y = sim.particles.iter().map(|p| p.position.y).fold(f32::MAX, f32::min);
+        let max_y = sim.particles.iter().map(|p| p.position.y).fold(f32::MIN, f32::max);
+
+        Some((all_reached_floor, min_y, max_y, floor_y))
+    });
+
+    let Some((all_reached, min_y, max_y, floor_y)) = result else {
+        return;
+    };
+
+    println!("=== Vertical Wall No Stuck Test ===");
+    println!("  Floor Y: {:.1}", floor_y);
+    println!("  Particle Y range: {:.1} - {:.1}", min_y, max_y);
+    println!("  All reached floor: {}", all_reached);
+
+    assert!(
+        all_reached,
+        "Particles stuck mid-air near wall! Y range: {:.1}-{:.1}, floor at {:.1}",
+        min_y, max_y, floor_y
+    );
+}
+
 // NOTE: Tests for "gold falls faster" and "gold sinks through sand" were REMOVED
 // because they tested for physically incorrect behavior:
 //
