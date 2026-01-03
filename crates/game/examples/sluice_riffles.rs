@@ -133,8 +133,8 @@ impl App {
             for i in 0..GRID_WIDTH {
                 let floor_h = floor_heights[k * GRID_WIDTH + i];
 
-                // Floor and everything below
-                for j in 0..=floor_h {
+                // Floor and everything below (floor_h is count of solid cells)
+                for j in 0..floor_h {
                     grid.set_solid(i, j, k);
                 }
 
