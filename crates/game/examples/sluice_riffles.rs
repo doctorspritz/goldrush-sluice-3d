@@ -25,6 +25,10 @@ const GRID_HEIGHT: usize = 48;  // Tall enough for water depth + riffles
 const GRID_DEPTH: usize = 24;   // Wide channel for 3D effects
 const CELL_SIZE: f32 = 0.02;    // Fine resolution
 const MAX_PARTICLES: usize = 800_000;
+// Pressure information propagates ~1 cell/iteration; use ~2x width for convergence.
+const PRESSURE_ITERS: u32 = GRID_WIDTH as u32 * 2;
+const GRAVITY_MAG: f32 = 9.8;
+const DIAG_TOLERANCE: f32 = 0.0005;
 
 // Sluice geometry
 const SLOPE_ANGLE: f32 = 12.0;  // Degrees - gentle slope
@@ -75,6 +79,8 @@ struct App {
     fps_frame_count: u32,
     current_fps: f32,
     rand_seed: u32,
+    diag_riffle_hits: u32,
+    diag_max_dx_cells: u32,
 }
 
 struct GpuState {
@@ -178,6 +184,8 @@ impl App {
             fps_frame_count: 0,
             current_fps: 0.0,
             rand_seed: 12345,
+            diag_riffle_hits: 0,
+            diag_max_dx_cells: 0,
         }
     }
 
@@ -187,6 +195,8 @@ impl App {
         self.c_matrices.clear();
         self.frame = 0;
         self.rand_seed = 12345;
+        self.diag_riffle_hits = 0;
+        self.diag_max_dx_cells = 0;
     }
 
     async fn init_gpu(&mut self, window: Arc<Window>) {
@@ -383,7 +393,8 @@ impl App {
             // Emit water from upper left - wide stream across channel width
             let emit_x = 5.0 * CELL_SIZE;
             let floor_at_emit = self.get_floor_height(5, GRID_DEPTH / 2);
-            let emit_y = (floor_at_emit + WATER_DEPTH + 5) as f32 * CELL_SIZE;
+            // Inject just above floor so water actually hits riffles instead of flying over them
+            let emit_y = (floor_at_emit + 2) as f32 * CELL_SIZE;
 
             // Flow direction: down the slope (positive X, slight negative Y)
             let slope_rad = SLOPE_ANGLE * std::f32::consts::PI / 180.0;
@@ -457,9 +468,11 @@ impl App {
             }
 
             // GPU simulation
-            let gravity = Vec3::new(0.0, -9.8, 0.0);
+            // Add downslope gravity to sustain flow and allow pressure buildup behind riffles.
+            let gravity = Vec3::new(GRAVITY_MAG * slope_rad.sin(), -GRAVITY_MAG, 0.0);
             let gpu = self.gpu.as_ref().unwrap();
             let gpu_flip = self.gpu_flip.as_ref().unwrap();
+
             gpu_flip.step(
                 &gpu.device,
                 &gpu.queue,
@@ -469,11 +482,43 @@ impl App {
                 &self.cell_types,
                 dt,
                 gravity,
-                50,
+                PRESSURE_ITERS,
             );
+
+            // POST-GPU: Zero velocity for particles facing riffle walls
+            // G2P just gave particles new velocities - zero X velocity if at a wall
+            // This prevents advection from moving them INTO walls
+            let floor_heights_ref = &self.floor_heights;
+            for (pos, vel) in self.positions.iter().zip(self.velocities.iter_mut()) {
+                if vel.x > 0.0 {
+                    let i = (pos.x / CELL_SIZE).floor() as usize;
+                    let k = (pos.z / CELL_SIZE).floor() as usize;
+                    let i_c = i.min(GRID_WIDTH - 1);
+                    let k_c = k.min(GRID_DEPTH - 1);
+
+                    // Check if there's a wall ahead
+                    if i_c + 1 < GRID_WIDTH {
+                        let curr_floor = floor_heights_ref[k_c * GRID_WIDTH + i_c];
+                        let next_floor = floor_heights_ref[k_c * GRID_WIDTH + i_c + 1];
+
+                        if next_floor > curr_floor {
+                            // There's a riffle wall at the right edge of current cell
+                            let wall_x = (i_c + 1) as f32 * CELL_SIZE;
+                            let riffle_top = (next_floor as f32 + 0.5) * CELL_SIZE;
+
+                            // If particle is close to wall AND below riffle top, zero X velocity
+                            if pos.x > wall_x - CELL_SIZE * 1.5 && pos.y < riffle_top {
+                                vel.x = 0.0;
+                            }
+                        }
+                    }
+                }
+            }
 
             // Advect with proper solid collision (including riffle vertical walls!)
             let floor_heights = &self.floor_heights;
+            let mut frame_riffle_hits = 0u32;
+            let mut frame_max_dx_cells = 0u32;
             for (pos, vel) in self.positions.iter_mut().zip(self.velocities.iter_mut()) {
                 let old_pos = *pos;
                 *pos += *vel * dt;
@@ -487,22 +532,36 @@ impl App {
                 let old_i = (old_pos.x / CELL_SIZE).floor() as usize;
                 let old_i_clamped = old_i.min(GRID_WIDTH - 1);
 
-                // Get floor heights at old and new X positions
-                let floor_h_new = floor_heights[k_clamped * GRID_WIDTH + i_clamped];
-                let floor_h_old = floor_heights[k_clamped * GRID_WIDTH + old_i_clamped];
-
                 // Check for riffle vertical wall collision:
-                // If floor height increased AND we're below the new floor height,
-                // we hit the upstream face of a riffle - block X movement
-                if floor_h_new > floor_h_old && vel.x > 0.0 {
-                    let riffle_top = (floor_h_new as f32 + 0.5) * CELL_SIZE;
-                    if pos.y < riffle_top {
-                        // Hit riffle wall! Push back to just before the riffle
-                        pos.x = (i_clamped as f32) * CELL_SIZE - 0.01;
-                        vel.x = 0.0;  // Stop horizontal movement
-                        // Bounce slightly upward to help water pile up
-                        if vel.y < 0.0 {
-                            vel.y *= -0.1;  // Small upward bounce
+                // Walk through cells between old and new position to catch fast-moving particles
+                let start_i = old_i_clamped;
+                let end_i = i_clamped;
+
+                if end_i > start_i {
+                    frame_max_dx_cells = frame_max_dx_cells.max((end_i - start_i) as u32);
+                }
+
+                if end_i > start_i && vel.x > 0.0 {
+                    // Check each cell transition for a riffle wall
+                    for check_i in (start_i + 1)..=end_i {
+                        let prev_floor = floor_heights[k_clamped * GRID_WIDTH + (check_i - 1)];
+                        let curr_floor = floor_heights[k_clamped * GRID_WIDTH + check_i];
+
+                        if curr_floor > prev_floor {
+                            // There's a riffle wall at the left edge of check_i
+                            let riffle_top = (curr_floor as f32 + 0.5) * CELL_SIZE;
+                            if pos.y < riffle_top {
+                                // Hit riffle wall! Push back to just BEFORE the wall
+                                let wall_x = check_i as f32 * CELL_SIZE;
+                                pos.x = wall_x - 0.005;
+                                vel.x = 0.0;
+                                // Small upward push to help water pile up
+                                if vel.y < 0.0 {
+                                    vel.y *= -0.1;
+                                }
+                                frame_riffle_hits += 1;
+                                break;  // Stop at first wall hit
+                            }
                         }
                     }
                 }
@@ -543,6 +602,8 @@ impl App {
                     if vel.z > 0.0 { vel.z = 0.0; }
                 }
             }
+            self.diag_riffle_hits += frame_riffle_hits;
+            self.diag_max_dx_cells = self.diag_max_dx_cells.max(frame_max_dx_cells);
 
             // GPU particle separation - allow denser packing for proper water depth
             // With cell_size=0.02, min_dist=0.01 allows ~8 particles per cell (2x2x2)
@@ -567,19 +628,104 @@ impl App {
             if elapsed >= 1.0 {
                 self.current_fps = self.fps_frame_count as f32 / elapsed;
 
-                let avg_vel = if !self.velocities.is_empty() {
-                    let sum: Vec3 = self.velocities.iter().copied().sum();
-                    sum / self.velocities.len() as f32
-                } else { Vec3::ZERO };
+                // REAL DIAGNOSTICS: Check if particles are actually pooling
+                let mut max_y = 0.0f32;
+                let mut avg_x = 0.0f32;
+                let mut max_depth = 0.0f32;
+                let mut avg_depth = 0.0f32;
+                let mut inside_floor = 0usize;
+                let mut particles_at_riffles = [0usize; RIFFLE_COUNT];
+                let mut cell_counts = vec![0u16; GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH];
+                let mut filled_cells = 0usize;
+                let mut max_cell_count = 0u16;
+
+                for pos in &self.positions {
+                    max_y = max_y.max(pos.y);
+                    avg_x += pos.x;
+
+                    // Count particles near each riffle (within 3 cells upstream)
+                    for r in 0..RIFFLE_COUNT {
+                        let riffle_x = (20 + r * RIFFLE_SPACING) as f32 * CELL_SIZE;
+                        if pos.x > riffle_x - 3.0 * CELL_SIZE && pos.x < riffle_x {
+                            particles_at_riffles[r] += 1;
+                        }
+                    }
+
+                    let i = (pos.x / CELL_SIZE).floor() as i32;
+                    let j = (pos.y / CELL_SIZE).floor() as i32;
+                    let k = (pos.z / CELL_SIZE).floor() as i32;
+                    if i >= 0 && i < GRID_WIDTH as i32 &&
+                       j >= 0 && j < GRID_HEIGHT as i32 &&
+                       k >= 0 && k < GRID_DEPTH as i32 {
+                        let idx = k as usize * GRID_WIDTH * GRID_HEIGHT + j as usize * GRID_WIDTH + i as usize;
+                        let count = cell_counts[idx];
+                        if count == 0 {
+                            filled_cells += 1;
+                        }
+                        let next = count.saturating_add(1);
+                        cell_counts[idx] = next;
+                        max_cell_count = max_cell_count.max(next);
+
+                        let floor_h = floor_heights[k as usize * GRID_WIDTH + i as usize];
+                        let floor_y = (floor_h as f32 + 0.5) * CELL_SIZE;
+                        let depth = (pos.y - floor_y).max(0.0);
+                        max_depth = max_depth.max(depth);
+                        avg_depth += depth;
+                        if pos.y < floor_y - DIAG_TOLERANCE {
+                            inside_floor += 1;
+                        }
+                    }
+                }
+
+                if !self.positions.is_empty() {
+                    avg_x /= self.positions.len() as f32;
+                    avg_depth /= self.positions.len() as f32;
+                }
+
+                let fluid_cells = self.cell_types.iter().filter(|&&ct| ct == 1).count();
+                let avg_particles_per_cell = if filled_cells > 0 {
+                    self.positions.len() as f32 / filled_cells as f32
+                } else {
+                    0.0
+                };
+
+                let mut max_div = 0.0f32;
+                let mut avg_div = 0.0f32;
+                let mut max_pressure = 0.0f32;
+                if fluid_cells > 0 {
+                    let (pressure, divergence) = gpu_flip.debug_read_pressure(&gpu.device, &gpu.queue);
+                    let mut div_count = 0usize;
+                    for (idx, &ct) in self.cell_types.iter().enumerate() {
+                        if ct == 1 {
+                            let d = divergence[idx].abs();
+                            max_div = max_div.max(d);
+                            avg_div += d;
+                            max_pressure = max_pressure.max(pressure[idx].abs());
+                            div_count += 1;
+                        }
+                    }
+                    if div_count > 0 {
+                        avg_div /= div_count as f32;
+                    }
+                }
+
+                // Floor height at first riffle for reference
+                let riffle1_floor = self.get_floor_height(20, GRID_DEPTH / 2);
+                let riffle1_top_y = (riffle1_floor + RIFFLE_HEIGHT) as f32 * CELL_SIZE;
 
                 println!(
-                    "Frame {:5} | FPS: {:5.1} | Particles: {:6} | AvgVel: ({:5.2}, {:5.2}, {:5.2})",
+                    "Frame {:5} | FPS: {:5.1} | N: {:6} | MaxY: {:.3} (riffle top: {:.3}) | MaxDepth: {:.3} | AvgDepth: {:.3} | InsideFloor: {:4} | FilledCells: {:6} | AvgP/Cell: {:4.1} | MaxCell: {:3} | MaxDiv: {:7.3} | AvgDiv: {:7.3} | MaxP: {:7.3} | AvgX: {:.2} | AtRiffles: {:?} | RiffleHits/s: {:4} | MaxDxCells: {:2}",
                     self.frame, self.current_fps, self.positions.len(),
-                    avg_vel.x, avg_vel.y, avg_vel.z
+                    max_y, riffle1_top_y, max_depth, avg_depth, inside_floor,
+                    filled_cells, avg_particles_per_cell, max_cell_count,
+                    max_div, avg_div, max_pressure,
+                    avg_x, particles_at_riffles, self.diag_riffle_hits, self.diag_max_dx_cells
                 );
 
                 self.fps_frame_count = 0;
                 self.last_fps_time = now;
+                self.diag_riffle_hits = 0;
+                self.diag_max_dx_cells = 0;
             }
         }
 
