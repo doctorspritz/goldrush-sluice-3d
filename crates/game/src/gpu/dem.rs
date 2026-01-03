@@ -703,6 +703,11 @@ impl GpuDemSolver {
         queue.write_buffer(&self.sdf_buffer, 0, bytemuck::cast_slice(sdf));
     }
 
+    /// Upload static states for headless testing (0 = dynamic, 1 = static)
+    pub fn upload_static_states_headless(&self, queue: &wgpu::Queue, states: &[u32]) {
+        queue.write_buffer(&self.static_state_buffer, 0, bytemuck::cast_slice(states));
+    }
+
     /// Execute GPU DEM for sediment particles
     pub fn execute(
         &mut self,

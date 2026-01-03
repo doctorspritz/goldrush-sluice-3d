@@ -119,6 +119,15 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     let material = materials[idx];
     let mu = FRICTIONS[min(material, 5u)];
 
+    // Read static state - STATIC particles are FROZEN
+    let is_static = static_states[idx] == 1u;
+    if (is_static) {
+        // Don't modify position or velocity - write back unchanged
+        positions[idx] = old_pos;
+        velocities[idx] = vel;
+        return;
+    }
+
     // Sleep system: read current sleep counter
     var sleep_counter = sleep_counters[idx];
     let is_sleeping = sleep_counter >= SLEEP_THRESHOLD;

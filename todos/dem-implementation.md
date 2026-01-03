@@ -27,11 +27,11 @@
 ---
 
 ## Level 1: Static State Buffer
-**Status:** PENDING
+**Status:** COMPLETE (commit 80e6a46)
 
 ### Entry Gate
-- [ ] Level 0 complete
-- [ ] No uncommitted changes
+- [x] Level 0 complete
+- [x] No uncommitted changes
 
 ### Implementation
 Add to `crates/game/src/gpu/dem.rs`:
@@ -55,9 +55,9 @@ let static_state = device.create_buffer(&wgpu::BufferDescriptor {
 4. Add to bind group at binding 10 (after sleep_counters at 8, solid_flags at 9)
 
 ### Exit Gate
-- [ ] `cargo build --release` succeeds
-- [ ] Existing tests still pass (no regression)
-- [ ] New buffer exists and is bound to shader
+- [x] `cargo build --release` succeeds
+- [x] Existing tests still pass (no regression)
+- [x] New buffer exists and is bound to shader
 
 ### Commit Message
 ```

@@ -481,6 +481,107 @@ fn test_vertical_wall_no_stuck() {
     );
 }
 
+/// Test 5: Static Particles Are Frozen
+///
+/// Particles marked as STATIC should not move regardless of physics.
+/// This is the foundation of the two-state model where settled piles act as solids.
+///
+/// This tests:
+/// - Static particles skip all physics integration
+/// - Dynamic particles still fall normally
+/// - Position remains unchanged for static particles over 100 frames
+#[test]
+fn test_static_particles_frozen() {
+    let result = pollster::block_on(async {
+        let Some(gpu) = create_test_gpu().await else {
+            println!("SKIP: No GPU adapter available");
+            return None;
+        };
+
+        let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+        build_box(&mut sim);
+        let mut dem =
+            GpuDemSolver::new_headless(&gpu.device, &gpu.queue, WIDTH as u32, HEIGHT as u32, 1000);
+
+        // Create 10 particles: 5 static (even indices), 5 dynamic (odd indices)
+        // Place them mid-air so dynamic ones would fall
+        let start_y = 20.0 * CELL_SIZE;
+        for i in 0..10 {
+            sim.particles.list.push(Particle::new(
+                Vec2::new(80.0 * CELL_SIZE + i as f32 * CELL_SIZE * 2.0, start_y),
+                Vec2::ZERO,
+                ParticleMaterial::Sand,
+            ));
+        }
+
+        // Record initial positions
+        let initial_positions: Vec<Vec2> = sim.particles.iter().map(|p| p.position).collect();
+
+        // Upload static states: even indices = static (1), odd = dynamic (0)
+        let mut static_states = vec![0u32; 10];
+        for i in (0..10).step_by(2) {
+            static_states[i] = 1; // Mark even indices as static
+        }
+        dem.upload_static_states_headless(&gpu.queue, &static_states);
+
+        // Run 100 frames
+        for _ in 0..100 {
+            sim.grid.compute_sdf();
+            dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+            dem.execute_headless(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.particles,
+                CELL_SIZE,
+                DT,
+                GRAVITY,
+                -1.0,
+            );
+        }
+
+        // Check positions
+        let final_positions: Vec<Vec2> = sim.particles.iter().map(|p| p.position).collect();
+        Some((initial_positions, final_positions))
+    });
+
+    let Some((initial, final_pos)) = result else {
+        return;
+    };
+
+    println!("=== Static Particles Frozen Test ===");
+
+    // Static particles (even indices) should have ZERO position change
+    let mut static_moved = false;
+    for i in (0..10).step_by(2) {
+        let delta = (final_pos[i] - initial[i]).length();
+        println!("  Static particle {}: delta = {:.4}", i, delta);
+        if delta > 0.001 {
+            static_moved = true;
+            println!("    ERROR: Static particle moved!");
+        }
+    }
+
+    // Dynamic particles (odd indices) should have fallen
+    let mut dynamic_fell = true;
+    for i in (1..10).step_by(2) {
+        let delta_y = final_pos[i].y - initial[i].y;
+        println!("  Dynamic particle {}: delta_y = {:.2}", i, delta_y);
+        if delta_y < 10.0 {
+            dynamic_fell = false;
+            println!("    ERROR: Dynamic particle didn't fall enough!");
+        }
+    }
+
+    assert!(
+        !static_moved,
+        "Static particles moved! They should be completely frozen."
+    );
+    assert!(
+        dynamic_fell,
+        "Dynamic particles didn't fall! Gravity should still work for dynamic particles."
+    );
+}
+
 // NOTE: Tests for "gold falls faster" and "gold sinks through sand" were REMOVED
 // because they tested for physically incorrect behavior:
 //
