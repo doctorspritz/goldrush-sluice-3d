@@ -681,7 +681,7 @@ impl App {
             KeyCode::ArrowDown => self.num_emitters = self.num_emitters.saturating_sub(1).max(1),
             KeyCode::Equal => {
                 if !self.shift_down {
-                    self.zoom = (self.zoom + 0.25).min(6.0);
+                    self.zoom = (self.zoom + 0.25).min(12.0);
                     self.fast_particle_size = CELL_SIZE * self.zoom * 1.5;
                 } else {
                     self.flow_multiplier = (self.flow_multiplier + 1).min(10);
@@ -861,7 +861,7 @@ impl ApplicationHandler for App {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => y,
                     winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 100.0,
                 };
-                self.zoom = (self.zoom + scroll * 0.2).clamp(0.5, 6.0);
+                self.zoom = (self.zoom + scroll * 0.2).clamp(0.5, 12.0);
                 self.fast_particle_size = CELL_SIZE * self.zoom * 1.5;
             }
             WindowEvent::RedrawRequested => {

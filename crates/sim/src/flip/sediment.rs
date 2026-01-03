@@ -904,50 +904,50 @@ impl FlipSimulation {
         self.grid.height - 1 // Bottom of grid
     }
 
-    /// Step 7b: Update particle states (Suspended <-> Bedload)
+    /// Step 7b: Update particle states (Suspended <-> Bedload) using Rouse number
     ///
-    /// State transitions based on:
-    /// - Enter Bedload: velocity < threshold AND near floor (SDF < radius)
-    /// - Exit Bedload: Shields number > unjam threshold AND jam_time > MIN_JAM_TIME
+    /// The Rouse number determines transport mode based on physics:
+    /// - Rouse = w_s / (κ * u*) where:
+    ///   - w_s = settling velocity (from Ferguson-Church)
+    ///   - κ = von Karman constant (0.4)
+    ///   - u* = shear velocity (derived from velocity gradient)
     ///
-    /// Hysteresis prevents rapid flickering between states:
-    /// - UNJAM_THRESHOLD is 2-3x JAM_THRESHOLD
-    /// - MIN_JAM_TIME requires particles to be bedload for some time before unjamming
-    /// - Shear deadzone shields bedload particles from small velocity fluctuations
+    /// Transport regimes:
+    /// - Rouse > 2.5: Bedload (particles stay near bottom)
+    /// - Rouse < 0.8: Suspended (particles distributed through depth)
+    /// - 0.8 - 2.5: Transitional (blend of both behaviors)
+    ///
+    /// This naturally handles density differentiation:
+    /// - Gold (high settling velocity) → high Rouse → bedload
+    /// - Sand (low settling velocity) → low Rouse in fast flow → suspended
     pub fn update_particle_states_impl(&mut self, dt: f32) {
-        // Thresholds in normalized units (cells-per-frame)
-        // Lowered to make sand easier to re-entrain by water flow
-        const JAM_THRESHOLD: f32 = 0.08; // Was 0.15 - slower before jamming
-        const UNJAM_THRESHOLD: f32 = 0.12; // Was 0.40 - easier to unjam
-        const SHEAR_DEADZONE: f32 = 0.02; // Was 0.08 - more responsive
-        const MIN_JAM_TIME: f32 = 0.10; // Was 0.20 - faster unjam
-        const JAM_VEL_MAX: f32 = 0.03; // Was 0.05 - stricter jam
+        // === Rouse Number Constants ===
+        const VON_KARMAN: f32 = 0.4; // κ - von Karman constant
+        const ROUSE_BEDLOAD: f32 = 2.5; // Above this → definitely bedload
+        const ROUSE_SUSPENDED: f32 = 0.8; // Below this → definitely suspended
 
-        // Per-material shear resistance multiplier
-        // Higher = harder to entrain (requires more shear)
-        // Relative to sand's Shields parameter (0.045)
-        fn material_shear_factor(mat: ParticleMaterial) -> f32 {
-            match mat {
-                ParticleMaterial::Water => 1.0,      // N/A for water
-                ParticleMaterial::Mud => 0.67,       // Shields 0.03 / 0.045 - easier to entrain
-                ParticleMaterial::Sand => 1.0,       // Reference material
-                ParticleMaterial::Magnetite => 1.56, // Shields 0.07 / 0.045 - much harder to entrain
-                ParticleMaterial::Gold => 2.0,       // Shields 0.09 / 0.045 - hardest to entrain
-                ParticleMaterial::Gravel => 1.33,    // Shields 0.06 / 0.045 - between sand and magnetite
-            }
-        }
+        // Hysteresis to prevent rapid state flickering
+        const ROUSE_JAM_HYSTERESIS: f32 = 0.3; // Extra margin to enter bedload
+        const ROUSE_UNJAM_HYSTERESIS: f32 = 0.5; // Extra margin to leave bedload
+        const MIN_JAM_TIME: f32 = 0.15; // Minimum time before unjamming
+
+        // Minimum shear velocity to prevent divide-by-zero
+        // Also prevents false bedload in stagnant water
+        const MIN_SHEAR_VELOCITY: f32 = 0.5; // pixels/s
+
+        // Velocity threshold for jamming (must be nearly stopped)
+        const JAM_VEL_THRESHOLD: f32 = 5.0; // pixels/s
 
         let grid = &self.grid;
         let cell_size = grid.cell_size;
         let pile_height = &self.pile_height;
         let pile_width = pile_height.len();
 
-        // Velocity scale: "1 cell per frame" in velocity units
-        // This normalizes velocities to cells-per-frame for threshold comparison
-        let v_scale = cell_size / dt;
-
         // Near floor distance: 1.5x cell size to catch particles resting on floor
         let near_floor_distance = cell_size * 1.5;
+
+        // Copy flags for closure
+        let use_variable_diameter = self.use_variable_diameter;
 
         self.particles.list.par_iter_mut().for_each(|particle| {
             // Only update sediment states
@@ -955,29 +955,38 @@ impl FlipSimulation {
                 return;
             }
 
-            // Compute shear as velocity gradient (difference between layers)
-            // shear = (u(x,y) - u(x,y-dx)).length()
-            // where y-dx is one cell below (toward bed)
+            // === COMPUTE SHEAR VELOCITY ===
+            // Shear velocity u* = sqrt(τ_b / ρ) ≈ velocity gradient at bed
+            // We use velocity difference over one cell as approximation
             let fluid_vel_here = particle.old_grid_velocity;
             let pos_below = particle.position + Vec2::new(0.0, cell_size);
             let fluid_vel_below = grid.sample_velocity(pos_below);
-            let shear = (fluid_vel_here - fluid_vel_below).length();
+            let velocity_gradient = (fluid_vel_here - fluid_vel_below).length();
 
-            // Apply deadzone and normalize to cells-per-frame
-            let effective_shear = (shear - SHEAR_DEADZONE).max(0.0);
-            let shear_n = effective_shear / v_scale;
+            // Shear velocity estimate (simple approximation)
+            // For log-law velocity profile: u* = κ * du/dz * z
+            // Simplified: u* ≈ velocity_gradient * 0.5
+            let shear_velocity = (velocity_gradient * 0.5).max(MIN_SHEAR_VELOCITY);
 
-            // Relative velocity: particle motion relative to local fluid (normalized)
+            // === COMPUTE SETTLING VELOCITY ===
+            let diameter = if use_variable_diameter {
+                particle.effective_diameter()
+            } else {
+                particle.material.typical_diameter()
+            };
+            let settling_velocity = particle.material.settling_velocity(diameter);
+
+            // === COMPUTE ROUSE NUMBER ===
+            // Rouse = w_s / (κ * u*)
+            // Higher Rouse = more likely to be bedload (heavy particles in slow flow)
+            // Lower Rouse = more likely to be suspended (light particles in fast flow)
+            let rouse = settling_velocity / (VON_KARMAN * shear_velocity);
+
+            // Relative velocity for jam check
             let rel_vel = (particle.velocity - fluid_vel_here).length();
-            let rel_vel_n = rel_vel / v_scale;
-
-            // Material-aware thresholds
-            let factor = material_shear_factor(particle.material);
-            let jam_th = JAM_THRESHOLD * factor;
-            let unjam_th = UNJAM_THRESHOLD * factor;
 
             // === SUPPORT CHECK ===
-            // Particles can only jam if they're supported by something:
+            // Particles can only be bedload if they're supported by something:
             // 1. On a solid floor (SDF surface pointing up)
             // 2. On top of a pile (bedload particles below)
             let sdf_dist = grid.sample_sdf(particle.position);
@@ -991,47 +1000,50 @@ impl FlipSimulation {
             let on_solid_floor = near_solid && is_floor_surface;
 
             // Check if supported by pile
-            // pile_top is the smallest Y (highest point) of bedload in this column
-            // Particle is "on pile" if its bottom is CLOSE to pile_top (within 1 cell)
             let col = ((particle.position.x / cell_size) as usize).min(pile_width.saturating_sub(1));
             let pile_top = pile_height[col];
             let particle_radius = cell_size * 0.5;
             let particle_bottom = particle.position.y + particle_radius;
-            // Particle is "on pile" if:
-            // 1. pile exists (pile_top < INFINITY)
-            // 2. particle_bottom >= pile_top (particle is AT or BELOW pile surface, not floating above)
-            // 3. particle_bottom is close to pile_top (within 1 cell)
             let on_pile = pile_top < f32::INFINITY
-                && particle_bottom >= pile_top // not floating above the pile
-                && (particle_bottom - pile_top) < cell_size; // within 1 cell of pile top
+                && particle_bottom >= pile_top
+                && (particle_bottom - pile_top) < cell_size;
 
             let has_support = on_solid_floor || on_pile;
 
             match particle.state {
                 ParticleState::Suspended => {
-                    // JAM: must have support AND low normalized shear AND low relative velocity
-                    if has_support && shear_n < jam_th && rel_vel_n < JAM_VEL_MAX {
+                    // === JAM (Enter Bedload) ===
+                    // Conditions:
+                    // 1. Has support (on floor or pile)
+                    // 2. Rouse number indicates bedload regime (with hysteresis)
+                    // 3. Particle is moving slowly (near rest)
+                    let rouse_threshold = ROUSE_BEDLOAD - ROUSE_JAM_HYSTERESIS;
+                    if has_support && rouse > rouse_threshold && rel_vel < JAM_VEL_THRESHOLD {
                         particle.state = ParticleState::Bedload;
                         particle.jam_time = 0.0;
                     }
                 }
                 ParticleState::Bedload => {
-                    // 1. LOSS-OF-SUPPORT UNJAM (hard constraint)
-                    // Bedload MUST unjam if it loses support - no floating bedload allowed
+                    // === LOSS-OF-SUPPORT UNJAM (hard constraint) ===
+                    // Bedload MUST unjam if it loses support - no floating bedload
                     if !has_support {
                         particle.state = ParticleState::Suspended;
                         particle.velocity = fluid_vel_here; // Resume with local fluid velocity
                         particle.jam_time = 0.0;
-                        return; // Skip shear check
+                        return;
                     }
 
-                    // 2. SHEAR-BASED UNJAM (physics)
                     // Increment jam time
                     particle.jam_time += dt;
 
-                    // UNJAM: if normalized shear exceeds threshold after minimum jam time
-                    if shear_n > unjam_th && particle.jam_time > MIN_JAM_TIME {
+                    // === ROUSE-BASED UNJAM ===
+                    // If Rouse number drops below suspended threshold, flow is strong
+                    // enough to entrain this particle
+                    let unjam_threshold = ROUSE_SUSPENDED + ROUSE_UNJAM_HYSTERESIS;
+                    if rouse < unjam_threshold && particle.jam_time > MIN_JAM_TIME {
                         particle.state = ParticleState::Suspended;
+                        // Give particle some of the fluid velocity to help it move
+                        particle.velocity = fluid_vel_here * 0.5;
                     }
                 }
             }

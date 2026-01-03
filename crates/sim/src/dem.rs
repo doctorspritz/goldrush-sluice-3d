@@ -62,7 +62,7 @@ impl Default for DemParams {
             wake_threshold: 3.0,             // Lower wake threshold for responsiveness
             particle_radius_cells: 0.5,      // Legacy fallback
             min_support_neighbors: 1,        // Only need 1 neighbor to sleep
-            velocity_damping: 0.98,          // Less damping needed with friction
+            velocity_damping: 0.95,          // 5% per frame instead of 2% - faster settling
             use_jitter: true,                // Enable surface roughness
             use_material_properties: true,   // Use per-material radius/mass/friction
             max_substeps: 8,                 // Adaptive substeps limit
@@ -507,12 +507,32 @@ impl DemSimulation {
 
             let radius = get_radius(p);
 
-            // Skip sleeping particles on floor
+            // Sleeping particles on floor: still apply settling force for stratification
+            // Heavy particles (gold) should sink through lighter particles (sand)
             if self.is_sleeping[idx] {
                 let sdf = grid.sample_sdf(p.position);
                 if sdf < radius * 1.5 {
-                    p.velocity = Vec2::ZERO;
+                    // On floor - stop horizontal motion but allow vertical settling
+                    p.velocity.x = 0.0;
                     p.state = ParticleState::Bedload;
+
+                    // Apply tiny settling velocity based on density difference from average
+                    // This allows heavy particles to slowly sink through lighter ones
+                    let in_water = if let Some(wl) = water_level {
+                        p.position.y > wl
+                    } else {
+                        true // assume in water for sluice
+                    };
+                    if in_water {
+                        let density = p.material.density();
+                        // Average sediment density ~5 (mix of sand 2.65, magnetite 5.2, gold 19.3)
+                        const AVG_SEDIMENT_DENSITY: f32 = 5.0;
+                        // Settling rate: heavier than average sinks, lighter than average rises
+                        // Scale: gold (19.3) gets +0.5 px/s, sand (2.65) gets -0.2 px/s
+                        let settling_rate = (density - AVG_SEDIMENT_DENSITY) * 0.035;
+                        p.velocity.y = settling_rate;
+                        p.position.y += p.velocity.y * dt;
+                    }
                     continue;
                 } else {
                     self.is_sleeping[idx] = false;
@@ -544,9 +564,32 @@ impl DemSimulation {
                 }
                 // Light damping in water
                 p.velocity *= 0.995;
+
+                // STRATIFICATION FORCE: Heavy particles sink through lighter ones
+                // This applies to ALL submerged sediment, not just sleeping particles.
+                // Average sediment density ~5 (mix of sand 2.65, magnetite 5.2, gold 19.3)
+                // Gold (19.3) gets stronger downward force (+Y), sand gets upward force (-Y)
+                const AVG_SEDIMENT_DENSITY: f32 = 5.0;
+                const STRATIFICATION_STRENGTH: f32 = 15.0; // px/s² acceleration
+                let density = p.material.density();
+                let strat_accel = (density - AVG_SEDIMENT_DENSITY) / density * STRATIFICATION_STRENGTH;
+                p.velocity.y += strat_accel * dt;
             } else {
                 // Global velocity damping only for DRY sediments (not in water)
                 p.velocity *= self.params.velocity_damping;
+
+                // Support-based damping: particles with support below them settle faster
+                let has_support = self.support_counts[idx] >= self.params.min_support_neighbors as u16;
+                if has_support {
+                    let speed = p.velocity.length();
+                    if speed < 5.0 {
+                        p.velocity *= 0.5;
+                    } else if speed < 15.0 {
+                        p.velocity *= 0.8;
+                    } else if speed < 30.0 {
+                        p.velocity *= 0.9;  // Light damping for faster particles too
+                    }
+                }
             }
 
             // Move
@@ -656,15 +699,28 @@ impl DemSimulation {
                                 };
                                 let f_t_max = mu * f_n;
 
-                                // Proper Coulomb friction: viscous damping clamped by μ*F_n
+                                // Coulomb friction with static threshold
+                                // Problem: pure viscous damping (k_t * v_t) gives tiny forces for slow particles,
+                                // allowing them to creep forever. True static friction locks slow particles.
+                                const STATIC_VELOCITY_THRESHOLD: f32 = 0.5; // cells/frame - below this, stop completely
+
                                 let v_t_mag = v_t.abs();
-                                let f_t = if v_t_mag > 1e-6 {
-                                    // Viscous resistance (no dt - that's added in impulse calculation)
+                                let f_t = if v_t_mag < 1e-6 {
+                                    0.0  // No relative motion
+                                } else if v_t_mag < STATIC_VELOCITY_THRESHOLD {
+                                    // Static friction regime: apply stopping force
+                                    // Force needed to zero velocity in one timestep: F = m * v / dt
+                                    // But we're computing force, then multiplying by dt for impulse,
+                                    // so stopping_force = m_eff * v_t / dt, impulse = stopping_force * dt = m_eff * v_t
+                                    // To avoid dt dependency here, just use large damping
+                                    let stopping_force = k_t * STATIC_VELOCITY_THRESHOLD; // Same as if at threshold
+                                    let friction_force = stopping_force.min(f_t_max);
+                                    -friction_force * v_t.signum()
+                                } else {
+                                    // Dynamic friction: viscous damping clamped by μ*F_n
                                     let damping_force = k_t * v_t_mag;
                                     let friction_force = damping_force.min(f_t_max);
-                                    -friction_force * v_t.signum()  // Oppose motion
-                                } else {
-                                    0.0
+                                    -friction_force * v_t.signum()
                                 };
 
                                 // Total impulse
@@ -720,7 +776,8 @@ impl DemSimulation {
                         p.velocity -= push_dir * normal_vel;
                     }
 
-                    // Floor friction using material property
+                    // Floor friction using material property with static threshold
+                    // Same fix as particle-particle: slow particles get stopped completely
                     let mu = if use_material {
                         p.material.static_friction()
                     } else {
@@ -728,14 +785,29 @@ impl DemSimulation {
                     };
                     let tangent = Vec2::new(-push_dir.y, push_dir.x);
                     let tangent_vel = p.velocity.dot(tangent);
-                    p.velocity -= tangent * tangent_vel * mu;
+
+                    const STATIC_VELOCITY_THRESHOLD: f32 = 0.5;
+                    if tangent_vel.abs() < STATIC_VELOCITY_THRESHOLD {
+                        // Static friction: stop completely
+                        p.velocity -= tangent * tangent_vel;
+                    } else {
+                        // Dynamic friction: reduce by mu fraction
+                        p.velocity -= tangent * tangent_vel * mu;
+                    }
                 }
             }
 
             // Update state and sleep
+            // Only zero horizontal velocity - allow vertical settling for stratification
             let speed = p.velocity.length();
             if speed < 0.5 {
-                p.velocity = Vec2::ZERO;
+                // Stop horizontal sliding but keep vertical for density stratification
+                p.velocity.x = 0.0;
+                // Apply density-based settling for bedload particles
+                let density = p.material.density();
+                const AVG_SEDIMENT_DENSITY: f32 = 5.0;
+                let settling_rate = (density - AVG_SEDIMENT_DENSITY) * 0.035;
+                p.velocity.y = settling_rate;
             }
 
             let sdf = grid.sample_sdf(p.position);

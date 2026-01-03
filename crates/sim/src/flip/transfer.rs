@@ -336,7 +336,7 @@ impl FlipSimulation {
         let width = self.grid.width;
         let height = self.grid.height;
         let d_inv = apic_d_inverse(cell_size);
-        let sand_pic_ratio = self.sand_pic_ratio;
+        // Note: sand_pic_ratio no longer used - replaced with drag-based coupling
 
         let grid = &self.grid;
 
@@ -366,23 +366,40 @@ impl FlipSimulation {
                 };
 
                 if cell_type == CellType::Fluid {
-                    // IN FLUID: Blend between PIC (follow grid) and FLIP (respond to changes)
-                    // Sand should mostly follow the water (PIC), with some FLIP for momentum
-                    // High FLIP causes sand to overshoot when water slows down
+                    // IN FLUID: Drag-based coupling with settling
+                    //
+                    // Physics: Instead of overriding velocity with PIC blend, we apply
+                    // drag forces that pull the particle toward the water velocity.
+                    // Heavy particles (gold) have low drag → resist water, settle despite flow.
+                    // Light particles (sand) have high drag → follow water, wash away.
+                    //
+                    // This preserves settling velocity and friction effects that would
+                    // otherwise be erased by the 70% PIC override every frame.
 
-                    let old_grid_vel = particle.old_grid_velocity;
-                    let grid_delta = v_grid - old_grid_vel;
+                    // Drag coefficient inversely proportional to density ratio
+                    // water/gold ≈ 0.05 → gold resists water strongly
+                    // water/sand ≈ 0.38 → sand follows water more readily
+                    const RHO_WATER: f32 = 1.0;
+                    const DRAG_STRENGTH: f32 = 10.0; // Tunable: controls coupling timescale
+                    let rho_particle = particle.material.density();
+                    let drag_coeff = RHO_WATER / rho_particle;
 
-                    // PIC: velocity = v_grid
-                    // FLIP: velocity = velocity + delta
-                    // Blend: velocity = PIC_RATIO * v_grid + (1 - PIC_RATIO) * (velocity + delta)
-                    let pic_vel = v_grid;
-                    let flip_vel = particle.velocity + grid_delta;
-                    particle.velocity = sand_pic_ratio * pic_vel + (1.0 - sand_pic_ratio) * flip_vel;
+                    // Drag rate: fraction of velocity difference applied per frame
+                    // Clamped to prevent over-damping (max 0.9 per frame for stability)
+                    let drag_rate = (drag_coeff * DRAG_STRENGTH * dt).min(0.9);
+
+                    // Apply drag toward water velocity (HORIZONTAL ONLY)
+                    // Heavy particles (low drag_rate) resist horizontal flow → stay in riffles
+                    // Light particles (high drag_rate) follow horizontal flow → wash away
+                    //
+                    // VERTICAL motion is handled ONLY by the vorticity settling section below.
+                    // This ensures heavy particles settle faster regardless of drag_rate.
+                    particle.velocity.x += (v_grid.x - particle.velocity.x) * drag_rate;
+                    // NO vertical drag here - settling is material-specific in vorticity section
 
                     particle.old_grid_velocity = v_grid;
                 } else {
-                    // IN AIR: Don't use FLIP (no meaningful water velocity)
+                    // IN AIR: Don't apply water drag (no meaningful water velocity)
                     // Just maintain current velocity - gravity and settling applied below
                     // Reset old_grid_velocity so next time we enter fluid, delta is clean
                     particle.old_grid_velocity = Vec2::ZERO;
@@ -432,11 +449,17 @@ impl FlipSimulation {
                 // Higher vorticity → less settling (particle stays suspended)
                 // Only apply lift if vorticity is significant (reduces noise-driven suspension)
                 const MIN_VORT_FOR_LIFT: f32 = 0.5; // Threshold to filter noise
-                let lift_factor = if vort_magnitude > MIN_VORT_FOR_LIFT {
+                let base_lift = if vort_magnitude > MIN_VORT_FOR_LIFT {
                     ((vort_magnitude - MIN_VORT_FOR_LIFT) * VORT_LIFT_SCALE).min(1.0)
                 } else {
                     0.0
                 };
+
+                // Scale lift by inverse density (Rouse number effect):
+                // Heavy particles (gold ρ=19.3): lift reduced by 1/19.3 ≈ 0.05 → settles despite turbulence
+                // Light particles (sand ρ=2.65): lift reduced by 1/2.65 ≈ 0.38 → can be suspended
+                let density_lift_scale = (1.0 / particle.material.density()).min(0.5);
+                let lift_factor = base_lift * density_lift_scale;
                 let effective_settling = settling_factor * (1.0 - lift_factor);
 
                 // 2. SWIRL: Add velocity perpendicular to particle motion
@@ -622,7 +645,7 @@ impl FlipSimulation {
     pub fn grid_to_particles_sediment_only(&mut self, dt: f32) {
         let cell_size = self.grid.cell_size;
         let width = self.grid.width;
-        let sand_pic_ratio = self.sand_pic_ratio;
+        // Note: sand_pic_ratio no longer used - replaced with drag-based coupling
 
         let grid = &self.grid;
 
@@ -651,17 +674,20 @@ impl FlipSimulation {
             };
 
             if cell_type == CellType::Fluid {
-                // IN FLUID: Blend between PIC (follow grid) and FLIP (respond to changes)
-                let old_grid_vel = particle.old_grid_velocity;
-                let grid_delta = v_grid - old_grid_vel;
+                // IN FLUID: Drag-based coupling with settling (same as main G2P)
+                const RHO_WATER: f32 = 1.0;
+                const DRAG_STRENGTH: f32 = 10.0;
+                let rho_particle = particle.material.density();
+                let drag_coeff = RHO_WATER / rho_particle;
+                let drag_rate = (drag_coeff * DRAG_STRENGTH * dt).min(0.9);
 
-                let pic_vel = v_grid;
-                let flip_vel = particle.velocity + grid_delta;
-                particle.velocity = sand_pic_ratio * pic_vel + (1.0 - sand_pic_ratio) * flip_vel;
+                // Apply drag toward water velocity (HORIZONTAL ONLY)
+                // Vertical settling is material-specific in vorticity section below
+                particle.velocity.x += (v_grid.x - particle.velocity.x) * drag_rate;
 
                 particle.old_grid_velocity = v_grid;
             } else {
-                // IN AIR: Don't use FLIP (no meaningful water velocity)
+                // IN AIR: Don't apply water drag
                 particle.old_grid_velocity = Vec2::ZERO;
             }
 
@@ -681,11 +707,14 @@ impl FlipSimulation {
 
             // 1. LIFT: Reduce settling in high-vorticity regions
             const MIN_VORT_FOR_LIFT: f32 = 0.5;
-            let lift_factor = if vort_magnitude > MIN_VORT_FOR_LIFT {
+            let base_lift = if vort_magnitude > MIN_VORT_FOR_LIFT {
                 ((vort_magnitude - MIN_VORT_FOR_LIFT) * VORT_LIFT_SCALE).min(1.0)
             } else {
                 0.0
             };
+            // Scale lift by inverse density (heavy particles resist suspension)
+            let density_lift_scale = (1.0 / particle.material.density()).min(0.5);
+            let lift_factor = base_lift * density_lift_scale;
             let effective_settling = settling_factor * (1.0 - lift_factor);
 
             // 2. SWIRL: Add velocity perpendicular to particle motion
