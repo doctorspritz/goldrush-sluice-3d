@@ -582,6 +582,106 @@ fn test_static_particles_frozen() {
     );
 }
 
+/// Test 6: Settling Particles Become Static
+///
+/// Particles that settle on the floor should transition from DYNAMIC to STATIC.
+/// This is Level 3 of the two-state model implementation.
+///
+/// This tests:
+/// - Dynamic particles transition to STATIC when slow + supported
+/// - Static particles have zero velocity
+/// - Transition happens within reasonable time
+#[test]
+fn test_settling_becomes_static() {
+    let result = pollster::block_on(async {
+        let Some(gpu) = create_test_gpu().await else {
+            println!("SKIP: No GPU adapter available");
+            return None;
+        };
+
+        let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+        build_box(&mut sim);
+        let mut dem =
+            GpuDemSolver::new_headless(&gpu.device, &gpu.queue, WIDTH as u32, HEIGHT as u32, 1000);
+
+        // Drop 50 particles onto floor
+        let drop_y = 30.0 * CELL_SIZE;
+        for i in 0..50 {
+            let x = 60.0 * CELL_SIZE + (i % 10) as f32 * CELL_SIZE * 2.0;
+            let y = drop_y + (i / 10) as f32 * CELL_SIZE * 2.0;
+            sim.particles.list.push(Particle::new(
+                Vec2::new(x, y),
+                Vec2::ZERO,
+                ParticleMaterial::Sand,
+            ));
+        }
+
+        // Run 300 frames (5 seconds at 60fps)
+        for frame in 0..300 {
+            sim.grid.compute_sdf();
+            dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+            dem.execute_headless(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.particles,
+                CELL_SIZE,
+                DT,
+                GRAVITY,
+                -1.0,
+            );
+
+            // Debug: print state at key frames
+            if frame == 100 || frame == 200 || frame == 299 {
+                let states = dem.download_static_states_headless(&gpu.device, &gpu.queue, 50);
+                let static_count = states.iter().filter(|&&s| s == 1).count();
+                let avg_vel: f32 = sim.particles.iter().take(50).map(|p| p.velocity.length()).sum::<f32>() / 50.0;
+                let avg_y: f32 = sim.particles.iter().take(50).map(|p| p.position.y).sum::<f32>() / 50.0;
+                println!("  Frame {}: static={}/50, avg_vel={:.2}, avg_y={:.1}", frame, static_count, avg_vel, avg_y);
+            }
+        }
+
+        // Download static states
+        let static_states = dem.download_static_states_headless(&gpu.device, &gpu.queue, 50);
+
+        // Count how many are static
+        let static_count = static_states.iter().filter(|&&s| s == 1).count();
+
+        // Get velocities of static particles
+        let velocities: Vec<f32> = sim.particles.iter()
+            .take(50)
+            .enumerate()
+            .filter(|(i, _)| static_states.get(*i).copied() == Some(1))
+            .map(|(_, p)| p.velocity.length())
+            .collect();
+
+        let max_static_velocity = velocities.iter().copied().fold(0.0f32, f32::max);
+
+        Some((static_count, max_static_velocity))
+    });
+
+    let Some((static_count, max_vel)) = result else {
+        return;
+    };
+
+    println!("=== Settling Becomes Static Test ===");
+    println!("  Static particles: {}/50 ({:.0}%)", static_count, static_count as f32 / 50.0 * 100.0);
+    println!("  Max velocity of static particles: {:.4}", max_vel);
+
+    // At least 80% should be static
+    assert!(
+        static_count >= 40,
+        "Only {}/50 particles became static! Expected at least 40 (80%)",
+        static_count
+    );
+
+    // Static particles should have near-zero velocity
+    assert!(
+        max_vel < 0.1,
+        "Static particles have velocity {}! Expected < 0.1",
+        max_vel
+    );
+}
+
 // NOTE: Tests for "gold falls faster" and "gold sinks through sand" were REMOVED
 // because they tested for physically incorrect behavior:
 //

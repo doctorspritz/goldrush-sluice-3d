@@ -239,8 +239,9 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                     }
 
                     // Support propagation: check if neighbor BELOW us is truly supported
+                    // In screen coords: j below us means j.y > our y, so diff.y < 0, so normal.y < 0
                     let j_sleep = sleep_counters[j_idx];
-                    let j_is_below = normal.y > 0.3;  // neighbor is below if normal points up
+                    let j_is_below = normal.y < -0.3;
                     if (j_is_below && j_sleep >= SLEEP_THRESHOLD) {
                         supported_contacts += 1u;
                     }
@@ -257,8 +258,9 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                     particle_contact_count += 1u;
 
                     // Check if this particle is below us (provides support)
-                    // normal points from j to us, so if normal.y > 0.5, j is below us
-                    if (normal.y > 0.5) {
+                    // normal = (pos - pos_j) / dist, points from j to us
+                    // In screen coords: if j is below us (j.y > our y), then diff.y < 0, so normal.y < 0
+                    if (normal.y < -0.5) {
                         has_support_below = true;
                     }
 
@@ -311,9 +313,10 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
         let correction = max(penetration - slop, 0.0);
         pos += grad * correction;
 
-        // Only count as floor contact if surface is roughly horizontal (grad.y > 0.7)
+        // Only count as floor contact if surface is roughly horizontal
+        // In screen coords (y increases downward), floor gradient points UP (negative y)
         // Vertical walls (grad.y ~ 0) should NOT count as floor support
-        floor_contact = grad.y > 0.7;
+        floor_contact = grad.y < -0.7;
 
         // Zero velocity into floor
         let v_into_floor = dot(vel, -grad);
@@ -371,8 +374,10 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     // Apply sleep: zero velocity when supported and counter high
+    // Level 3: Also transition to STATIC state - will skip physics entirely next frame
     if (sleep_counter >= SLEEP_THRESHOLD && truly_supported && !should_wake) {
         vel = vec2(0.0, 0.0);
+        static_states[idx] = 1u;  // Become STATIC
     }
 
     // Write back

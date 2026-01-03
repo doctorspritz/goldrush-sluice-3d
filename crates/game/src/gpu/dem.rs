@@ -80,6 +80,7 @@ pub struct GpuDemSolver {
     positions_staging: wgpu::Buffer,
     velocities_staging: wgpu::Buffer,
     bin_counts_staging: wgpu::Buffer,
+    static_state_staging: wgpu::Buffer,
 
     // Parameter buffers
     bin_params_buffer: wgpu::Buffer,
@@ -172,12 +173,19 @@ impl GpuDemSolver {
             mapped_at_creation: false,
         });
 
+        // Static state buffer - MUST be initialized to 0 (dynamic) for all particles
         let static_state_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("DEM Static State"),
             size: (max_particles * std::mem::size_of::<u32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: true,
         });
+        // Initialize to all zeros (DYNAMIC state)
+        {
+            let mut view = static_state_buffer.slice(..).get_mapped_range_mut();
+            view.fill(0);
+        }
+        static_state_buffer.unmap();
 
         // Create spatial hash buffers (+1 for sentinel in offsets)
         let bin_counts_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -234,6 +242,13 @@ impl GpuDemSolver {
         let bin_counts_staging = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("DEM Bin Counts Staging"),
             size: ((grid_size + 1) * std::mem::size_of::<u32>() as u32) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let static_state_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("DEM Static State Staging"),
+            size: (max_particles * std::mem::size_of::<u32>()) as u64,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -678,6 +693,7 @@ impl GpuDemSolver {
             positions_staging,
             velocities_staging,
             bin_counts_staging,
+            static_state_staging,
             bin_params_buffer,
             clear_params_buffer,
             dem_params_buffer,
@@ -706,6 +722,38 @@ impl GpuDemSolver {
     /// Upload static states for headless testing (0 = dynamic, 1 = static)
     pub fn upload_static_states_headless(&self, queue: &wgpu::Queue, states: &[u32]) {
         queue.write_buffer(&self.static_state_buffer, 0, bytemuck::cast_slice(states));
+    }
+
+    /// Download static states for headless testing (0 = dynamic, 1 = static)
+    pub fn download_static_states_headless(&self, device: &wgpu::Device, queue: &wgpu::Queue, count: usize) -> Vec<u32> {
+        // Copy from GPU buffer to staging
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Static State Download"),
+        });
+        encoder.copy_buffer_to_buffer(
+            &self.static_state_buffer,
+            0,
+            &self.static_state_staging,
+            0,
+            (count * std::mem::size_of::<u32>()) as u64,
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // Map and read
+        let buffer_slice = self.static_state_staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().expect("Failed to map static state staging buffer");
+
+        let data = buffer_slice.get_mapped_range();
+        let states: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        self.static_state_staging.unmap();
+
+        states[..count].to_vec()
     }
 
     /// Execute GPU DEM for sediment particles
