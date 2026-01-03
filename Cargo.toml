@@ -1,14 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/sim",
-  "crates/sim3d",
   "crates/game",
 ]
 
 default-members = [
   "crates/game",
 ]
-
-[workspace.dependencies]
-glam = "0.27"
