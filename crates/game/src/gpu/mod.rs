@@ -60,7 +60,11 @@ impl GpuContext {
                 &wgpu::DeviceDescriptor {
                     label: Some("GPU Device"),
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
+                    required_limits: {
+                        let mut limits = wgpu::Limits::default();
+                        limits.max_storage_buffers_per_shader_stage = 16;
+                        limits
+                    },
                     memory_hints: wgpu::MemoryHints::Performance,
                 },
                 None,

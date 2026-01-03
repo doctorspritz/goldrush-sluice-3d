@@ -1,352 +1,315 @@
-# DEM Two-State Implementation Progress
+# DEM Two-State Implementation - Level Gates
 
 **Master Plan:** `/Users/simonheikkila/.claude/plans/dynamic-crunching-cloud.md`
 
-**Last Updated:** 2026-01-03
+---
+
+## HOW THIS WORKS
+
+Each level has:
+1. **Prerequisites** - What must be done before starting
+2. **Unit Tests** - Programmatic tests that run headless
+3. **Visual Test** - What to run visually
+4. **Acceptance Criteria** - EXACTLY what you will observe
+5. **Gate** - User confirms "PASS" before next level
+
+**NO LEVEL PROCEEDS WITHOUT USER CONFIRMATION.**
 
 ---
 
 ## Level 0: Clean Slate
 **Status:** COMPLETE
 
-### Entry Gate
-- [x] In `.worktrees/fix-dem-settling` directory
-- [x] Uncommitted changes exist (stashed)
+### Prerequisites
+- In `.worktrees/fix-dem-settling` directory
 
-### Actions Taken
-- Ran `git stash push -m "Broken uncommitted changes - complex wake detection approach"`
-- Verified clean git status
-- Confirmed build passes
-- Confirmed existing tests pass (4/4)
+### Unit Tests
+```bash
+cargo test -p game --release --test gpu_dem_settling
+```
+Expected: 4 tests pass (baseline tests)
 
-### Exit Gate
-- [x] `git status` shows no uncommitted changes
-- [x] `cargo build --release` succeeds
-- [x] `cargo test -p game --release --test gpu_dem_settling` passes (4/4)
+### Visual Test
+```bash
+cargo run --example sediment_stages_visual -p game --release
+```
+
+### Acceptance Criteria
+- Window opens
+- Press 3 for gold stream
+- Gold particles fall and pile up
+- Pile has some jitter/vibration (this is EXPECTED - no freeze yet)
+
+### Gate
+- [ ] User confirms: "Level 0 PASS"
 
 ---
 
 ## Level 1: Static State Buffer
 **Status:** COMPLETE (commit 80e6a46)
 
-### Entry Gate
-- [x] Level 0 complete
-- [x] No uncommitted changes
+### Prerequisites
+- Level 0 passed
 
-### Implementation
-Add to `crates/game/src/gpu/dem.rs`:
-
-1. Add `static_state` buffer to `GpuDemSolver` struct:
-```rust
-static_state: wgpu::Buffer,  // u32 per particle: 0 = dynamic, 1 = static
+### Unit Tests
+```bash
+cargo test -p game --release --test gpu_dem_settling
 ```
+Expected: 4 tests pass (no regression)
 
-2. Create buffer in `new()`:
-```rust
-let static_state = device.create_buffer(&wgpu::BufferDescriptor {
-    label: Some("DEM Static State"),
-    size: (max_particles * 4) as u64,
-    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-    mapped_at_creation: false,
-});
-```
+### Visual Test
+Same as Level 0 - no visible change expected.
 
-3. Initialize all particles as DYNAMIC (0)
-4. Add to bind group at binding 10 (after sleep_counters at 8, solid_flags at 9)
+### Acceptance Criteria
+- Same as Level 0
+- No crashes
+- Behavior identical to before
 
-### Exit Gate
-- [x] `cargo build --release` succeeds
-- [x] Existing tests still pass (no regression)
-- [x] New buffer exists and is bound to shader
-
-### Commit Message
-```
-feat(dem): add static state buffer for two-state particle model
-
-Particles can now be STATIC (frozen, part of settled pile) or
-DYNAMIC (normal physics). This is the foundation for proper
-granular settling where settled piles act as solids.
-```
+### Gate
+- [ ] User confirms: "Level 1 PASS"
 
 ---
 
 ## Level 2: Static Particle Freeze
-**Status:** PENDING
+**Status:** COMPLETE (commit b8a8b90)
 
-### Entry Gate
-- [ ] Level 1 complete
-- [ ] Static buffer exists and compiles
+### Prerequisites
+- Level 1 passed
 
-### Implementation
-In `crates/game/src/gpu/shaders/dem_forces.wgsl`, at TOP of main function:
-
-```wgsl
-// Read static state
-let is_static = static_states[idx] == 1u;
-
-// STATIC particles are FROZEN - skip ALL physics
-if (is_static) {
-    // Don't modify position or velocity
-    // Just write back unchanged values
-    positions[idx] = old_pos;
-    velocities[idx] = vel;  // Already zero for static
-    return;
-}
+### Unit Tests
+```bash
+cargo test -p game --release --test gpu_dem_settling
 ```
+Expected: 5 tests pass, including `test_static_particles_frozen`
 
-### Exit Gate
-- [ ] `cargo build --release` succeeds
-- [ ] Existing tests still pass
-- [ ] NEW TEST: `test_static_particles_frozen`
-  - Create 10 particles, mark 5 as static
-  - Run 100 frames
-  - Static particles have ZERO position change
-  - Dynamic particles fall normally
+### Visual Test
+No visible change in normal operation (particles start DYNAMIC).
+The freeze logic exists but nothing triggers it yet.
 
-### Commit Message
-```
-feat(dem): static particles skip physics entirely
+### Acceptance Criteria
+- 5 tests pass
+- Visual behavior same as Level 1
+- No crashes
 
-Static particles now return immediately without any position
-or velocity updates. This is the core of the two-state model:
-static = frozen solid, dynamic = normal physics.
-```
+### Gate
+- [ ] User confirms: "Level 2 PASS"
 
 ---
 
 ## Level 3: Dynamic → Static Transition
-**Status:** PENDING
+**Status:** NOT STARTED (was stashed)
 
-### Entry Gate
-- [ ] Level 2 complete
-- [ ] Static freeze works (test passes)
+### Prerequisites
+- Level 2 passed
+- User confirmed Level 2
 
-### Implementation
-At END of `dem_forces.wgsl`, before writing back:
-
-```wgsl
-// Transition check: slow + supported → become static
-let speed_sq = dot(vel, vel);
-let STATIC_THRESHOLD_SQ: f32 = 1.0;  // 1 px/s
-let STATIC_DELAY: u32 = 30u;  // 30 frames = 0.5s at 60fps
-
-if (!is_static && has_support && speed_sq < STATIC_THRESHOLD_SQ) {
-    static_frames[idx] += 1u;
-    if (static_frames[idx] >= STATIC_DELAY) {
-        static_states[idx] = 1u;  // Become static
-        vel = vec2(0.0);  // Zero velocity
-    }
-} else if (!is_static) {
-    static_frames[idx] = 0u;  // Reset counter
-}
+### Unit Tests
+```bash
+cargo test -p game --release --test gpu_dem_settling test_settling_becomes_static
 ```
 
-**Note:** Need `static_frames` buffer (u32 per particle) - add in Level 1 if not present.
+**Test logic:**
+1. Drop 50 particles onto floor
+2. Run 300 frames (5 seconds)
+3. Download static states from GPU
+4. Assert: >80% of particles have `is_static = 1`
+5. Assert: Static particles have velocity < 0.1
 
-### Exit Gate
-- [ ] `cargo build --release` succeeds
-- [ ] Level 2 test still passes (no regression)
-- [ ] NEW TEST: `test_settling_becomes_static`
-  - Drop particles onto floor
-  - After settling, particles have `is_static = 1`
-  - Static particles have zero velocity
-
-### Commit Message
+### Visual Test
+```bash
+cargo run --example sediment_stages_visual -p game --release
+# Press 3 for gold stream, then F to stop flow
 ```
-feat(dem): dynamic particles transition to static when settled
 
-Particles that are slow and supported for 30 frames transition
-to static state. This makes settled piles truly frozen.
-```
+### Acceptance Criteria
+**EXACT OBSERVATIONS:**
+1. Start gold stream (key 3)
+2. Let particles pile up for 3 seconds
+3. Press F to stop new particles
+4. Wait 2 more seconds
+5. **OBSERVE:** Pile becomes COMPLETELY STILL
+   - No jitter
+   - No micro-movements
+   - Particles frozen in place
+6. Press F again to resume flow
+7. **OBSERVE:** New particles fall onto frozen pile
+   - Frozen particles don't move
+   - New particles settle and eventually freeze too
+
+**FAIL if:**
+- Pile keeps jittering after flow stops
+- Particles slowly drift
+- Any movement in settled pile
+
+### Gate
+- [ ] User confirms: "Level 3 PASS - pile freezes completely"
 
 ---
 
 ## Level 4: Force-Threshold Wake
 **Status:** PENDING
 
-### Entry Gate
-- [ ] Level 3 complete
-- [ ] Settling → static works
+### Prerequisites
+- Level 3 passed
 
-### Implementation
-In collision detection loop, for static particles:
-
-```wgsl
-// Static particles check if force exceeds threshold
-if (is_static) {
-    let net_force = compute_net_contact_force();
-    let weight = mass * params.gravity;
-    let wake_threshold = MU_STATIC * weight;
-
-    if (length(net_force) > wake_threshold) {
-        static_states[idx] = 0u;  // Wake up
-        // Continue with normal physics this frame
-    } else {
-        // Stay frozen
-        positions[idx] = old_pos;
-        velocities[idx] = vec2(0.0);
-        return;
-    }
-}
+### Unit Tests
+```bash
+cargo test -p game --release --test gpu_dem_settling test_gold_on_sand_stays_on_top
+cargo test -p game --release --test gpu_dem_settling test_impact_wakes_pile
 ```
 
-### Exit Gate
-- [ ] All previous tests pass
-- [ ] NEW TEST: `test_gold_on_sand_stays_on_top`
-  - Create settled sand pile (all static)
-  - Drop gold particle on top
-  - Gold sits on surface, doesn't penetrate
-  - Sand particles remain static
-- [ ] NEW TEST: `test_bulldozer_wakes_pile`
-  - Create settled sand pile
-  - Push large fast-moving object into pile
-  - Sand particles near impact wake up
-  - Pile restructures and resettles
+**Test 1 logic (gold on sand):**
+1. Create sand pile, let it settle and become static
+2. Drop single gold particle on top
+3. Run 100 frames
+4. Assert: Gold particle y-position is ABOVE sand pile surface
+5. Assert: Sand particles remain static
 
-### Commit Message
-```
-feat(dem): static particles wake only when force exceeds threshold
+**Test 2 logic (impact wakes):**
+1. Create settled static pile
+2. Launch fast particle into pile (vel = 500)
+3. Assert: Particles near impact become dynamic
+4. Run 200 more frames
+5. Assert: Pile resettles, particles become static again
 
-Static particles now resist penetration. Only forces exceeding
-μ × weight can wake them. This prevents gold from sinking
-through settled sand - the core behavior we need.
+### Visual Test
+```bash
+cargo run --example sediment_stages_visual -p game --release
+# Press 4 for mixed stream (sand + gold)
 ```
+
+### Acceptance Criteria
+**EXACT OBSERVATIONS:**
+1. Press 4 for mixed sand/gold stream
+2. Let pile build for 5 seconds
+3. **OBSERVE:** Gold particles (yellow) visible ON SURFACE
+   - Gold is denser but sits on top
+   - Gold does NOT sink through sand
+4. Press F to stop flow, wait for settling
+5. **OBSERVE:** Gold particles remain on surface of frozen pile
+
+**FAIL if:**
+- Gold sinks into sand pile
+- Gold ends up at bottom
+- Gold slowly descends through pile
+
+### Gate
+- [ ] User confirms: "Level 4 PASS - gold sits on top of sand"
 
 ---
 
 ## Level 5: Proper Coulomb Friction
 **Status:** PENDING
 
-### Entry Gate
-- [ ] Level 4 complete
-- [ ] Gold stays on sand
+### Prerequisites
+- Level 4 passed
 
-### Implementation
-Remove surface roughness hack, implement proper friction:
-
-```wgsl
-// DELETE this:
-// let roughness = hash_noise(seed) * 0.15;
-
-// ADD proper Coulomb friction:
-let tangent = vec2(-normal.y, normal.x);
-let v_rel = vel - vel_j;
-let v_t = dot(v_rel, tangent);
-let v_n = dot(v_rel, normal);
-
-// Static friction: resist motion up to μ × normal force
-let normal_force = overlap * CONTACT_STIFFNESS;
-let max_friction = MU_STATIC * normal_force;
-let friction = min(abs(v_t) * FRICTION_DAMPING, max_friction);
-accumulated_vel_correction -= tangent * sign(v_t) * friction;
+### Unit Tests
+```bash
+cargo test -p game --release --test gpu_dem_settling test_angle_of_repose
 ```
 
-### Exit Gate
-- [ ] All previous tests pass
-- [ ] NEW TEST: `test_angle_of_repose`
-  - Pour sand from height
-  - Measure final pile slope
-  - Slope should be arctan(μ) ± 5°
-  - For μ=0.6, expect 28-34°
+**Test logic:**
+1. Pour sand from narrow point
+2. Let pile form and settle
+3. Measure pile dimensions (width, height)
+4. Calculate angle: arctan(height / half_width)
+5. Assert: Angle is 28-34° (for μ=0.6)
 
-### Commit Message
+### Visual Test
+```bash
+cargo run --example sediment_stages_visual -p game --release
+# Press 2 for sand stream
 ```
-feat(dem): implement proper Coulomb friction for angle of repose
 
-Removed random surface roughness hack. Angle of repose now
-comes from friction coefficient as physics dictates:
-tan(θ) = μ. Sand with μ=0.6 forms ~31° slopes.
-```
+### Acceptance Criteria
+**EXACT OBSERVATIONS:**
+1. Press 2 for sand stream
+2. Let pile build for 10 seconds
+3. Press F to stop flow
+4. **OBSERVE:** Pile forms consistent slope
+   - Not a vertical tower
+   - Not a flat pancake
+   - Slope approximately 30° from horizontal
+5. **MEASURE:** Visually estimate slope
+   - If pile is 100 pixels high, base should extend ~170 pixels from center
+   - Rise:Run ratio approximately 1:1.7
+
+**FAIL if:**
+- Pile is vertical (stacking)
+- Pile is nearly flat
+- Slope varies randomly across pile
+- Different runs produce different angles
+
+### Gate
+- [ ] User confirms: "Level 5 PASS - pile has consistent ~30° slope"
 
 ---
 
 ## Level 6: Support-Based Wake Propagation
 **Status:** PENDING
 
-### Entry Gate
-- [ ] Level 5 complete
-- [ ] Angle of repose works
+### Prerequisites
+- Level 5 passed
 
-### Implementation
-```wgsl
-// When a static particle wakes, set a "wake neighbors" flag
-if (just_woke) {
-    wake_flags[idx] = 1u;
-}
-
-// In a second pass (or next frame), check wake_flags of neighbors below
-for each neighbor j below me {
-    if (wake_flags[j] == 1u && static_states[idx] == 1u) {
-        static_states[idx] = 0u;  // I wake too
-    }
-}
-```
-
-### Exit Gate
-- [ ] All previous tests pass
-- [ ] NEW TEST: `test_support_removal_cascade`
-  - Create settled pile on a platform
-  - Remove platform (set SDF to far)
-  - All particles wake and fall
-  - Particles resettle on new floor
-
-### Commit Message
-```
-feat(dem): implement support-based wake propagation
-
-When a supporting particle wakes, particles above it also wake.
-This creates realistic pile collapse when support is removed.
-```
-
----
-
-## DOOM LOOP DETECTION
-
-Track fix attempts here. If any section reaches 3 attempts, STOP and ask user.
-
-### Level 1 Attempts
-- Attempt 1: (pending)
-
-### Level 2 Attempts
-- Attempt 1: (pending)
-
-### Level 3 Attempts
-- Attempt 1: (pending)
-
-### Level 4 Attempts
-- Attempt 1: (pending)
-
-### Level 5 Attempts
-- Attempt 1: (pending)
-
-### Level 6 Attempts
-- Attempt 1: (pending)
-
----
-
-## Quick Reference: Test Commands
-
+### Unit Tests
 ```bash
-# All settling tests
-cargo test -p game --release --test gpu_dem_settling
-
-# Specific test
-cargo test -p game --release --test gpu_dem_settling test_static_particles_frozen
-
-# Visual verification
-cargo run --example sediment_stages_visual -p game --release
-
-# Headless diagnostic
-cargo run --example dem_settling_diagnostic -p game --release
+cargo test -p game --release --test gpu_dem_settling test_support_removal_cascade
 ```
 
-## Quick Reference: Files to Modify
+**Test logic:**
+1. Create pile on elevated platform (solid cells)
+2. Let pile settle and become static
+3. Remove platform (set those cells to fluid)
+4. Assert: All particles wake (become dynamic)
+5. Run 200 frames
+6. Assert: Particles fall and resettle on floor
 
-| Level | Files |
-|-------|-------|
-| 1 | `dem.rs` (add buffer) |
-| 2 | `dem_forces.wgsl` (static freeze) |
-| 3 | `dem_forces.wgsl` (transition logic), maybe `dem.rs` (static_frames buffer) |
-| 4 | `dem_forces.wgsl` (force threshold), `gpu_dem_settling.rs` (new tests) |
-| 5 | `dem_forces.wgsl` (Coulomb friction), `gpu_dem_settling.rs` (new tests) |
-| 6 | `dem_forces.wgsl` (wake propagation), maybe new shader pass, `gpu_dem_settling.rs` (new tests) |
+### Visual Test
+Need new stage: `stage_platform_collapse`
+
+### Acceptance Criteria
+**EXACT OBSERVATIONS:**
+1. Run platform collapse stage
+2. See pile resting on platform
+3. Platform removed (key trigger)
+4. **OBSERVE:** Entire pile falls
+   - Not just bottom particles
+   - All particles become dynamic
+   - Pile restructures on new floor
+
+**FAIL if:**
+- Only bottom particles fall
+- Upper particles float in air
+- Cascade is slow/gradual instead of immediate
+
+### Gate
+- [ ] User confirms: "Level 6 PASS - pile collapses when support removed"
+
+---
+
+## CURRENT POSITION
+
+- Level 0: COMPLETE
+- Level 1: COMPLETE (commit 80e6a46)
+- Level 2: COMPLETE (commit b8a8b90)
+- Level 3: NOT STARTED (need to implement, then get user gate confirmation)
+
+**NEXT ACTION:**
+Wait for user to confirm Level 0-2 gates before proceeding to Level 3.
+
+---
+
+## DOOM LOOP TRACKING
+
+If any level takes >3 attempts, STOP and discuss with user.
+
+| Level | Attempts | Notes |
+|-------|----------|-------|
+| 0 | 1 | Clean |
+| 1 | 1 | Clean |
+| 2 | 1 | Clean |
+| 3 | 0 | Not started |
+| 4 | 0 | Not started |
+| 5 | 0 | Not started |
+| 6 | 0 | Not started |
