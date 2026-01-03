@@ -1,3 +1,4 @@
+pub mod dem;
 pub mod flip_3d;
 pub mod g2p;
 pub mod g2p_3d;
@@ -7,6 +8,8 @@ pub mod p2g_3d;
 pub mod pressure;
 pub mod pressure_3d;
 pub mod renderer;
+
+pub use dem::GpuDemSolver;
 
 use std::sync::Arc;
 use wgpu::SurfaceTarget;

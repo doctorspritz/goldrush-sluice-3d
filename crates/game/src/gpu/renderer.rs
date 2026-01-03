@@ -256,6 +256,27 @@ impl ParticleRenderer {
         self.terrain_dirty = true;
     }
 
+    fn projection_matrix(
+        gpu: &GpuContext,
+        screen_scale: f32,
+        offset: (f32, f32),
+    ) -> [[f32; 4]; 4] {
+        let (width, height) = gpu.size;
+        let scale = screen_scale.max(0.0001);
+        let world_width = width as f32 / scale;
+        let world_height = height as f32 / scale;
+
+        let tx = -1.0 - 2.0 * offset.0 / world_width;
+        let ty = 1.0 + 2.0 * offset.1 / world_height;
+
+        [
+            [2.0 / world_width, 0.0, 0.0, 0.0],
+            [0.0, -2.0 / world_height, 0.0, 0.0], // Flip Y
+            [0.0, 0.0, 1.0, 0.0],
+            [tx, ty, 0.0, 1.0],
+        ]
+    }
+
     /// Update particle data and render
     pub fn draw(
         &self,
@@ -266,19 +287,30 @@ impl ParticleRenderer {
         screen_scale: f32,
         base_particle_size: f32,
     ) {
-        // Update uniforms with orthographic projection
-        let (width, height) = gpu.size;
-        let world_width = width as f32 / screen_scale;
-        let world_height = height as f32 / screen_scale;
+        self.draw_with_offset(
+            gpu,
+            encoder,
+            view,
+            particles,
+            screen_scale,
+            base_particle_size,
+            (0.0, 0.0),
+        );
+    }
 
-        // Orthographic projection: world coords -> NDC
-        // Note: wgpu uses top-left origin, so we flip Y
-        let projection = [
-            [2.0 / world_width, 0.0, 0.0, 0.0],
-            [0.0, -2.0 / world_height, 0.0, 0.0],  // Flip Y
-            [0.0, 0.0, 1.0, 0.0],
-            [-1.0, 1.0, 0.0, 1.0],  // Y offset flipped
-        ];
+    /// Update particle data and render with a camera offset
+    pub fn draw_with_offset(
+        &self,
+        gpu: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        particles: &Particles,
+        screen_scale: f32,
+        base_particle_size: f32,
+        offset: (f32, f32),
+    ) {
+        let (width, height) = gpu.size;
+        let projection = Self::projection_matrix(gpu, screen_scale, offset);
 
         let uniforms = Uniforms {
             projection,
@@ -372,17 +404,30 @@ impl ParticleRenderer {
         cell_size: f32,
         screen_scale: f32,
     ) {
-        // Update uniforms with orthographic projection
-        let (width, height) = gpu.size;
-        let world_width = width as f32 / screen_scale;
-        let world_height = height as f32 / screen_scale;
+        self.draw_terrain_with_offset(
+            gpu,
+            encoder,
+            view,
+            grid,
+            cell_size,
+            screen_scale,
+            (0.0, 0.0),
+        );
+    }
 
-        let projection = [
-            [2.0 / world_width, 0.0, 0.0, 0.0],
-            [0.0, -2.0 / world_height, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [-1.0, 1.0, 0.0, 1.0],
-        ];
+    /// Draw terrain with a camera offset
+    pub fn draw_terrain_with_offset(
+        &mut self,
+        gpu: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        grid: &Grid,
+        cell_size: f32,
+        screen_scale: f32,
+        offset: (f32, f32),
+    ) {
+        let (width, height) = gpu.size;
+        let projection = Self::projection_matrix(gpu, screen_scale, offset);
 
         let uniforms = Uniforms {
             projection,

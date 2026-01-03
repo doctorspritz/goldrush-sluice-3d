@@ -37,6 +37,10 @@ pub struct DemParams {
     pub particle_radius_cells: f32,
     /// Minimum neighbors below for sleep eligibility
     pub min_support_neighbors: usize,
+    /// Maximum DEM substeps per frame (prevents tunneling at high speeds)
+    pub max_substeps: usize,
+    /// Max displacement per substep as a fraction of particle radius
+    pub max_displacement_ratio: f32,
     /// Global velocity damping per frame (0.95 = 5% reduction/frame)
     /// Dissipates wave energy even when not in contact
     pub velocity_damping: f32,
@@ -61,6 +65,8 @@ impl Default for DemParams {
             velocity_damping: 0.98,          // Less damping needed with friction
             use_jitter: true,                // Enable surface roughness
             use_material_properties: true,   // Use per-material radius/mass/friction
+            max_substeps: 8,                 // Adaptive substeps limit
+            max_displacement_ratio: 0.25,    // Substep when displacement > 0.25 * radius
         }
     }
 }

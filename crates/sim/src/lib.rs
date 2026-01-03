@@ -16,6 +16,7 @@ pub mod sluice;
 pub mod pbf;
 pub mod dem;
 pub mod clump;
+pub mod stages;
 
 pub use flip::FlipSimulation;
 pub use grid::{CellType, Grid};
