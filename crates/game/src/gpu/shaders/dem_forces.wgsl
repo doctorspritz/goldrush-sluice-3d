@@ -44,7 +44,9 @@ const WAKE_SPEED_SQ: f32 = 200.0;   // Above this = wake neighbors (~14 px/s)
 @group(0) @binding(6) var<storage, read> sorted_indices: array<u32>;
 @group(0) @binding(7) var<storage, read> sdf_data: array<f32>;
 @group(0) @binding(8) var<storage, read_write> sleep_counters: array<u32>;
-@group(0) @binding(9) var<storage, read_write> static_states: array<u32>;
+// Use atomic for static_states to allow dynamic particles to mark static neighbors for wake
+// Values: 0 = dynamic, 1 = static, 2 = marked-for-wake
+@group(0) @binding(9) var<storage, read_write> static_states: array<atomic<u32>>;
 
 fn get_sdf_at(i: i32, j: i32) -> f32 {
     let w = i32(params.sdf_width);
@@ -119,14 +121,14 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     let material = materials[idx];
     let mu = FRICTIONS[min(material, 5u)];
 
-    // Read static state - STATIC particles are FROZEN
-    let is_static = static_states[idx] == 1u;
-    if (is_static) {
-        // Don't modify position or velocity - write back unchanged
-        positions[idx] = old_pos;
-        velocities[idx] = vel;
-        return;
-    }
+    // Read static state - STATIC particles need force-threshold wake check
+    // We DON'T return early anymore - we need to detect impacts that should wake us
+    // Using atomic load since buffer uses atomic<u32>
+    let my_static_state = atomicLoad(&static_states[idx]);
+    let was_static = my_static_state == 1u;
+
+    // Track maximum impact force for wake threshold check
+    var max_impact_force: f32 = 0.0;
 
     // Sleep system: read current sleep counter
     var sleep_counter = sleep_counters[idx];
@@ -175,6 +177,12 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     // Formula: Δx = (ω/n) * Σ(corrections), where n = constraint count, ω = SOR factor
     var accumulated_correction = vec2<f32>(0.0, 0.0);
     var accumulated_vel_correction = vec2<f32>(0.0, 0.0);
+
+    // Level 4: Track corrections from FAST neighbors separately
+    // This avoids false wakes from normal contacts in settled piles
+    var impact_correction = vec2<f32>(0.0, 0.0);
+    var impact_vel_correction = vec2<f32>(0.0, 0.0);
+    var impact_contact_count = 0u;
 
     // 4. Particle-particle collision (position-based, no springs)
     for (var dj = -1; dj <= 1; dj++) {
@@ -233,10 +241,51 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                     let j_speed_sq = dot(vel_j, vel_j);
                     let j_is_stationary = j_speed_sq < 25.0;  // ~5 px/s
 
-                    // Wake detection: if neighbor is moving fast, wake us up
-                    if (j_speed_sq > WAKE_SPEED_SQ) {
+                    // Wake detection: if neighbor is moving fast, track impact
+                    // ONLY check in iteration 0 - later iterations see post-collision velocities
+                    let j_is_fast = j_speed_sq > WAKE_SPEED_SQ;
+                    if (params.iteration == 0u && j_is_fast) {
                         should_wake = true;
+                        // Track impact force for force-threshold wake (Level 4)
+                        // Use impulse = mass * relative_velocity_into_us
+                        // normal points from j to us, so dot(vel_j, normal) > 0 means j moving toward us
+                        let v_into = max(0.0, dot(vel_j, normal));
+                        let j_mass = density_j * radius_j * radius_j;
+                        let impulse = j_mass * v_into;
+                        max_impact_force = max(max_impact_force, impulse);
                     }
+
+                    // Track if this is an impact (for static particle wake)
+                    // We use THREE signals to detect impacts:
+                    // 1. j_is_fast: neighbor is moving fast (but may be racy due to GPU parallelism)
+                    // 2. !j_is_stationary: neighbor is not settled (less aggressive than j_is_fast)
+                    // 3. Large overlap: indicates fast collision penetration (NOT racy - uses positions)
+                    //
+                    // The overlap check is critical because velocity readings have race conditions.
+                    // A fast projectile creates large overlap before constraint solver can push it out.
+                    // Normal settled contacts have very small overlaps.
+                    //
+                    // Use 20% of contact_dist as threshold (contact_dist = radius + radius_j)
+                    let large_overlap_threshold = contact_dist * 0.2;
+                    let has_large_overlap = overlap > large_overlap_threshold;
+
+                    // Also check: if neighbor j is itself static, we shouldn't count that as impact
+                    // (two static particles touching is equilibrium, not impact)
+                    let j_static_state = atomicLoad(&static_states[j_idx]);
+                    let j_is_static = j_static_state == 1u;
+
+                    // Level 4: Dynamic particles mark static neighbors for wake
+                    // This solves the GPU race condition - dynamic particle uses its OWN velocity
+                    // (which it knows), then sets a flag on the static neighbor.
+                    let my_speed_sq = dot(vel, vel);
+                    let i_am_fast = my_speed_sq > WAKE_SPEED_SQ;
+                    if (!was_static && j_is_static && i_am_fast && params.iteration == 0u) {
+                        // I'm dynamic & fast, hitting a static neighbor - mark them for wake
+                        // Value 2 means "marked for wake"
+                        atomicMax(&static_states[j_idx], 2u);
+                    }
+
+                    let is_impact = (j_is_fast || !j_is_stationary || has_large_overlap) && !j_is_static;
 
                     // Support propagation: check if neighbor BELOW us is truly supported
                     // In screen coords: j below us means j.y > our y, so diff.y < 0, so normal.y < 0
@@ -254,8 +303,15 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                     let my_fraction = effective_mass_j / total_mass;
 
                     // ACCUMULATE correction instead of applying directly
-                    accumulated_correction += normal * overlap * my_fraction;
+                    let this_correction = normal * overlap * my_fraction;
+                    accumulated_correction += this_correction;
                     particle_contact_count += 1u;
+
+                    // Level 4: Track impact corrections separately (for wake detection)
+                    if (is_impact) {
+                        impact_correction += this_correction;
+                        impact_contact_count += 1u;
+                    }
 
                     // Check if this particle is below us (provides support)
                     // normal = (pos - pos_j) / dist, points from j to us
@@ -373,11 +429,45 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
         sleep_counter = min(sleep_counter + 1u, SLEEP_THRESHOLD);
     }
 
+    // Level 4: Force-threshold wake for STATIC particles
+    // Static particles only wake if they receive a significant impact from a MOVING neighbor
+    //
+    // We use THREE methods to detect wake:
+    // 1. marked_for_wake: Dynamic particle already set our state to 2 (race-condition-free)
+    // 2. impact_correction: Significant push from non-stationary neighbor
+    // 3. should_wake: Fast neighbor detected (may be racy but kept as backup)
+    if (was_static) {
+        // Check if a dynamic particle marked us for wake
+        let current_state = atomicLoad(&static_states[idx]);
+        let marked_for_wake = current_state == 2u;
+
+        // Also check impact_correction (from non-stationary neighbors)
+        let impact_magnitude = length(impact_correction);
+        let wake_correction_threshold = radius * 0.15;
+        let significant_push = impact_contact_count > 0u && impact_magnitude > wake_correction_threshold;
+
+        let should_wake_up = marked_for_wake || significant_push || should_wake;
+
+        if (should_wake_up) {
+            // WAKE UP - become dynamic
+            atomicStore(&static_states[idx], 0u);
+            sleep_counter = 0u;
+            // Continue to write back pos and vel with corrections applied
+        } else {
+            // No significant impact - STAY FROZEN
+            // Discard all position/velocity changes
+            positions[idx] = old_pos;
+            velocities[idx] = vec2(0.0, 0.0);
+            sleep_counters[idx] = sleep_counter;
+            return;
+        }
+    }
+
     // Apply sleep: zero velocity when supported and counter high
     // Level 3: Also transition to STATIC state - will skip physics entirely next frame
     if (sleep_counter >= SLEEP_THRESHOLD && truly_supported && !should_wake) {
         vel = vec2(0.0, 0.0);
-        static_states[idx] = 1u;  // Become STATIC
+        atomicStore(&static_states[idx], 1u);  // Become STATIC
     }
 
     // Write back

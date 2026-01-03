@@ -691,3 +691,291 @@ fn test_settling_becomes_static() {
 // 2. Settled granular material acts as a SOLID. Gold sitting on a sand pile
 //    stays on top. Density stratification only occurs with AGITATION
 //    (water flow, vibration, shaking table).
+
+/// Test 7: Gold on Sand Stays on Top
+///
+/// When gold (heavy) is dropped onto a settled sand pile, it should sit on
+/// the surface, NOT sink through. The settled pile acts as a solid.
+///
+/// This tests:
+/// - Static particles resist penetration (force-threshold wake)
+/// - Heavy particles don't automatically sink through light static particles
+/// - The two-state model prevents unphysical density stratification
+#[test]
+fn test_gold_on_sand_stays_on_top() {
+    let result = pollster::block_on(async {
+        let Some(gpu) = create_test_gpu().await else {
+            println!("SKIP: No GPU adapter available");
+            return None;
+        };
+
+        let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+        build_box(&mut sim);
+        let mut dem =
+            GpuDemSolver::new_headless(&gpu.device, &gpu.queue, WIDTH as u32, HEIGHT as u32, 1000);
+
+        // Create sand pile (30 particles in a cluster near floor)
+        let pile_x = 80.0 * CELL_SIZE;
+        let floor_y = (HEIGHT as f32 - 4.0) * CELL_SIZE;
+
+        for i in 0..30 {
+            let x = pile_x + (i % 6) as f32 * CELL_SIZE * 1.5;
+            let y = floor_y - (i / 6) as f32 * CELL_SIZE * 1.5;
+            sim.particles.list.push(Particle::new(
+                Vec2::new(x, y),
+                Vec2::ZERO,
+                ParticleMaterial::Sand,
+            ));
+        }
+
+        // Run 200 frames to let sand settle and become static
+        for _ in 0..200 {
+            sim.grid.compute_sdf();
+            dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+            dem.execute_headless(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.particles,
+                CELL_SIZE,
+                DT,
+                GRAVITY,
+                -1.0,
+            );
+        }
+
+        // FORCE all sand particles to be static for this test
+        // This isolates wake threshold testing from settling logic
+        let forced_static: Vec<u32> = vec![1; 30];
+        dem.upload_static_states_headless(&gpu.queue, &forced_static);
+
+        // Verify sand is static
+        let static_states = dem.download_static_states_headless(&gpu.device, &gpu.queue, 30);
+        let sand_static_count = static_states.iter().filter(|&&s| s == 1).count();
+        println!("  Sand static: {}/30 (forced)", sand_static_count);
+
+        // Record sand pile surface height (minimum y = top of pile in screen coords)
+        let sand_surface_y = sim.particles.iter()
+            .take(30)
+            .map(|p| p.position.y)
+            .fold(f32::MAX, f32::min);
+        println!("  Sand surface Y: {:.1}", sand_surface_y);
+
+        // Now drop a gold particle on top
+        let gold_x = pile_x + 4.0 * CELL_SIZE; // Center of pile
+        let gold_y = sand_surface_y - 10.0 * CELL_SIZE; // Above the pile
+        sim.particles.list.push(Particle::new(
+            Vec2::new(gold_x, gold_y),
+            Vec2::ZERO,
+            ParticleMaterial::Gold,
+        ));
+        let gold_idx = sim.particles.list.len() - 1;
+
+        // Run 100 more frames - gold should land and stay on top
+        for frame in 0..100 {
+            sim.grid.compute_sdf();
+            dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+            dem.execute_headless(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.particles,
+                CELL_SIZE,
+                DT,
+                GRAVITY,
+                -1.0,
+            );
+
+            if frame % 50 == 49 {
+                let gold_pos = sim.particles.list[gold_idx].position;
+                println!("  Frame {}: gold Y = {:.1}, sand surface = {:.1}",
+                         frame, gold_pos.y, sand_surface_y);
+            }
+        }
+
+        // Check: gold particle should be ABOVE or AT sand surface level
+        let gold_final_y = sim.particles.list[gold_idx].position.y;
+
+        // Check: sand particles should still be static (not woken by gentle landing)
+        let final_static_states = dem.download_static_states_headless(&gpu.device, &gpu.queue, 30);
+        let sand_still_static = final_static_states.iter().filter(|&&s| s == 1).count();
+
+        Some((gold_final_y, sand_surface_y, sand_still_static))
+    });
+
+    let Some((gold_y, sand_surface, sand_static)) = result else {
+        return;
+    };
+
+    println!("=== Gold on Sand Stays on Top Test ===");
+    println!("  Gold final Y: {:.1}", gold_y);
+    println!("  Sand surface Y: {:.1}", sand_surface);
+    println!("  Sand still static: {}/30", sand_static);
+
+    // Gold should be at or above sand surface (smaller Y in screen coords = higher)
+    // Allow some tolerance for settling into the pile slightly
+    let max_allowed_y = sand_surface + CELL_SIZE * 2.0;
+    assert!(
+        gold_y <= max_allowed_y,
+        "Gold sank through sand! gold_y={:.1} > sand_surface={:.1} + tolerance",
+        gold_y, sand_surface
+    );
+
+    // Most sand should remain static
+    assert!(
+        sand_static >= 25,
+        "Too many sand particles woke up! Only {}/30 still static",
+        sand_static
+    );
+}
+
+/// Test 8: Impact Wakes Pile
+///
+/// A fast-moving particle hitting a settled pile should wake particles near
+/// the impact, then the pile should resettle.
+///
+/// This tests:
+/// - Force-threshold wake from strong impacts
+/// - Pile restructuring after disturbance
+/// - Re-settling after wake
+#[test]
+fn test_impact_wakes_pile() {
+    let result = pollster::block_on(async {
+        let Some(gpu) = create_test_gpu().await else {
+            println!("SKIP: No GPU adapter available");
+            return None;
+        };
+
+        let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+        build_box(&mut sim);
+        let mut dem =
+            GpuDemSolver::new_headless(&gpu.device, &gpu.queue, WIDTH as u32, HEIGHT as u32, 1000);
+
+        // Create sand pile
+        let pile_x = 80.0 * CELL_SIZE;
+        let floor_y = (HEIGHT as f32 - 4.0) * CELL_SIZE;
+
+        for i in 0..30 {
+            let x = pile_x + (i % 6) as f32 * CELL_SIZE * 1.5;
+            let y = floor_y - (i / 6) as f32 * CELL_SIZE * 1.5;
+            sim.particles.list.push(Particle::new(
+                Vec2::new(x, y),
+                Vec2::ZERO,
+                ParticleMaterial::Sand,
+            ));
+        }
+
+        // Run 200 frames to settle
+        for _ in 0..200 {
+            sim.grid.compute_sdf();
+            dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+            dem.execute_headless(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.particles,
+                CELL_SIZE,
+                DT,
+                GRAVITY,
+                -1.0,
+            );
+        }
+
+        // FORCE all sand particles to be static for this test
+        // This isolates wake detection from settling logic
+        let forced_static: Vec<u32> = vec![1; 30];
+        dem.upload_static_states_headless(&gpu.queue, &forced_static);
+
+        // Verify static
+        let static_before = dem.download_static_states_headless(&gpu.device, &gpu.queue, 30);
+        let count_before = static_before.iter().filter(|&&s| s == 1).count();
+        println!("  Static before impact: {}/30 (forced)", count_before);
+
+        // Launch a fast projectile INTO the pile
+        // Need to be fast enough to exceed WAKE_SPEED_SQ (200) = ~14.14 px/s
+        // But slow enough to not tunnel through (8 px/frame at 500 px/s is too fast!)
+        // Use 50 px/s = 0.83 px/frame, which allows overlap detection
+        // Start just before pile edge so it enters on first few frames
+        let projectile_x = pile_x - 1.0 * CELL_SIZE;  // 2 pixels before pile start
+        let projectile_y = floor_y - 3.0 * CELL_SIZE; // Inside pile height
+        sim.particles.list.push(Particle::new(
+            Vec2::new(projectile_x, projectile_y),
+            Vec2::new(50.0, 0.0), // Moderate velocity - above wake threshold but won't tunnel
+            ParticleMaterial::Gravel,
+        ));
+        println!("  Projectile spawned at ({:.1}, {:.1}) pile at x={:.1}", projectile_x, projectile_y, pile_x);
+
+        // Print pile particle positions for verification
+        println!("  Pile particles at y~226: x={:.1}, {:.1}, {:.1}, {:.1}, {:.1}, {:.1}",
+                 pile_x, pile_x + 3.0, pile_x + 6.0, pile_x + 9.0, pile_x + 12.0, pile_x + 15.0);
+
+        // Run 30 frames to ensure projectile traverses pile
+        for frame in 0..30 {
+            sim.grid.compute_sdf();
+            dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+            dem.execute_headless(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.particles,
+                CELL_SIZE,
+                DT,
+                GRAVITY,
+                -1.0,
+            );
+            // Debug: print projectile position and velocity
+            let proj = &sim.particles.list[30];
+            println!("  Frame {}: projectile at ({:.1}, {:.1}) vel=({:.1}, {:.1})",
+                     frame, proj.position.x, proj.position.y, proj.velocity.x, proj.velocity.y);
+        }
+
+        // Check how many particles woke up
+        let static_after_impact = dem.download_static_states_headless(&gpu.device, &gpu.queue, 30);
+        let count_after_impact = static_after_impact.iter().filter(|&&s| s == 1).count();
+        let woke_count = count_before.saturating_sub(count_after_impact);
+        println!("  Static after impact: {}/30 (woke: {})", count_after_impact, woke_count);
+
+        // Run 200 more frames to resettle
+        for _ in 0..200 {
+            sim.grid.compute_sdf();
+            dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+            dem.execute_headless(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.particles,
+                CELL_SIZE,
+                DT,
+                GRAVITY,
+                -1.0,
+            );
+        }
+
+        // Check final static count
+        let static_final = dem.download_static_states_headless(&gpu.device, &gpu.queue, 30);
+        let count_final = static_final.iter().filter(|&&s| s == 1).count();
+        println!("  Static after resettle: {}/30", count_final);
+
+        Some((count_before, woke_count, count_final))
+    });
+
+    let Some((before, woke, after)) = result else {
+        return;
+    };
+
+    println!("=== Impact Wakes Pile Test ===");
+    println!("  Static before: {}/30", before);
+    println!("  Particles woken by impact: {}", woke);
+    println!("  Static after resettle: {}/30", after);
+
+    // Impact should wake at least some particles
+    // With forced static + 50 px/s projectile, typically 2-3 particles wake
+    // (those in direct contact with the projectile's final position)
+    assert!(
+        woke >= 2,
+        "Impact didn't wake enough particles! Only {} woke, expected at least 2",
+        woke
+    );
+
+    // Pile should resettle after disturbance
+    assert!(
+        after >= 20,
+        "Pile didn't resettle! Only {}/30 static after 200 frames",
+        after
+    );
+}
