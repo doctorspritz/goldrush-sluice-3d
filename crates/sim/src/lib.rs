@@ -14,7 +14,6 @@ pub mod grid;
 pub mod particle;
 pub mod sluice;
 pub mod pbf;
-pub mod dem;
 pub mod clump;
 pub mod stages;
 
@@ -27,5 +26,4 @@ pub use sluice::{
     RiffleMode, SluiceConfig,
 };
 pub use pbf::{PbfSimulation, PbfParticle};
-pub use dem::{DemSimulation, DemParams};
 pub use clump::{Clump, ClumpShape, ClumpTemplate};

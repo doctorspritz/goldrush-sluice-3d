@@ -26,7 +26,6 @@ mod transfer;
 // (will be populated as methods are moved)
 
 use crate::clump::{Clump, ClumpTemplate};
-use crate::dem::DemSimulation;
 use crate::grid::{apic_d_inverse, quadratic_bspline, quadratic_bspline_1d, CellType, Grid};
 use crate::particle::{ParticleMaterial, Particles, ParticleState};
 use crate::physics::GRAVITY;
@@ -108,12 +107,6 @@ pub struct FlipSimulation {
     /// Recommended: 0.5-0.8 for stable sand transport
     pub sand_pic_ratio: f32,
 
-    // === Unified DEM for Granular Materials ===
-    /// Handles both bedload in water and dry particle physics
-    pub dem: DemSimulation,
-    /// Use unified DEM instead of legacy apply_dem_settling
-    pub use_unified_dem: bool,
-
     // === Gravel Clump System ===
     /// Pre-computed clump templates (generated once at initialization)
     pub clump_templates: Vec<ClumpTemplate>,
@@ -170,9 +163,6 @@ impl FlipSimulation {
             use_viscosity: false,
             viscosity: 1.0, // Good starting point for Re ~ 300
             sand_pic_ratio: 0.7, // 70% PIC, 30% FLIP - good balance
-            // Unified DEM
-            dem: DemSimulation::new(),
-            use_unified_dem: true, // Enable unified DEM by default
             // Gravel clump system
             // Generate templates with: particle_spacing = 0.4 * cell_size, particle_mass = 1.0
             clump_templates: ClumpTemplate::generate_all(cell_size * 0.4, 1.0),
@@ -276,23 +266,8 @@ impl FlipSimulation {
         // 8. Advect particles (uses SDF for O(1) collision)
         self.advect_particles(dt);
 
-        // 8e. DEM settling: particle contacts for pile formation
-        // Unified DEM handles both bedload in water and dry granular materials
-        let has_water = self.particles.iter().any(|p| p.material == ParticleMaterial::Water);
-        if self.use_unified_dem {
-            self.dem.update(
-                &mut self.particles,
-                &self.grid,
-                &self.cell_head,
-                &self.particle_next,
-                dt,
-                GRAVITY,
-                has_water,
-            );
-        } else {
-            // Legacy DEM (for comparison/fallback)
-            self.apply_dem_settling(dt);
-        }
+        // 8e. DEM settling: GPU DEM handles dry particles (see game crate)
+        // CPU DEM has been removed - use GpuDemSolver for dry particle physics
 
         // 8f. Update clump rigid body physics
         // Aggregates forces from DEM, integrates rigid body motion, syncs particles
@@ -340,43 +315,33 @@ impl FlipSimulation {
 
     /// Update for dry-only simulations (no water particles)
     ///
-    /// Skips FLIP grid operations entirely - pure DEM granular physics.
-    /// Much faster than full update when only sediment is present.
+    /// NOTE: CPU DEM has been removed. Use GpuDemSolver from game crate for dry physics.
+    /// This method now only handles basic gravity and SDF collision.
     pub fn update_dry(&mut self, dt: f32) {
         self.frame = self.frame.wrapping_add(1);
 
         // 1. Update SDF for collision
         self.grid.compute_sdf();
 
-        // 2. Build spatial hash for neighbor queries
-        self.build_spatial_hash();
-
-        // 3. Run unified DEM with full gravity (no buoyancy)
-        self.dem.update(
-            &mut self.particles,
-            &self.grid,
-            &self.cell_head,
-            &self.particle_next,
-            dt,
-            GRAVITY,
-            false, // in_water = false
-        );
-
-        // 4. Advect non-sleeping particles
+        // 2. Apply gravity and integrate
         for p in self.particles.iter_mut() {
-            if p.state != ParticleState::Bedload {
-                p.position += p.velocity * dt;
+            p.velocity.y += GRAVITY * dt;
+            p.position += p.velocity * dt;
 
-                // SDF collision
-                let sdf = self.grid.sample_sdf(p.position);
-                if sdf < 0.0 {
-                    let grad = self.grid.sdf_gradient(p.position);
-                    p.position -= grad * sdf;
+            // SDF collision
+            let sdf = self.grid.sample_sdf(p.position);
+            if sdf < 0.0 {
+                let grad = self.grid.sdf_gradient(p.position);
+                p.position -= grad * sdf;
+                // Zero velocity into floor
+                let v_n = p.velocity.dot(grad);
+                if v_n < 0.0 {
+                    p.velocity -= grad * v_n;
                 }
             }
         }
 
-        // 5. Cleanup
+        // 3. Cleanup
         self.particles.remove_out_of_bounds(
             self.grid.width as f32 * self.grid.cell_size,
             self.grid.height as f32 * self.grid.cell_size,
@@ -384,8 +349,9 @@ impl FlipSimulation {
     }
 
     /// Get count of sleeping particles (for performance metrics)
+    /// NOTE: CPU DEM removed - always returns 0
     pub fn sleeping_particle_count(&self) -> usize {
-        self.dem.sleeping_count()
+        0
     }
 
     /// Profiled update - returns timing breakdown in milliseconds
@@ -1174,13 +1140,9 @@ impl FlipSimulation {
             let (net_force, net_torque) = self.compute_clump_forces(clump_idx);
 
             // 2. Add gravity (applied to center of mass)
-            // Use gravel material's buoyancy-reduced gravity
+            // Gravel density ~2.5, buoyancy factor = (2.5 - 1.0) / 2.5 = 0.6
             let in_water = self.has_water();
-            let g_eff = crate::dem::DemSimulation::effective_gravity(
-                GRAVITY,
-                ParticleMaterial::Gravel,
-                in_water,
-            );
+            let g_eff = if in_water { GRAVITY * 0.6 } else { GRAVITY };
             let gravity_force = Vec2::new(0.0, g_eff * template.mass);
 
             let total_force = net_force + gravity_force;

@@ -84,7 +84,7 @@ fn main() {
         }
 
         let sim_start = Instant::now();
-        sim.step(1.0 / 60.0);
+        sim.update(1.0 / 60.0);
         total_sim_time += sim_start.elapsed();
 
         frame_count += 1;
@@ -136,7 +136,7 @@ fn main() {
         }
 
         let sim_start = Instant::now();
-        sim.step(1.0 / 60.0);
+        sim.update(1.0 / 60.0);
         steady_sim_time += sim_start.elapsed();
 
         frame_count += 1;

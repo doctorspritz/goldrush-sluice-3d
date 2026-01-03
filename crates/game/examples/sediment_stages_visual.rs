@@ -54,7 +54,7 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        let stage = stage_water_sluice();
+        let stage = stage_dry_sand_stream();
         let mut sim = FlipSimulation::new(stage.width, stage.height, stage.cell_size);
         (stage.init)(&mut sim);
         let zoom = zoom_for_width(&stage, TARGET_WIDTH);

@@ -279,8 +279,8 @@ we may not need the gravity-skip complexity.
 **Good behavior:**
 - [x] Particles fall smoothly through air (no pausing) - FIXED
 - [x] Particles hitting floor come to rest within ~10 frames - FIXED (settles at frame 108)
-- [x] Sleeping particles don't vibrate (check visually) - FIXED
-- [x] Sand pile forms stable angle of repose - FIXED (aspect ratio 69.52)
+- [x] Sleeping particles don't vibrate (check visually) - FIXED (vel=0.0,0.0 in visual test)
+- [x] Sand pile forms stable angle of repose - FIXED (aspect ratio 69.52, pile spreads x: 158→121)
 - [ ] Gold sinks through sand (density stratification) - NOT YET TESTED
 - [ ] Particles on vertical walls don't get stuck - NOT YET TESTED
 
@@ -307,6 +307,12 @@ cargo run --example dem_settling_diagnostic -p game --release
 **Headless diagnostic test:** `crates/game/examples/dem_settling_diagnostic.rs`
 - Test 1: Column pour → spread 202.5, aspect ratio 69.52 ✅
 - Test 2: Settling velocity → settled at frame 108, speed 0.0 ✅
+
+**Visual test:** `cargo run --example sediment_stages_visual -p game --release`
+- Particles fall from top (y=14.7), accelerate under gravity (191 px/s at frame 60)
+- Hit floor at y=237.7 (floor at y=240), settle with vel=(0.0, 0.0)
+- Pile spreads horizontally as particles land (x: 158.6 → 121.8)
+- No vibration, no mid-air pauses, proper angle of repose ✅
 
 ---
 
