@@ -97,7 +97,7 @@ The freeze logic exists but nothing triggers it yet.
 ---
 
 ## Level 3: Dynamic → Static Transition
-**Status:** NOT STARTED (was stashed)
+**Status:** COMPLETE (commit 226fd5c)
 
 ### Prerequisites
 - Level 2 passed
@@ -293,10 +293,10 @@ Need new stage: `stage_platform_collapse`
 - Level 0: COMPLETE
 - Level 1: COMPLETE (commit 80e6a46)
 - Level 2: COMPLETE (commit b8a8b90)
-- Level 3: NOT STARTED (need to implement, then get user gate confirmation)
+- Level 3: COMPLETE (commit 226fd5c) - User confirmed PASS
 
 **NEXT ACTION:**
-Wait for user to confirm Level 0-2 gates before proceeding to Level 3.
+Proceed to Level 4 (force-threshold wake) when ready.
 
 ---
 
