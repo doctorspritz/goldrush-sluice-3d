@@ -93,14 +93,14 @@ impl GpuPressure3D {
         let pressure_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Pressure 3D"),
             size: (cell_count * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
         let divergence_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Divergence 3D"),
             size: (cell_count * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -452,6 +452,71 @@ impl GpuPressure3D {
             pressure_bind_group,
             gradient_bind_group,
         }
+    }
+
+    /// Read back pressure and divergence for debugging
+    pub fn debug_read_pressure(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let cell_count = (self.width * self.height * self.depth) as usize;
+        let mut pressure = vec![0.0f32; cell_count];
+        let mut divergence = vec![0.0f32; cell_count];
+
+        // Read pressure
+        {
+            let staging = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Pressure Staging"),
+                size: (cell_count * 4) as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Pressure Read Encoder"),
+            });
+            encoder.copy_buffer_to_buffer(&self.pressure_buffer, 0, &staging, 0, (cell_count * 4) as u64);
+            queue.submit(std::iter::once(encoder.finish()));
+
+            let slice = staging.slice(..);
+            let (tx, rx) = std::sync::mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |r| { tx.send(r).unwrap(); });
+            device.poll(wgpu::Maintain::Wait);
+            rx.recv().unwrap().unwrap();
+            {
+                let data = slice.get_mapped_range();
+                pressure.copy_from_slice(bytemuck::cast_slice(&data));
+            }
+            staging.unmap();
+        }
+
+        // Read divergence
+        {
+            let staging = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Divergence Staging"),
+                size: (cell_count * 4) as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Divergence Read Encoder"),
+            });
+            encoder.copy_buffer_to_buffer(&self.divergence_buffer, 0, &staging, 0, (cell_count * 4) as u64);
+            queue.submit(std::iter::once(encoder.finish()));
+
+            let slice = staging.slice(..);
+            let (tx, rx) = std::sync::mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |r| { tx.send(r).unwrap(); });
+            device.poll(wgpu::Maintain::Wait);
+            rx.recv().unwrap().unwrap();
+            {
+                let data = slice.get_mapped_range();
+                divergence.copy_from_slice(bytemuck::cast_slice(&data));
+            }
+            staging.unmap();
+        }
+
+        (pressure, divergence)
     }
 
     /// Upload cell types and initialize pressure to zero

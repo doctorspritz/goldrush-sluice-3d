@@ -4,9 +4,11 @@
 //! WebGPU/wgpu only supports atomicAdd for i32, so we encode floats as fixed-point:
 //!   f32 * SCALE → i32 (scatter), then i32 / SCALE → f32 (divide)
 //!
-//! Two compute passes:
-//! 1. Scatter: Each particle atomically adds its momentum contribution to grid nodes
-//! 2. Divide: Each grid node divides accumulated momentum by weight to get velocity
+//! Compute passes (split to stay under 8 storage buffer limit):
+//! 1. Scatter U: Particles atomically add U momentum
+//! 2. Scatter V: Particles atomically add V momentum
+//! 3. Scatter W: Particles atomically add W momentum
+//! 4-6. Divide U/V/W: Grid nodes divide momentum by weight
 //!
 //! Grid layout (MAC staggered):
 //! - U velocities: (width+1) x height x depth
@@ -66,14 +68,18 @@ pub struct GpuP2g3D {
     // Parameters
     params_buffer: wgpu::Buffer,
 
-    // Compute pipelines
-    scatter_pipeline: wgpu::ComputePipeline,
+    // Compute pipelines (split scatter into 3 to stay under buffer limit)
+    scatter_u_pipeline: wgpu::ComputePipeline,
+    scatter_v_pipeline: wgpu::ComputePipeline,
+    scatter_w_pipeline: wgpu::ComputePipeline,
     divide_u_pipeline: wgpu::ComputePipeline,
     divide_v_pipeline: wgpu::ComputePipeline,
     divide_w_pipeline: wgpu::ComputePipeline,
 
-    // Bind groups
-    scatter_bind_group: wgpu::BindGroup,
+    // Bind groups (one per scatter component)
+    scatter_u_bind_group: wgpu::BindGroup,
+    scatter_v_bind_group: wgpu::BindGroup,
+    scatter_w_bind_group: wgpu::BindGroup,
     divide_bind_group: wgpu::BindGroup,
 
     // Current capacity
@@ -96,10 +102,20 @@ impl GpuP2g3D {
         let v_size = (width * (height + 1) * depth) as usize;
         let w_size = (width * height * (depth + 1)) as usize;
 
-        // Create shader modules
-        let scatter_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("P2G 3D Scatter Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/p2g_scatter_3d.wgsl").into()),
+        // Create shader modules (split scatter into 3 to stay under 8 buffer limit)
+        let scatter_u_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("P2G 3D Scatter U Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/p2g_scatter_u_3d.wgsl").into()),
+        });
+
+        let scatter_v_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("P2G 3D Scatter V Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/p2g_scatter_v_3d.wgsl").into()),
+        });
+
+        let scatter_w_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("P2G 3D Scatter W Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/p2g_scatter_w_3d.wgsl").into()),
         });
 
         let divide_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -239,7 +255,9 @@ impl GpuP2g3D {
             mapped_at_creation: false,
         });
 
-        // Create scatter bind group layout
+        // Create scatter bind group layout (shared by U/V/W scatter passes)
+        // Each pass uses: params, positions, velocities, c_col0, c_col1, c_col2, sum, weight
+        // That's 1 uniform + 7 storage = 8 bindings (under the limit!)
         let scatter_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("P2G 3D Scatter Bind Group Layout"),
             entries: &[
@@ -309,7 +327,7 @@ impl GpuP2g3D {
                     },
                     count: None,
                 },
-                // 6: u_sum (read_write atomic)
+                // 6: component_sum (read_write atomic)
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -320,53 +338,9 @@ impl GpuP2g3D {
                     },
                     count: None,
                 },
-                // 7: u_weight (read_write atomic)
+                // 7: component_weight (read_write atomic)
                 wgpu::BindGroupLayoutEntry {
                     binding: 7,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 8: v_sum (read_write atomic)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 9: v_weight (read_write atomic)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 10: w_sum (read_write atomic)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 11: w_weight (read_write atomic)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 11,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -488,9 +462,9 @@ impl GpuP2g3D {
             ],
         });
 
-        // Create scatter bind group
-        let scatter_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("P2G 3D Scatter Bind Group"),
+        // Create scatter bind groups (one per component)
+        let scatter_u_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("P2G 3D Scatter U Bind Group"),
             layout: &scatter_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
@@ -501,10 +475,36 @@ impl GpuP2g3D {
                 wgpu::BindGroupEntry { binding: 5, resource: c_col2_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 6, resource: u_sum_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 7, resource: u_weight_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 8, resource: v_sum_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 9, resource: v_weight_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 10, resource: w_sum_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 11, resource: w_weight_buffer.as_entire_binding() },
+            ],
+        });
+
+        let scatter_v_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("P2G 3D Scatter V Bind Group"),
+            layout: &scatter_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: positions_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: velocities_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: c_col0_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: c_col1_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: c_col2_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: v_sum_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: v_weight_buffer.as_entire_binding() },
+            ],
+        });
+
+        let scatter_w_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("P2G 3D Scatter W Bind Group"),
+            layout: &scatter_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: positions_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: velocities_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: c_col0_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: c_col1_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: c_col2_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: w_sum_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: w_weight_buffer.as_entire_binding() },
             ],
         });
 
@@ -526,18 +526,36 @@ impl GpuP2g3D {
             ],
         });
 
-        // Create pipelines
+        // Create pipelines (3 scatter pipelines, one per component)
         let scatter_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("P2G 3D Scatter Pipeline Layout"),
             bind_group_layouts: &[&scatter_bind_group_layout],
             push_constant_ranges: &[],
         });
 
-        let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("P2G 3D Scatter Pipeline"),
+        let scatter_u_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("P2G 3D Scatter U Pipeline"),
             layout: Some(&scatter_pipeline_layout),
-            module: &scatter_shader,
-            entry_point: Some("scatter"),
+            module: &scatter_u_shader,
+            entry_point: Some("scatter_u"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let scatter_v_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("P2G 3D Scatter V Pipeline"),
+            layout: Some(&scatter_pipeline_layout),
+            module: &scatter_v_shader,
+            entry_point: Some("scatter_v"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let scatter_w_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("P2G 3D Scatter W Pipeline"),
+            layout: Some(&scatter_pipeline_layout),
+            module: &scatter_w_shader,
+            entry_point: Some("scatter_w"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -597,11 +615,15 @@ impl GpuP2g3D {
             grid_v_staging,
             grid_w_staging,
             params_buffer,
-            scatter_pipeline,
+            scatter_u_pipeline,
+            scatter_v_pipeline,
+            scatter_w_pipeline,
             divide_u_pipeline,
             divide_v_pipeline,
             divide_w_pipeline,
-            scatter_bind_group,
+            scatter_u_bind_group,
+            scatter_v_bind_group,
+            scatter_w_bind_group,
             divide_bind_group,
             max_particles,
             scatter_workgroup_size: 256,
@@ -683,15 +705,38 @@ impl GpuP2g3D {
 
     /// Encode P2G compute passes into command encoder
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, particle_count: u32) {
-        // Scatter pass
+        let workgroups = (particle_count + self.scatter_workgroup_size - 1) / self.scatter_workgroup_size;
+
+        // Scatter U pass
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("P2G 3D Scatter Pass"),
+                label: Some("P2G 3D Scatter U Pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.scatter_pipeline);
-            pass.set_bind_group(0, &self.scatter_bind_group, &[]);
-            let workgroups = (particle_count + self.scatter_workgroup_size - 1) / self.scatter_workgroup_size;
+            pass.set_pipeline(&self.scatter_u_pipeline);
+            pass.set_bind_group(0, &self.scatter_u_bind_group, &[]);
+            pass.dispatch_workgroups(workgroups, 1, 1);
+        }
+
+        // Scatter V pass
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("P2G 3D Scatter V Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.scatter_v_pipeline);
+            pass.set_bind_group(0, &self.scatter_v_bind_group, &[]);
+            pass.dispatch_workgroups(workgroups, 1, 1);
+        }
+
+        // Scatter W pass
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("P2G 3D Scatter W Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.scatter_w_pipeline);
+            pass.set_bind_group(0, &self.scatter_w_bind_group, &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 

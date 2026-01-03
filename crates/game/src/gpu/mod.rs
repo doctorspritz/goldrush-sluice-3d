@@ -5,6 +5,7 @@ pub mod g2p_3d;
 pub mod mgpcg;
 pub mod p2g;
 pub mod p2g_3d;
+pub mod particle_separation_3d;
 pub mod pressure;
 pub mod pressure_3d;
 pub mod renderer;

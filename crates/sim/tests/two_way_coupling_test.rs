@@ -106,7 +106,12 @@ fn test_sand_slows_water() {
     // (mixture density at 30% sand ≈ 1.0 * 0.7 + 2.65 * 0.3 ≈ 1.5)
     // So pressure acceleration should be ~66% of pure water
     // But since sand settles and separates, effect may be less pronounced
-    // Just verify we see SOME difference
+    // Verify sand creates measurable slowdown (at least 5%)
+    assert!(
+        mixed_velocity < water_only_velocity * 0.95,
+        "Sand should slow water flow. Water-only: {:.2}, Mixed: {:.2}, Ratio: {:.2}",
+        water_only_velocity, mixed_velocity, mixed_velocity / water_only_velocity
+    );
 }
 
 /// Test that sand does NOT contribute velocity to grid (avoids killing water velocity)

@@ -92,7 +92,9 @@ struct GpuState {
 impl App {
     fn new() -> Self {
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
-        sim.gravity = Vec3::new(0.0, -9.8, 0.0);
+        // Tilted gravity: sluice has 10% slope, sin(atan(0.1)) ≈ 0.10
+        // gravity_x = 9.8 * 0.10 ≈ 1.0 m/s² (pushes water downstream)
+        sim.gravity = Vec3::new(1.0, -9.8, 0.0);
         sim.flip_ratio = 0.97;
         // CRITICAL: For a 200-cell-wide grid, pressure information propagates ~1 cell/iteration.
         // Need at least width iterations for full convergence. Using 500 for headroom.
@@ -201,7 +203,8 @@ impl App {
 
     fn reset_sim(&mut self) {
         self.sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
-        self.sim.gravity = Vec3::new(0.0, -9.8, 0.0);
+        // Tilted gravity: sluice has 10% slope, sin(atan(0.1)) ≈ 0.10
+        self.sim.gravity = Vec3::new(1.0, -9.8, 0.0);
         self.sim.flip_ratio = 0.97;
         self.sim.pressure_iterations = 500;  // Must match new() - need 500 for 200-wide grid
 
@@ -478,7 +481,7 @@ impl App {
                         }
 
                         // Run GPU FLIP step
-                        // Use the sim's pressure_iterations setting (should be 500 for large grids)
+                        // Use the sim's gravity (tilted for sluice slope) and pressure_iterations
                         gpu_flip.step(
                             &gpu.device,
                             &gpu.queue,
@@ -487,7 +490,7 @@ impl App {
                             &mut self.c_matrices,
                             &self.cell_types,
                             dt,
-                            -9.8,
+                            self.sim.gravity,  // Tilted gravity: (1.0, -9.8, 0.0)
                             self.sim.pressure_iterations as u32,
                         );
 

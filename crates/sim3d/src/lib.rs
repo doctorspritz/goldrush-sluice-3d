@@ -127,6 +127,29 @@ impl FlipSimulation3D {
         pressure::compute_divergence(&mut self.grid);
         pressure::solve_pressure_jacobi(&mut self.grid, self.pressure_iterations);
         pressure::apply_pressure_gradient(&mut self.grid);
+
+        // DEBUG: Check velocity and cell types after pressure gradient (before BC)
+        if self.frame == 100 {
+            let k = self.grid.depth / 2;
+            println!("Frame {} debug (after pressure gradient, before BC):", self.frame);
+            for j in (4..=6).rev() {
+                print!("  j={}: ", j);
+                for i in 3..=7 {
+                    let idx = self.grid.cell_index(i, j, k);
+                    let ct = match self.grid.cell_type[idx] {
+                        CellType::Solid => 'S',
+                        CellType::Fluid => 'F',
+                        CellType::Air => '.',
+                    };
+                    let p = self.grid.pressure[idx];
+                    let v_idx = self.grid.v_index(i, j + 1, k); // V at top of cell
+                    let v = self.grid.v[v_idx];
+                    print!("[{} p={:.4} v={:+.3}] ", ct, p, v);
+                }
+                println!();
+            }
+        }
+
         pressure::enforce_boundary_conditions(&mut self.grid);
 
         // 7. G2P: Transfer grid velocities back to particles

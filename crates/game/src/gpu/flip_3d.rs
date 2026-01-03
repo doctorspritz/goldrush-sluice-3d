@@ -9,18 +9,24 @@
 
 use super::g2p_3d::GpuG2p3D;
 use super::p2g_3d::GpuP2g3D;
+use super::particle_separation_3d::GpuParticleSeparation;
 use super::pressure_3d::GpuPressure3D;
 
 use bytemuck::{Pod, Zeroable};
+use wgpu::util::DeviceExt;
 
-/// Gravity application parameters
+/// Gravity application parameters (supports tilted gravity for sluice slope)
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct GravityParams3D {
     width: u32,
     height: u32,
     depth: u32,
-    gravity_dt: f32,
+    gravity_y_dt: f32,  // Vertical gravity (typically -9.8 * dt)
+    gravity_x_dt: f32,  // Horizontal gravity (slope component, e.g. 1.0 * dt)
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 /// Boundary condition parameters
@@ -55,9 +61,14 @@ pub struct GpuFlip3D {
     p2g: GpuP2g3D,
     g2p: GpuG2p3D,
     pressure: GpuPressure3D,
+    separation: GpuParticleSeparation,
 
-    // Gravity shader
-    gravity_pipeline: wgpu::ComputePipeline,
+    // Positions buffer for GPU separation
+    separation_positions_buffer: wgpu::Buffer,
+
+    // Gravity shaders (Y for vertical, X for tilted sluice slope)
+    gravity_y_pipeline: wgpu::ComputePipeline,
+    gravity_x_pipeline: wgpu::ComputePipeline,
     gravity_bind_group: wgpu::BindGroup,
     gravity_params_buffer: wgpu::Buffer,
 
@@ -67,6 +78,7 @@ pub struct GpuFlip3D {
     bc_w_pipeline: wgpu::ComputePipeline,
     bc_bind_group: wgpu::BindGroup,
     bc_params_buffer: wgpu::Buffer,
+    floor_heights_buffer: wgpu::Buffer,
 
     // Velocity clamping shaders (for CFL stability before pressure solve)
     clamp_u_pipeline: wgpu::ComputePipeline,
@@ -111,6 +123,17 @@ impl GpuFlip3D {
         // Create G2P solver
         let g2p = GpuG2p3D::new(device, width, height, depth, max_particles);
 
+        // Create particle separation solver
+        let separation = GpuParticleSeparation::new(device, width, height, depth, cell_size, max_particles);
+
+        // Positions buffer for GPU separation (Vec3 = 12 bytes)
+        let separation_positions_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Separation Positions"),
+            size: (max_particles * 12) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
         // Create grid velocity backup buffers for FLIP delta
         let u_size = ((width + 1) * height * depth) as usize;
         let v_size = (width * (height + 1) * depth) as usize;
@@ -150,8 +173,7 @@ impl GpuFlip3D {
             mapped_at_creation: false,
         });
 
-        // Note: We need a cell_type buffer for gravity - borrow from pressure solver
-        // For now we'll create a simple gravity pipeline that just modifies grid_v
+        // Gravity bind group layout - includes both grid_v and grid_u for tilted gravity
         let gravity_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Gravity 3D Bind Group Layout"),
             entries: &[
@@ -185,10 +207,20 @@ impl GpuFlip3D {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
-        // Use the pressure solver's cell_type buffer for gravity
+        // Gravity bind group - includes grid_v (binding 2) and grid_u (binding 3)
         let gravity_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Gravity 3D Bind Group"),
             layout: &gravity_bind_group_layout,
@@ -196,6 +228,7 @@ impl GpuFlip3D {
                 wgpu::BindGroupEntry { binding: 0, resource: gravity_params_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: pressure.cell_type_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: p2g.grid_v_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: p2g.grid_u_buffer.as_entire_binding() },
             ],
         });
 
@@ -205,11 +238,22 @@ impl GpuFlip3D {
             push_constant_ranges: &[],
         });
 
-        let gravity_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Gravity 3D Pipeline"),
+        // Pipeline for vertical (Y) gravity
+        let gravity_y_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Gravity Y 3D Pipeline"),
             layout: Some(&gravity_pipeline_layout),
             module: &gravity_shader,
             entry_point: Some("apply_gravity"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        // Pipeline for horizontal (X) gravity - for tilted sluice slope
+        let gravity_x_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Gravity X 3D Pipeline"),
+            layout: Some(&gravity_pipeline_layout),
+            module: &gravity_shader,
+            entry_point: Some("apply_gravity_x"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -224,6 +268,15 @@ impl GpuFlip3D {
             label: Some("BC Params 3D"),
             size: std::mem::size_of::<BcParams3D>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Floor heights buffer for terrain-aware boundary conditions
+        // Stores floor height (in cells) for each (i, k) grid position
+        let floor_heights_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Floor Heights 3D"),
+            size: (width * depth) as u64 * std::mem::size_of::<u32>() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -280,6 +333,16 @@ impl GpuFlip3D {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -292,6 +355,7 @@ impl GpuFlip3D {
                 wgpu::BindGroupEntry { binding: 2, resource: p2g.grid_u_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: p2g.grid_v_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: p2g.grid_w_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: floor_heights_buffer.as_entire_binding() },
             ],
         });
 
@@ -439,7 +503,10 @@ impl GpuFlip3D {
             p2g,
             g2p,
             pressure,
-            gravity_pipeline,
+            separation,
+            separation_positions_buffer,
+            gravity_y_pipeline,
+            gravity_x_pipeline,
             gravity_bind_group,
             gravity_params_buffer,
             bc_u_pipeline,
@@ -447,6 +514,7 @@ impl GpuFlip3D {
             bc_w_pipeline,
             bc_bind_group,
             bc_params_buffer,
+            floor_heights_buffer,
             clamp_u_pipeline,
             clamp_v_pipeline,
             clamp_w_pipeline,
@@ -479,7 +547,7 @@ impl GpuFlip3D {
         c_matrices: &mut [glam::Mat3],
         cell_types: &[u32],
         dt: f32,
-        gravity: f32,
+        gravity: glam::Vec3,  // Full 3D gravity for tilted sluice
         pressure_iterations: u32,
     ) {
         let particle_count = positions.len().min(self.max_particles);
@@ -577,13 +645,17 @@ impl GpuFlip3D {
         encoder.copy_buffer_to_buffer(&self.p2g.grid_w_buffer, 0, &self.grid_w_old_buffer, 0, (w_size * 4) as u64);
         queue.submit(std::iter::once(encoder.finish()));
 
-        // 4. Apply gravity
+        // 4. Apply gravity (both Y and X components for tilted sluice)
 
         let gravity_params = GravityParams3D {
             width: self.width,
             height: self.height,
             depth: self.depth,
-            gravity_dt: gravity * dt,
+            gravity_y_dt: gravity.y * dt,  // Vertical (typically -9.8 * dt)
+            gravity_x_dt: gravity.x * dt,  // Horizontal (slope, e.g. 1.0 * dt)
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         };
         queue.write_buffer(&self.gravity_params_buffer, 0, bytemuck::bytes_of(&gravity_params));
 
@@ -591,16 +663,30 @@ impl GpuFlip3D {
             label: Some("FLIP 3D Gravity Encoder"),
         });
 
-        // Apply gravity
+        // Apply vertical (Y) gravity to grid_v
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Gravity 3D Pass"),
+                label: Some("Gravity Y 3D Pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.gravity_pipeline);
+            pass.set_pipeline(&self.gravity_y_pipeline);
             pass.set_bind_group(0, &self.gravity_bind_group, &[]);
             let workgroups_x = (self.width + 7) / 8;
             let workgroups_y = (self.height + 1 + 7) / 8;
+            let workgroups_z = (self.depth + 3) / 4;
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+
+        // Apply horizontal (X) gravity to grid_u - for tilted sluice slope
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Gravity X 3D Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.gravity_x_pipeline);
+            pass.set_bind_group(0, &self.gravity_bind_group, &[]);
+            let workgroups_x = (self.width + 1 + 7) / 8;  // U grid is (width+1) x height x depth
+            let workgroups_y = (self.height + 7) / 8;
             let workgroups_z = (self.depth + 3) / 4;
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
@@ -757,6 +843,25 @@ impl GpuFlip3D {
         self.g2p.download(device, queue, g2p_count, velocities, c_matrices);
     }
 
+    /// Debug: read back pressure and divergence from GPU
+    pub fn debug_read_pressure(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> (Vec<f32>, Vec<f32>) {
+        self.pressure.debug_read_pressure(device, queue)
+    }
+
+    /// Upload floor heights for terrain-aware boundary conditions
+    ///
+    /// floor_heights is a [width * depth] array where:
+    /// - Index = k * width + i
+    /// - Value = number of cells from y=0 to floor surface at (i, k)
+    ///
+    /// This enables the GPU BC shader to zero velocities at riffle walls
+    /// and terrain surfaces, not just at y=0.
+    pub fn upload_floor_heights(&self, queue: &wgpu::Queue, floor_heights: &[u32]) {
+        assert_eq!(floor_heights.len(), (self.width * self.depth) as usize,
+            "floor_heights must be width * depth");
+        queue.write_buffer(&self.floor_heights_buffer, 0, bytemuck::cast_slice(floor_heights));
+    }
+
     fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer, output: &mut [f32]) {
         // Create a staging buffer
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
@@ -783,6 +888,83 @@ impl GpuFlip3D {
         {
             let data = buffer_slice.get_mapped_range();
             output.copy_from_slice(bytemuck::cast_slice(&data));
+        }
+        staging.unmap();
+    }
+
+    /// Run GPU-accelerated particle separation (Houdini-style relaxation)
+    ///
+    /// This pushes particles apart when they're too close, maintaining
+    /// proper fluid incompressibility without expensive O(n²) CPU computation.
+    ///
+    /// - min_dist: Minimum distance between particles (typically cell_size * 0.5 * 1.8)
+    /// - push_strength: Relaxation strength (0.3 typical)
+    /// - iterations: Number of relaxation passes (2 typical)
+    pub fn separate_particles(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        positions: &mut [glam::Vec3],
+        min_dist: f32,
+        push_strength: f32,
+        iterations: u32,
+    ) {
+        if positions.is_empty() {
+            return;
+        }
+
+        let particle_count = positions.len().min(self.max_particles) as u32;
+
+        // Upload positions to GPU
+        let pos_data: Vec<f32> = positions.iter()
+            .take(particle_count as usize)
+            .flat_map(|p| [p.x, p.y, p.z])
+            .collect();
+        queue.write_buffer(&self.separation_positions_buffer, 0, bytemuck::cast_slice(&pos_data));
+
+        // Run GPU separation
+        self.separation.separate(
+            device,
+            queue,
+            &self.separation_positions_buffer,
+            particle_count,
+            min_dist,
+            push_strength,
+            iterations,
+        );
+
+        // Download separated positions
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Separation Positions Staging"),
+            size: (particle_count as usize * 12) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(
+            &self.separation_positions_buffer,
+            0,
+            &staging,
+            0,
+            (particle_count as usize * 12) as u64,
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| { tx.send(r).unwrap(); });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+
+        {
+            let data = slice.get_mapped_range();
+            let floats: &[f32] = bytemuck::cast_slice(&data);
+            for (i, pos) in positions.iter_mut().take(particle_count as usize).enumerate() {
+                pos.x = floats[i * 3];
+                pos.y = floats[i * 3 + 1];
+                pos.z = floats[i * 3 + 2];
+            }
         }
         staging.unmap();
     }

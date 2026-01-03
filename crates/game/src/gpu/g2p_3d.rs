@@ -510,7 +510,7 @@ impl GpuG2p3D {
             depth: self.depth,
             particle_count,
             d_inv,
-            flip_ratio: 0.97,
+            flip_ratio: 0.97,  // Standard water FLIP ratio
             dt,
             max_velocity: 2000.0,
             _padding: [0.0; 3],
