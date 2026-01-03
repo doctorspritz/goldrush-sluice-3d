@@ -49,7 +49,7 @@ struct DemParams {
     sdf_width: u32,
     sdf_height: u32,
     water_level: f32,
-    _pad: f32,
+    iteration: u32,  // 0 = first pass (gravity+integrate), 1+ = constraint-only
 }
 
 /// GPU-based DEM solver using spatial hashing
@@ -64,6 +64,7 @@ pub struct GpuDemSolver {
     velocities_buffer: wgpu::Buffer,
     radii_buffer: wgpu::Buffer,
     materials_buffer: wgpu::Buffer,
+    sleep_counters_buffer: wgpu::Buffer, // Frames of consecutive low velocity
 
     // Spatial hash buffers
     bin_counts_buffer: wgpu::Buffer,
@@ -153,6 +154,13 @@ impl GpuDemSolver {
 
         let materials_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("DEM Materials"),
+            size: (max_particles * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let sleep_counters_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("DEM Sleep Counters"),
             size: (max_particles * std::mem::size_of::<u32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -553,6 +561,17 @@ impl GpuDemSolver {
                     },
                     count: None,
                 },
+                // 8: sleep_counters (read_write)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -605,6 +624,10 @@ impl GpuDemSolver {
                     binding: 7,
                     resource: sdf_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: sleep_counters_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -617,6 +640,7 @@ impl GpuDemSolver {
             velocities_buffer,
             radii_buffer,
             materials_buffer,
+            sleep_counters_buffer,
             bin_counts_buffer,
             bin_offsets_buffer,
             bin_counters_buffer,
@@ -689,21 +713,21 @@ impl GpuDemSolver {
         };
         gpu.queue.write_buffer(&self.clear_params_buffer, 0, bytemuck::bytes_of(&clear_params));
 
-        let dem_params = DemParams {
+        let mut dem_params = DemParams {
             cell_size,
             grid_width: self.grid_width,
             grid_height: self.grid_height,
             particle_count: particle_count as u32,
             dt,
             gravity,
-            contact_stiffness: 20000.0,
+            contact_stiffness: 2000.0, // Reduced from 20000 for stability with dt=1/60
             damping_ratio: 0.7,
             friction_coeff: 0.6,
             velocity_damping: 0.98,
             sdf_width: self.grid_width,
             sdf_height: self.grid_height,
             water_level,
-            _pad: 0.0,
+            iteration: 0, // First pass applies gravity
         };
         gpu.queue.write_buffer(&self.dem_params_buffer, 0, bytemuck::bytes_of(&dem_params));
 
@@ -789,25 +813,44 @@ impl GpuDemSolver {
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
-        // Phase 4: Compute DEM forces and integrate (run multiple iterations for stability)
-        for _ in 0..4 {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("DEM Forces"),
-                timestamp_writes: None,
+        // Submit bin insert phase before constraint loop
+        gpu.queue.submit(std::iter::once(encoder.finish()));
+
+        // Phase 4: Compute DEM forces and integrate
+        // Run multiple constraint iterations for pile stiffness:
+        // - Iteration 0: Apply gravity + integrate + resolve collisions
+        // - Iterations 1-3: Resolve collisions only (propagates pile resistance)
+        const CONSTRAINT_ITERATIONS: u32 = 4;
+        for iter in 0..CONSTRAINT_ITERATIONS {
+            dem_params.iteration = iter;
+            gpu.queue.write_buffer(&self.dem_params_buffer, 0, bytemuck::bytes_of(&dem_params));
+
+            let mut iter_encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("DEM Forces Iter"),
             });
-            pass.set_pipeline(&self.dem_forces_pipeline);
-            pass.set_bind_group(0, &self.dem_forces_bind_group, &[]);
-            let workgroups = (particle_count as u32 + 255) / 256;
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            {
+                let mut pass = iter_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("DEM Forces"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.dem_forces_pipeline);
+                pass.set_bind_group(0, &self.dem_forces_bind_group, &[]);
+                let workgroups = (particle_count as u32 + 255) / 256;
+                pass.dispatch_workgroups(workgroups, 1, 1);
+            }
+            gpu.queue.submit(std::iter::once(iter_encoder.finish()));
         }
 
         // Copy results to staging
         let pos_size = (particle_count * std::mem::size_of::<[f32; 2]>()) as u64;
         let vel_size = (particle_count * std::mem::size_of::<[f32; 2]>()) as u64;
-        encoder.copy_buffer_to_buffer(&self.positions_buffer, 0, &self.positions_staging, 0, pos_size);
-        encoder.copy_buffer_to_buffer(&self.velocities_buffer, 0, &self.velocities_staging, 0, vel_size);
+        let mut copy_encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("DEM Copy"),
+        });
+        copy_encoder.copy_buffer_to_buffer(&self.positions_buffer, 0, &self.positions_staging, 0, pos_size);
+        copy_encoder.copy_buffer_to_buffer(&self.velocities_buffer, 0, &self.velocities_staging, 0, vel_size);
 
-        gpu.queue.submit(std::iter::once(encoder.finish()));
+        gpu.queue.submit(std::iter::once(copy_encoder.finish()));
 
         // Download results
         self.download_particles(gpu, particles, &sediment_indices);
@@ -823,7 +866,8 @@ impl GpuDemSolver {
             let p = &particles.list[i];
             positions.push([p.position.x, p.position.y]);
             velocities.push([p.velocity.x, p.velocity.y]);
-            radii.push(p.material.typical_diameter() * 0.5 * cell_size);
+            // Reduce collision radius to pack particles tighter visually
+            radii.push(p.material.typical_diameter() * 0.35 * cell_size);
             materials.push(Self::material_to_u32(p.material));
         }
 

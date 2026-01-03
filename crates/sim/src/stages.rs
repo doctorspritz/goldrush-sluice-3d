@@ -213,6 +213,7 @@ pub fn stage_catalog() -> Vec<StageSpec> {
         stage_dry_sand_stream(),
         stage_dry_gold_stream(),
         stage_dry_mixed_stream(),
+        stage_sand_then_gold(),
         stage_sediment_water_no_dem(),
         stage_sediment_water_dem(),
         stage_two_way_coupling(),
@@ -234,6 +235,10 @@ pub fn stage_dry_gold_stream() -> StageSpec {
 
 pub fn stage_dry_mixed_stream() -> StageSpec {
     STAGE_DRY_MIXED_STREAM
+}
+
+pub fn stage_sand_then_gold() -> StageSpec {
+    STAGE_SAND_THEN_GOLD
 }
 
 pub fn stage_sediment_water_no_dem() -> StageSpec {
@@ -304,6 +309,17 @@ const STAGE_DRY_MIXED_STREAM: StageSpec = StageSpec {
     mode: StageMode::Dry,
     init: init_dry_mixed,
     per_frame: step_dry_mixed,
+};
+
+const STAGE_SAND_THEN_GOLD: StageSpec = StageSpec {
+    name: "sand_then_gold",
+    width: 160,
+    height: 120,
+    cell_size: 2.0,
+    steps: 600,
+    mode: StageMode::Dry,
+    init: init_dry_sand,  // Same init as dry_sand
+    per_frame: step_sand_then_gold,
 };
 
 const STAGE_SEDIMENT_WATER_NO_DEM: StageSpec = StageSpec {
@@ -430,6 +446,20 @@ fn step_dry_mixed(sim: &mut FlipSimulation, frame: usize) {
     spawn_cluster(sim, ParticleMaterial::Sand, center, 2, 2, spacing, Vec2::ZERO);
     spawn_cluster(sim, ParticleMaterial::Magnetite, center + Vec2::new(2.0, 0.0), 2, 2, spacing, Vec2::ZERO);
     spawn_cluster(sim, ParticleMaterial::Gold, center + Vec2::new(-2.0, 0.0), 2, 2, spacing, Vec2::ZERO);
+}
+
+// Sand first, then gold - to test layering behavior
+fn step_sand_then_gold(sim: &mut FlipSimulation, frame: usize) {
+    let center = dry_stream_center(sim);
+    let spacing = sim.grid.cell_size * 0.7;
+
+    if frame < STREAM_FRAMES {
+        // First phase: pour sand
+        spawn_cluster(sim, ParticleMaterial::Sand, center, 3, 3, spacing, Vec2::ZERO);
+    } else if frame < STREAM_FRAMES * 2 {
+        // Second phase: pour gold on top
+        spawn_cluster(sim, ParticleMaterial::Gold, center, 2, 2, spacing, Vec2::ZERO);
+    }
 }
 
 fn init_sediment_water_no_dem(sim: &mut FlipSimulation) {
