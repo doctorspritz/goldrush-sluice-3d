@@ -147,7 +147,7 @@ cargo run --example sediment_stages_visual -p game --release
 ---
 
 ## Level 4: Force-Threshold Wake
-**Status:** PENDING
+**Status:** COMPLETE (commit 92d10be)
 
 ### Prerequisites
 - Level 3 passed
@@ -294,9 +294,10 @@ Need new stage: `stage_platform_collapse`
 - Level 1: COMPLETE (commit 80e6a46)
 - Level 2: COMPLETE (commit b8a8b90)
 - Level 3: COMPLETE (commit 226fd5c) - User confirmed PASS
+- Level 4: COMPLETE (commit 92d10be) - Atomic-based wake detection
 
 **NEXT ACTION:**
-Proceed to Level 4 (force-threshold wake) when ready.
+Proceed to Level 5 (proper Coulomb friction) when ready.
 
 ---
 
@@ -309,7 +310,7 @@ If any level takes >3 attempts, STOP and discuss with user.
 | 0 | 1 | Clean |
 | 1 | 1 | Clean |
 | 2 | 1 | Clean |
-| 3 | 0 | Not started |
-| 4 | 0 | Not started |
+| 3 | 1 | Clean |
+| 4 | 3 | Solved GPU race condition with atomic operations |
 | 5 | 0 | Not started |
 | 6 | 0 | Not started |
