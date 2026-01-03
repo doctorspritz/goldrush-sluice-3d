@@ -43,12 +43,16 @@ async fn create_test_gpu() -> Option<TestGpu> {
         })
         .await?;
 
+    // Request higher limits for DEM solver (needs 10+ storage buffers)
+    let mut limits = wgpu::Limits::default();
+    limits.max_storage_buffers_per_shader_stage = 16;
+
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("DEM Test Device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: limits,
                 memory_hints: Default::default(),
             },
             None,

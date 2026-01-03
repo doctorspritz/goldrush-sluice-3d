@@ -65,6 +65,7 @@ pub struct GpuDemSolver {
     radii_buffer: wgpu::Buffer,
     materials_buffer: wgpu::Buffer,
     sleep_counters_buffer: wgpu::Buffer, // Frames of consecutive low velocity
+    static_state_buffer: wgpu::Buffer,   // 0 = dynamic, 1 = static (frozen)
 
     // Spatial hash buffers
     bin_counts_buffer: wgpu::Buffer,
@@ -166,6 +167,13 @@ impl GpuDemSolver {
 
         let sleep_counters_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("DEM Sleep Counters"),
+            size: (max_particles * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let static_state_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("DEM Static State"),
             size: (max_particles * std::mem::size_of::<u32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -577,6 +585,17 @@ impl GpuDemSolver {
                     },
                     count: None,
                 },
+                // 9: static_state (read_write)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -633,6 +652,10 @@ impl GpuDemSolver {
                     binding: 8,
                     resource: sleep_counters_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: static_state_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -646,6 +669,7 @@ impl GpuDemSolver {
             radii_buffer,
             materials_buffer,
             sleep_counters_buffer,
+            static_state_buffer,
             bin_counts_buffer,
             bin_offsets_buffer,
             bin_counters_buffer,

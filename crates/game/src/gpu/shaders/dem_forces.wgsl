@@ -44,6 +44,7 @@ const WAKE_SPEED_SQ: f32 = 200.0;   // Above this = wake neighbors (~14 px/s)
 @group(0) @binding(6) var<storage, read> sorted_indices: array<u32>;
 @group(0) @binding(7) var<storage, read> sdf_data: array<f32>;
 @group(0) @binding(8) var<storage, read_write> sleep_counters: array<u32>;
+@group(0) @binding(9) var<storage, read_write> static_states: array<u32>;
 
 fn get_sdf_at(i: i32, j: i32) -> f32 {
     let w = i32(params.sdf_width);
