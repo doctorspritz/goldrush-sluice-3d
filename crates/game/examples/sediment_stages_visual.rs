@@ -6,17 +6,19 @@ mod gpu {
 }
 
 use gpu::{dem::GpuDemSolver, renderer::ParticleRenderer, GpuContext};
+use sim::particle::{Particle, ParticleMaterial};
 use sim::stages::{
     stage_clump_drop, stage_dry_gold_stream, stage_dry_mixed_stream, stage_dry_sand_stream,
     stage_sand_then_gold, stage_sediment_water_dem, stage_sediment_water_no_dem,
     stage_two_way_coupling, stage_water_sluice, StageMode, StageSpec,
 };
 use sim::FlipSimulation;
+use glam::Vec2;
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
-    event::{ElementState, KeyEvent, WindowEvent},
+    event::{ElementState, KeyEvent, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
@@ -35,6 +37,14 @@ fn zoom_for_width(stage: &StageSpec, view_width: u32) -> f32 {
     width / sim_width.max(1.0)
 }
 
+/// Material mode for Level 4 testing
+#[derive(Clone, Copy, PartialEq)]
+enum MaterialMode {
+    Sand,
+    Gold,
+    Mixed, // Original behavior
+}
+
 struct App {
     gpu: Option<GpuContext>,
     renderer: Option<ParticleRenderer>,
@@ -50,6 +60,12 @@ struct App {
     spawn_interval: usize,
     spawn_frame: usize,
     frame: usize,
+    /// For Level 4 testing: allows switching material without resetting
+    material_mode: MaterialMode,
+    /// Mouse position in screen coordinates
+    mouse_pos: (f32, f32),
+    /// Mouse position in simulation coordinates
+    mouse_sim_pos: Vec2,
 }
 
 impl App {
@@ -70,7 +86,9 @@ impl App {
         };
 
         println!("Stage: {}", stage.name);
-        println!("Controls: 1-8 switch stage, SPACE pause, F toggle flow, R reset, +/- zoom, D dense sand, S slow stream");
+        println!("Controls: 1-9 switch stage, SPACE pause, F toggle flow, R reset, +/- zoom");
+        println!("Level 4 test: G=switch to gold, T=switch to sand, M=mixed mode");
+        println!("Mouse: Left=add particles, Right=remove particles");
 
         Self {
             gpu: None,
@@ -87,6 +105,72 @@ impl App {
             spawn_interval,
             spawn_frame: 0,
             frame: 0,
+            material_mode: MaterialMode::Mixed, // Default to original behavior
+            mouse_pos: (0.0, 0.0),
+            mouse_sim_pos: Vec2::ZERO,
+        }
+    }
+
+    /// Spawn particles at the stream location based on current material_mode
+    fn spawn_particles_by_mode(&mut self) {
+        let center_x = (self.stage.width as f32 / 2.0) * self.stage.cell_size;
+        let drop_y = 20.0; // Near top
+        let spacing = self.stage.cell_size * 0.7;
+
+        let material = match self.material_mode {
+            MaterialMode::Sand => ParticleMaterial::Sand,
+            MaterialMode::Gold => ParticleMaterial::Gold,
+            MaterialMode::Mixed => {
+                // Let the stage's per_frame handle mixed spawning
+                return;
+            }
+        };
+
+        // Spawn 3x2 cluster
+        for row in 0..2 {
+            for col in 0..3 {
+                let x = center_x + (col as f32 - 1.0) * spacing;
+                let y = drop_y + row as f32 * spacing;
+                self.sim.particles.list.push(Particle::new(
+                    Vec2::new(x, y),
+                    Vec2::ZERO,
+                    material,
+                ));
+            }
+        }
+    }
+
+    /// Spawn particles at the current mouse cursor position
+    fn spawn_at_cursor(&mut self) {
+        let material = match self.material_mode {
+            MaterialMode::Sand => ParticleMaterial::Sand,
+            MaterialMode::Gold => ParticleMaterial::Gold,
+            MaterialMode::Mixed => ParticleMaterial::Sand,
+        };
+        // Spawn small cluster at cursor
+        let spacing = self.stage.cell_size * 0.5;
+        for row in 0..2 {
+            for col in 0..2 {
+                let pos = self.mouse_sim_pos + Vec2::new(
+                    (col as f32 - 0.5) * spacing,
+                    (row as f32 - 0.5) * spacing,
+                );
+                self.sim.particles.list.push(Particle::new(pos, Vec2::ZERO, material));
+            }
+        }
+        println!("Spawned 4 {:?} at ({:.1}, {:.1})", material, self.mouse_sim_pos.x, self.mouse_sim_pos.y);
+    }
+
+    /// Remove particles near the current mouse cursor position
+    fn remove_near_cursor(&mut self) {
+        let radius = self.stage.cell_size * 3.0;
+        let before = self.sim.particles.list.len();
+        self.sim.particles.list.retain(|p| {
+            (p.position - self.mouse_sim_pos).length() > radius
+        });
+        let removed = before - self.sim.particles.list.len();
+        if removed > 0 {
+            println!("Removed {} particles near ({:.1}, {:.1})", removed, self.mouse_sim_pos.x, self.mouse_sim_pos.y);
         }
     }
 
@@ -130,6 +214,7 @@ impl App {
         };
         self.spawn_frame = 0;
         self.flow_enabled = true;
+        self.material_mode = MaterialMode::Mixed; // Reset to default
         self.update_camera_from_gpu();
         if let Some(renderer) = &mut self.renderer {
             renderer.invalidate_terrain();
@@ -156,17 +241,22 @@ impl App {
         let should_spawn = self.flow_enabled
             && (!is_dry_sand || (self.frame % self.spawn_interval == 0));
         if should_spawn {
-            let repeats = if is_dry_sand {
-                self.spawn_multiplier.max(1)
+            // Use material_mode if not Mixed, otherwise use stage's per_frame
+            if self.material_mode != MaterialMode::Mixed {
+                self.spawn_particles_by_mode();
             } else {
-                1
-            };
-            for _ in 0..repeats {
-                let spawn_frame = if is_dry_sand { self.spawn_frame } else { self.frame };
-                (self.stage.per_frame)(&mut self.sim, spawn_frame);
-            }
-            if is_dry_sand {
-                self.spawn_frame = self.spawn_frame.wrapping_add(1);
+                let repeats = if is_dry_sand {
+                    self.spawn_multiplier.max(1)
+                } else {
+                    1
+                };
+                for _ in 0..repeats {
+                    let spawn_frame = if is_dry_sand { self.spawn_frame } else { self.frame };
+                    (self.stage.per_frame)(&mut self.sim, spawn_frame);
+                }
+                if is_dry_sand {
+                    self.spawn_frame = self.spawn_frame.wrapping_add(1);
+                }
             }
         }
         match self.stage.mode {
@@ -185,15 +275,26 @@ impl App {
                         sim::physics::GRAVITY,
                         -1.0, // No water level for dry stages
                     );
-                    // Debug: print first particle info every 60 frames
+                    // Debug: print static state info every 60 frames
                     if self.frame % 60 == 0 && !self.sim.particles.list.is_empty() {
-                        let p = &self.sim.particles.list[0];
-                        let sdf = self.sim.grid.sample_sdf(p.position);
-                        let h_domain = self.stage.height as f32 * self.stage.cell_size;
+                        let particle_count = self.sim.particles.list.len();
+                        // Download static states to check how many are static
+                        let static_states = dem.download_static_states_headless(&gpu.device, &gpu.queue, particle_count);
+                        let static_count = static_states.iter().filter(|&&s| s == 1).count();
+                        let static_pct = if particle_count > 0 { static_count * 100 / particle_count } else { 0 };
+
+                        let avg_vel: f32 = self.sim.particles.iter()
+                            .map(|p| p.velocity.length())
+                            .sum::<f32>() / particle_count.max(1) as f32;
+
                         println!(
-                            "DEBUG: frame={} pos=({:.1},{:.1}) vel=({:.1},{:.1}) sdf={:.2} floor_y={:.0}",
-                            self.frame, p.position.x, p.position.y,
-                            p.velocity.x, p.velocity.y, sdf, h_domain
+                            "STATIC: frame={} particles={} static={}/{}({}%) avg_vel={:.2} mode={:?}",
+                            self.frame, particle_count, static_count, particle_count, static_pct, avg_vel,
+                            match self.material_mode {
+                                MaterialMode::Sand => "Sand",
+                                MaterialMode::Gold => "Gold",
+                                MaterialMode::Mixed => "Mixed",
+                            }
                         );
                     }
 
@@ -314,6 +415,19 @@ impl App {
             KeyCode::Digit7 => self.reset_stage(stage_two_way_coupling()),
             KeyCode::Digit8 => self.reset_stage(stage_clump_drop()),
             KeyCode::Digit9 => self.reset_stage(stage_sand_then_gold()),
+            // Level 4 material switching (no reset!)
+            KeyCode::KeyG => {
+                self.material_mode = MaterialMode::Gold;
+                println!("Material: GOLD (Level 4 test - gold on existing pile)");
+            }
+            KeyCode::KeyT => {
+                self.material_mode = MaterialMode::Sand;
+                println!("Material: SAND");
+            }
+            KeyCode::KeyM => {
+                self.material_mode = MaterialMode::Mixed;
+                println!("Material: MIXED (stage default)");
+            }
             _ => {}
         }
         self.update_camera_from_gpu();
@@ -359,6 +473,23 @@ impl ApplicationHandler for App {
                 }
                 self.zoom = zoom_for_width(&self.stage, size.width);
                 self.update_camera(size.width, size.height);
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.mouse_pos = (position.x as f32, position.y as f32);
+                // Convert to simulation coords
+                let screen_height = self.gpu.as_ref().map(|g| g.size.1).unwrap_or(TARGET_HEIGHT) as f32;
+                let sim_x = self.mouse_pos.0 / self.zoom + self.camera_offset.0;
+                let sim_y = (screen_height - self.mouse_pos.1) / self.zoom + self.camera_offset.1;
+                self.mouse_sim_pos = Vec2::new(sim_x, sim_y);
+            }
+            WindowEvent::MouseInput { button, state, .. } => {
+                if state == ElementState::Pressed {
+                    match button {
+                        MouseButton::Left => self.spawn_at_cursor(),
+                        MouseButton::Right => self.remove_near_cursor(),
+                        _ => {}
+                    }
+                }
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let KeyEvent {

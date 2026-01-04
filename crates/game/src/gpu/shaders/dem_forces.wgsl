@@ -34,6 +34,10 @@ const FRICTIONS: array<f32, 6> = array<f32, 6>(0.0, 0.4, 0.6, 0.55, 0.45, 0.65);
 const SLEEP_THRESHOLD: u32 = 10u;   // Frames of jitter before sleeping
 const JITTER_SPEED_SQ: f32 = 4.0;   // Below this = jitter (~2 px/s)
 const WAKE_SPEED_SQ: f32 = 200.0;   // Above this = wake neighbors (~14 px/s)
+const IMPACT_SPEED_SQ: f32 = 900.0; // Above this = impact wake (~30 px/s)
+// Chain support threshold - LOWER than SLEEP_THRESHOLD to allow faster propagation
+// Floor particles reach 3 after just 1 frame (+3), enabling immediate chain support
+const CHAIN_SUPPORT_THRESHOLD: u32 = 3u;
 
 @group(0) @binding(0) var<uniform> params: DemParams;
 @group(0) @binding(1) var<storage, read_write> positions: array<vec2<f32>>;
@@ -124,8 +128,10 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     // Read static state - STATIC particles need force-threshold wake check
     // We DON'T return early anymore - we need to detect impacts that should wake us
     // Using atomic load since buffer uses atomic<u32>
+    // States: 0 = dynamic, 1 = static (frozen), 2 = marked for wake
     let my_static_state = atomicLoad(&static_states[idx]);
     let was_static = my_static_state == 1u;
+    let marked_for_wake = my_static_state == 2u;
 
     // Track maximum impact force for wake threshold check
     var max_impact_force: f32 = 0.0;
@@ -133,6 +139,13 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     // Sleep system: read current sleep counter
     var sleep_counter = sleep_counters[idx];
     let is_sleeping = sleep_counter >= SLEEP_THRESHOLD;
+
+    // Handle wake marker from previous frame - clear state and counter
+    // This prevents particles from immediately going back to static
+    if (marked_for_wake) {
+        atomicStore(&static_states[idx], 0u);  // Clear wake marker → dynamic
+        sleep_counter = 0u;  // Reset counter so we don't immediately re-sleep
+    }
 
     // Check if particle was sleeping (low velocity = at rest)
     let was_sleeping = dot(vel, vel) < JITTER_SPEED_SQ;
@@ -147,9 +160,10 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
         // hit floor → get pushed up → repeat
         let sdf_now = sample_sdf(pos);
         let grad_now = sdf_gradient(pos);
-        // Require nearly horizontal surface (grad.y > 0.9) to avoid corners where
-        // diagonal gradient (0.707, 0.707) could falsely trigger floor detection
-        let on_floor_now = sdf_now < radius * 1.1 && grad_now.y > 0.9;
+        // Require nearly horizontal surface - floor gradient points UP in screen coords
+        // (negative y), so grad.y < -0.9 means horizontal floor below us
+        // BUG FIX: Was grad_now.y > 0.9 which is WRONG (that's a ceiling!)
+        let on_floor_now = sdf_now < radius * 1.1 && grad_now.y < -0.9;
         let skip_gravity = is_sleeping && on_floor_now;
 
         if (!skip_gravity) {
@@ -275,23 +289,39 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                     let j_is_static = j_static_state == 1u;
 
                     // Level 4: Dynamic particles mark static neighbors for wake
-                    // This solves the GPU race condition - dynamic particle uses its OWN velocity
-                    // (which it knows), then sets a flag on the static neighbor.
+                    // Wake conditions (must satisfy BOTH):
+                    // 1. I am dynamic (!was_static) hitting static neighbor (j_is_static)
+                    // 2. Either:
+                    //    a) High impact speed (>30 px/s) + any overlap
+                    //    b) Large overlap (>30%) regardless of speed
+                    //
+                    // This prevents:
+                    // - Gold gently settling (14 px/s, small overlap) from waking
+                    // - But allows projectiles (50 px/s, any overlap) to wake
                     let my_speed_sq = dot(vel, vel);
-                    let i_am_fast = my_speed_sq > WAKE_SPEED_SQ;
-                    if (!was_static && j_is_static && i_am_fast && params.iteration == 0u) {
-                        // I'm dynamic & fast, hitting a static neighbor - mark them for wake
+                    let is_impact_speed = my_speed_sq > IMPACT_SPEED_SQ;
+                    let wake_overlap_threshold = contact_dist * 0.3;
+                    let has_wake_overlap = overlap > wake_overlap_threshold;
+                    let should_wake = (is_impact_speed && overlap > 0.0) || has_wake_overlap;
+                    if (!was_static && j_is_static && should_wake && params.iteration == 0u) {
+                        // I'm dynamic AND hitting static neighbor hard - mark for wake
                         // Value 2 means "marked for wake"
                         atomicMax(&static_states[j_idx], 2u);
                     }
 
                     let is_impact = (j_is_fast || !j_is_stationary || has_large_overlap) && !j_is_static;
 
-                    // Support propagation: check if neighbor BELOW us is truly supported
+                    // Support propagation: check if neighbor BELOW us is settling
                     // In screen coords: j below us means j.y > our y, so diff.y < 0, so normal.y < 0
+                    //
+                    // KEY FIX: Use CHAIN_SUPPORT_THRESHOLD (3) instead of SLEEP_THRESHOLD (10)
+                    // This allows support to propagate upward in 1-2 frames instead of ~50 frames.
+                    // Floor particles get +3 per frame, so they're eligible to provide support
+                    // after just 1 slow frame, allowing the entire pile to build sleep counters
+                    // in parallel rather than serially layer-by-layer.
                     let j_sleep = sleep_counters[j_idx];
                     let j_is_below = normal.y < -0.3;
-                    if (j_is_below && j_sleep >= SLEEP_THRESHOLD) {
+                    if (j_is_below && j_sleep >= CHAIN_SUPPORT_THRESHOLD) {
                         supported_contacts += 1u;
                     }
 
@@ -411,22 +441,31 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     let has_chain_support = supported_contacts >= 1u;
     let truly_supported = has_floor_support || has_chain_support;
 
-    // Update sleep counter - ONLY supported particles can maintain high counter
-    if (speed_sq > WAKE_SPEED_SQ || should_wake) {
-        // Fast or woken = reset
-        sleep_counter = 0u;
-    } else if (!truly_supported) {
-        // NO SUPPORT = counter decays (can't sleep mid-air)
-        sleep_counter = sleep_counter / 2u;
-    } else if (speed_sq < JITTER_SPEED_SQ && has_floor_support) {
-        // Floor support + slow = fast sleep
-        sleep_counter = min(sleep_counter + 3u, SLEEP_THRESHOLD * 2u);
-    } else if (speed_sq < JITTER_SPEED_SQ && has_chain_support) {
-        // Chain support + slow = normal sleep
-        sleep_counter = min(sleep_counter + 2u, SLEEP_THRESHOLD * 2u);
-    } else if (speed_sq < JITTER_SPEED_SQ * 4.0 && truly_supported) {
-        // Somewhat slow + support = slow increment
-        sleep_counter = min(sleep_counter + 1u, SLEEP_THRESHOLD);
+    // Update sleep counter - ONLY on iteration 0 to avoid 4x increment per frame
+    // ONLY supported particles can maintain high counter
+    if (params.iteration == 0u) {
+        if (speed_sq > WAKE_SPEED_SQ || should_wake) {
+            // Fast or woken = reset
+            sleep_counter = 0u;
+        } else if (!truly_supported && speed_sq > JITTER_SPEED_SQ) {
+            // NO SUPPORT AND actually moving = counter decays (can't sleep mid-air)
+            // KEY FIX: Only decay if actually moving. Slow particles shouldn't have
+            // their counters destroyed due to 1-frame GPU read lag causing temporary
+            // "unsupported" status. This allows the support chain to propagate.
+            sleep_counter = sleep_counter / 2u;
+        } else if (!truly_supported) {
+            // Unsupported but slow - don't decay, just don't increment
+            // This prevents mid-air freezing while allowing chain propagation
+        } else if (speed_sq < JITTER_SPEED_SQ && has_floor_support) {
+            // Floor support + slow = fast sleep
+            sleep_counter = min(sleep_counter + 3u, SLEEP_THRESHOLD * 2u);
+        } else if (speed_sq < JITTER_SPEED_SQ && has_chain_support) {
+            // Chain support + slow = normal sleep
+            sleep_counter = min(sleep_counter + 2u, SLEEP_THRESHOLD * 2u);
+        } else if (speed_sq < JITTER_SPEED_SQ * 4.0 && truly_supported) {
+            // Somewhat slow + support = slow increment
+            sleep_counter = min(sleep_counter + 1u, SLEEP_THRESHOLD);
+        }
     }
 
     // Level 4: Force-threshold wake for STATIC particles

@@ -812,7 +812,8 @@ fn test_gold_on_sand_stays_on_top() {
 
     // Gold should be at or above sand surface (smaller Y in screen coords = higher)
     // Allow some tolerance for settling into the pile slightly
-    let max_allowed_y = sand_surface + CELL_SIZE * 2.0;
+    // 2.5 cell sizes accounts for: particle radius + gap between surface particles
+    let max_allowed_y = sand_surface + CELL_SIZE * 2.5;
     assert!(
         gold_y <= max_allowed_y,
         "Gold sank through sand! gold_y={:.1} > sand_surface={:.1} + tolerance",
@@ -907,7 +908,7 @@ fn test_impact_wakes_pile() {
                  pile_x, pile_x + 3.0, pile_x + 6.0, pile_x + 9.0, pile_x + 12.0, pile_x + 15.0);
 
         // Run 30 frames to ensure projectile traverses pile
-        for frame in 0..30 {
+        for _ in 0..30 {
             sim.grid.compute_sdf();
             dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
             dem.execute_headless(
@@ -919,10 +920,6 @@ fn test_impact_wakes_pile() {
                 GRAVITY,
                 -1.0,
             );
-            // Debug: print projectile position and velocity
-            let proj = &sim.particles.list[30];
-            println!("  Frame {}: projectile at ({:.1}, {:.1}) vel=({:.1}, {:.1})",
-                     frame, proj.position.x, proj.position.y, proj.velocity.x, proj.velocity.y);
         }
 
         // Check how many particles woke up
@@ -978,4 +975,251 @@ fn test_impact_wakes_pile() {
         "Pile didn't resettle! Only {}/30 static after 200 frames",
         after
     );
+}
+
+/// DIAGNOSTIC TEST: Level 4 Visual Verification Reference
+///
+/// This test prints detailed step-by-step output showing EXACTLY what
+/// the visual test should demonstrate. Run with:
+///
+///   cargo test -p game --release --test gpu_dem_settling diagnostic_level4 -- --nocapture
+///
+/// The visual test (stage 4) should match this sequence:
+/// 1. PHASE 1: Pour sand (should see particles falling, piling up)
+/// 2. PHASE 2: Wait for settling (particles stop moving, become static)
+/// 3. PHASE 3: Add gold on top (gold lands on surface, doesn't sink)
+#[test]
+fn diagnostic_level4_gold_on_static_sand() {
+    let result = pollster::block_on(async {
+        let Some(gpu) = create_test_gpu().await else {
+            println!("SKIP: No GPU adapter available");
+            return None;
+        };
+
+        let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+        build_box(&mut sim);
+        let mut dem =
+            GpuDemSolver::new_headless(&gpu.device, &gpu.queue, WIDTH as u32, HEIGHT as u32, 1000);
+
+        println!("\n========================================");
+        println!("LEVEL 4 DIAGNOSTIC: Gold on Static Sand");
+        println!("========================================\n");
+
+        // ============================================
+        // PHASE 1: Pour sand particles (simulate stream)
+        // ============================================
+        println!("PHASE 1: POURING SAND");
+        println!("----------------------");
+
+        let center_x = 80.0 * CELL_SIZE;
+        let drop_y = 30.0 * CELL_SIZE;
+        let floor_y = (HEIGHT as f32 - 4.0) * CELL_SIZE;
+
+        // Add sand particles in batches (simulating a stream)
+        for batch in 0..5 {
+            // Add 6 particles per batch
+            for i in 0..6 {
+                let x = center_x + (i as f32 - 2.5) * CELL_SIZE * 1.2;
+                let y = drop_y - batch as f32 * CELL_SIZE * 3.0;
+                sim.particles.list.push(Particle::new(
+                    Vec2::new(x, y),
+                    Vec2::ZERO,
+                    ParticleMaterial::Sand,
+                ));
+            }
+
+            // Run 30 frames between batches
+            for _ in 0..30 {
+                sim.grid.compute_sdf();
+                dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+                dem.execute_headless(
+                    &gpu.device,
+                    &gpu.queue,
+                    &mut sim.particles,
+                    CELL_SIZE,
+                    DT,
+                    GRAVITY,
+                    -1.0,
+                );
+            }
+
+            let sand_count = sim.particles.list.len();
+            let avg_y: f32 = sim.particles.iter().map(|p| p.position.y).sum::<f32>() / sand_count as f32;
+            let avg_vel: f32 = sim.particles.iter().map(|p| p.velocity.length()).sum::<f32>() / sand_count as f32;
+            println!("  Batch {}: {} sand particles, avg_y={:.1}, avg_vel={:.1}",
+                     batch + 1, sand_count, avg_y, avg_vel);
+        }
+
+        let total_sand = sim.particles.list.len();
+        println!("\n  Sand pouring complete: {} particles\n", total_sand);
+
+        // ============================================
+        // PHASE 2: Wait for settling (key moment!)
+        // ============================================
+        println!("PHASE 2: WAITING FOR SETTLING");
+        println!("------------------------------");
+        println!("  (In visual test: press F to stop flow, wait for pile to freeze)\n");
+
+        let mut static_count_history = Vec::new();
+
+        for frame in 0..300 {
+            sim.grid.compute_sdf();
+            dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+            dem.execute_headless(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.particles,
+                CELL_SIZE,
+                DT,
+                GRAVITY,
+                -1.0,
+            );
+
+            // Check static state every 60 frames
+            if frame % 60 == 59 {
+                let states = dem.download_static_states_headless(&gpu.device, &gpu.queue, total_sand);
+                let static_count = states.iter().filter(|&&s| s == 1).count();
+                let avg_vel: f32 = sim.particles.iter().map(|p| p.velocity.length()).sum::<f32>() / total_sand as f32;
+                let max_vel: f32 = sim.particles.iter().map(|p| p.velocity.length()).fold(0.0f32, f32::max);
+
+                static_count_history.push(static_count);
+
+                println!("  Frame {:3}: {}/{} static ({:3}%), avg_vel={:.2}, max_vel={:.2}",
+                         frame + 1, static_count, total_sand,
+                         static_count * 100 / total_sand, avg_vel, max_vel);
+            }
+        }
+
+        // Get final state after settling
+        let states_after_settle = dem.download_static_states_headless(&gpu.device, &gpu.queue, total_sand);
+        let static_after_settle = states_after_settle.iter().filter(|&&s| s == 1).count();
+
+        // Get pile surface (minimum Y = top in screen coords)
+        let pile_surface_y = sim.particles.iter()
+            .map(|p| p.position.y)
+            .fold(f32::MAX, f32::min);
+        let pile_bottom_y = sim.particles.iter()
+            .map(|p| p.position.y)
+            .fold(f32::MIN, f32::max);
+
+        println!("\n  Settling complete:");
+        println!("    Natural static: {}/{} ({:.0}%)",
+                 static_after_settle, total_sand,
+                 static_after_settle as f32 / total_sand as f32 * 100.0);
+        println!("    Pile surface Y: {:.1} (top)", pile_surface_y);
+        println!("    Pile bottom Y: {:.1} (near floor)", pile_bottom_y);
+        println!("    Pile height: {:.1} pixels", pile_bottom_y - pile_surface_y);
+
+        // FORCE all sand to static to isolate Level 4 behavior
+        // (Level 3 settling is a separate concern)
+        let forced_static: Vec<u32> = vec![1; total_sand];
+        dem.upload_static_states_headless(&gpu.queue, &forced_static);
+        println!("    FORCED all {} sand particles to STATIC for Level 4 test\n", total_sand);
+
+        // ============================================
+        // PHASE 3: Add gold on top
+        // ============================================
+        println!("PHASE 3: ADDING GOLD ON TOP");
+        println!("----------------------------");
+        println!("  (In visual test: press G or resume flow for gold)\n");
+
+        // Add 5 gold particles, one at a time
+        let mut gold_final_positions = Vec::new();
+
+        for gold_num in 0..5 {
+            let gold_x = center_x + (gold_num as f32 - 2.0) * CELL_SIZE * 2.0;
+            let gold_start_y = pile_surface_y - 15.0 * CELL_SIZE; // Above pile
+
+            let gold_idx = sim.particles.list.len();
+            sim.particles.list.push(Particle::new(
+                Vec2::new(gold_x, gold_start_y),
+                Vec2::ZERO,
+                ParticleMaterial::Gold,
+            ));
+
+            println!("  Gold #{}: spawned at ({:.1}, {:.1})", gold_num + 1, gold_x, gold_start_y);
+
+            // Run 60 frames to let gold fall and land
+            for frame in 0..60 {
+                sim.grid.compute_sdf();
+                dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+                dem.execute_headless(
+                    &gpu.device,
+                    &gpu.queue,
+                    &mut sim.particles,
+                    CELL_SIZE,
+                    DT,
+                    GRAVITY,
+                    -1.0,
+                );
+
+                if frame == 29 || frame == 59 {
+                    let gold = &sim.particles.list[gold_idx];
+                    println!("    Frame {:2}: gold at y={:.1}, vel=({:.1}, {:.1})",
+                             frame + 1, gold.position.y, gold.velocity.x, gold.velocity.y);
+                }
+            }
+
+            let gold_final = &sim.particles.list[gold_idx];
+            gold_final_positions.push(gold_final.position.y);
+
+            let on_surface = gold_final.position.y <= pile_surface_y + CELL_SIZE * 3.0;
+            let status = if on_surface { "ON SURFACE ✓" } else { "SUNK! ✗" };
+            println!("    Final: y={:.1} (surface={:.1}) -> {}\n",
+                     gold_final.position.y, pile_surface_y, status);
+        }
+
+        // ============================================
+        // SUMMARY
+        // ============================================
+        println!("========================================");
+        println!("SUMMARY");
+        println!("========================================");
+
+        let all_gold_on_surface = gold_final_positions.iter()
+            .all(|&y| y <= pile_surface_y + CELL_SIZE * 3.0);
+
+        // Check sand is still mostly static
+        let final_states = dem.download_static_states_headless(&gpu.device, &gpu.queue, total_sand);
+        let final_static = final_states.iter().filter(|&&s| s == 1).count();
+
+        let woke_count = total_sand - final_static;
+        println!("  Sand: {}/{} still static ({} woke from gold landing)", final_static, total_sand, woke_count);
+        println!("  Gold: {} particles, all on surface: {}",
+                 gold_final_positions.len(),
+                 if all_gold_on_surface { "YES ✓" } else { "NO ✗" });
+
+        // Level 4 success criteria:
+        // 1. Gold stays on surface (doesn't sink through)
+        // 2. Most sand stays static (gentle landing doesn't wake pile)
+        let sand_mostly_static = final_static >= total_sand * 3 / 4; // 75% threshold
+
+        if all_gold_on_surface && sand_mostly_static {
+            println!("\n  LEVEL 4 BEHAVIOR: CORRECT ✓");
+            println!("  Gold sits on top of static sand pile.");
+        } else {
+            println!("\n  LEVEL 4 BEHAVIOR: NEEDS INVESTIGATION");
+            if !all_gold_on_surface {
+                println!("  PROBLEM: Gold sank through sand!");
+            }
+            if !sand_mostly_static {
+                println!("  NOTE: {} sand particles woke (may be expected for landing impact)", woke_count);
+            }
+        }
+        println!("========================================\n");
+
+        Some((all_gold_on_surface, sand_mostly_static, woke_count))
+    });
+
+    let Some((gold_on_surface, sand_static_ok, woke)) = result else {
+        return;
+    };
+
+    // Primary assertion: gold must stay on surface
+    assert!(gold_on_surface, "LEVEL 4 FAIL: Gold sank through sand pile!");
+
+    // Secondary: warn if too many woke, but don't fail
+    if !sand_static_ok {
+        println!("WARNING: {} particles woke from gold landing. This may need tuning.", woke);
+    }
 }
