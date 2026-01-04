@@ -11,6 +11,8 @@
 //! The FLIP delta is computed using grid_*_old (pre-force velocities)
 //! stored by the caller after P2G but before forces are applied.
 
+use std::sync::Arc;
+
 use bytemuck::{Pod, Zeroable};
 
 /// Parameters for G2P 3D compute shader
@@ -35,13 +37,13 @@ pub struct GpuG2p3D {
     height: u32,
     depth: u32,
 
-    // Particle buffers (positions public for density projection)
-    pub positions_buffer: wgpu::Buffer,
-    pub(crate) velocities_buffer: wgpu::Buffer,
+    // Particle buffers (shared, GPU-resident)
+    pub positions_buffer: Arc<wgpu::Buffer>,
+    pub(crate) velocities_buffer: Arc<wgpu::Buffer>,
     // C matrix columns (output)
-    c_col0_buffer: wgpu::Buffer,
-    c_col1_buffer: wgpu::Buffer,
-    c_col2_buffer: wgpu::Buffer,
+    c_col0_buffer: Arc<wgpu::Buffer>,
+    c_col1_buffer: Arc<wgpu::Buffer>,
+    c_col2_buffer: Arc<wgpu::Buffer>,
 
     // Staging buffers for readback
     velocities_staging: wgpu::Buffer,
@@ -73,6 +75,11 @@ impl GpuG2p3D {
         height: u32,
         depth: u32,
         max_particles: usize,
+        positions_buffer: Arc<wgpu::Buffer>,
+        velocities_buffer: Arc<wgpu::Buffer>,
+        c_col0_buffer: Arc<wgpu::Buffer>,
+        c_col1_buffer: Arc<wgpu::Buffer>,
+        c_col2_buffer: Arc<wgpu::Buffer>,
         grid_u_buffer: &wgpu::Buffer,
         grid_v_buffer: &wgpu::Buffer,
         grid_w_buffer: &wgpu::Buffer,
@@ -84,43 +91,6 @@ impl GpuG2p3D {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("G2P 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/g2p_3d.wgsl").into()),
-        });
-
-        // Create particle buffers (vec3 padded to vec4)
-        let positions_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("G2P 3D Positions"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let velocities_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("G2P 3D Velocities"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        // C matrix columns (output)
-        let c_col0_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("G2P 3D C Col0"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let c_col1_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("G2P 3D C Col1"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let c_col2_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("G2P 3D C Col2"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
         });
 
         // Staging buffers for readback
@@ -299,11 +269,11 @@ impl GpuG2p3D {
             layout: &bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: positions_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: velocities_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: c_col0_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: c_col1_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: c_col2_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: positions_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: velocities_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: c_col0_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: c_col1_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: c_col2_buffer.as_ref().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 6, resource: grid_u_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 7, resource: grid_v_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 8, resource: grid_w_buffer.as_entire_binding() },
@@ -350,53 +320,15 @@ impl GpuG2p3D {
         }
     }
 
-    /// Upload particle data to GPU
+    /// Update params for the next G2P pass.
     pub fn upload_particles(
         &self,
         queue: &wgpu::Queue,
-        positions: &[glam::Vec3],
-        velocities: &[glam::Vec3],
-        c_matrices: &[glam::Mat3],
+        particle_count: usize,
         cell_size: f32,
         dt: f32,
     ) -> u32 {
-        let particle_count = positions.len().min(self.max_particles) as u32;
-
-        // Convert to padded vec4 format
-        let positions_padded: Vec<[f32; 4]> = positions.iter()
-            .take(particle_count as usize)
-            .map(|p| [p.x, p.y, p.z, 0.0])
-            .collect();
-
-        let velocities_padded: Vec<[f32; 4]> = velocities.iter()
-            .take(particle_count as usize)
-            .map(|v| [v.x, v.y, v.z, 0.0])
-            .collect();
-
-        // Extract C matrix columns
-        let c_col0: Vec<[f32; 4]> = c_matrices.iter()
-            .take(particle_count as usize)
-            .map(|c| [c.x_axis.x, c.x_axis.y, c.x_axis.z, 0.0])
-            .collect();
-
-        let c_col1: Vec<[f32; 4]> = c_matrices.iter()
-            .take(particle_count as usize)
-            .map(|c| [c.y_axis.x, c.y_axis.y, c.y_axis.z, 0.0])
-            .collect();
-
-        let c_col2: Vec<[f32; 4]> = c_matrices.iter()
-            .take(particle_count as usize)
-            .map(|c| [c.z_axis.x, c.z_axis.y, c.z_axis.z, 0.0])
-            .collect();
-
-        // Upload particle data
-        queue.write_buffer(&self.positions_buffer, 0, bytemuck::cast_slice(&positions_padded));
-        queue.write_buffer(&self.velocities_buffer, 0, bytemuck::cast_slice(&velocities_padded));
-        queue.write_buffer(&self.c_col0_buffer, 0, bytemuck::cast_slice(&c_col0));
-        queue.write_buffer(&self.c_col1_buffer, 0, bytemuck::cast_slice(&c_col1));
-        queue.write_buffer(&self.c_col2_buffer, 0, bytemuck::cast_slice(&c_col2));
-
-        // Upload params
+        let particle_count = particle_count.min(self.max_particles) as u32;
         let d_inv = 4.0 / (cell_size * cell_size);
         let params = G2pParams3D {
             cell_size,
@@ -427,7 +359,7 @@ impl GpuG2p3D {
         pass.dispatch_workgroups(workgroups, 1, 1);
     }
 
-    /// Download particle data from GPU
+    /// Debug-only readback of particle data from GPU (blocking).
     pub fn download(
         &self,
         device: &wgpu::Device,
@@ -443,10 +375,10 @@ impl GpuG2p3D {
         });
 
         // Copy to staging
-        encoder.copy_buffer_to_buffer(&self.velocities_buffer, 0, &self.velocities_staging, 0, (count * 16) as u64);
-        encoder.copy_buffer_to_buffer(&self.c_col0_buffer, 0, &self.c_col0_staging, 0, (count * 16) as u64);
-        encoder.copy_buffer_to_buffer(&self.c_col1_buffer, 0, &self.c_col1_staging, 0, (count * 16) as u64);
-        encoder.copy_buffer_to_buffer(&self.c_col2_buffer, 0, &self.c_col2_staging, 0, (count * 16) as u64);
+        encoder.copy_buffer_to_buffer(self.velocities_buffer.as_ref(), 0, &self.velocities_staging, 0, (count * 16) as u64);
+        encoder.copy_buffer_to_buffer(self.c_col0_buffer.as_ref(), 0, &self.c_col0_staging, 0, (count * 16) as u64);
+        encoder.copy_buffer_to_buffer(self.c_col1_buffer.as_ref(), 0, &self.c_col1_staging, 0, (count * 16) as u64);
+        encoder.copy_buffer_to_buffer(self.c_col2_buffer.as_ref(), 0, &self.c_col2_staging, 0, (count * 16) as u64);
 
         queue.submit(std::iter::once(encoder.finish()));
 
