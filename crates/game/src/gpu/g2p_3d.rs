@@ -43,14 +43,6 @@ pub struct GpuG2p3D {
     c_col1_buffer: wgpu::Buffer,
     c_col2_buffer: wgpu::Buffer,
 
-    // Grid buffers (read-only during G2P)
-    grid_u_buffer: wgpu::Buffer,      // Post-force velocities
-    grid_v_buffer: wgpu::Buffer,
-    grid_w_buffer: wgpu::Buffer,
-    grid_u_old_buffer: wgpu::Buffer,  // Pre-force velocities (for FLIP delta)
-    grid_v_old_buffer: wgpu::Buffer,
-    grid_w_old_buffer: wgpu::Buffer,
-
     // Staging buffers for readback
     velocities_staging: wgpu::Buffer,
     c_col0_staging: wgpu::Buffer,
@@ -81,11 +73,13 @@ impl GpuG2p3D {
         height: u32,
         depth: u32,
         max_particles: usize,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        grid_u_old_buffer: &wgpu::Buffer,
+        grid_v_old_buffer: &wgpu::Buffer,
+        grid_w_old_buffer: &wgpu::Buffer,
     ) -> Self {
-        let u_size = ((width + 1) * height * depth) as usize;
-        let v_size = (width * (height + 1) * depth) as usize;
-        let w_size = (width * height * (depth + 1)) as usize;
-
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("G2P 3D Shader"),
@@ -126,49 +120,6 @@ impl GpuG2p3D {
             label: Some("G2P 3D C Col2"),
             size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        // Grid buffers
-        let grid_u_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("G2P 3D Grid U"),
-            size: (u_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let grid_v_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("G2P 3D Grid V"),
-            size: (v_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let grid_w_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("G2P 3D Grid W"),
-            size: (w_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let grid_u_old_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("G2P 3D Grid U Old"),
-            size: (u_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let grid_v_old_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("G2P 3D Grid V Old"),
-            size: (v_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let grid_w_old_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("G2P 3D Grid W Old"),
-            size: (w_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -387,12 +338,6 @@ impl GpuG2p3D {
             c_col0_buffer,
             c_col1_buffer,
             c_col2_buffer,
-            grid_u_buffer,
-            grid_v_buffer,
-            grid_w_buffer,
-            grid_u_old_buffer,
-            grid_v_old_buffer,
-            grid_w_old_buffer,
             velocities_staging,
             c_col0_staging,
             c_col1_staging,
@@ -405,58 +350,16 @@ impl GpuG2p3D {
         }
     }
 
-    /// Upload particle and grid data to GPU
-    pub fn upload(
+    /// Upload particle data to GPU
+    pub fn upload_particles(
         &self,
         queue: &wgpu::Queue,
         positions: &[glam::Vec3],
         velocities: &[glam::Vec3],
         c_matrices: &[glam::Mat3],
-        grid_u: &[f32],
-        grid_v: &[f32],
-        grid_w: &[f32],
-        grid_u_old: &[f32],
-        grid_v_old: &[f32],
-        grid_w_old: &[f32],
         cell_size: f32,
         dt: f32,
     ) -> u32 {
-        // Validate grid buffer sizes to prevent silent partial writes
-        let expected_u_size = ((self.width + 1) * self.height * self.depth) as usize;
-        let expected_v_size = (self.width * (self.height + 1) * self.depth) as usize;
-        let expected_w_size = (self.width * self.height * (self.depth + 1)) as usize;
-
-        assert_eq!(
-            grid_u.len(), expected_u_size,
-            "Grid U size mismatch: got {}, expected {}",
-            grid_u.len(), expected_u_size
-        );
-        assert_eq!(
-            grid_v.len(), expected_v_size,
-            "Grid V size mismatch: got {}, expected {}",
-            grid_v.len(), expected_v_size
-        );
-        assert_eq!(
-            grid_w.len(), expected_w_size,
-            "Grid W size mismatch: got {}, expected {}",
-            grid_w.len(), expected_w_size
-        );
-        assert_eq!(
-            grid_u_old.len(), expected_u_size,
-            "Grid U old size mismatch: got {}, expected {}",
-            grid_u_old.len(), expected_u_size
-        );
-        assert_eq!(
-            grid_v_old.len(), expected_v_size,
-            "Grid V old size mismatch: got {}, expected {}",
-            grid_v_old.len(), expected_v_size
-        );
-        assert_eq!(
-            grid_w_old.len(), expected_w_size,
-            "Grid W old size mismatch: got {}, expected {}",
-            grid_w_old.len(), expected_w_size
-        );
-
         let particle_count = positions.len().min(self.max_particles) as u32;
 
         // Convert to padded vec4 format
@@ -492,14 +395,6 @@ impl GpuG2p3D {
         queue.write_buffer(&self.c_col0_buffer, 0, bytemuck::cast_slice(&c_col0));
         queue.write_buffer(&self.c_col1_buffer, 0, bytemuck::cast_slice(&c_col1));
         queue.write_buffer(&self.c_col2_buffer, 0, bytemuck::cast_slice(&c_col2));
-
-        // Upload grid data
-        queue.write_buffer(&self.grid_u_buffer, 0, bytemuck::cast_slice(grid_u));
-        queue.write_buffer(&self.grid_v_buffer, 0, bytemuck::cast_slice(grid_v));
-        queue.write_buffer(&self.grid_w_buffer, 0, bytemuck::cast_slice(grid_w));
-        queue.write_buffer(&self.grid_u_old_buffer, 0, bytemuck::cast_slice(grid_u_old));
-        queue.write_buffer(&self.grid_v_old_buffer, 0, bytemuck::cast_slice(grid_v_old));
-        queue.write_buffer(&self.grid_w_old_buffer, 0, bytemuck::cast_slice(grid_w_old));
 
         // Upload params
         let d_inv = 4.0 / (cell_size * cell_size);

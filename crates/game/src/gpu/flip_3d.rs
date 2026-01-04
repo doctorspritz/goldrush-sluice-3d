@@ -171,20 +171,6 @@ impl GpuFlip3D {
         // Create P2G solver (owns the grid velocity buffers)
         let p2g = GpuP2g3D::new(device, width, height, depth, max_particles);
 
-        // Create pressure solver (references P2G's grid buffers)
-        let pressure = GpuPressure3D::new(
-            device,
-            width,
-            height,
-            depth,
-            &p2g.grid_u_buffer,
-            &p2g.grid_v_buffer,
-            &p2g.grid_w_buffer,
-        );
-
-        // Create G2P solver
-        let g2p = GpuG2p3D::new(device, width, height, depth, max_particles);
-
         // Create grid velocity backup buffers for FLIP delta
         let u_size = ((width + 1) * height * depth) as usize;
         let v_size = (width * (height + 1) * depth) as usize;
@@ -210,6 +196,32 @@ impl GpuFlip3D {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
+
+        // Create pressure solver (references P2G's grid buffers)
+        let pressure = GpuPressure3D::new(
+            device,
+            width,
+            height,
+            depth,
+            &p2g.grid_u_buffer,
+            &p2g.grid_v_buffer,
+            &p2g.grid_w_buffer,
+        );
+
+        // Create G2P solver (binds to P2G and old grid buffers)
+        let g2p = GpuG2p3D::new(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            &p2g.grid_u_buffer,
+            &p2g.grid_v_buffer,
+            &p2g.grid_w_buffer,
+            &grid_u_old_buffer,
+            &grid_v_old_buffer,
+            &grid_w_old_buffer,
+        );
 
         // Create gravity shader
         let gravity_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1142,36 +1154,12 @@ impl GpuFlip3D {
 
         queue.submit(std::iter::once(encoder.finish()));
 
-        // 6. Download grid velocities and run G2P
-        // For now, we'll do a simplified version that downloads grids to CPU
-        // A full GPU implementation would keep everything on GPU
-
-        let mut grid_u = vec![0.0f32; u_size];
-        let mut grid_v = vec![0.0f32; v_size];
-        let mut grid_w = vec![0.0f32; w_size];
-        let mut grid_u_old = vec![0.0f32; u_size];
-        let mut grid_v_old = vec![0.0f32; v_size];
-        let mut grid_w_old = vec![0.0f32; w_size];
-
-        self.p2g.download(device, queue, &mut grid_u, &mut grid_v, &mut grid_w);
-
-        // Read old velocities
-        Self::read_buffer(device, queue, &self.grid_u_old_buffer, &mut grid_u_old);
-        Self::read_buffer(device, queue, &self.grid_v_old_buffer, &mut grid_v_old);
-        Self::read_buffer(device, queue, &self.grid_w_old_buffer, &mut grid_w_old);
-
-        // Upload to G2P and run
-        let g2p_count = self.g2p.upload(
+        // 6. Run G2P using grid buffers already on GPU
+        let g2p_count = self.g2p.upload_particles(
             queue,
             positions,
             velocities,
             c_matrices,
-            &grid_u,
-            &grid_v,
-            &grid_w,
-            &grid_u_old,
-            &grid_v_old,
-            &grid_w_old,
             self.cell_size,
             dt,
         );
@@ -1219,28 +1207,6 @@ impl GpuFlip3D {
 
         queue.submit(std::iter::once(encoder.finish()));
 
-        // DEBUG: Read particle counts and density errors to verify
-        let cell_count = (self.width * self.height * self.depth) as usize;
-        let mut particle_counts = vec![0i32; cell_count];
-        Self::read_buffer_i32(device, queue, &self.p2g.particle_count_buffer, &mut particle_counts, cell_count);
-        let max_count = particle_counts.iter().max().copied().unwrap_or(0);
-        let nonzero_count = particle_counts.iter().filter(|&&c| c > 0).count();
-
-        let mut density_errors = vec![0.0f32; cell_count];
-        Self::read_buffer(device, queue, &self.pressure.divergence_buffer, &mut density_errors);
-        let max_error = density_errors.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
-        let nonzero_errors = density_errors.iter().filter(|&&e| e.abs() > 0.001).count();
-
-        // Only print once every 100 frames (frame 0, 100, 200...)
-        static mut FRAME_COUNT: u32 = 0;
-        unsafe {
-            if FRAME_COUNT % 100 == 0 {
-                eprintln!("DENSITY DEBUG [frame {}]: max_particle_count={}, cells_with_particles={}, max_density_error={:.4}, cells_with_error={}",
-                          FRAME_COUNT, max_count, nonzero_count, max_error, nonzero_errors);
-            }
-            FRAME_COUNT += 1;
-        }
-
         // 2. Clear pressure and run density pressure iterations
         self.pressure.clear_pressure(queue);
 
@@ -1254,18 +1220,6 @@ impl GpuFlip3D {
         self.pressure.encode_iterations_only(&mut encoder, density_iterations);
 
         queue.submit(std::iter::once(encoder.finish()));
-
-        // DEBUG: Read pressure after density iterations
-        let mut pressures = vec![0.0f32; cell_count];
-        Self::read_buffer(device, queue, &self.pressure.pressure_buffer, &mut pressures);
-        let max_pressure = pressures.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
-        let nonzero_pressures = pressures.iter().filter(|&&p| p.abs() > 0.001).count();
-
-        unsafe {
-            if FRAME_COUNT % 100 == 1 {  // Print on frames 1, 101, 201 (after the other debug)
-                eprintln!("  PRESSURE: max_pressure={:.4}, cells_with_pressure={}", max_pressure, nonzero_pressures);
-            }
-        }
 
         // 3. Compute position deltas on grid (blub approach)
         // Update grid shader params with dt
@@ -1331,16 +1285,6 @@ impl GpuFlip3D {
         // 5. Download position deltas and apply to particle positions
         let mut position_deltas = vec![[0.0f32; 4]; particle_count];
         Self::read_buffer_vec4(device, queue, &self.position_delta_buffer, &mut position_deltas, particle_count);
-
-        // DEBUG: Check position delta values
-        let max_delta_x = position_deltas.iter().map(|d| d[0].abs()).fold(0.0f32, f32::max);
-        let max_delta_y = position_deltas.iter().map(|d| d[1].abs()).fold(0.0f32, f32::max);
-        let max_delta_z = position_deltas.iter().map(|d| d[2].abs()).fold(0.0f32, f32::max);
-        unsafe {
-            if FRAME_COUNT % 100 == 2 {
-                eprintln!("  DELTAS: max_dx={:.6}, max_dy={:.6}, max_dz={:.6}", max_delta_x, max_delta_y, max_delta_z);
-            }
-        }
 
         // Apply position corrections to particles
         for (i, delta) in position_deltas.iter().enumerate() {
@@ -1409,66 +1353,6 @@ impl GpuFlip3D {
                 positions[i] = glam::Vec3::new(pos[0], pos[1], pos[2]);
             }
         }
-    }
-
-    fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer, output: &mut [f32]) {
-        // Create a staging buffer
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Temp Staging"),
-            size: (output.len() * 4) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Read Buffer Encoder"),
-        });
-        encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, (output.len() * 4) as u64);
-        queue.submit(std::iter::once(encoder.finish()));
-
-        let buffer_slice = staging.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
-        });
-        device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
-
-        {
-            let data = buffer_slice.get_mapped_range();
-            output.copy_from_slice(bytemuck::cast_slice(&data));
-        }
-        staging.unmap();
-    }
-
-    fn read_buffer_i32(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer, output: &mut [i32], count: usize) {
-        let byte_size = count * std::mem::size_of::<i32>();
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Temp i32 Staging"),
-            size: byte_size as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Read i32 Buffer Encoder"),
-        });
-        encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, byte_size as u64);
-        queue.submit(std::iter::once(encoder.finish()));
-
-        let buffer_slice = staging.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
-        });
-        device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
-
-        {
-            let data = buffer_slice.get_mapped_range();
-            output[..count].copy_from_slice(bytemuck::cast_slice(&data));
-        }
-        staging.unmap();
     }
 
     fn read_buffer_vec4(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer, output: &mut [[f32; 4]], count: usize) {
