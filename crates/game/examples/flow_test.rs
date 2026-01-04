@@ -231,6 +231,7 @@ fn main() {
                 &mut velocities,
                 &mut c_matrices,
                 &cell_types,
+                None,
                 DT,
                 -9.8,
                 FLOW_ACCEL,  // <-- THIS IS THE KEY: flow applied on grid before pressure solve

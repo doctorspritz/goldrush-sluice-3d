@@ -81,6 +81,20 @@ struct DensityCorrectionParams3D {
     _pad3: u32,
 }
 
+/// SDF collision parameters
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct SdfCollisionParams3D {
+    width: u32,
+    height: u32,
+    depth: u32,
+    particle_count: u32,
+    cell_size: f32,
+    dt: f32,
+    _pad0: u32,
+    _pad1: u32,
+}
+
 /// GPU-accelerated 3D FLIP simulation
 pub struct GpuFlip3D {
     // Grid dimensions
@@ -133,6 +147,12 @@ pub struct GpuFlip3D {
     density_correct_bind_group: wgpu::BindGroup,
     density_correct_params_buffer: wgpu::Buffer,
     position_delta_buffer: wgpu::Buffer,  // Per-particle delta (output)
+
+    // SDF collision (advection + solid collision)
+    sdf_collision_pipeline: wgpu::ComputePipeline,
+    sdf_collision_bind_group: wgpu::BindGroup,
+    sdf_collision_params_buffer: wgpu::Buffer,
+    sdf_buffer: wgpu::Buffer,
 
     // Maximum particles supported
     max_particles: usize,
@@ -806,6 +826,98 @@ impl GpuFlip3D {
             cache: None,
         });
 
+        // ========== SDF Collision (Advection + Solid Collision) ==========
+        let sdf_collision_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("SDF Collision 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sdf_collision_3d.wgsl").into()),
+        });
+
+        let sdf_collision_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SDF Collision Params 3D"),
+            size: std::mem::size_of::<SdfCollisionParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let sdf_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SDF Collision Grid 3D"),
+            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let sdf_collision_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("SDF Collision 3D Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let sdf_collision_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SDF Collision 3D Bind Group"),
+            layout: &sdf_collision_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: sdf_collision_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: g2p.positions_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: g2p.velocities_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: sdf_buffer.as_entire_binding() },
+            ],
+        });
+
+        let sdf_collision_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("SDF Collision 3D Pipeline Layout"),
+            bind_group_layouts: &[&sdf_collision_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let sdf_collision_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("SDF Collision 3D Pipeline"),
+            layout: Some(&sdf_collision_pipeline_layout),
+            module: &sdf_collision_shader,
+            entry_point: Some("sdf_collision"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         Self {
             width,
             height,
@@ -841,6 +953,10 @@ impl GpuFlip3D {
             density_correct_bind_group,
             density_correct_params_buffer,
             position_delta_buffer,
+            sdf_collision_pipeline,
+            sdf_collision_bind_group,
+            sdf_collision_params_buffer,
+            sdf_buffer,
             max_particles,
         }
     }
@@ -855,6 +971,7 @@ impl GpuFlip3D {
     /// 5. Apply flow acceleration (horizontal, for sluice flow)
     /// 6. Pressure solve (includes divergence, iterations, gradient)
     /// 7. G2P: Transfer grid data back to particles
+    /// 8. Optional: GPU advection + SDF collision (when `sdf` is provided)
     ///
     /// # Arguments
     /// * `flow_accel` - Downstream flow acceleration (m/s²). Set to 0.0 for closed box sims.
@@ -867,6 +984,7 @@ impl GpuFlip3D {
         velocities: &mut [glam::Vec3],
         c_matrices: &mut [glam::Mat3],
         cell_types: &[u32],
+        sdf: Option<&[f32]>,
         dt: f32,
         gravity: f32,
         flow_accel: f32,
@@ -1064,9 +1182,6 @@ impl GpuFlip3D {
         self.g2p.encode(&mut encoder, g2p_count);
         queue.submit(std::iter::once(encoder.finish()));
 
-        // Download results
-        self.g2p.download(device, queue, g2p_count, velocities, c_matrices);
-
         // ========== Density Projection (Implicit Density Projection) ==========
         // Push particles from crowded regions to empty regions
         // This causes water level to "rise" when particles accumulate behind riffles
@@ -1232,6 +1347,67 @@ impl GpuFlip3D {
             positions[i].x += delta[0];
             positions[i].y += delta[1];
             positions[i].z += delta[2];
+        }
+
+        let run_sdf_collision = if let Some(sdf) = sdf {
+            let expected_sdf_len = (self.width * self.height * self.depth) as usize;
+            assert_eq!(
+                sdf.len(),
+                expected_sdf_len,
+                "SDF size mismatch: got {}, expected {}",
+                sdf.len(),
+                expected_sdf_len
+            );
+
+            // Upload latest positions (after density correction) and SDF
+            let positions_padded: Vec<[f32; 4]> = positions
+                .iter()
+                .take(particle_count)
+                .map(|p| [p.x, p.y, p.z, 0.0])
+                .collect();
+            queue.write_buffer(&self.g2p.positions_buffer, 0, bytemuck::cast_slice(&positions_padded));
+            queue.write_buffer(&self.sdf_buffer, 0, bytemuck::cast_slice(sdf));
+
+            let sdf_params = SdfCollisionParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                particle_count: particle_count as u32,
+                cell_size: self.cell_size,
+                dt,
+                _pad0: 0,
+                _pad1: 0,
+            };
+            queue.write_buffer(&self.sdf_collision_params_buffer, 0, bytemuck::bytes_of(&sdf_params));
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("FLIP 3D SDF Collision Encoder"),
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("SDF Collision 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.sdf_collision_pipeline);
+                pass.set_bind_group(0, &self.sdf_collision_bind_group, &[]);
+                let workgroups = (g2p_count + 255) / 256;
+                pass.dispatch_workgroups(workgroups, 1, 1);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+            true
+        } else {
+            false
+        };
+
+        // Download results (velocities + C matrix). Positions are optional.
+        self.g2p.download(device, queue, g2p_count, velocities, c_matrices);
+
+        if run_sdf_collision {
+            let mut gpu_positions = vec![[0.0f32; 4]; particle_count];
+            Self::read_buffer_vec4(device, queue, &self.g2p.positions_buffer, &mut gpu_positions, particle_count);
+            for (i, pos) in gpu_positions.iter().enumerate() {
+                positions[i] = glam::Vec3::new(pos[0], pos[1], pos[2]);
+            }
         }
     }
 

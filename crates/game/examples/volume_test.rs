@@ -364,6 +364,7 @@ impl App {
                     &mut self.velocities,
                     &mut self.c_matrices,
                     &self.cell_types,
+                    None,
                     DT,
                     -9.8,
                     0.0,  // No flow acceleration

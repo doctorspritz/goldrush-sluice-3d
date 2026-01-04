@@ -438,6 +438,7 @@ impl App {
                         &mut self.velocities,
                         &mut self.c_matrices,
                         &self.cell_types,
+                        None,
                         dt,
                         -9.8,
                         FLOW_ACCEL,

@@ -37,7 +37,7 @@ pub struct GpuG2p3D {
 
     // Particle buffers (positions public for density projection)
     pub positions_buffer: wgpu::Buffer,
-    velocities_buffer: wgpu::Buffer,
+    pub(crate) velocities_buffer: wgpu::Buffer,
     // C matrix columns (output)
     c_col0_buffer: wgpu::Buffer,
     c_col1_buffer: wgpu::Buffer,
@@ -96,7 +96,7 @@ impl GpuG2p3D {
         let positions_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("G2P 3D Positions"),
             size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 

@@ -258,6 +258,7 @@ fn main() {
         &mut velocities,
         &mut c_matrices,
         &cell_types,
+        None,
         DT,
         0.0,  // No gravity
         0.0,  // No flow accel

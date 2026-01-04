@@ -148,6 +148,8 @@ fn create_closed_box(sim: &mut FlipSimulation3D) {
         }
     }
 
+    sim.grid.compute_sdf();
+
     // Count riffles
     let num_riffles = ((riffle_end_x - riffle_start_x) / riffle_spacing) as usize;
     println!("Created sluice: slope {}→{} cells, {} riffles, exit at right wall",
@@ -417,13 +419,19 @@ impl App {
                 // Run GPU step (need to borrow gpu here)
                 let pressure_iters = self.sim.pressure_iterations as u32;
                 if let (Some(gpu_flip), Some(gpu)) = (&self.gpu_flip, &self.gpu) {
+                    let sdf = self.sim.grid.sdf.as_slice();
+                    let positions = &mut self.positions;
+                    let velocities = &mut self.velocities;
+                    let c_matrices = &mut self.c_matrices;
+                    let cell_types = &self.cell_types;
                     gpu_flip.step(
                         &gpu.device,
                         &gpu.queue,
-                        &mut self.positions,
-                        &mut self.velocities,
-                        &mut self.c_matrices,
-                        &self.cell_types,
+                        positions,
+                        velocities,
+                        c_matrices,
+                        cell_types,
+                        Some(sdf),
                         dt,
                         -9.8,
                         0.0,  // No flow acceleration for closed box
@@ -437,55 +445,24 @@ impl App {
                         p.velocity = self.velocities[idx];
                         p.affine_velocity = self.c_matrices[idx];
                     }
-                    // Advect from density-corrected position (positions[] was modified by step())
-                    p.position = self.positions[idx] + p.velocity * dt;
+                    // Position was advanced and collision-resolved on the GPU.
+                    p.position = self.positions[idx];
 
-                    // Enforce boundaries (sluice with slope, riffles, exit)
+                    // Exit zone (right wall, middle Z section, lower part)
                     let cell_size = CELL_SIZE;
-                    let min_x = cell_size * 1.01;
-                    let max_y = (GRID_HEIGHT as f32 - 1.01) * cell_size;
-                    let min_z = cell_size * 1.01;
-                    let max_z = (GRID_DEPTH as f32 - 1.01) * cell_size;
-
-                    // Calculate sloped floor height at this x position
                     let t = (p.position.x / cell_size) / (GRID_WIDTH as f32 - 1.0);
                     let t = t.clamp(0.0, 1.0);
                     let floor_height = 8.0 * (1.0 - t) + 2.0 * t; // 8 cells left, 2 cells right
-
-                    // Check if particle is on a riffle (riffles are 2 cells tall, spaced every 6 cells)
-                    let i = (p.position.x / cell_size) as usize;
-                    let riffle_start = 8;
-                    let riffle_end = GRID_WIDTH - 4;
-                    let is_on_riffle = i >= riffle_start && i < riffle_end &&
-                        (i - riffle_start) % 6 < 2;
-                    let riffle_add = if is_on_riffle { 2.0 } else { 0.0 };
-
-                    let min_y = (floor_height + riffle_add + 0.51) * cell_size;
-
-                    // Exit zone (right wall, middle Z section, lower part)
                     let exit_start_z = GRID_DEPTH as f32 * cell_size / 4.0;
                     let exit_end_z = GRID_DEPTH as f32 * cell_size * 3.0 / 4.0;
                     let exit_max_y = (floor_height + 6.0) * cell_size;  // Exit is 6 cells tall
                     let is_in_exit_zone = p.position.z >= exit_start_z && p.position.z < exit_end_z
                         && p.position.y < exit_max_y;
 
-                    // Handle X boundary - let particles exit through the exit
-                    if p.position.x < min_x { p.position.x = min_x; p.velocity.x = 0.0; }
-                    if p.position.x >= (GRID_WIDTH as f32 - 0.5) * cell_size {
-                        if is_in_exit_zone {
-                            // Mark for removal by moving far outside
-                            p.position.x = 1000.0;
-                        } else {
-                            // Bounce off wall
-                            p.position.x = (GRID_WIDTH as f32 - 1.01) * cell_size;
-                            p.velocity.x = 0.0;
-                        }
+                    if p.position.x >= (GRID_WIDTH as f32 - 0.5) * cell_size && is_in_exit_zone {
+                        // Mark for removal by moving far outside
+                        p.position.x = 1000.0;
                     }
-
-                    if p.position.y < min_y { p.position.y = min_y; p.velocity.y = 0.0; }
-                    if p.position.y > max_y { p.position.y = max_y; p.velocity.y = 0.0; }
-                    if p.position.z < min_z { p.position.z = min_z; p.velocity.z = 0.0; }
-                    if p.position.z > max_z { p.position.z = max_z; p.velocity.z = 0.0; }
                 }
 
                 // Remove particles that exited and count them
