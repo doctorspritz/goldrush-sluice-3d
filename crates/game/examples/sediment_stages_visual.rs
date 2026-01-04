@@ -66,6 +66,10 @@ struct App {
     mouse_pos: (f32, f32),
     /// Mouse position in simulation coordinates
     mouse_sim_pos: Vec2,
+    /// Left mouse button held
+    mouse_left_held: bool,
+    /// Right mouse button held
+    mouse_right_held: bool,
 }
 
 impl App {
@@ -108,6 +112,8 @@ impl App {
             material_mode: MaterialMode::Mixed, // Default to original behavior
             mouse_pos: (0.0, 0.0),
             mouse_sim_pos: Vec2::ZERO,
+            mouse_left_held: false,
+            mouse_right_held: false,
         }
     }
 
@@ -140,8 +146,8 @@ impl App {
         }
     }
 
-    /// Spawn particles at the current mouse cursor position
-    fn spawn_at_cursor(&mut self) {
+    /// Spawn particles at the current mouse cursor position (silent, for held mouse)
+    fn spawn_at_cursor_silent(&mut self) {
         let material = match self.material_mode {
             MaterialMode::Sand => ParticleMaterial::Sand,
             MaterialMode::Gold => ParticleMaterial::Gold,
@@ -158,20 +164,14 @@ impl App {
                 self.sim.particles.list.push(Particle::new(pos, Vec2::ZERO, material));
             }
         }
-        println!("Spawned 4 {:?} at ({:.1}, {:.1})", material, self.mouse_sim_pos.x, self.mouse_sim_pos.y);
     }
 
-    /// Remove particles near the current mouse cursor position
-    fn remove_near_cursor(&mut self) {
+    /// Remove particles near the current mouse cursor position (silent, for held mouse)
+    fn remove_near_cursor_silent(&mut self) {
         let radius = self.stage.cell_size * 3.0;
-        let before = self.sim.particles.list.len();
         self.sim.particles.list.retain(|p| {
             (p.position - self.mouse_sim_pos).length() > radius
         });
-        let removed = before - self.sim.particles.list.len();
-        if removed > 0 {
-            println!("Removed {} particles near ({:.1}, {:.1})", removed, self.mouse_sim_pos.x, self.mouse_sim_pos.y);
-        }
     }
 
     fn update_camera(&mut self, view_width: u32, view_height: u32) {
@@ -235,6 +235,16 @@ impl App {
     fn update(&mut self) {
         if self.paused {
             return;
+        }
+
+        // Mouse-held spawning/removing (every 3rd frame to avoid spam)
+        if self.frame % 3 == 0 {
+            if self.mouse_left_held {
+                self.spawn_at_cursor_silent();
+            }
+            if self.mouse_right_held {
+                self.remove_near_cursor_silent();
+            }
         }
 
         let is_dry_sand = self.stage.name == DRY_SAND_STAGE;
@@ -483,12 +493,11 @@ impl ApplicationHandler for App {
                 self.mouse_sim_pos = Vec2::new(sim_x, sim_y);
             }
             WindowEvent::MouseInput { button, state, .. } => {
-                if state == ElementState::Pressed {
-                    match button {
-                        MouseButton::Left => self.spawn_at_cursor(),
-                        MouseButton::Right => self.remove_near_cursor(),
-                        _ => {}
-                    }
+                let pressed = state == ElementState::Pressed;
+                match button {
+                    MouseButton::Left => self.mouse_left_held = pressed,
+                    MouseButton::Right => self.mouse_right_held = pressed,
+                    _ => {}
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
