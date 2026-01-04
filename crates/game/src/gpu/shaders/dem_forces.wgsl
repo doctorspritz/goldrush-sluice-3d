@@ -130,7 +130,9 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     // Using atomic load since buffer uses atomic<u32>
     // States: 0 = dynamic, 1 = static (frozen), 2 = marked for wake
     let my_static_state = atomicLoad(&static_states[idx]);
-    let was_static = my_static_state == 1u;
+    // For cascade wake: state==2 means we're ABOUT to wake from static,
+    // so we should also trigger cascade propagation
+    let was_static = my_static_state == 1u || my_static_state == 2u;
     let marked_for_wake = my_static_state == 2u;
 
     // Track maximum impact force for wake threshold check
@@ -488,21 +490,79 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     // 2. impact_correction: Significant push from non-stationary neighbor
     // 3. should_wake: Fast neighbor detected (may be racy but kept as backup)
     if (was_static) {
-        // Check if a dynamic particle marked us for wake
-        let current_state = atomicLoad(&static_states[idx]);
-        let marked_for_wake = current_state == 2u;
+        // NOTE: Do NOT re-read the state here! We already cleared it at line 148 if it was 2.
+        // Use the original marked_for_wake from line 136 which was captured BEFORE we cleared it.
 
         // Also check impact_correction (from non-stationary neighbors)
         let impact_magnitude = length(impact_correction);
         let wake_correction_threshold = radius * 0.15;
         let significant_push = impact_contact_count > 0u && impact_magnitude > wake_correction_threshold;
 
+        // Use marked_for_wake from line 136 (original value before we cleared state)
         let should_wake_up = marked_for_wake || significant_push || should_wake;
 
         if (should_wake_up) {
             // WAKE UP - become dynamic
             atomicStore(&static_states[idx], 0u);
             sleep_counter = 0u;
+
+            // Level 6: WAKE CASCADE - mark static neighbors ABOVE for wake
+            // When support is removed (I wake), particles above me that relied
+            // on me should also wake to trigger cascade collapse.
+            // In screen coords: y increases downward, so ABOVE = smaller y
+            // normal = (pos - pos_j) / dist: if j is above, diff.y > 0, normal.y > 0
+            //
+            // IMPORTANT: Use OLD position for grid lookup, not updated pos!
+            // After gravity, we may have moved to a different cell than our neighbors.
+            let cascade_gi = i32(old_pos.x / params.cell_size);
+            let cascade_gj = i32(old_pos.y / params.cell_size);
+            for (var dj = -1; dj <= 1; dj++) {
+                for (var di = -1; di <= 1; di++) {
+                    let ni = cascade_gi + di;
+                    let nj = cascade_gj + dj;
+
+                    if (ni < 0 || ni >= grid_w || nj < 0 || nj >= grid_h) {
+                        continue;
+                    }
+
+                    let bin_idx = u32(nj * grid_w + ni);
+                    let bin_start = bin_offsets[bin_idx];
+                    let bin_end = bin_offsets[bin_idx + 1u];
+
+                    for (var k = bin_start; k < bin_end; k++) {
+                        let j_idx = sorted_indices[k];
+                        if (j_idx == idx) {
+                            continue;
+                        }
+
+                        let pos_j = positions[j_idx];
+                        let radius_j = radii[j_idx];
+                        // Use OLD position for contact check - we want to know who was
+                        // in contact with us at the START of the frame
+                        let diff = old_pos - pos_j;
+                        let dist_sq = dot(diff, diff);
+                        let contact_dist = radius + radius_j;
+
+                        // Check if in contact (use slightly larger threshold for cascade)
+                        let cascade_threshold = contact_dist * 1.2;  // 20% margin
+                        if (dist_sq < cascade_threshold * cascade_threshold && dist_sq > 0.0001) {
+                            let dist = sqrt(dist_sq);
+                            let normal = diff / dist;
+
+                            // j is ABOVE me if normal.y > 0.3
+                            // (in screen coords, smaller y = higher up, so diff.y > 0 when j is above)
+                            if (normal.y > 0.3) {
+                                let j_state = atomicLoad(&static_states[j_idx]);
+                                if (j_state == 1u) {
+                                    // j is static and above me - mark for wake cascade
+                                    atomicMax(&static_states[j_idx], 2u);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Continue to write back pos and vel with corrections applied
         } else {
             // No significant impact - STAY FROZEN

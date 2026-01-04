@@ -976,6 +976,193 @@ fn test_impact_wakes_pile() {
     );
 }
 
+/// Test 9: Support Removal Causes Cascade Wake
+///
+/// When support is removed from under a pile (a particle at the bottom wakes),
+/// particles above it that were relying on it for support should also wake.
+/// This creates a cascade effect - the pile collapses when support is removed.
+///
+/// This tests:
+/// - Wake propagation from supporting particles to supported particles
+/// - Cascade wake travels upward through pile
+/// - Pile resettles after cascade
+#[test]
+fn test_support_removal_cascade() {
+    let result = pollster::block_on(async {
+        let Some(gpu) = create_test_gpu().await else {
+            println!("SKIP: No GPU adapter available");
+            return None;
+        };
+
+        let mut sim = FlipSimulation::new(WIDTH, HEIGHT, CELL_SIZE);
+        build_box(&mut sim);
+        let mut dem =
+            GpuDemSolver::new_headless(&gpu.device, &gpu.queue, WIDTH as u32, HEIGHT as u32, 1000);
+
+        // Create a vertical stack of particles (column)
+        // Bottom particle will be woken, cascade should travel up
+        let stack_x = 80.0 * CELL_SIZE;
+        let floor_y = (HEIGHT as f32 - 4.0) * CELL_SIZE;
+        // Sand: typical_diameter=0.8, radius=0.8*0.35*CELL_SIZE=0.28 * CELL_SIZE = 0.56 pixels
+        // contact_dist = 2*radius = 1.12 pixels
+        // Use spacing < contact_dist so particles touch
+        let particle_radius = 0.8 * 0.35 * CELL_SIZE;  // 0.56 pixels
+        let spacing = particle_radius * 1.8;  // ~1.0 pixels, less than 1.12 contact_dist
+
+        // Create a 5-particle vertical stack - placed at KNOWN positions
+        // Don't let them settle, just force positions and static state
+        let num_in_stack = 5;
+        for i in 0..num_in_stack {
+            // Stack from floor upward (increasing i = higher up = smaller y in screen coords)
+            // Particle 0 is at the bottom, on the floor
+            let y = floor_y - 0.5 * particle_radius - (i as f32) * spacing;
+            sim.particles.list.push(Particle::new(
+                Vec2::new(stack_x, y),
+                Vec2::ZERO,
+                ParticleMaterial::Sand,
+            ));
+        }
+
+        // Print positions for debugging
+        println!("  Particle positions:");
+        for (i, p) in sim.particles.iter().enumerate().take(num_in_stack) {
+            println!("    Particle {}: y={:.2}", i, p.position.y);
+        }
+        println!("  Particle radius: {:.2}, contact_dist: {:.2}, spacing: {:.2}",
+                 particle_radius, particle_radius * 2.0, spacing);
+
+        // FORCE all particles to static - NO settling phase
+        // This isolates the cascade test from settling logic
+        let forced_static: Vec<u32> = vec![1; num_in_stack];
+        dem.upload_static_states_headless(&gpu.queue, &forced_static);
+
+        // Verify all are static
+        let static_before = dem.download_static_states_headless(&gpu.device, &gpu.queue, num_in_stack);
+        let count_before = static_before.iter().filter(|&&s| s == 1).count();
+        println!("  Stack: {} particles, all static: {}", num_in_stack, count_before == num_in_stack);
+
+        // Record positions before
+        let positions_before: Vec<Vec2> = sim.particles.iter().map(|p| p.position).collect();
+
+        // Wake the BOTTOM particle (index 0 = closest to floor)
+        // Use state=2 (marked_for_wake) to trigger wake in next frame
+        let mut states = static_before.clone();
+        states[0] = 2;  // Mark bottom particle for wake
+        dem.upload_static_states_headless(&gpu.queue, &states);
+
+        println!("  Marked bottom particle (idx 0) for wake");
+
+        // Run 1 frame to process the wake
+        sim.grid.compute_sdf();
+        dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+        dem.execute_headless(
+            &gpu.device,
+            &gpu.queue,
+            &mut sim.particles,
+            CELL_SIZE,
+            DT,
+            GRAVITY,
+            -1.0,
+        );
+
+        // Check how many are now dynamic and show all states
+        let static_after_1frame = dem.download_static_states_headless(&gpu.device, &gpu.queue, num_in_stack);
+        println!("  States after frame 1: {:?}", static_after_1frame);
+        let dynamic_after_1 = static_after_1frame.iter().filter(|&&s| s != 1).count();
+        println!("  After 1 frame: {} particles are dynamic", dynamic_after_1);
+
+        // Run a few more frames to let cascade propagate, print states each frame
+        for frame in 0..10 {
+            sim.grid.compute_sdf();
+            dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+            dem.execute_headless(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.particles,
+                CELL_SIZE,
+                DT,
+                GRAVITY,
+                -1.0,
+            );
+            let states = dem.download_static_states_headless(&gpu.device, &gpu.queue, num_in_stack);
+            if frame < 3 {
+                println!("  Frame {}: states={:?}", frame + 2, states);
+                println!("    Positions: {:?}", sim.particles.iter().take(num_in_stack)
+                    .map(|p| format!("({:.1},{:.1})", p.position.x, p.position.y))
+                    .collect::<Vec<_>>());
+            }
+        }
+
+        let static_after_cascade = dem.download_static_states_headless(&gpu.device, &gpu.queue, num_in_stack);
+        let dynamic_after_cascade = static_after_cascade.iter().filter(|&&s| s != 1).count();
+        println!("  After cascade (10 frames): {} particles are dynamic", dynamic_after_cascade);
+
+        // Check if positions changed (particles should have fallen/moved)
+        let positions_after: Vec<Vec2> = sim.particles.iter().map(|p| p.position).collect();
+        let mut moved_count = 0;
+        for i in 0..num_in_stack {
+            let delta = (positions_after[i] - positions_before[i]).length();
+            if delta > 0.1 {
+                moved_count += 1;
+            }
+        }
+        println!("  Particles that moved: {}/{}", moved_count, num_in_stack);
+
+        // Run 200 more frames to let pile resettle
+        for _ in 0..200 {
+            sim.grid.compute_sdf();
+            dem.upload_sdf_headless(&gpu.device, &gpu.queue, &sim.grid.sdf);
+            dem.execute_headless(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.particles,
+                CELL_SIZE,
+                DT,
+                GRAVITY,
+                -1.0,
+            );
+        }
+
+        let static_final = dem.download_static_states_headless(&gpu.device, &gpu.queue, num_in_stack);
+        let static_count_final = static_final.iter().filter(|&&s| s == 1).count();
+        println!("  After resettle: {}/{} static", static_count_final, num_in_stack);
+
+        Some((count_before, dynamic_after_cascade, moved_count, static_count_final))
+    });
+
+    let Some((before, cascade_woke, moved, after)) = result else {
+        return;
+    };
+
+    println!("=== Support Removal Cascade Test ===");
+    println!("  Static before: {}", before);
+    println!("  Woke by cascade: {}", cascade_woke);
+    println!("  Particles moved: {}", moved);
+    println!("  Static after resettle: {}", after);
+
+    // The cascade should wake MORE than just the bottom particle
+    // In a 5-high stack, we expect at least 2-3 to wake (bottom + those immediately above)
+    assert!(
+        cascade_woke >= 2,
+        "Cascade didn't propagate! Only {} particles woke, expected at least 2",
+        cascade_woke
+    );
+
+    // Particles should have moved due to the cascade
+    assert!(
+        moved >= 2,
+        "Particles didn't move! {} moved, expected at least 2",
+        moved
+    );
+
+    // Pile should eventually resettle
+    assert!(
+        after >= 3,
+        "Pile didn't resettle! Only {}/5 static after 200 frames",
+        after
+    );
+}
+
 /// DIAGNOSTIC TEST: Level 4 Visual Verification Reference
 ///
 /// This test prints detailed step-by-step output showing EXACTLY what
