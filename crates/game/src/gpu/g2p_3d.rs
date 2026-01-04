@@ -35,8 +35,8 @@ pub struct GpuG2p3D {
     height: u32,
     depth: u32,
 
-    // Particle buffers
-    positions_buffer: wgpu::Buffer,
+    // Particle buffers (positions public for density projection)
+    pub positions_buffer: wgpu::Buffer,
     velocities_buffer: wgpu::Buffer,
     // C matrix columns (output)
     c_col0_buffer: wgpu::Buffer,

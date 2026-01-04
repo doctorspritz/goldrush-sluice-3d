@@ -27,6 +27,9 @@ const CELL_SIZE: f32 = 0.016;   // Fine enough for vortices (~5 cells per riffle
 const MAX_PARTICLES: usize = 800000;  // More particles for finer grid
 const MAX_SOLIDS: usize = 100000;  // More solid cells with finer grid
 
+// Flow acceleration applied ON GRID before pressure solve (not after G2P!)
+const FLOW_ACCEL: f32 = 3.0;  // m/s² - downstream acceleration for sluice slope
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Vertex {
@@ -482,12 +485,13 @@ impl App {
                         gpu_flip.step(
                             &gpu.device,
                             &gpu.queue,
-                            &self.positions,
+                            &mut self.positions,
                             &mut self.velocities,
                             &mut self.c_matrices,
                             &self.cell_types,
                             dt,
                             -9.8,
+                            FLOW_ACCEL,  // Apply flow acceleration ON GRID before pressure solve
                             self.sim.pressure_iterations as u32,
                         );
 
@@ -509,8 +513,8 @@ impl App {
                                 p.velocity.y += settling_vel * dt;
                             }
 
-                            // Advect particle
-                            p.position += p.velocity * dt;
+                            // Advect from density-corrected position (positions[] was modified by step())
+                            p.position = self.positions[idx] + p.velocity * dt;
 
                             // Domain boundary handling (same as CPU path)
                             let min = CELL_SIZE * 0.5;

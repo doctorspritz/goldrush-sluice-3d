@@ -150,12 +150,16 @@ pub fn spawn_inlet_water(sim: &mut FlipSimulation3D, config: &SluiceConfig, coun
     let width = sim.grid.width;
     let depth = sim.grid.depth;
 
-    // Inlet is at x=0, floor height is (width-1) * slope
-    let inlet_floor_y = ((width - 1) as f32 * config.slope) as usize;
+    // Calculate first riffle top height - water must spawn ABOVE this to overflow
+    let first_riffle_x = config.slick_plate_len;
+    let first_riffle_floor_y = ((width - 1 - first_riffle_x) as f32 * config.slope) as usize;
+    let first_riffle_top_y = first_riffle_floor_y + config.riffle_height;
 
-    // Spawn position: just past inlet wall, above floor
+    // Spawn water 2 cells ABOVE the first riffle top (not inlet floor!)
+    // OLD BUG: Used inlet_floor_y + 2, which put water AT riffle height (0.44m = 0.44m)
+    // FIX: Use first_riffle_top_y + 2, so water is ABOVE riffles and can overflow
     let spawn_x = 2.0 * dx;
-    let spawn_y_base = (inlet_floor_y as f32 + 2.0) * dx;
+    let spawn_y_base = (first_riffle_top_y as f32 + 2.0) * dx;
 
     // Number of emitters across the width (inside side walls)
     let num_emitters = (depth - 2).max(1); // depth-2 to stay inside walls
@@ -219,12 +223,14 @@ pub fn spawn_inlet_sediment(
     let width = sim.grid.width;
     let depth = sim.grid.depth;
 
-    // Inlet is at x=0, floor height is (width-1) * slope
-    let inlet_floor_y = ((width - 1) as f32 * config.slope) as usize;
+    // Calculate first riffle top height - sediment must spawn ABOVE this to overflow
+    let first_riffle_x = config.slick_plate_len;
+    let first_riffle_floor_y = ((width - 1 - first_riffle_x) as f32 * config.slope) as usize;
+    let first_riffle_top_y = first_riffle_floor_y + config.riffle_height;
 
-    // Spawn position: just past inlet wall, above floor
+    // Spawn sediment 2 cells ABOVE the first riffle top (not inlet floor!)
     let spawn_x = 2.0 * dx;
-    let spawn_y_base = (inlet_floor_y as f32 + 2.0) * dx;
+    let spawn_y_base = (first_riffle_top_y as f32 + 2.0) * dx;
 
     // Number of emitters across the width (inside side walls)
     let num_emitters = (depth - 2).max(1);

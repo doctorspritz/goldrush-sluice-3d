@@ -35,6 +35,7 @@ struct Params {
 @group(0) @binding(9) var<storage, read_write> v_weight: array<atomic<i32>>;
 @group(0) @binding(10) var<storage, read_write> w_sum: array<atomic<i32>>;
 @group(0) @binding(11) var<storage, read_write> w_weight: array<atomic<i32>>;
+@group(0) @binding(12) var<storage, read_write> particle_count: array<atomic<i32>>;
 
 // Quadratic B-spline kernel (1D)
 // Returns weight for grid node at distance x from particle
@@ -62,6 +63,11 @@ fn v_index(i: u32, j: u32, k: u32) -> u32 {
 
 fn w_index(i: u32, j: u32, k: u32) -> u32 {
     // W grid: width x height x (depth+1)
+    return k * params.width * params.height + j * params.width + i;
+}
+
+fn cell_index(i: u32, j: u32, k: u32) -> u32 {
+    // Cell grid: width x height x depth
     return k * params.width * params.height + j * params.width + i;
 }
 
@@ -258,4 +264,12 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
             }
         }
     }
+
+    // ========== Count particle in its home cell (for density projection) ==========
+    // This counts each particle exactly once in the cell that contains it
+    let home_i = u32(clamp(i32(pos.x / cell_size), 0, i32(width) - 1));
+    let home_j = u32(clamp(i32(pos.y / cell_size), 0, i32(height) - 1));
+    let home_k = u32(clamp(i32(pos.z / cell_size), 0, i32(depth) - 1));
+    let home_idx = cell_index(home_i, home_j, home_k);
+    atomicAdd(&particle_count[home_idx], 1);
 }

@@ -37,9 +37,9 @@ pub struct GpuPressure3D {
     height: u32,
     depth: u32,
 
-    // Pressure and divergence buffers
-    pressure_buffer: wgpu::Buffer,
-    divergence_buffer: wgpu::Buffer,
+    // Pressure and divergence buffers (public for density projection reuse)
+    pub pressure_buffer: wgpu::Buffer,
+    pub divergence_buffer: wgpu::Buffer,
     pub cell_type_buffer: wgpu::Buffer,  // Public so gravity shader can use it
 
     // Parameters
@@ -93,14 +93,14 @@ impl GpuPressure3D {
         let pressure_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Pressure 3D"),
             size: (cell_count * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
         let divergence_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Divergence 3D"),
             size: (cell_count * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -561,6 +561,48 @@ impl GpuPressure3D {
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
             let workgroups_w_z = (self.depth + 1 + 3) / 4;
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_w_z);
+        }
+    }
+
+    /// Clear the pressure buffer (needed before density projection)
+    pub fn clear_pressure(&self, queue: &wgpu::Queue) {
+        let cell_count = (self.width * self.height * self.depth) as usize;
+        queue.write_buffer(&self.pressure_buffer, 0, &vec![0u8; cell_count * 4]);
+    }
+
+    /// Encode just the pressure iterations (no divergence compute, no gradient apply)
+    ///
+    /// This is used for density projection where:
+    /// - divergence_buffer is pre-filled with density error
+    /// - We want the resulting pressure to apply to particle positions, not grid velocities
+    pub fn encode_iterations_only(&self, encoder: &mut wgpu::CommandEncoder, iterations: u32) {
+        let workgroups_x = (self.width + 7) / 8;
+        let workgroups_y = (self.height + 7) / 8;
+        let workgroups_z = (self.depth + 3) / 4;
+
+        // Red-Black Gauss-Seidel iterations
+        for _ in 0..iterations {
+            // Red pass
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Density Pressure Red 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.pressure_red_pipeline);
+                pass.set_bind_group(0, &self.pressure_bind_group, &[]);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+
+            // Black pass
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Density Pressure Black 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.pressure_black_pipeline);
+                pass.set_bind_group(0, &self.pressure_bind_group, &[]);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
         }
     }
 }

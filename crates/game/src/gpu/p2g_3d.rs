@@ -58,6 +58,9 @@ pub struct GpuP2g3D {
     pub grid_v_buffer: wgpu::Buffer,
     pub grid_w_buffer: wgpu::Buffer,
 
+    // Particle count per cell (atomic i32) - for density projection
+    pub particle_count_buffer: wgpu::Buffer,
+
     // Staging buffers for readback
     grid_u_staging: wgpu::Buffer,
     grid_v_staging: wgpu::Buffer,
@@ -206,6 +209,15 @@ impl GpuP2g3D {
             label: Some("P2G 3D Grid W"),
             size: (w_size * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Create particle count per cell buffer (for density projection)
+        let cell_count = (width * height * depth) as usize;
+        let particle_count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("P2G 3D Particle Count"),
+            size: (cell_count * std::mem::size_of::<i32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -375,6 +387,17 @@ impl GpuP2g3D {
                     },
                     count: None,
                 },
+                // 12: particle_count (read_write atomic) - for density projection
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -505,6 +528,7 @@ impl GpuP2g3D {
                 wgpu::BindGroupEntry { binding: 9, resource: v_weight_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 10, resource: w_sum_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 11, resource: w_weight_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 12, resource: particle_count_buffer.as_entire_binding() },
             ],
         });
 
@@ -593,6 +617,7 @@ impl GpuP2g3D {
             grid_u_buffer,
             grid_v_buffer,
             grid_w_buffer,
+            particle_count_buffer,
             grid_u_staging,
             grid_v_staging,
             grid_w_staging,
@@ -670,6 +695,7 @@ impl GpuP2g3D {
         let u_size = ((self.width + 1) * self.height * self.depth) as usize;
         let v_size = (self.width * (self.height + 1) * self.depth) as usize;
         let w_size = (self.width * self.height * (self.depth + 1)) as usize;
+        let cell_count = (self.width * self.height * self.depth) as usize;
 
         queue.write_buffer(&self.u_sum_buffer, 0, &vec![0u8; u_size * 4]);
         queue.write_buffer(&self.u_weight_buffer, 0, &vec![0u8; u_size * 4]);
@@ -677,6 +703,7 @@ impl GpuP2g3D {
         queue.write_buffer(&self.v_weight_buffer, 0, &vec![0u8; v_size * 4]);
         queue.write_buffer(&self.w_sum_buffer, 0, &vec![0u8; w_size * 4]);
         queue.write_buffer(&self.w_weight_buffer, 0, &vec![0u8; w_size * 4]);
+        queue.write_buffer(&self.particle_count_buffer, 0, &vec![0u8; cell_count * 4]);
 
         particle_count
     }
