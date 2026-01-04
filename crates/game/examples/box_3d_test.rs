@@ -418,34 +418,35 @@ impl App {
 
                 // Run GPU step (need to borrow gpu here)
                 let pressure_iters = self.sim.pressure_iterations as u32;
-                if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                if let (Some(gpu_flip), Some(gpu)) = (&self.gpu_flip, &self.gpu) {
                     let sdf = self.sim.grid.sdf.as_slice();
-
-                    // Upload particles to GPU (new API - particles are GPU-resident)
-                    gpu_flip.upload_particles(&gpu.queue, &self.positions, &self.velocities, &self.c_matrices);
-
-                    // Run step (no particle args in new API)
+                    let positions = &mut self.positions;
+                    let velocities = &mut self.velocities;
+                    let c_matrices = &mut self.c_matrices;
+                    let cell_types = &self.cell_types;
                     gpu_flip.step(
                         &gpu.device,
                         &gpu.queue,
-                        &self.cell_types,
+                        positions,
+                        velocities,
+                        c_matrices,
+                        cell_types,
                         Some(sdf),
                         dt,
                         -9.8,
                         0.0,  // No flow acceleration for closed box
                         pressure_iters,
                     );
-
-                    // Download positions back for rendering and CPU sync
-                    self.positions = gpu_flip.download_positions(&gpu.device, &gpu.queue);
                 }
 
-                // Sync positions back to CPU (velocities stay on GPU, use existing for stats)
+                // Sync back to CPU and advect
                 for (idx, p) in self.sim.particles.list.iter_mut().enumerate() {
-                    if idx < self.positions.len() {
-                        // Position was advanced and collision-resolved on the GPU.
-                        p.position = self.positions[idx];
+                    if idx < self.velocities.len() {
+                        p.velocity = self.velocities[idx];
+                        p.affine_velocity = self.c_matrices[idx];
                     }
+                    // Position was advanced and collision-resolved on the GPU.
+                    p.position = self.positions[idx];
 
                     // Exit zone (right wall, middle Z section, lower part)
                     let cell_size = CELL_SIZE;

@@ -5,9 +5,7 @@
 //! - Pressure solve (Red-Black Gauss-Seidel)
 //! - G2P (Grid-to-Particle) with FLIP/PIC blend
 //!
-//! The simulation keeps particle data on GPU and runs all heavy computation on GPU.
-
-use std::sync::Arc;
+//! The simulation maintains particle data on CPU but does all heavy computation on GPU.
 
 use super::g2p_3d::GpuG2p3D;
 use super::p2g_3d::GpuP2g3D;
@@ -105,14 +103,6 @@ pub struct GpuFlip3D {
     pub depth: u32,
     pub cell_size: f32,
 
-    // Particle buffers (GPU-resident)
-    positions_buffer: Arc<wgpu::Buffer>,
-    velocities_buffer: Arc<wgpu::Buffer>,
-    c_col0_buffer: Arc<wgpu::Buffer>,
-    c_col1_buffer: Arc<wgpu::Buffer>,
-    c_col2_buffer: Arc<wgpu::Buffer>,
-    particle_count: usize,
-
     // Sub-solvers
     p2g: GpuP2g3D,
     g2p: GpuG2p3D,
@@ -156,6 +146,7 @@ pub struct GpuFlip3D {
     density_correct_pipeline: wgpu::ComputePipeline,
     density_correct_bind_group: wgpu::BindGroup,
     density_correct_params_buffer: wgpu::Buffer,
+    position_delta_buffer: wgpu::Buffer,  // Per-particle delta (output)
 
     // SDF collision (advection + solid collision)
     sdf_collision_pipeline: wgpu::ComputePipeline,
@@ -177,58 +168,8 @@ impl GpuFlip3D {
         cell_size: f32,
         max_particles: usize,
     ) -> Self {
-        // Create shared particle buffers (vec3 padded to vec4)
-        let positions_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("FLIP 3D Positions"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::VERTEX,
-            mapped_at_creation: false,
-        }));
-
-        let velocities_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("FLIP 3D Velocities"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }));
-
-        let c_col0_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("FLIP 3D C Col0"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }));
-
-        let c_col1_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("FLIP 3D C Col1"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }));
-
-        let c_col2_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("FLIP 3D C Col2"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }));
-
         // Create P2G solver (owns the grid velocity buffers)
-        let p2g = GpuP2g3D::new(
-            device,
-            width,
-            height,
-            depth,
-            max_particles,
-            Arc::clone(&positions_buffer),
-            Arc::clone(&velocities_buffer),
-            Arc::clone(&c_col0_buffer),
-            Arc::clone(&c_col1_buffer),
-            Arc::clone(&c_col2_buffer),
-        );
+        let p2g = GpuP2g3D::new(device, width, height, depth, max_particles);
 
         // Create grid velocity backup buffers for FLIP delta
         let u_size = ((width + 1) * height * depth) as usize;
@@ -274,11 +215,6 @@ impl GpuFlip3D {
             height,
             depth,
             max_particles,
-            Arc::clone(&positions_buffer),
-            Arc::clone(&velocities_buffer),
-            Arc::clone(&c_col0_buffer),
-            Arc::clone(&c_col1_buffer),
-            Arc::clone(&c_col2_buffer),
             &p2g.grid_u_buffer,
             &p2g.grid_v_buffer,
             &p2g.grid_w_buffer,
@@ -788,7 +724,15 @@ impl GpuFlip3D {
             mapped_at_creation: false,
         });
 
-        // Bindings: params, delta_x, delta_y, delta_z, cell_type, positions
+        // Per-particle position delta buffer (output)
+        let position_delta_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Position Delta 3D"),
+            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        // Bindings: params, delta_x, delta_y, delta_z, cell_type, positions, particle_delta
         let density_correct_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Density Correct 3D Bind Group Layout"),
             entries: &[
@@ -846,6 +790,16 @@ impl GpuFlip3D {
                     binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
@@ -864,7 +818,8 @@ impl GpuFlip3D {
                 wgpu::BindGroupEntry { binding: 2, resource: position_delta_y_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: position_delta_z_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: pressure.cell_type_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: positions_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: g2p.positions_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: position_delta_buffer.as_entire_binding() },
             ],
         });
 
@@ -954,8 +909,8 @@ impl GpuFlip3D {
             layout: &sdf_collision_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: sdf_collision_params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: positions_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: velocities_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: g2p.positions_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: g2p.velocities_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: sdf_buffer.as_entire_binding() },
             ],
         });
@@ -980,12 +935,6 @@ impl GpuFlip3D {
             height,
             depth,
             cell_size,
-            positions_buffer,
-            velocities_buffer,
-            c_col0_buffer,
-            c_col1_buffer,
-            c_col2_buffer,
-            particle_count: 0,
             p2g,
             g2p,
             pressure,
@@ -1015,6 +964,7 @@ impl GpuFlip3D {
             density_correct_pipeline,
             density_correct_bind_group,
             density_correct_params_buffer,
+            position_delta_buffer,
             sdf_collision_pipeline,
             sdf_collision_bind_group,
             sdf_collision_params_buffer,
@@ -1042,6 +992,9 @@ impl GpuFlip3D {
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        positions: &mut [glam::Vec3],  // Now mutable for density projection position correction
+        velocities: &mut [glam::Vec3],
+        c_matrices: &mut [glam::Mat3],
         cell_types: &[u32],
         sdf: Option<&[f32]>,
         dt: f32,
@@ -1049,7 +1002,7 @@ impl GpuFlip3D {
         flow_accel: f32,
         pressure_iterations: u32,
     ) {
-        let particle_count = self.particle_count.min(self.max_particles);
+        let particle_count = positions.len().min(self.max_particles);
         if particle_count == 0 {
             return;
         }
@@ -1067,7 +1020,13 @@ impl GpuFlip3D {
         queue.write_buffer(&self.bc_params_buffer, 0, bytemuck::bytes_of(&bc_params));
 
         // 1. Upload particles and run P2G
-        let count = self.p2g.upload_particles(queue, particle_count, self.cell_size);
+        let count = self.p2g.upload_particles(
+            queue,
+            positions,
+            velocities,
+            c_matrices,
+            self.cell_size,
+        );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D Step Encoder"),
@@ -1196,7 +1155,14 @@ impl GpuFlip3D {
         queue.submit(std::iter::once(encoder.finish()));
 
         // 6. Run G2P using grid buffers already on GPU
-        let g2p_count = self.g2p.upload_particles(queue, particle_count, self.cell_size, dt);
+        let g2p_count = self.g2p.upload_particles(
+            queue,
+            positions,
+            velocities,
+            c_matrices,
+            self.cell_size,
+            dt,
+        );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D G2P Encoder"),
@@ -1316,7 +1282,18 @@ impl GpuFlip3D {
 
         queue.submit(std::iter::once(encoder.finish()));
 
-        if let Some(sdf) = sdf {
+        // 5. Download position deltas and apply to particle positions
+        let mut position_deltas = vec![[0.0f32; 4]; particle_count];
+        Self::read_buffer_vec4(device, queue, &self.position_delta_buffer, &mut position_deltas, particle_count);
+
+        // Apply position corrections to particles
+        for (i, delta) in position_deltas.iter().enumerate() {
+            positions[i].x += delta[0];
+            positions[i].y += delta[1];
+            positions[i].z += delta[2];
+        }
+
+        let run_sdf_collision = if let Some(sdf) = sdf {
             let expected_sdf_len = (self.width * self.height * self.depth) as usize;
             assert_eq!(
                 sdf.len(),
@@ -1326,6 +1303,13 @@ impl GpuFlip3D {
                 expected_sdf_len
             );
 
+            // Upload latest positions (after density correction) and SDF
+            let positions_padded: Vec<[f32; 4]> = positions
+                .iter()
+                .take(particle_count)
+                .map(|p| [p.x, p.y, p.z, 0.0])
+                .collect();
+            queue.write_buffer(&self.g2p.positions_buffer, 0, bytemuck::cast_slice(&positions_padded));
             queue.write_buffer(&self.sdf_buffer, 0, bytemuck::cast_slice(sdf));
 
             let sdf_params = SdfCollisionParams3D {
@@ -1354,85 +1338,21 @@ impl GpuFlip3D {
                 pass.dispatch_workgroups(workgroups, 1, 1);
             }
             queue.submit(std::iter::once(encoder.finish()));
+            true
+        } else {
+            false
+        };
+
+        // Download results (velocities + C matrix). Positions are optional.
+        self.g2p.download(device, queue, g2p_count, velocities, c_matrices);
+
+        if run_sdf_collision {
+            let mut gpu_positions = vec![[0.0f32; 4]; particle_count];
+            Self::read_buffer_vec4(device, queue, &self.g2p.positions_buffer, &mut gpu_positions, particle_count);
+            for (i, pos) in gpu_positions.iter().enumerate() {
+                positions[i] = glam::Vec3::new(pos[0], pos[1], pos[2]);
+            }
         }
-    }
-
-    /// Upload initial particle data to GPU (call once at start or when respawning).
-    pub fn upload_particles(
-        &mut self,
-        queue: &wgpu::Queue,
-        positions: &[glam::Vec3],
-        velocities: &[glam::Vec3],
-        c_matrices: &[glam::Mat3],
-    ) {
-        let particle_count = positions
-            .len()
-            .min(velocities.len())
-            .min(c_matrices.len())
-            .min(self.max_particles);
-        self.particle_count = particle_count;
-
-        let positions_padded: Vec<[f32; 4]> = positions
-            .iter()
-            .take(particle_count)
-            .map(|p| [p.x, p.y, p.z, 0.0])
-            .collect();
-
-        let velocities_padded: Vec<[f32; 4]> = velocities
-            .iter()
-            .take(particle_count)
-            .map(|v| [v.x, v.y, v.z, 0.0])
-            .collect();
-
-        let c_col0: Vec<[f32; 4]> = c_matrices
-            .iter()
-            .take(particle_count)
-            .map(|c| [c.x_axis.x, c.x_axis.y, c.x_axis.z, 0.0])
-            .collect();
-
-        let c_col1: Vec<[f32; 4]> = c_matrices
-            .iter()
-            .take(particle_count)
-            .map(|c| [c.y_axis.x, c.y_axis.y, c.y_axis.z, 0.0])
-            .collect();
-
-        let c_col2: Vec<[f32; 4]> = c_matrices
-            .iter()
-            .take(particle_count)
-            .map(|c| [c.z_axis.x, c.z_axis.y, c.z_axis.z, 0.0])
-            .collect();
-
-        queue.write_buffer(self.positions_buffer.as_ref(), 0, bytemuck::cast_slice(&positions_padded));
-        queue.write_buffer(self.velocities_buffer.as_ref(), 0, bytemuck::cast_slice(&velocities_padded));
-        queue.write_buffer(self.c_col0_buffer.as_ref(), 0, bytemuck::cast_slice(&c_col0));
-        queue.write_buffer(self.c_col1_buffer.as_ref(), 0, bytemuck::cast_slice(&c_col1));
-        queue.write_buffer(self.c_col2_buffer.as_ref(), 0, bytemuck::cast_slice(&c_col2));
-    }
-
-    /// Get current particle count on GPU.
-    pub fn particle_count(&self) -> usize {
-        self.particle_count
-    }
-
-    /// Access the GPU positions buffer (for rendering).
-    pub fn positions_buffer(&self) -> &wgpu::Buffer {
-        self.positions_buffer.as_ref()
-    }
-
-    /// Read back particle positions (debug/export only).
-    pub fn download_positions(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<glam::Vec3> {
-        let count = self.particle_count.min(self.max_particles);
-        if count == 0 {
-            return Vec::new();
-        }
-
-        let mut gpu_positions = vec![[0.0f32; 4]; count];
-        Self::read_buffer_vec4(device, queue, self.positions_buffer.as_ref(), &mut gpu_positions, count);
-
-        gpu_positions
-            .into_iter()
-            .map(|pos| glam::Vec3::new(pos[0], pos[1], pos[2]))
-            .collect()
     }
 
     fn read_buffer_vec4(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer, output: &mut [[f32; 4]], count: usize) {
