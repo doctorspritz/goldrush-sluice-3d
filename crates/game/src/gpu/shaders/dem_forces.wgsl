@@ -237,12 +237,8 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                         continue;
                     }
 
-                    // Surface roughness: add small random perturbation to normal
-                    // This prevents perfect vertical stacking and enables angle of repose
-                    let roughness_seed = idx * 31u + j_idx * 17u + params.iteration;
-                    let roughness = hash_noise(roughness_seed) * 0.15;  // ~8 degree max deviation
-                    let perp = vec2(-normal.y, normal.x);
-                    normal = normalize(normal + perp * roughness);
+                    // NOTE: Surface roughness hack REMOVED in Level 5
+                    // Angle of repose now comes from proper Coulomb friction: tan(θ) = μ
 
                     // Mass-weighted separation: heavy particles move less
                     let density_i = DENSITIES[min(material, 5u)];
@@ -350,20 +346,30 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                         has_support_below = true;
                     }
 
-                    // Tangential friction - allows particles to SLIDE past each other
-                    // This is critical for angle of repose behavior
+                    // Coulomb friction: F_tangent <= μ × F_normal
+                    // This creates angle of repose: tan(θ) = μ
                     let tangent = vec2(-normal.y, normal.x);
                     let rel_vel = vel - vel_j;
                     let v_tangent = dot(rel_vel, tangent);
-                    let v_normal = dot(rel_vel, -normal);
 
-                    // Coulomb friction: tangential force <= mu * normal force
-                    // Only apply if there's relative tangential motion
+                    // Add tiny velocity perturbation to break perfect symmetry
+                    // This simulates natural micro-scale surface irregularities
+                    // Without this, perfectly aligned particles stack perfectly (unphysical)
+                    let noise_seed = idx * 31u + j_idx * 17u + params.iteration;
+                    let noise = hash_noise(noise_seed) * 0.3;  // Small perturbation
+                    let v_tangent_perturbed = v_tangent + noise;
+
+                    // For PBD: friction limits tangential velocity relative to normal overlap
                     let mu_ij = (mu + FRICTIONS[min(material_j, 5u)]) * 0.5;  // Average friction
-                    if (abs(v_tangent) > 0.1 && v_normal > 0.0) {
-                        let max_friction = mu_ij * v_normal;
-                        let friction_impulse = min(abs(v_tangent) * 0.5, max_friction);
-                        accumulated_vel_correction -= tangent * sign(v_tangent) * friction_impulse * my_fraction;
+
+                    // Scale factor: convert overlap to velocity-scale friction limit
+                    let friction_scale = 0.5;  // Tunable: higher = more friction
+                    let max_friction_vel = mu_ij * overlap * friction_scale;
+
+                    // Apply friction: reduce tangential velocity, clamped by Coulomb limit
+                    if (abs(v_tangent_perturbed) > 0.1) {
+                        let friction_vel = min(abs(v_tangent_perturbed) * 0.5, max_friction_vel) * my_fraction;
+                        accumulated_vel_correction -= tangent * sign(v_tangent_perturbed) * friction_vel;
                     }
 
                     // Also accumulate velocity correction for normal direction
@@ -410,11 +416,17 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
             vel += grad * v_into_floor;
         }
 
-        // Apply floor friction
+        // Apply floor Coulomb friction: F_tangent <= μ × F_normal
+        // For PBD: friction proportional to penetration (overlap with floor)
+        let friction_scale = 0.5;  // Match particle-particle friction scaling
+        let max_floor_friction = mu * penetration * friction_scale;
+
         let tangent = vec2(-grad.y, grad.x);
         let v_tangent = dot(vel, tangent);
-        let friction_force = min(abs(v_tangent), mu * abs(v_into_floor));
-        vel -= tangent * sign(v_tangent) * friction_force;
+        if (abs(v_tangent) > 0.1) {
+            let friction_vel = min(abs(v_tangent) * 0.5, max_floor_friction);
+            vel -= tangent * sign(v_tangent) * friction_vel;
+        }
     }
 
     // 6. Damp velocity for particles with contact
