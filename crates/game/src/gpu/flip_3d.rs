@@ -12,6 +12,7 @@ use super::p2g_3d::GpuP2g3D;
 use super::pressure_3d::GpuPressure3D;
 
 use bytemuck::{Pod, Zeroable};
+use std::sync::Arc;
 
 /// Gravity application parameters
 #[repr(C)]
@@ -153,6 +154,7 @@ pub struct GpuFlip3D {
     sdf_collision_bind_group: wgpu::BindGroup,
     sdf_collision_params_buffer: wgpu::Buffer,
     sdf_buffer: wgpu::Buffer,
+    sdf_uploaded: bool,
 
     // Maximum particles supported
     max_particles: usize,
@@ -168,8 +170,52 @@ impl GpuFlip3D {
         cell_size: f32,
         max_particles: usize,
     ) -> Self {
+        // Shared particle buffers for P2G/G2P
+        let particle_buffer_size = (max_particles * std::mem::size_of::<[f32; 4]>()) as u64;
+        let positions_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("FLIP 3D Positions"),
+            size: particle_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }));
+        let velocities_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("FLIP 3D Velocities"),
+            size: particle_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }));
+        let c_col0_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("FLIP 3D C Col0"),
+            size: particle_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }));
+        let c_col1_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("FLIP 3D C Col1"),
+            size: particle_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }));
+        let c_col2_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("FLIP 3D C Col2"),
+            size: particle_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }));
+
         // Create P2G solver (owns the grid velocity buffers)
-        let p2g = GpuP2g3D::new(device, width, height, depth, max_particles);
+        let p2g = GpuP2g3D::new(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            Arc::clone(&positions_buffer),
+            Arc::clone(&velocities_buffer),
+            Arc::clone(&c_col0_buffer),
+            Arc::clone(&c_col1_buffer),
+            Arc::clone(&c_col2_buffer),
+        );
 
         // Create grid velocity backup buffers for FLIP delta
         let u_size = ((width + 1) * height * depth) as usize;
@@ -215,6 +261,11 @@ impl GpuFlip3D {
             height,
             depth,
             max_particles,
+            Arc::clone(&positions_buffer),
+            Arc::clone(&velocities_buffer),
+            Arc::clone(&c_col0_buffer),
+            Arc::clone(&c_col1_buffer),
+            Arc::clone(&c_col2_buffer),
             &p2g.grid_u_buffer,
             &p2g.grid_v_buffer,
             &p2g.grid_w_buffer,
@@ -818,7 +869,7 @@ impl GpuFlip3D {
                 wgpu::BindGroupEntry { binding: 2, resource: position_delta_y_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: position_delta_z_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: pressure.cell_type_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: g2p.positions_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: g2p.positions_buffer.as_ref().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 6, resource: position_delta_buffer.as_entire_binding() },
             ],
         });
@@ -909,8 +960,8 @@ impl GpuFlip3D {
             layout: &sdf_collision_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: sdf_collision_params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: g2p.positions_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: g2p.velocities_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: g2p.positions_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: g2p.velocities_buffer.as_ref().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: sdf_buffer.as_entire_binding() },
             ],
         });
@@ -969,8 +1020,27 @@ impl GpuFlip3D {
             sdf_collision_bind_group,
             sdf_collision_params_buffer,
             sdf_buffer,
+            sdf_uploaded: false,
             max_particles,
         }
+    }
+
+    fn upload_sdf(&mut self, queue: &wgpu::Queue, sdf: &[f32]) {
+        if self.sdf_uploaded {
+            return;
+        }
+
+        let expected_sdf_len = (self.width * self.height * self.depth) as usize;
+        assert_eq!(
+            sdf.len(),
+            expected_sdf_len,
+            "SDF size mismatch: got {}, expected {}",
+            sdf.len(),
+            expected_sdf_len
+        );
+
+        queue.write_buffer(&self.sdf_buffer, 0, bytemuck::cast_slice(sdf));
+        self.sdf_uploaded = true;
     }
 
     /// Run one simulation step
@@ -989,7 +1059,7 @@ impl GpuFlip3D {
     /// * `flow_accel` - Downstream flow acceleration (m/s²). Set to 0.0 for closed box sims.
     ///                  For a sluice, use ~2-5 m/s² to drive water downstream.
     pub fn step(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         positions: &mut [glam::Vec3],  // Now mutable for density projection position correction
@@ -1155,14 +1225,7 @@ impl GpuFlip3D {
         queue.submit(std::iter::once(encoder.finish()));
 
         // 6. Run G2P using grid buffers already on GPU
-        let g2p_count = self.g2p.upload_particles(
-            queue,
-            positions,
-            velocities,
-            c_matrices,
-            self.cell_size,
-            dt,
-        );
+        let g2p_count = self.g2p.upload_params(queue, count, self.cell_size, dt);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D G2P Encoder"),
@@ -1294,23 +1357,17 @@ impl GpuFlip3D {
         }
 
         let run_sdf_collision = if let Some(sdf) = sdf {
-            let expected_sdf_len = (self.width * self.height * self.depth) as usize;
-            assert_eq!(
-                sdf.len(),
-                expected_sdf_len,
-                "SDF size mismatch: got {}, expected {}",
-                sdf.len(),
-                expected_sdf_len
-            );
+            if !self.sdf_uploaded {
+                self.upload_sdf(queue, sdf);
+            }
 
-            // Upload latest positions (after density correction) and SDF
+            // Upload latest positions (after density correction)
             let positions_padded: Vec<[f32; 4]> = positions
                 .iter()
                 .take(particle_count)
                 .map(|p| [p.x, p.y, p.z, 0.0])
                 .collect();
             queue.write_buffer(&self.g2p.positions_buffer, 0, bytemuck::cast_slice(&positions_padded));
-            queue.write_buffer(&self.sdf_buffer, 0, bytemuck::cast_slice(sdf));
 
             let sdf_params = SdfCollisionParams3D {
                 width: self.width,

@@ -14,6 +14,7 @@
 //! - W velocities: width x height x (depth+1)
 
 use bytemuck::{Pod, Zeroable};
+use std::sync::Arc;
 
 /// Fixed-point scale factor (must match shader)
 #[allow(dead_code)]
@@ -38,12 +39,12 @@ pub struct GpuP2g3D {
     depth: u32,
 
     // Particle buffers (uploaded each frame)
-    positions_buffer: wgpu::Buffer,
-    velocities_buffer: wgpu::Buffer,
+    positions_buffer: Arc<wgpu::Buffer>,
+    velocities_buffer: Arc<wgpu::Buffer>,
     // C matrix stored as 3 separate vec3 columns
-    c_col0_buffer: wgpu::Buffer,
-    c_col1_buffer: wgpu::Buffer,
-    c_col2_buffer: wgpu::Buffer,
+    c_col0_buffer: Arc<wgpu::Buffer>,
+    c_col1_buffer: Arc<wgpu::Buffer>,
+    c_col2_buffer: Arc<wgpu::Buffer>,
 
     // Grid accumulator buffers (atomic<i32>)
     u_sum_buffer: wgpu::Buffer,
@@ -94,6 +95,11 @@ impl GpuP2g3D {
         height: u32,
         depth: u32,
         max_particles: usize,
+        positions_buffer: Arc<wgpu::Buffer>,
+        velocities_buffer: Arc<wgpu::Buffer>,
+        c_col0_buffer: Arc<wgpu::Buffer>,
+        c_col1_buffer: Arc<wgpu::Buffer>,
+        c_col2_buffer: Arc<wgpu::Buffer>,
     ) -> Self {
         let u_size = ((width + 1) * height * depth) as usize;
         let v_size = (width * (height + 1) * depth) as usize;
@@ -108,43 +114,6 @@ impl GpuP2g3D {
         let divide_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("P2G 3D Divide Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/p2g_divide_3d.wgsl").into()),
-        });
-
-        // Create particle buffers
-        let positions_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("P2G 3D Positions"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64, // vec3 padded to vec4
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let velocities_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("P2G 3D Velocities"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // C matrix columns (3 x vec3, each padded to vec4)
-        let c_col0_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("P2G 3D C Col0"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let c_col1_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("P2G 3D C Col1"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let c_col2_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("P2G 3D C Col2"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
         });
 
         // Create grid accumulator buffers (atomic i32)
@@ -517,11 +486,11 @@ impl GpuP2g3D {
             layout: &scatter_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: positions_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: velocities_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: c_col0_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: c_col1_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: c_col2_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: positions_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: velocities_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: c_col0_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: c_col1_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: c_col2_buffer.as_ref().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 6, resource: u_sum_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 7, resource: u_weight_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 8, resource: v_sum_buffer.as_entire_binding() },

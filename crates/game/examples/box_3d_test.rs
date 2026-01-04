@@ -418,7 +418,7 @@ impl App {
 
                 // Run GPU step (need to borrow gpu here)
                 let pressure_iters = self.sim.pressure_iterations as u32;
-                if let (Some(gpu_flip), Some(gpu)) = (&self.gpu_flip, &self.gpu) {
+                if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
                     let sdf = self.sim.grid.sdf.as_slice();
                     let positions = &mut self.positions;
                     let velocities = &mut self.velocities;

@@ -385,7 +385,7 @@ impl App {
             let dt = 1.0 / 120.0;
             let substeps = 2;
 
-            if let Some(gpu_flip) = &self.gpu_flip {
+            if let Some(gpu_flip) = &mut self.gpu_flip {
                 for _ in 0..substeps {
                     let particle_count = self.sim.particles.list.len();
                     self.positions.clear();

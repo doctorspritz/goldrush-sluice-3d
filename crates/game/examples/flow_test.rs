@@ -160,7 +160,7 @@ fn main() {
             .expect("Failed to create GPU device")
     });
 
-    let gpu_flip = GpuFlip3D::new(
+    let mut gpu_flip = GpuFlip3D::new(
         &device,
         GRID_WIDTH as u32,
         GRID_HEIGHT as u32,
