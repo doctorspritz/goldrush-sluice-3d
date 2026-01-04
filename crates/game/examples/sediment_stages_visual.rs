@@ -306,6 +306,56 @@ impl App {
                                 MaterialMode::Mixed => "Mixed",
                             }
                         );
+
+                        // Density diagnostic: check particle spacing near floor
+                        let floor_y = (self.stage.height as f32 - 3.0) * self.stage.cell_size;
+                        let radius = 0.8 * 0.35 * self.stage.cell_size;  // Expected particle radius
+                        let ideal_spacing = radius * 2.0;  // Particles touching but not overlapping
+
+                        // Find particles near floor (within 10 cell heights)
+                        let floor_zone_height = 10.0 * self.stage.cell_size;
+                        let near_floor: Vec<&Particle> = self.sim.particles.iter()
+                            .filter(|p| p.position.y > floor_y - floor_zone_height)
+                            .collect();
+
+                        if near_floor.len() >= 2 {
+                            // Compute average nearest-neighbor distance
+                            let mut total_min_dist = 0.0;
+                            let mut count = 0;
+                            for (i, p1) in near_floor.iter().enumerate() {
+                                let mut min_dist = f32::MAX;
+                                for (j, p2) in near_floor.iter().enumerate() {
+                                    if i != j {
+                                        let dist = (p1.position - p2.position).length();
+                                        min_dist = min_dist.min(dist);
+                                    }
+                                }
+                                if min_dist < f32::MAX {
+                                    total_min_dist += min_dist;
+                                    count += 1;
+                                }
+                            }
+                            let avg_min_dist = if count > 0 { total_min_dist / count as f32 } else { 0.0 };
+                            let compression_ratio = avg_min_dist / ideal_spacing;
+
+                            // Count severely compressed particles (overlapping by >20%)
+                            let mut severely_compressed = 0;
+                            for (i, p1) in near_floor.iter().enumerate() {
+                                for (j, p2) in near_floor.iter().enumerate() {
+                                    if i < j {
+                                        let dist = (p1.position - p2.position).length();
+                                        if dist < ideal_spacing * 0.8 {
+                                            severely_compressed += 1;
+                                        }
+                                    }
+                                }
+                            }
+
+                            println!(
+                                "  FLOOR_DENSITY: near_floor={} avg_nn_dist={:.2} ideal={:.2} compression={:.0}% severely_compressed_pairs={}",
+                                near_floor.len(), avg_min_dist, ideal_spacing, compression_ratio * 100.0, severely_compressed
+                            );
+                        }
                     }
 
                     // Remove out-of-bounds particles

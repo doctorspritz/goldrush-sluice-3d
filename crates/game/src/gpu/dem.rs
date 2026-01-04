@@ -906,8 +906,9 @@ impl GpuDemSolver {
         // Phase 4: Compute DEM forces and integrate
         // Run multiple constraint iterations for pile stiffness:
         // - Iteration 0: Apply gravity + integrate + resolve collisions
-        // - Iterations 1-3: Resolve collisions only (propagates pile resistance)
-        const CONSTRAINT_ITERATIONS: u32 = 4;
+        // - Iterations 1-7: Resolve collisions only (propagates pile resistance)
+        // 8 iterations gives better overlap resolution for dense piles
+        const CONSTRAINT_ITERATIONS: u32 = 8;
         for iter in 0..CONSTRAINT_ITERATIONS {
             dem_params.iteration = iter;
             gpu.queue.write_buffer(&self.dem_params_buffer, 0, bytemuck::bytes_of(&dem_params));
@@ -1081,7 +1082,8 @@ impl GpuDemSolver {
         queue.submit(std::iter::once(encoder.finish()));
 
         // Phase 4: Compute DEM forces with multiple iterations
-        const CONSTRAINT_ITERATIONS: u32 = 4;
+        // 8 iterations gives better overlap resolution for dense piles
+        const CONSTRAINT_ITERATIONS: u32 = 8;
         for iter in 0..CONSTRAINT_ITERATIONS {
             dem_params.iteration = iter;
             queue.write_buffer(&self.dem_params_buffer, 0, bytemuck::bytes_of(&dem_params));

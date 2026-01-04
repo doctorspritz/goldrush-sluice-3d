@@ -312,14 +312,16 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
                     // Support propagation: check if neighbor BELOW us is settling
                     // In screen coords: j below us means j.y > our y, so diff.y < 0, so normal.y < 0
                     //
-                    // KEY FIX: Use CHAIN_SUPPORT_THRESHOLD (3) instead of SLEEP_THRESHOLD (10)
-                    // This allows support to propagate upward in 1-2 frames instead of ~50 frames.
-                    // Floor particles get +3 per frame, so they're eligible to provide support
-                    // after just 1 slow frame, allowing the entire pile to build sleep counters
-                    // in parallel rather than serially layer-by-layer.
+                    // Chain support: A particle below us provides support if it's:
+                    // 1. STATIC (state=1) - already settled and frozen, OR
+                    // 2. DYNAMIC (state=0) with high sleep counter - about to become static
+                    // NOTE: state=2 means MARKED_FOR_WAKE - DO NOT provide support!
+                    // (j_static_state and j_is_static already defined above at line 286-287)
                     let j_sleep = sleep_counters[j_idx];
+                    let j_is_settling = j_static_state == 0u && j_sleep >= CHAIN_SUPPORT_THRESHOLD;
                     let j_is_below = normal.y < -0.3;
-                    if (j_is_below && j_sleep >= CHAIN_SUPPORT_THRESHOLD) {
+                    let j_provides_support = j_is_static || j_is_settling;
+                    if (j_is_below && j_provides_support) {
                         supported_contacts += 1u;
                     }
 
@@ -432,10 +434,19 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     // 6. Damp velocity for particles with contact
-    // Use moderate damping - too strong kills lateral sliding needed for angle of repose
+    // Use moderate damping - only reduce for SEVERE compression to allow escape
+    let correction_magnitude = length(accumulated_correction);
+    // Only reduce damping for truly severe compression (>100% radius correction)
+    // This is rare and indicates particles need to push apart urgently
+    let is_severely_compressed = correction_magnitude > radius * 1.0;
+
     let has_contact = floor_contact || has_support_below;
     if (has_contact) {
-        vel *= 0.7;  // Moderate damping - allows sliding while dissipating energy
+        if (is_severely_compressed) {
+            vel *= 0.85;  // Slightly lighter damping for severe compression
+        } else {
+            vel *= 0.7;  // Normal damping - allows sliding while dissipating energy
+        }
     } else if (particle_contact_count > 2u) {
         vel *= 0.9;  // Light damping for particles with multiple contacts
     }
@@ -498,8 +509,13 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
         let wake_correction_threshold = radius * 0.15;
         let significant_push = impact_contact_count > 0u && impact_magnitude > wake_correction_threshold;
 
+        // CRITICAL: Also wake if we lost support!
+        // A static particle with no support (not touching floor, no supported neighbors below)
+        // must wake up to fall. This catches cases where support is removed without impact.
+        let lost_support = !floor_contact && supported_contacts == 0u;
+
         // Use marked_for_wake from line 136 (original value before we cleared state)
-        let should_wake_up = marked_for_wake || significant_push || should_wake;
+        let should_wake_up = marked_for_wake || significant_push || should_wake || lost_support;
 
         if (should_wake_up) {
             // WAKE UP - become dynamic
@@ -576,7 +592,11 @@ fn dem_forces(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Apply sleep: zero velocity when supported and counter high
     // Level 3: Also transition to STATIC state - will skip physics entirely next frame
-    if (sleep_counter >= SLEEP_THRESHOLD && truly_supported && !should_wake) {
+    // Only block static transition for SEVERE overlaps (>50% radius total correction)
+    // Normal PBD has small overlaps - that's expected and fine
+    let overlap_magnitude = length(accumulated_correction);
+    let severe_overlap = overlap_magnitude > radius * 0.5;  // Only block for severe compression
+    if (sleep_counter >= SLEEP_THRESHOLD && truly_supported && !should_wake && !severe_overlap) {
         vel = vec2(0.0, 0.0);
         atomicStore(&static_states[idx], 1u);  // Become STATIC
     }
