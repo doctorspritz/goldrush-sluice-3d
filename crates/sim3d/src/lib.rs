@@ -33,13 +33,11 @@ pub mod grid;
 pub mod kernels;
 pub mod particle;
 pub mod pressure;
-pub mod sluice;
 pub mod transfer;
 
 pub use glam::{Mat3, Vec3};
 pub use grid::{CellType, Grid3D};
 pub use particle::{Particle3D, Particles3D};
-pub use sluice::{create_sluice, spawn_inlet_sediment, spawn_inlet_water, SluiceConfig};
 
 use transfer::TransferBuffers;
 
