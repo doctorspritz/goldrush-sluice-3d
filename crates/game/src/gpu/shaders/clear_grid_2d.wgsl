@@ -24,6 +24,7 @@ fn clear(@builtin(global_invocation_id) id: vec3<u32>) {
         _ = atomicExchange(&v_sum[idx], 0);
         _ = atomicExchange(&v_weight[idx], 0);
     }
+    // Clear pressure each frame to prevent accumulation
     if (idx < params.p_len) {
         pressure_a[idx] = 0.0;
         pressure_b[idx] = 0.0;

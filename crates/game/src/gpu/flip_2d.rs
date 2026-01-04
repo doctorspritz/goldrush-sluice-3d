@@ -113,8 +113,8 @@ pub struct GpuFlip2D {
     grid_v_old_buffer: wgpu::Buffer,
 
     // Pressure buffers
-    _divergence_buffer: wgpu::Buffer,
-    _pressure_a_buffer: wgpu::Buffer,
+    divergence_buffer: wgpu::Buffer,
+    pressure_a_buffer: wgpu::Buffer,
     _pressure_b_buffer: wgpu::Buffer,
 
     // Parameter buffers
@@ -135,7 +135,9 @@ pub struct GpuFlip2D {
     divide_v_pipeline: wgpu::ComputePipeline,
     gravity_pipeline: wgpu::ComputePipeline,
     divergence_pipeline: wgpu::ComputePipeline,
-    pressure_pipeline: wgpu::ComputePipeline,
+    _pressure_pipeline: wgpu::ComputePipeline,  // Old Jacobi (unused)
+    pressure_red_pipeline: wgpu::ComputePipeline,  // RB-SOR red pass
+    pressure_black_pipeline: wgpu::ComputePipeline,  // RB-SOR black pass
     gradient_u_pipeline: wgpu::ComputePipeline,
     gradient_v_pipeline: wgpu::ComputePipeline,
     bc_u_pipeline: wgpu::ComputePipeline,
@@ -151,10 +153,11 @@ pub struct GpuFlip2D {
     divide_v_bind_group: wgpu::BindGroup,
     gravity_bind_group: wgpu::BindGroup,
     divergence_bind_group: wgpu::BindGroup,
-    pressure_bind_group_ab: wgpu::BindGroup,
-    pressure_bind_group_ba: wgpu::BindGroup,
+    _pressure_bind_group_ab: wgpu::BindGroup,  // Old Jacobi (unused)
+    _pressure_bind_group_ba: wgpu::BindGroup,  // Old Jacobi (unused)
+    pressure_rb_bind_group: wgpu::BindGroup,  // RB-SOR (in-place on pressure_a)
     gradient_bind_group_a: wgpu::BindGroup,
-    gradient_bind_group_b: wgpu::BindGroup,
+    _gradient_bind_group_b: wgpu::BindGroup,  // Unused now (always use pressure_a)
     bc_bind_group: wgpu::BindGroup,
     g2p_bind_group: wgpu::BindGroup,
     advect_bind_group: wgpu::BindGroup,
@@ -180,7 +183,7 @@ impl GpuFlip2D {
         let positions_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Particles Positions 2D"),
             size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let velocities_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -243,13 +246,13 @@ impl GpuFlip2D {
         let divergence_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Divergence 2D"),
             size: (p_len as usize * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let pressure_a_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Pressure A 2D"),
             size: (p_len as usize * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let pressure_b_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -394,6 +397,10 @@ impl GpuFlip2D {
         let pressure_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Pressure 2D Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/pressure_jacobi_2d.wgsl").into()),
+        });
+        let pressure_rb_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Pressure RB-SOR 2D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/pressure_rb_sor_2d.wgsl").into()),
         });
         let gradient_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Pressure Gradient 2D Shader"),
@@ -1020,6 +1027,85 @@ impl GpuFlip2D {
             cache: None,
         });
 
+        // RB-SOR pressure solver (much faster convergence)
+        let pressure_rb_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Pressure RB Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let pressure_rb_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Pressure RB Pipeline Layout"),
+                bind_group_layouts: &[&pressure_rb_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let pressure_red_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Pressure Red Pipeline"),
+            layout: Some(&pressure_rb_pipeline_layout),
+            module: &pressure_rb_shader,
+            entry_point: Some("solve_red"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let pressure_black_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Pressure Black Pipeline"),
+                layout: Some(&pressure_rb_pipeline_layout),
+                module: &pressure_rb_shader,
+                entry_point: Some("solve_black"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let pressure_rb_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Pressure RB Bind Group"),
+            layout: &pressure_rb_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: pressure_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: pressure_a_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: divergence_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
         let gradient_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Gradient Bind Group Layout"),
             entries: &[
@@ -1415,8 +1501,8 @@ impl GpuFlip2D {
             grid_v_buffer,
             grid_u_old_buffer,
             grid_v_old_buffer,
-            _divergence_buffer: divergence_buffer,
-            _pressure_a_buffer: pressure_a_buffer,
+            divergence_buffer,
+            pressure_a_buffer,
             _pressure_b_buffer: pressure_b_buffer,
             _clear_params_buffer: clear_params_buffer,
             p2g_params_buffer,
@@ -1433,7 +1519,9 @@ impl GpuFlip2D {
             divide_v_pipeline,
             gravity_pipeline,
             divergence_pipeline,
-            pressure_pipeline,
+            _pressure_pipeline: pressure_pipeline,
+            pressure_red_pipeline,
+            pressure_black_pipeline,
             gradient_u_pipeline,
             gradient_v_pipeline,
             bc_u_pipeline,
@@ -1447,10 +1535,11 @@ impl GpuFlip2D {
             divide_v_bind_group,
             gravity_bind_group,
             divergence_bind_group,
-            pressure_bind_group_ab,
-            pressure_bind_group_ba,
+            _pressure_bind_group_ab: pressure_bind_group_ab,
+            _pressure_bind_group_ba: pressure_bind_group_ba,
+            pressure_rb_bind_group,
             gradient_bind_group_a,
-            gradient_bind_group_b,
+            _gradient_bind_group_b: gradient_bind_group_b,
             bc_bind_group,
             g2p_bind_group,
             advect_bind_group,
@@ -1526,6 +1615,15 @@ impl GpuFlip2D {
         if self.particle_count == 0 {
             return;
         }
+
+        // Update P2G params with current particle count
+        let p2g_params = P2gParams {
+            cell_size: self.cell_size,
+            width: self.width,
+            height: self.height,
+            particle_count: self.particle_count,
+        };
+        queue.write_buffer(&self.p2g_params_buffer, 0, bytemuck::bytes_of(&p2g_params));
 
         let g2p_params = G2pParams {
             cell_size: self.cell_size,
@@ -1654,31 +1752,35 @@ impl GpuFlip2D {
             pass.dispatch_workgroups(wg_x, wg_y, 1);
         }
 
-        for iter in 0..pressure_iters {
-            let use_ab = iter % 2 == 0;
-            let bind_group = if use_ab {
-                &self.pressure_bind_group_ab
-            } else {
-                &self.pressure_bind_group_ba
-            };
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Pressure Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.pressure_pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
-            let wg_x = (self.width + 7) / 8;
-            let wg_y = (self.height + 7) / 8;
-            pass.dispatch_workgroups(wg_x, wg_y, 1);
+        // Red-Black SOR pressure solve (in-place on pressure_a)
+        let wg_x = (self.width + 7) / 8;
+        let wg_y = (self.height + 7) / 8;
+        for _ in 0..pressure_iters {
+            // Red pass (cells where (i+j) % 2 == 0)
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Pressure Red Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.pressure_red_pipeline);
+                pass.set_bind_group(0, &self.pressure_rb_bind_group, &[]);
+                pass.dispatch_workgroups(wg_x, wg_y, 1);
+            }
+            // Black pass (cells where (i+j) % 2 == 1)
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Pressure Black Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.pressure_black_pipeline);
+                pass.set_bind_group(0, &self.pressure_rb_bind_group, &[]);
+                pass.dispatch_workgroups(wg_x, wg_y, 1);
+            }
         }
 
         if pressure_iters > 0 {
-            let pressure_is_a = pressure_iters % 2 == 0;
-            let gradient_bind_group = if pressure_is_a {
-                &self.gradient_bind_group_a
-            } else {
-                &self.gradient_bind_group_b
-            };
+            // RB-SOR writes in-place to pressure_a
+            let gradient_bind_group = &self.gradient_bind_group_a;
 
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1748,5 +1850,288 @@ impl GpuFlip2D {
         }
 
         queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    pub fn read_positions(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<[f32; 2]> {
+        let size = (self.particle_count as usize) * std::mem::size_of::<[f32; 4]>();
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Position Staging"),
+            size: size as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Read Positions Encoder"),
+        });
+        encoder.copy_buffer_to_buffer(&self.positions_buffer, 0, &staging, 0, size as u64);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+
+        let data = slice.get_mapped_range();
+        let raw: &[[f32; 4]] = bytemuck::cast_slice(&data);
+        let result: Vec<[f32; 2]> = raw.iter().map(|p| [p[0], p[1]]).collect();
+        drop(data);
+        staging.unmap();
+        result
+    }
+
+    pub fn read_divergence(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<f32> {
+        let size = (self.p_len as usize) * std::mem::size_of::<f32>();
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Divergence Staging"),
+            size: size as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Read Divergence Encoder"),
+        });
+        encoder.copy_buffer_to_buffer(&self.divergence_buffer, 0, &staging, 0, size as u64);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+
+        let data = slice.get_mapped_range();
+        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        staging.unmap();
+        result
+    }
+
+    pub fn read_pressure(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<f32> {
+        let size = (self.p_len as usize) * std::mem::size_of::<f32>();
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pressure Staging"),
+            size: size as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Read Pressure Encoder"),
+        });
+        encoder.copy_buffer_to_buffer(&self.pressure_a_buffer, 0, &staging, 0, size as u64);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+
+        let data = slice.get_mapped_range();
+        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        staging.unmap();
+        result
+    }
+
+    /// Verify pressure solve: compute max|∇²p - div| on CPU
+    pub fn verify_pressure_solve(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> f32 {
+        // Read pressure and divergence
+        let p = self.read_pressure(device, queue);
+        let div = self.read_divergence(device, queue);
+
+        let dx2 = self.cell_size * self.cell_size;
+        let mut max_residual = 0.0f32;
+
+        for j in 0..self.height {
+            for i in 0..self.width {
+                let idx = (j * self.width + i) as usize;
+                let p_center = p[idx];
+
+                // Compute Laplacian with boundary handling
+                let mut neighbor_sum = 0.0f32;
+                let mut neighbor_count = 0.0f32;
+
+                if i > 0 {
+                    neighbor_sum += p[(j * self.width + (i - 1)) as usize];
+                    neighbor_count += 1.0;
+                }
+                if i + 1 < self.width {
+                    neighbor_sum += p[(j * self.width + (i + 1)) as usize];
+                    neighbor_count += 1.0;
+                }
+                if j > 0 {
+                    neighbor_sum += p[((j - 1) * self.width + i) as usize];
+                    neighbor_count += 1.0;
+                }
+                if j + 1 < self.height {
+                    neighbor_sum += p[((j + 1) * self.width + i) as usize];
+                    neighbor_count += 1.0;
+                }
+
+                // Laplacian = (neighbor_sum - n*p_center) / dx²
+                let laplacian = (neighbor_sum - neighbor_count * p_center) / dx2;
+                let residual = (laplacian - div[idx]).abs();
+                max_residual = max_residual.max(residual);
+            }
+        }
+
+        max_residual
+    }
+
+    /// Compute post-correction divergence on CPU from current grid velocities
+    pub fn compute_residual(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> f32 {
+        // Read grid_u
+        let u_size = (self.u_len as usize) * std::mem::size_of::<f32>();
+        let u_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("U Staging"),
+            size: u_size as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Read grid_v
+        let v_size = (self.v_len as usize) * std::mem::size_of::<f32>();
+        let v_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("V Staging"),
+            size: v_size as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&self.grid_u_buffer, 0, &u_staging, 0, u_size as u64);
+        encoder.copy_buffer_to_buffer(&self.grid_v_buffer, 0, &v_staging, 0, v_size as u64);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // Map and read u
+        let u_slice = u_staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        u_slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+        let u_data = u_slice.get_mapped_range();
+        let grid_u: Vec<f32> = bytemuck::cast_slice(&u_data).to_vec();
+        drop(u_data);
+        u_staging.unmap();
+
+        // Map and read v
+        let v_slice = v_staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        v_slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+        let v_data = v_slice.get_mapped_range();
+        let grid_v: Vec<f32> = bytemuck::cast_slice(&v_data).to_vec();
+        drop(v_data);
+        v_staging.unmap();
+
+        // Compute divergence on CPU with boundary conditions
+        let inv_dx = 1.0 / self.cell_size;
+        let mut max_div = 0.0f32;
+
+        for j in 0..self.height {
+            for i in 0..self.width {
+                let u_idx = (j * (self.width + 1) + i) as usize;
+                let v_idx = (j * self.width + i) as usize;
+
+                let mut u_left = grid_u[u_idx];
+                let mut u_right = grid_u[u_idx + 1];
+                let mut v_bottom = grid_v[v_idx];
+                let mut v_top = grid_v[v_idx + self.width as usize];
+
+                // Apply solid boundary conditions (all 4 walls)
+                if i == 0 { u_left = 0.0; }
+                if i == self.width - 1 { u_right = 0.0; }
+                if j == 0 { v_bottom = 0.0; }
+                if j == self.height - 1 { v_top = 0.0; }
+
+                let div = (u_right - u_left + v_top - v_bottom) * inv_dx;
+                max_div = max_div.max(div.abs());
+            }
+        }
+
+        max_div
+    }
+
+    /// Read particle velocities from GPU
+    pub fn read_velocities(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<[f32; 2]> {
+        let size = self.max_particles * std::mem::size_of::<[f32; 2]>();
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Velocities Staging"),
+            size: size as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Read Velocities Encoder"),
+        });
+        encoder.copy_buffer_to_buffer(&self.velocities_buffer, 0, &staging, 0, size as u64);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+
+        let data = slice.get_mapped_range();
+        let result: Vec<[f32; 2]> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        staging.unmap();
+
+        // Only return valid particles
+        result[..self.particle_count as usize].to_vec()
+    }
+
+    /// Spawn new particles (returns number actually spawned)
+    pub fn spawn_particles(
+        &mut self,
+        queue: &wgpu::Queue,
+        positions: &[[f32; 2]],
+        velocities: &[[f32; 2]],
+    ) -> usize {
+        let space_left = self.max_particles - self.particle_count as usize;
+        let to_spawn = positions.len().min(space_left);
+
+        if to_spawn == 0 {
+            return 0;
+        }
+
+        // Write positions as [x, y, 0, 0] at offset
+        let pos_data: Vec<[f32; 4]> = positions[..to_spawn]
+            .iter()
+            .map(|p| [p[0], p[1], 0.0, 0.0])
+            .collect();
+        let pos_offset = self.particle_count as usize * std::mem::size_of::<[f32; 4]>();
+        queue.write_buffer(&self.positions_buffer, pos_offset as u64, bytemuck::cast_slice(&pos_data));
+
+        // Write velocities at offset
+        let vel_offset = self.particle_count as usize * std::mem::size_of::<[f32; 2]>();
+        queue.write_buffer(&self.velocities_buffer, vel_offset as u64, bytemuck::cast_slice(&velocities[..to_spawn]));
+
+        self.particle_count += to_spawn as u32;
+        to_spawn
+    }
+
+    /// Get current particle count
+    pub fn particle_count(&self) -> usize {
+        self.particle_count as usize
     }
 }
