@@ -26,15 +26,13 @@ const GRID_HEIGHT: usize = 40;   // Taller for water depth
 const GRID_DEPTH: usize = 32;    // 2x deeper (was 16)
 const CELL_SIZE: f32 = 0.03;     // Smaller cells for detail
 const MAX_PARTICLES: usize = 200_000;  // 4x more particles
-const MAX_TRAIL_PARTICLES: usize = 4_000;
-const TRAIL_SCALE: u32 = 2;
-const TRAIL_DECAY: f32 = 0.92;
+const FLOW_PARTICLE_STRIDE: usize = 8; // Render every Nth particle for flow viz
+const MAX_FLOW_PARTICLES: usize = MAX_PARTICLES / FLOW_PARTICLE_STRIDE;
 const TARGET_FPS: f32 = 60.0;
 const PRESSURE_ITERS_MIN: u32 = 30;
 const PRESSURE_ITERS_MAX: u32 = 120;
 const PRESSURE_ITERS_STEP: u32 = 5;
 const MAX_SURFACE_VERTICES: usize = GRID_WIDTH * GRID_DEPTH * 6;
-const TRAIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -64,15 +62,6 @@ struct Uniforms {
     _pad: f32,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct TrailParams {
-    fade: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
-}
-
 struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
@@ -93,7 +82,7 @@ struct App {
     use_async_readback: bool,
     gpu_readback_pending: bool,
     render_heightfield: bool,
-    render_trails: bool,
+    render_flow_particles: bool,
     mouse_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
     last_fps_time: Instant,
@@ -103,7 +92,7 @@ struct App {
     particles_exited: u32,
     heightfield: Vec<f32>,
     surface_vertices: Vec<SurfaceVertex>,
-    trail_instances: Vec<ParticleInstance>,
+    flow_particles: Vec<ParticleInstance>,
 }
 
 struct GpuState {
@@ -119,20 +108,6 @@ struct GpuState {
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     surface_pipeline: wgpu::RenderPipeline,
-    trail_fade_pipeline: wgpu::RenderPipeline,
-    trail_comp_pipeline: wgpu::RenderPipeline,
-    trail_particle_pipeline: wgpu::RenderPipeline,
-    trail_params_fade: wgpu::Buffer,
-    trail_params_comp: wgpu::Buffer,
-    trail_bind_group_layout: wgpu::BindGroupLayout,
-    trail_sampler: wgpu::Sampler,
-    #[allow(dead_code)]
-    trail_textures: Vec<wgpu::Texture>,
-    trail_views: Vec<wgpu::TextureView>,
-    trail_bind_groups_fade: Vec<wgpu::BindGroup>,
-    trail_bind_groups_comp: Vec<wgpu::BindGroup>,
-    trail_index: usize,
-    trail_initialized: bool,
 }
 
 /// Create an industrial-scale sluice:
@@ -210,95 +185,6 @@ fn rand_float() -> f32 {
     }
 }
 
-fn create_trail_targets(
-    device: &wgpu::Device,
-    config: &wgpu::SurfaceConfiguration,
-    layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
-    params_fade: &wgpu::Buffer,
-    params_comp: &wgpu::Buffer,
-) -> (
-    Vec<wgpu::Texture>,
-    Vec<wgpu::TextureView>,
-    Vec<wgpu::BindGroup>,
-    Vec<wgpu::BindGroup>,
-) {
-    let width = (config.width / TRAIL_SCALE).max(1);
-    let height = (config.height / TRAIL_SCALE).max(1);
-    let size = wgpu::Extent3d {
-        width,
-        height,
-        depth_or_array_layers: 1,
-    };
-
-    let mut textures = Vec::with_capacity(2);
-    let mut views = Vec::with_capacity(2);
-    let mut bind_groups_fade = Vec::with_capacity(2);
-    let mut bind_groups_comp = Vec::with_capacity(2);
-
-    for idx in 0..2 {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(match idx {
-                0 => "Trail Texture A",
-                _ => "Trail Texture B",
-            }),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: TRAIL_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let bind_group_fade = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Trail Bind Group Fade"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params_fade.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-            ],
-        });
-
-        let bind_group_comp = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Trail Bind Group Composite"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params_comp.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-            ],
-        });
-
-        textures.push(texture);
-        views.push(view);
-        bind_groups_fade.push(bind_group_fade);
-        bind_groups_comp.push(bind_group_comp);
-    }
-
-    (textures, views, bind_groups_fade, bind_groups_comp)
-}
-
 impl App {
     fn new() -> Self {
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
@@ -313,7 +199,7 @@ impl App {
 
         println!("Solid cells: {}", solid_instances.len());
         println!("Max particles: {}", MAX_PARTICLES);
-        println!("Controls: SPACE=pause, R=reset, G=toggle GPU/CPU, E=toggle emitter, H=toggle heightfield, T=toggle trails, ESC=quit");
+        println!("Controls: SPACE=pause, R=reset, G=toggle GPU/CPU, E=toggle emitter, H=heightfield, F=flow particles, ESC=quit");
 
         Self {
             window: None,
@@ -335,7 +221,7 @@ impl App {
             use_async_readback: true,
             gpu_readback_pending: false,
             render_heightfield: true,
-            render_trails: true,
+            render_flow_particles: true,
             mouse_pressed: false,
             last_mouse_pos: None,
             last_fps_time: Instant::now(),
@@ -345,7 +231,7 @@ impl App {
             particles_exited: 0,
             heightfield: vec![f32::NEG_INFINITY; GRID_WIDTH * GRID_DEPTH],
             surface_vertices: Vec::with_capacity(MAX_SURFACE_VERTICES),
-            trail_instances: Vec::with_capacity(MAX_TRAIL_PARTICLES),
+            flow_particles: Vec::with_capacity(MAX_FLOW_PARTICLES),
         }
     }
 
@@ -457,10 +343,6 @@ impl App {
         self.sim = sim;
         self.pressure_iters_gpu = self.sim.pressure_iterations as u32;
         self.gpu_readback_pending = false;
-        if let Some(gpu) = &mut self.gpu {
-            gpu.trail_initialized = false;
-            gpu.trail_index = 0;
-        }
         self.frame = 0;
         self.emitter_enabled = true;
         self.particles_exited = 0;
@@ -538,8 +420,9 @@ impl App {
         self.surface_vertices.len()
     }
 
-    fn build_trail_instances(&mut self) -> usize {
-        self.trail_instances.clear();
+    /// Build sparse flow particles colored by velocity
+    fn build_flow_particles(&mut self) -> usize {
+        self.flow_particles.clear();
 
         let particles = &self.sim.particles.list;
         let total = particles.len();
@@ -547,20 +430,46 @@ impl App {
             return 0;
         }
 
-        let stride = (total / MAX_TRAIL_PARTICLES).max(1);
-        let mut idx = 0;
-        while idx < total {
-            let p = &particles[idx];
+        // Sample every Nth particle
+        for (i, p) in particles.iter().enumerate() {
+            if i % FLOW_PARTICLE_STRIDE != 0 {
+                continue;
+            }
+
             let speed = p.velocity.length();
-            let t = (speed / 3.0).min(1.0);
-            self.trail_instances.push(ParticleInstance {
+            // Color by speed: slow=dark blue, fast=bright cyan/white
+            let t = (speed / 2.5).min(1.0);
+            let color = [
+                0.1 + t * 0.9,      // R: dark -> bright
+                0.3 + t * 0.7,      // G: blue -> cyan
+                0.7 + t * 0.3,      // B: stays high
+                0.6 + t * 0.3,      // A: more visible when fast
+            ];
+
+            self.flow_particles.push(ParticleInstance {
                 position: [p.position.x, p.position.y, p.position.z],
-                color: [0.15 + t * 0.75, 0.8 - t * 0.4, 0.2 + t * 0.1, 0.9],
+                color,
             });
-            idx += stride;
         }
 
-        self.trail_instances.len()
+        self.flow_particles.len()
+    }
+
+    /// Build ALL particle instances for direct rendering (when heightfield is OFF)
+    fn build_all_particle_instances(&self) -> Vec<ParticleInstance> {
+        self.sim.particles.list.iter().map(|p| {
+            let speed = p.velocity.length();
+            let t = (speed / 2.5).min(1.0);
+            ParticleInstance {
+                position: [p.position.x, p.position.y, p.position.z],
+                color: [
+                    0.2 + t * 0.6,
+                    0.4 + t * 0.4,
+                    0.8,
+                    0.8,
+                ],
+            }
+        }).collect()
     }
 
     fn render(&mut self) {
@@ -741,60 +650,45 @@ impl App {
             );
         }
 
-        let mut instances: Vec<ParticleInstance> = Vec::new();
-        let mut instance_count = 0;
-        let mut using_trails = false;
-        let surface_vertex_count = if self.render_heightfield {
-            self.build_heightfield_vertices()
+        // Build geometry based on render mode
+        let (surface_vertex_count, flow_particle_count, all_instances) = if self.render_heightfield {
+            let svc = self.build_heightfield_vertices();
+            let fpc = if self.render_flow_particles {
+                self.build_flow_particles()
+            } else {
+                0
+            };
+            (svc, fpc, Vec::new())
         } else {
-            0
+            // Non-heightfield mode: draw all particles
+            (0, 0, self.build_all_particle_instances())
         };
-
-        if self.render_heightfield {
-            if self.render_trails {
-                instance_count = self.build_trail_instances();
-                using_trails = true;
-            }
-        } else {
-            instances = self
-                .sim
-                .particles
-                .list
-                .iter()
-                .map(|p| {
-                    let speed = p.velocity.length();
-                    let t = (speed / 3.0).min(1.0);
-                    ParticleInstance {
-                        position: [p.position.x, p.position.y, p.position.z],
-                        color: [0.2 + t * 0.6, 0.5 - t * 0.3, 0.9 - t * 0.4, 0.8],
-                    }
-                })
-                .collect();
-            instance_count = instances.len();
-        }
+        let instance_count = all_instances.len();
 
         let window = self.window.as_ref().unwrap().clone();
         let gpu = self.gpu.as_mut().unwrap();
 
-        if self.render_heightfield {
-            if surface_vertex_count > 0 {
-                gpu.queue.write_buffer(
-                    &gpu.surface_vertex_buffer,
-                    0,
-                    bytemuck::cast_slice(&self.surface_vertices),
-                );
-            }
+        // Upload buffers
+        if surface_vertex_count > 0 {
+            gpu.queue.write_buffer(
+                &gpu.surface_vertex_buffer,
+                0,
+                bytemuck::cast_slice(&self.surface_vertices),
+            );
+        }
+        if flow_particle_count > 0 {
+            gpu.queue.write_buffer(
+                &gpu.instance_buffer,
+                0,
+                bytemuck::cast_slice(&self.flow_particles),
+            );
         }
         if instance_count > 0 {
-            if using_trails {
-                gpu.queue.write_buffer(
-                    &gpu.instance_buffer,
-                    0,
-                    bytemuck::cast_slice(&self.trail_instances),
-                );
-            } else {
-                gpu.queue.write_buffer(&gpu.instance_buffer, 0, bytemuck::cast_slice(&instances));
-            }
+            gpu.queue.write_buffer(
+                &gpu.instance_buffer,
+                0,
+                bytemuck::cast_slice(&all_instances),
+            );
         }
 
         // Camera centered on the sluice
@@ -828,43 +722,6 @@ impl App {
             label: Some("Render Encoder"),
         });
 
-        if self.render_heightfield && self.render_trails {
-            let src_index = gpu.trail_index;
-            let dst_index = (gpu.trail_index + 1) % 2;
-            let trail_view = &gpu.trail_views[dst_index];
-            let mut trail_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Trail Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: trail_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            if gpu.trail_initialized {
-                trail_pass.set_pipeline(&gpu.trail_fade_pipeline);
-                trail_pass.set_bind_group(0, &gpu.trail_bind_groups_fade[src_index], &[]);
-                trail_pass.draw(0..3, 0..1);
-            }
-
-            if instance_count > 0 {
-                trail_pass.set_pipeline(&gpu.trail_particle_pipeline);
-                trail_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                trail_pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-                trail_pass.set_vertex_buffer(1, gpu.instance_buffer.slice(..));
-                trail_pass.draw(0..4, 0..instance_count as u32);
-            }
-
-            gpu.trail_index = dst_index;
-            gpu.trail_initialized = true;
-        }
-
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -883,23 +740,28 @@ impl App {
 
             pass.set_bind_group(0, &gpu.bind_group, &[]);
 
+            // Draw solid cells
             pass.set_pipeline(&gpu.pipeline);
             pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
             pass.set_vertex_buffer(1, gpu.solid_buffer.slice(..));
             pass.draw(0..4, 0..self.solid_instances.len() as u32);
 
             if self.render_heightfield {
+                // Draw water surface
                 if surface_vertex_count > 0 {
                     pass.set_pipeline(&gpu.surface_pipeline);
                     pass.set_vertex_buffer(0, gpu.surface_vertex_buffer.slice(..));
                     pass.draw(0..surface_vertex_count as u32, 0..1);
                 }
-                if self.render_trails && gpu.trail_initialized {
-                    pass.set_pipeline(&gpu.trail_comp_pipeline);
-                    pass.set_bind_group(0, &gpu.trail_bind_groups_comp[gpu.trail_index], &[]);
-                    pass.draw(0..3, 0..1);
+                // Draw sparse flow particles to show interior flow
+                if self.render_flow_particles && flow_particle_count > 0 {
+                    pass.set_pipeline(&gpu.pipeline);
+                    pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
+                    pass.set_vertex_buffer(1, gpu.instance_buffer.slice(..));
+                    pass.draw(0..4, 0..flow_particle_count as u32);
                 }
             } else if instance_count > 0 {
+                // Draw particles directly
                 pass.set_pipeline(&gpu.pipeline);
                 pass.set_bind_group(0, &gpu.bind_group, &[]);
                 pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
@@ -987,10 +849,6 @@ impl ApplicationHandler for App {
             label: Some("Heightfield Shader"),
             source: wgpu::ShaderSource::Wgsl(HEIGHTFIELD_SHADER.into()),
         });
-        let trail_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Trail Shader"),
-            source: wgpu::ShaderSource::Wgsl(TRAIL_SHADER.into()),
-        });
 
         let vertices = [
             Vertex { position: [-1.0, -1.0] },
@@ -1016,7 +874,6 @@ impl ApplicationHandler for App {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-
         let solid_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Solid Buffer"),
             contents: bytemuck::cast_slice(&self.solid_instances),
@@ -1053,84 +910,9 @@ impl ApplicationHandler for App {
             }],
         });
 
-        let trail_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Trail Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let trail_params_fade = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Trail Params Fade"),
-            contents: bytemuck::bytes_of(&TrailParams {
-                fade: TRAIL_DECAY,
-                _pad0: 0.0,
-                _pad1: 0.0,
-                _pad2: 0.0,
-            }),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let trail_params_comp = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Trail Params Composite"),
-            contents: bytemuck::bytes_of(&TrailParams {
-                fade: 1.0,
-                _pad0: 0.0,
-                _pad1: 0.0,
-                _pad2: 0.0,
-            }),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let trail_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Trail Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        let (trail_textures, trail_views, trail_bind_groups_fade, trail_bind_groups_comp) =
-            create_trail_targets(
-                &device,
-                &config,
-                &trail_bind_group_layout,
-                &trail_sampler,
-                &trail_params_fade,
-                &trail_params_comp,
-            );
-
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-        let trail_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Trail Pipeline Layout"),
-            bind_group_layouts: &[&trail_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -1175,127 +957,6 @@ impl ApplicationHandler for App {
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-        let trail_fade_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Trail Fade Pipeline"),
-            layout: Some(&trail_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &trail_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &trail_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: TRAIL_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-        let trail_comp_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Trail Composite Pipeline"),
-            layout: Some(&trail_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &trail_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &trail_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,  // Composite renders to screen, not trail texture
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-        let trail_particle_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Trail Particle Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[
-                    wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &[wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 0,
-                            format: wgpu::VertexFormat::Float32x2,
-                        }],
-                    },
-                    wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<ParticleInstance>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &[
-                            wgpu::VertexAttribute {
-                                offset: 0,
-                                shader_location: 1,
-                                format: wgpu::VertexFormat::Float32x3,
-                            },
-                            wgpu::VertexAttribute {
-                                offset: 12,
-                                shader_location: 2,
-                                format: wgpu::VertexFormat::Float32x4,
-                            },
-                        ],
-                    },
-                ],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: TRAIL_FORMAT,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -1366,19 +1027,6 @@ impl ApplicationHandler for App {
             uniform_buffer,
             bind_group,
             surface_pipeline,
-            trail_fade_pipeline,
-            trail_comp_pipeline,
-            trail_particle_pipeline,
-            trail_params_fade,
-            trail_params_comp,
-            trail_bind_group_layout,
-            trail_sampler,
-            trail_textures,
-            trail_views,
-            trail_bind_groups_fade,
-            trail_bind_groups_comp,
-            trail_index: 0,
-            trail_initialized: false,
         });
 
         self.window = Some(window);
@@ -1397,20 +1045,6 @@ impl ApplicationHandler for App {
                     gpu.config.width = size.width.max(1);
                     gpu.config.height = size.height.max(1);
                     gpu.surface.configure(&gpu.device, &gpu.config);
-                    let (textures, views, bind_groups_fade, bind_groups_comp) = create_trail_targets(
-                        &gpu.device,
-                        &gpu.config,
-                        &gpu.trail_bind_group_layout,
-                        &gpu.trail_sampler,
-                        &gpu.trail_params_fade,
-                        &gpu.trail_params_comp,
-                    );
-                    gpu.trail_textures = textures;
-                    gpu.trail_views = views;
-                    gpu.trail_bind_groups_fade = bind_groups_fade;
-                    gpu.trail_bind_groups_comp = bind_groups_comp;
-                    gpu.trail_initialized = false;
-                    gpu.trail_index = 0;
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -1435,19 +1069,11 @@ impl ApplicationHandler for App {
                         }
                         PhysicalKey::Code(KeyCode::KeyH) => {
                             self.render_heightfield = !self.render_heightfield;
-                            if let Some(gpu) = &mut self.gpu {
-                                gpu.trail_initialized = false;
-                                gpu.trail_index = 0;
-                            }
                             println!("Heightfield: {}", if self.render_heightfield { "ON" } else { "OFF" });
                         }
-                        PhysicalKey::Code(KeyCode::KeyT) => {
-                            self.render_trails = !self.render_trails;
-                            if let Some(gpu) = &mut self.gpu {
-                                gpu.trail_initialized = false;
-                                gpu.trail_index = 0;
-                            }
-                            println!("Trails: {}", if self.render_trails { "ON" } else { "OFF" });
+                        PhysicalKey::Code(KeyCode::KeyF) => {
+                            self.render_flow_particles = !self.render_flow_particles;
+                            println!("Flow particles: {}", if self.render_flow_particles { "ON" } else { "OFF" });
                         }
                         PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
                         _ => {}
@@ -1562,44 +1188,6 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return in.color;
-}
-"#;
-
-const TRAIL_SHADER: &str = r#"
-struct TrailParams {
-    fade: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
-}
-
-@group(0) @binding(0) var<uniform> params: TrailParams;
-@group(0) @binding(1) var trail_sampler: sampler;
-@group(0) @binding(2) var trail_tex: texture_2d<f32>;
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-}
-
-@vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    let positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0),
-    );
-    let pos = positions[vertex_index];
-    var out: VertexOutput;
-    out.clip_position = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, 0.5 - pos.y * 0.5);  // Flip Y for wgpu texture coords
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let color = textureSample(trail_tex, trail_sampler, in.uv);
-    return color * params.fade;
 }
 "#;
 
