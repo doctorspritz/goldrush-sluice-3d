@@ -24,6 +24,26 @@ git clean -fd
 
 **Uncommitted changes may be the user's working solution. Destroying them wastes hours of work.**
 
+### WORKTREE SAFETY
+
+**NEVER remove a worktree while your shell is inside it.**
+
+```bash
+# WRONG - will break shell and lose track of current directory:
+cd .worktrees/feature
+# ... do work ...
+git worktree remove .worktrees/feature  # BREAKS: you're inside it!
+
+# RIGHT - exit first, then remove:
+cd /path/to/main/repo                    # exit worktree FIRST
+git worktree remove .worktrees/feature   # safe to remove now
+```
+
+**Before `git worktree remove`:**
+1. Run `pwd` to verify you're NOT in the worktree
+2. If you are, `cd` to the main repo first
+3. Then remove the worktree
+
 ### NO PATCH FIXING - DEBUG NEW CODE
 
 When new code breaks something:
