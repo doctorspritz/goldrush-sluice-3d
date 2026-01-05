@@ -166,7 +166,7 @@ impl App {
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
         sim.gravity = Vec3::new(0.0, -9.8, 0.0);
         sim.flip_ratio = 0.97;
-        sim.pressure_iterations = 150;  // More iterations for larger grid
+        sim.pressure_iterations = 80;  // Reduced for better FPS (was 150)
 
         create_industrial_sluice(&mut sim);
 
