@@ -1,6 +1,7 @@
 // Density Position Correction Shader (3D) - Blub-Style Trilinear Sampling
 //
-// Particles sample position deltas from grid using trilinear interpolation.
+// Particles sample position deltas from grid using trilinear interpolation
+// and apply corrections in-place on the positions buffer.
 // Uses offset positions for proper staggered grid sampling (blub approach):
 // - X delta sampled at pos - (0.5, 0, 0)
 // - Y delta sampled at pos - (0, 0.5, 0)
@@ -25,9 +26,7 @@ struct Params {
 @group(0) @binding(3) var<storage, read> position_delta_z: array<f32>;
 @group(0) @binding(4) var<storage, read> cell_type: array<u32>;
 // Positions stored as vec4 (padded from vec3) - must match G2P buffer layout
-@group(0) @binding(5) var<storage, read> positions: array<vec4<f32>>;
-// Position delta output also stored as vec4 for consistent stride
-@group(0) @binding(6) var<storage, read_write> particle_position_delta: array<vec4<f32>>;
+@group(0) @binding(5) var<storage, read_write> positions: array<vec4<f32>>;
 
 const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
@@ -192,5 +191,6 @@ fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
     let correction_scale: f32 = 15.0;  // Empirical scaling factor (increased for stronger volume conservation)
     let delta = vec3<f32>(-delta_x, -delta_y, -delta_z) * correction_scale;
 
-    particle_position_delta[pid] = vec4<f32>(delta.x, delta.y, delta.z, 0.0);
+    let corrected = pos + delta;
+    positions[pid] = vec4<f32>(corrected, 0.0);
 }

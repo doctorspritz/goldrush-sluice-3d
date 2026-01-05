@@ -12,7 +12,7 @@ use super::p2g_3d::GpuP2g3D;
 use super::pressure_3d::GpuPressure3D;
 
 use bytemuck::{Pod, Zeroable};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 
 /// Gravity application parameters
 #[repr(C)]
@@ -96,6 +96,260 @@ struct SdfCollisionParams3D {
     _pad1: u32,
 }
 
+#[derive(Copy, Clone)]
+enum ReadbackMode {
+    Sync,
+    Async,
+}
+
+struct ReadbackSlot {
+    positions_staging: wgpu::Buffer,
+    velocities_staging: wgpu::Buffer,
+    c_col0_staging: wgpu::Buffer,
+    c_col1_staging: wgpu::Buffer,
+    c_col2_staging: wgpu::Buffer,
+    capacity: usize,
+    count: usize,
+    pending: bool,
+    positions_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
+    velocities_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
+    c_col0_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
+    c_col1_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
+    c_col2_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
+}
+
+impl ReadbackSlot {
+    fn new(device: &wgpu::Device, max_particles: usize) -> Self {
+        let buffer_size = (max_particles * std::mem::size_of::<[f32; 4]>()) as u64;
+        Self {
+            positions_staging: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Readback Positions Staging"),
+                size: buffer_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            velocities_staging: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Readback Velocities Staging"),
+                size: buffer_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            c_col0_staging: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Readback C Col0 Staging"),
+                size: buffer_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            c_col1_staging: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Readback C Col1 Staging"),
+                size: buffer_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            c_col2_staging: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Readback C Col2 Staging"),
+                size: buffer_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            capacity: max_particles,
+            count: 0,
+            pending: false,
+            positions_rx: None,
+            velocities_rx: None,
+            c_col0_rx: None,
+            c_col1_rx: None,
+            c_col2_rx: None,
+        }
+    }
+
+    fn schedule(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        positions: &wgpu::Buffer,
+        velocities: &wgpu::Buffer,
+        c_col0: &wgpu::Buffer,
+        c_col1: &wgpu::Buffer,
+        c_col2: &wgpu::Buffer,
+        count: usize,
+    ) -> bool {
+        if self.pending {
+            return false;
+        }
+
+        let count = count.min(self.capacity);
+        if count == 0 {
+            return false;
+        }
+
+        let byte_size = (count * std::mem::size_of::<[f32; 4]>()) as u64;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Readback Copy Encoder"),
+        });
+        encoder.copy_buffer_to_buffer(positions, 0, &self.positions_staging, 0, byte_size);
+        encoder.copy_buffer_to_buffer(velocities, 0, &self.velocities_staging, 0, byte_size);
+        encoder.copy_buffer_to_buffer(c_col0, 0, &self.c_col0_staging, 0, byte_size);
+        encoder.copy_buffer_to_buffer(c_col1, 0, &self.c_col1_staging, 0, byte_size);
+        encoder.copy_buffer_to_buffer(c_col2, 0, &self.c_col2_staging, 0, byte_size);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        self.count = count;
+        self.pending = true;
+
+        let (tx, rx) = mpsc::channel();
+        self.positions_staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+        self.positions_rx = Some(rx);
+
+        let (tx, rx) = mpsc::channel();
+        self.velocities_staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+        self.velocities_rx = Some(rx);
+
+        let (tx, rx) = mpsc::channel();
+        self.c_col0_staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+        self.c_col0_rx = Some(rx);
+
+        let (tx, rx) = mpsc::channel();
+        self.c_col1_staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+        self.c_col1_rx = Some(rx);
+
+        let (tx, rx) = mpsc::channel();
+        self.c_col2_staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+        self.c_col2_rx = Some(rx);
+
+        true
+    }
+
+    fn try_read(
+        &mut self,
+        positions_out: &mut [glam::Vec3],
+        velocities_out: &mut [glam::Vec3],
+        c_matrices_out: &mut [glam::Mat3],
+    ) -> Option<usize> {
+        if !self.pending {
+            return None;
+        }
+
+        let mut failed = false;
+        let mut all_ready = true;
+        for rx in [
+            &mut self.positions_rx,
+            &mut self.velocities_rx,
+            &mut self.c_col0_rx,
+            &mut self.c_col1_rx,
+            &mut self.c_col2_rx,
+        ] {
+            if let Some(receiver) = rx {
+                match receiver.try_recv() {
+                    Ok(Ok(())) => {
+                        *rx = None;
+                    }
+                    Ok(Err(_)) => {
+                        failed = true;
+                        *rx = None;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {
+                        all_ready = false;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        failed = true;
+                        *rx = None;
+                    }
+                }
+            }
+        }
+
+        if failed {
+            self.pending = false;
+            self.positions_staging.unmap();
+            self.velocities_staging.unmap();
+            self.c_col0_staging.unmap();
+            self.c_col1_staging.unmap();
+            self.c_col2_staging.unmap();
+            return None;
+        }
+
+        if !all_ready {
+            return None;
+        }
+
+        let count = self
+            .count
+            .min(positions_out.len())
+            .min(velocities_out.len())
+            .min(c_matrices_out.len());
+
+        {
+            let data = self.positions_staging.slice(..).get_mapped_range();
+            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
+            for i in 0..count {
+                positions_out[i] = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
+            }
+        }
+        self.positions_staging.unmap();
+
+        {
+            let data = self.velocities_staging.slice(..).get_mapped_range();
+            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
+            for i in 0..count {
+                velocities_out[i] = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
+            }
+        }
+        self.velocities_staging.unmap();
+
+        {
+            let data = self.c_col0_staging.slice(..).get_mapped_range();
+            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
+            for i in 0..count {
+                c_matrices_out[i].x_axis = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
+            }
+        }
+        self.c_col0_staging.unmap();
+
+        {
+            let data = self.c_col1_staging.slice(..).get_mapped_range();
+            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
+            for i in 0..count {
+                c_matrices_out[i].y_axis = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
+            }
+        }
+        self.c_col1_staging.unmap();
+
+        {
+            let data = self.c_col2_staging.slice(..).get_mapped_range();
+            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
+            for i in 0..count {
+                c_matrices_out[i].z_axis = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
+            }
+        }
+        self.c_col2_staging.unmap();
+
+        self.pending = false;
+        self.count = 0;
+        Some(count)
+    }
+}
+
 /// GPU-accelerated 3D FLIP simulation
 pub struct GpuFlip3D {
     // Grid dimensions
@@ -103,6 +357,13 @@ pub struct GpuFlip3D {
     pub height: u32,
     pub depth: u32,
     pub cell_size: f32,
+
+    // Shared particle buffers (for readback scheduling)
+    positions_buffer: Arc<wgpu::Buffer>,
+    velocities_buffer: Arc<wgpu::Buffer>,
+    c_col0_buffer: Arc<wgpu::Buffer>,
+    c_col1_buffer: Arc<wgpu::Buffer>,
+    c_col2_buffer: Arc<wgpu::Buffer>,
 
     // Sub-solvers
     p2g: GpuP2g3D,
@@ -147,7 +408,6 @@ pub struct GpuFlip3D {
     density_correct_pipeline: wgpu::ComputePipeline,
     density_correct_bind_group: wgpu::BindGroup,
     density_correct_params_buffer: wgpu::Buffer,
-    position_delta_buffer: wgpu::Buffer,  // Per-particle delta (output)
 
     // SDF collision (advection + solid collision)
     sdf_collision_pipeline: wgpu::ComputePipeline,
@@ -158,6 +418,10 @@ pub struct GpuFlip3D {
 
     // Maximum particles supported
     max_particles: usize,
+
+    // Double-buffered async readback slots
+    readback_slots: Vec<ReadbackSlot>,
+    readback_cursor: usize,
 }
 
 impl GpuFlip3D {
@@ -775,15 +1039,7 @@ impl GpuFlip3D {
             mapped_at_creation: false,
         });
 
-        // Per-particle position delta buffer (output)
-        let position_delta_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Position Delta 3D"),
-            size: (max_particles * std::mem::size_of::<[f32; 4]>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        // Bindings: params, delta_x, delta_y, delta_z, cell_type, positions, particle_delta
+        // Bindings: params, delta_x, delta_y, delta_z, cell_type, positions
         let density_correct_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Density Correct 3D Bind Group Layout"),
             entries: &[
@@ -841,16 +1097,6 @@ impl GpuFlip3D {
                     binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
@@ -870,7 +1116,6 @@ impl GpuFlip3D {
                 wgpu::BindGroupEntry { binding: 3, resource: position_delta_z_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: pressure.cell_type_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: g2p.positions_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: position_delta_buffer.as_entire_binding() },
             ],
         });
 
@@ -981,11 +1226,21 @@ impl GpuFlip3D {
             cache: None,
         });
 
+        let readback_slots = vec![
+            ReadbackSlot::new(device, max_particles),
+            ReadbackSlot::new(device, max_particles),
+        ];
+
         Self {
             width,
             height,
             depth,
             cell_size,
+            positions_buffer,
+            velocities_buffer,
+            c_col0_buffer,
+            c_col1_buffer,
+            c_col2_buffer,
             p2g,
             g2p,
             pressure,
@@ -1015,13 +1270,14 @@ impl GpuFlip3D {
             density_correct_pipeline,
             density_correct_bind_group,
             density_correct_params_buffer,
-            position_delta_buffer,
             sdf_collision_pipeline,
             sdf_collision_bind_group,
             sdf_collision_params_buffer,
             sdf_buffer,
             sdf_uploaded: false,
             max_particles,
+            readback_slots,
+            readback_cursor: 0,
         }
     }
 
@@ -1043,7 +1299,7 @@ impl GpuFlip3D {
         self.sdf_uploaded = true;
     }
 
-    /// Run one simulation step
+    /// Run one simulation step (sync readback).
     ///
     /// This performs the full FLIP pipeline:
     /// 1. P2G: Transfer particle data to grid
@@ -1062,7 +1318,7 @@ impl GpuFlip3D {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        positions: &mut [glam::Vec3],  // Now mutable for density projection position correction
+        positions: &mut [glam::Vec3],
         velocities: &mut [glam::Vec3],
         c_matrices: &mut [glam::Mat3],
         cell_types: &[u32],
@@ -1072,9 +1328,125 @@ impl GpuFlip3D {
         flow_accel: f32,
         pressure_iterations: u32,
     ) {
+        let _ = self.step_internal(
+            device,
+            queue,
+            positions,
+            velocities,
+            c_matrices,
+            cell_types,
+            sdf,
+            dt,
+            gravity,
+            flow_accel,
+            pressure_iterations,
+            ReadbackMode::Sync,
+        );
+    }
+
+    /// Run one simulation step and schedule an async readback.
+    ///
+    /// Call `try_readback` on subsequent frames to pull results without stalling.
+    /// Returns false if all readback slots are still in flight.
+    pub fn step_async(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        positions: &mut [glam::Vec3],
+        velocities: &mut [glam::Vec3],
+        c_matrices: &mut [glam::Mat3],
+        cell_types: &[u32],
+        sdf: Option<&[f32]>,
+        dt: f32,
+        gravity: f32,
+        flow_accel: f32,
+        pressure_iterations: u32,
+    ) -> bool {
+        self.step_internal(
+            device,
+            queue,
+            positions,
+            velocities,
+            c_matrices,
+            cell_types,
+            sdf,
+            dt,
+            gravity,
+            flow_accel,
+            pressure_iterations,
+            ReadbackMode::Async,
+        )
+    }
+
+    /// Try to fetch the latest async readback results without stalling.
+    ///
+    /// Returns Some(count) when a slot completes, otherwise None.
+    pub fn try_readback(
+        &mut self,
+        device: &wgpu::Device,
+        positions: &mut [glam::Vec3],
+        velocities: &mut [glam::Vec3],
+        c_matrices: &mut [glam::Mat3],
+    ) -> Option<usize> {
+        device.poll(wgpu::Maintain::Poll);
+        for slot in &mut self.readback_slots {
+            if let Some(count) = slot.try_read(positions, velocities, c_matrices) {
+                return Some(count);
+            }
+        }
+        None
+    }
+
+    fn schedule_readback(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        particle_count: usize,
+    ) -> bool {
+        if self.readback_slots.is_empty() {
+            return false;
+        }
+
+        let slots = self.readback_slots.len();
+        for _ in 0..slots {
+            let index = self.readback_cursor % slots;
+            self.readback_cursor = (self.readback_cursor + 1) % slots;
+            let slot = &mut self.readback_slots[index];
+            if slot.schedule(
+                device,
+                queue,
+                &self.positions_buffer,
+                &self.velocities_buffer,
+                &self.c_col0_buffer,
+                &self.c_col1_buffer,
+                &self.c_col2_buffer,
+                particle_count,
+            ) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn step_internal(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        positions: &mut [glam::Vec3],  // Now mutable for density projection position correction
+        velocities: &mut [glam::Vec3],
+        c_matrices: &mut [glam::Mat3],
+        cell_types: &[u32],
+        sdf: Option<&[f32]>,
+        dt: f32,
+        gravity: f32,
+        flow_accel: f32,
+        pressure_iterations: u32,
+        readback: ReadbackMode,
+    ) -> bool {
         let particle_count = positions.len().min(self.max_particles);
         if particle_count == 0 {
-            return;
+            return false;
         }
 
         // Upload cell types FIRST (needed for BC enforcement)
@@ -1345,29 +1717,10 @@ impl GpuFlip3D {
 
         queue.submit(std::iter::once(encoder.finish()));
 
-        // 5. Download position deltas and apply to particle positions
-        let mut position_deltas = vec![[0.0f32; 4]; particle_count];
-        Self::read_buffer_vec4(device, queue, &self.position_delta_buffer, &mut position_deltas, particle_count);
-
-        // Apply position corrections to particles
-        for (i, delta) in position_deltas.iter().enumerate() {
-            positions[i].x += delta[0];
-            positions[i].y += delta[1];
-            positions[i].z += delta[2];
-        }
-
-        let run_sdf_collision = if let Some(sdf) = sdf {
+        if let Some(sdf) = sdf {
             if !self.sdf_uploaded {
                 self.upload_sdf(queue, sdf);
             }
-
-            // Upload latest positions (after density correction)
-            let positions_padded: Vec<[f32; 4]> = positions
-                .iter()
-                .take(particle_count)
-                .map(|p| [p.x, p.y, p.z, 0.0])
-                .collect();
-            queue.write_buffer(&self.g2p.positions_buffer, 0, bytemuck::cast_slice(&positions_padded));
 
             let sdf_params = SdfCollisionParams3D {
                 width: self.width,
@@ -1395,20 +1748,20 @@ impl GpuFlip3D {
                 pass.dispatch_workgroups(workgroups, 1, 1);
             }
             queue.submit(std::iter::once(encoder.finish()));
-            true
-        } else {
-            false
-        };
+        }
 
-        // Download results (velocities + C matrix). Positions are optional.
-        self.g2p.download(device, queue, g2p_count, velocities, c_matrices);
-
-        if run_sdf_collision {
-            let mut gpu_positions = vec![[0.0f32; 4]; particle_count];
-            Self::read_buffer_vec4(device, queue, &self.g2p.positions_buffer, &mut gpu_positions, particle_count);
-            for (i, pos) in gpu_positions.iter().enumerate() {
-                positions[i] = glam::Vec3::new(pos[0], pos[1], pos[2]);
+        match readback {
+            ReadbackMode::Sync => {
+                // Download results (velocities + C matrix + positions).
+                self.g2p.download(device, queue, g2p_count, velocities, c_matrices);
+                let mut gpu_positions = vec![[0.0f32; 4]; particle_count];
+                Self::read_buffer_vec4(device, queue, &self.g2p.positions_buffer, &mut gpu_positions, particle_count);
+                for (i, pos) in gpu_positions.iter().enumerate() {
+                    positions[i] = glam::Vec3::new(pos[0], pos[1], pos[2]);
+                }
+                true
             }
+            ReadbackMode::Async => self.schedule_readback(device, queue, particle_count),
         }
     }
 
