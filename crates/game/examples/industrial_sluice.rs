@@ -1229,7 +1229,7 @@ impl ApplicationHandler for App {
                 module: &trail_shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: TRAIL_FORMAT,
+                    format: config.format,  // Composite renders to screen, not trail texture
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
