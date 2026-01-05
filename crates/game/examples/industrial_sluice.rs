@@ -1592,7 +1592,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     let pos = positions[vertex_index];
     var out: VertexOutput;
     out.clip_position = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = pos * 0.5 + vec2<f32>(0.5);
+    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, 0.5 - pos.y * 0.5);  // Flip Y for wgpu texture coords
     return out;
 }
 
