@@ -33,6 +33,9 @@ const PRESSURE_ITERS_MIN: u32 = 30;
 const PRESSURE_ITERS_MAX: u32 = 120;
 const PRESSURE_ITERS_STEP: u32 = 5;
 const MAX_SURFACE_VERTICES: usize = GRID_WIDTH * GRID_DEPTH * 6;
+const VORTICITY_EPSILON_DEFAULT: f32 = 0.05;
+const VORTICITY_EPSILON_STEP: f32 = 0.01;
+const VORTICITY_EPSILON_MAX: f32 = 0.25;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -79,6 +82,7 @@ struct App {
     cell_types: Vec<u32>,
     use_gpu_sim: bool,
     pressure_iters_gpu: u32,
+    vorticity_epsilon: f32,
     use_async_readback: bool,
     gpu_readback_pending: bool,
     render_heightfield: bool,
@@ -125,7 +129,7 @@ fn create_industrial_sluice(sim: &mut FlipSimulation3D) {
 
     // Riffle parameters - more riffles for industrial scale
     let riffle_spacing = 12;     // Riffles every 12 cells
-    let riffle_height = 2;       // Riffles are 2 cells tall
+    let riffle_height = 4;       // Riffles are 4 cells tall (deeper pooling)
     let riffle_start_x = 15;     // Start riffles after inlet
     let riffle_end_x = width - 10; // Stop before exit
 
@@ -199,7 +203,7 @@ impl App {
 
         println!("Solid cells: {}", solid_instances.len());
         println!("Max particles: {}", MAX_PARTICLES);
-        println!("Controls: SPACE=pause, R=reset, G=toggle GPU/CPU, E=toggle emitter, H=heightfield, F=flow particles, ESC=quit");
+        println!("Controls: SPACE=pause, R=reset, G=toggle GPU/CPU, E=toggle emitter, H=heightfield, F=flow particles, V/B=vorticity -/+, ESC=quit");
 
         Self {
             window: None,
@@ -218,6 +222,7 @@ impl App {
             cell_types: Vec::new(),
             use_gpu_sim: true,
             pressure_iters_gpu,
+            vorticity_epsilon: VORTICITY_EPSILON_DEFAULT,
             use_async_readback: true,
             gpu_readback_pending: false,
             render_heightfield: true,
@@ -342,6 +347,7 @@ impl App {
 
         self.sim = sim;
         self.pressure_iters_gpu = self.sim.pressure_iterations as u32;
+        self.vorticity_epsilon = VORTICITY_EPSILON_DEFAULT;
         self.gpu_readback_pending = false;
         self.frame = 0;
         self.emitter_enabled = true;
@@ -549,6 +555,7 @@ impl App {
 
                     let pressure_iters = self.pressure_iters_gpu;
                     if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                        gpu_flip.vorticity_epsilon = self.vorticity_epsilon;
                         let sdf = self.sim.grid.sdf.as_slice();
                         let positions = &mut self.positions;
                         let velocities = &mut self.velocities;
@@ -1074,6 +1081,15 @@ impl ApplicationHandler for App {
                         PhysicalKey::Code(KeyCode::KeyF) => {
                             self.render_flow_particles = !self.render_flow_particles;
                             println!("Flow particles: {}", if self.render_flow_particles { "ON" } else { "OFF" });
+                        }
+                        PhysicalKey::Code(KeyCode::KeyV) => {
+                            self.vorticity_epsilon = (self.vorticity_epsilon - VORTICITY_EPSILON_STEP).max(0.0);
+                            println!("Vorticity epsilon: {:.3}", self.vorticity_epsilon);
+                        }
+                        PhysicalKey::Code(KeyCode::KeyB) => {
+                            self.vorticity_epsilon =
+                                (self.vorticity_epsilon + VORTICITY_EPSILON_STEP).min(VORTICITY_EPSILON_MAX);
+                            println!("Vorticity epsilon: {:.3}", self.vorticity_epsilon);
                         }
                         PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
                         _ => {}

@@ -34,6 +34,26 @@ struct FlowParams3D {
     flow_accel_dt: f32,  // flow_accel * dt
 }
 
+/// Vorticity computation parameters
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct VorticityParams3D {
+    width: u32,
+    height: u32,
+    depth: u32,
+    cell_size: f32,
+}
+
+/// Vorticity confinement parameters
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct VortConfineParams3D {
+    width: u32,
+    height: u32,
+    depth: u32,
+    epsilon_h_dt: f32,  // epsilon * h * dt
+}
+
 /// Boundary condition parameters
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -357,6 +377,8 @@ pub struct GpuFlip3D {
     pub height: u32,
     pub depth: u32,
     pub cell_size: f32,
+    /// Vorticity confinement strength (default 0.05, range 0.0-0.25)
+    pub vorticity_epsilon: f32,
 
     // Shared particle buffers (for readback scheduling)
     positions_buffer: Arc<wgpu::Buffer>,
@@ -379,6 +401,20 @@ pub struct GpuFlip3D {
     flow_pipeline: wgpu::ComputePipeline,
     flow_bind_group: wgpu::BindGroup,
     flow_params_buffer: wgpu::Buffer,
+
+    // Vorticity confinement
+    vorticity_x_buffer: wgpu::Buffer,
+    vorticity_y_buffer: wgpu::Buffer,
+    vorticity_z_buffer: wgpu::Buffer,
+    vorticity_mag_buffer: wgpu::Buffer,
+    vorticity_compute_pipeline: wgpu::ComputePipeline,
+    vorticity_compute_bind_group: wgpu::BindGroup,
+    vorticity_confine_u_pipeline: wgpu::ComputePipeline,
+    vorticity_confine_v_pipeline: wgpu::ComputePipeline,
+    vorticity_confine_w_pipeline: wgpu::ComputePipeline,
+    vorticity_confine_bind_group: wgpu::BindGroup,
+    vorticity_params_buffer: wgpu::Buffer,
+    vort_confine_params_buffer: wgpu::Buffer,
 
     // Boundary condition enforcement shaders
     bc_u_pipeline: wgpu::ComputePipeline,
@@ -538,6 +574,8 @@ impl GpuFlip3D {
             &grid_w_old_buffer,
         );
 
+        let cell_count = (width * height * depth) as usize;
+
         // Create gravity shader
         let gravity_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Gravity 3D Shader"),
@@ -686,6 +724,328 @@ impl GpuFlip3D {
             layout: Some(&flow_pipeline_layout),
             module: &flow_shader,
             entry_point: Some("apply_flow"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        // ========== Vorticity Confinement ==========
+        let vorticity_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Vorticity 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/vorticity_3d.wgsl").into()),
+        });
+
+        let vorticity_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Vorticity Params 3D"),
+            size: std::mem::size_of::<VorticityParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let vorticity_x_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Vorticity X 3D"),
+            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let vorticity_y_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Vorticity Y 3D"),
+            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let vorticity_z_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Vorticity Z 3D"),
+            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let vorticity_mag_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Vorticity Magnitude 3D"),
+            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        let vorticity_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Vorticity 3D Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let vorticity_compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Vorticity 3D Bind Group"),
+            layout: &vorticity_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: vorticity_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: p2g.grid_u_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: p2g.grid_v_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: p2g.grid_w_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: pressure.cell_type_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: vorticity_x_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: vorticity_y_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: vorticity_z_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 8, resource: vorticity_mag_buffer.as_entire_binding() },
+            ],
+        });
+
+        let vorticity_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Vorticity 3D Pipeline Layout"),
+            bind_group_layouts: &[&vorticity_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let vorticity_compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Vorticity 3D Pipeline"),
+            layout: Some(&vorticity_pipeline_layout),
+            module: &vorticity_shader,
+            entry_point: Some("compute_vorticity"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let vorticity_confine_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Vorticity Confine 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/vorticity_confine_3d.wgsl").into()),
+        });
+
+        let vort_confine_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Vorticity Confine Params 3D"),
+            size: std::mem::size_of::<VortConfineParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let vorticity_confine_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Vorticity Confine 3D Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let vorticity_confine_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Vorticity Confine 3D Bind Group"),
+            layout: &vorticity_confine_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: vort_confine_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: vorticity_x_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: vorticity_y_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: vorticity_z_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: vorticity_mag_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: pressure.cell_type_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: p2g.grid_u_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: p2g.grid_v_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 8, resource: p2g.grid_w_buffer.as_entire_binding() },
+            ],
+        });
+
+        let vorticity_confine_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Vorticity Confine 3D Pipeline Layout"),
+            bind_group_layouts: &[&vorticity_confine_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let vorticity_confine_u_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Vorticity Confine U 3D Pipeline"),
+            layout: Some(&vorticity_confine_pipeline_layout),
+            module: &vorticity_confine_shader,
+            entry_point: Some("apply_confinement_u"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let vorticity_confine_v_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Vorticity Confine V 3D Pipeline"),
+            layout: Some(&vorticity_confine_pipeline_layout),
+            module: &vorticity_confine_shader,
+            entry_point: Some("apply_confinement_v"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let vorticity_confine_w_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Vorticity Confine W 3D Pipeline"),
+            layout: Some(&vorticity_confine_pipeline_layout),
+            module: &vorticity_confine_shader,
+            entry_point: Some("apply_confinement_w"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -1236,6 +1596,7 @@ impl GpuFlip3D {
             height,
             depth,
             cell_size,
+            vorticity_epsilon: 0.05,
             positions_buffer,
             velocities_buffer,
             c_col0_buffer,
@@ -1250,6 +1611,18 @@ impl GpuFlip3D {
             flow_pipeline,
             flow_bind_group,
             flow_params_buffer,
+            vorticity_x_buffer,
+            vorticity_y_buffer,
+            vorticity_z_buffer,
+            vorticity_mag_buffer,
+            vorticity_compute_pipeline,
+            vorticity_compute_bind_group,
+            vorticity_confine_u_pipeline,
+            vorticity_confine_v_pipeline,
+            vorticity_confine_w_pipeline,
+            vorticity_confine_bind_group,
+            vorticity_params_buffer,
+            vort_confine_params_buffer,
             bc_u_pipeline,
             bc_v_pipeline,
             bc_w_pipeline,
@@ -1307,9 +1680,10 @@ impl GpuFlip3D {
     /// 3. Save grid velocity (for FLIP delta)
     /// 4. Apply gravity (vertical)
     /// 5. Apply flow acceleration (horizontal, for sluice flow)
-    /// 6. Pressure solve (includes divergence, iterations, gradient)
-    /// 7. G2P: Transfer grid data back to particles
-    /// 8. Optional: GPU advection + SDF collision (when `sdf` is provided)
+    /// 6. Vorticity confinement (adds rotational energy)
+    /// 7. Pressure solve (includes divergence, iterations, gradient)
+    /// 8. G2P: Transfer grid data back to particles
+    /// 9. Optional: GPU advection + SDF collision (when `sdf` is provided)
     ///
     /// # Arguments
     /// * `flow_accel` - Downstream flow acceleration (m/s²). Set to 0.0 for closed box sims.
@@ -1591,12 +1965,86 @@ impl GpuFlip3D {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
-        // 6. Pressure solve (divergence → iterations → gradient)
+        // 6. Vorticity confinement (adds rotational energy)
+        if self.vorticity_epsilon > 0.0 {
+            let vort_params = VorticityParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                cell_size: self.cell_size,
+            };
+            queue.write_buffer(&self.vorticity_params_buffer, 0, bytemuck::bytes_of(&vort_params));
+
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Vorticity 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.vorticity_compute_pipeline);
+                pass.set_bind_group(0, &self.vorticity_compute_bind_group, &[]);
+                let workgroups_x = (self.width + 7) / 8;
+                let workgroups_y = (self.height + 7) / 8;
+                let workgroups_z = (self.depth + 3) / 4;
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+
+            let confine_params = VortConfineParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                epsilon_h_dt: self.vorticity_epsilon * self.cell_size * dt,
+            };
+            queue.write_buffer(&self.vort_confine_params_buffer, 0, bytemuck::bytes_of(&confine_params));
+
+            // Apply confinement to U faces
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Vorticity Confine U 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.vorticity_confine_u_pipeline);
+                pass.set_bind_group(0, &self.vorticity_confine_bind_group, &[]);
+                let workgroups_x = (self.width + 1 + 7) / 8;
+                let workgroups_y = (self.height + 7) / 8;
+                let workgroups_z = (self.depth + 3) / 4;
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+
+            // Apply confinement to V faces
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Vorticity Confine V 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.vorticity_confine_v_pipeline);
+                pass.set_bind_group(0, &self.vorticity_confine_bind_group, &[]);
+                let workgroups_x = (self.width + 7) / 8;
+                let workgroups_y = (self.height + 1 + 7) / 8;
+                let workgroups_z = (self.depth + 3) / 4;
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+
+            // Apply confinement to W faces
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Vorticity Confine W 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.vorticity_confine_w_pipeline);
+                pass.set_bind_group(0, &self.vorticity_confine_bind_group, &[]);
+                let workgroups_x = (self.width + 7) / 8;
+                let workgroups_y = (self.height + 7) / 8;
+                let workgroups_z = (self.depth + 1 + 3) / 4;
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+        }
+
+        // 7. Pressure solve (divergence → iterations → gradient)
         self.pressure.encode(&mut encoder, pressure_iterations);
 
         queue.submit(std::iter::once(encoder.finish()));
 
-        // 6. Run G2P using grid buffers already on GPU
+        // 8. Run G2P using grid buffers already on GPU
         let g2p_count = self.g2p.upload_params(queue, count, self.cell_size, dt);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
