@@ -71,6 +71,8 @@ struct App {
     current_fps: f32,
     emitter_enabled: bool,
     particles_exited: u32,
+    use_async_readback: bool,
+    gpu_readback_pending: bool,
 }
 
 struct GpuState {
@@ -199,6 +201,8 @@ impl App {
             current_fps: 0.0,
             emitter_enabled: true,
             particles_exited: 0,
+            use_async_readback: true,
+            gpu_readback_pending: false,
         }
     }
 
@@ -227,6 +231,40 @@ impl App {
 
             self.sim.spawn_particle(Vec3::new(x, y, z));
         }
+    }
+
+    fn apply_gpu_results(&mut self, count: usize) {
+        let limit = count.min(self.sim.particles.len());
+
+        for (idx, p) in self.sim.particles.list.iter_mut().enumerate().take(limit) {
+            if idx < self.velocities.len() {
+                p.velocity = self.velocities[idx];
+                p.affine_velocity = self.c_matrices[idx];
+            }
+            if idx < self.positions.len() {
+                p.position = self.positions[idx];
+            }
+
+            // Exit zone detection
+            let cell_size = CELL_SIZE;
+            let t = (p.position.x / cell_size) / (GRID_WIDTH as f32 - 1.0);
+            let t = t.clamp(0.0, 1.0);
+            let floor_height = 10.0 * (1.0 - t) + 4.0 * t;
+            let exit_start_z = GRID_DEPTH as f32 * cell_size / 6.0;
+            let exit_end_z = GRID_DEPTH as f32 * cell_size * 5.0 / 6.0;
+            let exit_max_y = (floor_height + 8.0) * cell_size;
+            let is_in_exit_zone = p.position.z >= exit_start_z && p.position.z < exit_end_z
+                && p.position.y < exit_max_y;
+
+            if p.position.x >= (GRID_WIDTH as f32 - 0.5) * cell_size && is_in_exit_zone {
+                p.position.x = 1000.0;
+            }
+        }
+
+        let before = self.sim.particles.len();
+        self.sim.particles.list.retain(|p| p.position.x < 100.0);
+        let exited_this_frame = before - self.sim.particles.len();
+        self.particles_exited += exited_this_frame as u32;
     }
 
     fn collect_solids(sim: &FlipSimulation3D) -> Vec<ParticleInstance> {
@@ -307,100 +345,130 @@ impl App {
         if !self.paused {
             let dt = 1.0 / 60.0;
 
-            // Emit MORE particles for industrial scale - 200 every other frame
-            if self.emitter_enabled && self.frame % 2 == 0 {
-                self.emit_particles(200);
-            }
-
             if self.use_gpu_sim {
-                self.positions.clear();
-                self.velocities.clear();
-                self.c_matrices.clear();
-
-                for p in &self.sim.particles.list {
-                    self.positions.push(p.position);
-                    self.velocities.push(p.velocity);
-                    self.c_matrices.push(p.affine_velocity);
-                }
-
-                let w = self.sim.grid.width;
-                let h = self.sim.grid.height;
-                let d = self.sim.grid.depth;
-                self.cell_types.clear();
-                self.cell_types.resize(w * h * d, 0);
-
-                for k in 0..d {
-                    for j in 0..h {
-                        for i in 0..w {
-                            let idx = k * w * h + j * w + i;
-                            if self.sim.grid.is_solid(i, j, k) {
-                                self.cell_types[idx] = 2;
+                if self.use_async_readback {
+                    if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                        if self.gpu_readback_pending {
+                            if let Some(count) = gpu_flip.try_readback(
+                                &gpu.device,
+                                &mut self.positions,
+                                &mut self.velocities,
+                                &mut self.c_matrices,
+                            ) {
+                                self.gpu_readback_pending = false;
+                                self.apply_gpu_results(count);
                             }
                         }
                     }
                 }
 
-                for p in &self.sim.particles.list {
-                    let i = (p.position.x / CELL_SIZE).floor() as i32;
-                    let j = (p.position.y / CELL_SIZE).floor() as i32;
-                    let k = (p.position.z / CELL_SIZE).floor() as i32;
-                    if i >= 0 && i < w as i32 && j >= 0 && j < h as i32 && k >= 0 && k < d as i32 {
-                        let idx = k as usize * w * h + j as usize * w + i as usize;
-                        if self.cell_types[idx] != 2 {
-                            self.cell_types[idx] = 1;
+                let should_schedule = if self.use_async_readback {
+                    !self.gpu_readback_pending
+                } else {
+                    true
+                };
+
+                if should_schedule {
+                    // Emit MORE particles for industrial scale - 200 every other frame
+                    if self.emitter_enabled && self.frame % 2 == 0 {
+                        self.emit_particles(200);
+                    }
+
+                    self.positions.clear();
+                    self.velocities.clear();
+                    self.c_matrices.clear();
+
+                    for p in &self.sim.particles.list {
+                        self.positions.push(p.position);
+                        self.velocities.push(p.velocity);
+                        self.c_matrices.push(p.affine_velocity);
+                    }
+
+                    let w = self.sim.grid.width;
+                    let h = self.sim.grid.height;
+                    let d = self.sim.grid.depth;
+                    self.cell_types.clear();
+                    self.cell_types.resize(w * h * d, 0);
+
+                    for k in 0..d {
+                        for j in 0..h {
+                            for i in 0..w {
+                                let idx = k * w * h + j * w + i;
+                                if self.sim.grid.is_solid(i, j, k) {
+                                    self.cell_types[idx] = 2;
+                                }
+                            }
+                        }
+                    }
+
+                    for p in &self.sim.particles.list {
+                        let i = (p.position.x / CELL_SIZE).floor() as i32;
+                        let j = (p.position.y / CELL_SIZE).floor() as i32;
+                        let k = (p.position.z / CELL_SIZE).floor() as i32;
+                        if i >= 0 && i < w as i32 && j >= 0 && j < h as i32 && k >= 0 && k < d as i32 {
+                            let idx = k as usize * w * h + j as usize * w + i as usize;
+                            if self.cell_types[idx] != 2 {
+                                self.cell_types[idx] = 1;
+                            }
+                        }
+                    }
+
+                    let pressure_iters = self.sim.pressure_iterations as u32;
+                    if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                        let sdf = self.sim.grid.sdf.as_slice();
+                        let positions = &mut self.positions;
+                        let velocities = &mut self.velocities;
+                        let c_matrices = &mut self.c_matrices;
+                        let cell_types = &self.cell_types;
+                        if self.use_async_readback {
+                            if gpu_flip.step_async(
+                                &gpu.device,
+                                &gpu.queue,
+                                positions,
+                                velocities,
+                                c_matrices,
+                                cell_types,
+                                Some(sdf),
+                                dt,
+                                -9.8,
+                                0.0,
+                                pressure_iters,
+                            ) {
+                                self.gpu_readback_pending = true;
+                            } else {
+                                gpu_flip.step(
+                                    &gpu.device,
+                                    &gpu.queue,
+                                    positions,
+                                    velocities,
+                                    c_matrices,
+                                    cell_types,
+                                    Some(sdf),
+                                    dt,
+                                    -9.8,
+                                    0.0,
+                                    pressure_iters,
+                                );
+                                self.apply_gpu_results(self.positions.len());
+                            }
+                        } else {
+                            gpu_flip.step(
+                                &gpu.device,
+                                &gpu.queue,
+                                positions,
+                                velocities,
+                                c_matrices,
+                                cell_types,
+                                Some(sdf),
+                                dt,
+                                -9.8,
+                                0.0,
+                                pressure_iters,
+                            );
+                            self.apply_gpu_results(self.positions.len());
                         }
                     }
                 }
-
-                let pressure_iters = self.sim.pressure_iterations as u32;
-                if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
-                    let sdf = self.sim.grid.sdf.as_slice();
-                    let positions = &mut self.positions;
-                    let velocities = &mut self.velocities;
-                    let c_matrices = &mut self.c_matrices;
-                    let cell_types = &self.cell_types;
-                    gpu_flip.step(
-                        &gpu.device,
-                        &gpu.queue,
-                        positions,
-                        velocities,
-                        c_matrices,
-                        cell_types,
-                        Some(sdf),
-                        dt,
-                        -9.8,
-                        0.0,
-                        pressure_iters,
-                    );
-                }
-
-                for (idx, p) in self.sim.particles.list.iter_mut().enumerate() {
-                    if idx < self.velocities.len() {
-                        p.velocity = self.velocities[idx];
-                        p.affine_velocity = self.c_matrices[idx];
-                    }
-                    p.position = self.positions[idx];
-
-                    // Exit zone detection
-                    let cell_size = CELL_SIZE;
-                    let t = (p.position.x / cell_size) / (GRID_WIDTH as f32 - 1.0);
-                    let t = t.clamp(0.0, 1.0);
-                    let floor_height = 10.0 * (1.0 - t) + 4.0 * t;
-                    let exit_start_z = GRID_DEPTH as f32 * cell_size / 6.0;
-                    let exit_end_z = GRID_DEPTH as f32 * cell_size * 5.0 / 6.0;
-                    let exit_max_y = (floor_height + 8.0) * cell_size;
-                    let is_in_exit_zone = p.position.z >= exit_start_z && p.position.z < exit_end_z
-                        && p.position.y < exit_max_y;
-
-                    if p.position.x >= (GRID_WIDTH as f32 - 0.5) * cell_size && is_in_exit_zone {
-                        p.position.x = 1000.0;
-                    }
-                }
-
-                let before = self.sim.particles.len();
-                self.sim.particles.list.retain(|p| p.position.x < 100.0);
-                let exited_this_frame = before - self.sim.particles.len();
-                self.particles_exited += exited_this_frame as u32;
             } else {
                 self.sim.update(dt);
             }
