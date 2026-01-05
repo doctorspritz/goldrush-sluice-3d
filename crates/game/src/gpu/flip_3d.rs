@@ -1807,7 +1807,7 @@ impl GpuFlip3D {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        positions: &mut [glam::Vec3],  // Now mutable for density projection position correction
+        positions: &mut [glam::Vec3],
         velocities: &mut [glam::Vec3],
         c_matrices: &mut [glam::Mat3],
         cell_types: &[u32],

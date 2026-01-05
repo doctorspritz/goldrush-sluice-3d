@@ -510,6 +510,7 @@ impl App {
                 };
 
                 if should_schedule {
+                    // Emit MORE particles for industrial scale - 200 every other frame
                     if self.emitter_enabled && self.frame % 2 == 0 {
                         self.emit_particles(200);
                     }
