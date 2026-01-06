@@ -55,8 +55,8 @@ struct Params {
 @group(0) @binding(3) var<storage, read> densities: array<f32>;
 @group(0) @binding(4) var<storage, read> bed_height: array<f32>;
 @group(0) @binding(5) var<storage, read> sdf: array<f32>;
-@group(0) @binding(6) var<storage, read_write> bed_water_count: array<atomic<u32>>;
-@group(0) @binding(7) var<storage, read_write> bed_sediment_count: array<atomic<u32>>;
+@group(0) @binding(6) var<storage, read_write> bed_water_count: array<atomic<i32>>;
+@group(0) @binding(7) var<storage, read_write> bed_sediment_count: array<atomic<i32>>;
 @group(0) @binding(8) var<storage, read_write> bed_water_vel_sum: array<atomic<i32>>;
 @group(0) @binding(9) var<storage, read_write> probe_stats: array<atomic<i32>>;
 
@@ -167,15 +167,21 @@ fn bed_stats(@builtin(global_invocation_id) gid: vec3<u32>) {
     let density = densities[gid.x];
     let cell_size = params.cell_size;
 
-    let i = clamp(i32(pos.x / cell_size), 0, i32(params.width) - 1);
-    let k = clamp(i32(pos.z / cell_size), 0, i32(params.depth) - 1);
+    let i = i32(floor(pos.x / cell_size));
+    let k = i32(floor(pos.z / cell_size));
+    if (i < 0 || i >= i32(params.width) || k < 0 || k >= i32(params.depth)) {
+        return;
+    }
     let idx = bed_index(i, k);
     let bed = bed_height_at(i, k);
+    let offset = pos.y - bed;
 
-    let in_sample = pos.y >= bed && pos.y <= bed + params.sample_height;
+    let in_sample = offset >= 0.0 && offset <= params.sample_height;
     if (in_sample) {
         if (density > SEDIMENT_DENSITY_THRESHOLD) {
-            atomicAdd(&bed_sediment_count[idx], 1);
+            if (offset <= params.bed_air_margin) {
+                atomicAdd(&bed_sediment_count[idx], 1);
+            }
         } else {
             atomicAdd(&bed_water_count[idx], 1);
             let base = idx * 3u;

@@ -18,11 +18,12 @@ struct Params {
     entrainment_coeff: f32,
     sediment_settling_velocity: f32,
     bed_porosity: f32,
+    sediment_rest_particles: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> bed_water_count: array<atomic<u32>>;
-@group(0) @binding(2) var<storage, read> bed_sediment_count: array<atomic<u32>>;
+@group(0) @binding(1) var<storage, read> bed_water_count: array<atomic<i32>>;
+@group(0) @binding(2) var<storage, read> bed_sediment_count: array<atomic<i32>>;
 @group(0) @binding(3) var<storage, read> bed_water_vel_sum: array<atomic<i32>>;
 @group(0) @binding(4) var<storage, read> bed_base_height: array<f32>;
 @group(0) @binding(5) var<storage, read> bed_height: array<f32>;
@@ -53,15 +54,15 @@ fn bed_flux(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let water_count = atomicLoad(&bed_water_count[idx]);
-    let sediment_count = atomicLoad(&bed_sediment_count[idx]);
+    let water_count = max(atomicLoad(&bed_water_count[idx]), 0);
+    let sediment_count = max(atomicLoad(&bed_sediment_count[idx]), 0);
     let base = idx * 3u;
     let sum_x = f32(atomicLoad(&bed_water_vel_sum[base + 0u])) / VEL_SCALE;
     let sum_y = f32(atomicLoad(&bed_water_vel_sum[base + 1u])) / VEL_SCALE;
     let sum_z = f32(atomicLoad(&bed_water_vel_sum[base + 2u])) / VEL_SCALE;
 
     var avg_vel = vec3<f32>(0.0, 0.0, 0.0);
-    if (water_count > 0u) {
+    if (water_count > 0) {
         let inv = 1.0 / f32(water_count);
         avg_vel = vec3<f32>(sum_x, sum_y, sum_z) * inv;
     }
@@ -87,9 +88,17 @@ fn bed_flux(@builtin(global_invocation_id) gid: vec3<u32>) {
     bed_flux_z[idx] = flow_dir.z * bedload_mag;
 
     let total = water_count + sediment_count;
-    let sediment_conc = select(0.0, f32(sediment_count) / f32(total), total > 0u);
+    let sediment_conc = select(0.0, f32(sediment_count) / f32(total), total > 0);
     let shear_factor = 1.0 - smoothstep(params.shields_critical * 0.7, params.shields_critical * 1.3, theta);
     let deposit_rate = params.sediment_settling_velocity * sediment_conc * shear_factor;
     let entrain_rate = params.entrainment_coeff * excess;
-    bed_desired_delta[idx] = (deposit_rate - entrain_rate) * params.dt;
+    var desired_delta = (deposit_rate - entrain_rate) * params.dt;
+
+    let particle_height = params.cell_size / (params.sediment_rest_particles * (1.0 - params.bed_porosity));
+    let max_deposit = f32(sediment_count) * particle_height;
+    if (desired_delta > max_deposit) {
+        desired_delta = max_deposit;
+    }
+
+    bed_desired_delta[idx] = desired_delta;
 }

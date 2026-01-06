@@ -57,6 +57,7 @@ pub struct GpuBedParams {
     pub entrainment_coeff: f32,
     pub sediment_settling_velocity: f32,
     pub bed_porosity: f32,
+    pub sediment_rest_particles: f32,
     pub max_bed_height: f32,
 }
 
@@ -99,6 +100,8 @@ struct BedFluxParams3D {
     entrainment_coeff: f32,
     sediment_settling_velocity: f32,
     bed_porosity: f32,
+    sediment_rest_particles: f32,
+    _pad1: f32,
 }
 
 #[repr(C)]
@@ -203,14 +206,14 @@ impl GpuBed3D {
 
         let bed_water_count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Bed Water Count"),
-            size: (column_count * std::mem::size_of::<u32>()) as u64,
+            size: (column_count * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let bed_sediment_count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Bed Sediment Count"),
-            size: (column_count * std::mem::size_of::<u32>()) as u64,
+            size: (column_count * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -747,6 +750,17 @@ impl GpuBed3D {
         queue.write_buffer(&self.bed_height_buffer, 0, bytemuck::cast_slice(bed_base_height));
     }
 
+    pub fn write_bed_height(&self, queue: &wgpu::Queue, bed_height: &[f32]) {
+        assert_eq!(
+            bed_height.len(),
+            self.column_count,
+            "bed height size mismatch: got {}, expected {}",
+            bed_height.len(),
+            self.column_count
+        );
+        queue.write_buffer(&self.bed_height_buffer, 0, bytemuck::cast_slice(bed_height));
+    }
+
     pub fn update(
         &mut self,
         device: &wgpu::Device,
@@ -790,6 +804,8 @@ impl GpuBed3D {
             entrainment_coeff: params.entrainment_coeff,
             sediment_settling_velocity: params.sediment_settling_velocity,
             bed_porosity: params.bed_porosity,
+            sediment_rest_particles: params.sediment_rest_particles,
+            _pad1: 0.0,
         };
         queue.write_buffer(&self.bed_flux_params_buffer, 0, bytemuck::bytes_of(&bed_flux_params));
 
