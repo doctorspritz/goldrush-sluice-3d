@@ -66,6 +66,8 @@ struct App {
     positions: Vec<Vec3>,
     velocities: Vec<Vec3>,
     c_matrices: Vec<Mat3>,
+    densities: Vec<f32>,
+    bed_height: Vec<f32>,
     cell_types: Vec<u32>,
     // Mouse drag state
     mouse_pressed: bool,
@@ -207,6 +209,8 @@ impl App {
             positions: Vec::new(),
             velocities: Vec::new(),
             c_matrices: Vec::new(),
+            densities: Vec::new(),
+            bed_height: vec![0.0; GRID_WIDTH * GRID_DEPTH],
             cell_types: Vec::new(),
             mouse_pressed: false,
             last_mouse_pos: None,
@@ -317,11 +321,13 @@ impl App {
             self.positions.clear();
             self.velocities.clear();
             self.c_matrices.clear();
+            self.densities.clear();
 
             for p in &self.sim.particles.list {
                 self.positions.push(p.position);
                 self.velocities.push(p.velocity);
                 self.c_matrices.push(p.affine_velocity);
+                self.densities.push(p.density);
             }
 
             // Build cell types
@@ -363,8 +369,10 @@ impl App {
                     &mut self.positions,
                     &mut self.velocities,
                     &mut self.c_matrices,
+                    &self.densities,
                     &self.cell_types,
                     None,
+                    Some(&self.bed_height),
                     DT,
                     -9.8,
                     0.0,  // No flow acceleration

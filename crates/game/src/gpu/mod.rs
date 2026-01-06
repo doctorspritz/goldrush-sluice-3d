@@ -1,3 +1,4 @@
+pub mod bed_3d;
 pub mod flip_3d;
 pub mod g2p;
 pub mod g2p_3d;

@@ -18,15 +18,27 @@ struct Params {
 @group(0) @binding(1) var<storage, read_write> positions: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read_write> velocities: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read> sdf: array<f32>;
+@group(0) @binding(4) var<storage, read> bed_height: array<f32>;
+@group(0) @binding(5) var<storage, read> densities: array<f32>;
 
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
 }
 
+fn bed_index(i: i32, k: i32) -> u32 {
+    return u32(k) * params.width + u32(i);
+}
+
+fn bed_height_at(i: i32, k: i32) -> f32 {
+    let ii = clamp(i, 0, i32(params.width) - 1);
+    let kk = clamp(k, 0, i32(params.depth) - 1);
+    return bed_height[bed_index(ii, kk)];
+}
+
 fn sdf_at(i: i32, j: i32, k: i32) -> f32 {
-    if (i < 0 || i >= i32(params.width)) { return -params.cell_size; }
-    if (j < 0 || j >= i32(params.height)) { return -params.cell_size; }
     if (k < 0 || k >= i32(params.depth)) { return -params.cell_size; }
+    if (i < 0 || j < 0) { return -params.cell_size; }
+    if (i >= i32(params.width) || j >= i32(params.height)) { return params.cell_size; }
     return sdf[cell_index(u32(i), u32(j), u32(k))];
 }
 
@@ -80,6 +92,27 @@ fn sdf_gradient(pos: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(0.0, 1.0, 0.0);
 }
 
+fn sample_bed_height(pos: vec3<f32>) -> f32 {
+    let inv_dx = 1.0 / params.cell_size;
+    let fx = pos.x * inv_dx - 0.5;
+    let fz = pos.z * inv_dx - 0.5;
+
+    let i0 = i32(floor(fx));
+    let k0 = i32(floor(fz));
+
+    let tx = fx - f32(i0);
+    let tz = fz - f32(k0);
+
+    let h00 = bed_height_at(i0, k0);
+    let h10 = bed_height_at(i0 + 1, k0);
+    let h01 = bed_height_at(i0, k0 + 1);
+    let h11 = bed_height_at(i0 + 1, k0 + 1);
+
+    let hx0 = mix(h00, h10, tx);
+    let hx1 = mix(h01, h11, tx);
+    return mix(hx0, hx1, tz);
+}
+
 @compute @workgroup_size(256)
 fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
     let pid = id.x;
@@ -103,6 +136,19 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
         let vel_into = dot(vel, normal);
         if (vel_into < 0.0) {
             vel -= normal * vel_into * 1.1;
+        }
+    }
+
+    let density = densities[pid];
+    if (density > 1.0) {
+        let bed = sample_bed_height(pos);
+        if (pos.y < bed) {
+            pos.y = bed + params.cell_size * 0.05;
+            if (vel.y < 0.0) {
+                vel.y = 0.0;
+            }
+            vel.x *= 0.7;
+            vel.z *= 0.7;
         }
     }
 

@@ -62,6 +62,8 @@ struct App {
     positions: Vec<Vec3>,
     velocities: Vec<Vec3>,
     c_matrices: Vec<Mat3>,
+    densities: Vec<f32>,
+    bed_height: Vec<f32>,
     cell_types: Vec<u32>,
     use_gpu_sim: bool,
     // Mouse drag state
@@ -249,6 +251,8 @@ impl App {
             positions: Vec::new(),
             velocities: Vec::new(),
             c_matrices: Vec::new(),
+            densities: Vec::new(),
+            bed_height: vec![0.0; GRID_WIDTH * GRID_DEPTH],
             cell_types: Vec::new(),
             use_gpu_sim: true,
             mouse_pressed: false,
@@ -379,11 +383,13 @@ impl App {
                 self.positions.clear();
                 self.velocities.clear();
                 self.c_matrices.clear();
+                self.densities.clear();
 
                 for p in &self.sim.particles.list {
                     self.positions.push(p.position);
                     self.velocities.push(p.velocity);
                     self.c_matrices.push(p.affine_velocity);
+                    self.densities.push(p.density);
                 }
 
                 // Build cell types
@@ -423,15 +429,19 @@ impl App {
                     let positions = &mut self.positions;
                     let velocities = &mut self.velocities;
                     let c_matrices = &mut self.c_matrices;
+                    let densities = &self.densities;
                     let cell_types = &self.cell_types;
+                    let bed_height = &self.bed_height;
                     gpu_flip.step(
                         &gpu.device,
                         &gpu.queue,
                         positions,
                         velocities,
                         c_matrices,
+                        densities,
                         cell_types,
                         Some(sdf),
+                        Some(bed_height),
                         dt,
                         -9.8,
                         0.0,  // No flow acceleration for closed box

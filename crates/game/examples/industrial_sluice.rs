@@ -6,6 +6,7 @@
 //! Run with: cargo run --example industrial_sluice --release
 
 use bytemuck::{Pod, Zeroable};
+use game::gpu::bed_3d::{self, GpuBed3D, GpuBedParams};
 use game::gpu::flip_3d::GpuFlip3D;
 use glam::{Mat3, Mat4, Vec3};
 use sim3d::FlipSimulation3D;
@@ -23,9 +24,9 @@ use winit::{
 // INDUSTRIAL SCALE - much larger than box_3d_test
 const GRID_WIDTH: usize = 160;   // 5x wider (was 32)
 const GRID_HEIGHT: usize = 40;   // Taller for water depth
-const GRID_DEPTH: usize = 32;    // 2x deeper (was 16)
+const GRID_DEPTH: usize = 24;    // Thinner sluice (was 32)
 const CELL_SIZE: f32 = 0.03;     // Smaller cells for detail
-const MAX_PARTICLES: usize = 200_000;  // 4x more particles
+const MAX_PARTICLES: usize = 500_000;  // Increased cap to avoid emitter saturation
 const FLOW_PARTICLE_STRIDE: usize = 8; // Render every Nth particle for flow viz
 const MAX_FLOW_PARTICLES: usize = MAX_PARTICLES / FLOW_PARTICLE_STRIDE;
 const TARGET_FPS: f32 = 60.0;
@@ -36,6 +37,32 @@ const MAX_SURFACE_VERTICES: usize = GRID_WIDTH * GRID_DEPTH * 6;
 const VORTICITY_EPSILON_DEFAULT: f32 = 0.05;
 const VORTICITY_EPSILON_STEP: f32 = 0.01;
 const VORTICITY_EPSILON_MAX: f32 = 0.25;
+const GPU_SYNC_STRIDE: u32 = 4;
+const FLOOR_HEIGHT_LEFT: usize = 10;
+const FLOOR_HEIGHT_RIGHT: usize = 3;
+const RIFFLE_SPACING: usize = 12;
+const RIFFLE_HEIGHT: usize = 2;
+const RIFFLE_START_X: usize = 12;
+const RIFFLE_END_PAD: usize = 8;
+const SEDIMENT_EMIT_FRACTION: f32 = 0.25;
+const RIFFLE_THICKNESS_CELLS: i32 = 2;
+const SEDIMENT_REL_DENSITY: f32 = 2.65;
+const SEDIMENT_REST_PARTICLES: f32 = 8.0;
+const SEDIMENT_SETTLING_VELOCITY: f32 = 0.35;
+const BED_POROSITY: f32 = 0.4;
+const BED_SAMPLE_HEIGHT_CELLS: f32 = 2.0;
+const BED_FRICTION: f32 = 0.004;
+const SEDIMENT_GRAIN_DIAMETER: f32 = 0.0015;
+const WATER_DENSITY: f32 = 1000.0;
+const SHIELDS_CRITICAL: f32 = 0.045;
+const SHIELDS_SMOOTH: f32 = 0.02;
+const BEDLOAD_COEFF: f32 = 0.25;
+const ENTRAINMENT_COEFF: f32 = 0.2;
+const RIFFLE_PROBE_PAD: i32 = 2;
+const BED_AIR_MARGIN_CELLS: f32 = 1.5;
+const BED_MAX_SLOPE: f32 = 0.7;
+const BED_RELAX_ITERS: usize = 2;
+const BED_MAX_DELTA_LAYERS: f32 = 1.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -69,6 +96,7 @@ struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
     gpu_flip: Option<GpuFlip3D>,
+    gpu_bed: Option<GpuBed3D>,
     sim: FlipSimulation3D,
     paused: bool,
     camera_angle: f32,
@@ -79,6 +107,16 @@ struct App {
     positions: Vec<Vec3>,
     velocities: Vec<Vec3>,
     c_matrices: Vec<Mat3>,
+    densities: Vec<f32>,
+    bed_height: Vec<f32>,
+    bed_base_height: Vec<f32>,
+    bed_height_prev: Vec<f32>,
+    bed_height_residual: Vec<f32>,
+    bed_water_vel_sum: Vec<Vec3>,
+    bed_water_count: Vec<u32>,
+    bed_sediment_count: Vec<u32>,
+    bed_flux_x: Vec<f32>,
+    bed_flux_z: Vec<f32>,
     cell_types: Vec<u32>,
     use_gpu_sim: bool,
     pressure_iters_gpu: u32,
@@ -87,6 +125,7 @@ struct App {
     gpu_readback_pending: bool,
     render_heightfield: bool,
     render_flow_particles: bool,
+    debug_riffle_probe: bool,
     mouse_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
     last_fps_time: Instant,
@@ -94,9 +133,60 @@ struct App {
     current_fps: f32,
     emitter_enabled: bool,
     particles_exited: u32,
+    pending_emit: usize,
+    gpu_particle_count: u32,
+    gpu_probe_stats: Vec<i32>,
     heightfield: Vec<f32>,
     surface_vertices: Vec<SurfaceVertex>,
     flow_particles: Vec<ParticleInstance>,
+}
+
+struct RiffleProbeStats {
+    water_count: u32,
+    sediment_count: u32,
+    water_avg_y: f32,
+    sediment_avg_y: f32,
+    water_max_y: f32,
+    sediment_max_y: f32,
+    water_avg_vy: f32,
+    sediment_avg_vy: f32,
+    water_sdf_neg: u32,
+    sediment_sdf_neg: u32,
+    water_below_bed: u32,
+    sediment_below_bed: u32,
+    water_above_bed: u32,
+    sediment_above_bed: u32,
+    water_up: u32,
+    sediment_up: u32,
+    water_avg_offset: f32,
+    sediment_avg_offset: f32,
+    water_max_offset: f32,
+    sediment_max_offset: f32,
+    bed_min: f32,
+    bed_max: f32,
+}
+
+struct MaterialProbeStats {
+    count: u32,
+    avg_y: f32,
+    max_y: f32,
+    avg_vy: f32,
+    sdf_neg: u32,
+    below_bed: u32,
+    above_bed: u32,
+    avg_offset: f32,
+    max_offset: f32,
+    up: u32,
+}
+
+struct SedimentThroughputStats {
+    total: u32,
+    upstream: u32,
+    at_riffle: u32,
+    downstream: u32,
+    max_x: f32,
+    max_y: f32,
+    lofted: u32,
 }
 
 struct GpuState {
@@ -124,14 +214,14 @@ fn create_industrial_sluice(sim: &mut FlipSimulation3D) {
     let depth = sim.grid.depth;
 
     // 2° slope: over 160 cells, drop = 160 * tan(2°) ≈ 5.6 cells
-    let floor_height_left = 10;  // Start 10 cells high
-    let floor_height_right = 4;  // End 4 cells high (6 cell drop over 160 cells ≈ 2.1°)
+    let floor_height_left = FLOOR_HEIGHT_LEFT;  // Start 10 cells high
+    let floor_height_right = FLOOR_HEIGHT_RIGHT;  // End 4 cells high (6 cell drop over 160 cells ≈ 2.1°)
 
     // Riffle parameters - more riffles for industrial scale
-    let riffle_spacing = 12;     // Riffles every 12 cells
-    let riffle_height = 4;       // Riffles are 4 cells tall (deeper pooling)
-    let riffle_start_x = 15;     // Start riffles after inlet
-    let riffle_end_x = width - 10; // Stop before exit
+    let riffle_spacing = RIFFLE_SPACING;     // Riffles every 12 cells
+    let riffle_height = RIFFLE_HEIGHT;       // Riffles are 4 cells tall (deeper pooling)
+    let riffle_start_x = RIFFLE_START_X;     // Start riffles after inlet
+    let riffle_end_x = width - RIFFLE_END_PAD; // Stop before exit
 
     // Exit parameters - wide exit
     let exit_start_z = depth / 6;
@@ -189,6 +279,89 @@ fn rand_float() -> f32 {
     }
 }
 
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    if (edge1 - edge0).abs() < f32::EPSILON {
+        return if x < edge0 { 0.0 } else { 1.0 };
+    }
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn smooth_positive(x: f32, width: f32) -> f32 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if width <= 0.0 {
+        return x;
+    }
+    x * smoothstep(0.0, width, x)
+}
+
+fn flow_accel_from_slope() -> f32 {
+    let drop = (FLOOR_HEIGHT_LEFT as f32 - FLOOR_HEIGHT_RIGHT as f32).max(0.0);
+    let slope = drop / (GRID_WIDTH as f32 - 1.0);
+    9.8 * slope
+}
+
+fn bed_surface_height_at(i: usize) -> f32 {
+    // Bed height excludes riffles; riffles remain solid via SDF only.
+    let t = i as f32 / (GRID_WIDTH as f32 - 1.0);
+    let floor_height = FLOOR_HEIGHT_LEFT as f32 * (1.0 - t) + FLOOR_HEIGHT_RIGHT as f32 * t;
+    floor_height * CELL_SIZE
+}
+
+fn build_bed_base_height() -> Vec<f32> {
+    let mut height = vec![0.0f32; GRID_WIDTH * GRID_DEPTH];
+    for k in 0..GRID_DEPTH {
+        for i in 0..GRID_WIDTH {
+            height[k * GRID_WIDTH + i] = bed_surface_height_at(i);
+        }
+    }
+    height
+}
+
+fn build_gpu_bed_params(dt: f32) -> GpuBedParams {
+    let riffle_start = RIFFLE_START_X as i32;
+    let riffle_end = riffle_start + RIFFLE_THICKNESS_CELLS - 1;
+    let riffle_min_i = (riffle_start - RIFFLE_PROBE_PAD).max(0);
+    let riffle_max_i = (riffle_end + RIFFLE_PROBE_PAD).min(GRID_WIDTH as i32 - 1);
+
+    let downstream_start = riffle_end + 1 + RIFFLE_PROBE_PAD;
+    let downstream_end = downstream_start + RIFFLE_THICKNESS_CELLS - 1;
+    let downstream_min_i = (downstream_start - RIFFLE_PROBE_PAD).max(0);
+    let downstream_max_i = (downstream_end + RIFFLE_PROBE_PAD).min(GRID_WIDTH as i32 - 1);
+
+    let riffle_start_x = RIFFLE_START_X as f32 * CELL_SIZE;
+    let riffle_end_x = (RIFFLE_START_X as i32 + RIFFLE_THICKNESS_CELLS) as f32 * CELL_SIZE;
+    let downstream_x = riffle_end_x + CELL_SIZE;
+
+    GpuBedParams {
+        dt,
+        sample_height: BED_SAMPLE_HEIGHT_CELLS * CELL_SIZE,
+        bed_air_margin: BED_AIR_MARGIN_CELLS * CELL_SIZE,
+        loft_height: CELL_SIZE * 2.0,
+        riffle_min_i,
+        riffle_max_i,
+        downstream_min_i,
+        downstream_max_i,
+        riffle_start_x,
+        riffle_end_x,
+        downstream_x,
+        bed_friction: BED_FRICTION,
+        sediment_rel_density: SEDIMENT_REL_DENSITY,
+        water_density: WATER_DENSITY,
+        sediment_grain_diameter: SEDIMENT_GRAIN_DIAMETER,
+        shields_critical: SHIELDS_CRITICAL,
+        shields_smooth: SHIELDS_SMOOTH,
+        bedload_coeff: BEDLOAD_COEFF,
+        entrainment_coeff: ENTRAINMENT_COEFF,
+        sediment_settling_velocity: SEDIMENT_SETTLING_VELOCITY,
+        bed_porosity: BED_POROSITY,
+        sediment_rest_particles: SEDIMENT_REST_PARTICLES,
+        max_bed_height: (GRID_HEIGHT as f32 - 2.0) * CELL_SIZE,
+    }
+}
+
 impl App {
     fn new() -> Self {
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
@@ -198,17 +371,29 @@ impl App {
 
         create_industrial_sluice(&mut sim);
 
+        let bed_base_height = build_bed_base_height();
+        let bed_height = bed_base_height.clone();
+        let bed_column_count = GRID_WIDTH * GRID_DEPTH;
+        let bed_water_vel_sum = vec![Vec3::ZERO; bed_column_count];
+        let bed_water_count = vec![0u32; bed_column_count];
+        let bed_sediment_count = vec![0u32; bed_column_count];
+        let bed_flux_x = vec![0.0f32; bed_column_count];
+        let bed_flux_z = vec![0.0f32; bed_column_count];
+        let bed_height_prev = bed_height.clone();
+        let bed_height_residual = vec![0.0f32; bed_column_count];
+
         let solid_instances = Self::collect_solids(&sim);
         let pressure_iters_gpu = sim.pressure_iterations as u32;
 
         println!("Solid cells: {}", solid_instances.len());
         println!("Max particles: {}", MAX_PARTICLES);
-        println!("Controls: SPACE=pause, R=reset, G=toggle GPU/CPU, E=toggle emitter, H=heightfield, F=flow particles, V/B=vorticity -/+, ESC=quit");
+        println!("Controls: SPACE=pause, R=reset, G=toggle GPU/CPU, E=toggle emitter, H=heightfield, F=flow particles, V/B=vorticity -/+, P=riffle probe, ESC=quit");
 
         Self {
             window: None,
             gpu: None,
             gpu_flip: None,
+            gpu_bed: None,
             sim,
             paused: false,
             camera_angle: 0.3,
@@ -219,14 +404,25 @@ impl App {
             positions: Vec::new(),
             velocities: Vec::new(),
             c_matrices: Vec::new(),
+            densities: Vec::new(),
+            bed_height,
+            bed_base_height,
+            bed_height_prev,
+            bed_height_residual,
+            bed_water_vel_sum,
+            bed_water_count,
+            bed_sediment_count,
+            bed_flux_x,
+            bed_flux_z,
             cell_types: Vec::new(),
             use_gpu_sim: true,
             pressure_iters_gpu,
             vorticity_epsilon: VORTICITY_EPSILON_DEFAULT,
-            use_async_readback: true,
+            use_async_readback: false,
             gpu_readback_pending: false,
             render_heightfield: true,
             render_flow_particles: true,
+            debug_riffle_probe: true,
             mouse_pressed: false,
             last_mouse_pos: None,
             last_fps_time: Instant::now(),
@@ -234,6 +430,9 @@ impl App {
             current_fps: 0.0,
             emitter_enabled: true,
             particles_exited: 0,
+            pending_emit: 0,
+            gpu_particle_count: 0,
+            gpu_probe_stats: vec![0; bed_3d::PROBE_STAT_BUFFER_LEN],
             heightfield: vec![f32::NEG_INFINITY; GRID_WIDTH * GRID_DEPTH],
             surface_vertices: Vec::with_capacity(MAX_SURFACE_VERTICES),
             flow_particles: Vec::with_capacity(MAX_FLOW_PARTICLES),
@@ -248,22 +447,411 @@ impl App {
 
         let cell_size = CELL_SIZE;
         let max_to_spawn = (MAX_PARTICLES - self.sim.particles.len()).min(count);
+        let sediment_spawn = (max_to_spawn as f32 * SEDIMENT_EMIT_FRACTION) as usize;
+        let water_spawn = max_to_spawn.saturating_sub(sediment_spawn);
 
-        // Emit from left side, above the sloped floor (floor is 10 cells high on left)
-        let emit_x = 5.0 * cell_size;
+        // Emit above the first riffle so particles drop under gravity.
+        let emit_x = (RIFFLE_START_X as f32 + 0.5) * cell_size;
         let center_z = GRID_DEPTH as f32 * cell_size * 0.5;
-        let emit_y = 15.0 * cell_size; // Above the 10-cell high left floor
+        let drop_height = 8.0 * cell_size;
 
         // Wider spread for industrial inlet
         let spread_x = 4.0 * cell_size;
         let spread_z = (GRID_DEPTH as f32 - 4.0) * cell_size * 0.6;
 
-        for _ in 0..max_to_spawn {
-            let x = emit_x + rand_float() * spread_x;
+        for _ in 0..water_spawn {
+            let x = emit_x + (rand_float() - 0.5) * spread_x;
             let z = center_z + (rand_float() - 0.5) * spread_z;
-            let y = emit_y + rand_float() * 2.0 * cell_size;
+            let i = (x / cell_size).floor() as i32;
+            let k = (z / cell_size).floor() as i32;
+            let bed_y = if i >= 0 && i < GRID_WIDTH as i32 && k >= 0 && k < GRID_DEPTH as i32 {
+                let idx = k as usize * GRID_WIDTH + i as usize;
+                self.bed_height[idx]
+            } else {
+                0.0
+            };
+            let y = bed_y + drop_height + rand_float() * 2.0 * cell_size;
 
             self.sim.spawn_particle(Vec3::new(x, y, z));
+        }
+
+        for _ in 0..sediment_spawn {
+            if self.sim.particles.len() >= MAX_PARTICLES {
+                break;
+            }
+
+            let x = emit_x + (rand_float() - 0.5) * spread_x;
+            let z = center_z + (rand_float() - 0.5) * spread_z;
+            let i = (x / cell_size).floor() as i32;
+            let k = (z / cell_size).floor() as i32;
+            let bed_y = if i >= 0 && i < GRID_WIDTH as i32 && k >= 0 && k < GRID_DEPTH as i32 {
+                let idx = k as usize * GRID_WIDTH + i as usize;
+                self.bed_height[idx]
+            } else {
+                0.0
+            };
+
+            let y = bed_y + drop_height + rand_float() * 2.0 * cell_size;
+            let vel = Vec3::ZERO;
+            self.sim.spawn_sediment(Vec3::new(x, y, z), vel, SEDIMENT_REL_DENSITY);
+        }
+    }
+
+    fn update_sediment_bed(&mut self, dt: f32) {
+        let w = GRID_WIDTH;
+        let d = GRID_DEPTH;
+        let cell_size = CELL_SIZE;
+        let column_count = w * d;
+        let sample_height = cell_size * BED_SAMPLE_HEIGHT_CELLS;
+        let sediment_band = cell_size * BED_AIR_MARGIN_CELLS;
+
+        self.bed_water_vel_sum.fill(Vec3::ZERO);
+        self.bed_water_count.fill(0);
+        self.bed_sediment_count.fill(0);
+
+        for p in &self.sim.particles.list {
+            let i = (p.position.x / cell_size).floor() as i32;
+            let k = (p.position.z / cell_size).floor() as i32;
+            if i < 0 || i >= w as i32 || k < 0 || k >= d as i32 {
+                continue;
+            }
+            let idx = k as usize * w + i as usize;
+            let bed_y = self.bed_height[idx];
+            if p.density <= 1.0 {
+                if p.position.y >= bed_y && p.position.y <= bed_y + sample_height {
+                    self.bed_water_vel_sum[idx] += p.velocity;
+                    self.bed_water_count[idx] += 1;
+                }
+            } else if p.position.y >= bed_y && p.position.y <= bed_y + sediment_band {
+                self.bed_sediment_count[idx] += 1;
+            }
+        }
+
+        let particle_height = cell_size / (SEDIMENT_REST_PARTICLES * (1.0 - BED_POROSITY));
+        let mut deposit_quota = vec![0u32; column_count];
+        let mut erode_quota = vec![0u32; column_count];
+        let density_diff = (SEDIMENT_REL_DENSITY - 1.0) * WATER_DENSITY;
+
+        for idx in 0..column_count {
+            let count = self.bed_water_count[idx];
+            let avg_vel = if count > 0 {
+                self.bed_water_vel_sum[idx] / count as f32
+            } else {
+                Vec3::ZERO
+            };
+            self.bed_water_vel_sum[idx] = avg_vel;
+
+            let speed = avg_vel.length();
+            let tau = WATER_DENSITY * BED_FRICTION * speed * speed;
+            let theta = if speed > 0.0 {
+                tau / (density_diff * 9.81 * SEDIMENT_GRAIN_DIAMETER)
+            } else {
+                0.0
+            };
+            let excess = smooth_positive(theta - SHIELDS_CRITICAL, SHIELDS_SMOOTH);
+            let available_height = (self.bed_height[idx] - self.bed_base_height[idx]).max(0.0);
+            let availability = (available_height / (cell_size * 2.0)).clamp(0.0, 1.0);
+            let bedload_mag = BEDLOAD_COEFF * excess.powf(1.5) * availability;
+            let flow_dir = if speed > 1e-3 {
+                Vec3::new(avg_vel.x, 0.0, avg_vel.z).normalize()
+            } else {
+                Vec3::ZERO
+            };
+            self.bed_flux_x[idx] = flow_dir.x * bedload_mag;
+            self.bed_flux_z[idx] = flow_dir.z * bedload_mag;
+
+            let sediment_count = self.bed_sediment_count[idx];
+            let water_count = self.bed_water_count[idx];
+            let total_count = sediment_count + water_count;
+            let sediment_conc = if total_count > 0 {
+                sediment_count as f32 / total_count as f32
+            } else {
+                0.0
+            };
+            let shear_factor = 1.0 - smoothstep(SHIELDS_CRITICAL * 0.7, SHIELDS_CRITICAL * 1.3, theta);
+            let deposit_rate = SEDIMENT_SETTLING_VELOCITY * sediment_conc * shear_factor;
+            let entrain_rate = ENTRAINMENT_COEFF * excess;
+            let desired_delta = (deposit_rate - entrain_rate) * dt;
+
+            if desired_delta > 0.0 {
+                deposit_quota[idx] = (desired_delta / particle_height).floor() as u32;
+            } else if desired_delta < 0.0 {
+                let available_height = (self.bed_height[idx] - self.bed_base_height[idx]).max(0.0);
+                let max_erode = (available_height / particle_height).floor() as u32;
+                let want = ((-desired_delta) / particle_height).floor() as u32;
+                erode_quota[idx] = want.min(max_erode);
+            }
+        }
+
+        let mut bedload_delta = vec![0.0f32; column_count];
+        for k in 0..d {
+            for i in 0..w {
+                let idx = k * w + i;
+                let fx_p = if i + 1 < w { self.bed_flux_x[idx + 1] } else { 0.0 };
+                let fx_m = if i > 0 { self.bed_flux_x[idx - 1] } else { 0.0 };
+                let fz_p = if k + 1 < d { self.bed_flux_z[idx + w] } else { 0.0 };
+                let fz_m = if k > 0 { self.bed_flux_z[idx - w] } else { 0.0 };
+                let div = (fx_p - fx_m + fz_p - fz_m) / (2.0 * cell_size);
+                bedload_delta[idx] = -div * dt / (1.0 - BED_POROSITY);
+            }
+        }
+
+        let mut removed = vec![0u32; column_count];
+        let mut deposit_quota = deposit_quota;
+        let bed_height = &self.bed_height;
+        self.sim.particles.list.retain(|p| {
+            if p.is_sediment() {
+                let i = (p.position.x / cell_size).floor() as i32;
+                let k = (p.position.z / cell_size).floor() as i32;
+                if i >= 0 && i < w as i32 && k >= 0 && k < d as i32 {
+                    let idx = k as usize * w + i as usize;
+                    if deposit_quota[idx] > 0 && p.position.y <= bed_height[idx] + sediment_band {
+                        deposit_quota[idx] -= 1;
+                        removed[idx] += 1;
+                        return false;
+                    }
+                }
+            }
+            true
+        });
+
+        let max_bed_height = (GRID_HEIGHT as f32 - 2.0) * cell_size;
+        for idx in 0..column_count {
+            let mut spawned = 0u32;
+            let spawn_count = erode_quota[idx];
+            if spawn_count > 0 {
+                let avg_vel = self.bed_water_vel_sum[idx];
+                let k = idx / w;
+                let i = idx % w;
+                for _ in 0..spawn_count {
+                    if self.sim.particles.len() >= MAX_PARTICLES {
+                        break;
+                    }
+                    let x = (i as f32 + rand_float()) * cell_size;
+                    let z = (k as f32 + rand_float()) * cell_size;
+                    let y = self.bed_height[idx] + 0.25 * cell_size + rand_float() * 0.5 * cell_size;
+                    let mut vel = avg_vel;
+                    vel.y = vel.y.max(0.0) + 0.05;
+                    self.sim.spawn_sediment(Vec3::new(x, y, z), vel, SEDIMENT_REL_DENSITY);
+                    spawned += 1;
+                }
+            }
+
+            let delta_particles = removed[idx] as i32 - spawned as i32;
+            self.bed_height[idx] += delta_particles as f32 * particle_height;
+            self.bed_height[idx] += bedload_delta[idx];
+            self.bed_height[idx] = self.bed_height[idx].clamp(self.bed_base_height[idx], max_bed_height);
+        }
+    }
+
+    fn apply_bed_height_residual(&mut self) {
+        let w = GRID_WIDTH;
+        let d = GRID_DEPTH;
+        let column_count = w * d;
+        if self.bed_height_residual.len() != column_count {
+            return;
+        }
+
+        let cell_size = CELL_SIZE;
+        let sample_height = cell_size * BED_SAMPLE_HEIGHT_CELLS;
+        let sediment_band = cell_size * BED_AIR_MARGIN_CELLS;
+        let particle_height = cell_size / (SEDIMENT_REST_PARTICLES * (1.0 - BED_POROSITY));
+        if particle_height <= 0.0 {
+            return;
+        }
+
+        self.bed_water_vel_sum.fill(Vec3::ZERO);
+        self.bed_water_count.fill(0);
+
+        for p in &self.sim.particles.list {
+            if p.is_sediment() {
+                continue;
+            }
+
+            let i = (p.position.x / cell_size).floor() as i32;
+            let k = (p.position.z / cell_size).floor() as i32;
+            if i < 0 || i >= w as i32 || k < 0 || k >= d as i32 {
+                continue;
+            }
+            let idx = k as usize * w + i as usize;
+            let bed_y = self.bed_height[idx];
+            if p.position.y >= bed_y && p.position.y <= bed_y + sample_height {
+                self.bed_water_vel_sum[idx] += p.velocity;
+                self.bed_water_count[idx] += 1;
+            }
+        }
+
+        for idx in 0..column_count {
+            let count = self.bed_water_count[idx];
+            self.bed_water_vel_sum[idx] = if count > 0 {
+                self.bed_water_vel_sum[idx] / count as f32
+            } else {
+                Vec3::ZERO
+            };
+        }
+
+        let mut deposit_quota = vec![0u32; column_count];
+        let mut erode_quota = vec![0u32; column_count];
+
+        for idx in 0..column_count {
+            let residual = self.bed_height_residual[idx];
+            if residual >= particle_height {
+                deposit_quota[idx] = (residual / particle_height).floor() as u32;
+            } else if residual <= -particle_height {
+                erode_quota[idx] = ((-residual) / particle_height).floor() as u32;
+            }
+        }
+
+        let mut removed = vec![0u32; column_count];
+        if deposit_quota.iter().any(|&quota| quota > 0) {
+            let bed_height = &self.bed_height;
+            self.sim.particles.list.retain(|p| {
+                if p.is_sediment() {
+                    let i = (p.position.x / cell_size).floor() as i32;
+                    let k = (p.position.z / cell_size).floor() as i32;
+                    if i >= 0 && i < w as i32 && k >= 0 && k < d as i32 {
+                        let idx = k as usize * w + i as usize;
+                        if deposit_quota[idx] > 0 && p.position.y <= bed_height[idx] + sediment_band {
+                            deposit_quota[idx] -= 1;
+                            removed[idx] += 1;
+                            return false;
+                        }
+                    }
+                }
+                true
+            });
+        }
+
+        let mut spawned = vec![0u32; column_count];
+        for idx in 0..column_count {
+            let spawn_count = erode_quota[idx];
+            if spawn_count == 0 {
+                continue;
+            }
+            let k = idx / w;
+            let i = idx % w;
+            let avg_vel = self.bed_water_vel_sum[idx];
+            for _ in 0..spawn_count {
+                if self.sim.particles.len() >= MAX_PARTICLES {
+                    break;
+                }
+                let x = (i as f32 + rand_float()) * cell_size;
+                let z = (k as f32 + rand_float()) * cell_size;
+                let y = self.bed_height[idx] + 0.25 * cell_size + rand_float() * 0.5 * cell_size;
+                let mut vel = avg_vel;
+                vel.y = vel.y.max(0.0) + 0.05;
+                self.sim.spawn_sediment(Vec3::new(x, y, z), vel, SEDIMENT_REL_DENSITY);
+                spawned[idx] += 1;
+            }
+        }
+
+        let max_bed_height = (GRID_HEIGHT as f32 - 2.0) * cell_size;
+        for idx in 0..column_count {
+            let desired_delta = self.bed_height_residual[idx];
+            let actual_delta = (removed[idx] as i32 - spawned[idx] as i32) as f32 * particle_height;
+            let leftover = desired_delta - actual_delta;
+            if leftover != 0.0 {
+                self.bed_height[idx] -= leftover;
+                self.bed_height[idx] = self.bed_height[idx].clamp(self.bed_base_height[idx], max_bed_height);
+            }
+            self.bed_height_residual[idx] = 0.0;
+        }
+    }
+
+    fn accumulate_bed_height_delta(&mut self) {
+        let column_count = GRID_WIDTH * GRID_DEPTH;
+        if self.bed_height_prev.len() != column_count
+            || self.bed_height.len() != column_count
+            || self.bed_base_height.len() != column_count
+        {
+            return;
+        }
+
+        let particle_height = CELL_SIZE / (SEDIMENT_REST_PARTICLES * (1.0 - BED_POROSITY));
+        if particle_height <= 0.0 {
+            return;
+        }
+        let max_delta = particle_height * BED_MAX_DELTA_LAYERS;
+        let max_bed_height = (GRID_HEIGHT as f32 - 2.0) * CELL_SIZE;
+
+        for idx in 0..column_count {
+            let mut delta = self.bed_height[idx] - self.bed_height_prev[idx];
+            if delta > max_delta {
+                delta = max_delta;
+            } else if delta < -max_delta {
+                delta = -max_delta;
+            }
+            let updated = (self.bed_height_prev[idx] + delta)
+                .clamp(self.bed_base_height[idx], max_bed_height);
+            self.bed_height[idx] = updated;
+            self.bed_height_residual[idx] = updated - self.bed_height_prev[idx];
+        }
+    }
+
+    fn relax_bed_height(&mut self) {
+        let w = GRID_WIDTH;
+        let d = GRID_DEPTH;
+        let column_count = w * d;
+        if self.bed_height.len() != column_count || self.bed_base_height.len() != column_count {
+            return;
+        }
+
+        let max_diff = BED_MAX_SLOPE * CELL_SIZE;
+        let max_bed_height = (GRID_HEIGHT as f32 - 2.0) * CELL_SIZE;
+        let mut delta = vec![0.0f32; column_count];
+
+        for _ in 0..BED_RELAX_ITERS {
+            delta.fill(0.0);
+            for k in 0..d {
+                for i in 0..w {
+                    let idx = k * w + i;
+                    let h = self.bed_height[idx];
+                    let base_h = self.bed_base_height[idx];
+
+                    if i + 1 < w {
+                        let n = idx + 1;
+                        let diff = h - self.bed_height[n];
+                        if diff.abs() > max_diff {
+                            let excess = diff.abs() - max_diff;
+                            let mut move_amt = 0.5 * excess;
+                            if diff > 0.0 {
+                                move_amt = move_amt.min(h - base_h);
+                                delta[idx] -= move_amt;
+                                delta[n] += move_amt;
+                            } else {
+                                let n_base = self.bed_base_height[n];
+                                move_amt = move_amt.min(self.bed_height[n] - n_base);
+                                delta[idx] += move_amt;
+                                delta[n] -= move_amt;
+                            }
+                        }
+                    }
+
+                    if k + 1 < d {
+                        let n = idx + w;
+                        let diff = h - self.bed_height[n];
+                        if diff.abs() > max_diff {
+                            let excess = diff.abs() - max_diff;
+                            let mut move_amt = 0.5 * excess;
+                            if diff > 0.0 {
+                                move_amt = move_amt.min(h - base_h);
+                                delta[idx] -= move_amt;
+                                delta[n] += move_amt;
+                            } else {
+                                let n_base = self.bed_base_height[n];
+                                move_amt = move_amt.min(self.bed_height[n] - n_base);
+                                delta[idx] += move_amt;
+                                delta[n] -= move_amt;
+                            }
+                        }
+                    }
+                }
+            }
+
+            for idx in 0..column_count {
+                let updated = self.bed_height[idx] + delta[idx];
+                self.bed_height[idx] = updated.clamp(self.bed_base_height[idx], max_bed_height);
+            }
         }
     }
 
@@ -283,7 +871,7 @@ impl App {
             let cell_size = CELL_SIZE;
             let t = (p.position.x / cell_size) / (GRID_WIDTH as f32 - 1.0);
             let t = t.clamp(0.0, 1.0);
-            let floor_height = 10.0 * (1.0 - t) + 4.0 * t;
+            let floor_height = FLOOR_HEIGHT_LEFT as f32 * (1.0 - t) + FLOOR_HEIGHT_RIGHT as f32 * t;
             let exit_start_z = GRID_DEPTH as f32 * cell_size / 6.0;
             let exit_end_z = GRID_DEPTH as f32 * cell_size * 5.0 / 6.0;
             let exit_max_y = (floor_height + 8.0) * cell_size;
@@ -345,6 +933,22 @@ impl App {
 
         create_industrial_sluice(&mut sim);
 
+        let bed_base_height = build_bed_base_height();
+        self.bed_base_height = bed_base_height.clone();
+        self.bed_height = bed_base_height;
+        self.bed_height_prev = self.bed_height.clone();
+        self.bed_height_residual.fill(0.0);
+        self.bed_water_vel_sum.fill(Vec3::ZERO);
+        self.bed_water_count.fill(0);
+        self.bed_sediment_count.fill(0);
+        self.bed_flux_x.fill(0.0);
+        self.bed_flux_z.fill(0.0);
+        self.densities.clear();
+
+        if let (Some(gpu_bed), Some(gpu)) = (&self.gpu_bed, &self.gpu) {
+            gpu_bed.reset_bed(&gpu.queue, &self.bed_base_height);
+        }
+
         self.sim = sim;
         self.pressure_iters_gpu = self.sim.pressure_iterations as u32;
         self.vorticity_epsilon = VORTICITY_EPSILON_DEFAULT;
@@ -352,6 +956,8 @@ impl App {
         self.frame = 0;
         self.emitter_enabled = true;
         self.particles_exited = 0;
+        self.pending_emit = 0;
+        self.gpu_particle_count = 0;
         println!("Reset - emitter enabled");
     }
 
@@ -372,6 +978,322 @@ impl App {
         let avg_vel = if count > 0.0 { sum_vel / count } else { Vec3::ZERO };
 
         (avg_vel, max_vel, max_y, max_x)
+    }
+
+    fn sample_sdf_cell(&self, pos: Vec3) -> f32 {
+        self.sim.grid.sample_sdf(pos)
+    }
+
+    fn bed_min_max(&self, min_i: i32, max_i: i32) -> (f32, f32) {
+        if min_i > max_i {
+            return (0.0, 0.0);
+        }
+        let depth = GRID_DEPTH as i32;
+        let mut bed_min = f32::INFINITY;
+        let mut bed_max = f32::NEG_INFINITY;
+        for k in 0..depth {
+            for i in min_i..=max_i {
+                let idx = k as usize * GRID_WIDTH + i as usize;
+                let bed = self.bed_height[idx];
+                bed_min = bed_min.min(bed);
+                bed_max = bed_max.max(bed);
+            }
+        }
+        if !bed_min.is_finite() {
+            bed_min = 0.0;
+            bed_max = 0.0;
+        }
+        (bed_min, bed_max)
+    }
+
+    fn probe_riffle_band(&self, min_i: i32, max_i: i32) -> Option<RiffleProbeStats> {
+        if min_i > max_i {
+            return None;
+        }
+        let depth = GRID_DEPTH as i32;
+        let bed_air_margin = CELL_SIZE * BED_AIR_MARGIN_CELLS;
+
+        let (bed_min, bed_max) = self.bed_min_max(min_i, max_i);
+
+        let mut water_count = 0u32;
+        let mut sediment_count = 0u32;
+        let mut water_sum_y = 0.0f32;
+        let mut sediment_sum_y = 0.0f32;
+        let mut water_max_y = 0.0f32;
+        let mut sediment_max_y = 0.0f32;
+        let mut water_sum_vy = 0.0f32;
+        let mut sediment_sum_vy = 0.0f32;
+        let mut water_sdf_neg = 0u32;
+        let mut sediment_sdf_neg = 0u32;
+        let mut water_below_bed = 0u32;
+        let mut sediment_below_bed = 0u32;
+        let mut water_above_bed = 0u32;
+        let mut sediment_above_bed = 0u32;
+        let mut water_up = 0u32;
+        let mut sediment_up = 0u32;
+        let mut water_sum_offset = 0.0f32;
+        let mut sediment_sum_offset = 0.0f32;
+        let mut water_max_offset = f32::NEG_INFINITY;
+        let mut sediment_max_offset = f32::NEG_INFINITY;
+
+        let cell_size = CELL_SIZE;
+        for p in &self.sim.particles.list {
+            let i = (p.position.x / cell_size).floor() as i32;
+            if i < min_i || i > max_i {
+                continue;
+            }
+            let k = (p.position.z / cell_size).floor() as i32;
+            if k < 0 || k >= depth {
+                continue;
+            }
+            let idx = k as usize * GRID_WIDTH + i as usize;
+            let bed = self.bed_height[idx];
+            let sdf = self.sample_sdf_cell(p.position);
+            let below_bed = p.position.y < bed;
+            let offset = p.position.y - bed;
+            let moving_up = p.velocity.y > 0.0;
+
+            if p.is_sediment() {
+                sediment_count += 1;
+                sediment_sum_y += p.position.y;
+                sediment_max_y = sediment_max_y.max(p.position.y);
+                sediment_sum_vy += p.velocity.y;
+                sediment_sum_offset += offset;
+                sediment_max_offset = sediment_max_offset.max(offset);
+                if sdf < 0.0 {
+                    sediment_sdf_neg += 1;
+                }
+                if below_bed {
+                    sediment_below_bed += 1;
+                }
+                if offset > bed_air_margin {
+                    sediment_above_bed += 1;
+                }
+                if moving_up {
+                    sediment_up += 1;
+                }
+            } else {
+                water_count += 1;
+                water_sum_y += p.position.y;
+                water_max_y = water_max_y.max(p.position.y);
+                water_sum_vy += p.velocity.y;
+                water_sum_offset += offset;
+                water_max_offset = water_max_offset.max(offset);
+                if sdf < 0.0 {
+                    water_sdf_neg += 1;
+                }
+                if below_bed {
+                    water_below_bed += 1;
+                }
+                if offset > bed_air_margin {
+                    water_above_bed += 1;
+                }
+                if moving_up {
+                    water_up += 1;
+                }
+            }
+        }
+
+        if water_count == 0 && sediment_count == 0 {
+            return None;
+        }
+
+        let water_avg_y = if water_count > 0 { water_sum_y / water_count as f32 } else { 0.0 };
+        let sediment_avg_y = if sediment_count > 0 { sediment_sum_y / sediment_count as f32 } else { 0.0 };
+        let water_avg_vy = if water_count > 0 { water_sum_vy / water_count as f32 } else { 0.0 };
+        let sediment_avg_vy = if sediment_count > 0 { sediment_sum_vy / sediment_count as f32 } else { 0.0 };
+        let water_avg_offset = if water_count > 0 { water_sum_offset / water_count as f32 } else { 0.0 };
+        let sediment_avg_offset = if sediment_count > 0 { sediment_sum_offset / sediment_count as f32 } else { 0.0 };
+        if water_max_offset.is_infinite() {
+            water_max_offset = 0.0;
+        }
+        if sediment_max_offset.is_infinite() {
+            sediment_max_offset = 0.0;
+        }
+
+        Some(RiffleProbeStats {
+            water_count,
+            sediment_count,
+            water_avg_y,
+            sediment_avg_y,
+            water_max_y,
+            sediment_max_y,
+            water_avg_vy,
+            sediment_avg_vy,
+            water_sdf_neg,
+            sediment_sdf_neg,
+            water_below_bed,
+            sediment_below_bed,
+            water_above_bed,
+            sediment_above_bed,
+            water_up,
+            sediment_up,
+            water_avg_offset,
+            sediment_avg_offset,
+            water_max_offset,
+            sediment_max_offset,
+            bed_min,
+            bed_max,
+        })
+    }
+
+    fn probe_first_riffle(&self) -> Option<RiffleProbeStats> {
+        let riffle_start = RIFFLE_START_X as i32;
+        let riffle_end = riffle_start + RIFFLE_THICKNESS_CELLS - 1;
+        let min_i = (riffle_start - RIFFLE_PROBE_PAD).max(0);
+        let max_i = (riffle_end + RIFFLE_PROBE_PAD).min(GRID_WIDTH as i32 - 1);
+        self.probe_riffle_band(min_i, max_i)
+    }
+
+    fn probe_downstream_riffle(&self) -> Option<RiffleProbeStats> {
+        let riffle_start = RIFFLE_START_X as i32;
+        let riffle_end = riffle_start + RIFFLE_THICKNESS_CELLS - 1;
+        let downstream_start = riffle_end + 1 + RIFFLE_PROBE_PAD;
+        let downstream_end = downstream_start + RIFFLE_THICKNESS_CELLS - 1;
+        let min_i = (downstream_start - RIFFLE_PROBE_PAD).max(0);
+        let max_i = (downstream_end + RIFFLE_PROBE_PAD).min(GRID_WIDTH as i32 - 1);
+        self.probe_riffle_band(min_i, max_i)
+    }
+
+    fn sediment_throughput_stats(&self) -> SedimentThroughputStats {
+        let riffle_start_x = RIFFLE_START_X as f32 * CELL_SIZE;
+        let riffle_end_x = (RIFFLE_START_X + 2) as f32 * CELL_SIZE;
+        let downstream_x = riffle_end_x + CELL_SIZE;
+        let loft_height = CELL_SIZE * 2.0;
+        let cell_size = CELL_SIZE;
+        let mut total = 0u32;
+        let mut upstream = 0u32;
+        let mut at_riffle = 0u32;
+        let mut downstream = 0u32;
+        let mut max_x = 0.0f32;
+        let mut max_y = 0.0f32;
+        let mut lofted = 0u32;
+
+        for p in &self.sim.particles.list {
+            if !p.is_sediment() {
+                continue;
+            }
+            total += 1;
+            max_x = max_x.max(p.position.x);
+            max_y = max_y.max(p.position.y);
+
+            if p.position.x < riffle_start_x {
+                upstream += 1;
+            } else if p.position.x <= riffle_end_x {
+                at_riffle += 1;
+            } else if p.position.x > downstream_x {
+                downstream += 1;
+            }
+
+            if p.velocity.y > 0.0 {
+                let i = (p.position.x / cell_size).floor() as i32;
+                let k = (p.position.z / cell_size).floor() as i32;
+                if i >= 0 && i < GRID_WIDTH as i32 && k >= 0 && k < GRID_DEPTH as i32 {
+                    let idx = k as usize * GRID_WIDTH + i as usize;
+                    let bed = self.bed_height[idx];
+                    if p.position.y > bed + loft_height {
+                        lofted += 1;
+                    }
+                }
+            }
+        }
+
+        SedimentThroughputStats {
+            total,
+            upstream,
+            at_riffle,
+            downstream,
+            max_x,
+            max_y,
+            lofted,
+        }
+    }
+
+    fn material_stats_from_gpu(&self, stats: &[i32], zone: usize, material: usize) -> MaterialProbeStats {
+        let base = zone * bed_3d::PROBE_ZONE_STRIDE + material * bed_3d::PROBE_MATERIAL_STRIDE;
+        let count = stats[base + bed_3d::PROBE_STAT_COUNT_IDX].max(0) as u32;
+        let sum_y = stats[base + bed_3d::PROBE_STAT_SUM_Y_IDX] as f32 / bed_3d::PROBE_STAT_SCALE;
+        let max_y = stats[base + bed_3d::PROBE_STAT_MAX_Y_IDX] as f32 / bed_3d::PROBE_STAT_SCALE;
+        let sum_vy = stats[base + bed_3d::PROBE_STAT_SUM_VY_IDX] as f32 / bed_3d::PROBE_STAT_SCALE;
+        let sum_offset = stats[base + bed_3d::PROBE_STAT_SUM_OFFSET_IDX] as f32 / bed_3d::PROBE_STAT_SCALE;
+        let max_offset = stats[base + bed_3d::PROBE_STAT_MAX_OFFSET_IDX] as f32 / bed_3d::PROBE_STAT_SCALE;
+
+        let avg_y = if count > 0 { sum_y / count as f32 } else { 0.0 };
+        let avg_vy = if count > 0 { sum_vy / count as f32 } else { 0.0 };
+        let avg_offset = if count > 0 { sum_offset / count as f32 } else { 0.0 };
+
+        MaterialProbeStats {
+            count,
+            avg_y,
+            max_y,
+            avg_vy,
+            sdf_neg: stats[base + bed_3d::PROBE_STAT_SDF_NEG_IDX].max(0) as u32,
+            below_bed: stats[base + bed_3d::PROBE_STAT_BELOW_BED_IDX].max(0) as u32,
+            above_bed: stats[base + bed_3d::PROBE_STAT_ABOVE_BED_IDX].max(0) as u32,
+            avg_offset,
+            max_offset,
+            up: stats[base + bed_3d::PROBE_STAT_UP_IDX].max(0) as u32,
+        }
+    }
+
+    fn riffle_stats_from_gpu(
+        &self,
+        stats: &[i32],
+        zone: usize,
+        bed_min: f32,
+        bed_max: f32,
+    ) -> Option<RiffleProbeStats> {
+        let water = self.material_stats_from_gpu(stats, zone, 0);
+        let sediment = self.material_stats_from_gpu(stats, zone, 1);
+        if water.count == 0 && sediment.count == 0 {
+            return None;
+        }
+
+        Some(RiffleProbeStats {
+            water_count: water.count,
+            sediment_count: sediment.count,
+            water_avg_y: water.avg_y,
+            sediment_avg_y: sediment.avg_y,
+            water_max_y: water.max_y,
+            sediment_max_y: sediment.max_y,
+            water_avg_vy: water.avg_vy,
+            sediment_avg_vy: sediment.avg_vy,
+            water_sdf_neg: water.sdf_neg,
+            sediment_sdf_neg: sediment.sdf_neg,
+            water_below_bed: water.below_bed,
+            sediment_below_bed: sediment.below_bed,
+            water_above_bed: water.above_bed,
+            sediment_above_bed: sediment.above_bed,
+            water_up: water.up,
+            sediment_up: sediment.up,
+            water_avg_offset: water.avg_offset,
+            sediment_avg_offset: sediment.avg_offset,
+            water_max_offset: water.max_offset,
+            sediment_max_offset: sediment.max_offset,
+            bed_min,
+            bed_max,
+        })
+    }
+
+    fn throughput_stats_from_gpu(&self, stats: &[i32]) -> SedimentThroughputStats {
+        let base = bed_3d::PROBE_THROUGHPUT_OFFSET;
+        let total = stats[base + bed_3d::PROBE_THROUGHPUT_TOTAL_IDX].max(0) as u32;
+        let upstream = stats[base + bed_3d::PROBE_THROUGHPUT_UPSTREAM_IDX].max(0) as u32;
+        let at_riffle = stats[base + bed_3d::PROBE_THROUGHPUT_AT_RIFFLE_IDX].max(0) as u32;
+        let downstream = stats[base + bed_3d::PROBE_THROUGHPUT_DOWNSTREAM_IDX].max(0) as u32;
+        let max_x = stats[base + bed_3d::PROBE_THROUGHPUT_MAX_X_IDX] as f32 / bed_3d::PROBE_STAT_SCALE;
+        let max_y = stats[base + bed_3d::PROBE_THROUGHPUT_MAX_Y_IDX] as f32 / bed_3d::PROBE_STAT_SCALE;
+        let lofted = stats[base + bed_3d::PROBE_THROUGHPUT_LOFTED_IDX].max(0) as u32;
+
+        SedimentThroughputStats {
+            total,
+            upstream,
+            at_riffle,
+            downstream,
+            max_x,
+            max_y,
+            lofted,
+        }
     }
 
     fn build_heightfield_vertices(&mut self) -> usize {
@@ -443,14 +1365,23 @@ impl App {
             }
 
             let speed = p.velocity.length();
-            // Color by speed: slow=dark blue, fast=bright cyan/white
+            // Color by speed: water=blue/cyan, sediment=golden/brown
             let t = (speed / 2.5).min(1.0);
-            let color = [
-                0.1 + t * 0.9,      // R: dark -> bright
-                0.3 + t * 0.7,      // G: blue -> cyan
-                0.7 + t * 0.3,      // B: stays high
-                0.6 + t * 0.3,      // A: more visible when fast
-            ];
+            let color = if p.is_sediment() {
+                [
+                    0.45 + t * 0.4,
+                    0.35 + t * 0.3,
+                    0.15 + t * 0.2,
+                    0.7,
+                ]
+            } else {
+                [
+                    0.1 + t * 0.9,      // R: dark -> bright
+                    0.3 + t * 0.7,      // G: blue -> cyan
+                    0.7 + t * 0.3,      // B: stays high
+                    0.6 + t * 0.3,      // A: more visible when fast
+                ]
+            };
 
             self.flow_particles.push(ParticleInstance {
                 position: [p.position.x, p.position.y, p.position.z],
@@ -466,14 +1397,24 @@ impl App {
         self.sim.particles.list.iter().map(|p| {
             let speed = p.velocity.length();
             let t = (speed / 2.5).min(1.0);
-            ParticleInstance {
-                position: [p.position.x, p.position.y, p.position.z],
-                color: [
+            let color = if p.is_sediment() {
+                [
+                    0.6 + t * 0.2,
+                    0.5 + t * 0.2,
+                    0.2 + t * 0.1,
+                    0.85,
+                ]
+            } else {
+                [
                     0.2 + t * 0.6,
                     0.4 + t * 0.4,
                     0.8,
                     0.8,
-                ],
+                ]
+            };
+            ParticleInstance {
+                position: [p.position.x, p.position.y, p.position.z],
+                color,
             }
         }).collect()
     }
@@ -487,6 +1428,8 @@ impl App {
             let dt = 1.0 / 60.0;
 
             if self.use_gpu_sim {
+                let bed_dt = dt * GPU_SYNC_STRIDE as f32;
+                let bed_params = build_gpu_bed_params(bed_dt);
                 if self.use_async_readback {
                     if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
                         if self.gpu_readback_pending {
@@ -509,74 +1452,118 @@ impl App {
                     true
                 };
 
+                let do_sync = self.frame % GPU_SYNC_STRIDE == 0;
+                if self.emitter_enabled && self.frame % 2 == 0 {
+                    self.pending_emit = self.pending_emit.saturating_add(200);
+                }
+
                 if should_schedule {
-                    // Emit MORE particles for industrial scale - 200 every other frame
-                    if self.emitter_enabled && self.frame % 2 == 0 {
-                        self.emit_particles(200);
-                    }
+                    if do_sync {
+                        if self.pending_emit > 0 {
+                            self.emit_particles(self.pending_emit);
+                            self.pending_emit = 0;
+                        }
 
-                    self.positions.clear();
-                    self.velocities.clear();
-                    self.c_matrices.clear();
+                        if self.gpu_bed.is_none() {
+                            self.update_sediment_bed(dt);
+                        }
 
-                    for p in &self.sim.particles.list {
-                        self.positions.push(p.position);
-                        self.velocities.push(p.velocity);
-                        self.c_matrices.push(p.affine_velocity);
-                    }
+                        self.positions.clear();
+                        self.velocities.clear();
+                        self.c_matrices.clear();
+                        self.densities.clear();
 
-                    let w = self.sim.grid.width;
-                    let h = self.sim.grid.height;
-                    let d = self.sim.grid.depth;
-                    self.cell_types.clear();
-                    self.cell_types.resize(w * h * d, 0);
+                        for p in &self.sim.particles.list {
+                            self.positions.push(p.position);
+                            self.velocities.push(p.velocity);
+                            self.c_matrices.push(p.affine_velocity);
+                            self.densities.push(p.density);
+                        }
 
-                    for k in 0..d {
-                        for j in 0..h {
+                        let w = self.sim.grid.width;
+                        let h = self.sim.grid.height;
+                        let d = self.sim.grid.depth;
+                        self.cell_types.clear();
+                        self.cell_types.resize(w * h * d, 0);
+
+                        for k in 0..d {
                             for i in 0..w {
-                                let idx = k * w * h + j * w + i;
-                                if self.sim.grid.is_solid(i, j, k) {
-                                    self.cell_types[idx] = 2;
+                                for j in 0..h {
+                                    let idx = k * w * h + j * w + i;
+                                    if self.sim.grid.is_solid(i, j, k) {
+                                        self.cell_types[idx] = 2;
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    for p in &self.sim.particles.list {
-                        let i = (p.position.x / CELL_SIZE).floor() as i32;
-                        let j = (p.position.y / CELL_SIZE).floor() as i32;
-                        let k = (p.position.z / CELL_SIZE).floor() as i32;
-                        if i >= 0 && i < w as i32 && j >= 0 && j < h as i32 && k >= 0 && k < d as i32 {
-                            let idx = k as usize * w * h + j as usize * w + i as usize;
-                            if self.cell_types[idx] != 2 {
-                                self.cell_types[idx] = 1;
+                        for p in &self.sim.particles.list {
+                            if p.is_sediment() {
+                                continue;
+                            }
+                            let i = (p.position.x / CELL_SIZE).floor() as i32;
+                            let j = (p.position.y / CELL_SIZE).floor() as i32;
+                            let k = (p.position.z / CELL_SIZE).floor() as i32;
+                            if i >= 0 && i < w as i32 && j >= 0 && j < h as i32 && k >= 0 && k < d as i32 {
+                                let idx = k as usize * w * h + j as usize * w + i as usize;
+                                if self.cell_types[idx] != 2 {
+                                    self.cell_types[idx] = 1;
+                                }
                             }
                         }
-                    }
 
-                    let pressure_iters = self.pressure_iters_gpu;
-                    if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
-                        gpu_flip.vorticity_epsilon = self.vorticity_epsilon;
-                        let sdf = self.sim.grid.sdf.as_slice();
-                        let positions = &mut self.positions;
-                        let velocities = &mut self.velocities;
-                        let c_matrices = &mut self.c_matrices;
-                        let cell_types = &self.cell_types;
-                        if self.use_async_readback {
-                            if gpu_flip.step_async(
-                                &gpu.device,
-                                &gpu.queue,
-                                positions,
-                                velocities,
-                                c_matrices,
-                                cell_types,
-                                Some(sdf),
-                                dt,
-                                -9.8,
-                                0.0,
-                                pressure_iters,
-                            ) {
-                                self.gpu_readback_pending = true;
+                        let pressure_iters = self.pressure_iters_gpu;
+                        let flow_accel = flow_accel_from_slope();
+                        if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                            gpu_flip.vorticity_epsilon = self.vorticity_epsilon;
+                            gpu_flip.sediment_rest_particles = SEDIMENT_REST_PARTICLES;
+                            gpu_flip.sediment_settling_velocity = SEDIMENT_SETTLING_VELOCITY;
+                            let sdf = self.sim.grid.sdf.as_slice();
+                            let positions = &mut self.positions;
+                            let velocities = &mut self.velocities;
+                            let c_matrices = &mut self.c_matrices;
+                            let densities = &self.densities;
+                            let cell_types = &self.cell_types;
+                            let bed_height = if self.gpu_bed.is_some() {
+                                None
+                            } else {
+                                Some(self.bed_height.as_slice())
+                            };
+                            if self.use_async_readback {
+                                if gpu_flip.step_async(
+                                    &gpu.device,
+                                    &gpu.queue,
+                                    positions,
+                                    velocities,
+                                    c_matrices,
+                                    densities,
+                                    cell_types,
+                                    Some(sdf),
+                                    bed_height,
+                                    dt,
+                                    -9.8,
+                                    flow_accel,
+                                    pressure_iters,
+                                ) {
+                                    self.gpu_readback_pending = true;
+                                } else {
+                                    gpu_flip.step(
+                                        &gpu.device,
+                                        &gpu.queue,
+                                        positions,
+                                        velocities,
+                                        c_matrices,
+                                        densities,
+                                        cell_types,
+                                        Some(sdf),
+                                        bed_height,
+                                        dt,
+                                        -9.8,
+                                        flow_accel,
+                                        pressure_iters,
+                                    );
+                                    self.apply_gpu_results(self.positions.len());
+                                }
                             } else {
                                 gpu_flip.step(
                                     &gpu.device,
@@ -584,30 +1571,58 @@ impl App {
                                     positions,
                                     velocities,
                                     c_matrices,
+                                    densities,
                                     cell_types,
                                     Some(sdf),
+                                    bed_height,
                                     dt,
                                     -9.8,
-                                    0.0,
+                                    flow_accel,
                                     pressure_iters,
                                 );
                                 self.apply_gpu_results(self.positions.len());
                             }
-                        } else {
-                            gpu_flip.step(
+                        }
+                        self.gpu_particle_count = self.positions.len() as u32;
+                        let mut bed_updated = false;
+                        if let (Some(gpu_bed), Some(gpu)) = (self.gpu_bed.as_mut(), self.gpu.as_ref()) {
+                            gpu_bed.update(&gpu.device, &gpu.queue, self.gpu_particle_count, &bed_params);
+                            gpu_bed.read_bed_height(&gpu.device, &gpu.queue, &mut self.bed_height);
+                            bed_updated = true;
+                        }
+
+                        if bed_updated {
+                            self.accumulate_bed_height_delta();
+                            self.apply_bed_height_residual();
+                            self.relax_bed_height();
+                            self.bed_height_prev.copy_from_slice(&self.bed_height);
+                            if let (Some(gpu_bed), Some(gpu)) = (self.gpu_bed.as_ref(), self.gpu.as_ref()) {
+                                gpu_bed.write_bed_height(&gpu.queue, &self.bed_height);
+                            }
+                        }
+                    } else {
+                        let pressure_iters = self.pressure_iters_gpu;
+                        let flow_accel = flow_accel_from_slope();
+                        if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                            let sdf = self.sim.grid.sdf.as_slice();
+                            let cell_types = &self.cell_types;
+                            let bed_height = if self.gpu_bed.is_some() {
+                                None
+                            } else {
+                                Some(self.bed_height.as_slice())
+                            };
+                            gpu_flip.step_in_place(
                                 &gpu.device,
                                 &gpu.queue,
-                                positions,
-                                velocities,
-                                c_matrices,
+                                self.gpu_particle_count,
                                 cell_types,
                                 Some(sdf),
+                                bed_height,
                                 dt,
                                 -9.8,
-                                0.0,
+                                flow_accel,
                                 pressure_iters,
                             );
-                            self.apply_gpu_results(self.positions.len());
                         }
                     }
                 }
@@ -656,6 +1671,198 @@ impl App {
                 max_y,
                 max_x,
             );
+
+            if self.debug_riffle_probe {
+                if self.use_gpu_sim {
+                    if let (Some(gpu_bed), Some(gpu)) = (&self.gpu_bed, &self.gpu) {
+                        gpu_bed.read_probe_stats(&gpu.device, &gpu.queue, &mut self.gpu_probe_stats);
+
+                        let riffle_start = RIFFLE_START_X as i32;
+                        let riffle_end = riffle_start + RIFFLE_THICKNESS_CELLS - 1;
+                        let min_i = (riffle_start - RIFFLE_PROBE_PAD).max(0);
+                        let max_i = (riffle_end + RIFFLE_PROBE_PAD).min(GRID_WIDTH as i32 - 1);
+                        let (bed_min, bed_max) = self.bed_min_max(min_i, max_i);
+
+                        if let Some(stats) = self.riffle_stats_from_gpu(
+                            &self.gpu_probe_stats,
+                            bed_3d::PROBE_ZONE_RIFFLE,
+                            bed_min,
+                            bed_max,
+                        ) {
+                            println!(
+                                "[Probe] Riffle x={}..{} bed[{:.3},{:.3}] | water n={} avg_y={:.3} max_y={:.3} avg_vy={:.3} sdf<0={} below_bed={} above_bed={} avg_off={:.3} max_off={:.3} up={} | sediment n={} avg_y={:.3} max_y={:.3} avg_vy={:.3} sdf<0={} below_bed={} above_bed={} avg_off={:.3} max_off={:.3} up={}",
+                                min_i,
+                                max_i,
+                                stats.bed_min,
+                                stats.bed_max,
+                                stats.water_count,
+                                stats.water_avg_y,
+                                stats.water_max_y,
+                                stats.water_avg_vy,
+                                stats.water_sdf_neg,
+                                stats.water_below_bed,
+                                stats.water_above_bed,
+                                stats.water_avg_offset,
+                                stats.water_max_offset,
+                                stats.water_up,
+                                stats.sediment_count,
+                                stats.sediment_avg_y,
+                                stats.sediment_max_y,
+                                stats.sediment_avg_vy,
+                                stats.sediment_sdf_neg,
+                                stats.sediment_below_bed,
+                                stats.sediment_above_bed,
+                                stats.sediment_avg_offset,
+                                stats.sediment_max_offset,
+                                stats.sediment_up,
+                            );
+                        } else {
+                            println!("[Probe] Riffle x={}..{} no particles", RIFFLE_START_X, RIFFLE_START_X + 1);
+                        }
+
+                        let downstream_start = riffle_end + 1 + RIFFLE_PROBE_PAD;
+                        let downstream_end = downstream_start + RIFFLE_THICKNESS_CELLS - 1;
+                        let min_i = (downstream_start - RIFFLE_PROBE_PAD).max(0);
+                        let max_i = (downstream_end + RIFFLE_PROBE_PAD).min(GRID_WIDTH as i32 - 1);
+                        let (bed_min, bed_max) = self.bed_min_max(min_i, max_i);
+
+                        if let Some(stats) = self.riffle_stats_from_gpu(
+                            &self.gpu_probe_stats,
+                            bed_3d::PROBE_ZONE_DOWNSTREAM,
+                            bed_min,
+                            bed_max,
+                        ) {
+                            println!(
+                                "[Probe] Downstream x={}..{} bed[{:.3},{:.3}] | water n={} avg_y={:.3} max_y={:.3} avg_vy={:.3} sdf<0={} below_bed={} above_bed={} avg_off={:.3} max_off={:.3} up={} | sediment n={} avg_y={:.3} max_y={:.3} avg_vy={:.3} sdf<0={} below_bed={} above_bed={} avg_off={:.3} max_off={:.3} up={}",
+                                min_i,
+                                max_i,
+                                stats.bed_min,
+                                stats.bed_max,
+                                stats.water_count,
+                                stats.water_avg_y,
+                                stats.water_max_y,
+                                stats.water_avg_vy,
+                                stats.water_sdf_neg,
+                                stats.water_below_bed,
+                                stats.water_above_bed,
+                                stats.water_avg_offset,
+                                stats.water_max_offset,
+                                stats.water_up,
+                                stats.sediment_count,
+                                stats.sediment_avg_y,
+                                stats.sediment_max_y,
+                                stats.sediment_avg_vy,
+                                stats.sediment_sdf_neg,
+                                stats.sediment_below_bed,
+                                stats.sediment_above_bed,
+                                stats.sediment_avg_offset,
+                                stats.sediment_max_offset,
+                                stats.sediment_up,
+                            );
+                        } else {
+                            println!("[Probe] Downstream no particles");
+                        }
+
+                        let sed_stats = self.throughput_stats_from_gpu(&self.gpu_probe_stats);
+                        println!(
+                            "[Sediment] total={} upstream={} at_riffle={} downstream={} max_x={:.3} max_y={:.3} lofted={}",
+                            sed_stats.total,
+                            sed_stats.upstream,
+                            sed_stats.at_riffle,
+                            sed_stats.downstream,
+                            sed_stats.max_x,
+                            sed_stats.max_y,
+                            sed_stats.lofted,
+                        );
+                    } else {
+                        println!("[Probe] GPU bed not initialized");
+                    }
+                } else {
+                    if let Some(stats) = self.probe_first_riffle() {
+                        let riffle_start = RIFFLE_START_X as i32;
+                        let riffle_end = riffle_start + RIFFLE_THICKNESS_CELLS - 1;
+                        let min_i = (riffle_start - RIFFLE_PROBE_PAD).max(0);
+                        let max_i = (riffle_end + RIFFLE_PROBE_PAD).min(GRID_WIDTH as i32 - 1);
+                        println!(
+                            "[Probe] Riffle x={}..{} bed[{:.3},{:.3}] | water n={} avg_y={:.3} max_y={:.3} avg_vy={:.3} sdf<0={} below_bed={} above_bed={} avg_off={:.3} max_off={:.3} up={} | sediment n={} avg_y={:.3} max_y={:.3} avg_vy={:.3} sdf<0={} below_bed={} above_bed={} avg_off={:.3} max_off={:.3} up={}",
+                            min_i,
+                            max_i,
+                            stats.bed_min,
+                            stats.bed_max,
+                            stats.water_count,
+                            stats.water_avg_y,
+                            stats.water_max_y,
+                            stats.water_avg_vy,
+                            stats.water_sdf_neg,
+                            stats.water_below_bed,
+                            stats.water_above_bed,
+                            stats.water_avg_offset,
+                            stats.water_max_offset,
+                            stats.water_up,
+                            stats.sediment_count,
+                            stats.sediment_avg_y,
+                            stats.sediment_max_y,
+                            stats.sediment_avg_vy,
+                            stats.sediment_sdf_neg,
+                            stats.sediment_below_bed,
+                            stats.sediment_above_bed,
+                            stats.sediment_avg_offset,
+                            stats.sediment_max_offset,
+                            stats.sediment_up,
+                        );
+                    } else {
+                        println!("[Probe] Riffle x={}..{} no particles", RIFFLE_START_X, RIFFLE_START_X + 1);
+                    }
+                    if let Some(stats) = self.probe_downstream_riffle() {
+                        let riffle_start = RIFFLE_START_X as i32;
+                        let riffle_end = riffle_start + RIFFLE_THICKNESS_CELLS - 1;
+                        let downstream_start = riffle_end + 1 + RIFFLE_PROBE_PAD;
+                        let downstream_end = downstream_start + RIFFLE_THICKNESS_CELLS - 1;
+                        let min_i = (downstream_start - RIFFLE_PROBE_PAD).max(0);
+                        let max_i = (downstream_end + RIFFLE_PROBE_PAD).min(GRID_WIDTH as i32 - 1);
+                        println!(
+                            "[Probe] Downstream x={}..{} bed[{:.3},{:.3}] | water n={} avg_y={:.3} max_y={:.3} avg_vy={:.3} sdf<0={} below_bed={} above_bed={} avg_off={:.3} max_off={:.3} up={} | sediment n={} avg_y={:.3} max_y={:.3} avg_vy={:.3} sdf<0={} below_bed={} above_bed={} avg_off={:.3} max_off={:.3} up={}",
+                            min_i,
+                            max_i,
+                            stats.bed_min,
+                            stats.bed_max,
+                            stats.water_count,
+                            stats.water_avg_y,
+                            stats.water_max_y,
+                            stats.water_avg_vy,
+                            stats.water_sdf_neg,
+                            stats.water_below_bed,
+                            stats.water_above_bed,
+                            stats.water_avg_offset,
+                            stats.water_max_offset,
+                            stats.water_up,
+                            stats.sediment_count,
+                            stats.sediment_avg_y,
+                            stats.sediment_max_y,
+                            stats.sediment_avg_vy,
+                            stats.sediment_sdf_neg,
+                            stats.sediment_below_bed,
+                            stats.sediment_above_bed,
+                            stats.sediment_avg_offset,
+                            stats.sediment_max_offset,
+                            stats.sediment_up,
+                        );
+                    } else {
+                        println!("[Probe] Downstream no particles");
+                    }
+                    let sed_stats = self.sediment_throughput_stats();
+                    println!(
+                        "[Sediment] total={} upstream={} at_riffle={} downstream={} max_x={:.3} max_y={:.3} lofted={}",
+                        sed_stats.total,
+                        sed_stats.upstream,
+                        sed_stats.at_riffle,
+                        sed_stats.downstream,
+                        sed_stats.max_x,
+                        sed_stats.max_y,
+                        sed_stats.lofted,
+                    );
+                }
+            }
         }
 
         // Build geometry based on render mode
@@ -847,6 +2054,24 @@ impl ApplicationHandler for App {
             CELL_SIZE,
             MAX_PARTICLES,
         );
+        let positions_buffer = gpu_flip.positions_buffer();
+        let velocities_buffer = gpu_flip.velocities_buffer();
+        let densities_buffer = gpu_flip.densities_buffer();
+        let gpu_bed = GpuBed3D::new(
+            &device,
+            &queue,
+            GRID_WIDTH as u32,
+            GRID_HEIGHT as u32,
+            GRID_DEPTH as u32,
+            CELL_SIZE,
+            positions_buffer.as_ref(),
+            velocities_buffer.as_ref(),
+            densities_buffer.as_ref(),
+            gpu_flip.sdf_buffer(),
+            gpu_flip.bed_height_buffer(),
+            &self.bed_base_height,
+        );
+        self.gpu_bed = Some(gpu_bed);
         self.gpu_flip = Some(gpu_flip);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1091,6 +2316,10 @@ impl ApplicationHandler for App {
                             self.vorticity_epsilon =
                                 (self.vorticity_epsilon + VORTICITY_EPSILON_STEP).min(VORTICITY_EPSILON_MAX);
                             println!("Vorticity epsilon: {:.3}", self.vorticity_epsilon);
+                        }
+                        PhysicalKey::Code(KeyCode::KeyP) => {
+                            self.debug_riffle_probe = !self.debug_riffle_probe;
+                            println!("Riffle probe: {}", if self.debug_riffle_probe { "ON" } else { "OFF" });
                         }
                         PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
                         _ => {}

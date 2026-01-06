@@ -25,6 +25,17 @@ struct Params {
     max_velocity: f32,   // Safety clamp (2000.0)
 }
 
+struct SedimentParams {
+    drag_rate: f32,
+    settling_velocity: f32,
+    vorticity_lift: f32,
+    vorticity_threshold: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+    _pad3: f32,
+}
+
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> positions: array<vec3<f32>>;
 @group(0) @binding(2) var<storage, read_write> velocities: array<vec3<f32>>;
@@ -41,6 +52,9 @@ struct Params {
 @group(0) @binding(9) var<storage, read> grid_u_old: array<f32>;
 @group(0) @binding(10) var<storage, read> grid_v_old: array<f32>;
 @group(0) @binding(11) var<storage, read> grid_w_old: array<f32>;
+@group(0) @binding(12) var<storage, read> densities: array<f32>;
+@group(0) @binding(13) var<uniform> sediment_params: SedimentParams;
+@group(0) @binding(14) var<storage, read> vorticity_mag: array<f32>;
 
 // Quadratic B-spline kernel (1D)
 fn quadratic_bspline_1d(x: f32) -> f32 {
@@ -67,6 +81,10 @@ fn v_index(i: i32, j: i32, k: i32) -> u32 {
 
 fn w_index(i: i32, j: i32, k: i32) -> u32 {
     // W grid: width x height x (depth+1)
+    return u32(k) * params.width * params.height + u32(j) * params.width + u32(i);
+}
+
+fn cell_index(i: i32, j: i32, k: i32) -> u32 {
     return u32(k) * params.width * params.height + u32(j) * params.width + u32(i);
 }
 
@@ -239,6 +257,32 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         new_velocity.z /= weight_sum.z;
         old_grid_vel.z /= weight_sum.z;
         new_c_row2 /= weight_sum.z;
+    }
+
+    let density = densities[id.x];
+    if (density > 1.0) {
+        let drag = 1.0 - exp(-sediment_params.drag_rate * params.dt);
+        var final_velocity = old_particle_vel + (new_velocity - old_particle_vel) * drag;
+        final_velocity.y -= sediment_params.settling_velocity * params.dt;
+
+        let cell_i = clamp(i32(pos.x / cell_size), 0, width - 1);
+        let cell_j = clamp(i32(pos.y / cell_size), 0, height - 1);
+        let cell_k = clamp(i32(pos.z / cell_size), 0, depth - 1);
+        let vort = vorticity_mag[cell_index(cell_i, cell_j, cell_k)];
+        let vort_excess = max(vort - sediment_params.vorticity_threshold, 0.0);
+        let lift_factor = clamp(sediment_params.vorticity_lift * vort_excess, 0.0, 0.9);
+        final_velocity.y += sediment_params.settling_velocity * params.dt * lift_factor;
+
+        let speed = length(final_velocity);
+        if (speed > params.max_velocity) {
+            final_velocity *= params.max_velocity / speed;
+        }
+
+        velocities[id.x] = final_velocity;
+        c_col0[id.x] = vec3<f32>(0.0, 0.0, 0.0);
+        c_col1[id.x] = vec3<f32>(0.0, 0.0, 0.0);
+        c_col2[id.x] = vec3<f32>(0.0, 0.0, 0.0);
+        return;
     }
 
     // ========== FLIP/PIC blend ==========

@@ -30,6 +30,19 @@ struct G2pParams3D {
     _padding: [f32; 3], // Align to 48 bytes
 }
 
+/// Sediment parameters for G2P (single material).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct SedimentParams3D {
+    pub drag_rate: f32,
+    pub settling_velocity: f32,
+    /// Scales how much vorticity reduces settling (suspension, not upward thrust).
+    pub vorticity_lift: f32,
+    pub vorticity_threshold: f32,
+    pub _pad: [f32; 4],
+}
+
+
 /// GPU-based Grid-to-Particle transfer for 3D simulation
 pub struct GpuG2p3D {
     width: u32,
@@ -39,6 +52,7 @@ pub struct GpuG2p3D {
     // Particle buffers (positions public for density projection)
     pub positions_buffer: Arc<wgpu::Buffer>,
     pub(crate) velocities_buffer: Arc<wgpu::Buffer>,
+    densities_buffer: Arc<wgpu::Buffer>,
     // C matrix columns (output)
     c_col0_buffer: Arc<wgpu::Buffer>,
     c_col1_buffer: Arc<wgpu::Buffer>,
@@ -52,6 +66,7 @@ pub struct GpuG2p3D {
 
     // Parameters
     params_buffer: wgpu::Buffer,
+    sediment_params_buffer: wgpu::Buffer,
 
     // Compute pipeline
     g2p_pipeline: wgpu::ComputePipeline,
@@ -79,12 +94,14 @@ impl GpuG2p3D {
         c_col0_buffer: Arc<wgpu::Buffer>,
         c_col1_buffer: Arc<wgpu::Buffer>,
         c_col2_buffer: Arc<wgpu::Buffer>,
+        densities_buffer: Arc<wgpu::Buffer>,
         grid_u_buffer: &wgpu::Buffer,
         grid_v_buffer: &wgpu::Buffer,
         grid_w_buffer: &wgpu::Buffer,
         grid_u_old_buffer: &wgpu::Buffer,
         grid_v_old_buffer: &wgpu::Buffer,
         grid_w_old_buffer: &wgpu::Buffer,
+        vorticity_mag_buffer: &wgpu::Buffer,
     ) -> Self {
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -129,7 +146,14 @@ impl GpuG2p3D {
             mapped_at_creation: false,
         });
 
-        // Create bind group layout (matches shader bindings 0-11)
+        let sediment_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("G2P 3D Sediment Params"),
+            size: std::mem::size_of::<SedimentParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Create bind group layout (matches shader bindings 0-14)
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("G2P 3D Bind Group Layout"),
             entries: &[
@@ -259,6 +283,39 @@ impl GpuG2p3D {
                     },
                     count: None,
                 },
+                // 12: densities (read)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 13: sediment params (uniform)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 14: vorticity magnitude (read)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -279,6 +336,9 @@ impl GpuG2p3D {
                 wgpu::BindGroupEntry { binding: 9, resource: grid_u_old_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 10, resource: grid_v_old_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 11, resource: grid_w_old_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 12, resource: densities_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 13, resource: sediment_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 14, resource: vorticity_mag_buffer.as_entire_binding() },
             ],
         });
 
@@ -304,6 +364,7 @@ impl GpuG2p3D {
             depth,
             positions_buffer,
             velocities_buffer,
+            densities_buffer,
             c_col0_buffer,
             c_col1_buffer,
             c_col2_buffer,
@@ -312,6 +373,7 @@ impl GpuG2p3D {
             c_col1_staging,
             c_col2_staging,
             params_buffer,
+            sediment_params_buffer,
             g2p_pipeline,
             bind_group,
             max_particles,
@@ -326,6 +388,7 @@ impl GpuG2p3D {
         particle_count: u32,
         cell_size: f32,
         dt: f32,
+        sediment_params: SedimentParams3D,
     ) -> u32 {
         let particle_count = particle_count.min(self.max_particles as u32);
 
@@ -344,6 +407,7 @@ impl GpuG2p3D {
             _padding: [0.0; 3],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
+        queue.write_buffer(&self.sediment_params_buffer, 0, bytemuck::bytes_of(&sediment_params));
 
         particle_count
     }

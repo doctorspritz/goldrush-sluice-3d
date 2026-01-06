@@ -41,6 +41,7 @@ pub struct GpuP2g3D {
     // Particle buffers (uploaded each frame)
     positions_buffer: Arc<wgpu::Buffer>,
     velocities_buffer: Arc<wgpu::Buffer>,
+    densities_buffer: Arc<wgpu::Buffer>,
     // C matrix stored as 3 separate vec3 columns
     c_col0_buffer: Arc<wgpu::Buffer>,
     c_col1_buffer: Arc<wgpu::Buffer>,
@@ -61,6 +62,8 @@ pub struct GpuP2g3D {
 
     // Particle count per cell (atomic i32) - for density projection
     pub particle_count_buffer: wgpu::Buffer,
+    // Sediment count per cell (atomic i32) - for sediment fraction
+    pub sediment_count_buffer: wgpu::Buffer,
 
     // Staging buffers for readback
     grid_u_staging: wgpu::Buffer,
@@ -97,6 +100,7 @@ impl GpuP2g3D {
         max_particles: usize,
         positions_buffer: Arc<wgpu::Buffer>,
         velocities_buffer: Arc<wgpu::Buffer>,
+        densities_buffer: Arc<wgpu::Buffer>,
         c_col0_buffer: Arc<wgpu::Buffer>,
         c_col1_buffer: Arc<wgpu::Buffer>,
         c_col2_buffer: Arc<wgpu::Buffer>,
@@ -187,6 +191,13 @@ impl GpuP2g3D {
             label: Some("P2G 3D Particle Count"),
             size: (cell_count * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let sediment_count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("P2G 3D Sediment Count"),
+            size: (cell_count * std::mem::size_of::<i32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -367,6 +378,28 @@ impl GpuP2g3D {
                     },
                     count: None,
                 },
+                // 13: densities (read)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 14: sediment_count (read_write atomic)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -498,6 +531,8 @@ impl GpuP2g3D {
                 wgpu::BindGroupEntry { binding: 10, resource: w_sum_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 11, resource: w_weight_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 12, resource: particle_count_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 13, resource: densities_buffer.as_ref().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 14, resource: sediment_count_buffer.as_entire_binding() },
             ],
         });
 
@@ -574,6 +609,7 @@ impl GpuP2g3D {
             depth,
             positions_buffer,
             velocities_buffer,
+            densities_buffer,
             c_col0_buffer,
             c_col1_buffer,
             c_col2_buffer,
@@ -587,6 +623,7 @@ impl GpuP2g3D {
             grid_v_buffer,
             grid_w_buffer,
             particle_count_buffer,
+            sediment_count_buffer,
             grid_u_staging,
             grid_v_staging,
             grid_w_staging,
@@ -610,10 +647,12 @@ impl GpuP2g3D {
         queue: &wgpu::Queue,
         positions: &[glam::Vec3],
         velocities: &[glam::Vec3],
+        densities: &[f32],
         c_matrices: &[glam::Mat3],
         cell_size: f32,
     ) -> u32 {
         let particle_count = positions.len().min(self.max_particles) as u32;
+        let density_count = densities.len().min(self.max_particles);
 
         // Convert to padded vec4 format for GPU
         let positions_padded: Vec<[f32; 4]> = positions.iter()
@@ -648,8 +687,16 @@ impl GpuP2g3D {
         queue.write_buffer(&self.c_col0_buffer, 0, bytemuck::cast_slice(&c_col0));
         queue.write_buffer(&self.c_col1_buffer, 0, bytemuck::cast_slice(&c_col1));
         queue.write_buffer(&self.c_col2_buffer, 0, bytemuck::cast_slice(&c_col2));
+        if density_count > 0 {
+            queue.write_buffer(&self.densities_buffer, 0, bytemuck::cast_slice(&densities[..density_count]));
+        }
 
-        // Upload params
+        self.prepare(queue, particle_count, cell_size);
+
+        particle_count
+    }
+
+    pub fn prepare(&self, queue: &wgpu::Queue, particle_count: u32, cell_size: f32) {
         let params = P2gParams3D {
             cell_size,
             width: self.width,
@@ -660,7 +707,10 @@ impl GpuP2g3D {
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 
-        // Clear accumulator buffers
+        self.clear_accumulators(queue);
+    }
+
+    fn clear_accumulators(&self, queue: &wgpu::Queue) {
         let u_size = ((self.width + 1) * self.height * self.depth) as usize;
         let v_size = (self.width * (self.height + 1) * self.depth) as usize;
         let w_size = (self.width * self.height * (self.depth + 1)) as usize;
@@ -673,8 +723,7 @@ impl GpuP2g3D {
         queue.write_buffer(&self.w_sum_buffer, 0, &vec![0u8; w_size * 4]);
         queue.write_buffer(&self.w_weight_buffer, 0, &vec![0u8; w_size * 4]);
         queue.write_buffer(&self.particle_count_buffer, 0, &vec![0u8; cell_count * 4]);
-
-        particle_count
+        queue.write_buffer(&self.sediment_count_buffer, 0, &vec![0u8; cell_count * 4]);
     }
 
     /// Encode P2G compute passes into command encoder

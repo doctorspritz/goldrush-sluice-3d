@@ -173,7 +173,9 @@ fn main() {
     let mut positions: Vec<Vec3> = Vec::with_capacity(MAX_PARTICLES);
     let mut velocities: Vec<Vec3> = Vec::with_capacity(MAX_PARTICLES);
     let mut c_matrices: Vec<Mat3> = Vec::with_capacity(MAX_PARTICLES);
+    let mut densities: Vec<f32> = Vec::with_capacity(MAX_PARTICLES);
     let mut cell_types: Vec<u32> = vec![0; GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH];
+    let bed_height = vec![0.0f32; GRID_WIDTH * GRID_DEPTH];
 
     println!("Running {} frames...", TEST_FRAMES);
 
@@ -185,11 +187,13 @@ fn main() {
             positions.clear();
             velocities.clear();
             c_matrices.clear();
+            densities.clear();
 
             for p in &sim.particles.list {
                 positions.push(p.position);
                 velocities.push(p.velocity);
                 c_matrices.push(p.affine_velocity);
+                densities.push(p.density);
             }
 
             // Build cell types from grid
@@ -230,8 +234,10 @@ fn main() {
                 &mut positions,
                 &mut velocities,
                 &mut c_matrices,
+                &densities,
                 &cell_types,
                 None,
+                Some(&bed_height),
                 DT,
                 -9.8,
                 FLOW_ACCEL,  // <-- THIS IS THE KEY: flow applied on grid before pressure solve
