@@ -30,6 +30,7 @@
 
 pub mod advection;
 pub mod grid;
+pub mod heightfield;
 pub mod kernels;
 pub mod particle;
 pub mod pressure;
@@ -37,6 +38,7 @@ pub mod transfer;
 
 pub use glam::{Mat3, Vec3};
 pub use grid::{CellType, Grid3D};
+pub use heightfield::Heightfield;
 pub use particle::{Particle3D, Particles3D};
 
 use transfer::TransferBuffers;
