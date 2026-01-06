@@ -7,7 +7,7 @@
 //!
 //! The simulation maintains particle data on CPU but does all heavy computation on GPU.
 
-use super::g2p_3d::{GpuG2p3D, SedimentParams3D};
+use super::g2p_3d::{DruckerPragerParams, GpuG2p3D, SedimentParams3D};
 use super::p2g_3d::GpuP2g3D;
 use super::pressure_3d::GpuPressure3D;
 
@@ -64,6 +64,20 @@ struct SedimentFractionParams3D {
     rest_particles: f32,
 }
 
+/// Sediment pressure parameters (for Drucker-Prager)
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct SedimentPressureParams3D {
+    width: u32,
+    height: u32,
+    depth: u32,
+    _pad0: u32,
+    cell_size: f32,
+    particle_mass: f32,
+    gravity: f32,
+    buoyancy_factor: f32,
+}
+
 /// Porosity drag parameters
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -117,9 +131,19 @@ struct DensityCorrectionParams3D {
     depth: u32,
     particle_count: u32,
     cell_size: f32,
+    dt: f32,
     _pad1: u32,
     _pad2: u32,
-    _pad3: u32,
+}
+
+/// Sediment cell type builder parameters
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct SedimentCellTypeParams3D {
+    width: u32,
+    height: u32,
+    depth: u32,
+    _pad0: u32,
 }
 
 /// SDF collision parameters
@@ -455,6 +479,12 @@ pub struct GpuFlip3D {
     sediment_fraction_bind_group: wgpu::BindGroup,
     sediment_fraction_params_buffer: wgpu::Buffer,
 
+    // Sediment pressure (Drucker-Prager)
+    sediment_pressure_buffer: wgpu::Buffer,
+    sediment_pressure_pipeline: wgpu::ComputePipeline,
+    sediment_pressure_bind_group: wgpu::BindGroup,
+    sediment_pressure_params_buffer: wgpu::Buffer,
+
     // Porosity drag (sediment damping on grid)
     porosity_drag_u_pipeline: wgpu::ComputePipeline,
     porosity_drag_v_pipeline: wgpu::ComputePipeline,
@@ -490,6 +520,13 @@ pub struct GpuFlip3D {
     density_correct_pipeline: wgpu::ComputePipeline,
     density_correct_bind_group: wgpu::BindGroup,
     density_correct_params_buffer: wgpu::Buffer,
+    // Sediment density projection (granular packing)
+    sediment_cell_type_pipeline: wgpu::ComputePipeline,
+    sediment_cell_type_bind_group: wgpu::BindGroup,
+    sediment_cell_type_params_buffer: wgpu::Buffer,
+    sediment_density_error_pipeline: wgpu::ComputePipeline,
+    sediment_density_error_bind_group: wgpu::BindGroup,
+    sediment_density_correct_pipeline: wgpu::ComputePipeline,
 
     // SDF collision (advection + solid collision)
     sdf_collision_pipeline: wgpu::ComputePipeline,
@@ -599,6 +636,13 @@ impl GpuFlip3D {
 
         let cell_count = (width * height * depth) as usize;
 
+        let sediment_pressure_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Sediment Pressure Buffer"),
+            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let vorticity_x_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vorticity X 3D"),
             size: (cell_count * std::mem::size_of::<f32>()) as u64,
@@ -655,6 +699,9 @@ impl GpuFlip3D {
             &grid_v_old_buffer,
             &grid_w_old_buffer,
             &vorticity_mag_buffer,
+            &sediment_pressure_buffer,
+            &p2g.sediment_count_buffer,
+            &p2g.particle_count_buffer,
         );
 
         // Create gravity shader
@@ -1187,6 +1234,80 @@ impl GpuFlip3D {
             cache: None,
         });
 
+        // ========== Sediment Pressure ==========
+        let sediment_pressure_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Sediment Pressure 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sediment_pressure_3d.wgsl").into()),
+        });
+
+        let sediment_pressure_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Sediment Pressure Params 3D"),
+            size: std::mem::size_of::<SedimentPressureParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let sediment_pressure_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Sediment Pressure 3D Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let sediment_pressure_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Sediment Pressure 3D Bind Group"),
+            layout: &sediment_pressure_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: sediment_pressure_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: p2g.sediment_count_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: sediment_pressure_buffer.as_entire_binding() },
+            ],
+        });
+
+        let sediment_pressure_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Sediment Pressure 3D Pipeline Layout"),
+            bind_group_layouts: &[&sediment_pressure_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let sediment_pressure_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Sediment Pressure 3D Pipeline"),
+            layout: Some(&sediment_pressure_pipeline_layout),
+            module: &sediment_pressure_shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         // ========== Porosity Drag ==========
         let porosity_drag_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Porosity Drag 3D Shader"),
@@ -1650,7 +1771,7 @@ impl GpuFlip3D {
             mapped_at_creation: false,
         });
 
-        // Bindings: params, delta_x, delta_y, delta_z, cell_type, positions, densities
+        // Bindings: params, delta_x, delta_y, delta_z, cell_type, positions, densities, velocities
         let density_correct_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Density Correct 3D Bind Group Layout"),
             entries: &[
@@ -1724,6 +1845,16 @@ impl GpuFlip3D {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1738,6 +1869,7 @@ impl GpuFlip3D {
                 wgpu::BindGroupEntry { binding: 4, resource: pressure.cell_type_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: g2p.positions_buffer.as_ref().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 6, resource: densities_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: velocities_buffer.as_ref().as_entire_binding() },
             ],
         });
 
@@ -1751,6 +1883,119 @@ impl GpuFlip3D {
             label: Some("Density Correct 3D Pipeline"),
             layout: Some(&density_correct_pipeline_layout),
             module: &density_correct_shader,
+            entry_point: Some("correct_positions"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        // ========== Sediment Density Projection (Granular Packing) ==========
+        let sediment_cell_type_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Sediment Cell Type 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sediment_cell_type_3d.wgsl").into()),
+        });
+
+        let sediment_cell_type_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Sediment Cell Type Params 3D"),
+            size: std::mem::size_of::<SedimentCellTypeParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let sediment_cell_type_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Sediment Cell Type 3D Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let sediment_cell_type_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Sediment Cell Type 3D Bind Group"),
+            layout: &sediment_cell_type_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: sediment_cell_type_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: pressure.cell_type_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: p2g.sediment_count_buffer.as_entire_binding() },
+            ],
+        });
+
+        let sediment_cell_type_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Sediment Cell Type 3D Pipeline Layout"),
+            bind_group_layouts: &[&sediment_cell_type_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let sediment_cell_type_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Sediment Cell Type 3D Pipeline"),
+            layout: Some(&sediment_cell_type_pipeline_layout),
+            module: &sediment_cell_type_shader,
+            entry_point: Some("build_sediment_cell_type"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let sediment_density_error_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Sediment Density Error 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sediment_density_error_3d.wgsl").into()),
+        });
+
+        let sediment_density_error_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Sediment Density Error 3D Bind Group"),
+            layout: &density_error_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: density_error_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: p2g.sediment_count_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: pressure.cell_type_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: pressure.divergence_buffer.as_entire_binding() },
+            ],
+        });
+
+        let sediment_density_error_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Sediment Density Error 3D Pipeline"),
+            layout: Some(&density_error_pipeline_layout),
+            module: &sediment_density_error_shader,
+            entry_point: Some("compute_sediment_density_error"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let sediment_density_correct_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Sediment Density Correct 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sediment_density_correct_3d.wgsl").into()),
+        });
+
+        let sediment_density_correct_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Sediment Density Correct 3D Pipeline"),
+            layout: Some(&density_correct_pipeline_layout),
+            module: &sediment_density_correct_shader,
             entry_point: Some("correct_positions"),
             compilation_options: Default::default(),
             cache: None,
@@ -1925,6 +2170,10 @@ impl GpuFlip3D {
             sediment_fraction_pipeline,
             sediment_fraction_bind_group,
             sediment_fraction_params_buffer,
+            sediment_pressure_buffer,
+            sediment_pressure_pipeline,
+            sediment_pressure_bind_group,
+            sediment_pressure_params_buffer,
             porosity_drag_u_pipeline,
             porosity_drag_v_pipeline,
             porosity_drag_w_pipeline,
@@ -1950,6 +2199,12 @@ impl GpuFlip3D {
             density_correct_pipeline,
             density_correct_bind_group,
             density_correct_params_buffer,
+            sediment_cell_type_pipeline,
+            sediment_cell_type_bind_group,
+            sediment_cell_type_params_buffer,
+            sediment_density_error_pipeline,
+            sediment_density_error_bind_group,
+            sediment_density_correct_pipeline,
             sdf_collision_pipeline,
             sdf_collision_bind_group,
             sdf_collision_params_buffer,
@@ -2099,6 +2354,10 @@ impl GpuFlip3D {
         self.densities_buffer.clone()
     }
 
+    pub fn set_drucker_prager_params(&self, queue: &wgpu::Queue, params: DruckerPragerParams) {
+        self.g2p.set_drucker_prager_params(queue, params);
+    }
+
     pub fn sdf_buffer(&self) -> &wgpu::Buffer {
         &self.sdf_buffer
     }
@@ -2231,6 +2490,35 @@ impl GpuFlip3D {
             let workgroups_y = (self.height + 7) / 8;
             let workgroups_z = (self.depth + 3) / 4;
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let sediment_pressure_params = SedimentPressureParams3D {
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+            _pad0: 0,
+            cell_size: self.cell_size,
+            particle_mass: 1.0,
+            gravity: gravity.abs(),
+            buoyancy_factor: 0.62,
+        };
+        queue.write_buffer(&self.sediment_pressure_params_buffer, 0, bytemuck::bytes_of(&sediment_pressure_params));
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Sediment Pressure 3D Encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Sediment Pressure 3D Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.sediment_pressure_pipeline);
+            pass.set_bind_group(0, &self.sediment_pressure_bind_group, &[]);
+            let workgroups_x = (self.width + 7) / 8;
+            let workgroups_z = (self.depth + 7) / 8;
+            pass.dispatch_workgroups(workgroups_x, 1, workgroups_z);
         }
 
         queue.submit(std::iter::once(encoder.finish()));
@@ -2582,9 +2870,9 @@ impl GpuFlip3D {
             depth: self.depth,
             particle_count: particle_count,
             cell_size: self.cell_size,
+            dt,
             _pad1: 0,
             _pad2: 0,
-            _pad3: 0,
         };
         queue.write_buffer(&self.density_correct_params_buffer, 0, bytemuck::bytes_of(&density_correct_params));
 
@@ -2605,6 +2893,140 @@ impl GpuFlip3D {
         }
 
         queue.submit(std::iter::once(encoder.finish()));
+
+        // ========== Sediment Density Projection (Granular Packing) ==========
+        if self.sediment_rest_particles > 0.0 {
+            let sediment_cell_params = SedimentCellTypeParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                _pad0: 0,
+            };
+            queue.write_buffer(
+                &self.sediment_cell_type_params_buffer,
+                0,
+                bytemuck::bytes_of(&sediment_cell_params),
+            );
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Sediment Cell Type 3D Encoder"),
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Sediment Cell Type 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.sediment_cell_type_pipeline);
+                pass.set_bind_group(0, &self.sediment_cell_type_bind_group, &[]);
+                let workgroups_x = (self.width + 7) / 8;
+                let workgroups_y = (self.height + 7) / 8;
+                let workgroups_z = (self.depth + 3) / 4;
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+
+            let sediment_density_error_params = DensityErrorParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                rest_density: self.sediment_rest_particles,
+                dt,
+                _pad1: 0,
+                _pad2: 0,
+                _pad3: 0,
+            };
+            queue.write_buffer(
+                &self.density_error_params_buffer,
+                0,
+                bytemuck::bytes_of(&sediment_density_error_params),
+            );
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Sediment Density Error 3D Encoder"),
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Sediment Density Error 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.sediment_density_error_pipeline);
+                pass.set_bind_group(0, &self.sediment_density_error_bind_group, &[]);
+                let workgroups_x = (self.width + 7) / 8;
+                let workgroups_y = (self.height + 7) / 8;
+                let workgroups_z = (self.depth + 3) / 4;
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+
+            self.pressure.clear_pressure(queue);
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Sediment Density Pressure 3D Encoder"),
+            });
+            let sediment_iterations = 15;
+            self.pressure.encode_iterations_only(&mut encoder, sediment_iterations);
+            queue.submit(std::iter::once(encoder.finish()));
+
+            let grid_params = DensityPositionGridParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                dt,
+            };
+            queue.write_buffer(
+                &self.density_position_grid_params_buffer,
+                0,
+                bytemuck::bytes_of(&grid_params),
+            );
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Sediment Position Grid 3D Encoder"),
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Sediment Position Grid 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.density_position_grid_pipeline);
+                pass.set_bind_group(0, &self.density_position_grid_bind_group, &[]);
+                let workgroups_x = (self.width + 7) / 8;
+                let workgroups_y = (self.height + 7) / 8;
+                let workgroups_z = (self.depth + 3) / 4;
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+
+            let density_correct_params = DensityCorrectionParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                particle_count: particle_count,
+                cell_size: self.cell_size,
+                dt,
+                _pad1: 0,
+                _pad2: 0,
+            };
+            queue.write_buffer(
+                &self.density_correct_params_buffer,
+                0,
+                bytemuck::bytes_of(&density_correct_params),
+            );
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Sediment Density Correct 3D Encoder"),
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Sediment Density Correct 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.sediment_density_correct_pipeline);
+                pass.set_bind_group(0, &self.density_correct_bind_group, &[]);
+                let workgroups = (particle_count as u32 + 255) / 256;
+                pass.dispatch_workgroups(workgroups, 1, 1);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+        }
 
         if let Some(bed_height) = bed_height {
             let expected_len = (self.width * self.depth) as usize;

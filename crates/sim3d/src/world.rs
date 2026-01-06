@@ -439,6 +439,7 @@ impl World {
         let width = self.width;
         let depth = self.depth;
         let cell_size = self.cell_size;
+        let cell_area = cell_size * cell_size;
 
         for z in 0..depth {
             for x in 0..width {
@@ -450,7 +451,7 @@ impl World {
             }
         }
 
-        let max_velocity = cell_size / dt * 0.25;
+        let max_velocity = cell_size / dt * 0.5;
 
         for z in 0..depth {
             for x in 1..width {
@@ -516,7 +517,88 @@ impl World {
             self.water_flow_z[front_idx] = 0.0;
         }
 
-        let cell_area = cell_size * cell_size;
+        // Flux limiting: ensure no cell outputs more volume than it has
+        self.collapse_deltas.fill(1.0); // Reuse buffer for limits
+
+        for z in 0..depth {
+            for x in 0..width {
+                let idx = self.idx(x, z);
+                let depth_here = self.water_depth(x, z);
+                
+                // if depth_here < 1e-4 { continue; } // Unsafe optimization removed
+
+                let available_volume = depth_here * cell_area;
+                let mut total_outflow_volume = 0.0;
+
+                // Right (x+1)
+                let v_right = self.water_flow_x[self.flow_x_idx(x + 1, z)];
+                if v_right > 0.0 {
+                    let depth_right = if x + 1 < width { self.water_depth(x+1, z) } else { depth_here };
+                    let flux = v_right * 0.5 * (depth_here + depth_right) * cell_size * dt;
+                    total_outflow_volume += flux;
+                }
+
+                // Left (x)
+                let v_left = self.water_flow_x[self.flow_x_idx(x, z)];
+                if v_left < 0.0 {
+                    let depth_left = if x > 0 { self.water_depth(x-1, z) } else { depth_here };
+                    let flux = -v_left * 0.5 * (depth_left + depth_here) * cell_size * dt;
+                    total_outflow_volume += flux;
+                }
+                
+                // Front (z+1)
+                let v_front = self.water_flow_z[self.flow_z_idx(x, z + 1)];
+                if v_front > 0.0 {
+                    let depth_front = if z + 1 < depth { self.water_depth(x, z+1) } else { depth_here };
+                    let flux = v_front * 0.5 * (depth_here + depth_front) * cell_size * dt;
+                    total_outflow_volume += flux;
+                }
+                
+                // Back (z)
+                let v_back = self.water_flow_z[self.flow_z_idx(x, z)];
+                if v_back < 0.0 {
+                    let depth_back = if z > 0 { self.water_depth(x, z-1) } else { depth_here };
+                    let flux = -v_back * 0.5 * (depth_back + depth_here) * cell_size * dt;
+                    total_outflow_volume += flux;
+                }
+
+                if total_outflow_volume > available_volume {
+                    self.collapse_deltas[idx] = available_volume / total_outflow_volume;
+                }
+            }
+        }
+        
+        // Apply Limiters to Flow
+        for z in 0..depth {
+            for x in 0..width + 1 { // Flow X faces
+                 let flow_idx = self.flow_x_idx(x, z);
+                 let vel = self.water_flow_x[flow_idx];
+                 if vel > 0.0 && x > 0 {
+                     let donor_idx = self.idx(x-1, z);
+                     self.water_flow_x[flow_idx] *= self.collapse_deltas[donor_idx];
+                 } else if vel < 0.0 && x < width {
+                     let donor_idx = self.idx(x, z);
+                     self.water_flow_x[flow_idx] *= self.collapse_deltas[donor_idx];
+                 }
+            }
+        }
+        for z in 0..depth + 1 { // Flow Z faces
+            for x in 0..width {
+                 let flow_idx = self.flow_z_idx(x, z);
+                 let vel = self.water_flow_z[flow_idx];
+                 if vel > 0.0 && z > 0 {
+                     let donor_idx = self.idx(x, z-1);
+                     self.water_flow_z[flow_idx] *= self.collapse_deltas[donor_idx];
+                 } else if vel < 0.0 && z < depth {
+                     let donor_idx = self.idx(x, z);
+                     self.water_flow_z[flow_idx] *= self.collapse_deltas[donor_idx];
+                 }
+            }
+        }
+
+        // 5. Volume Update
+        // Reuse collapse_deltas for height changes to verify conservation (avoid race condition)
+        self.collapse_deltas.fill(0.0);
 
         for z in 0..depth {
             for x in 0..width {
@@ -551,10 +633,16 @@ impl World {
 
                 let volume_change =
                     (flux_left - flux_right + flux_back - flux_front) * cell_size * dt;
+                
                 let height_change = volume_change / cell_area;
+                self.collapse_deltas[idx] = height_change;
+            }
+        }
 
-                self.water_surface[idx] += height_change;
-
+        for z in 0..depth {
+            for x in 0..width {
+                let idx = self.idx(x, z);
+                self.water_surface[idx] += self.collapse_deltas[idx];
                 let ground = self.ground_height(x, z);
                 self.water_surface[idx] = self.water_surface[idx].max(ground);
             }
@@ -834,7 +922,8 @@ mod tests {
     fn test_terrain_collapse() {
         let mut world = World::new(10, 10, 1.0, 0.0);
 
-        world.terrain_sediment[world.idx(5, 5)] = 10.0;
+        let idx_center = world.idx(5, 5);
+        world.terrain_sediment[idx_center] = 10.0;
 
         for _ in 0..100 {
             world.update_terrain_collapse();
@@ -886,5 +975,66 @@ mod tests {
 
         assert!(final_suspended < initial_suspended);
         assert!(final_bed > 0.0);
+    }
+
+    #[test]
+    fn test_digging_dry_land_stays_dry() {
+        let mut world = World::new(3, 3, 1.0, 10.0);
+        let center = Vec3::new(1.5, 10.0, 1.5);
+        
+        // Dig center
+        world.excavate(center, 0.5, 1.0);
+        
+        let idx = world.idx(1, 1);
+        let ground = world.ground_height(1, 1);
+        let surface = world.water_surface[idx];
+        let depth = world.water_depth(1, 1);
+        
+        // Should be 9.0
+        assert!((ground - 9.0).abs() < 0.001, "Ground should be 9.0, got {}", ground);
+        // Surface should match ground (dry)
+        assert!((surface - ground).abs() < 0.001, "Water surface {} should match ground {}", surface, ground);
+        assert!(depth < 0.001, "Depth should be 0, got {}", depth);
+    }
+
+    #[test]
+    fn test_digging_near_water_flow() {
+        let mut world = World::new(3, 3, 1.0, 10.0);
+        // Add water to (0,1) - Left neighbor of center (1,1)
+        world.add_water(Vec3::new(0.5, 10.0, 1.5), 5.0); // 5m depth. Surface 15.0
+        
+        // Verify Setup
+        // Neighbor (0,1)
+        let idx_n = world.idx(0, 1);
+        assert!((world.water_surface[idx_n] - 15.0).abs() < 0.001);
+        
+        // Center is dry (1,1)
+        assert!(world.water_depth(1, 1) < 0.001);
+        
+        // Dig center
+        world.excavate(Vec3::new(1.5, 10.0, 1.5), 0.5, 2.0); // Dig 2m -> Height 8
+        
+        // Check immediate state
+        let idx = world.idx(1, 1);
+        let ground = world.ground_height(1, 1);
+        let surface = world.water_surface[idx];
+        assert!((ground - 8.0).abs() < 0.001);
+        // If dry, surface was 10. Excavating dry -> surface becomes ground (8).
+        assert!((surface - ground).abs() < 0.001, "Immediate surface should match ground");
+        
+        // Update flow once
+        world.update_water_flow(0.1);
+        
+        // Water should flow in from neighbor (15) to center (8).
+        // Center surface should rise.
+        let surface_after = world.water_surface[idx];
+        
+        // Hypothesis: User claims it rises to "height of removed ground" (10.0 ?? or neighbor 15.0?).
+        // If it rises to 15.0 instantly, that's bad.
+        // If it rises to 10.0 instantly, that's also bad (arbitrary old ground).
+        
+        println!("Surface before: {}, after: {}", surface, surface_after);
+        assert!(surface_after > ground, "Water should flow in");
+        assert!(surface_after < 14.5, "Water shouldn't level instantly");
     }
 }

@@ -13,6 +13,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
+use wgpu::util::DeviceExt;
 
 /// Parameters for G2P 3D compute shader
 #[repr(C)]
@@ -42,6 +43,35 @@ pub struct SedimentParams3D {
     pub _pad: [f32; 4],
 }
 
+/// Drucker-Prager parameters for sediment yield.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct DruckerPragerParams {
+    pub friction_coeff: f32,   // tan(friction_angle)
+    pub cohesion: f32,         // Pa
+    pub buoyancy_factor: f32,  // 1 - rho_w/rho_s
+    pub viscosity: f32,        // Pa·s
+    pub jammed_drag: f32,      // drag coefficient when jammed
+    pub min_pressure: f32,
+    pub yield_smoothing: f32,
+    pub _pad0: f32,
+}
+
+impl Default for DruckerPragerParams {
+    fn default() -> Self {
+        Self {
+            friction_coeff: 0.62,
+            cohesion: 0.0,
+            buoyancy_factor: 0.62,
+            viscosity: 1.0,
+            jammed_drag: 50.0,
+            min_pressure: 0.1,
+            yield_smoothing: 0.1,
+            _pad0: 0.0,
+        }
+    }
+}
+
 
 /// GPU-based Grid-to-Particle transfer for 3D simulation
 pub struct GpuG2p3D {
@@ -67,6 +97,7 @@ pub struct GpuG2p3D {
     // Parameters
     params_buffer: wgpu::Buffer,
     sediment_params_buffer: wgpu::Buffer,
+    dp_params_buffer: wgpu::Buffer,
 
     // Compute pipeline
     g2p_pipeline: wgpu::ComputePipeline,
@@ -102,6 +133,9 @@ impl GpuG2p3D {
         grid_v_old_buffer: &wgpu::Buffer,
         grid_w_old_buffer: &wgpu::Buffer,
         vorticity_mag_buffer: &wgpu::Buffer,
+        sediment_pressure_buffer: &wgpu::Buffer,
+        sediment_count_buffer: &wgpu::Buffer,
+        particle_count_buffer: &wgpu::Buffer,
     ) -> Self {
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -153,7 +187,14 @@ impl GpuG2p3D {
             mapped_at_creation: false,
         });
 
-        // Create bind group layout (matches shader bindings 0-14)
+        let dp_params = DruckerPragerParams::default();
+        let dp_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Drucker-Prager Params"),
+            contents: bytemuck::cast_slice(&[dp_params]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // Create bind group layout (matches shader bindings 0-18)
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("G2P 3D Bind Group Layout"),
             entries: &[
@@ -316,6 +357,50 @@ impl GpuG2p3D {
                     },
                     count: None,
                 },
+                // 15: Drucker-Prager params
+                wgpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 16: sediment pressure (read)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 16,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 17: sediment count (read)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 17,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 18: water count (read)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 18,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -339,6 +424,10 @@ impl GpuG2p3D {
                 wgpu::BindGroupEntry { binding: 12, resource: densities_buffer.as_ref().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 13, resource: sediment_params_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 14, resource: vorticity_mag_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 15, resource: dp_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 16, resource: sediment_pressure_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 17, resource: sediment_count_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 18, resource: particle_count_buffer.as_entire_binding() },
             ],
         });
 
@@ -374,6 +463,7 @@ impl GpuG2p3D {
             c_col2_staging,
             params_buffer,
             sediment_params_buffer,
+            dp_params_buffer,
             g2p_pipeline,
             bind_group,
             max_particles,
@@ -410,6 +500,10 @@ impl GpuG2p3D {
         queue.write_buffer(&self.sediment_params_buffer, 0, bytemuck::bytes_of(&sediment_params));
 
         particle_count
+    }
+
+    pub fn set_drucker_prager_params(&self, queue: &wgpu::Queue, params: DruckerPragerParams) {
+        queue.write_buffer(&self.dp_params_buffer, 0, bytemuck::bytes_of(&params));
     }
 
     /// Encode G2P compute pass into command encoder

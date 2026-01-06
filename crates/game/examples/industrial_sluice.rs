@@ -8,7 +8,8 @@
 use bytemuck::{Pod, Zeroable};
 use game::gpu::bed_3d::{self, GpuBed3D, GpuBedParams};
 use game::gpu::flip_3d::GpuFlip3D;
-use glam::{Mat3, Mat4, Vec3};
+use game::gpu::g2p_3d::DruckerPragerParams;
+use glam::{Mat3, Mat4, Vec3, Vec4};
 use sim3d::FlipSimulation3D;
 use std::sync::Arc;
 use std::time::Instant;
@@ -44,9 +45,28 @@ const RIFFLE_SPACING: usize = 12;
 const RIFFLE_HEIGHT: usize = 2;
 const RIFFLE_START_X: usize = 12;
 const RIFFLE_END_PAD: usize = 8;
-const SEDIMENT_EMIT_FRACTION: f32 = 0.25;
 const RIFFLE_THICKNESS_CELLS: i32 = 2;
 const SEDIMENT_REL_DENSITY: f32 = 2.65;
+const DEFAULT_WATER_EMIT_RATE: usize = 150;
+const DEFAULT_SEDIMENT_EMIT_RATE: usize = 50;
+const EMIT_RATE_STEP: usize = 25;
+const MAX_EMIT_RATE: usize = 1000;
+const CLICK_SPAWN_WATER: usize = 120;
+const CLICK_SPAWN_SEDIMENT: usize = 150;
+const CLICK_SPAWN_RADIUS: f32 = 2.5 * CELL_SIZE;
+const CLICK_WATER_LIFT: f32 = 3.0 * CELL_SIZE;
+const CLICK_SEDIMENT_LIFT: f32 = 1.5 * CELL_SIZE;
+const DP_FRICTION_ANGLE_DEFAULT_DEG: f32 = 32.0;
+const DP_COHESION_DEFAULT: f32 = 0.0;
+const DP_VISCOSITY_DEFAULT: f32 = 1.0;
+const DP_JAMMED_DRAG_DEFAULT: f32 = 50.0;
+const DP_BUOYANCY_FACTOR: f32 = 1.0 - 1.0 / SEDIMENT_REL_DENSITY;
+const DP_MIN_PRESSURE: f32 = 0.1;
+const DP_YIELD_SMOOTHING: f32 = 0.1;
+const DP_FRICTION_STEP_DEG: f32 = 1.0;
+const DP_COHESION_STEP: f32 = 5.0;
+const DP_VISCOSITY_STEP: f32 = 0.1;
+const DP_JAMMED_DRAG_STEP: f32 = 5.0;
 const SEDIMENT_REST_PARTICLES: f32 = 8.0;
 const SEDIMENT_SETTLING_VELOCITY: f32 = 0.35;
 const BED_POROSITY: f32 = 0.4;
@@ -121,6 +141,10 @@ struct App {
     use_gpu_sim: bool,
     pressure_iters_gpu: u32,
     vorticity_epsilon: f32,
+    dp_friction_angle_deg: f32,
+    dp_cohesion: f32,
+    dp_viscosity: f32,
+    dp_jammed_drag: f32,
     use_async_readback: bool,
     gpu_readback_pending: bool,
     render_heightfield: bool,
@@ -128,12 +152,19 @@ struct App {
     debug_riffle_probe: bool,
     mouse_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
+    cursor_pos: Option<(f32, f32)>,
     last_fps_time: Instant,
     fps_frame_count: u32,
     current_fps: f32,
     emitter_enabled: bool,
+    water_emitter_enabled: bool,
+    sediment_emitter_enabled: bool,
+    water_emit_rate: usize,
+    sediment_emit_rate: usize,
     particles_exited: u32,
-    pending_emit: usize,
+    pending_emit_water: usize,
+    pending_emit_sediment: usize,
+    click_add_sediment: bool,
     gpu_particle_count: u32,
     gpu_probe_stats: Vec<i32>,
     heightfield: Vec<f32>,
@@ -387,7 +418,9 @@ impl App {
 
         println!("Solid cells: {}", solid_instances.len());
         println!("Max particles: {}", MAX_PARTICLES);
-        println!("Controls: SPACE=pause, R=reset, G=toggle GPU/CPU, E=toggle emitter, H=heightfield, F=flow particles, V/B=vorticity -/+, P=riffle probe, ESC=quit");
+        println!(
+            "Controls: SPACE=pause, R=reset, G=toggle GPU/CPU, E=toggle emitter, W/S=water/sediment emit, Up/Down=water rate, Left/Right=sediment rate, M=click material, LMB=add burst, RMB=drag, C=clear water, X=clear sediment, Z=clear all, H=heightfield, F=flow particles, V/B=vorticity -/+, 1/2=friction, 3/4=cohesion, 5/6=viscosity, 7/8=jammed drag, P=riffle probe, ESC=quit"
+        );
 
         Self {
             window: None,
@@ -418,6 +451,10 @@ impl App {
             use_gpu_sim: true,
             pressure_iters_gpu,
             vorticity_epsilon: VORTICITY_EPSILON_DEFAULT,
+            dp_friction_angle_deg: DP_FRICTION_ANGLE_DEFAULT_DEG,
+            dp_cohesion: DP_COHESION_DEFAULT,
+            dp_viscosity: DP_VISCOSITY_DEFAULT,
+            dp_jammed_drag: DP_JAMMED_DRAG_DEFAULT,
             use_async_readback: false,
             gpu_readback_pending: false,
             render_heightfield: true,
@@ -425,12 +462,19 @@ impl App {
             debug_riffle_probe: true,
             mouse_pressed: false,
             last_mouse_pos: None,
+            cursor_pos: None,
             last_fps_time: Instant::now(),
             fps_frame_count: 0,
             current_fps: 0.0,
             emitter_enabled: true,
+            water_emitter_enabled: true,
+            sediment_emitter_enabled: true,
+            water_emit_rate: DEFAULT_WATER_EMIT_RATE,
+            sediment_emit_rate: DEFAULT_SEDIMENT_EMIT_RATE,
             particles_exited: 0,
-            pending_emit: 0,
+            pending_emit_water: 0,
+            pending_emit_sediment: 0,
+            click_add_sediment: false,
             gpu_particle_count: 0,
             gpu_probe_stats: vec![0; bed_3d::PROBE_STAT_BUFFER_LEN],
             heightfield: vec![f32::NEG_INFINITY; GRID_WIDTH * GRID_DEPTH],
@@ -440,15 +484,19 @@ impl App {
     }
 
     /// Emit particles from inlet on left side - higher rate for industrial scale
-    fn emit_particles(&mut self, count: usize) {
+    fn emit_particles(&mut self, water_count: usize, sediment_count: usize) {
         if self.sim.particles.len() >= MAX_PARTICLES {
             return;
         }
 
         let cell_size = CELL_SIZE;
-        let max_to_spawn = (MAX_PARTICLES - self.sim.particles.len()).min(count);
-        let sediment_spawn = (max_to_spawn as f32 * SEDIMENT_EMIT_FRACTION) as usize;
-        let water_spawn = max_to_spawn.saturating_sub(sediment_spawn);
+        let mut remaining = MAX_PARTICLES - self.sim.particles.len();
+        if remaining == 0 {
+            return;
+        }
+        let water_spawn = water_count.min(remaining);
+        remaining = remaining.saturating_sub(water_spawn);
+        let sediment_spawn = sediment_count.min(remaining);
 
         // Emit above the first riffle so particles drop under gravity.
         let emit_x = (RIFFLE_START_X as f32 + 0.5) * cell_size;
@@ -495,6 +543,150 @@ impl App {
             let vel = Vec3::ZERO;
             self.sim.spawn_sediment(Vec3::new(x, y, z), vel, SEDIMENT_REL_DENSITY);
         }
+    }
+
+    fn bed_height_at(&self, x: f32, z: f32) -> f32 {
+        let i = (x / CELL_SIZE).floor() as i32;
+        let k = (z / CELL_SIZE).floor() as i32;
+        if i >= 0 && i < GRID_WIDTH as i32 && k >= 0 && k < GRID_DEPTH as i32 {
+            let idx = k as usize * GRID_WIDTH + i as usize;
+            self.bed_height[idx]
+        } else {
+            0.0
+        }
+    }
+
+    fn emit_particles_at(&mut self, center_x: f32, center_z: f32, water_count: usize, sediment_count: usize) {
+        if self.sim.particles.len() >= MAX_PARTICLES {
+            return;
+        }
+
+        let mut remaining = MAX_PARTICLES - self.sim.particles.len();
+        if remaining == 0 {
+            return;
+        }
+        let water_spawn = water_count.min(remaining);
+        remaining = remaining.saturating_sub(water_spawn);
+        let sediment_spawn = sediment_count.min(remaining);
+
+        let cell_size = CELL_SIZE;
+        let max_x = GRID_WIDTH as f32 * cell_size;
+        let max_z = GRID_DEPTH as f32 * cell_size;
+        let spread = CLICK_SPAWN_RADIUS;
+
+        for _ in 0..water_spawn {
+            let x = (center_x + (rand_float() - 0.5) * spread).clamp(0.0, max_x - 0.5 * cell_size);
+            let z = (center_z + (rand_float() - 0.5) * spread).clamp(0.0, max_z - 0.5 * cell_size);
+            let bed_y = self.bed_height_at(x, z);
+            let y = bed_y + CLICK_WATER_LIFT + rand_float() * cell_size;
+            self.sim.spawn_particle(Vec3::new(x, y, z));
+        }
+
+        for _ in 0..sediment_spawn {
+            if self.sim.particles.len() >= MAX_PARTICLES {
+                break;
+            }
+            let x = (center_x + (rand_float() - 0.5) * spread).clamp(0.0, max_x - 0.5 * cell_size);
+            let z = (center_z + (rand_float() - 0.5) * spread).clamp(0.0, max_z - 0.5 * cell_size);
+            let bed_y = self.bed_height_at(x, z);
+            let y = bed_y + CLICK_SEDIMENT_LIFT + rand_float() * cell_size;
+            self.sim.spawn_sediment(Vec3::new(x, y, z), Vec3::ZERO, SEDIMENT_REL_DENSITY);
+        }
+    }
+
+    fn screen_to_world_ray(&self, screen_x: f32, screen_y: f32, width: f32, height: f32) -> (Vec3, Vec3) {
+        let ndc_x = (2.0 * screen_x / width) - 1.0;
+        let ndc_y = 1.0 - (2.0 * screen_y / height);
+
+        let center = Vec3::new(
+            GRID_WIDTH as f32 * CELL_SIZE * 0.5,
+            GRID_HEIGHT as f32 * CELL_SIZE * 0.3,
+            GRID_DEPTH as f32 * CELL_SIZE * 0.5,
+        );
+        let eye = center + Vec3::new(
+            self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
+            self.camera_distance * self.camera_pitch.sin(),
+            self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
+        );
+
+        let view = Mat4::look_at_rh(eye, center, Vec3::Y);
+        let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, width / height, 0.01, 100.0);
+        let inv_vp = (proj * view).inverse();
+
+        let near = inv_vp * Vec4::new(ndc_x, ndc_y, -1.0, 1.0);
+        let far = inv_vp * Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+        let near = near.truncate() / near.w;
+        let far = far.truncate() / far.w;
+
+        let dir = (far - near).normalize();
+        (eye, dir)
+    }
+
+    fn handle_click(&mut self, screen_x: f32, screen_y: f32) {
+        let (width, height) = if let Some(gpu) = &self.gpu {
+            (gpu.config.width as f32, gpu.config.height as f32)
+        } else {
+            return;
+        };
+
+        if width <= 1.0 || height <= 1.0 {
+            return;
+        }
+
+        let (origin, dir) = self.screen_to_world_ray(screen_x, screen_y, width, height);
+        if dir.y.abs() < 1.0e-4 {
+            return;
+        }
+
+        let t = (0.0 - origin.y) / dir.y;
+        if t <= 0.0 {
+            return;
+        }
+
+        let hit = origin + dir * t;
+        let max_x = GRID_WIDTH as f32 * CELL_SIZE;
+        let max_z = GRID_DEPTH as f32 * CELL_SIZE;
+        if hit.x < 0.0 || hit.x > max_x || hit.z < 0.0 || hit.z > max_z {
+            return;
+        }
+
+        if self.click_add_sediment {
+            self.emit_particles_at(hit.x, hit.z, 0, CLICK_SPAWN_SEDIMENT);
+        } else {
+            self.emit_particles_at(hit.x, hit.z, CLICK_SPAWN_WATER, 0);
+        }
+    }
+
+    fn request_gpu_sync(&mut self) {
+        self.gpu_readback_pending = false;
+        self.frame = 0;
+    }
+
+    fn clear_water(&mut self) {
+        let before = self.sim.particles.len();
+        self.sim.particles.list.retain(|p| p.is_sediment());
+        let removed = before - self.sim.particles.len();
+        self.pending_emit_water = 0;
+        self.request_gpu_sync();
+        println!("Cleared water particles: {}", removed);
+    }
+
+    fn clear_sediment(&mut self) {
+        let before = self.sim.particles.len();
+        self.sim.particles.list.retain(|p| !p.is_sediment());
+        let removed = before - self.sim.particles.len();
+        self.pending_emit_sediment = 0;
+        self.request_gpu_sync();
+        println!("Cleared sediment particles: {}", removed);
+    }
+
+    fn clear_all_particles(&mut self) {
+        let removed = self.sim.particles.len();
+        self.sim.particles.list.clear();
+        self.pending_emit_water = 0;
+        self.pending_emit_sediment = 0;
+        self.request_gpu_sync();
+        println!("Cleared all particles: {}", removed);
     }
 
     fn update_sediment_bed(&mut self, dt: f32) {
@@ -952,11 +1144,23 @@ impl App {
         self.sim = sim;
         self.pressure_iters_gpu = self.sim.pressure_iterations as u32;
         self.vorticity_epsilon = VORTICITY_EPSILON_DEFAULT;
+        self.dp_friction_angle_deg = DP_FRICTION_ANGLE_DEFAULT_DEG;
+        self.dp_cohesion = DP_COHESION_DEFAULT;
+        self.dp_viscosity = DP_VISCOSITY_DEFAULT;
+        self.dp_jammed_drag = DP_JAMMED_DRAG_DEFAULT;
         self.gpu_readback_pending = false;
         self.frame = 0;
         self.emitter_enabled = true;
+        self.water_emitter_enabled = true;
+        self.sediment_emitter_enabled = true;
+        self.water_emit_rate = DEFAULT_WATER_EMIT_RATE;
+        self.sediment_emit_rate = DEFAULT_SEDIMENT_EMIT_RATE;
         self.particles_exited = 0;
-        self.pending_emit = 0;
+        self.pending_emit_water = 0;
+        self.pending_emit_sediment = 0;
+        self.click_add_sediment = false;
+        self.cursor_pos = None;
+        self.last_mouse_pos = None;
         self.gpu_particle_count = 0;
         println!("Reset - emitter enabled");
     }
@@ -1454,14 +1658,20 @@ impl App {
 
                 let do_sync = self.frame % GPU_SYNC_STRIDE == 0;
                 if self.emitter_enabled && self.frame % 2 == 0 {
-                    self.pending_emit = self.pending_emit.saturating_add(200);
+                    if self.water_emitter_enabled {
+                        self.pending_emit_water = self.pending_emit_water.saturating_add(self.water_emit_rate);
+                    }
+                    if self.sediment_emitter_enabled {
+                        self.pending_emit_sediment = self.pending_emit_sediment.saturating_add(self.sediment_emit_rate);
+                    }
                 }
 
                 if should_schedule {
                     if do_sync {
-                        if self.pending_emit > 0 {
-                            self.emit_particles(self.pending_emit);
-                            self.pending_emit = 0;
+                        if self.pending_emit_water > 0 || self.pending_emit_sediment > 0 {
+                            self.emit_particles(self.pending_emit_water, self.pending_emit_sediment);
+                            self.pending_emit_water = 0;
+                            self.pending_emit_sediment = 0;
                         }
 
                         if self.gpu_bed.is_none() {
@@ -1518,6 +1728,17 @@ impl App {
                             gpu_flip.vorticity_epsilon = self.vorticity_epsilon;
                             gpu_flip.sediment_rest_particles = SEDIMENT_REST_PARTICLES;
                             gpu_flip.sediment_settling_velocity = SEDIMENT_SETTLING_VELOCITY;
+                            let dp_params = DruckerPragerParams {
+                                friction_coeff: self.dp_friction_angle_deg.to_radians().tan(),
+                                cohesion: self.dp_cohesion,
+                                buoyancy_factor: DP_BUOYANCY_FACTOR,
+                                viscosity: self.dp_viscosity,
+                                jammed_drag: self.dp_jammed_drag,
+                                min_pressure: DP_MIN_PRESSURE,
+                                yield_smoothing: DP_YIELD_SMOOTHING,
+                                _pad0: 0.0,
+                            };
+                            gpu_flip.set_drucker_prager_params(&gpu.queue, dp_params);
                             let sdf = self.sim.grid.sdf.as_slice();
                             let positions = &mut self.positions;
                             let velocities = &mut self.velocities;
@@ -1604,6 +1825,17 @@ impl App {
                         let pressure_iters = self.pressure_iters_gpu;
                         let flow_accel = flow_accel_from_slope();
                         if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                            let dp_params = DruckerPragerParams {
+                                friction_coeff: self.dp_friction_angle_deg.to_radians().tan(),
+                                cohesion: self.dp_cohesion,
+                                buoyancy_factor: DP_BUOYANCY_FACTOR,
+                                viscosity: self.dp_viscosity,
+                                jammed_drag: self.dp_jammed_drag,
+                                min_pressure: DP_MIN_PRESSURE,
+                                yield_smoothing: DP_YIELD_SMOOTHING,
+                                _pad0: 0.0,
+                            };
+                            gpu_flip.set_drucker_prager_params(&gpu.queue, dp_params);
                             let sdf = self.sim.grid.sdf.as_slice();
                             let cell_types = &self.cell_types;
                             let bed_height = if self.gpu_bed.is_some() {
@@ -1628,7 +1860,9 @@ impl App {
                 }
             } else {
                 if self.emitter_enabled && self.frame % 2 == 0 {
-                    self.emit_particles(200);
+                    let water = if self.water_emitter_enabled { self.water_emit_rate } else { 0 };
+                    let sediment = if self.sediment_emitter_enabled { self.sediment_emit_rate } else { 0 };
+                    self.emit_particles(water, sediment);
                 }
                 self.sim.update(dt);
             }
@@ -2300,6 +2534,45 @@ impl ApplicationHandler for App {
                             self.emitter_enabled = !self.emitter_enabled;
                             println!("Emitter: {}", if self.emitter_enabled { "ON" } else { "OFF" });
                         }
+                        PhysicalKey::Code(KeyCode::KeyW) => {
+                            self.water_emitter_enabled = !self.water_emitter_enabled;
+                            println!(
+                                "Water emit: {} (rate {})",
+                                if self.water_emitter_enabled { "ON" } else { "OFF" },
+                                self.water_emit_rate
+                            );
+                        }
+                        PhysicalKey::Code(KeyCode::KeyS) => {
+                            self.sediment_emitter_enabled = !self.sediment_emitter_enabled;
+                            println!(
+                                "Sediment emit: {} (rate {})",
+                                if self.sediment_emitter_enabled { "ON" } else { "OFF" },
+                                self.sediment_emit_rate
+                            );
+                        }
+                        PhysicalKey::Code(KeyCode::KeyM) => {
+                            self.click_add_sediment = !self.click_add_sediment;
+                            println!(
+                                "Click material: {}",
+                                if self.click_add_sediment { "SEDIMENT" } else { "WATER" }
+                            );
+                        }
+                        PhysicalKey::Code(KeyCode::ArrowUp) => {
+                            self.water_emit_rate = (self.water_emit_rate + EMIT_RATE_STEP).min(MAX_EMIT_RATE);
+                            println!("Water emit rate: {}", self.water_emit_rate);
+                        }
+                        PhysicalKey::Code(KeyCode::ArrowDown) => {
+                            self.water_emit_rate = self.water_emit_rate.saturating_sub(EMIT_RATE_STEP);
+                            println!("Water emit rate: {}", self.water_emit_rate);
+                        }
+                        PhysicalKey::Code(KeyCode::ArrowRight) => {
+                            self.sediment_emit_rate = (self.sediment_emit_rate + EMIT_RATE_STEP).min(MAX_EMIT_RATE);
+                            println!("Sediment emit rate: {}", self.sediment_emit_rate);
+                        }
+                        PhysicalKey::Code(KeyCode::ArrowLeft) => {
+                            self.sediment_emit_rate = self.sediment_emit_rate.saturating_sub(EMIT_RATE_STEP);
+                            println!("Sediment emit rate: {}", self.sediment_emit_rate);
+                        }
                         PhysicalKey::Code(KeyCode::KeyH) => {
                             self.render_heightfield = !self.render_heightfield;
                             println!("Heightfield: {}", if self.render_heightfield { "ON" } else { "OFF" });
@@ -2317,6 +2590,49 @@ impl ApplicationHandler for App {
                                 (self.vorticity_epsilon + VORTICITY_EPSILON_STEP).min(VORTICITY_EPSILON_MAX);
                             println!("Vorticity epsilon: {:.3}", self.vorticity_epsilon);
                         }
+                        PhysicalKey::Code(KeyCode::Digit1) => {
+                            self.dp_friction_angle_deg =
+                                (self.dp_friction_angle_deg - DP_FRICTION_STEP_DEG).max(20.0);
+                            println!("DP friction angle: {:.1}°", self.dp_friction_angle_deg);
+                        }
+                        PhysicalKey::Code(KeyCode::Digit2) => {
+                            self.dp_friction_angle_deg =
+                                (self.dp_friction_angle_deg + DP_FRICTION_STEP_DEG).min(45.0);
+                            println!("DP friction angle: {:.1}°", self.dp_friction_angle_deg);
+                        }
+                        PhysicalKey::Code(KeyCode::Digit3) => {
+                            self.dp_cohesion = (self.dp_cohesion - DP_COHESION_STEP).max(0.0);
+                            println!("DP cohesion: {:.1} Pa", self.dp_cohesion);
+                        }
+                        PhysicalKey::Code(KeyCode::Digit4) => {
+                            self.dp_cohesion = (self.dp_cohesion + DP_COHESION_STEP).min(100.0);
+                            println!("DP cohesion: {:.1} Pa", self.dp_cohesion);
+                        }
+                        PhysicalKey::Code(KeyCode::Digit5) => {
+                            self.dp_viscosity = (self.dp_viscosity - DP_VISCOSITY_STEP).max(0.1);
+                            println!("DP viscosity: {:.2} Pa*s", self.dp_viscosity);
+                        }
+                        PhysicalKey::Code(KeyCode::Digit6) => {
+                            self.dp_viscosity = (self.dp_viscosity + DP_VISCOSITY_STEP).min(10.0);
+                            println!("DP viscosity: {:.2} Pa*s", self.dp_viscosity);
+                        }
+                        PhysicalKey::Code(KeyCode::Digit7) => {
+                            self.dp_jammed_drag = (self.dp_jammed_drag - DP_JAMMED_DRAG_STEP).max(10.0);
+                            println!("DP jammed drag: {:.1}", self.dp_jammed_drag);
+                        }
+                        PhysicalKey::Code(KeyCode::Digit8) => {
+                            self.dp_jammed_drag = (self.dp_jammed_drag + DP_JAMMED_DRAG_STEP).min(100.0);
+                            println!("DP jammed drag: {:.1}", self.dp_jammed_drag);
+                        }
+                        PhysicalKey::Code(KeyCode::KeyC) => {
+                            self.clear_water();
+                        }
+                        PhysicalKey::Code(KeyCode::KeyX) => {
+                            self.clear_sediment();
+                        }
+                        PhysicalKey::Code(KeyCode::KeyZ) => {
+                            self.clear_all_particles();
+                        }
                         PhysicalKey::Code(KeyCode::KeyP) => {
                             self.debug_riffle_probe = !self.debug_riffle_probe;
                             println!("Riffle probe: {}", if self.debug_riffle_probe { "ON" } else { "OFF" });
@@ -2327,14 +2643,20 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                if button == MouseButton::Left {
+                if button == MouseButton::Right {
                     self.mouse_pressed = state == ElementState::Pressed;
                     if !self.mouse_pressed {
                         self.last_mouse_pos = None;
                     }
                 }
+                if button == MouseButton::Left && state == ElementState::Pressed {
+                    if let Some((x, y)) = self.cursor_pos {
+                        self.handle_click(x, y);
+                    }
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_pos = Some((position.x as f32, position.y as f32));
                 if self.mouse_pressed {
                     if let Some((last_x, last_y)) = self.last_mouse_pos {
                         let dx = (position.x - last_x) as f32;
