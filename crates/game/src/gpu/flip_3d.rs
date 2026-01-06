@@ -496,7 +496,7 @@ pub struct GpuFlip3D {
     sdf_collision_bind_group: wgpu::BindGroup,
     sdf_collision_params_buffer: wgpu::Buffer,
     sdf_buffer: wgpu::Buffer,
-    bed_height_buffer: wgpu::Buffer,
+    bed_height_buffer: Arc<wgpu::Buffer>,
     sdf_uploaded: bool,
 
     // Maximum particles supported
@@ -1776,12 +1776,12 @@ impl GpuFlip3D {
             mapped_at_creation: false,
         });
 
-        let bed_height_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let bed_height_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Bed Height 3D"),
             size: (width as usize * depth as usize * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
-        });
+        }));
 
         let sdf_collision_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("SDF Collision 3D Bind Group Layout"),
@@ -2087,6 +2087,40 @@ impl GpuFlip3D {
         None
     }
 
+    pub fn positions_buffer(&self) -> Arc<wgpu::Buffer> {
+        self.positions_buffer.clone()
+    }
+
+    pub fn velocities_buffer(&self) -> Arc<wgpu::Buffer> {
+        self.velocities_buffer.clone()
+    }
+
+    pub fn densities_buffer(&self) -> Arc<wgpu::Buffer> {
+        self.densities_buffer.clone()
+    }
+
+    pub fn sdf_buffer(&self) -> &wgpu::Buffer {
+        &self.sdf_buffer
+    }
+
+    pub fn bed_height_buffer(&self) -> Arc<wgpu::Buffer> {
+        self.bed_height_buffer.clone()
+    }
+
+    fn upload_bc_and_cell_types(&self, queue: &wgpu::Queue, cell_types: &[u32]) {
+        // Upload cell types FIRST (needed for BC enforcement)
+        self.pressure.upload_cell_types(queue, cell_types, self.cell_size);
+
+        // Upload BC params
+        let bc_params = BcParams3D {
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+            _pad: 0,
+        };
+        queue.write_buffer(&self.bc_params_buffer, 0, bytemuck::bytes_of(&bc_params));
+    }
+
     fn schedule_readback(
         &mut self,
         device: &wgpu::Device,
@@ -2119,14 +2153,11 @@ impl GpuFlip3D {
         false
     }
 
-    fn step_internal(
+    pub fn step_in_place(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        positions: &mut [glam::Vec3],
-        velocities: &mut [glam::Vec3],
-        c_matrices: &mut [glam::Mat3],
-        densities: &[f32],
+        particle_count: u32,
         cell_types: &[u32],
         sdf: Option<&[f32]>,
         bed_height: Option<&[f32]>,
@@ -2134,34 +2165,40 @@ impl GpuFlip3D {
         gravity: f32,
         flow_accel: f32,
         pressure_iterations: u32,
-        readback: ReadbackMode,
-    ) -> bool {
-        let particle_count = positions.len().min(self.max_particles);
+    ) {
         if particle_count == 0 {
-            return false;
+            return;
         }
 
-        // Upload cell types FIRST (needed for BC enforcement)
-        self.pressure.upload_cell_types(queue, cell_types, self.cell_size);
+        self.upload_bc_and_cell_types(queue, cell_types);
+        self.p2g.prepare(queue, particle_count, self.cell_size);
 
-        // Upload BC params
-        let bc_params = BcParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            _pad: 0,
-        };
-        queue.write_buffer(&self.bc_params_buffer, 0, bytemuck::bytes_of(&bc_params));
-
-        // 1. Upload particles and run P2G
-        let count = self.p2g.upload_particles(
+        let _ = self.run_gpu_passes(
+            device,
             queue,
-            positions,
-            velocities,
-            densities,
-            c_matrices,
-            self.cell_size,
+            particle_count,
+            sdf,
+            bed_height,
+            dt,
+            gravity,
+            flow_accel,
+            pressure_iterations,
         );
+    }
+
+    fn run_gpu_passes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        particle_count: u32,
+        sdf: Option<&[f32]>,
+        bed_height: Option<&[f32]>,
+        dt: f32,
+        gravity: f32,
+        flow_accel: f32,
+        pressure_iterations: u32,
+    ) -> u32 {
+        let count = particle_count;
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D Step Encoder"),
@@ -2543,7 +2580,7 @@ impl GpuFlip3D {
             width: self.width,
             height: self.height,
             depth: self.depth,
-            particle_count: particle_count as u32,
+            particle_count: particle_count,
             cell_size: self.cell_size,
             _pad1: 0,
             _pad2: 0,
@@ -2613,6 +2650,55 @@ impl GpuFlip3D {
             }
             queue.submit(std::iter::once(encoder.finish()));
         }
+
+        g2p_count
+    }
+
+    fn step_internal(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        positions: &mut [glam::Vec3],
+        velocities: &mut [glam::Vec3],
+        c_matrices: &mut [glam::Mat3],
+        densities: &[f32],
+        cell_types: &[u32],
+        sdf: Option<&[f32]>,
+        bed_height: Option<&[f32]>,
+        dt: f32,
+        gravity: f32,
+        flow_accel: f32,
+        pressure_iterations: u32,
+        readback: ReadbackMode,
+    ) -> bool {
+        let particle_count = positions.len().min(self.max_particles);
+        if particle_count == 0 {
+            return false;
+        }
+
+        self.upload_bc_and_cell_types(queue, cell_types);
+
+        // 1. Upload particles and run P2G
+        let count = self.p2g.upload_particles(
+            queue,
+            positions,
+            velocities,
+            densities,
+            c_matrices,
+            self.cell_size,
+        );
+
+        let g2p_count = self.run_gpu_passes(
+            device,
+            queue,
+            count,
+            sdf,
+            bed_height,
+            dt,
+            gravity,
+            flow_accel,
+            pressure_iterations,
+        );
 
         match readback {
             ReadbackMode::Sync => {

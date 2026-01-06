@@ -691,7 +691,12 @@ impl GpuP2g3D {
             queue.write_buffer(&self.densities_buffer, 0, bytemuck::cast_slice(&densities[..density_count]));
         }
 
-        // Upload params
+        self.prepare(queue, particle_count, cell_size);
+
+        particle_count
+    }
+
+    pub fn prepare(&self, queue: &wgpu::Queue, particle_count: u32, cell_size: f32) {
         let params = P2gParams3D {
             cell_size,
             width: self.width,
@@ -702,7 +707,10 @@ impl GpuP2g3D {
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 
-        // Clear accumulator buffers
+        self.clear_accumulators(queue);
+    }
+
+    fn clear_accumulators(&self, queue: &wgpu::Queue) {
         let u_size = ((self.width + 1) * self.height * self.depth) as usize;
         let v_size = (self.width * (self.height + 1) * self.depth) as usize;
         let w_size = (self.width * self.height * (self.depth + 1)) as usize;
@@ -716,8 +724,6 @@ impl GpuP2g3D {
         queue.write_buffer(&self.w_weight_buffer, 0, &vec![0u8; w_size * 4]);
         queue.write_buffer(&self.particle_count_buffer, 0, &vec![0u8; cell_count * 4]);
         queue.write_buffer(&self.sediment_count_buffer, 0, &vec![0u8; cell_count * 4]);
-
-        particle_count
     }
 
     /// Encode P2G compute passes into command encoder
