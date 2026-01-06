@@ -460,7 +460,7 @@ impl Grid3D {
         result
     }
 
-    /// Get SDF value at cell, treating out-of-bounds as solid.
+    /// Get SDF value at cell, treating open boundaries as air.
     fn sdf_at(&self, i: i32, j: i32, k: i32) -> f32 {
         if i >= 0
             && i < self.width as i32
@@ -470,6 +470,8 @@ impl Grid3D {
             && k < self.depth as i32
         {
             self.sdf[self.cell_index(i as usize, j as usize, k as usize)]
+        } else if i >= self.width as i32 || j >= self.height as i32 {
+            self.cell_size // Open outlet/top = air
         } else {
             -self.cell_size // Out of bounds = inside solid
         }

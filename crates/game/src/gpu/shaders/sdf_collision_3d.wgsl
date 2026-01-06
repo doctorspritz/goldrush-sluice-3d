@@ -36,9 +36,9 @@ fn bed_height_at(i: i32, k: i32) -> f32 {
 }
 
 fn sdf_at(i: i32, j: i32, k: i32) -> f32 {
-    if (i < 0 || i >= i32(params.width)) { return -params.cell_size; }
-    if (j < 0 || j >= i32(params.height)) { return -params.cell_size; }
     if (k < 0 || k >= i32(params.depth)) { return -params.cell_size; }
+    if (i < 0 || j < 0) { return -params.cell_size; }
+    if (i >= i32(params.width) || j >= i32(params.height)) { return params.cell_size; }
     return sdf[cell_index(u32(i), u32(j), u32(k))];
 }
 

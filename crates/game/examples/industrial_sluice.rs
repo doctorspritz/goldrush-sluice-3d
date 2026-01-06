@@ -23,9 +23,9 @@ use winit::{
 // INDUSTRIAL SCALE - much larger than box_3d_test
 const GRID_WIDTH: usize = 160;   // 5x wider (was 32)
 const GRID_HEIGHT: usize = 40;   // Taller for water depth
-const GRID_DEPTH: usize = 32;    // 2x deeper (was 16)
+const GRID_DEPTH: usize = 24;    // Thinner sluice (was 32)
 const CELL_SIZE: f32 = 0.03;     // Smaller cells for detail
-const MAX_PARTICLES: usize = 200_000;  // 4x more particles
+const MAX_PARTICLES: usize = 500_000;  // Increased cap to avoid emitter saturation
 const FLOW_PARTICLE_STRIDE: usize = 8; // Render every Nth particle for flow viz
 const MAX_FLOW_PARTICLES: usize = MAX_PARTICLES / FLOW_PARTICLE_STRIDE;
 const TARGET_FPS: f32 = 60.0;
@@ -37,9 +37,9 @@ const VORTICITY_EPSILON_DEFAULT: f32 = 0.05;
 const VORTICITY_EPSILON_STEP: f32 = 0.01;
 const VORTICITY_EPSILON_MAX: f32 = 0.25;
 const FLOOR_HEIGHT_LEFT: usize = 10;
-const FLOOR_HEIGHT_RIGHT: usize = 4;
+const FLOOR_HEIGHT_RIGHT: usize = 3;
 const RIFFLE_SPACING: usize = 12;
-const RIFFLE_HEIGHT: usize = 4;
+const RIFFLE_HEIGHT: usize = 2;
 const RIFFLE_START_X: usize = 12;
 const RIFFLE_END_PAD: usize = 8;
 const SEDIMENT_EMIT_FRACTION: f32 = 0.25;
@@ -273,6 +273,12 @@ fn smooth_positive(x: f32, width: f32) -> f32 {
     x * smoothstep(0.0, width, x)
 }
 
+fn flow_accel_from_slope() -> f32 {
+    let drop = (FLOOR_HEIGHT_LEFT as f32 - FLOOR_HEIGHT_RIGHT as f32).max(0.0);
+    let slope = drop / (GRID_WIDTH as f32 - 1.0);
+    9.8 * slope
+}
+
 fn bed_surface_height_at(i: usize) -> f32 {
     // Bed height excludes riffles; riffles remain solid via SDF only.
     let t = i as f32 / (GRID_WIDTH as f32 - 1.0);
@@ -341,7 +347,7 @@ impl App {
             use_gpu_sim: true,
             pressure_iters_gpu,
             vorticity_epsilon: VORTICITY_EPSILON_DEFAULT,
-            use_async_readback: true,
+            use_async_readback: false,
             gpu_readback_pending: false,
             render_heightfield: true,
             render_flow_particles: true,
@@ -370,19 +376,27 @@ impl App {
         let sediment_spawn = (max_to_spawn as f32 * SEDIMENT_EMIT_FRACTION) as usize;
         let water_spawn = max_to_spawn.saturating_sub(sediment_spawn);
 
-        // Emit from left side, above the sloped floor (floor is 10 cells high on left)
-        let emit_x = 5.0 * cell_size;
+        // Emit above the first riffle so particles drop under gravity.
+        let emit_x = (RIFFLE_START_X as f32 + 0.5) * cell_size;
         let center_z = GRID_DEPTH as f32 * cell_size * 0.5;
-        let emit_y = 15.0 * cell_size; // Above the 10-cell high left floor
+        let drop_height = 8.0 * cell_size;
 
         // Wider spread for industrial inlet
         let spread_x = 4.0 * cell_size;
         let spread_z = (GRID_DEPTH as f32 - 4.0) * cell_size * 0.6;
 
         for _ in 0..water_spawn {
-            let x = emit_x + rand_float() * spread_x;
+            let x = emit_x + (rand_float() - 0.5) * spread_x;
             let z = center_z + (rand_float() - 0.5) * spread_z;
-            let y = emit_y + rand_float() * 2.0 * cell_size;
+            let i = (x / cell_size).floor() as i32;
+            let k = (z / cell_size).floor() as i32;
+            let bed_y = if i >= 0 && i < GRID_WIDTH as i32 && k >= 0 && k < GRID_DEPTH as i32 {
+                let idx = k as usize * GRID_WIDTH + i as usize;
+                self.bed_height[idx]
+            } else {
+                0.0
+            };
+            let y = bed_y + drop_height + rand_float() * 2.0 * cell_size;
 
             self.sim.spawn_particle(Vec3::new(x, y, z));
         }
@@ -392,7 +406,7 @@ impl App {
                 break;
             }
 
-            let x = emit_x + rand_float() * spread_x;
+            let x = emit_x + (rand_float() - 0.5) * spread_x;
             let z = center_z + (rand_float() - 0.5) * spread_z;
             let i = (x / cell_size).floor() as i32;
             let k = (z / cell_size).floor() as i32;
@@ -400,11 +414,11 @@ impl App {
                 let idx = k as usize * GRID_WIDTH + i as usize;
                 self.bed_height[idx]
             } else {
-                emit_y - cell_size
+                0.0
             };
 
-            let y = bed_y + 0.4 * cell_size + rand_float() * 0.6 * cell_size;
-            let vel = Vec3::new(1.5 + rand_float() * 0.5, -0.2, 0.0);
+            let y = bed_y + drop_height + rand_float() * 2.0 * cell_size;
+            let vel = Vec3::ZERO;
             self.sim.spawn_sediment(Vec3::new(x, y, z), vel, SEDIMENT_REL_DENSITY);
         }
     }
@@ -1099,6 +1113,7 @@ impl App {
                     }
 
                     let pressure_iters = self.pressure_iters_gpu;
+                    let flow_accel = flow_accel_from_slope();
                     if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
                         gpu_flip.vorticity_epsilon = self.vorticity_epsilon;
                         gpu_flip.sediment_rest_particles = SEDIMENT_REST_PARTICLES;
@@ -1123,7 +1138,7 @@ impl App {
                                 Some(bed_height),
                                 dt,
                                 -9.8,
-                                0.0,
+                                flow_accel,
                                 pressure_iters,
                             ) {
                                 self.gpu_readback_pending = true;
@@ -1140,7 +1155,7 @@ impl App {
                                     Some(bed_height),
                                     dt,
                                     -9.8,
-                                    0.0,
+                                    flow_accel,
                                     pressure_iters,
                                 );
                                 self.apply_gpu_results(self.positions.len());
@@ -1158,7 +1173,7 @@ impl App {
                                 Some(bed_height),
                                 dt,
                                 -9.8,
-                                0.0,
+                                flow_accel,
                                 pressure_iters,
                             );
                             self.apply_gpu_results(self.positions.len());
