@@ -165,9 +165,11 @@ fn main() {
     );
 
     // Prepare GPU data
-    let positions: Vec<Vec3> = sim.particles.list.iter().map(|p| p.position).collect();
+    let mut positions: Vec<Vec3> = sim.particles.list.iter().map(|p| p.position).collect();
     let mut velocities: Vec<Vec3> = sim.particles.list.iter().map(|p| p.velocity).collect();
     let mut c_matrices: Vec<Mat3> = sim.particles.list.iter().map(|p| p.affine_velocity).collect();
+    let densities: Vec<f32> = sim.particles.list.iter().map(|p| p.density).collect();
+    let bed_height: Vec<f32> = vec![0.0; GRID_WIDTH * GRID_DEPTH];
 
     // Build cell types
     let mut cell_types: Vec<u32> = vec![0; GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH];
@@ -257,8 +259,10 @@ fn main() {
         &mut positions,
         &mut velocities,
         &mut c_matrices,
+        &densities,
         &cell_types,
         None,
+        Some(&bed_height),
         DT,
         0.0,  // No gravity
         0.0,  // No flow accel

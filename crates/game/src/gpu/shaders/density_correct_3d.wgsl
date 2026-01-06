@@ -27,10 +27,12 @@ struct Params {
 @group(0) @binding(4) var<storage, read> cell_type: array<u32>;
 // Positions stored as vec4 (padded from vec3) - must match G2P buffer layout
 @group(0) @binding(5) var<storage, read_write> positions: array<vec4<f32>>;
+@group(0) @binding(6) var<storage, read> densities: array<f32>;
 
 const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
 const CELL_SOLID: u32 = 2u;
+const SEDIMENT_DENSITY_THRESHOLD: f32 = 1.0;
 
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
@@ -170,6 +172,10 @@ fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
     let pid = id.x;
 
     if (pid >= params.particle_count) {
+        return;
+    }
+
+    if (densities[pid] > SEDIMENT_DENSITY_THRESHOLD) {
         return;
     }
 

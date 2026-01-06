@@ -36,6 +36,8 @@ struct Params {
 @group(0) @binding(10) var<storage, read_write> w_sum: array<atomic<i32>>;
 @group(0) @binding(11) var<storage, read_write> w_weight: array<atomic<i32>>;
 @group(0) @binding(12) var<storage, read_write> particle_count: array<atomic<i32>>;
+@group(0) @binding(13) var<storage, read> densities: array<f32>;
+@group(0) @binding(14) var<storage, read_write> sediment_count: array<atomic<i32>>;
 
 // Quadratic B-spline kernel (1D)
 // Returns weight for grid node at distance x from particle
@@ -90,10 +92,23 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let pos = positions[id.x];
     let vel = velocities[id.x];
+    let density = densities[id.x];
     let cell_size = params.cell_size;
     let width = params.width;
     let height = params.height;
     let depth = params.depth;
+
+    // Count particle in its home cell (for density projection + sediment fraction).
+    let home_i = u32(clamp(i32(pos.x / cell_size), 0, i32(width) - 1));
+    let home_j = u32(clamp(i32(pos.y / cell_size), 0, i32(height) - 1));
+    let home_k = u32(clamp(i32(pos.z / cell_size), 0, i32(depth) - 1));
+    let home_idx = cell_index(home_i, home_j, home_k);
+
+    // Sediment does not contribute to grid momentum; count it and exit early.
+    if (density > 1.0) {
+        atomicAdd(&sediment_count[home_idx], 1);
+        return;
+    }
 
     // ========== U component (staggered on left YZ faces) ==========
     // U sample point is at (i, j+0.5, k+0.5) in cell coordinates
@@ -265,11 +280,6 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    // ========== Count particle in its home cell (for density projection) ==========
-    // This counts each particle exactly once in the cell that contains it
-    let home_i = u32(clamp(i32(pos.x / cell_size), 0, i32(width) - 1));
-    let home_j = u32(clamp(i32(pos.y / cell_size), 0, i32(height) - 1));
-    let home_k = u32(clamp(i32(pos.z / cell_size), 0, i32(depth) - 1));
-    let home_idx = cell_index(home_i, home_j, home_k);
+    // Count water particle for density projection.
     atomicAdd(&particle_count[home_idx], 1);
 }
