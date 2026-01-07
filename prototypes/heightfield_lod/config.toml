@@ -34,3 +34,18 @@ frames = 300
 report_stride = 30
 
 enforce_parent_tiles = true
+
+# Optional CSV output (empty disables)
+csv_path = ""
+
+# Optional ASCII map output (0 disables)
+ascii_map_stride = 0
+ascii_map_lod = 0
+ascii_map_max_dim = 80
+
+# Optional PPM image output (empty disables)
+image_output_dir = ""
+image_stride = 0
+image_lod = 0
+image_scale = 8
+image_max_dim = 200

@@ -41,6 +41,7 @@ pub struct GpuHeightfield {
     
     pub erosion_pipeline: wgpu::ComputePipeline,
     pub sediment_transport_pipeline: wgpu::ComputePipeline,
+    pub collapse_pipeline: wgpu::ComputePipeline,
     
     // Emitter Pipeline
     pub emitter_pipeline: wgpu::ComputePipeline,
@@ -227,6 +228,36 @@ impl GpuHeightfield {
             cache: None,
         });
 
+        // Collapse Shader & Pipeline (angle of repose)
+        let collapse_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Heightfield Collapse Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/heightfield_collapse.wgsl").into()),
+        });
+
+        // Collapse needs params (group 0) and terrain (group 2), but not water (group 1)
+        // We'll use a simpler layout for collapse
+        let collapse_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Collapse Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            ],
+        });
+        
+        let collapse_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Collapse Pipeline Layout"),
+            bind_group_layouts: &[&params_layout, &water_layout, &terrain_layout], // Reuse full layout for compatibility
+            push_constant_ranges: &[],
+        });
+
+        let collapse_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Collapse Pipeline"),
+            layout: Some(&collapse_pipeline_layout),
+            module: &collapse_shader,
+            entry_point: Some("update_collapse"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         // Emitter Shader & Pipelines
         let emitter_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Heightfield Emitter Shader"),
@@ -324,6 +355,7 @@ impl GpuHeightfield {
             depth_pipeline,
             erosion_pipeline,
             sediment_transport_pipeline,
+            collapse_pipeline,
             
             emitter_pipeline,
             emitter_params_buffer,
@@ -369,6 +401,10 @@ impl GpuHeightfield {
          
          // 6. Sediment Transport (flux-based advection)
          pass.set_pipeline(&self.sediment_transport_pipeline);
+         pass.dispatch_workgroups(x_groups, z_groups, 1);
+         
+         // 7. Collapse (angle of repose / slope stability)
+         pass.set_pipeline(&self.collapse_pipeline);
          pass.dispatch_workgroups(x_groups, z_groups, 1);
     }
     

@@ -94,6 +94,12 @@ The prototype runs a CPU-only scheduler that:
 - Selects tiles per LOD with pool limits
 - Reports memory and dispatch counts
 
+## Prototype Output (Optional)
+- CSV log for plotting tile counts, memory, and dispatch counts.
+- ASCII map for visualizing tile residency and activity on a chosen LOD.
+  - `#` = selected tile, `C` = camera tile, other glyphs reflect activity intensity.
+- PPM image output for quick visual inspection (tile grid heatmap).
+
 ## Next Steps (When Integrating)
 - Introduce a GPU tile atlas + bindless indices
 - Implement upsample/downsample kernels with conservation

@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 #[derive(Clone, Debug)]
@@ -22,6 +23,15 @@ struct Config {
     frames: u32,
     report_stride: u32,
     enforce_parent_tiles: bool,
+    csv_path: String,
+    ascii_map_stride: u32,
+    ascii_map_lod: u32,
+    ascii_map_max_dim: u32,
+    image_output_dir: String,
+    image_stride: u32,
+    image_lod: u32,
+    image_scale: u32,
+    image_max_dim: u32,
 }
 
 impl Default for Config {
@@ -44,12 +54,24 @@ impl Default for Config {
             frames: 300,
             report_stride: 30,
             enforce_parent_tiles: true,
+            csv_path: String::new(),
+            ascii_map_stride: 0,
+            ascii_map_lod: 0,
+            ascii_map_max_dim: 80,
+            image_output_dir: String::new(),
+            image_stride: 0,
+            image_lod: 0,
+            image_scale: 8,
+            image_max_dim: 200,
         }
     }
 }
 
 impl Config {
     fn normalize(&mut self) {
+        if self.lod_levels == 0 {
+            self.lod_levels = 1;
+        }
         let lods = self.lod_levels as usize;
         let pool_fill = self.tile_pool.last().copied().unwrap_or(0);
         let stride_fill = self.update_stride.last().copied().unwrap_or(1);
@@ -68,6 +90,24 @@ impl Config {
         self.tile_pool.truncate(lods);
         self.update_stride.truncate(lods);
         self.activity_thresholds.truncate(lods);
+        if self.ascii_map_lod >= self.lod_levels {
+            self.ascii_map_lod = self.lod_levels.saturating_sub(1);
+        }
+        if self.image_lod >= self.lod_levels {
+            self.image_lod = self.lod_levels.saturating_sub(1);
+        }
+        if self.csv_path.eq_ignore_ascii_case("none") {
+            self.csv_path.clear();
+        }
+        if self.ascii_map_max_dim == 0 {
+            self.ascii_map_max_dim = 1;
+        }
+        if self.image_scale == 0 {
+            self.image_scale = 1;
+        }
+        if self.image_max_dim == 0 {
+            self.image_max_dim = 1;
+        }
     }
 }
 
@@ -167,6 +207,7 @@ struct PrototypeSim {
     rng: LcgRng,
     hotspots: Vec<Hotspot>,
     tiles: HashMap<TileKey, TileState>,
+    csv: Option<fs::File>,
 }
 
 impl PrototypeSim {
@@ -181,6 +222,13 @@ impl PrototypeSim {
                 intensity: rng.range_f32(0.6, 1.0),
             })
             .collect();
+        let mut csv = open_csv(&cfg);
+        if let Some(file) = csv.as_mut() {
+            if let Err(err) = write_csv_header(file, cfg.lod_levels as usize) {
+                eprintln!("CSV header write failed: {err}");
+                csv = None;
+            }
+        }
 
         Self {
             cfg,
@@ -188,6 +236,7 @@ impl PrototypeSim {
             rng,
             hotspots,
             tiles: HashMap::new(),
+            csv,
         }
     }
 
@@ -204,6 +253,8 @@ impl PrototypeSim {
                 &self.cfg,
                 camera,
             );
+            self.maybe_print_ascii_map(frame, camera, &activity_levels, &selection.selected_set);
+            self.maybe_write_ppm(frame, camera, &activity_levels, &selection.selected_set);
 
             let stats = self.update_tiles(&selection.selected_set, &activity_levels, frame);
             let dispatch = compute_dispatches(
@@ -214,6 +265,7 @@ impl PrototypeSim {
             let mem_mb = estimate_memory_mb(&self.cfg, &selection.selected_by_lod);
             let budget_mb = self.cfg.memory_budget_mb as f32;
             let budget_flag = if mem_mb > budget_mb { "OVER" } else { "OK" };
+            self.maybe_write_csv(frame, &selection, &stats, &dispatch, mem_mb);
 
             if frame == 0 || frame % self.cfg.report_stride as u64 == 0 {
                 let totals = selection
@@ -324,6 +376,199 @@ impl PrototypeSim {
         TileStats {
             new_tiles,
             evicted_tiles,
+        }
+    }
+
+    fn maybe_write_csv(
+        &mut self,
+        frame: u64,
+        selection: &Selection,
+        stats: &TileStats,
+        dispatch: &DispatchCounts,
+        mem_mb: f32,
+    ) {
+        let file = match self.csv.as_mut() {
+            Some(file) => file,
+            None => return,
+        };
+
+        let lods = self.levels.len();
+        let mut counts = vec![0usize; lods];
+        for (lod, tiles) in selection.selected_by_lod.iter().enumerate() {
+            if lod < counts.len() {
+                counts[lod] = tiles.len();
+            }
+        }
+
+        let mut line = String::new();
+        line.push_str(&format!("{}", frame));
+        for count in counts {
+            line.push_str(&format!(",{}", count));
+        }
+        line.push_str(&format!(
+            ",{:.2},{},{},{},{},{},{},{},{}",
+            mem_mb,
+            stats.new_tiles,
+            stats.evicted_tiles,
+            dispatch.surface,
+            dispatch.flux,
+            dispatch.depth,
+            dispatch.erosion,
+            dispatch.upsample,
+            dispatch.downsample,
+        ));
+        line.push('\n');
+
+        if let Err(err) = file.write_all(line.as_bytes()) {
+            eprintln!("CSV write failed: {err}");
+            self.csv = None;
+        }
+    }
+
+    fn maybe_print_ascii_map(
+        &self,
+        frame: u64,
+        camera: (f32, f32),
+        activity_levels: &[ActivityLevel],
+        selected: &HashSet<TileKey>,
+    ) {
+        if self.cfg.ascii_map_stride == 0 {
+            return;
+        }
+        if frame % self.cfg.ascii_map_stride as u64 != 0 {
+            return;
+        }
+
+        let lod = self.cfg.ascii_map_lod as usize;
+        let level = match self.levels.get(lod) {
+            Some(level) => level,
+            None => return,
+        };
+        let activity = match activity_levels.get(lod) {
+            Some(activity) => activity,
+            None => return,
+        };
+
+        let max_dim = self.cfg.ascii_map_max_dim as i32;
+        if activity.tiles_x > max_dim || activity.tiles_z > max_dim {
+            println!(
+                "map L{} frame {} skipped ({}x{} > max {})",
+                lod,
+                frame,
+                activity.tiles_x,
+                activity.tiles_z,
+                max_dim
+            );
+            return;
+        }
+
+        let cam_tx = (camera.0 / level.tile_size_m).floor() as i32;
+        let cam_tz = (camera.1 / level.tile_size_m).floor() as i32;
+        println!(
+            "map L{} frame {} ({}x{})",
+            lod, frame, activity.tiles_x, activity.tiles_z
+        );
+
+        for tz in 0..activity.tiles_z {
+            let mut row = String::with_capacity(activity.tiles_x as usize);
+            for tx in 0..activity.tiles_x {
+                let key = TileKey {
+                    lod: level.lod,
+                    tx,
+                    tz,
+                };
+                let mut ch = activity_char(activity.get(tx, tz));
+                if selected.contains(&key) {
+                    ch = '#';
+                }
+                if tx == cam_tx && tz == cam_tz {
+                    ch = 'C';
+                }
+                row.push(ch);
+            }
+            println!("{row}");
+        }
+        println!("legend: C=camera #=selected O/o/*/:/.=activity");
+    }
+
+    fn maybe_write_ppm(
+        &self,
+        frame: u64,
+        camera: (f32, f32),
+        activity_levels: &[ActivityLevel],
+        selected: &HashSet<TileKey>,
+    ) {
+        if self.cfg.image_stride == 0 {
+            return;
+        }
+        if frame % self.cfg.image_stride as u64 != 0 {
+            return;
+        }
+        let output_dir = self.cfg.image_output_dir.trim();
+        if output_dir.is_empty() {
+            return;
+        }
+
+        let lod = self.cfg.image_lod as usize;
+        let level = match self.levels.get(lod) {
+            Some(level) => level,
+            None => return,
+        };
+        let activity = match activity_levels.get(lod) {
+            Some(activity) => activity,
+            None => return,
+        };
+
+        let max_dim = self.cfg.image_max_dim as i32;
+        if activity.tiles_x > max_dim || activity.tiles_z > max_dim {
+            println!(
+                "image L{} frame {} skipped ({}x{} > max {})",
+                lod,
+                frame,
+                activity.tiles_x,
+                activity.tiles_z,
+                max_dim
+            );
+            return;
+        }
+
+        if let Err(err) = fs::create_dir_all(output_dir) {
+            eprintln!("Failed to create image output dir '{}': {err}", output_dir);
+            return;
+        }
+
+        let scale = self.cfg.image_scale as usize;
+        let width = activity.tiles_x as usize * scale;
+        let height = activity.tiles_z as usize * scale;
+        let mut pixels = Vec::with_capacity(width * height * 3);
+
+        let cam_tx = (camera.0 / level.tile_size_m).floor() as i32;
+        let cam_tz = (camera.1 / level.tile_size_m).floor() as i32;
+
+        for tz in 0..activity.tiles_z {
+            for _ in 0..scale {
+                for tx in 0..activity.tiles_x {
+                    let key = TileKey {
+                        lod: level.lod,
+                        tx,
+                        tz,
+                    };
+                    let is_selected = selected.contains(&key);
+                    let is_camera = tx == cam_tx && tz == cam_tz;
+                    let color = tile_color(activity.get(tx, tz), is_selected, is_camera);
+                    for _ in 0..scale {
+                        pixels.push(color[0]);
+                        pixels.push(color[1]);
+                        pixels.push(color[2]);
+                    }
+                }
+            }
+        }
+
+        let file_name = format!("frame_{:04}_lod{}.ppm", frame, lod);
+        let path = Path::new(output_dir).join(file_name);
+        if let Err(err) = write_ppm(&path, width as u32, height as u32, &pixels) {
+            eprintln!("Failed to write ppm '{:?}': {err}", path);
         }
     }
 }
@@ -578,6 +823,36 @@ fn activity_at(levels: &[ActivityLevel], key: TileKey) -> f32 {
         .unwrap_or(0.0)
 }
 
+fn activity_char(value: f32) -> char {
+    if value >= 0.9 {
+        'O'
+    } else if value >= 0.75 {
+        'o'
+    } else if value >= 0.5 {
+        '*'
+    } else if value >= 0.25 {
+        ':'
+    } else if value > 0.0 {
+        '.'
+    } else {
+        ' '
+    }
+}
+
+fn tile_color(activity: f32, selected: bool, camera: bool) -> [u8; 3] {
+    if camera {
+        return [40, 220, 60];
+    }
+    if selected {
+        return [220, 80, 40];
+    }
+    let a = activity.clamp(0.0, 1.0);
+    let r = (a * 255.0) as u8;
+    let g = (a * a * 255.0) as u8;
+    let b = ((1.0 - a) * 180.0 + 50.0) as u8;
+    [r, g, b]
+}
+
 fn radial_falloff(dist: f32, radius: f32) -> f32 {
     if radius <= 0.0 || dist >= radius {
         0.0
@@ -603,6 +878,39 @@ fn ensure_len_f32(vec: &mut Vec<f32>, len: usize, fill: f32) {
     if vec.len() < len {
         vec.extend(std::iter::repeat(fill).take(len - vec.len()));
     }
+}
+
+fn open_csv(cfg: &Config) -> Option<fs::File> {
+    let path = cfg.csv_path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    match fs::File::create(path) {
+        Ok(file) => Some(file),
+        Err(err) => {
+            eprintln!("Failed to create CSV file '{}': {err}", path);
+            None
+        }
+    }
+}
+
+fn write_csv_header(file: &mut fs::File, lod_levels: usize) -> std::io::Result<()> {
+    let mut header = String::from("frame");
+    for lod in 0..lod_levels {
+        header.push_str(&format!(",l{}", lod));
+    }
+    header.push_str(
+        ",mem_mb,new_tiles,evicted_tiles,pass_surface,pass_flux,pass_depth,pass_erosion,pass_upsample,pass_downsample\n",
+    );
+    file.write_all(header.as_bytes())
+}
+
+fn write_ppm(path: &Path, width: u32, height: u32, pixels: &[u8]) -> std::io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    let header = format!("P6\n{} {}\n255\n", width, height);
+    file.write_all(header.as_bytes())?;
+    file.write_all(pixels)?;
+    Ok(())
 }
 
 fn load_config(path: &Path) -> Config {
@@ -653,6 +961,15 @@ fn parse_config(text: &str) -> Result<Config, String> {
             "frames" => cfg.frames = parse_u32(value)?,
             "report_stride" => cfg.report_stride = parse_u32(value)?,
             "enforce_parent_tiles" => cfg.enforce_parent_tiles = parse_bool(value)?,
+            "csv_path" => cfg.csv_path = parse_string(value)?,
+            "ascii_map_stride" => cfg.ascii_map_stride = parse_u32(value)?,
+            "ascii_map_lod" => cfg.ascii_map_lod = parse_u32(value)?,
+            "ascii_map_max_dim" => cfg.ascii_map_max_dim = parse_u32(value)?,
+            "image_output_dir" => cfg.image_output_dir = parse_string(value)?,
+            "image_stride" => cfg.image_stride = parse_u32(value)?,
+            "image_lod" => cfg.image_lod = parse_u32(value)?,
+            "image_scale" => cfg.image_scale = parse_u32(value)?,
+            "image_max_dim" => cfg.image_max_dim = parse_u32(value)?,
             _ => {
                 return Err(format!("line {}: unknown key '{}'", line_idx + 1, key));
             }
@@ -686,6 +1003,21 @@ fn parse_bool(value: &str) -> Result<bool, String> {
         "false" => Ok(false),
         _ => Err(format!("invalid bool: {}", value)),
     }
+}
+
+fn parse_string(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    let unquoted = if let Some(stripped) = trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        stripped
+    } else if let Some(stripped) = trimmed
+        .strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
+    {
+        stripped
+    } else {
+        trimmed
+    };
+    Ok(unquoted.to_string())
 }
 
 fn parse_list_u32(value: &str) -> Result<Vec<u32>, String> {
