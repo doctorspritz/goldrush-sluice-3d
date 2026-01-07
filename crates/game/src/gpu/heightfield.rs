@@ -39,6 +39,7 @@ pub struct GpuHeightfield {
     pub depth_pipeline: wgpu::ComputePipeline,
     
     pub erosion_pipeline: wgpu::ComputePipeline,
+    pub sediment_transport_pipeline: wgpu::ComputePipeline,
     
     // Emitter Pipeline
     pub emitter_pipeline: wgpu::ComputePipeline,
@@ -213,6 +214,15 @@ impl GpuHeightfield {
             cache: None,
         });
 
+        let sediment_transport_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Sediment Transport Pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &erosion_shader,
+            entry_point: Some("update_sediment_transport"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         // Emitter Shader & Pipelines
         let emitter_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Heightfield Emitter Shader"),
@@ -308,6 +318,7 @@ impl GpuHeightfield {
             flux_pipeline,
             depth_pipeline,
             erosion_pipeline,
+            sediment_transport_pipeline,
             
             emitter_pipeline,
             emitter_params_buffer,
@@ -349,6 +360,10 @@ impl GpuHeightfield {
          
          // 5. Erosion (post-flux velocity)
          pass.set_pipeline(&self.erosion_pipeline);
+         pass.dispatch_workgroups(x_groups, z_groups, 1);
+         
+         // 6. Sediment Transport (flux-based advection)
+         pass.set_pipeline(&self.sediment_transport_pipeline);
          pass.dispatch_workgroups(x_groups, z_groups, 1);
     }
     

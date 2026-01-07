@@ -860,6 +860,11 @@ fn build_world() -> World {
                 if (x as f32 - center_x).abs() < 5.0 {
                     berm_height = 1.0; 
                 }
+                // Pre-cut breach point (offset from spillway for testing)
+                // This creates a weak point that will erode and widen
+                if (x as f32 - (center_x + 15.0)).abs() < 2.0 {
+                    berm_height = 3.0; // Lower than wall but higher than spillway
+                }
             }
             
             // Berm 2

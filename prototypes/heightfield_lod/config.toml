@@ -1,0 +1,36 @@
+# Heightfield LOD prototype config
+
+world_size_m = 2000.0
+base_cell_size_m = 0.2
+tile_resolution = 256
+lod_levels = 4
+
+# Per-LOD tile pools (L0..L3)
+tile_pool = 128, 128, 64, 25
+
+# Per-LOD update stride in frames (L0..L3)
+update_stride = 1, 2, 4, 8
+
+# Activity thresholds per LOD (L0..L3)
+activity_thresholds = 0.7, 0.4, 0.2, 0.0
+activity_sleep_frames = 120
+
+# Camera ring (forced L0 tiles)
+camera_radius_tiles = 3
+
+# Hotspot activity (simulated sources of activity)
+activity_hotspots = 3
+activity_hotspot_radius_m = 120.0
+
+# Memory model
+memory_budget_mb = 4096
+buffers_per_cell = 11
+# double-buffered fields (e.g., water + flux) -> multiply bytes per cell by 2
+# set false if you only ping-pong a subset of fields
+full_double_buffer = true
+
+# Prototype runtime
+frames = 300
+report_stride = 30
+
+enforce_parent_tiles = true

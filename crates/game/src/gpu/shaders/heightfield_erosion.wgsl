@@ -15,13 +15,13 @@ struct Params {
 
 // Extended Params for Erosion
 // We'll stick to the common Params struct but maybe add fields or use constants.
-const K_ENTRAIN: f32 = 0.01;  // Very low to prevent runaway
-const K_DEPOSIT: f32 = 0.5;    // High deposition to settle quickly
+const K_ENTRAIN: f32 = 0.1;           // 10x faster erosion for visible effect
+const K_DEPOSIT: f32 = 0.5;           // Moderate deposition
 const K_HARDNESS_BEDROCK: f32 = 0.0;  // Bedrock doesn't erode
-const K_HARDNESS_PAYDIRT: f32 = 0.1;
-const K_HARDNESS_OVERBURDEN: f32 = 0.3;
-const CAPACITY_FACTOR: f32 = 0.1;  // Very low capacity
-const MAX_CAPACITY: f32 = 0.5;     // Hard cap on capacity per cell
+const K_HARDNESS_PAYDIRT: f32 = 0.2;  // Slightly harder
+const K_HARDNESS_OVERBURDEN: f32 = 0.8; // Berms erode relatively easily
+const CAPACITY_FACTOR: f32 = 0.5;     // Higher carrying capacity
+const MAX_CAPACITY: f32 = 1.0;        // Allow more sediment per cell
 
 @group(0) @binding(0) var<uniform> params: Params;
 
@@ -162,43 +162,84 @@ fn advect_sediment(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 @compute @workgroup_size(16, 16)
 fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>) {
-     // Flux-Based Advection (Reuse Water Flux)
-     // dM/dt = Influx - Outflux
-     // M_new = M_old + dt * (Sum(Flux_in * C_in) - Sum(Flux_out * C_local))
-     
+    // Flux-Based Sediment Advection
+    // Transport = Water_Flux * Concentration_upwind
+    // Use upwind scheme: concentration from cell that flux flows FROM
+    
     let x = global_id.x;
     let z = global_id.y;
     if (x >= params.width || z >= params.depth) { return; }
     let idx = get_idx(x, z);
     
     let depth = water_depth[idx];
-    if (depth < 0.0001) { return; }
+    let current_sed = suspended_sediment[idx];
     
-    let concentration = suspended_sediment[idx] / depth; 
+    // Calculate local concentration
+    let local_conc = select(0.0, current_sed / depth, depth > 0.001);
     
-    // Inflow X (Left)
-    var input_mass = 0.0;
+    var net_sediment = 0.0;
+    
+    // X-direction flux
+    // Inflow from left (flux_x[x-1] > 0 means flow from x-1 to x)
     if (x > 0) {
         let idx_left = get_idx(x - 1, z);
-        let flux = flux_x[idx_left]; // flow x->x+1
-        if (flux > 0.0) {
-            let conc_left = suspended_sediment[idx_left] / max(water_depth[idx_left], 0.0001);
-            input_mass += flux * conc_left;
+        let fx = flux_x[idx_left];
+        if (fx > 0.0) {
+            // Inflow from left - use left cell concentration
+            let depth_left = water_depth[idx_left];
+            let conc_left = select(0.0, suspended_sediment[idx_left] / depth_left, depth_left > 0.001);
+            net_sediment += fx * conc_left;
         } else {
-            // Negative flux means flow OUT to left. Handled in Outflow.
-             // Wait, flux_x[x-1] is flow across face x-1/2.
-             // If positive: (x-1) -> (x). Input to x. Based on C(x-1).
-             // If negative: (x) -> (x-1). Output from x. Based on C(x).
-             
-             // Wait, standard Upwinding:
-             // Flux = Velocity * Area.
-             // Transport = Flux * Concentration_Upwind.
+            // Outflow to left - use local concentration
+            net_sediment += fx * local_conc; // fx is negative, so this subtracts
         }
     }
     
-    // This is getting complex to implement perfectly in one pass without race conditions.
-    // Simplest: Just use the Erosion/Deposition step for now.
-    // Visuals will show sediment being picked up and dropped.
-    // Advection is critical for moving it DOWNSTREAM though.
-    // I'll leave the kernel stubbed for now and focus on getting Erosion working.
+    // Outflow to right (flux_x[idx] > 0 means flow from x to x+1)
+    if (x < params.width - 1) {
+        let fx = flux_x[idx];
+        if (fx > 0.0) {
+            // Outflow to right - use local concentration
+            net_sediment -= fx * local_conc;
+        } else {
+            // Inflow from right - use right cell concentration
+            let idx_right = get_idx(x + 1, z);
+            let depth_right = water_depth[idx_right];
+            let conc_right = select(0.0, suspended_sediment[idx_right] / depth_right, depth_right > 0.001);
+            net_sediment -= fx * conc_right; // fx is negative, so this adds
+        }
+    }
+    
+    // Z-direction flux (same pattern)
+    if (z > 0) {
+        let idx_back = get_idx(x, z - 1);
+        let fz = flux_z[idx_back];
+        if (fz > 0.0) {
+            let depth_back = water_depth[idx_back];
+            let conc_back = select(0.0, suspended_sediment[idx_back] / depth_back, depth_back > 0.001);
+            net_sediment += fz * conc_back;
+        } else {
+            net_sediment += fz * local_conc;
+        }
+    }
+    
+    if (z < params.depth - 1) {
+        let fz = flux_z[idx];
+        if (fz > 0.0) {
+            net_sediment -= fz * local_conc;
+        } else {
+            let idx_front = get_idx(x, z + 1);
+            let depth_front = water_depth[idx_front];
+            let conc_front = select(0.0, suspended_sediment[idx_front] / depth_front, depth_front > 0.001);
+            net_sediment -= fz * conc_front;
+        }
+    }
+    
+    // Apply transport (scaled by cell area)
+    let cell_area = params.cell_size * params.cell_size;
+    let new_sed = current_sed + net_sediment / cell_area;
+    
+    // Clamp to non-negative and reasonable max
+    suspended_sediment[idx] = clamp(new_sed, 0.0, 10.0);
 }
+
