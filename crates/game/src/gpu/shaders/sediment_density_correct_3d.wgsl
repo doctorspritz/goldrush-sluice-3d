@@ -155,7 +155,6 @@ fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let pos = positions[pid].xyz;
-    let vel = velocities[pid].xyz;
     let cell_size = params.cell_size;
     let grid_pos = pos / cell_size;
 
@@ -163,17 +162,10 @@ fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
     let delta_y = trilinear_delta_y(grid_pos);
     let delta_z = trilinear_delta_z(grid_pos);
 
-    let correction_scale: f32 = 15.0;
+    let correction_scale: f32 = 8.0;  // Reduced from 15.0 for gentler corrections
     let delta = vec3<f32>(-delta_x, -delta_y, -delta_z) * correction_scale;
 
-    // Update position
+    // Update position only - let Drucker-Prager jamming handle velocity resistance
     let corrected_pos = pos + delta;
     positions[pid] = vec4<f32>(corrected_pos, 0.0);
-
-    // Update velocity to reflect the collision force
-    // This prevents particles from overlapping again next frame
-    // Use a damped velocity correction (0.2 factor) to avoid overly rigid behavior
-    let velocity_correction = (delta / params.dt) * 0.2;
-    let corrected_vel = vel + velocity_correction;
-    velocities[pid] = vec4<f32>(corrected_vel, 0.0);
 }

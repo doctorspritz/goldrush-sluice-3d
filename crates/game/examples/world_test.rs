@@ -28,8 +28,8 @@ use winit::{
     window::{Window, WindowId},
 };
 
-const WORLD_WIDTH: usize = 100;
-const WORLD_DEPTH: usize = 100;
+const WORLD_WIDTH: usize = 256;
+const WORLD_DEPTH: usize = 256;
 const CELL_SIZE: f32 = 1.0;
 const INITIAL_HEIGHT: f32 = 10.0;
 
@@ -42,8 +42,8 @@ const WATER_ADD_VOLUME: f32 = 5.0;
 const MOVE_SPEED: f32 = 20.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
 
-const STEPS_PER_FRAME: usize = 4;
-const DT: f32 = 1.0 / 60.0 / STEPS_PER_FRAME as f32;
+const STEPS_PER_FRAME: usize = 10;
+const DT: f32 = 0.005;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Default)]
@@ -204,6 +204,13 @@ struct InputState {
     mouse_pos: (f32, f32),
 }
 
+struct WaterEmitter {
+    position: Vec3,
+    rate: f32, // Volume per second
+    radius: f32,
+    enabled: bool,
+}
+
 struct GpuState {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -220,6 +227,7 @@ struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
     world: World,
+    emitter: WaterEmitter,
     camera: Camera,
     input: InputState,
     last_frame: Instant,
@@ -235,8 +243,14 @@ impl App {
             window: None,
             gpu: None,
             world,
+            emitter: WaterEmitter {
+                position: Vec3::new(128.0, 30.0, 128.0),
+                rate: 100.0,
+                radius: 5.0,
+                enabled: false,
+            },
             camera: Camera {
-                position: Vec3::new(50.0, 30.0, 80.0),
+                position: Vec3::new(128.0, 50.0, 128.0),
                 yaw: -1.57,
                 pitch: -0.4,
                 speed: MOVE_SPEED,
@@ -263,6 +277,9 @@ impl App {
         self.update_camera(dt);
 
         for _ in 0..STEPS_PER_FRAME {
+            if self.emitter.enabled {
+                self.world.add_water(self.emitter.position, self.emitter.rate * DT);
+            }
             self.world.update(DT);
         }
 
@@ -640,6 +657,16 @@ impl ApplicationHandler for App {
                                 KeyCode::KeyR => self.reset_world(),
                                 KeyCode::Digit1 => self.add_water_at_cursor(),
                                 KeyCode::Digit2 => self.add_muddy_water_at_cursor(),
+                                KeyCode::Digit3 => {
+                                    if let Some(hit) = self.raycast_terrain() {
+                                        self.emitter.position = hit;
+                                        self.emitter.enabled = true;
+                                        println!("Emitter placed at {:?}", hit);
+                                    } else {
+                                        self.emitter.enabled = !self.emitter.enabled;
+                                        println!("Emitter enabled: {}", self.emitter.enabled);
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -684,18 +711,19 @@ impl ApplicationHandler for App {
 fn build_world() -> World {
     let mut world = World::new(WORLD_WIDTH, WORLD_DEPTH, CELL_SIZE, INITIAL_HEIGHT);
 
-    for z in 30..70 {
-        for x in 30..70 {
+    // Initial terrain sculpting for interesting flow
+    for z in 50..200 {
+        for x in 50..200 {
             let idx = world.idx(x, z);
-            let dist_x = (x as f32 - 50.0).abs();
-            let dist_z = (z as f32 - 50.0).abs();
+            let dist_x = (x as f32 - 128.0).abs();
+            let dist_z = (z as f32 - 128.0).abs();
             let dist = (dist_x.max(dist_z)) / 20.0;
             world.terrain_base[idx] = INITIAL_HEIGHT - 5.0 * (1.0 - dist).max(0.0);
         }
     }
 
-    for z in 68..72 {
-        for x in 30..70 {
+    for z in 120..136 {
+        for x in 80..176 {
             let idx = world.idx(x, z);
             world.terrain_sediment[idx] = 3.0;
         }

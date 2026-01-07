@@ -17,6 +17,9 @@ const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
 const CELL_SOLID: u32 = 2u;
 
+// Jamming threshold: cells with this many sediment particles become solid
+const SEDIMENT_JAM_THRESHOLD: i32 = 6;
+
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
 }
@@ -39,5 +42,13 @@ fn build_sediment_cell_type(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let count = atomicLoad(&sediment_count[idx]);
-    cell_type[idx] = select(CELL_AIR, CELL_FLUID, count > 0);
+
+    // Voxel-based jamming: treat heavily packed cells as solid obstacles
+    if (count >= SEDIMENT_JAM_THRESHOLD) {
+        cell_type[idx] = CELL_SOLID;
+    } else if (count > 0) {
+        cell_type[idx] = CELL_FLUID;
+    } else {
+        cell_type[idx] = CELL_AIR;
+    }
 }

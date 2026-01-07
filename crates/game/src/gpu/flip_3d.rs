@@ -2925,6 +2925,8 @@ impl GpuFlip3D {
             }
             queue.submit(std::iter::once(encoder.finish()));
 
+            // DISABLED: Using voxel-based jamming instead of density projection
+            /*
             let sediment_density_error_params = DensityErrorParams3D {
                 width: self.width,
                 height: self.height,
@@ -3026,6 +3028,7 @@ impl GpuFlip3D {
                 pass.dispatch_workgroups(workgroups, 1, 1);
             }
             queue.submit(std::iter::once(encoder.finish()));
+            */
         }
 
         if let Some(bed_height) = bed_height {

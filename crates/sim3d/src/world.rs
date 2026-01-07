@@ -31,7 +31,7 @@ impl Default for WorldParams {
             collapse_transfer_rate: 0.35,
             collapse_max_outflow: 0.5,
             gravity: 9.81,
-            water_damping: 0.02,
+            water_damping: 0.001,
             settling_velocity: 0.01,
             bed_porosity: 0.4,
         }
@@ -646,6 +646,20 @@ impl World {
                 let ground = self.ground_height(x, z);
                 self.water_surface[idx] = self.water_surface[idx].max(ground);
             }
+        }
+
+        // Open Boundary Condition: Edges are sinks (water flow off map)
+        for z in 0..depth {
+            let idx_left = self.idx(0, z);
+            let idx_right = self.idx(width - 1, z);
+            self.water_surface[idx_left] = self.ground_height(0, z);
+            self.water_surface[idx_right] = self.ground_height(width - 1, z);
+        }
+        for x in 0..width {
+            let idx_back = self.idx(x, 0);
+            let idx_front = self.idx(x, depth - 1);
+            self.water_surface[idx_back] = self.ground_height(x, 0);
+            self.water_surface[idx_front] = self.ground_height(x, depth - 1);
         }
 
         self.advect_suspended_sediment(dt);
