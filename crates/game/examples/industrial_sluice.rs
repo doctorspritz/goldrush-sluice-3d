@@ -1906,6 +1906,13 @@ impl App {
                 max_x,
             );
 
+            // Print jamming diagnostics every 30 frames when using GPU
+            if self.use_gpu_sim {
+                if let (Some(gpu_flip), Some(gpu)) = (&self.gpu_flip, &self.gpu) {
+                    gpu_flip.print_jamming_diagnostics(&gpu.device, &gpu.queue);
+                }
+            }
+
             if self.debug_riffle_probe {
                 if self.use_gpu_sim {
                     if let (Some(gpu_bed), Some(gpu)) = (&self.gpu_bed, &self.gpu) {

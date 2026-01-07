@@ -3199,4 +3199,154 @@ impl GpuFlip3D {
         }
         staging.unmap();
     }
+
+    /// Print jamming diagnostics - call this every N frames from the example
+    pub fn print_jamming_diagnostics(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        // Read back cell types
+        let cell_type_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Cell Type Staging"),
+            size: (self.width * self.height * self.depth * 4) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let sediment_count_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Sediment Count Staging"),
+            size: (self.width * self.height * self.depth * 4) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let particle_count_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Particle Count Staging"),
+            size: (self.width * self.height * self.depth * 4) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Jamming Diagnostics Readback"),
+        });
+        encoder.copy_buffer_to_buffer(
+            &self.pressure.cell_type_buffer,
+            0,
+            &cell_type_staging,
+            0,
+            (self.width * self.height * self.depth * 4) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.p2g.sediment_count_buffer,
+            0,
+            &sediment_count_staging,
+            0,
+            (self.width * self.height * self.depth * 4) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.p2g.particle_count_buffer,
+            0,
+            &particle_count_staging,
+            0,
+            (self.width * self.height * self.depth * 4) as u64,
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // Map and read buffers
+        let ct_slice = cell_type_staging.slice(..);
+        let sed_slice = sediment_count_staging.slice(..);
+        let part_slice = particle_count_staging.slice(..);
+
+        let (ct_tx, ct_rx) = std::sync::mpsc::channel();
+        let (sed_tx, sed_rx) = std::sync::mpsc::channel();
+        let (part_tx, part_rx) = std::sync::mpsc::channel();
+
+        ct_slice.map_async(wgpu::MapMode::Read, move |r| { ct_tx.send(r).unwrap(); });
+        sed_slice.map_async(wgpu::MapMode::Read, move |r| { sed_tx.send(r).unwrap(); });
+        part_slice.map_async(wgpu::MapMode::Read, move |r| { part_tx.send(r).unwrap(); });
+
+        device.poll(wgpu::Maintain::Wait);
+        ct_rx.recv().unwrap().unwrap();
+        sed_rx.recv().unwrap().unwrap();
+        part_rx.recv().unwrap().unwrap();
+
+        let ct_data = ct_slice.get_mapped_range();
+        let sed_data = sed_slice.get_mapped_range();
+        let part_data = part_slice.get_mapped_range();
+
+        let cell_types: &[u32] = bytemuck::cast_slice(&ct_data);
+        let sediment_counts: &[i32] = bytemuck::cast_slice(&sed_data);
+        let particle_counts: &[i32] = bytemuck::cast_slice(&part_data);
+
+        // Count cell types
+        let solid_count = cell_types.iter().filter(|&&ct| ct == 2).count();
+        let fluid_count = cell_types.iter().filter(|&&ct| ct == 1).count();
+        let air_count = cell_types.iter().filter(|&&ct| ct == 0).count();
+
+        // Find sample cells with sediment
+        let mut sample_cells = Vec::new();
+        for j in 0..self.height.min(5) {
+            for k in (self.depth / 2).saturating_sub(2)..=(self.depth / 2 + 2).min(self.depth - 1) {
+                for i in (self.width / 2).saturating_sub(2)..=(self.width / 2 + 2).min(self.width - 1) {
+                    let idx = (k * self.width * self.height + j * self.width + i) as usize;
+                    let sed_count = sediment_counts[idx];
+                    let total_count = particle_counts[idx];
+                    let wat_count = total_count - sed_count;
+                    let cell_type = cell_types[idx];
+
+                    if sed_count > 0 || total_count > 0 {
+                        sample_cells.push((i, j, k, sed_count, wat_count, total_count, cell_type));
+                    }
+                }
+            }
+        }
+
+        // Print summary
+        println!("\n========== JAMMING DIAGNOSTICS ==========");
+        println!("Cell Types: SOLID={} FLUID={} AIR={} (total={})",
+            solid_count, fluid_count, air_count, cell_types.len());
+
+        if !sample_cells.is_empty() {
+            println!("\nSample cells (center-bottom, j=0-4):");
+            println!("  (i, j, k) -> sed | water | total | type");
+            for (i, j, k, sed, wat, total, ct) in sample_cells.iter().take(15) {
+                let type_str = match ct {
+                    0 => "AIR",
+                    1 => "FLUID",
+                    2 => "SOLID",
+                    _ => "???",
+                };
+                let dominance = if *sed > *wat { "SED>" } else if *wat > *sed { "WAT>" } else { "=" };
+                println!("  ({:3},{:3},{:3}) -> {:3} | {:3} | {:3} | {} {}",
+                    i, j, k, sed, wat, total, type_str, dominance);
+            }
+        }
+
+        // Check support chains (sample column at center)
+        let mid_i = self.width / 2;
+        let mid_k = self.depth / 2;
+        println!("\nCenter column support chain (i={}, k={}):", mid_i, mid_k);
+        for j in 0..self.height.min(10) {
+            let idx = (mid_k * self.width * self.height + j * self.width + mid_i) as usize;
+            let sed_count = sediment_counts[idx];
+            let total_count = particle_counts[idx];
+            let wat_count = total_count - sed_count;
+            let cell_type = cell_types[idx];
+            let type_str = match cell_type {
+                0 => "AIR  ",
+                1 => "FLUID",
+                2 => "SOLID",
+                _ => "???  ",
+            };
+            println!("  j={:2}: {} | sed={:2} wat={:2} | {}",
+                j, type_str, sed_count, wat_count,
+                if sed_count > wat_count { "SED>" } else if wat_count > sed_count { "WAT>" } else { "=" });
+        }
+        println!("=========================================\n");
+
+        drop(ct_data);
+        drop(sed_data);
+        drop(part_data);
+        cell_type_staging.unmap();
+        sediment_count_staging.unmap();
+        particle_count_staging.unmap();
+    }
 }
