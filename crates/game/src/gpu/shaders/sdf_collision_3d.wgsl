@@ -20,9 +20,21 @@ struct Params {
 @group(0) @binding(3) var<storage, read> sdf: array<f32>;
 @group(0) @binding(4) var<storage, read> bed_height: array<f32>;
 @group(0) @binding(5) var<storage, read> densities: array<f32>;
+@group(0) @binding(6) var<storage, read> cell_type: array<u32>;
+
+const CELL_AIR: u32 = 0u;
+const CELL_FLUID: u32 = 1u;
+const CELL_SOLID: u32 = 2u;
 
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
+}
+
+fn is_cell_solid(i: i32, j: i32, k: i32) -> bool {
+    if (i < 0 || i >= i32(params.width)) { return true; }
+    if (j < 0 || j >= i32(params.height)) { return false; }
+    if (k < 0 || k >= i32(params.depth)) { return true; }
+    return cell_type[cell_index(u32(i), u32(j), u32(k))] == CELL_SOLID;
 }
 
 fn bed_index(i: i32, k: i32) -> u32 {
@@ -137,6 +149,48 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
         if (vel_into < 0.0) {
             vel -= normal * vel_into * 1.1;
         }
+    }
+
+    // Check if particle would enter a jammed sediment cell (voxel collision)
+    let cell_i = i32(pos.x / params.cell_size);
+    let cell_j = i32(pos.y / params.cell_size);
+    let cell_k = i32(pos.z / params.cell_size);
+
+    if (is_cell_solid(cell_i, cell_j, cell_k)) {
+        // Particle is trying to enter a jammed cell - push it back
+        let old_pos = positions[pid].xyz;
+
+        // Find the nearest non-solid cell by checking neighbors
+        var best_pos = old_pos;
+        var found_valid = false;
+
+        for (var dj: i32 = 1; dj <= 2; dj++) {
+            for (var dk: i32 = -1; dk <= 1; dk++) {
+                for (var di: i32 = -1; di <= 1; di++) {
+                    let test_i = cell_i + di;
+                    let test_j = cell_j + dj;  // Prefer upward
+                    let test_k = cell_k + dk;
+
+                    if (!is_cell_solid(test_i, test_j, test_k)) {
+                        let test_pos = vec3<f32>(
+                            (f32(test_i) + 0.5) * params.cell_size,
+                            (f32(test_j) + 0.5) * params.cell_size,
+                            (f32(test_k) + 0.5) * params.cell_size
+                        );
+                        best_pos = test_pos;
+                        found_valid = true;
+                        break;
+                    }
+                }
+                if (found_valid) { break; }
+            }
+            if (found_valid) { break; }
+        }
+
+        pos = best_pos;
+
+        // Damp velocity when hitting jammed sediment
+        vel *= 0.3;
     }
 
     let density = densities[pid];

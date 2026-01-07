@@ -1934,6 +1934,16 @@ impl GpuFlip3D {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1944,6 +1954,7 @@ impl GpuFlip3D {
                 wgpu::BindGroupEntry { binding: 0, resource: sediment_cell_type_params_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: pressure.cell_type_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: p2g.sediment_count_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: p2g.particle_count_buffer.as_entire_binding() },
             ],
         });
 
@@ -2091,6 +2102,16 @@ impl GpuFlip3D {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -2104,6 +2125,7 @@ impl GpuFlip3D {
                 wgpu::BindGroupEntry { binding: 3, resource: sdf_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: bed_height_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: densities_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: pressure.cell_type_buffer.as_entire_binding() },
             ],
         });
 
@@ -2908,23 +2930,30 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&sediment_cell_params),
             );
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Sediment Cell Type 3D Encoder"),
-            });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Sediment Cell Type 3D Pass"),
-                    timestamp_writes: None,
+            // Run jamming pass multiple times to propagate support from bottom to top
+            // Each iteration allows jamming to propagate up one layer
+            let jamming_iterations = 5;  // Enough for typical pile heights
+            for _ in 0..jamming_iterations {
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Sediment Cell Type 3D Encoder"),
                 });
-                pass.set_pipeline(&self.sediment_cell_type_pipeline);
-                pass.set_bind_group(0, &self.sediment_cell_type_bind_group, &[]);
-                let workgroups_x = (self.width + 7) / 8;
-                let workgroups_y = (self.height + 7) / 8;
-                let workgroups_z = (self.depth + 3) / 4;
-                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+                {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Sediment Cell Type 3D Pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.sediment_cell_type_pipeline);
+                    pass.set_bind_group(0, &self.sediment_cell_type_bind_group, &[]);
+                    let workgroups_x = (self.width + 7) / 8;
+                    let workgroups_y = (self.height + 7) / 8;
+                    let workgroups_z = (self.depth + 3) / 4;
+                    pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+                }
+                queue.submit(std::iter::once(encoder.finish()));
             }
-            queue.submit(std::iter::once(encoder.finish()));
 
+            // Sediment density projection disabled - using voxel jamming approach instead
+            /*
             let sediment_density_error_params = DensityErrorParams3D {
                 width: self.width,
                 height: self.height,
@@ -3026,6 +3055,7 @@ impl GpuFlip3D {
                 pass.dispatch_workgroups(workgroups, 1, 1);
             }
             queue.submit(std::iter::once(encoder.finish()));
+            */
         }
 
         if let Some(bed_height) = bed_height {
