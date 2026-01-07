@@ -238,6 +238,7 @@ struct App {
     last_stats: Instant,
     window_size: (u32, u32),
     selected_material: u32, // 0=sediment, 1=overburden, 2=gravel
+    terrain_dirty: bool,    // Rebuild terrain mesh only when true
 }
 
 impl App {
@@ -273,6 +274,7 @@ impl App {
             last_stats: Instant::now(),
             window_size: (1280, 720),
             selected_material: 2, // Default to gravel (most useful for building)
+            terrain_dirty: true,  // Build initial terrain mesh
         }
     }
 
@@ -354,6 +356,7 @@ impl App {
                     }
                     
                     gpu.queue.submit(Some(encoder.finish()));
+                    self.terrain_dirty = true; // Rebuild terrain mesh on next render
                 }
             }
         }
@@ -646,11 +649,16 @@ impl App {
 
         let Some(gpu) = self.gpu.as_mut() else { return };
 
-        let (terrain_vertices, terrain_indices) = build_terrain_mesh(&self.world);
+        // Only rebuild terrain mesh when it changes (expensive with side faces)
+        if self.terrain_dirty {
+            let (terrain_vertices, terrain_indices) = build_terrain_mesh(&self.world);
+            gpu.terrain
+                .update(&gpu.device, &gpu.queue, &terrain_vertices, &terrain_indices, "Terrain");
+            self.terrain_dirty = false;
+        }
+        
+        // Water mesh updates every frame (simulation changes it)
         let (water_vertices, water_indices) = build_water_mesh(&self.world);
-
-        gpu.terrain
-            .update(&gpu.device, &gpu.queue, &terrain_vertices, &terrain_indices, "Terrain");
         gpu.water
             .update(&gpu.device, &gpu.queue, &water_vertices, &water_indices, "Water");
 
@@ -1029,6 +1037,69 @@ fn build_terrain_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
             });
 
             indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+            
+            // Add side faces where neighbor is lower
+            let side_color = [
+                (color[0] * 0.7).max(0.0), // Darken sides for depth
+                (color[1] * 0.7).max(0.0),
+                (color[2] * 0.7).max(0.0),
+                1.0,
+            ];
+            
+            // Check each neighbor and add side quad if lower (0.5m threshold for perf)
+            const SIDE_THRESHOLD: f32 = 0.5;
+            
+            // Right neighbor (X+1)
+            if x + 1 < world.width {
+                let neighbor_height = world.ground_height(x + 1, z);
+                if neighbor_height < height - SIDE_THRESHOLD {
+                    let base = vertices.len() as u32;
+                    vertices.push(WorldVertex { position: [x1, height, z0], color: side_color });
+                    vertices.push(WorldVertex { position: [x1, height, z1], color: side_color });
+                    vertices.push(WorldVertex { position: [x1, neighbor_height, z1], color: side_color });
+                    vertices.push(WorldVertex { position: [x1, neighbor_height, z0], color: side_color });
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+            }
+            
+            // Front neighbor (Z+1)
+            if z + 1 < world.depth {
+                let neighbor_height = world.ground_height(x, z + 1);
+                if neighbor_height < height - SIDE_THRESHOLD {
+                    let base = vertices.len() as u32;
+                    vertices.push(WorldVertex { position: [x0, height, z1], color: side_color });
+                    vertices.push(WorldVertex { position: [x1, height, z1], color: side_color });
+                    vertices.push(WorldVertex { position: [x1, neighbor_height, z1], color: side_color });
+                    vertices.push(WorldVertex { position: [x0, neighbor_height, z1], color: side_color });
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+            }
+            
+            // Left neighbor (X-1)
+            if x > 0 {
+                let neighbor_height = world.ground_height(x - 1, z);
+                if neighbor_height < height - SIDE_THRESHOLD {
+                    let base = vertices.len() as u32;
+                    vertices.push(WorldVertex { position: [x0, height, z1], color: side_color });
+                    vertices.push(WorldVertex { position: [x0, height, z0], color: side_color });
+                    vertices.push(WorldVertex { position: [x0, neighbor_height, z0], color: side_color });
+                    vertices.push(WorldVertex { position: [x0, neighbor_height, z1], color: side_color });
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+            }
+            
+            // Back neighbor (Z-1)
+            if z > 0 {
+                let neighbor_height = world.ground_height(x, z - 1);
+                if neighbor_height < height - SIDE_THRESHOLD {
+                    let base = vertices.len() as u32;
+                    vertices.push(WorldVertex { position: [x1, height, z0], color: side_color });
+                    vertices.push(WorldVertex { position: [x0, height, z0], color: side_color });
+                    vertices.push(WorldVertex { position: [x0, neighbor_height, z0], color: side_color });
+                    vertices.push(WorldVertex { position: [x1, neighbor_height, z0], color: side_color });
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+            }
         }
     }
 
@@ -1083,6 +1154,80 @@ fn build_water_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
             });
 
             indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+            
+            // Add side faces for water (down to ground level)
+            let ground_height = world.ground_height(x, z);
+            let water_side_color = [
+                color[0] * 0.8,
+                color[1] * 0.8,
+                color[2] * 0.9,
+                alpha * 0.8,
+            ];
+            
+            // Right side (X+1)
+            if x + 1 < world.width {
+                let neighbor_water = world.water_surface[world.idx(x + 1, z)];
+                let neighbor_ground = world.ground_height(x + 1, z);
+                let neighbor_depth = neighbor_water - neighbor_ground;
+                if neighbor_depth < 0.001 {
+                    // No water in neighbor, draw side down to ground
+                    let bottom = ground_height.max(neighbor_ground);
+                    let base = vertices.len() as u32;
+                    vertices.push(WorldVertex { position: [x1, height, z0], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x1, height, z1], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x1, bottom, z1], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x1, bottom, z0], color: water_side_color });
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+            }
+            
+            // Front side (Z+1)
+            if z + 1 < world.depth {
+                let neighbor_water = world.water_surface[world.idx(x, z + 1)];
+                let neighbor_ground = world.ground_height(x, z + 1);
+                let neighbor_depth = neighbor_water - neighbor_ground;
+                if neighbor_depth < 0.001 {
+                    let bottom = ground_height.max(neighbor_ground);
+                    let base = vertices.len() as u32;
+                    vertices.push(WorldVertex { position: [x0, height, z1], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x1, height, z1], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x1, bottom, z1], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x0, bottom, z1], color: water_side_color });
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+            }
+            
+            // Left side (X-1)
+            if x > 0 {
+                let neighbor_water = world.water_surface[world.idx(x - 1, z)];
+                let neighbor_ground = world.ground_height(x - 1, z);
+                let neighbor_depth = neighbor_water - neighbor_ground;
+                if neighbor_depth < 0.001 {
+                    let bottom = ground_height.max(neighbor_ground);
+                    let base = vertices.len() as u32;
+                    vertices.push(WorldVertex { position: [x0, height, z1], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x0, height, z0], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x0, bottom, z0], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x0, bottom, z1], color: water_side_color });
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+            }
+            
+            // Back side (Z-1)
+            if z > 0 {
+                let neighbor_water = world.water_surface[world.idx(x, z - 1)];
+                let neighbor_ground = world.ground_height(x, z - 1);
+                let neighbor_depth = neighbor_water - neighbor_ground;
+                if neighbor_depth < 0.001 {
+                    let bottom = ground_height.max(neighbor_ground);
+                    let base = vertices.len() as u32;
+                    vertices.push(WorldVertex { position: [x1, height, z0], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x0, height, z0], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x0, bottom, z0], color: water_side_color });
+                    vertices.push(WorldVertex { position: [x1, bottom, z0], color: water_side_color });
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+            }
         }
     }
 
