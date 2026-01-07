@@ -809,6 +809,15 @@ impl ApplicationHandler for App {
 }
 
 fn build_world() -> World {
+    use sim3d::{generate_klondike_terrain, TerrainConfig};
+    
+    let config = TerrainConfig::default();
+    generate_klondike_terrain(WORLD_WIDTH, WORLD_DEPTH, CELL_SIZE, &config)
+}
+
+// Old build_world code kept as reference (commented out)
+#[allow(dead_code)]
+fn _build_world_old() -> World {
     let mut world = World::new(WORLD_WIDTH, WORLD_DEPTH, CELL_SIZE, INITIAL_HEIGHT);
     
     // Cascading Tailings Ponds Generator

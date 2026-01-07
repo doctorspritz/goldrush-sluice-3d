@@ -34,6 +34,7 @@ pub mod heightfield;
 pub mod kernels;
 pub mod particle;
 pub mod pressure;
+pub mod terrain_generator;
 pub mod transfer;
 pub mod world;
 
@@ -41,6 +42,7 @@ pub use glam::{Mat3, Vec3};
 pub use grid::{CellType, Grid3D};
 pub use heightfield::Heightfield;
 pub use particle::{Particle3D, Particles3D};
+pub use terrain_generator::{generate_klondike_terrain, get_creek_source, TerrainConfig};
 pub use world::{ExcavationResult, TerrainMaterial, World, WorldParams};
 
 use transfer::TransferBuffers;
