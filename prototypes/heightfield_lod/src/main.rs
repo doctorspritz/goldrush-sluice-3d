@@ -32,6 +32,8 @@ struct Config {
     image_lod: u32,
     image_scale: u32,
     image_max_dim: u32,
+    image_composite: bool,
+    thrash_window: u32,
 }
 
 impl Default for Config {
@@ -63,6 +65,8 @@ impl Default for Config {
             image_lod: 0,
             image_scale: 8,
             image_max_dim: 200,
+            image_composite: false,
+            thrash_window: 60,
         }
     }
 }
@@ -107,6 +111,9 @@ impl Config {
         }
         if self.image_max_dim == 0 {
             self.image_max_dim = 1;
+        }
+        if self.thrash_window == 0 {
+            self.thrash_window = 1;
         }
     }
 }
@@ -180,6 +187,21 @@ struct LcgRng {
     state: u64,
 }
 
+#[derive(Clone, Debug, Default)]
+struct ThrashTracker {
+    window: usize,
+    index: usize,
+    entries: Vec<ThrashEntry>,
+    sum_new: u64,
+    sum_evicted: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ThrashEntry {
+    new_tiles: u32,
+    evicted_tiles: u32,
+}
+
 impl LcgRng {
     fn new(seed: u64) -> Self {
         Self { state: seed }
@@ -201,6 +223,43 @@ impl LcgRng {
     }
 }
 
+impl ThrashTracker {
+    fn new(window: usize) -> Self {
+        let window = window.max(1);
+        Self {
+            window,
+            index: 0,
+            entries: vec![ThrashEntry::default(); window],
+            sum_new: 0,
+            sum_evicted: 0,
+        }
+    }
+
+    fn push(&mut self, entry: ThrashEntry) {
+        let old = self.entries[self.index];
+        self.sum_new = self.sum_new.saturating_sub(old.new_tiles as u64);
+        self.sum_evicted = self.sum_evicted.saturating_sub(old.evicted_tiles as u64);
+
+        self.entries[self.index] = entry;
+        self.sum_new += entry.new_tiles as u64;
+        self.sum_evicted += entry.evicted_tiles as u64;
+
+        self.index = (self.index + 1) % self.window;
+    }
+
+    fn per_frame(&self) -> f32 {
+        (self.sum_new + self.sum_evicted) as f32 / self.window as f32
+    }
+
+    fn ratio(&self, active_tiles: usize) -> f32 {
+        if active_tiles == 0 {
+            0.0
+        } else {
+            self.per_frame() / active_tiles as f32
+        }
+    }
+}
+
 struct PrototypeSim {
     cfg: Config,
     levels: Vec<LodLevel>,
@@ -208,6 +267,7 @@ struct PrototypeSim {
     hotspots: Vec<Hotspot>,
     tiles: HashMap<TileKey, TileState>,
     csv: Option<fs::File>,
+    thrash: ThrashTracker,
 }
 
 impl PrototypeSim {
@@ -229,6 +289,7 @@ impl PrototypeSim {
                 csv = None;
             }
         }
+        let thrash = ThrashTracker::new(cfg.thrash_window as usize);
 
         Self {
             cfg,
@@ -237,6 +298,7 @@ impl PrototypeSim {
             hotspots,
             tiles: HashMap::new(),
             csv,
+            thrash,
         }
     }
 
@@ -247,16 +309,31 @@ impl PrototypeSim {
             self.update_hotspots();
 
             let activity_levels = self.build_activity_levels(camera);
-            let selection = select_tiles(
+            let mut selection = select_tiles(
                 &self.levels,
                 &activity_levels,
                 &self.cfg,
                 camera,
             );
+            let budget = apply_memory_budget(
+                &mut selection,
+                &self.levels,
+                &self.cfg,
+                &self.tiles,
+                &activity_levels,
+                frame,
+            );
             self.maybe_print_ascii_map(frame, camera, &activity_levels, &selection.selected_set);
             self.maybe_write_ppm(frame, camera, &activity_levels, &selection.selected_set);
 
             let stats = self.update_tiles(&selection.selected_set, &activity_levels, frame);
+            let thrash_entry = ThrashEntry {
+                new_tiles: stats.new_tiles,
+                evicted_tiles: stats.evicted_tiles + budget.evicted_tiles as u32,
+            };
+            self.thrash.push(thrash_entry);
+            let thrash_per_frame = self.thrash.per_frame();
+            let thrash_ratio = self.thrash.ratio(selection.selected_set.len());
             let dispatch = compute_dispatches(
                 &self.levels,
                 &selection.selected_by_lod,
@@ -264,8 +341,17 @@ impl PrototypeSim {
             );
             let mem_mb = estimate_memory_mb(&self.cfg, &selection.selected_by_lod);
             let budget_mb = self.cfg.memory_budget_mb as f32;
-            let budget_flag = if mem_mb > budget_mb { "OVER" } else { "OK" };
-            self.maybe_write_csv(frame, &selection, &stats, &dispatch, mem_mb);
+            let mem_flag = if mem_mb > budget_mb { "OVER" } else { "OK" };
+            self.maybe_write_csv(
+                frame,
+                &selection,
+                &stats,
+                &dispatch,
+                mem_mb,
+                &budget,
+                thrash_per_frame,
+                thrash_ratio,
+            );
 
             if frame == 0 || frame % self.cfg.report_stride as u64 == 0 {
                 let totals = selection
@@ -274,9 +360,10 @@ impl PrototypeSim {
                     .enumerate()
                     .map(|(lod, tiles)| (lod, tiles.len()))
                     .collect::<Vec<_>>();
+                let budget_flag = if budget.blocked { "BLOCKED" } else { "OK" };
 
                 println!(
-                    "frame {:>4} | L0 {:>4}/{:<4} L1 {:>4}/{:<4} L2 {:>4}/{:<4} L3 {:>4}/{:<4} | mem {:>6.1}/{:<6.1}MB {} | new {:>3} evict {:>3} | pass surf {:>4} flux {:>4} depth {:>4} erosion {:>4} up {:>4} down {:>4}",
+                    "frame {:>4} | L0 {:>4}/{:<4} L1 {:>4}/{:<4} L2 {:>4}/{:<4} L3 {:>4}/{:<4} | mem {:>6.1}/{:<6.1}MB {} | new {:>3} evict {:>3} budget {:>3} {:>7} | thrash {:>5.1} ({:.3}) | pass surf {:>4} flux {:>4} depth {:>4} erosion {:>4} up {:>4} down {:>4}",
                     frame,
                     totals.get(0).map(|t| t.1).unwrap_or(0),
                     self.levels.get(0).map(|l| (l.tiles_x * l.tiles_z) as usize).unwrap_or(0),
@@ -288,9 +375,13 @@ impl PrototypeSim {
                     self.levels.get(3).map(|l| (l.tiles_x * l.tiles_z) as usize).unwrap_or(0),
                     mem_mb,
                     budget_mb,
-                    budget_flag,
+                    mem_flag,
                     stats.new_tiles,
                     stats.evicted_tiles,
+                    budget.evicted_tiles,
+                    budget_flag,
+                    thrash_per_frame,
+                    thrash_ratio,
                     dispatch.surface,
                     dispatch.flux,
                     dispatch.depth,
@@ -386,6 +477,9 @@ impl PrototypeSim {
         stats: &TileStats,
         dispatch: &DispatchCounts,
         mem_mb: f32,
+        budget: &BudgetStats,
+        thrash_per_frame: f32,
+        thrash_ratio: f32,
     ) {
         let file = match self.csv.as_mut() {
             Some(file) => file,
@@ -406,10 +500,15 @@ impl PrototypeSim {
             line.push_str(&format!(",{}", count));
         }
         line.push_str(&format!(
-            ",{:.2},{},{},{},{},{},{},{},{}",
+            ",{:.2},{},{},{},{},{},{:.3},{:.5},{},{},{},{},{},{}",
             mem_mb,
             stats.new_tiles,
             stats.evicted_tiles,
+            budget.budget_tiles,
+            budget.evicted_tiles,
+            if budget.blocked { 1 } else { 0 },
+            thrash_per_frame,
+            thrash_ratio,
             dispatch.surface,
             dispatch.flux,
             dispatch.depth,
@@ -519,56 +618,102 @@ impl PrototypeSim {
             None => return,
         };
 
-        let max_dim = self.cfg.image_max_dim as i32;
-        if activity.tiles_x > max_dim || activity.tiles_z > max_dim {
-            println!(
-                "image L{} frame {} skipped ({}x{} > max {})",
-                lod,
-                frame,
-                activity.tiles_x,
-                activity.tiles_z,
-                max_dim
-            );
-            return;
-        }
-
         if let Err(err) = fs::create_dir_all(output_dir) {
             eprintln!("Failed to create image output dir '{}': {err}", output_dir);
             return;
         }
 
         let scale = self.cfg.image_scale as usize;
-        let width = activity.tiles_x as usize * scale;
-        let height = activity.tiles_z as usize * scale;
-        let mut pixels = Vec::with_capacity(width * height * 3);
-
-        let cam_tx = (camera.0 / level.tile_size_m).floor() as i32;
-        let cam_tz = (camera.1 / level.tile_size_m).floor() as i32;
-
-        for tz in 0..activity.tiles_z {
-            for _ in 0..scale {
-                for tx in 0..activity.tiles_x {
-                    let key = TileKey {
-                        lod: level.lod,
-                        tx,
-                        tz,
-                    };
-                    let is_selected = selected.contains(&key);
-                    let is_camera = tx == cam_tx && tz == cam_tz;
-                    let color = tile_color(activity.get(tx, tz), is_selected, is_camera);
-                    for _ in 0..scale {
-                        pixels.push(color[0]);
-                        pixels.push(color[1]);
-                        pixels.push(color[2]);
-                    }
+        let max_dim = self.cfg.image_max_dim as i32;
+        let (width, height, pixels) =
+            match render_lod_pixels(level, activity, selected, camera, scale, max_dim) {
+                Some(data) => data,
+                None => {
+                    println!(
+                        "image L{} frame {} skipped ({}x{} > max {})",
+                        lod,
+                        frame,
+                        activity.tiles_x,
+                        activity.tiles_z,
+                        max_dim
+                    );
+                    return;
                 }
-            }
-        }
+            };
 
         let file_name = format!("frame_{:04}_lod{}.ppm", frame, lod);
         let path = Path::new(output_dir).join(file_name);
         if let Err(err) = write_ppm(&path, width as u32, height as u32, &pixels) {
             eprintln!("Failed to write ppm '{:?}': {err}", path);
+        }
+
+        if self.cfg.image_composite {
+            self.maybe_write_composite(frame, camera, activity_levels, selected, output_dir);
+        }
+    }
+
+    fn maybe_write_composite(
+        &self,
+        frame: u64,
+        camera: (f32, f32),
+        activity_levels: &[ActivityLevel],
+        selected: &HashSet<TileKey>,
+        output_dir: &str,
+    ) {
+        let scale = self.cfg.image_scale as usize;
+        let max_dim = self.cfg.image_max_dim as i32;
+        let mut rendered = Vec::with_capacity(self.levels.len());
+        for (lod, level) in self.levels.iter().enumerate() {
+            let activity = match activity_levels.get(lod) {
+                Some(activity) => activity,
+                None => continue,
+            };
+            let data = render_lod_pixels(level, activity, selected, camera, scale, max_dim);
+            rendered.push(data);
+        }
+
+        let mut max_w = 0usize;
+        let mut max_h = 0usize;
+        for entry in rendered.iter().flatten() {
+            max_w = max_w.max(entry.0 as usize);
+            max_h = max_h.max(entry.1 as usize);
+        }
+        if max_w == 0 || max_h == 0 {
+            return;
+        }
+
+        let lod_count = self.levels.len();
+        let grid_cols = (lod_count as f32).sqrt().ceil() as usize;
+        let grid_rows = (lod_count + grid_cols - 1) / grid_cols;
+        let width = max_w * grid_cols;
+        let height = max_h * grid_rows;
+        let mut pixels = vec![0u8; width * height * 3];
+
+        for (index, entry) in rendered.into_iter().enumerate() {
+            let (w, h, data) = match entry {
+                Some(data) => data,
+                None => continue,
+            };
+            let col = index % grid_cols;
+            let row = index / grid_cols;
+            let offset_x = col * max_w;
+            let offset_y = row * max_h;
+            blit_pixels(
+                &mut pixels,
+                width,
+                height,
+                data,
+                w as usize,
+                h as usize,
+                offset_x,
+                offset_y,
+            );
+        }
+
+        let file_name = format!("frame_{:04}_composite.ppm", frame);
+        let path = Path::new(output_dir).join(file_name);
+        if let Err(err) = write_ppm(&path, width as u32, height as u32, &pixels) {
+            eprintln!("Failed to write composite ppm '{:?}': {err}", path);
         }
     }
 }
@@ -579,9 +724,17 @@ struct TileStats {
     evicted_tiles: u32,
 }
 
+#[derive(Clone, Debug, Default)]
+struct BudgetStats {
+    budget_tiles: usize,
+    evicted_tiles: usize,
+    blocked: bool,
+}
+
 struct Selection {
     selected_by_lod: Vec<Vec<TileKey>>,
     selected_set: HashSet<TileKey>,
+    pinned_set: HashSet<TileKey>,
 }
 
 fn build_levels(cfg: &Config) -> Vec<LodLevel> {
@@ -678,6 +831,7 @@ fn select_tiles(
 ) -> Selection {
     let mut selected_by_lod: Vec<Vec<TileKey>> = vec![Vec::new(); levels.len()];
     let mut selected_set: HashSet<TileKey> = HashSet::new();
+    let mut pinned_set: HashSet<TileKey> = HashSet::new();
 
     for (lod, level) in levels.iter().enumerate() {
         let activity = &activity_levels[lod];
@@ -732,6 +886,7 @@ fn select_tiles(
                 if selected_set.insert(key) {
                     selected_by_lod[0].push(key);
                 }
+                pinned_set.insert(key);
             }
         }
     }
@@ -762,6 +917,7 @@ fn select_tiles(
     Selection {
         selected_by_lod,
         selected_set,
+        pinned_set,
     }
 }
 
@@ -774,6 +930,177 @@ fn parent_tile(key: TileKey, lod_levels: u8) -> Option<TileKey> {
         tx: key.tx / 2,
         tz: key.tz / 2,
     })
+}
+
+fn apply_memory_budget(
+    selection: &mut Selection,
+    levels: &[LodLevel],
+    cfg: &Config,
+    tiles: &HashMap<TileKey, TileState>,
+    activity_levels: &[ActivityLevel],
+    frame: u64,
+) -> BudgetStats {
+    let bytes_per_tile = bytes_per_tile(cfg);
+    if bytes_per_tile == 0 {
+        return BudgetStats {
+            budget_tiles: 0,
+            evicted_tiles: 0,
+            blocked: true,
+        };
+    }
+    let budget_tiles = ((cfg.memory_budget_mb as u64) * 1024 * 1024 / bytes_per_tile)
+        .max(1) as usize;
+    let mut stats = BudgetStats {
+        budget_tiles,
+        evicted_tiles: 0,
+        blocked: false,
+    };
+
+    if selection.selected_set.len() <= budget_tiles {
+        return stats;
+    }
+
+    let lod_levels = levels.len() as u8;
+    let protected_set = if cfg.enforce_parent_tiles {
+        extend_with_parents(&selection.pinned_set, lod_levels)
+    } else {
+        selection.pinned_set.clone()
+    };
+
+    if protected_set.len() > budget_tiles {
+        stats.blocked = true;
+        return stats;
+    }
+
+    while selection.selected_set.len() > budget_tiles {
+        let required_parents = if cfg.enforce_parent_tiles {
+            required_parents_of_set(&selection.selected_set, lod_levels)
+        } else {
+            HashSet::new()
+        };
+        let mut candidates: Vec<TileKey> = selection
+            .selected_set
+            .iter()
+            .copied()
+            .filter(|key| !protected_set.contains(key))
+            .filter(|key| !required_parents.contains(key))
+            .collect();
+
+        if candidates.is_empty() {
+            candidates = selection
+                .selected_set
+                .iter()
+                .copied()
+                .filter(|key| !protected_set.contains(key))
+                .collect();
+        }
+
+        if candidates.is_empty() {
+            stats.blocked = true;
+            break;
+        }
+
+        candidates.sort_by(|a, b| {
+            let pa = tile_priority(*a, activity_levels, tiles, frame, lod_levels);
+            let pb = tile_priority(*b, activity_levels, tiles, frame, lod_levels);
+            pa.partial_cmp(&pb).unwrap_or(Ordering::Equal)
+        });
+
+        let victim = candidates[0];
+        let removed = evict_subtree(&mut selection.selected_set, victim, lod_levels);
+        stats.evicted_tiles += removed;
+
+        if removed == 0 {
+            stats.blocked = true;
+            break;
+        }
+    }
+
+    rebuild_selected_by_lod(selection, lod_levels as usize);
+    stats
+}
+
+fn bytes_per_tile(cfg: &Config) -> u64 {
+    let bytes_per_cell = cfg.buffers_per_cell as u64 * 4 * if cfg.full_double_buffer { 2 } else { 1 };
+    let cells_per_tile = (cfg.tile_resolution as u64) * (cfg.tile_resolution as u64);
+    bytes_per_cell.saturating_mul(cells_per_tile)
+}
+
+fn rebuild_selected_by_lod(selection: &mut Selection, lod_levels: usize) {
+    selection.selected_by_lod = vec![Vec::new(); lod_levels];
+    for key in selection.selected_set.iter().copied() {
+        let idx = key.lod as usize;
+        if idx < selection.selected_by_lod.len() {
+            selection.selected_by_lod[idx].push(key);
+        }
+    }
+}
+
+fn extend_with_parents(set: &HashSet<TileKey>, lod_levels: u8) -> HashSet<TileKey> {
+    let mut out = set.clone();
+    for key in set.iter().copied() {
+        let mut current = key;
+        while let Some(parent) = parent_tile(current, lod_levels) {
+            out.insert(parent);
+            current = parent;
+        }
+    }
+    out
+}
+
+fn required_parents_of_set(set: &HashSet<TileKey>, lod_levels: u8) -> HashSet<TileKey> {
+    let mut required = HashSet::new();
+    for key in set.iter().copied() {
+        let mut current = key;
+        while let Some(parent) = parent_tile(current, lod_levels) {
+            required.insert(parent);
+            current = parent;
+        }
+    }
+    required
+}
+
+fn evict_subtree(set: &mut HashSet<TileKey>, root: TileKey, lod_levels: u8) -> usize {
+    let mut to_remove = Vec::new();
+    for key in set.iter().copied() {
+        if is_descendant_or_self(key, root, lod_levels) {
+            to_remove.push(key);
+        }
+    }
+    for key in &to_remove {
+        set.remove(key);
+    }
+    to_remove.len()
+}
+
+fn is_descendant_or_self(mut key: TileKey, ancestor: TileKey, lod_levels: u8) -> bool {
+    if key == ancestor {
+        return true;
+    }
+    while let Some(parent) = parent_tile(key, lod_levels) {
+        if parent == ancestor {
+            return true;
+        }
+        key = parent;
+    }
+    false
+}
+
+fn tile_priority(
+    key: TileKey,
+    activity_levels: &[ActivityLevel],
+    tiles: &HashMap<TileKey, TileState>,
+    frame: u64,
+    lod_levels: u8,
+) -> f32 {
+    let activity = activity_at(activity_levels, key);
+    let age = tiles
+        .get(&key)
+        .map(|state| frame.saturating_sub(state.last_active_frame) as f32)
+        .unwrap_or(0.0);
+    let recency = 1.0 / (1.0 + age);
+    let lod_bias = (lod_levels.saturating_sub(1) as f32 - key.lod as f32) * 0.05;
+    activity + recency * 0.2 + lod_bias
 }
 
 fn compute_dispatches(
@@ -853,6 +1180,78 @@ fn tile_color(activity: f32, selected: bool, camera: bool) -> [u8; 3] {
     [r, g, b]
 }
 
+fn render_lod_pixels(
+    level: &LodLevel,
+    activity: &ActivityLevel,
+    selected: &HashSet<TileKey>,
+    camera: (f32, f32),
+    scale: usize,
+    max_dim: i32,
+) -> Option<(u32, u32, Vec<u8>)> {
+    if activity.tiles_x <= 0 || activity.tiles_z <= 0 {
+        return None;
+    }
+    if activity.tiles_x > max_dim || activity.tiles_z > max_dim {
+        return None;
+    }
+    let scale = scale.max(1);
+    let width = activity.tiles_x as usize * scale;
+    let height = activity.tiles_z as usize * scale;
+    let mut pixels = Vec::with_capacity(width * height * 3);
+
+    let cam_tx = (camera.0 / level.tile_size_m).floor() as i32;
+    let cam_tz = (camera.1 / level.tile_size_m).floor() as i32;
+
+    for tz in 0..activity.tiles_z {
+        for _ in 0..scale {
+            for tx in 0..activity.tiles_x {
+                let key = TileKey {
+                    lod: level.lod,
+                    tx,
+                    tz,
+                };
+                let is_selected = selected.contains(&key);
+                let is_camera = tx == cam_tx && tz == cam_tz;
+                let color = tile_color(activity.get(tx, tz), is_selected, is_camera);
+                for _ in 0..scale {
+                    pixels.push(color[0]);
+                    pixels.push(color[1]);
+                    pixels.push(color[2]);
+                }
+            }
+        }
+    }
+
+    Some((width as u32, height as u32, pixels))
+}
+
+fn blit_pixels(
+    dest: &mut [u8],
+    dest_w: usize,
+    dest_h: usize,
+    src: Vec<u8>,
+    src_w: usize,
+    src_h: usize,
+    offset_x: usize,
+    offset_y: usize,
+) {
+    if offset_x >= dest_w || offset_y >= dest_h {
+        return;
+    }
+    let copy_w = src_w.min(dest_w - offset_x);
+    let copy_h = src_h.min(dest_h - offset_y);
+
+    for y in 0..copy_h {
+        let dest_row = (offset_y + y) * dest_w;
+        let src_row = y * src_w;
+        for x in 0..copy_w {
+            let dest_idx = (dest_row + offset_x + x) * 3;
+            let src_idx = (src_row + x) * 3;
+            dest[dest_idx..dest_idx + 3].copy_from_slice(&src[src_idx..src_idx + 3]);
+        }
+    }
+}
+
 fn radial_falloff(dist: f32, radius: f32) -> f32 {
     if radius <= 0.0 || dist >= radius {
         0.0
@@ -900,7 +1299,7 @@ fn write_csv_header(file: &mut fs::File, lod_levels: usize) -> std::io::Result<(
         header.push_str(&format!(",l{}", lod));
     }
     header.push_str(
-        ",mem_mb,new_tiles,evicted_tiles,pass_surface,pass_flux,pass_depth,pass_erosion,pass_upsample,pass_downsample\n",
+        ",mem_mb,new_tiles,evicted_tiles,budget_tiles,budget_evicted,budget_blocked,thrash_per_frame,thrash_ratio,pass_surface,pass_flux,pass_depth,pass_erosion,pass_upsample,pass_downsample\n",
     );
     file.write_all(header.as_bytes())
 }
@@ -970,6 +1369,8 @@ fn parse_config(text: &str) -> Result<Config, String> {
             "image_lod" => cfg.image_lod = parse_u32(value)?,
             "image_scale" => cfg.image_scale = parse_u32(value)?,
             "image_max_dim" => cfg.image_max_dim = parse_u32(value)?,
+            "image_composite" => cfg.image_composite = parse_bool(value)?,
+            "thrash_window" => cfg.thrash_window = parse_u32(value)?,
             _ => {
                 return Err(format!("line {}: unknown key '{}'", line_idx + 1, key));
             }

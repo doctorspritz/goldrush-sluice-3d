@@ -44,8 +44,12 @@ ascii_map_lod = 0
 ascii_map_max_dim = 80
 
 # Optional PPM image output (empty disables)
-image_output_dir = ""
-image_stride = 0
+image_output_dir = "prototypes/heightfield_lod/out"
+image_stride = 10
 image_lod = 0
 image_scale = 8
 image_max_dim = 200
+image_composite = true
+
+# Thrash metric
+thrash_window = 60

@@ -92,6 +92,7 @@ Avoid seams and chunk boundary artifacts:
 The prototype runs a CPU-only scheduler that:
 - Computes activity maps
 - Selects tiles per LOD with pool limits
+- Enforces a global memory budget with LRU-style eviction
 - Reports memory and dispatch counts
 
 ## Prototype Output (Optional)
@@ -99,6 +100,8 @@ The prototype runs a CPU-only scheduler that:
 - ASCII map for visualizing tile residency and activity on a chosen LOD.
   - `#` = selected tile, `C` = camera tile, other glyphs reflect activity intensity.
 - PPM image output for quick visual inspection (tile grid heatmap).
+- Composite PPM image (all LODs in a single mosaic) for side-by-side comparison.
+- Thrash metric (moving window churn) logged to CSV and console.
 
 ## Next Steps (When Integrating)
 - Introduce a GPU tile atlas + bindless indices

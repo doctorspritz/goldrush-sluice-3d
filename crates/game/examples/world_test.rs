@@ -237,6 +237,7 @@ struct App {
     last_frame: Instant,
     last_stats: Instant,
     window_size: (u32, u32),
+    selected_material: u32, // 0=sediment, 1=overburden, 2=gravel
 }
 
 impl App {
@@ -271,6 +272,7 @@ impl App {
             last_frame: Instant::now(),
             last_stats: Instant::now(),
             window_size: (1280, 720),
+            selected_material: 2, // Default to gravel (most useful for building)
         }
     }
 
@@ -318,22 +320,40 @@ impl App {
             // self.world.update(dt);
         }
 
+        // Handle mouse click - material tool
         if self.input.left_mouse {
             if let Some(hit) = self.raycast_terrain() {
-                if self
-                    .input
-                    .keys
-                    .contains(&KeyCode::ControlLeft)
-                    || self.input.keys.contains(&KeyCode::ControlRight)
-                {
-                    self.world
-                        .add_material(hit, ADD_RADIUS, ADD_HEIGHT, TerrainMaterial::Gravel);
-                } else {
-                    self.world.excavate(hit, DIG_RADIUS, DIG_DEPTH);
-                }
-                // Sync terrain changes to GPU immediately (terrain only, not water)
                 if let Some(gpu) = self.gpu.as_ref() {
-                    gpu.heightfield.upload_terrain_only(&gpu.queue, &self.world);
+                    // Ctrl = add material, else = excavate
+                    let is_adding = self.input.keys.contains(&KeyCode::ControlLeft)
+                        || self.input.keys.contains(&KeyCode::ControlRight);
+                    
+                    let amount = if is_adding { ADD_HEIGHT * 50.0 } else { -(DIG_DEPTH * 50.0) };
+                    let radius = if is_adding { ADD_RADIUS } else { DIG_RADIUS };
+                    
+                    // Update material tool params
+                    gpu.heightfield.update_material_tool(
+                        &gpu.queue,
+                        hit.x, hit.z,
+                        radius,
+                        amount,
+                        self.selected_material,
+                        dt,
+                        true, // enabled
+                    );
+                    
+                    // Dispatch appropriate tool
+                    let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Material Tool Encoder"),
+                    });
+                    
+                    if is_adding {
+                        gpu.heightfield.dispatch_material_tool(&mut encoder);
+                    } else {
+                        gpu.heightfield.dispatch_excavate(&mut encoder);
+                    }
+                    
+                    gpu.queue.submit(Some(encoder.finish()));
                 }
             }
         }
@@ -726,6 +746,19 @@ impl ApplicationHandler for App {
                                         self.emitter.enabled = !self.emitter.enabled;
                                         println!("Emitter enabled: {}", self.emitter.enabled);
                                     }
+                                }
+                                // Material selection keys
+                                KeyCode::KeyG => {
+                                    self.selected_material = 2; // Gravel
+                                    println!("Selected material: Gravel");
+                                }
+                                KeyCode::KeyO => {
+                                    self.selected_material = 1; // Overburden
+                                    println!("Selected material: Overburden");
+                                }
+                                KeyCode::KeyT => {
+                                    self.selected_material = 0; // Sediment (T for terrain/sediment)
+                                    println!("Selected material: Sediment");
                                 }
                                 _ => {}
                             }

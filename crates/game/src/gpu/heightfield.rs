@@ -48,6 +48,13 @@ pub struct GpuHeightfield {
     pub emitter_params_buffer: wgpu::Buffer,
     pub emitter_bind_group: wgpu::BindGroup,
     
+    // Material Tool Pipelines
+    pub material_tool_pipeline: wgpu::ComputePipeline,
+    pub excavate_pipeline: wgpu::ComputePipeline,
+    pub material_tool_params_buffer: wgpu::Buffer,
+    pub material_tool_bind_group: wgpu::BindGroup,
+    pub material_tool_terrain_bind_group: wgpu::BindGroup,
+    
     // Params Buffer (to update every frame)
     pub params_buffer: wgpu::Buffer,
 }
@@ -328,6 +335,84 @@ impl GpuHeightfield {
             cache: None,
         });
 
+        // Material Tool Shader & Pipelines
+        let material_tool_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Heightfield Material Tool Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/heightfield_material_tool.wgsl").into()),
+        });
+
+        // Material tool params buffer (64 bytes: pos_x, pos_z, radius, amount, material_type, enabled, width, depth, cell_size, dt, pad[2])
+        let material_tool_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Material Tool Params Buffer"),
+            size: 64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Material tool bind group layout: params + terrain buffers
+        let material_tool_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Material Tool Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            ],
+        });
+
+        // Terrain layout for material tool (same as terrain_layout but as group 1)
+        let material_tool_terrain_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Material Tool Terrain Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            ],
+        });
+
+        let material_tool_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Material Tool Bind Group"),
+            layout: &material_tool_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: material_tool_params_buffer.as_entire_binding() },
+            ],
+        });
+
+        let material_tool_terrain_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Material Tool Terrain Bind Group"),
+            layout: &material_tool_terrain_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: bedrock.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: paydirt.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: gravel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: overburden.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: sediment.as_entire_binding() },
+            ],
+        });
+
+        let material_tool_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Material Tool Pipeline Layout"),
+            bind_group_layouts: &[&material_tool_layout, &material_tool_terrain_layout],
+            push_constant_ranges: &[],
+        });
+
+        let material_tool_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Material Tool Pipeline"),
+            layout: Some(&material_tool_pipeline_layout),
+            module: &material_tool_shader,
+            entry_point: Some("apply_material_tool"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let excavate_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Excavate Pipeline"),
+            layout: Some(&material_tool_pipeline_layout),
+            module: &material_tool_shader,
+            entry_point: Some("excavate"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         Self {
             width,
             depth,
@@ -360,6 +445,12 @@ impl GpuHeightfield {
             emitter_pipeline,
             emitter_params_buffer,
             emitter_bind_group,
+            
+            material_tool_pipeline,
+            excavate_pipeline,
+            material_tool_params_buffer,
+            material_tool_bind_group,
+            material_tool_terrain_bind_group,
             
             params_buffer,
         }
@@ -449,6 +540,58 @@ impl GpuHeightfield {
         
         pass.set_pipeline(&self.emitter_pipeline);
         pass.set_bind_group(0, &self.emitter_bind_group, &[]);
+        pass.dispatch_workgroups(x_groups, z_groups, 1);
+    }
+
+    /// Update GPU material tool parameters
+    /// material_type: 0=sediment, 1=overburden, 2=gravel
+    pub fn update_material_tool(&self, queue: &wgpu::Queue, pos_x: f32, pos_z: f32, radius: f32, amount: f32, material_type: u32, dt: f32, enabled: bool) {
+        // ToolParams struct: pos_x, pos_z, radius, amount, material_type, enabled, width, depth, cell_size, dt, pad[2]
+        let params: [u32; 12] = [
+            bytemuck::cast(pos_x),
+            bytemuck::cast(pos_z),
+            bytemuck::cast(radius),
+            bytemuck::cast(amount),
+            material_type,
+            if enabled { 1 } else { 0 },
+            self.width,
+            self.depth,
+            bytemuck::cast(1.0f32), // cell_size
+            bytemuck::cast(dt),
+            0, 0, // padding
+        ];
+        queue.write_buffer(&self.material_tool_params_buffer, 0, bytemuck::cast_slice(&params));
+    }
+    
+    /// Dispatch material tool (add/remove specific material type)
+    pub fn dispatch_material_tool(&self, encoder: &mut wgpu::CommandEncoder) {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("Material Tool Compute Pass"),
+            timestamp_writes: None,
+        });
+        
+        let x_groups = (self.width + 15) / 16;
+        let z_groups = (self.depth + 15) / 16;
+        
+        pass.set_pipeline(&self.material_tool_pipeline);
+        pass.set_bind_group(0, &self.material_tool_bind_group, &[]);
+        pass.set_bind_group(1, &self.material_tool_terrain_bind_group, &[]);
+        pass.dispatch_workgroups(x_groups, z_groups, 1);
+    }
+    
+    /// Dispatch excavation (generic dig from top layer down)
+    pub fn dispatch_excavate(&self, encoder: &mut wgpu::CommandEncoder) {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("Excavate Compute Pass"),
+            timestamp_writes: None,
+        });
+        
+        let x_groups = (self.width + 15) / 16;
+        let z_groups = (self.depth + 15) / 16;
+        
+        pass.set_pipeline(&self.excavate_pipeline);
+        pass.set_bind_group(0, &self.material_tool_bind_group, &[]);
+        pass.set_bind_group(1, &self.material_tool_terrain_bind_group, &[]);
         pass.dispatch_workgroups(x_groups, z_groups, 1);
     }
 
