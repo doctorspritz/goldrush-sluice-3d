@@ -28,8 +28,8 @@ use winit::{
     window::{Window, WindowId},
 };
 
-const WORLD_WIDTH: usize = 256;
-const WORLD_DEPTH: usize = 256;
+const WORLD_WIDTH: usize = 512;
+const WORLD_DEPTH: usize = 512;
 const CELL_SIZE: f32 = 1.0;
 const INITIAL_HEIGHT: f32 = 10.0;
 
@@ -42,8 +42,8 @@ const WATER_ADD_VOLUME: f32 = 5.0;
 const MOVE_SPEED: f32 = 20.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
 
-const STEPS_PER_FRAME: usize = 10;
-const DT: f32 = 0.005;
+const STEPS_PER_FRAME: usize = 10; // More steps for faster filling
+const DT: f32 = 0.02;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Default)]
@@ -202,6 +202,7 @@ struct InputState {
     left_mouse: bool,
     last_mouse_pos: Option<(f64, f64)>,
     mouse_pos: (f32, f32),
+    scroll_delta: f32,
 }
 
 struct WaterEmitter {
@@ -210,6 +211,8 @@ struct WaterEmitter {
     radius: f32,
     enabled: bool,
 }
+
+use game::gpu::heightfield::GpuHeightfield;
 
 struct GpuState {
     surface: wgpu::Surface<'static>,
@@ -221,6 +224,7 @@ struct GpuState {
     bind_group: wgpu::BindGroup,
     terrain: Mesh,
     water: Mesh,
+    heightfield: GpuHeightfield,
 }
 
 struct App {
@@ -244,13 +248,13 @@ impl App {
             gpu: None,
             world,
             emitter: WaterEmitter {
-                position: Vec3::new(128.0, 30.0, 128.0),
-                rate: 100.0,
+                position: Vec3::new(256.0, 50.0, 80.0), // Top Pond Start
+                rate: 50.0, // Higher rate for visible filling
                 radius: 5.0,
-                enabled: false,
+                enabled: true, // Start enabled
             },
             camera: Camera {
-                position: Vec3::new(128.0, 50.0, 128.0),
+                position: Vec3::new(256.0, 300.0, 256.0),
                 yaw: -1.57,
                 pitch: -0.4,
                 speed: MOVE_SPEED,
@@ -262,6 +266,7 @@ impl App {
                 left_mouse: false,
                 last_mouse_pos: None,
                 mouse_pos: (0.0, 0.0),
+                scroll_delta: 0.0,
             },
             last_frame: Instant::now(),
             last_stats: Instant::now(),
@@ -276,11 +281,41 @@ impl App {
     fn update(&mut self, dt: f32) {
         self.update_camera(dt);
 
-        for _ in 0..STEPS_PER_FRAME {
-            if self.emitter.enabled {
-                self.world.add_water(self.emitter.position, self.emitter.rate * DT);
+        if let Some(gpu) = self.gpu.as_mut() {
+            // Run GPU Sim with fixed timestep substepping
+            let sim_dt = DT; // Use fixed 0.02s timestep
+            let steps = ((dt / sim_dt).ceil() as usize).min(STEPS_PER_FRAME);
+            
+            for _ in 0..steps {
+                let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Sim Encoder"),
+                });
+                
+                // Update GPU emitter and dispatch (before water sim)
+                gpu.heightfield.update_emitter(
+                    &gpu.queue,
+                    self.emitter.position.x,
+                    self.emitter.position.z,
+                    self.emitter.radius,
+                    self.emitter.rate,
+                    sim_dt,
+                    self.emitter.enabled,
+                );
+                gpu.heightfield.dispatch_emitter(&mut encoder);
+                
+                // Update water sim params and dispatch
+                gpu.heightfield.update_params(&gpu.queue, sim_dt);
+                gpu.heightfield.dispatch(&mut encoder, sim_dt);
+                
+                gpu.queue.submit(Some(encoder.finish()));
             }
-            self.world.update(DT);
+            
+            // Sync back to CPU for rendering
+            pollster::block_on(gpu.heightfield.download_to_world(&gpu.device, &gpu.queue, &mut self.world));
+            
+        } else {
+            // Fallback if no GPU? (Shouldn't happen in this example)
+            // self.world.update(dt);
         }
 
         if self.input.left_mouse {
@@ -295,6 +330,10 @@ impl App {
                         .add_material(hit, ADD_RADIUS, ADD_HEIGHT, TerrainMaterial::Gravel);
                 } else {
                     self.world.excavate(hit, DIG_RADIUS, DIG_DEPTH);
+                }
+                // Sync terrain changes to GPU immediately (terrain only, not water)
+                if let Some(gpu) = self.gpu.as_ref() {
+                    gpu.heightfield.upload_terrain_only(&gpu.queue, &self.world);
                 }
             }
         }
@@ -346,10 +385,22 @@ impl App {
             self.camera.position += direction.normalize() * self.camera.speed * dt;
         }
 
+        if let Some(gpu) = &mut self.gpu {
+            // ... (Wait, this is update_camera, not update?)
+            // update_camera has no gpu argument.
+        }
+
+        // Apply scroll zoom
+        if self.input.scroll_delta != 0.0 {
+            let forward = self.camera.forward();
+            self.camera.position += forward * self.input.scroll_delta * 2.0;
+            self.input.scroll_delta = 0.0;
+        }
+
         let world_size = self.world.world_size();
         self.camera.position.x = self.camera.position.x.clamp(0.0, world_size.x);
         self.camera.position.z = self.camera.position.z.clamp(0.0, world_size.z);
-        self.camera.position.y = self.camera.position.y.clamp(2.0, world_size.y + 30.0);
+        self.camera.position.y = self.camera.position.y.clamp(2.0, world_size.y + 100.0);
     }
 
     fn screen_to_world_ray(&self, screen_x: f32, screen_y: f32) -> Vec3 {
@@ -529,6 +580,14 @@ impl App {
         let terrain = Mesh::new(&device, &terrain_vertices, &terrain_indices, "Terrain");
         let water = Mesh::new(&device, &water_vertices, &water_indices, "Water");
 
+        let heightfield = GpuHeightfield::new(
+            &device, 
+            self.world.width as u32, 
+            self.world.depth as u32, 
+            INITIAL_HEIGHT
+        );
+        heightfield.upload_from_world(&queue, &self.world);
+
         self.gpu = Some(GpuState {
             surface,
             device,
@@ -539,6 +598,7 @@ impl App {
             bind_group,
             terrain,
             water,
+            heightfield,
         });
     }
 
@@ -702,6 +762,13 @@ impl ApplicationHandler for App {
                     self.input.last_mouse_pos = Some((position.x, position.y));
                 }
             }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let y = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y * 2.0,
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.1,
+                };
+                self.input.scroll_delta += y;
+            }
             WindowEvent::RedrawRequested => self.render(),
             _ => {}
         }
@@ -710,22 +777,154 @@ impl ApplicationHandler for App {
 
 fn build_world() -> World {
     let mut world = World::new(WORLD_WIDTH, WORLD_DEPTH, CELL_SIZE, INITIAL_HEIGHT);
-
-    // Initial terrain sculpting for interesting flow
-    for z in 50..200 {
-        for x in 50..200 {
+    
+    // Cascading Tailings Ponds Generator
+    // Map: 512x512
+    // Pond 1: Top (Z: 50-150)
+    // Pond 2: Middle (Z: 200-300)
+    // Pond 3: Bottom (Z: 350-450)
+    // Slope: General slope North-South (Z direction)
+    
+    let center_x = (WORLD_WIDTH / 2) as f32; // 256.0
+    
+    for z in 0..WORLD_DEPTH {
+        for x in 0..WORLD_WIDTH {
             let idx = world.idx(x, z);
-            let dist_x = (x as f32 - 128.0).abs();
-            let dist_z = (z as f32 - 128.0).abs();
-            let dist = (dist_x.max(dist_z)) / 20.0;
-            world.terrain_base[idx] = INITIAL_HEIGHT - 5.0 * (1.0 - dist).max(0.0);
+            
+            // 1. General Slope
+            // Drop 40m over 512m
+            let slope_drop = (z as f32 / WORLD_DEPTH as f32) * 40.0;
+            let base_h = INITIAL_HEIGHT + 40.0 - slope_drop;
+            
+            world.bedrock_elevation[idx] = base_h * 0.5; // Deep bedrock
+            world.overburden_thickness[idx] = base_h * 0.2;
+            world.paydirt_thickness[idx] = base_h * 0.3;
+            
+            // 2. Sculpt Basins (Deeper areas)
+            let mut basin_depth = 0.0;
+            
+            // Pond 1 (Top) - Reduced Scale
+            if z > 50 && z < 100 && x > 200 && x < 312 { // Length 50, Width 112
+                let dx = ((x as f32 - center_x) / 50.0).powi(2);
+                let dz = ((z as f32 - 75.0) / 25.0).powi(2);
+                let d = dx + dz;
+                if d < 1.0 {
+                    basin_depth = 5.0 * (1.0 - d);
+                }
+            }
+            
+            // Pond 2 (Middle)
+            if z > 150 && z < 200 && x > 200 && x < 312 {
+                let dx = ((x as f32 - center_x) / 50.0).powi(2);
+                let dz = ((z as f32 - 175.0) / 25.0).powi(2);
+                let d = dx + dz;
+                if d < 1.0 {
+                    basin_depth = 5.0 * (1.0 - d);
+                }
+            }
+            
+            // Pond 3 (Bottom)
+            if z > 250 && z < 300 && x > 200 && x < 312 {
+                let dx = ((x as f32 - center_x) / 50.0).powi(2);
+                let dz = ((z as f32 - 275.0) / 25.0).powi(2);
+                let d = dx + dz;
+                if d < 1.0 {
+                    basin_depth = 5.0 * (1.0 - d);
+                }
+            }
+            
+            // Apply Basin: Dig into layers
+            if basin_depth > 0.0 {
+                 // Remove overburden first
+                 let ob = world.overburden_thickness[idx];
+                 let dug_ob = basin_depth.min(ob);
+                 world.overburden_thickness[idx] -= dug_ob;
+                 
+                 let remaining = basin_depth - dug_ob;
+                 if remaining > 0.0 {
+                     world.paydirt_thickness[idx] = (world.paydirt_thickness[idx] - remaining).max(0.0);
+                 }
+            }
+            
+            // 3. Build Berms (Walls) below each pond
+            // Berm 1 (Z~110)
+            // Berm 2 (Z~210)
+            // Berm 3 (Z~310)
+            
+            let mut berm_height = 0.0;
+            
+            // Berm 1
+            if z > 110 && z < 115 {
+                berm_height = 5.0; // Wall
+                // Spillway (Center)
+                if (x as f32 - center_x).abs() < 5.0 {
+                    berm_height = 1.0; 
+                }
+            }
+            
+            // Berm 2
+             if z > 210 && z < 215 {
+                berm_height = 5.0; // Wall
+                // Spillway (Offset Left)
+                if (x as f32 - (center_x - 30.0)).abs() < 5.0 {
+                    berm_height = 1.0; 
+                }
+            }
+             // Berm 3 (End Dam)
+             if z > 310 && z < 315 {
+                berm_height = 6.0; // Wall
+                // Spillway (Offset Right)
+                if (x as f32 - (center_x + 30.0)).abs() < 5.0 {
+                    berm_height = 2.0; 
+                }
+            }
+            
+            if berm_height > 0.0 {
+                // Add Overburden pile (Berm)
+                world.overburden_thickness[idx] += berm_height;
+                // Compact it? No need.
+            }
         }
     }
 
-    for z in 120..136 {
-        for x in 80..176 {
+    // Pre-fill ponds with water to berm spillway level
+    // Calculate reference heights for each pond's water level
+    let pond1_water_level = { // Z~75, X~256
+        let ref_idx = world.idx(256, 110); // Berm spillway location
+        world.bedrock_elevation[ref_idx] + world.paydirt_thickness[ref_idx] + world.overburden_thickness[ref_idx] - 1.0 // Below spillway
+    };
+    let pond2_water_level = {
+        let ref_idx = world.idx(226, 210); // Berm 2 spillway (center_x - 30)
+        world.bedrock_elevation[ref_idx] + world.paydirt_thickness[ref_idx] + world.overburden_thickness[ref_idx] - 1.0
+    };
+    let pond3_water_level = {
+        let ref_idx = world.idx(286, 310); // Berm 3 spillway (center_x + 30)
+        world.bedrock_elevation[ref_idx] + world.paydirt_thickness[ref_idx] + world.overburden_thickness[ref_idx] - 1.0
+    };
+
+    for z in 0..WORLD_DEPTH {
+        for x in 0..WORLD_WIDTH {
             let idx = world.idx(x, z);
-            world.terrain_sediment[idx] = 3.0;
+            let ground = world.ground_height(x, z);
+            
+            // Pond 1 fill
+            if z > 50 && z < 110 && x > 200 && x < 312 {
+                if ground < pond1_water_level {
+                    world.water_surface[idx] = pond1_water_level;
+                }
+            }
+            // Pond 2 fill
+            if z > 150 && z < 210 && x > 200 && x < 312 {
+                if ground < pond2_water_level {
+                    world.water_surface[idx] = pond2_water_level;
+                }
+            }
+            // Pond 3 fill
+            if z > 250 && z < 310 && x > 200 && x < 312 {
+                if ground < pond3_water_level {
+                    world.water_surface[idx] = pond3_water_level;
+                }
+            }
         }
     }
 
@@ -742,13 +941,14 @@ fn build_terrain_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
             let height = world.ground_height(x, z);
             let sediment = world.terrain_sediment[idx];
             let sediment_ratio = (sediment / 2.0).min(1.0);
-            let base_color = match world.terrain_material[idx] {
-                TerrainMaterial::Dirt => [0.4, 0.3, 0.2],
-                TerrainMaterial::Gravel => [0.5, 0.5, 0.5],
-                TerrainMaterial::Sand => [0.8, 0.7, 0.5],
+                let base_color = match world.surface_material(x, z) {
+                TerrainMaterial::Dirt => [0.4, 0.3, 0.2], // Overburden (Brown)
+                TerrainMaterial::Gravel => [0.6, 0.5, 0.2], // Paydirt (Gold-ish gravel)
+                TerrainMaterial::Sand => [0.8, 0.7, 0.5], // Sediment (Tan)
                 TerrainMaterial::Clay => [0.6, 0.4, 0.3],
-                TerrainMaterial::Bedrock => [0.3, 0.3, 0.35],
-            };
+                TerrainMaterial::Bedrock => [0.2, 0.2, 0.25], // Bedrock (Dark Grey)
+                };
+
             let sediment_color = [0.6, 0.5, 0.4];
 
             let color = [
@@ -795,7 +995,7 @@ fn build_water_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
     for z in 0..world.depth {
         for x in 0..world.width {
             let depth = world.water_depth(x, z);
-            if depth < 0.01 {
+            if depth < 0.001 {
                 continue;
             }
 
@@ -803,7 +1003,7 @@ fn build_water_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
             let height = world.water_surface[idx];
             let turbidity = world.suspended_sediment[idx];
 
-            let alpha = (depth / 2.0).min(0.8);
+            let alpha = 0.5 + (depth).min(0.3); // Visible even when shallow
             let brown = turbidity.min(0.5) * 2.0;
             let color = [
                 0.2 + brown * 0.4,

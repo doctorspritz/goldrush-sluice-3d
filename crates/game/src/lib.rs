@@ -3,3 +3,6 @@
 pub mod gpu;
 pub mod terrain_render;
 pub mod tools;
+
+#[cfg(feature = "panning")]
+pub mod panning;

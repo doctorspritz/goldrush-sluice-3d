@@ -13,7 +13,7 @@ This document provides step-by-step instructions to implement the gold panning m
 
 **Goal:** Create module structure and example binary
 **Time:** 30 minutes
-**Status:** ⬜ Not Started
+**Status:** 🟨 someday.maybe (parked)
 
 ### Step 0.1: Create Module Directory Structure
 
@@ -96,7 +96,7 @@ Window opens with text displayed.
 
 **Goal:** Spawn particles in pan, run FLIP sim, render basic view
 **Time:** 4-6 hours
-**Status:** ⬜ Not Started
+**Status:** 🟨 someday.maybe (parked)
 
 ### Step 1.1: Define Material Types
 
@@ -625,7 +625,7 @@ Should see:
 
 **Goal:** Replace simple physics with GPU FLIP simulation
 **Time:** 4-6 hours
-**Status:** ⬜ Not Started
+**Status:** 🟨 someday.maybe (parked)
 
 ### Step 2.1: Add GPU Dependencies to Pan Module
 
@@ -881,7 +881,7 @@ self.flip.apply_pan_swirl(
 
 **Goal:** Heavy particles (gold) sink through vortex, light particles (sand) suspend
 **Time:** 3-4 hours
-**Status:** ⬜ Not Started
+**Status:** 🟨 someday.maybe (parked)
 
 ### Step 3.1: Add Settling Velocity Calculation
 
@@ -1028,7 +1028,7 @@ fn sync_particles_to_gpu(&mut self) {
 
 **Goal:** Make physics visible and satisfying
 **Time:** 2-3 hours
-**Status:** ⬜ Not Started
+**Status:** 🟨 someday.maybe (parked)
 
 ### Step 4.1: Add Gold Shimmer Effect
 
@@ -1184,7 +1184,7 @@ draw_text(
 
 **Goal:** Tutorial, scoring, progression
 **Time:** 3-4 hours
-**Status:** ⬜ Not Started
+**Status:** 🟨 someday.maybe (parked)
 
 ### Step 5.1: Add Tutorial State Machine
 

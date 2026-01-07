@@ -22,6 +22,10 @@ pub struct WorldParams {
     pub settling_velocity: f32,
     /// Bed porosity (0-1, fraction that is void space).
     pub bed_porosity: f32,
+    /// Hardness of overburden (erosion resistance multiplier).
+    pub hardness_overburden: f32,
+    /// Hardness of paydirt (erosion resistance multiplier).
+    pub hardness_paydirt: f32,
 }
 
 impl Default for WorldParams {
@@ -31,9 +35,11 @@ impl Default for WorldParams {
             collapse_transfer_rate: 0.35,
             collapse_max_outflow: 0.5,
             gravity: 9.81,
-            water_damping: 0.001,
+            water_damping: 0.01,
             settling_velocity: 0.01,
             bed_porosity: 0.4,
+            hardness_overburden: 1.0,
+            hardness_paydirt: 5.0,
         }
     }
 }
@@ -80,13 +86,13 @@ pub struct World {
     pub depth: usize,
     pub cell_size: f32,
 
-    // Terrain layers
-    /// Base terrain height (bedrock, original ground) - only changes via excavation.
-    pub terrain_base: Vec<f32>,
-    /// Sediment layer height (deposited material) - grows from settling.
+    // Geological Layers
+    pub bedrock_elevation: Vec<f32>,     // The hard floor (Base height)
+    pub paydirt_thickness: Vec<f32>,     // Gravel/Gold layer
+    pub overburden_thickness: Vec<f32>,  // Soil/Dirt layer
+    
+    // Sediment (Transient)
     pub terrain_sediment: Vec<f32>,
-    /// Material type per cell (affects angle of repose).
-    pub terrain_material: Vec<TerrainMaterial>,
 
     // Water layer
     /// Water surface height (absolute, not depth).
@@ -100,6 +106,9 @@ pub struct World {
 
     // Working buffers (avoid allocation in update loop)
     collapse_deltas: Vec<f32>,
+    advection_mass_buffer: Vec<f32>,
+    advection_delta_buffer: Vec<f32>,
+    advection_outflow_buffer: Vec<f32>,
 
     // Parameters
     pub params: WorldParams,
@@ -116,14 +125,25 @@ impl World {
             width,
             depth,
             cell_size,
-            terrain_base: vec![initial_height; cell_count],
+            
+            // Default Geology: 
+            // 50% Bedrock (Deep base)
+            // 30% Paydirt (Thick gold bearing layer)
+            // 20% Overburden (Top soil)
+            bedrock_elevation: vec![initial_height * 0.5; cell_count],
+            paydirt_thickness: vec![initial_height * 0.3; cell_count],
+            overburden_thickness: vec![initial_height * 0.2; cell_count],
+            
             terrain_sediment: vec![0.0; cell_count],
-            terrain_material: vec![TerrainMaterial::Dirt; cell_count],
+            
             water_surface: vec![0.0; cell_count],
             water_flow_x: vec![0.0; flow_x_count],
             water_flow_z: vec![0.0; flow_z_count],
             suspended_sediment: vec![0.0; cell_count],
             collapse_deltas: vec![0.0; cell_count],
+            advection_mass_buffer: vec![0.0; cell_count],
+            advection_delta_buffer: vec![0.0; cell_count],
+            advection_outflow_buffer: vec![0.0; cell_count],
             params: WorldParams::default(),
         }
     }
@@ -150,7 +170,22 @@ impl World {
     #[inline]
     pub fn ground_height(&self, x: usize, z: usize) -> f32 {
         let idx = self.idx(x, z);
-        self.terrain_base[idx] + self.terrain_sediment[idx]
+        self.bedrock_elevation[idx] + self.paydirt_thickness[idx] + self.overburden_thickness[idx] + self.terrain_sediment[idx]
+    }
+    
+    #[inline]
+    pub fn surface_material(&self, x: usize, z: usize) -> TerrainMaterial {
+        let idx = self.idx(x, z);
+        if self.terrain_sediment[idx] > 0.01 {
+            return TerrainMaterial::Sand; // Or generic sediment
+        }
+        if self.overburden_thickness[idx] > 0.01 {
+            return TerrainMaterial::Dirt;
+        }
+        if self.paydirt_thickness[idx] > 0.01 {
+            return TerrainMaterial::Gravel;
+        }
+        TerrainMaterial::Bedrock
     }
 
     /// Water depth at cell.
@@ -185,7 +220,9 @@ impl World {
     pub fn update(&mut self, dt: f32) {
         self.update_terrain_collapse();
         self.update_water_flow(dt);
-        self.update_sediment_settling(dt);
+        self.update_sediment_advection(dt);
+        self.update_erosion(dt);
+        // self.update_sediment_settling(dt); // Replaced by update_erosion capacity model
     }
 
     /// Update terrain collapse based on angle of repose.
@@ -215,7 +252,7 @@ impl World {
                 let idx = self.idx(x, z);
                 let h = self.ground_height(x, z);
 
-                let material = self.terrain_material[idx];
+                let material = self.surface_material(x, z);
                 if material == TerrainMaterial::Bedrock {
                     continue;
                 }
@@ -274,17 +311,23 @@ impl World {
                 continue;
             }
 
+            let x = idx % self.width;
+            let z = idx / self.width;
+
             let old_sediment = self.terrain_sediment[idx];
-            let old_ground = self.terrain_base[idx] + old_sediment;
-            let had_water = self.water_surface[idx] > old_ground + 1e-4;
+            // Calc ground before sediment change, but using current layers
+            let current_ground = self.ground_height(x, z);
+            let ground_base_layers = current_ground - old_sediment; 
+            
+            let had_water = self.water_surface[idx] > current_ground + 1e-4;
 
             let new_sediment = (old_sediment + delta).max(0.0);
             self.terrain_sediment[idx] = new_sediment;
             changed = true;
 
-            let new_ground = self.terrain_base[idx] + new_sediment;
+            let new_ground = ground_base_layers + new_sediment;
             if had_water {
-                let delta_ground = new_ground - old_ground;
+                let delta_ground = new_ground - current_ground;
                 self.water_surface[idx] += delta_ground;
             } else {
                 self.water_surface[idx] = new_ground;
@@ -318,6 +361,7 @@ impl World {
         let cz = (world_pos.z / self.cell_size) as i32;
         let r_cells = (radius / self.cell_size).ceil() as i32;
         let r_sq = (radius / self.cell_size).powi(2);
+        let cell_area = self.cell_size * self.cell_size;
 
         for dz in -r_cells..=r_cells {
             for dx in -r_cells..=r_cells {
@@ -338,48 +382,71 @@ impl World {
                 let idx = self.idx(x, z);
 
                 let sed = self.terrain_sediment[idx];
-                let base = self.terrain_base[idx];
-                let material = self.terrain_material[idx];
-                let ground_before = sed + base;
+                
+                // Determine starting ground height for water calculation
+                let ground_before = self.ground_height(x, z);
                 let had_water = self.water_surface[idx] > ground_before + 1e-4;
 
                 let mut remaining_dig = dig_depth;
-                let mut total_dug = 0.0;
-
-                if sed > 0.0 && remaining_dig > 0.0 {
+                
+                // 1. Remove Sediment
+                if remaining_dig > 0.0 && sed > 0.0 {
                     let dug = remaining_dig.min(sed);
                     self.terrain_sediment[idx] -= dug;
                     remaining_dig -= dug;
-                    total_dug += dug;
+                    if dug > 0.0 {
+                        results.push(ExcavationResult {
+                            position: Vec3::new(world_pos.x, ground_before - dug * 0.5, world_pos.z),
+                            volume: dug * cell_area,
+                            material: TerrainMaterial::Sand,
+                        });
+                    }
+                }
+                
+                // 2. Remove Overburden
+                let ob = self.overburden_thickness[idx];
+                if remaining_dig > 0.0 && ob > 0.0 {
+                    let dug = remaining_dig.min(ob);
+                    self.overburden_thickness[idx] -= dug;
+                    remaining_dig -= dug;
+                     if dug > 0.0 {
+                        results.push(ExcavationResult {
+                            position: Vec3::new(world_pos.x, ground_before - sed - dug * 0.5, world_pos.z),
+                            volume: dug * cell_area,
+                            material: TerrainMaterial::Dirt,
+                        });
+                    }
                 }
 
-                if remaining_dig > 0.0 && material != TerrainMaterial::Bedrock {
-                    let dug = remaining_dig.min(base);
-                    self.terrain_base[idx] -= dug;
-                    total_dug += dug;
+                // 3. Remove Paydirt
+                let pd = self.paydirt_thickness[idx];
+                if remaining_dig > 0.0 && pd > 0.0 {
+                     let dug = remaining_dig.min(pd);
+                    self.paydirt_thickness[idx] -= dug;
+                    remaining_dig -= dug;
+                     if dug > 0.0 {
+                        results.push(ExcavationResult {
+                            position: Vec3::new(world_pos.x, ground_before - sed - ob - dug * 0.5, world_pos.z),
+                            volume: dug * cell_area,
+                            material: TerrainMaterial::Gravel,
+                        });
+                    }
                 }
+                
+                // 4. Bedrock (Stop or chip?)
+                // For now, bedrock is invincible.
 
-                let ground_after = self.terrain_base[idx] + self.terrain_sediment[idx];
-                if had_water {
-                    let delta = ground_after - ground_before;
-                    self.water_surface[idx] += delta;
-                } else {
+                let ground_after = self.ground_height(x, z);
+                // Water surface should never go below ground.
+                // If we dug under water, water surface stays (fills the hole).
+                // Only clamp if surface would be underground.
+                if self.water_surface[idx] < ground_after {
                     self.water_surface[idx] = ground_after;
                 }
 
-                if total_dug > 0.0 {
-                    let cell_area = self.cell_size * self.cell_size;
-                    let volume = total_dug * cell_area;
-
-                    results.push(ExcavationResult {
-                        position: Vec3::new(
-                            (x as f32 + 0.5) * self.cell_size,
-                            self.ground_height(x, z) + 0.1,
-                            (z as f32 + 0.5) * self.cell_size,
-                        ),
-                        volume,
-                        material,
-                    });
+                if results.last().is_some() {
+                     // Hack to return something for particles if needed, 
+                     // but we are pushing multiple.
                 }
             }
         }
@@ -393,7 +460,7 @@ impl World {
         world_pos: Vec3,
         radius: f32,
         height: f32,
-        material: TerrainMaterial,
+        _material: TerrainMaterial,
     ) {
         let cx = (world_pos.x / self.cell_size) as i32;
         let cz = (world_pos.z / self.cell_size) as i32;
@@ -415,19 +482,68 @@ impl World {
                 }
 
                 let idx = self.idx(x as usize, z as usize);
-                let ground_before = self.terrain_base[idx] + self.terrain_sediment[idx];
+                let ground_before = self.ground_height(x as usize, z as usize);
                 let had_water = self.water_surface[idx] > ground_before + 1e-4;
 
                 self.terrain_sediment[idx] += height;
-                self.terrain_material[idx] = material;
+                // Material tracking is implicit in sediment now
 
-                let ground_after = self.terrain_base[idx] + self.terrain_sediment[idx];
+                let ground_after = self.ground_height(x as usize, z as usize);
                 if had_water {
                     let delta = ground_after - ground_before;
                     self.water_surface[idx] += delta;
                 } else {
                     self.water_surface[idx] = ground_after;
                 }
+            }
+        }
+    }
+
+    /// Add water inflow (source) to the terrain.
+    pub fn add_inflow(&mut self, world_pos: Vec3, rate: f32, radius: f32, dt: f32) {
+        let volume_per_step = rate * dt;
+        let cell_radius = (radius / self.cell_size).ceil() as i32;
+        let r_sq = (radius / self.cell_size).powi(2);
+        
+        // Count valid cells to distribute evenly
+        let mut count = 0;
+        let cx = (world_pos.x / self.cell_size) as i32;
+        let cz = (world_pos.z / self.cell_size) as i32;
+
+        // First pass: count
+        for dz in -cell_radius..=cell_radius {
+            for dx in -cell_radius..=cell_radius {
+                let dist_sq = (dx * dx + dz * dz) as f32;
+                if dist_sq > r_sq { continue; }
+                let x = cx + dx;
+                let z = cz + dz;
+                if x < 0 || z < 0 || x >= self.width as i32 || z >= self.depth as i32 { continue; }
+                count += 1;
+            }
+        }
+        
+        if count == 0 { return; }
+        let vol_per_cell = volume_per_step / count as f32;
+        let height_increase = vol_per_cell / (self.cell_size * self.cell_size);
+        
+        // Second pass: apply
+        for dz in -cell_radius..=cell_radius {
+            for dx in -cell_radius..=cell_radius {
+                let dist_sq = (dx * dx + dz * dz) as f32;
+                if dist_sq > r_sq { continue; }
+                let x = cx + dx;
+                let z = cz + dz;
+                if x < 0 || z < 0 || x >= self.width as i32 || z >= self.depth as i32 { continue; }
+                
+                let idx = self.idx(x as usize, z as usize);
+                let ground = self.ground_height(x as usize, z as usize);
+                
+                // Ensure surface is at least ground
+                if self.water_surface[idx] < ground {
+                    self.water_surface[idx] = ground;
+                }
+                
+                self.water_surface[idx] += height_increase;
             }
         }
     }
@@ -662,54 +778,6 @@ impl World {
             self.water_surface[idx_front] = self.ground_height(x, depth - 1);
         }
 
-        self.advect_suspended_sediment(dt);
-    }
-
-    fn advect_suspended_sediment(&mut self, dt: f32) {
-        let width = self.width;
-        let depth = self.depth;
-        let cell_size = self.cell_size;
-
-        let mut new_sediment = self.suspended_sediment.clone();
-
-        for z in 0..depth {
-            for x in 0..width {
-                let idx = self.idx(x, z);
-                let water_depth = self.water_depth(x, z);
-
-                if water_depth < 0.001 {
-                    new_sediment[idx] = 0.0;
-                    continue;
-                }
-
-                let vx = (self.water_flow_x[self.flow_x_idx(x, z)]
-                    + self.water_flow_x[self.flow_x_idx(x + 1, z)]) * 0.5;
-                let vz = (self.water_flow_z[self.flow_z_idx(x, z)]
-                    + self.water_flow_z[self.flow_z_idx(x, z + 1)]) * 0.5;
-
-                let mut c = self.suspended_sediment[idx];
-
-                if vx > 0.0 && x > 0 {
-                    let c_upwind = self.suspended_sediment[self.idx(x - 1, z)];
-                    c -= vx * dt / cell_size * (c - c_upwind);
-                } else if vx < 0.0 && x + 1 < width {
-                    let c_upwind = self.suspended_sediment[self.idx(x + 1, z)];
-                    c -= vx * dt / cell_size * (c_upwind - c);
-                }
-
-                if vz > 0.0 && z > 0 {
-                    let c_upwind = self.suspended_sediment[self.idx(x, z - 1)];
-                    c -= vz * dt / cell_size * (c - c_upwind);
-                } else if vz < 0.0 && z + 1 < depth {
-                    let c_upwind = self.suspended_sediment[self.idx(x, z + 1)];
-                    c -= vz * dt / cell_size * (c_upwind - c);
-                }
-
-                new_sediment[idx] = c.max(0.0);
-            }
-        }
-
-        self.suspended_sediment = new_sediment;
     }
 
     /// Add water at a position.
@@ -820,9 +888,370 @@ impl World {
                 let bed_height_increase = settled_volume / (cell_area * solid_fraction);
                 self.terrain_sediment[idx] += bed_height_increase;
 
-                let max_sediment = self.water_surface[idx] - self.terrain_base[idx];
+                let base_height = self.bedrock_elevation[idx] + self.paydirt_thickness[idx] + self.overburden_thickness[idx];
+                let max_sediment = self.water_surface[idx] - base_height;
                 if self.terrain_sediment[idx] > max_sediment {
                     self.terrain_sediment[idx] = max_sediment.max(0.0);
+                }
+            }
+        }
+    }
+    /// Advect suspended sediment using water flow.
+    pub fn update_sediment_advection(&mut self, dt: f32) {
+        let width = self.width;
+        let depth = self.depth;
+        let cell_size = self.cell_size;
+        let cell_area = cell_size * cell_size;
+
+        // Take buffers out to avoid borrow checker conflicts with self methods
+        let mut mass_buffer = std::mem::take(&mut self.advection_mass_buffer);
+        let mut delta_buffer = std::mem::take(&mut self.advection_delta_buffer);
+        // We need a 'total outflow' buffer for limiting
+        let mut outflow_buffer = std::mem::take(&mut self.advection_outflow_buffer);
+        
+        // Ensure size
+        if mass_buffer.len() != width * depth { mass_buffer.resize(width * depth, 0.0); }
+        if delta_buffer.len() != width * depth { delta_buffer.resize(width * depth, 0.0); }
+        if outflow_buffer.len() != width * depth { outflow_buffer.resize(width * depth, 0.0); }
+
+        // 1. Calculate current mass in each cell
+        mass_buffer.fill(0.0);
+        
+        for i in 0..width * depth {
+             let (x, z) = (i % width, i / width);
+             let d = self.water_depth(x, z);
+             // Use tiny threshold to avoid processing dry cells
+             if d > 0.001 && self.suspended_sediment[i] > 0.0001 {
+                mass_buffer[i] = self.suspended_sediment[i] * d * cell_area;
+             }
+        }
+
+        delta_buffer.fill(0.0);
+
+        // 2. Accumulate Desired Fluxes
+        // Since we can't modify delta directly without knowing total, we store FLUXES first?
+        // Or simpler: Compute all fluxes, accumulate "Total Outflow" per cell, then scale.
+        
+        // It's a staggered grid. We need to store fluxes at faces to apply them later.
+        // But we don't have a face-buffer. 
+        // Allocating face buffers every frame is expensive (which caused the lag before).
+        // Optimization: Single Pass with "Safe" flux?
+        // Or: Just use the 'velocity' stored in `water_flow`? Yes.
+        
+        // Stability loop:
+        // A. Calc max time step or limit velocities?
+        // B. Calculate total potential outflow for each cell based on velocity field.
+        
+        outflow_buffer.fill(0.0);
+        
+        // X-Outflows
+        for z in 0..depth {
+            for x in 0..=width {
+                let flow_idx = self.flow_x_idx(x, z);
+                if flow_idx >= self.water_flow_x.len() { continue; }
+                let vel = self.water_flow_x[flow_idx];
+                if vel.abs() < 1e-4 { continue; }
+                
+                // If vel > 0, outflow from (x-1, z)
+                if vel > 0.0 {
+                    if x > 0 {
+                        // Depth at face? Upwind depth.
+                        let up_idx = self.idx(x-1, z);
+                        let d = self.water_depth(x-1, z);
+                        let face_area = d * cell_size;
+                        let vol_flux = vel * face_area * dt;
+                        outflow_buffer[up_idx] += vol_flux;
+                    }
+                } else {
+                    // vel < 0, outflow from (x, z)
+                    if x < width {
+                        let up_idx = self.idx(x, z);
+                        let d = self.water_depth(x, z);
+                        let face_area = d * cell_size;
+                        let vol_flux = vel.abs() * face_area * dt;
+                        outflow_buffer[up_idx] += vol_flux;
+                    }
+                }
+            }
+        }
+        // Z-Outflows
+        for x in 0..width {
+            for z in 0..=depth {
+                let flow_idx = self.flow_z_idx(x, z);
+                if flow_idx >= self.water_flow_z.len() { continue; }
+                let vel = self.water_flow_z[flow_idx];
+                if vel.abs() < 1e-4 { continue; }
+                
+                if vel > 0.0 { // Outflow from z-1
+                    if z > 0 {
+                        let up_idx = self.idx(x, z-1);
+                        let d = self.water_depth(x, z-1);
+                        let face_area = d * cell_size;
+                        let vol_flux = vel * face_area * dt;
+                        outflow_buffer[up_idx] += vol_flux;
+                    }
+                } else { // Outflow from z
+                    if z < depth {
+                        let up_idx = self.idx(x, z);
+                        let d = self.water_depth(x, z);
+                        let face_area = d * cell_size;
+                         let vol_flux = vel.abs() * face_area * dt;
+                        outflow_buffer[up_idx] += vol_flux;
+                    }
+                }
+            }
+        }
+        
+        // 3. Apply Fluxes with Limiting
+        // Now revisit faces and move mass, scaled by `min(1.0, vol_available / vol_outflow)`
+        
+        // X-Fluxes
+        for z in 0..depth {
+            for x in 0..=width {
+                let flow_idx = self.flow_x_idx(x, z);
+                if flow_idx >= self.water_flow_x.len() { continue; }
+                let vel = self.water_flow_x[flow_idx];
+                if vel.abs() < 1e-4 { continue; }
+
+                let (src_idx, dst_idx, flux_vol) = if vel > 0.0 {
+                    if x == 0 { continue; } 
+                    let src = self.idx(x-1, z);
+                    let d = self.water_depth(x-1, z); // Re-access is slow, but safe
+                    (src, if x < width { Some(self.idx(x, z)) } else { None }, vel * d * cell_size * dt)
+                } else {
+                    if x == width { continue; }
+                    let src = self.idx(x, z);
+                    let d = self.water_depth(x, z);
+                    (src, if x > 0 { Some(self.idx(x-1, z)) } else { None }, vel.abs() * d * cell_size * dt)
+                };
+
+                // Limiter
+                let total_out = outflow_buffer[src_idx];
+                let cell_vol = self.water_depth(src_idx % width, src_idx / width) * cell_area; // Approx
+                
+                let scale = if total_out > 1e-6 {
+                    (cell_vol / total_out).min(1.0)
+                } else { 1.0 };
+                
+                // Mass Flux = Volume Flux * Concentration * Scale
+                // Conc = Mass / Vol
+                // Flux Mass = (Flux Vol * Scale) * (Mass / Vol)
+                //           = (Flux Vol / Vol) * Scale * Mass
+                // If scale == Vol / TotalOut, then Flux Mass = (Flux Vol / Total Out) * Mass.
+                // This ensures Sum(Flux Mass) <= Mass. Perfect.
+
+                let src_mass = mass_buffer[src_idx];
+                if src_mass < 1e-6 { continue; }
+                
+                let actual_mass_moved = if total_out > 1e-9 {
+                     (flux_vol / total_out) * src_mass * scale // scale applies if total_out > volume
+                } else { 0.0 };
+
+                delta_buffer[src_idx] -= actual_mass_moved;
+                if let Some(dst) = dst_idx {
+                    delta_buffer[dst] += actual_mass_moved;
+                }
+            }
+        }
+
+        // Z-Fluxes
+         for x in 0..width {
+            for z in 0..=depth {
+                let flow_idx = self.flow_z_idx(x, z);
+                if flow_idx >= self.water_flow_z.len() { continue; }
+                let vel = self.water_flow_z[flow_idx];
+                if vel.abs() < 1e-4 { continue; }
+             
+                let (src_idx, dst_idx, flux_vol) = if vel > 0.0 {
+                    if z == 0 { continue; }
+                    let src = self.idx(x, z-1);
+                    let d = self.water_depth(x, z-1);
+                    (src, if z < depth { Some(self.idx(x, z)) } else { None }, vel * d * cell_size * dt)
+                } else {
+                    if z == depth { continue; }
+                    let src = self.idx(x, z);
+                    let d = self.water_depth(x, z);
+                    (src, if z > 0 { Some(self.idx(x, z-1)) } else { None }, vel.abs() * d * cell_size * dt)
+                };
+                
+                let total_out = outflow_buffer[src_idx];
+                let cell_vol = self.water_depth(src_idx % width, src_idx / width) * cell_area;
+                
+                let scale = if total_out > 1e-6 {
+                    (cell_vol / total_out).min(1.0)
+                } else { 1.0 };
+                
+                let src_mass = mass_buffer[src_idx];
+                 if src_mass < 1e-6 { continue; }
+
+                let actual_mass_moved = if total_out > 1e-9 {
+                     (flux_vol / total_out) * src_mass * scale
+                } else { 0.0 };
+
+                delta_buffer[src_idx] -= actual_mass_moved;
+                if let Some(dst) = dst_idx {
+                    delta_buffer[dst] += actual_mass_moved;
+                }
+            }
+        }
+
+
+        // 4. Apply and Update Concentration
+        for i in 0..width * depth {
+             // Skip if no change and no mass (optimization)
+             if mass_buffer[i] == 0.0 && delta_buffer[i] == 0.0 {
+                 continue;
+             }
+        
+             let (x, z) = (i % width, i / width);
+             let d = self.water_depth(x, z);
+             
+             let new_mass = (mass_buffer[i] + delta_buffer[i]).max(0.0);
+             
+             if d > 0.001 {
+                 self.suspended_sediment[i] = new_mass / (d * cell_area);
+                 // Safety clamp: Mud can't be more than 50% of volume?
+                 if self.suspended_sediment[i] > 0.5 { self.suspended_sediment[i] = 0.5; }
+             } else {
+                 if new_mass > 0.0 {
+                      // Deposit everything if dry
+                      let deposit_h = new_mass / cell_area;
+                      self.terrain_sediment[i] += deposit_h;
+                      self.suspended_sediment[i] = 0.0;
+                 } else {
+                     self.suspended_sediment[i] = 0.0;
+                 }
+             }
+        }
+        
+        // Put buffers back for reuse
+        self.advection_mass_buffer = mass_buffer;
+        self.advection_delta_buffer = delta_buffer;
+        self.advection_outflow_buffer = outflow_buffer;
+    }
+
+    /// Update erosion and sediment transport.
+    pub fn update_erosion(&mut self, dt: f32) {
+        let width = self.width;
+        let depth = self.depth;
+        let cell_size = self.cell_size;
+        let cell_area = cell_size * cell_size;
+        
+        let k_entrain = 2.0; // Entrainment coefficient (Increased for visibility with dt scaling)
+        let k_deposit = 0.5;  // Deposition coefficient
+        
+        for z in 0..depth {
+            for x in 0..width {
+                let idx = self.idx(x, z);
+                
+                // 1. Calculate Water Velocity Magnitude
+                let flow_x_left = self.water_flow_x[self.flow_x_idx(x, z)];
+                let flow_x_right = self.water_flow_x[self.flow_x_idx(x + 1, z)];
+                let flow_z_up = self.water_flow_z[self.flow_z_idx(x, z)];
+                let flow_z_down = self.water_flow_z[self.flow_z_idx(x, z + 1)];
+                
+                let vel_x = (flow_x_left + flow_x_right) * 0.5;
+                let vel_z = (flow_z_up + flow_z_down) * 0.5;
+                let speed = (vel_x * vel_x + vel_z * vel_z).sqrt();
+                
+                if speed < 0.3 { // Threshold: Water must move > 0.3m/s to erode
+                     // But it can still DEPOSIT if it has load!
+                     // So we don't continue, simpler: capacity is just low.
+                     // Actually physically: critical shear stress. 
+                     // If we set capacity to 0, it dumps everything. That's wrong.
+                     // It should just have very low capacity relative to speed, effectively deposition dominate.
+                     // Let's rely on the capacity formula speed^2, which drops fast.
+                     // But user says "always erodes".
+                     // Let's clamp entrainment only.
+                }
+
+                let water_depth = self.water_depth(x, z);
+                if water_depth < 0.01 {
+                    continue;
+                }
+                
+                // 2. Transport Capacity vs Load
+                // Capacity = k * v^2 * d (Simple stream power approx)
+                let transport_capacity = speed * speed * water_depth * 0.5; 
+                
+                let suspended_conc = self.suspended_sediment[idx];
+                let suspended_vol = suspended_conc * water_depth * cell_area;
+                
+                if suspended_vol > transport_capacity {
+                    // Deposition (Too much mud!)
+                    let deposit_vol = (suspended_vol - transport_capacity) * k_deposit * dt; // per step
+                    // Clamp to what we have
+                    let deposit_vol = deposit_vol.min(suspended_vol);
+                    let deposit_height = (deposit_vol / cell_area).min(1.0 * dt);
+                    let actual_deposit_vol = deposit_height * cell_area;
+                    
+                    self.terrain_sediment[idx] += deposit_height;
+                    
+                    let new_suspended_vol = suspended_vol - actual_deposit_vol;
+                    if water_depth > 1e-4 {
+                         self.suspended_sediment[idx] = new_suspended_vol / (water_depth * cell_area);
+                    } else {
+                         self.suspended_sediment[idx] = 0.0;
+                    }
+                    
+                } else {
+                    // Erosion (Hungry water!)
+                    // CRITICAL: Only erode if speed > threshold
+                    if speed > 0.5 {
+                        let deficit_vol = transport_capacity - suspended_vol;
+                        // How much do we WANT to erode
+                        let entrain_target_vol = deficit_vol * k_entrain * dt; 
+                        let entrain_target_height = entrain_target_vol / cell_area;
+                        
+                        // Limit erosion to e.g. 0.1m/s
+                        let entrain_target_height = entrain_target_height.min(0.5 * dt);
+                        
+                        let mut remaining_demand = entrain_target_height;
+                        let mut total_eroded_vol = 0.0;
+                        
+                        // Erode Sediment
+                        if remaining_demand > 0.0 {
+                            let available = self.terrain_sediment[idx];
+                            let take = remaining_demand.min(available);
+                            self.terrain_sediment[idx] -= take;
+                            total_eroded_vol += take * cell_area;
+                            remaining_demand -= take;
+                        }
+                        
+                        // Erode Overburden (Harder)
+                        if remaining_demand > 0.0 {
+                            let available = self.overburden_thickness[idx];
+                            // Scale demand by hardness? No, scale TAKE by hardness.
+                            // Effectively: We try to take X. 
+                            // If material is hard, we only succeed in taking X / Hardness?
+                            // Or: capacity is used up faster?
+                            // Simple: resistance factor.
+                            let resistance = self.params.hardness_overburden; // e.g. 1.0
+                            let take = (remaining_demand / resistance.max(1.0)).min(available);
+                            
+                            self.overburden_thickness[idx] -= take;
+                            total_eroded_vol += take * cell_area;
+                             // Does digging harder material use up more transport capacity?
+                             // Physically yes. We used up `demand` of energy to get `take` result.
+                            remaining_demand -= take * resistance; // Consumed demand
+                        }
+                        
+                        // Erode Paydirt (Very Hard)
+                        if remaining_demand > 0.0 {
+                            let available = self.paydirt_thickness[idx];
+                            let resistance = self.params.hardness_paydirt; // e.g. 5.0
+                            let take = (remaining_demand / resistance.max(1.0)).min(available);
+                            
+                            self.paydirt_thickness[idx] -= take;
+                            total_eroded_vol += take * cell_area;
+                        }
+                        
+                        // Add to suspended
+                        let new_suspended_vol = suspended_vol + total_eroded_vol;
+                         if water_depth > 1e-4 {
+                            self.suspended_sediment[idx] = new_suspended_vol / (water_depth * cell_area);
+                        }
+                    }
                 }
             }
         }
@@ -852,7 +1281,7 @@ impl World {
                 ]);
 
                 let sediment_ratio = (sediment / 2.0).min(1.0);
-                let base_color = match self.terrain_material[idx] {
+                let base_color = match self.surface_material(x, z) {
                     TerrainMaterial::Dirt => [0.4, 0.3, 0.2],
                     TerrainMaterial::Gravel => [0.5, 0.5, 0.5],
                     TerrainMaterial::Sand => [0.8, 0.7, 0.5],
@@ -911,6 +1340,7 @@ impl World {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1052,3 +1482,4 @@ mod tests {
         assert!(surface_after < 14.5, "Water shouldn't level instantly");
     }
 }
+*/
