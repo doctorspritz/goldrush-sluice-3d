@@ -23,15 +23,16 @@ struct Params {
 // Terrain Bind Group (Read Write for Layout Compatibility)
 @group(2) @binding(0) var<storage, read_write> bedrock: array<f32>;
 @group(2) @binding(1) var<storage, read_write> paydirt: array<f32>;
-@group(2) @binding(2) var<storage, read_write> overburden: array<f32>;
-@group(2) @binding(3) var<storage, read_write> sediment: array<f32>;
+@group(2) @binding(2) var<storage, read_write> gravel: array<f32>;
+@group(2) @binding(3) var<storage, read_write> overburden: array<f32>;
+@group(2) @binding(4) var<storage, read_write> sediment: array<f32>;
 
 fn get_idx(x: u32, z: u32) -> u32 {
     return z * params.width + x;
 }
 
 fn get_ground_height(idx: u32) -> f32 {
-    return bedrock[idx] + paydirt[idx] + overburden[idx] + sediment[idx];
+    return bedrock[idx] + paydirt[idx] + gravel[idx] + overburden[idx] + sediment[idx];
 }
 
 // 1. Calculate Water Surface Height

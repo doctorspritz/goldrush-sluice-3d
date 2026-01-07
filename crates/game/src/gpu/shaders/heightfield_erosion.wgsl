@@ -14,12 +14,12 @@ struct Params {
 }
 
 // Extended Params for Erosion
-// We'll stick to the common Params struct but maybe add fields or use constants.
 const K_ENTRAIN: f32 = 0.1;           // 10x faster erosion for visible effect
 const K_DEPOSIT: f32 = 0.5;           // Moderate deposition
 const K_HARDNESS_BEDROCK: f32 = 0.0;  // Bedrock doesn't erode
 const K_HARDNESS_PAYDIRT: f32 = 0.2;  // Slightly harder
-const K_HARDNESS_OVERBURDEN: f32 = 0.8; // Berms erode relatively easily
+const K_HARDNESS_GRAVEL: f32 = 0.15;  // Gravel is more resistant than overburden
+const K_HARDNESS_OVERBURDEN: f32 = 0.8; // Easy to erode
 const CAPACITY_FACTOR: f32 = 0.5;     // Higher carrying capacity
 const MAX_CAPACITY: f32 = 1.0;        // Allow more sediment per cell
 
@@ -35,8 +35,9 @@ const MAX_CAPACITY: f32 = 1.0;        // Allow more sediment per cell
 
 @group(2) @binding(0) var<storage, read_write> bedrock: array<f32>;
 @group(2) @binding(1) var<storage, read_write> paydirt: array<f32>;
-@group(2) @binding(2) var<storage, read_write> overburden: array<f32>;
-@group(2) @binding(3) var<storage, read_write> sediment: array<f32>;
+@group(2) @binding(2) var<storage, read_write> gravel: array<f32>;
+@group(2) @binding(3) var<storage, read_write> overburden: array<f32>;
+@group(2) @binding(4) var<storage, read_write> sediment: array<f32>;
 
 fn get_idx(x: u32, z: u32) -> u32 {
     return z * params.width + x;
@@ -94,25 +95,33 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
         total_eroded += sed_eroded;
         remaining_target -= sed_eroded;
         
-        // 2. Overburden
+        // 2. Overburden (soil/dirt - easy to erode)
         if (remaining_target > 0.0) {
             let ob_avail = overburden[idx];
             let can_erode = min(remaining_target * K_HARDNESS_OVERBURDEN, ob_avail);
             overburden[idx] -= can_erode;
             total_eroded += can_erode;
-            remaining_target -= can_erode / K_HARDNESS_OVERBURDEN; // Account for hardness in remaining target
+            remaining_target -= can_erode / K_HARDNESS_OVERBURDEN;
         }
         
-        // 3. Paydirt
-         if (remaining_target > 0.0) {
+        // 3. Gravel (resistant layer)
+        if (remaining_target > 0.0) {
+            let gr_avail = gravel[idx];
+            let can_erode = min(remaining_target * K_HARDNESS_GRAVEL, gr_avail);
+            gravel[idx] -= can_erode;
+            total_eroded += can_erode;
+            remaining_target -= can_erode / K_HARDNESS_GRAVEL;
+        }
+        
+        // 4. Paydirt (gold-bearing layer)
+        if (remaining_target > 0.0) {
             let pd_avail = paydirt[idx];
             let can_erode = min(remaining_target * K_HARDNESS_PAYDIRT, pd_avail);
             paydirt[idx] -= can_erode;
             total_eroded += can_erode;
         }
         
-        // 4. Bedrock (Don't erode, it's the stable base)
-        // No bedrock erosion for stability
+        // 5. Bedrock (Don't erode, it's the stable base)
         
         // Add ONLY what was actually eroded to suspended sediment
         suspended_sediment[idx] += total_eroded;

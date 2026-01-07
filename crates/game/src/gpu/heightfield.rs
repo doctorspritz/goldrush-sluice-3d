@@ -14,6 +14,7 @@ pub struct GpuHeightfield {
     // Geology Buffers
     pub bedrock_buffer: wgpu::Buffer,
     pub paydirt_buffer: wgpu::Buffer,
+    pub gravel_buffer: wgpu::Buffer,    // Gravel layer (erosion resistant)
     pub overburden_buffer: wgpu::Buffer,
     pub sediment_buffer: wgpu::Buffer, // Deposited sediment
     
@@ -66,7 +67,8 @@ impl GpuHeightfield {
 
         // 1. Initialize Geology
         let bedrock = create_storage("Bedrock Buffer", initial_height * 0.5);
-        let paydirt = create_storage("Paydirt Buffer", initial_height * 0.3);
+        let paydirt = create_storage("Paydirt Buffer", initial_height * 0.25);
+        let gravel = create_storage("Gravel Buffer", initial_height * 0.05);
         let overburden = create_storage("Overburden Buffer", initial_height * 0.2);
         let sediment = create_storage("Sediment Buffer", 0.0);
         
@@ -143,14 +145,15 @@ impl GpuHeightfield {
             ],
         });
 
-        // Group 2: Terrain (ReadOnly)
+        // Group 2: Terrain (ReadWrite for erosion)
          let terrain_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Terrain Layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None }, // bedrock
                 wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None }, // paydirt
-                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None }, // overburden
-                wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None }, // sediment
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None }, // gravel
+                wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None }, // overburden
+                wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None }, // sediment
             ]
         });
         
@@ -160,8 +163,9 @@ impl GpuHeightfield {
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: bedrock.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: paydirt.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: overburden.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: sediment.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: gravel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: overburden.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: sediment.as_entire_binding() },
             ],
         });
 
@@ -298,6 +302,7 @@ impl GpuHeightfield {
             depth,
             bedrock_buffer: bedrock,
             paydirt_buffer: paydirt,
+            gravel_buffer: gravel,
             overburden_buffer: overburden,
             sediment_buffer: sediment,
             
@@ -420,6 +425,7 @@ impl GpuHeightfield {
         // Geology
         queue.write_buffer(&self.bedrock_buffer, 0, bytemuck::cast_slice(&world.bedrock_elevation));
         queue.write_buffer(&self.paydirt_buffer, 0, bytemuck::cast_slice(&world.paydirt_thickness));
+        queue.write_buffer(&self.gravel_buffer, 0, bytemuck::cast_slice(&world.gravel_thickness));
         queue.write_buffer(&self.overburden_buffer, 0, bytemuck::cast_slice(&world.overburden_thickness));
         queue.write_buffer(&self.sediment_buffer, 0, bytemuck::cast_slice(&world.terrain_sediment));
         
@@ -431,7 +437,8 @@ impl GpuHeightfield {
         
         for i in 0..count {
              let ground = world.bedrock_elevation[i] 
-                        + world.paydirt_thickness[i] 
+                        + world.paydirt_thickness[i]
+                        + world.gravel_thickness[i]
                         + world.overburden_thickness[i] 
                         + world.terrain_sediment[i];
              depth_data[i] = (world.water_surface[i] - ground).max(0.0);
@@ -459,6 +466,7 @@ impl GpuHeightfield {
         // Only geology - leave water/velocity untouched on GPU
         queue.write_buffer(&self.bedrock_buffer, 0, bytemuck::cast_slice(&world.bedrock_elevation));
         queue.write_buffer(&self.paydirt_buffer, 0, bytemuck::cast_slice(&world.paydirt_thickness));
+        queue.write_buffer(&self.gravel_buffer, 0, bytemuck::cast_slice(&world.gravel_thickness));
         queue.write_buffer(&self.overburden_buffer, 0, bytemuck::cast_slice(&world.overburden_thickness));
         queue.write_buffer(&self.sediment_buffer, 0, bytemuck::cast_slice(&world.terrain_sediment));
     }
@@ -498,6 +506,7 @@ impl GpuHeightfield {
          
          let bedrock = read_buffer(&self.bedrock_buffer);
          let paydirt = read_buffer(&self.paydirt_buffer);
+         let gravel = read_buffer(&self.gravel_buffer);
          let overburden = read_buffer(&self.overburden_buffer);
          let sediment = read_buffer(&self.sediment_buffer);
          
@@ -507,6 +516,7 @@ impl GpuHeightfield {
          // Update World
          world.bedrock_elevation = bedrock;
          world.paydirt_thickness = paydirt;
+         world.gravel_thickness = gravel;
          world.overburden_thickness = overburden;
          world.terrain_sediment = sediment;
          world.suspended_sediment = suspended;
@@ -514,7 +524,8 @@ impl GpuHeightfield {
          // Calculate Surface
          for i in 0..water_depth.len() {
               let ground = world.bedrock_elevation[i] 
-                        + world.paydirt_thickness[i] 
+                        + world.paydirt_thickness[i]
+                        + world.gravel_thickness[i]
                         + world.overburden_thickness[i] 
                         + world.terrain_sediment[i];
               world.water_surface[i] = ground + water_depth[i];

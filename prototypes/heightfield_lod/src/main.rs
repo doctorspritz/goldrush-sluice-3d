@@ -51,16 +51,19 @@ impl Default for Config {
 impl Config {
     fn normalize(&mut self) {
         let lods = self.lod_levels as usize;
-        ensure_len(&mut self.tile_pool, lods, *self.tile_pool.last().unwrap_or(&0));
+        let pool_fill = self.tile_pool.last().copied().unwrap_or(0);
+        let stride_fill = self.update_stride.last().copied().unwrap_or(1);
+        let activity_fill = self.activity_thresholds.last().copied().unwrap_or(0.0);
+        ensure_len(&mut self.tile_pool, lods, pool_fill);
         ensure_len(
             &mut self.update_stride,
             lods,
-            *self.update_stride.last().unwrap_or(&1),
+            stride_fill,
         );
         ensure_len_f32(
             &mut self.activity_thresholds,
             lods,
-            *self.activity_thresholds.last().unwrap_or(&0.0),
+            activity_fill,
         );
         self.tile_pool.truncate(lods);
         self.update_stride.truncate(lods);

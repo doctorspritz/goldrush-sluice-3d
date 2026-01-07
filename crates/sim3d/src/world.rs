@@ -88,8 +88,9 @@ pub struct World {
 
     // Geological Layers
     pub bedrock_elevation: Vec<f32>,     // The hard floor (Base height)
-    pub paydirt_thickness: Vec<f32>,     // Gravel/Gold layer
-    pub overburden_thickness: Vec<f32>,  // Soil/Dirt layer
+    pub paydirt_thickness: Vec<f32>,     // Gold-bearing layer
+    pub gravel_thickness: Vec<f32>,      // Gravel layer (resistant to erosion)
+    pub overburden_thickness: Vec<f32>,  // Soil/Dirt layer (easy to erode)
     
     // Sediment (Transient)
     pub terrain_sediment: Vec<f32>,
@@ -128,10 +129,12 @@ impl World {
             
             // Default Geology: 
             // 50% Bedrock (Deep base)
-            // 30% Paydirt (Thick gold bearing layer)
+            // 25% Paydirt (Gold bearing layer)
+            // 5% Gravel (Resistant layer)
             // 20% Overburden (Top soil)
             bedrock_elevation: vec![initial_height * 0.5; cell_count],
-            paydirt_thickness: vec![initial_height * 0.3; cell_count],
+            paydirt_thickness: vec![initial_height * 0.25; cell_count],
+            gravel_thickness: vec![initial_height * 0.05; cell_count],
             overburden_thickness: vec![initial_height * 0.2; cell_count],
             
             terrain_sediment: vec![0.0; cell_count],
@@ -166,11 +169,15 @@ impl World {
         z * self.width + x
     }
 
-    /// Total ground height (base + sediment).
+    /// Total ground height (base + all layers).
     #[inline]
     pub fn ground_height(&self, x: usize, z: usize) -> f32 {
         let idx = self.idx(x, z);
-        self.bedrock_elevation[idx] + self.paydirt_thickness[idx] + self.overburden_thickness[idx] + self.terrain_sediment[idx]
+        self.bedrock_elevation[idx] 
+            + self.paydirt_thickness[idx] 
+            + self.gravel_thickness[idx]
+            + self.overburden_thickness[idx] 
+            + self.terrain_sediment[idx]
     }
     
     #[inline]
