@@ -79,10 +79,23 @@ const SHIELDS_SMOOTH: f32 = 0.02;
 const BEDLOAD_COEFF: f32 = 0.25;
 const ENTRAINMENT_COEFF: f32 = 0.2;
 const RIFFLE_PROBE_PAD: i32 = 2;
+const WALL_MARGIN: usize = 4;  // Wall height above floor+riffle
 const BED_AIR_MARGIN_CELLS: f32 = 1.5;
 const BED_MAX_SLOPE: f32 = 0.7;
 const BED_RELAX_ITERS: usize = 2;
 const BED_MAX_DELTA_LAYERS: f32 = 1.0;
+
+// Screen-space fluid rendering constants
+const WATER_PARTICLE_RADIUS: f32 = 0.025;  // Larger for better depth overlap
+const SSFR_BLUR_RADIUS: i32 = 15;          // Bigger blur for smoother surface
+const SSFR_BLUR_DEPTH_FALLOFF: f32 = 0.2;  // More permissive depth falloff
+const SSFR_NEAR: f32 = 0.01;
+const SSFR_FAR: f32 = 100.0;
+
+// Hybrid water rendering: heightfield mesh + splats for overtopping
+const WATER_MESH_SUBDIVISIONS: usize = 2;  // 2x2 = 4 sub-cells per grid cell (faster)
+const MAX_WATER_SURFACE_VERTICES: usize = GRID_WIDTH * GRID_DEPTH * 6 * (WATER_MESH_SUBDIVISIONS * WATER_MESH_SUBDIVISIONS * 2);  // Surface + sides only
+const WATER_OVERTOP_THRESHOLD: f32 = 0.02;  // Particles must be this much above heightfield to be splats
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -98,10 +111,78 @@ struct ParticleInstance {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, Default)]
 struct SurfaceVertex {
     position: [f32; 3],
     color: [f32; 4],
+}
+
+/// Indexed mesh for efficient 3D rendering
+struct BedMesh {
+    vertices: Vec<SurfaceVertex>,
+    indices: Vec<u32>,
+    vertex_buffer: Option<wgpu::Buffer>,
+    index_buffer: Option<wgpu::Buffer>,
+}
+
+impl BedMesh {
+    fn new() -> Self {
+        Self {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            vertex_buffer: None,
+            index_buffer: None,
+        }
+    }
+
+    fn upload(&mut self, device: &wgpu::Device) {
+        if self.vertices.is_empty() {
+            return;
+        }
+
+        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Bed Vertex Buffer"),
+            contents: bytemuck::cast_slice(&self.vertices),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        }));
+
+        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Bed Index Buffer"),
+            contents: bytemuck::cast_slice(&self.indices),
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+        }));
+    }
+
+    fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
+        if self.vertices.is_empty() {
+            return;
+        }
+
+        // Recreate buffers if size changed (simple approach)
+        if self.vertex_buffer.is_none() {
+            self.upload(device);
+            return;
+        }
+
+        let vb = self.vertex_buffer.as_ref().unwrap();
+        let ib = self.index_buffer.as_ref().unwrap();
+
+        let vertex_bytes = bytemuck::cast_slice(&self.vertices);
+        let index_bytes = bytemuck::cast_slice(&self.indices);
+
+        // Check if buffers are large enough
+        if vb.size() >= vertex_bytes.len() as u64 && ib.size() >= index_bytes.len() as u64 {
+            queue.write_buffer(vb, 0, vertex_bytes);
+            queue.write_buffer(ib, 0, index_bytes);
+        } else {
+            // Recreate larger buffers
+            self.upload(device);
+        }
+    }
+
+    fn num_indices(&self) -> u32 {
+        self.indices.len() as u32
+    }
 }
 
 #[repr(C)]
@@ -110,6 +191,30 @@ struct Uniforms {
     view_proj: [[f32; 4]; 4],
     camera_pos: [f32; 3],
     _pad: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct WaterUniforms {
+    view_proj: [[f32; 4]; 4],
+    view: [[f32; 4]; 4],
+    proj: [[f32; 4]; 4],
+    inv_proj: [[f32; 4]; 4],
+    camera_pos: [f32; 3],
+    particle_radius: f32,
+    screen_size: [f32; 2],
+    near: f32,
+    far: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct BlurUniforms {
+    texel_size: [f32; 2],
+    blur_radius: i32,
+    depth_falloff: f32,
+    direction: [f32; 2],
+    _pad: [f32; 2],
 }
 
 struct App {
@@ -124,6 +229,7 @@ struct App {
     camera_distance: f32,
     frame: u32,
     solid_instances: Vec<ParticleInstance>,
+    bed_mesh: BedMesh,
     positions: Vec<Vec3>,
     velocities: Vec<Vec3>,
     c_matrices: Vec<Mat3>,
@@ -170,6 +276,13 @@ struct App {
     heightfield: Vec<f32>,
     surface_vertices: Vec<SurfaceVertex>,
     flow_particles: Vec<ParticleInstance>,
+    // Water heightfield for hybrid rendering
+    water_heightfield: Vec<f32>,
+    water_heightfield_smoothed: Vec<f32>,  // Temporally smoothed heightfield
+    water_presence: Vec<f32>,  // Smooth presence [0,1] for edge fading
+    water_surface_vertices: Vec<SurfaceVertex>,
+    // Time for wave animation
+    simulation_time: f32,
 }
 
 struct RiffleProbeStats {
@@ -220,6 +333,38 @@ struct SedimentThroughputStats {
     lofted: u32,
 }
 
+/// Screen-Space Fluid Rendering resources
+struct WaterSSFR {
+    // Textures
+    depth_texture: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+    smoothed_depth_texture: wgpu::Texture,
+    smoothed_depth_view: wgpu::TextureView,
+    temp_blur_texture: wgpu::Texture,  // For separable blur
+    temp_blur_view: wgpu::TextureView,
+    thickness_texture: wgpu::Texture,
+    thickness_view: wgpu::TextureView,
+    // Scene depth for compositing
+    scene_depth_texture: wgpu::Texture,
+    scene_depth_view: wgpu::TextureView,
+    // Samplers
+    sampler: wgpu::Sampler,
+    // Uniforms
+    water_uniform_buffer: wgpu::Buffer,
+    blur_uniform_buffer: wgpu::Buffer,
+    // Depth pass
+    depth_pipeline: wgpu::RenderPipeline,
+    depth_bind_group: wgpu::BindGroup,
+    // Blur passes
+    blur_h_pipeline: wgpu::ComputePipeline,
+    blur_v_pipeline: wgpu::ComputePipeline,
+    blur_h_bind_group: wgpu::BindGroup,
+    blur_v_bind_group: wgpu::BindGroup,
+    // Composite pass
+    composite_pipeline: wgpu::RenderPipeline,
+    composite_bind_group: wgpu::BindGroup,
+}
+
 struct GpuState {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -230,9 +375,12 @@ struct GpuState {
     instance_buffer: wgpu::Buffer,
     solid_buffer: wgpu::Buffer,
     surface_vertex_buffer: wgpu::Buffer,
+    water_surface_buffer: wgpu::Buffer,  // For hybrid water heightfield mesh
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     surface_pipeline: wgpu::RenderPipeline,
+    // Screen-space fluid rendering
+    water_ssfr: Option<WaterSSFR>,
 }
 
 /// Create an industrial-scale sluice:
@@ -278,13 +426,15 @@ fn create_industrial_sluice(sim: &mut FlipSimulation3D) {
                     k >= exit_start_z && k < exit_end_z &&
                     j > floor_j && j <= floor_j + exit_height;
 
+                // Wall height: just above floor + riffle + margin (open-top trough)
+                let wall_top = floor_j + riffle_height + WALL_MARGIN;
+
                 let is_boundary =
-                    (i == 0) ||                      // Left wall
-                    (i == width - 1 && !is_exit) ||  // Right wall (except exit)
-                    j <= floor_j ||                   // Sloped floor
-                    j == height - 1 ||                // Ceiling
-                    k == 0 || k == depth - 1 ||       // Z walls
-                    is_riffle;                        // Riffles on floor
+                    j <= floor_j ||                                       // Sloped floor
+                    is_riffle ||                                          // Riffles on floor
+                    (i == 0 && j <= wall_top) ||                          // Left wall (short)
+                    (i == width - 1 && !is_exit && j <= wall_top) ||      // Right wall (short, except exit)
+                    ((k == 0 || k == depth - 1) && j <= wall_top);        // Z walls (short)
 
                 if is_boundary {
                     sim.grid.set_solid(i, j, k);
@@ -300,6 +450,427 @@ fn create_industrial_sluice(sim: &mut FlipSimulation3D) {
     println!("Industrial sluice: {}x{}x{} grid", width, height, depth);
     println!("  Slope: {:.1}° ({} → {} cells)", slope_deg, floor_height_left, floor_height_right);
     println!("  {} riffles, exit width: {} cells", num_riffles, exit_end_z - exit_start_z);
+}
+
+/// Create Screen-Space Fluid Rendering resources
+fn create_water_ssfr(
+    device: &wgpu::Device,
+    config: &wgpu::SurfaceConfiguration,
+    vertex_buffer: &wgpu::Buffer,
+    instance_buffer: &wgpu::Buffer,
+) -> WaterSSFR {
+    let width = config.width;
+    let height = config.height;
+
+    // Create depth texture for water particles
+    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Water Depth Texture"),
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Smoothed depth (after blur)
+    let smoothed_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Water Smoothed Depth Texture"),
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let smoothed_depth_view = smoothed_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Temp texture for separable blur
+    let temp_blur_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Water Temp Blur Texture"),
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let temp_blur_view = temp_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Thickness texture
+    let thickness_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Water Thickness Texture"),
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let thickness_view = thickness_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Scene depth texture (for depth testing against scene geometry)
+    let scene_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Scene Depth Texture"),
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let scene_depth_view = scene_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Sampler
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("Water Sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+
+    // Uniform buffers
+    let water_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Water Uniform Buffer"),
+        size: std::mem::size_of::<WaterUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let blur_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Blur Uniform Buffer"),
+        size: std::mem::size_of::<BlurUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    // Create shaders
+    let depth_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Water Depth Shader"),
+        source: wgpu::ShaderSource::Wgsl(WATER_DEPTH_SHADER.into()),
+    });
+    let blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Water Blur Shader"),
+        source: wgpu::ShaderSource::Wgsl(WATER_BLUR_SHADER.into()),
+    });
+    let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Water Composite Shader"),
+        source: wgpu::ShaderSource::Wgsl(WATER_COMPOSITE_SHADER.into()),
+    });
+
+    // Depth pass bind group layout and pipeline
+    let depth_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Water Depth Bind Group Layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+
+    let depth_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Water Depth Bind Group"),
+        layout: &depth_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: water_uniform_buffer.as_entire_binding(),
+        }],
+    });
+
+    let depth_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Water Depth Pipeline Layout"),
+        bind_group_layouts: &[&depth_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let depth_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Water Depth Pipeline"),
+        layout: Some(&depth_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &depth_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[
+                wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        offset: 0,
+                        shader_location: 0,
+                        format: wgpu::VertexFormat::Float32x2,
+                    }],
+                },
+                wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<ParticleInstance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 12,
+                            shader_location: 2,
+                            format: wgpu::VertexFormat::Float32x4,
+                        },
+                    ],
+                },
+            ],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &depth_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba16Float,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    // Blur pass bind group layout and pipelines
+    let blur_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Water Blur Bind Group Layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+
+    // Horizontal blur: depth -> temp
+    let blur_h_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Water Blur H Bind Group"),
+        layout: &blur_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: blur_uniform_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&depth_view) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&temp_blur_view) },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&sampler) },
+        ],
+    });
+
+    // Vertical blur: temp -> smoothed
+    let blur_v_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Water Blur V Bind Group"),
+        layout: &blur_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: blur_uniform_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&temp_blur_view) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&smoothed_depth_view) },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&sampler) },
+        ],
+    });
+
+    let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Water Blur Pipeline Layout"),
+        bind_group_layouts: &[&blur_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let blur_h_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("Water Blur H Pipeline"),
+        layout: Some(&blur_pipeline_layout),
+        module: &blur_shader,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    let blur_v_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("Water Blur V Pipeline"),
+        layout: Some(&blur_pipeline_layout),
+        module: &blur_shader,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    // Composite pass bind group layout and pipeline
+    let composite_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Water Composite Bind Group Layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+
+    let composite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Water Composite Bind Group"),
+        layout: &composite_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: water_uniform_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&smoothed_depth_view) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&thickness_view) },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&scene_depth_view) },
+            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&sampler) },
+        ],
+    });
+
+    let composite_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Water Composite Pipeline Layout"),
+        bind_group_layouts: &[&composite_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Water Composite Pipeline"),
+        layout: Some(&composite_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &composite_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &composite_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    WaterSSFR {
+        depth_texture,
+        depth_view,
+        smoothed_depth_texture,
+        smoothed_depth_view,
+        temp_blur_texture,
+        temp_blur_view,
+        thickness_texture,
+        thickness_view,
+        scene_depth_texture,
+        scene_depth_view,
+        sampler,
+        water_uniform_buffer,
+        blur_uniform_buffer,
+        depth_pipeline,
+        depth_bind_group,
+        blur_h_pipeline,
+        blur_v_pipeline,
+        blur_h_bind_group,
+        blur_v_bind_group,
+        composite_pipeline,
+        composite_bind_group,
+    }
 }
 
 fn rand_float() -> f32 {
@@ -414,6 +985,7 @@ impl App {
         let bed_height_residual = vec![0.0f32; bed_column_count];
 
         let solid_instances = Self::collect_solids(&sim);
+        let bed_mesh = Self::build_bed_mesh(&sim);
         let pressure_iters_gpu = sim.pressure_iterations as u32;
 
         println!("Solid cells: {}", solid_instances.len());
@@ -434,6 +1006,7 @@ impl App {
             camera_distance: 8.0,  // Start further back for larger scene
             frame: 0,
             solid_instances,
+            bed_mesh,
             positions: Vec::new(),
             velocities: Vec::new(),
             c_matrices: Vec::new(),
@@ -480,6 +1053,11 @@ impl App {
             heightfield: vec![f32::NEG_INFINITY; GRID_WIDTH * GRID_DEPTH],
             surface_vertices: Vec::with_capacity(MAX_SURFACE_VERTICES),
             flow_particles: Vec::with_capacity(MAX_FLOW_PARTICLES),
+            water_heightfield: vec![f32::NEG_INFINITY; GRID_WIDTH * GRID_DEPTH],
+            water_heightfield_smoothed: vec![f32::NEG_INFINITY; GRID_WIDTH * GRID_DEPTH],
+            water_presence: vec![0.0; GRID_WIDTH * GRID_DEPTH],
+            water_surface_vertices: Vec::with_capacity(MAX_WATER_SURFACE_VERTICES),
+            simulation_time: 0.0,
         }
     }
 
@@ -1117,6 +1695,114 @@ impl App {
         solids
     }
 
+    /// Build a 3D indexed mesh for the sluice bed geometry.
+    /// Only exposed faces are included (faces adjacent to non-solid cells).
+    fn build_bed_mesh(sim: &FlipSimulation3D) -> BedMesh {
+        let mut mesh = BedMesh::new();
+        let width = sim.grid.width;
+        let height = sim.grid.height;
+        let depth = sim.grid.depth;
+        let cs = sim.grid.cell_size;
+
+        // Colors for different face orientations (subtle shading)
+        let color_top = [0.55, 0.50, 0.45, 1.0];    // Lighter for top faces
+        let color_side = [0.45, 0.40, 0.35, 1.0];   // Medium for side faces
+        let color_bottom = [0.35, 0.30, 0.25, 1.0]; // Darker for bottom faces
+
+        for k in 0..depth {
+            for j in 0..height {
+                for i in 0..width {
+                    if !sim.grid.is_solid(i, j, k) {
+                        continue;
+                    }
+
+                    let x0 = i as f32 * cs;
+                    let x1 = (i + 1) as f32 * cs;
+                    let y0 = j as f32 * cs;
+                    let y1 = (j + 1) as f32 * cs;
+                    let z0 = k as f32 * cs;
+                    let z1 = (k + 1) as f32 * cs;
+
+                    // -X face (left)
+                    if i == 0 || !sim.grid.is_solid(i - 1, j, k) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x0, y0, z0], color: color_side },
+                            SurfaceVertex { position: [x0, y1, z0], color: color_side },
+                            SurfaceVertex { position: [x0, y1, z1], color: color_side },
+                            SurfaceVertex { position: [x0, y0, z1], color: color_side },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+2, base+1, base, base+3, base+2]);
+                    }
+
+                    // +X face (right)
+                    if i == width - 1 || !sim.grid.is_solid(i + 1, j, k) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x1, y0, z0], color: color_side },
+                            SurfaceVertex { position: [x1, y1, z0], color: color_side },
+                            SurfaceVertex { position: [x1, y1, z1], color: color_side },
+                            SurfaceVertex { position: [x1, y0, z1], color: color_side },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                    }
+
+                    // -Y face (bottom)
+                    if j == 0 || !sim.grid.is_solid(i, j - 1, k) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x0, y0, z0], color: color_bottom },
+                            SurfaceVertex { position: [x1, y0, z0], color: color_bottom },
+                            SurfaceVertex { position: [x1, y0, z1], color: color_bottom },
+                            SurfaceVertex { position: [x0, y0, z1], color: color_bottom },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                    }
+
+                    // +Y face (top) - most visible
+                    if j == height - 1 || !sim.grid.is_solid(i, j + 1, k) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x0, y1, z0], color: color_top },
+                            SurfaceVertex { position: [x1, y1, z0], color: color_top },
+                            SurfaceVertex { position: [x1, y1, z1], color: color_top },
+                            SurfaceVertex { position: [x0, y1, z1], color: color_top },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+2, base+1, base, base+3, base+2]);
+                    }
+
+                    // -Z face (front)
+                    if k == 0 || !sim.grid.is_solid(i, j, k - 1) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x0, y0, z0], color: color_side },
+                            SurfaceVertex { position: [x1, y0, z0], color: color_side },
+                            SurfaceVertex { position: [x1, y1, z0], color: color_side },
+                            SurfaceVertex { position: [x0, y1, z0], color: color_side },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                    }
+
+                    // +Z face (back)
+                    if k == depth - 1 || !sim.grid.is_solid(i, j, k + 1) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x0, y0, z1], color: color_side },
+                            SurfaceVertex { position: [x1, y0, z1], color: color_side },
+                            SurfaceVertex { position: [x1, y1, z1], color: color_side },
+                            SurfaceVertex { position: [x0, y1, z1], color: color_side },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+2, base+1, base, base+3, base+2]);
+                    }
+                }
+            }
+        }
+
+        println!("Bed mesh: {} vertices, {} indices ({} triangles)",
+            mesh.vertices.len(), mesh.indices.len(), mesh.indices.len() / 3);
+        mesh
+    }
+
     fn reset_sim(&mut self) {
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
         sim.gravity = Vec3::new(0.0, -9.8, 0.0);
@@ -1139,6 +1825,13 @@ impl App {
 
         if let (Some(gpu_bed), Some(gpu)) = (&self.gpu_bed, &self.gpu) {
             gpu_bed.reset_bed(&gpu.queue, &self.bed_base_height);
+        }
+
+        self.solid_instances = Self::collect_solids(&sim);
+        self.bed_mesh = Self::build_bed_mesh(&sim);
+        // Upload bed mesh to GPU if initialized
+        if let Some(gpu) = &self.gpu {
+            self.bed_mesh.upload(&gpu.device);
         }
 
         self.sim = sim;
@@ -1552,6 +2245,671 @@ impl App {
         self.surface_vertices.len()
     }
 
+    /// Build water surface heightfield mesh with marching squares + physics-based wave displacement
+    /// Water particles get their max Y stored per cell, smoothed, then organic triangles are built
+    fn build_water_heightfield_mesh(&mut self) -> usize {
+        self.water_heightfield.fill(f32::NEG_INFINITY);
+        self.water_surface_vertices.clear();
+
+        let width = GRID_WIDTH;
+        let depth = GRID_DEPTH;
+        let cell_size = CELL_SIZE;
+        let time = self.simulation_time;
+
+        // Wave parameters - rushing water feel
+        const BASE_WAVE_AMPLITUDE: f32 = 0.001;  // Base ripple
+        const VELOCITY_WAVE_SCALE: f32 = 0.003;  // Amplitude per m/s for main wave
+        const CHOP_SCALE: f32 = 0.002;           // High-frequency chop amplitude per m/s
+        const TURBULENCE_SCALE: f32 = 0.002;     // Splash amplitude
+        const WAVE_FREQ: f32 = 5.0;              // Main wave frequency
+        const CHOP_FREQ: f32 = 25.0;             // High-frequency chop
+        const WAVE_SPEED_MULT: f32 = 8.0;        // How fast waves animate with flow
+
+        // Velocity field per cell (for physics-based waves)
+        let mut vel_sum_x = vec![0.0f32; width * depth];
+        let mut vel_sum_z = vec![0.0f32; width * depth];
+        let mut vel_sum_y = vec![0.0f32; width * depth];  // Vertical velocity for splashing
+        let mut vel_count = vec![0u32; width * depth];
+
+        // Maximum reasonable water height (reject outlier particles)
+        let max_water_y = (GRID_HEIGHT as f32 - 2.0) * cell_size;
+
+        // First pass: compute water surface height AND velocity per cell
+        for p in &self.sim.particles.list {
+            if p.is_sediment() {
+                continue;
+            }
+            let i = (p.position.x / cell_size).floor() as i32;
+            let k = (p.position.z / cell_size).floor() as i32;
+            if i >= 0 && i < width as i32 && k >= 0 && k < depth as i32 {
+                let idx = k as usize * width + i as usize;
+                let y = p.position.y;
+                // Clamp to reasonable height to prevent outlier spikes
+                if y > self.water_heightfield[idx] && y < max_water_y {
+                    self.water_heightfield[idx] = y;
+                }
+                // Accumulate velocity (only from particles below max height)
+                if y < max_water_y {
+                    vel_sum_x[idx] += p.velocity.x;
+                    vel_sum_z[idx] += p.velocity.z;
+                    vel_sum_y[idx] += p.velocity.y;
+                    vel_count[idx] += 1;
+                }
+            }
+        }
+
+        // Compute average velocity per cell (raw)
+        let mut vel_x_raw = vec![0.0f32; width * depth];
+        let mut vel_z_raw = vec![0.0f32; width * depth];
+        let mut vel_y_raw = vec![0.0f32; width * depth];
+        for idx in 0..(width * depth) {
+            if vel_count[idx] > 0 {
+                let n = vel_count[idx] as f32;
+                vel_x_raw[idx] = vel_sum_x[idx] / n;
+                vel_z_raw[idx] = vel_sum_z[idx] / n;
+                vel_y_raw[idx] = vel_sum_y[idx] / n;
+            }
+        }
+
+        // Smooth velocity field (3x3 average) for gentler waves
+        let mut vel_x = vec![0.0f32; width * depth];
+        let mut vel_z = vec![0.0f32; width * depth];
+        let mut vel_y = vec![0.0f32; width * depth];
+        for k in 0..depth {
+            for i in 0..width {
+                let idx = k * width + i;
+                if vel_count[idx] == 0 {
+                    continue;
+                }
+                let mut sum_x = 0.0;
+                let mut sum_z = 0.0;
+                let mut sum_y = 0.0;
+                let mut count = 0;
+                for dk in -1i32..=1 {
+                    for di in -1i32..=1 {
+                        let ni = i as i32 + di;
+                        let nk = k as i32 + dk;
+                        if ni >= 0 && ni < width as i32 && nk >= 0 && nk < depth as i32 {
+                            let nidx = nk as usize * width + ni as usize;
+                            if vel_count[nidx] > 0 {
+                                sum_x += vel_x_raw[nidx];
+                                sum_z += vel_z_raw[nidx];
+                                sum_y += vel_y_raw[nidx];
+                                count += 1;
+                            }
+                        }
+                    }
+                }
+                if count > 0 {
+                    vel_x[idx] = sum_x / count as f32;
+                    vel_z[idx] = sum_z / count as f32;
+                    vel_y[idx] = sum_y / count as f32;
+                }
+            }
+        }
+
+        // Second pass: smooth the heightfield (3x3 spatial average with neighbors)
+        let mut smoothed = vec![f32::NEG_INFINITY; width * depth];
+        for k in 0..depth {
+            for i in 0..width {
+                let idx = k * width + i;
+                let center = self.water_heightfield[idx];
+                if !center.is_finite() {
+                    continue;
+                }
+
+                let mut sum = 0.0;
+                let mut count = 0;
+                for dk in -1i32..=1 {
+                    for di in -1i32..=1 {
+                        let ni = i as i32 + di;
+                        let nk = k as i32 + dk;
+                        if ni >= 0 && ni < width as i32 && nk >= 0 && nk < depth as i32 {
+                            let nidx = nk as usize * width + ni as usize;
+                            let h = self.water_heightfield[nidx];
+                            if h.is_finite() {
+                                sum += h;
+                                count += 1;
+                            }
+                        }
+                    }
+                }
+                if count > 0 {
+                    smoothed[idx] = sum / count as f32;
+                }
+            }
+        }
+
+        // Third pass: temporal smoothing (blend with previous frame)
+        const TEMPORAL_BLEND: f32 = 0.3;  // 0.3 = 30% new, 70% old (smoother)
+        const PRESENCE_RISE_RATE: f32 = 0.15;  // How fast presence increases (slower = smoother edge appearance)
+        const PRESENCE_FALL_RATE: f32 = 0.08;  // How fast presence decreases (slower = smoother edge disappearance)
+
+        for idx in 0..(width * depth) {
+            let new_h = smoothed[idx];
+            let old_h = self.water_heightfield_smoothed[idx];
+
+            if new_h.is_finite() && old_h.is_finite() {
+                // Blend between old and new
+                smoothed[idx] = old_h * (1.0 - TEMPORAL_BLEND) + new_h * TEMPORAL_BLEND;
+            }
+            // Update the stored smoothed heightfield for next frame
+            self.water_heightfield_smoothed[idx] = smoothed[idx];
+
+            // Update water presence with smooth transitions
+            let has_water_now = new_h.is_finite();
+            let old_presence = self.water_presence[idx];
+            let target_presence = if has_water_now { 1.0 } else { 0.0 };
+
+            let new_presence = if target_presence > old_presence {
+                (old_presence + PRESENCE_RISE_RATE).min(1.0)
+            } else {
+                (old_presence - PRESENCE_FALL_RATE).max(0.0)
+            };
+            self.water_presence[idx] = new_presence;
+        }
+
+        // Copy presence for use in closures
+        let presence = &self.water_presence;
+
+        // Colors for depth-based shading (more transparent)
+        let shallow_color = [0.15, 0.45, 0.85, 0.55];  // More transparent
+        let deep_color = [0.06, 0.25, 0.60, 0.70];     // Slightly more opaque when deep
+
+        // Physics-based wave displacement function - rushing water feel
+        // Combines smooth undulation + high-frequency chop that scales with velocity
+        let wave_offset = |x: f32, z: f32, local_vx: f32, local_vz: f32, local_vy: f32| -> f32 {
+            let speed = (local_vx * local_vx + local_vz * local_vz).sqrt();
+            let vert_speed = local_vy.abs();
+
+            // Normalize flow direction
+            let (dir_x, dir_z) = if speed > 0.05 {
+                (local_vx / speed, local_vz / speed)
+            } else {
+                (1.0, 0.0)
+            };
+
+            // Distance along and across flow
+            let flow_dist = dir_x * x + dir_z * z;
+            let cross_dist = -dir_z * x + dir_x * z;
+
+            // === MAIN SMOOTH WAVE ===
+            // Amplitude grows with speed
+            let main_amp = BASE_WAVE_AMPLITUDE + speed * VELOCITY_WAVE_SCALE;
+            let main_phase = flow_dist * WAVE_FREQ - time * (2.0 + speed * WAVE_SPEED_MULT);
+            let main_wave = main_phase.sin() * main_amp;
+
+            // === HIGH-FREQUENCY CHOP ===
+            // Fast ripples that only appear in moving water - gives "rushing" feel
+            let chop_amp = speed * CHOP_SCALE;  // No chop when still
+            let chop1 = (flow_dist * CHOP_FREQ - time * speed * 15.0).sin() * chop_amp;
+            let chop2 = (cross_dist * CHOP_FREQ * 0.8 + time * 6.0).sin() * chop_amp * 0.5;
+            // Diagonal chop for variety
+            let chop3 = ((flow_dist + cross_dist) * CHOP_FREQ * 0.6 - time * 10.0).sin() * chop_amp * 0.3;
+
+            // === CROSS WAVE ===
+            let cross_amp = main_amp * 0.4;
+            let cross_phase = cross_dist * WAVE_FREQ * 0.7 + time * 2.5;
+            let cross_wave = cross_phase.sin() * cross_amp;
+
+            // === TURBULENCE from vertical motion ===
+            let splash = if vert_speed > 0.15 {
+                let splash_amp = vert_speed * TURBULENCE_SCALE;
+                (x * 30.0 + z * 35.0 + time * 12.0).sin() * splash_amp
+            } else {
+                0.0
+            };
+
+            main_wave + cross_wave + chop1 + chop2 + chop3 + splash
+        };
+
+        // Helper to check if cell has water (using presence for smooth edges)
+        let has_water = |i: i32, k: i32| -> bool {
+            if i < 0 || i >= width as i32 || k < 0 || k >= depth as i32 {
+                return false;
+            }
+            // Use presence threshold for smoother edge transitions
+            presence[k as usize * width + i as usize] > 0.1
+        };
+
+        // Get presence at cell
+        let get_presence = |i: i32, k: i32| -> f32 {
+            if i < 0 || i >= width as i32 || k < 0 || k >= depth as i32 {
+                return 0.0;
+            }
+            presence[k as usize * width + i as usize]
+        };
+
+        // Helper to get velocity at a position (bilinear interpolation)
+        let get_velocity_at = |x: f32, z: f32| -> (f32, f32, f32) {
+            let fi = x / cell_size;
+            let fk = z / cell_size;
+            let i = fi.floor() as i32;
+            let k = fk.floor() as i32;
+
+            if i < 0 || i >= width as i32 - 1 || k < 0 || k >= depth as i32 - 1 {
+                // Edge case: just return nearest cell velocity
+                let ci = i.clamp(0, width as i32 - 1) as usize;
+                let ck = k.clamp(0, depth as i32 - 1) as usize;
+                let idx = ck * width + ci;
+                return (vel_x[idx], vel_z[idx], vel_y[idx]);
+            }
+
+            // Bilinear interpolation weights
+            let fx = fi - i as f32;
+            let fz = fk - k as f32;
+            let i = i as usize;
+            let k = k as usize;
+
+            let idx00 = k * width + i;
+            let idx10 = k * width + i + 1;
+            let idx01 = (k + 1) * width + i;
+            let idx11 = (k + 1) * width + i + 1;
+
+            let vx = vel_x[idx00] * (1.0 - fx) * (1.0 - fz)
+                   + vel_x[idx10] * fx * (1.0 - fz)
+                   + vel_x[idx01] * (1.0 - fx) * fz
+                   + vel_x[idx11] * fx * fz;
+            let vz = vel_z[idx00] * (1.0 - fx) * (1.0 - fz)
+                   + vel_z[idx10] * fx * (1.0 - fz)
+                   + vel_z[idx01] * (1.0 - fx) * fz
+                   + vel_z[idx11] * fx * fz;
+            let vy = vel_y[idx00] * (1.0 - fx) * (1.0 - fz)
+                   + vel_y[idx10] * fx * (1.0 - fz)
+                   + vel_y[idx01] * (1.0 - fx) * fz
+                   + vel_y[idx11] * fx * fz;
+
+            (vx, vz, vy)
+        };
+
+        // Helper to get height at position with physics-based wave displacement
+        let get_height_at = |x: f32, z: f32, base_h: f32| -> f32 {
+            let (vx, vz, vy) = get_velocity_at(x, z);
+            base_h + wave_offset(x, z, vx, vz, vy)
+        };
+
+        // Get corner height from surrounding cells
+        let get_corner_height = |ci: usize, ck: usize| -> Option<f32> {
+            let mut sum = 0.0;
+            let mut count = 0;
+            for dk in 0..=1 {
+                for di in 0..=1 {
+                    if ci >= di && ck >= dk {
+                        let cell_i = ci - di;
+                        let cell_k = ck - dk;
+                        if cell_i < width && cell_k < depth {
+                            let idx = cell_k * width + cell_i;
+                            let h = smoothed[idx];
+                            if h.is_finite() {
+                                sum += h;
+                                count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            if count > 0 { Some(sum / count as f32) } else { None }
+        };
+
+        // Calculate color based on water depth, velocity, AND presence (for edge fading)
+        let calc_color = |i: usize, k: usize, center_h: f32, speed: f32| -> [f32; 4] {
+            let floor_t = i as f32 / (width - 1) as f32;
+            let floor_height = (FLOOR_HEIGHT_LEFT as f32 * (1.0 - floor_t)
+                + FLOOR_HEIGHT_RIGHT as f32 * floor_t) * cell_size;
+            let water_depth = (center_h - floor_height).max(0.0);
+            let depth_factor = (water_depth / (3.0 * cell_size)).min(1.0);
+
+            // Get presence for edge fading
+            let cell_presence = get_presence(i as i32, k as i32);
+
+            // Base color from depth
+            let base_r = shallow_color[0] * (1.0 - depth_factor) + deep_color[0] * depth_factor;
+            let base_g = shallow_color[1] * (1.0 - depth_factor) + deep_color[1] * depth_factor;
+            let base_b = shallow_color[2] * (1.0 - depth_factor) + deep_color[2] * depth_factor;
+            let base_a = shallow_color[3] * (1.0 - depth_factor) + deep_color[3] * depth_factor;
+
+            // Foam factor: fast water -> whiter (desaturated, brighter)
+            let foam = (speed / 1.5).min(1.0);  // Full foam at 1.5 m/s
+            let foam_color = [0.80, 0.88, 0.95, 0.65];  // Pale blue-white foam, semi-transparent
+
+            // Apply presence to alpha for smooth edge fading
+            let alpha = (base_a * (1.0 - foam * 0.5) + foam_color[3] * foam * 0.5) * cell_presence;
+
+            [
+                base_r * (1.0 - foam) + foam_color[0] * foam,
+                base_g * (1.0 - foam) + foam_color[1] * foam,
+                base_b * (1.0 - foam) + foam_color[2] * foam,
+                alpha,
+            ]
+        };
+
+        // Third pass: marching squares for organic water boundary
+        for k in 0..depth {
+            for i in 0..width {
+                let idx = k * width + i;
+                let center_h = smoothed[idx];
+
+                // Build marching squares case from 4 corners
+                // Corners: 0=bottom-left(i,k), 1=bottom-right(i+1,k), 2=top-left(i,k+1), 3=top-right(i+1,k+1)
+                let c0 = has_water(i as i32, k as i32);
+                let c1 = has_water(i as i32 + 1, k as i32);
+                let c2 = has_water(i as i32, k as i32 + 1);
+                let c3 = has_water(i as i32 + 1, k as i32 + 1);
+
+                let case = (c0 as u8) | ((c1 as u8) << 1) | ((c2 as u8) << 2) | ((c3 as u8) << 3);
+
+                if case == 0 {
+                    continue; // No water
+                }
+
+                // Get base heights at corners (with fallback to center)
+                let h00 = get_corner_height(i, k).unwrap_or(center_h);
+                let h10 = get_corner_height(i + 1, k).unwrap_or(center_h);
+                let h01 = get_corner_height(i, k + 1).unwrap_or(center_h);
+                let h11 = get_corner_height(i + 1, k + 1).unwrap_or(center_h);
+                let h_center = (h00 + h10 + h01 + h11) / 4.0;
+
+                // World positions
+                let x0 = i as f32 * cell_size;
+                let x1 = (i + 1) as f32 * cell_size;
+                let xm = (x0 + x1) * 0.5;
+                let z0 = k as f32 * cell_size;
+                let z1 = (k + 1) as f32 * cell_size;
+                let zm = (z0 + z1) * 0.5;
+
+                // Heights with wave displacement at each position
+                let y00 = get_height_at(x0, z0, h00);
+                let y10 = get_height_at(x1, z0, h10);
+                let y01 = get_height_at(x0, z1, h01);
+                let y11 = get_height_at(x1, z1, h11);
+                let ym0 = get_height_at(xm, z0, (h00 + h10) * 0.5);  // Mid bottom edge
+                let ym1 = get_height_at(xm, z1, (h01 + h11) * 0.5);  // Mid top edge
+                let y0m = get_height_at(x0, zm, (h00 + h01) * 0.5);  // Mid left edge
+                let y1m = get_height_at(x1, zm, (h10 + h11) * 0.5);  // Mid right edge
+                let ymm = get_height_at(xm, zm, h_center);           // Center
+
+                // Get cell velocity for foam coloring
+                let cell_speed = (vel_x[idx] * vel_x[idx] + vel_z[idx] * vel_z[idx]).sqrt();
+                let color = calc_color(i, k, center_h, cell_speed);
+
+                // Vertices at 9 positions (corners, edge midpoints, center)
+                let v00 = SurfaceVertex { position: [x0, y00, z0], color };
+                let v10 = SurfaceVertex { position: [x1, y10, z0], color };
+                let v01 = SurfaceVertex { position: [x0, y01, z1], color };
+                let v11 = SurfaceVertex { position: [x1, y11, z1], color };
+                let vm0 = SurfaceVertex { position: [xm, ym0, z0], color };  // Bottom mid
+                let vm1 = SurfaceVertex { position: [xm, ym1, z1], color };  // Top mid
+                let v0m = SurfaceVertex { position: [x0, y0m, zm], color };  // Left mid
+                let v1m = SurfaceVertex { position: [x1, y1m, zm], color };  // Right mid
+                let vmm = SurfaceVertex { position: [xm, ymm, zm], color };  // Center
+
+                // Generate triangles based on marching squares case
+                // Using edge midpoints creates organic boundaries at water edges
+                match case {
+                    // Single corner cases - triangular wedges
+                    1 => { // Only bottom-left
+                        self.water_surface_vertices.extend_from_slice(&[v00, vm0, v0m]);
+                    }
+                    2 => { // Only bottom-right
+                        self.water_surface_vertices.extend_from_slice(&[vm0, v10, v1m]);
+                    }
+                    4 => { // Only top-left
+                        self.water_surface_vertices.extend_from_slice(&[v0m, vm1, v01]);
+                    }
+                    8 => { // Only top-right
+                        self.water_surface_vertices.extend_from_slice(&[v1m, v11, vm1]);
+                    }
+
+                    // Two adjacent corners - half cells
+                    3 => { // Bottom row
+                        self.water_surface_vertices.extend_from_slice(&[
+                            v00, v10, v1m,
+                            v00, v1m, v0m,
+                        ]);
+                    }
+                    5 => { // Left column
+                        self.water_surface_vertices.extend_from_slice(&[
+                            v00, vm0, vm1,
+                            v00, vm1, v01,
+                        ]);
+                    }
+                    10 => { // Right column
+                        self.water_surface_vertices.extend_from_slice(&[
+                            vm0, v10, v11,
+                            vm0, v11, vm1,
+                        ]);
+                    }
+                    12 => { // Top row
+                        self.water_surface_vertices.extend_from_slice(&[
+                            v0m, v1m, v11,
+                            v0m, v11, v01,
+                        ]);
+                    }
+
+                    // Diagonal cases - use center point
+                    6 => { // Bottom-right and top-left (diagonal)
+                        self.water_surface_vertices.extend_from_slice(&[
+                            vm0, v10, v1m,
+                            v1m, vmm, vm0,
+                            v0m, vm1, v01,
+                            v0m, vmm, vm1,
+                        ]);
+                    }
+                    9 => { // Bottom-left and top-right (diagonal)
+                        self.water_surface_vertices.extend_from_slice(&[
+                            v00, vm0, v0m,
+                            vm0, vmm, v0m,
+                            v1m, v11, vm1,
+                            vmm, v1m, vm1,
+                        ]);
+                    }
+
+                    // Three corners - L shapes
+                    7 => { // Missing top-right
+                        self.water_surface_vertices.extend_from_slice(&[
+                            v00, v10, v1m,
+                            v00, v1m, vmm,
+                            v00, vmm, vm1,
+                            v00, vm1, v01,
+                        ]);
+                    }
+                    11 => { // Missing top-left
+                        self.water_surface_vertices.extend_from_slice(&[
+                            v00, v10, v11,
+                            v00, v11, vm1,
+                            v00, vm1, vmm,
+                            v00, vmm, v0m,
+                        ]);
+                    }
+                    13 => { // Missing bottom-right
+                        self.water_surface_vertices.extend_from_slice(&[
+                            v00, vm0, vmm,
+                            v00, vmm, v1m,
+                            v00, v1m, v11,
+                            v00, v11, v01,
+                        ]);
+                    }
+                    14 => { // Missing bottom-left
+                        self.water_surface_vertices.extend_from_slice(&[
+                            vm0, v10, v11,
+                            vm0, v11, v01,
+                            vm0, v01, v0m,
+                            vm0, v0m, vmm,
+                        ]);
+                    }
+
+                    // Full cell - subdivided mesh for smooth high-resolution surface
+                    15 => {
+                        let n = WATER_MESH_SUBDIVISIONS;
+                        let sub_size = cell_size / n as f32;
+
+                        for sk in 0..n {
+                            for si in 0..n {
+                                // Normalized position within cell [0,1]
+                                let u0 = si as f32 / n as f32;
+                                let u1 = (si + 1) as f32 / n as f32;
+                                let v0 = sk as f32 / n as f32;
+                                let v1 = (sk + 1) as f32 / n as f32;
+                                let um = (u0 + u1) * 0.5;
+                                let vm = (v0 + v1) * 0.5;
+
+                                // World positions for this sub-cell
+                                let sx0 = x0 + si as f32 * sub_size;
+                                let sx1 = x0 + (si + 1) as f32 * sub_size;
+                                let sz0 = z0 + sk as f32 * sub_size;
+                                let sz1 = z0 + (sk + 1) as f32 * sub_size;
+                                let sxm = (sx0 + sx1) * 0.5;
+                                let szm = (sz0 + sz1) * 0.5;
+
+                                // Bilinear interpolation of base heights at sub-cell corners
+                                let bh00 = h00 * (1.0 - u0) * (1.0 - v0) + h10 * u0 * (1.0 - v0)
+                                         + h01 * (1.0 - u0) * v0 + h11 * u0 * v0;
+                                let bh10 = h00 * (1.0 - u1) * (1.0 - v0) + h10 * u1 * (1.0 - v0)
+                                         + h01 * (1.0 - u1) * v0 + h11 * u1 * v0;
+                                let bh01 = h00 * (1.0 - u0) * (1.0 - v1) + h10 * u0 * (1.0 - v1)
+                                         + h01 * (1.0 - u0) * v1 + h11 * u0 * v1;
+                                let bh11 = h00 * (1.0 - u1) * (1.0 - v1) + h10 * u1 * (1.0 - v1)
+                                         + h01 * (1.0 - u1) * v1 + h11 * u1 * v1;
+                                let bhm = h00 * (1.0 - um) * (1.0 - vm) + h10 * um * (1.0 - vm)
+                                        + h01 * (1.0 - um) * vm + h11 * um * vm;
+
+                                // Heights with wave displacement
+                                let sy00 = get_height_at(sx0, sz0, bh00);
+                                let sy10 = get_height_at(sx1, sz0, bh10);
+                                let sy01 = get_height_at(sx0, sz1, bh01);
+                                let sy11 = get_height_at(sx1, sz1, bh11);
+
+                                // Get velocity at sub-cell center for foam color
+                                let (sub_vx, sub_vz, _) = get_velocity_at(sxm, szm);
+                                let sub_speed = (sub_vx * sub_vx + sub_vz * sub_vz).sqrt();
+                                let sub_color = calc_color(i, k, bhm, sub_speed);
+
+                                // Two triangles per sub-cell
+                                self.water_surface_vertices.extend_from_slice(&[
+                                    SurfaceVertex { position: [sx0, sy00, sz0], color: sub_color },
+                                    SurfaceVertex { position: [sx1, sy10, sz0], color: sub_color },
+                                    SurfaceVertex { position: [sx1, sy11, sz1], color: sub_color },
+                                    SurfaceVertex { position: [sx0, sy00, sz0], color: sub_color },
+                                    SurfaceVertex { position: [sx1, sy11, sz1], color: sub_color },
+                                    SurfaceVertex { position: [sx0, sy01, sz1], color: sub_color },
+                                ]);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Unified water volume: bottom faces + side walls at same detail level as surface
+        // This creates a solid water volume instead of just a surface
+
+        // Second pass for volume: bottom faces and side walls (same detail as surface)
+        for k in 0..depth {
+            for i in 0..width {
+                let idx = k * width + i;
+                let center_h = smoothed[idx];
+
+                // Only process full water cells (case 15) for bottom - others are at boundary
+                let c0 = has_water(i as i32, k as i32);
+                let c1 = has_water(i as i32 + 1, k as i32);
+                let c2 = has_water(i as i32, k as i32 + 1);
+                let c3 = has_water(i as i32 + 1, k as i32 + 1);
+                let case = (c0 as u8) | ((c1 as u8) << 1) | ((c2 as u8) << 2) | ((c3 as u8) << 3);
+
+                if case == 0 || !center_h.is_finite() {
+                    continue;
+                }
+
+                // Floor height interpolated across the cell
+                let get_floor_y = |x: f32| -> f32 {
+                    let t = x / ((width - 1) as f32 * cell_size);
+                    (FLOOR_HEIGHT_LEFT as f32 * (1.0 - t) + FLOOR_HEIGHT_RIGHT as f32 * t) * cell_size
+                };
+
+                // Get base heights at corners
+                let h00 = get_corner_height(i, k).unwrap_or(center_h);
+                let h10 = get_corner_height(i + 1, k).unwrap_or(center_h);
+                let h01 = get_corner_height(i, k + 1).unwrap_or(center_h);
+                let h11 = get_corner_height(i + 1, k + 1).unwrap_or(center_h);
+
+                let x0 = i as f32 * cell_size;
+                let x1 = (i + 1) as f32 * cell_size;
+                let z0 = k as f32 * cell_size;
+                let z1 = (k + 1) as f32 * cell_size;
+
+                // Simple side walls at water boundaries (single quad per edge for speed)
+                let xm = (x0 + x1) * 0.5;
+                let zm = (z0 + z1) * 0.5;
+
+                // Get cell velocity for side color
+                let (cell_vx, cell_vz, _) = get_velocity_at(xm, zm);
+                let cell_speed = (cell_vx * cell_vx + cell_vz * cell_vz).sqrt();
+                let mut side_color = calc_color(i, k, center_h, cell_speed);
+                side_color[0] *= 0.8;
+                side_color[1] *= 0.8;
+                side_color[2] *= 0.9;
+
+                let floor_y0 = get_floor_y(x0);
+                let floor_y1 = get_floor_y(x1);
+                let sy00 = get_height_at(x0, z0, h00);
+                let sy10 = get_height_at(x1, z0, h10);
+                let sy01 = get_height_at(x0, z1, h01);
+                let sy11 = get_height_at(x1, z1, h11);
+
+                // Front edge (z = z0)
+                if k == 0 || !smoothed[(k - 1) * width + i].is_finite() {
+                    self.water_surface_vertices.extend_from_slice(&[
+                        SurfaceVertex { position: [x0, floor_y0, z0], color: side_color },
+                        SurfaceVertex { position: [x1, floor_y1, z0], color: side_color },
+                        SurfaceVertex { position: [x1, sy10, z0], color: side_color },
+                        SurfaceVertex { position: [x0, floor_y0, z0], color: side_color },
+                        SurfaceVertex { position: [x1, sy10, z0], color: side_color },
+                        SurfaceVertex { position: [x0, sy00, z0], color: side_color },
+                    ]);
+                }
+
+                // Back edge (z = z1)
+                if k == depth - 1 || !smoothed[(k + 1) * width + i].is_finite() {
+                    self.water_surface_vertices.extend_from_slice(&[
+                        SurfaceVertex { position: [x0, floor_y0, z1], color: side_color },
+                        SurfaceVertex { position: [x0, sy01, z1], color: side_color },
+                        SurfaceVertex { position: [x1, sy11, z1], color: side_color },
+                        SurfaceVertex { position: [x0, floor_y0, z1], color: side_color },
+                        SurfaceVertex { position: [x1, sy11, z1], color: side_color },
+                        SurfaceVertex { position: [x1, floor_y1, z1], color: side_color },
+                    ]);
+                }
+
+                // Left edge (x = x0)
+                if i == 0 || !smoothed[k * width + i - 1].is_finite() {
+                    self.water_surface_vertices.extend_from_slice(&[
+                        SurfaceVertex { position: [x0, floor_y0, z0], color: side_color },
+                        SurfaceVertex { position: [x0, sy00, z0], color: side_color },
+                        SurfaceVertex { position: [x0, sy01, z1], color: side_color },
+                        SurfaceVertex { position: [x0, floor_y0, z0], color: side_color },
+                        SurfaceVertex { position: [x0, sy01, z1], color: side_color },
+                        SurfaceVertex { position: [x0, floor_y0, z1], color: side_color },
+                    ]);
+                }
+
+                // Right edge (x = x1)
+                if i == width - 1 || !smoothed[k * width + i + 1].is_finite() {
+                    self.water_surface_vertices.extend_from_slice(&[
+                        SurfaceVertex { position: [x1, floor_y1, z0], color: side_color },
+                        SurfaceVertex { position: [x1, floor_y1, z1], color: side_color },
+                        SurfaceVertex { position: [x1, sy11, z1], color: side_color },
+                        SurfaceVertex { position: [x1, floor_y1, z0], color: side_color },
+                        SurfaceVertex { position: [x1, sy11, z1], color: side_color },
+                        SurfaceVertex { position: [x1, sy10, z0], color: side_color },
+                    ]);
+                }
+            }
+        }
+
+        self.water_surface_vertices.len()
+    }
+
     /// Build sparse flow particles colored by velocity
     fn build_flow_particles(&mut self) -> usize {
         self.flow_particles.clear();
@@ -1623,6 +2981,67 @@ impl App {
         }).collect()
     }
 
+    /// Build particle instances sorted by type (water first, then sediment) for SSFR rendering
+    /// In hybrid mode, only includes water particles ABOVE the water heightfield (overtopping)
+    /// Returns (instances, water_count, sediment_count)
+    fn build_particle_instances_sorted(&self) -> (Vec<ParticleInstance>, usize, usize) {
+        let mut water_instances = Vec::new();
+        let mut sediment_instances = Vec::new();
+
+        let cell_size = CELL_SIZE;
+        let width = GRID_WIDTH;
+        let depth = GRID_DEPTH;
+
+        for p in &self.sim.particles.list {
+            let speed = p.velocity.length();
+            let t = (speed / 2.5).min(1.0);
+
+            if p.is_sediment() {
+                sediment_instances.push(ParticleInstance {
+                    position: [p.position.x, p.position.y, p.position.z],
+                    color: [
+                        0.6 + t * 0.2,
+                        0.5 + t * 0.2,
+                        0.2 + t * 0.1,
+                        0.85,
+                    ],
+                });
+            } else {
+                // For water: only include if above heightfield (overtopping particles)
+                let i = (p.position.x / cell_size).floor() as i32;
+                let k = (p.position.z / cell_size).floor() as i32;
+
+                let include = if i >= 0 && i < width as i32 && k >= 0 && k < depth as i32 {
+                    let idx = k as usize * width + i as usize;
+                    let surface_y = self.water_heightfield[idx];
+                    // Include if no heightfield data OR particle is above surface + threshold
+                    !surface_y.is_finite() || p.position.y > surface_y + WATER_OVERTOP_THRESHOLD
+                } else {
+                    true  // Outside grid, include as splat
+                };
+
+                if include {
+                    water_instances.push(ParticleInstance {
+                        position: [p.position.x, p.position.y, p.position.z],
+                        color: [
+                            0.3 + t * 0.5,  // Slightly brighter for splash visibility
+                            0.5 + t * 0.4,
+                            0.9,
+                            0.9,
+                        ],
+                    });
+                }
+            }
+        }
+
+        let water_count = water_instances.len();
+        let sediment_count = sediment_instances.len();
+
+        // Water first, then sediment
+        water_instances.extend(sediment_instances);
+        (water_instances, water_count, sediment_count)
+    }
+
     fn render(&mut self) {
         if self.gpu.is_none() || self.window.is_none() {
             return;
@@ -1630,6 +3049,7 @@ impl App {
 
         if !self.paused {
             let dt = 1.0 / 60.0;
+            self.simulation_time += dt;
 
             if self.use_gpu_sim {
                 let bed_dt = dt * GPU_SYNC_STRIDE as f32;
@@ -1889,7 +3309,12 @@ impl App {
             }
         }
 
-        // Print stats every 30 frames (less spam for larger sim)
+        // Print FPS every 10 frames for visibility
+        if self.frame % 10 == 0 {
+            println!(">>> FPS: {:.1} | Particles: {} <<<", self.current_fps, self.sim.particles.len());
+        }
+
+        // Print full stats every 30 frames
         if self.frame % 30 == 0 {
             let (avg_vel, _max_vel, max_y, max_x) = self.particle_stats();
             let mode = if self.use_gpu_sim { "GPU" } else { "CPU" };
@@ -1905,6 +3330,13 @@ impl App {
                 max_y,
                 max_x,
             );
+
+            // Print jamming diagnostics every 30 frames when using GPU
+            if self.use_gpu_sim {
+                if let (Some(gpu_flip), Some(gpu)) = (&self.gpu_flip, &self.gpu) {
+                    gpu_flip.print_jamming_diagnostics(&gpu.device, &gpu.queue);
+                }
+            }
 
             if self.debug_riffle_probe {
                 if self.use_gpu_sim {
@@ -2100,17 +3532,24 @@ impl App {
         }
 
         // Build geometry based on render mode
-        let (surface_vertex_count, flow_particle_count, all_instances) = if self.render_heightfield {
+        let (surface_vertex_count, flow_particle_count, all_instances, water_particle_count, sediment_particle_count, water_mesh_vertex_count) = if self.render_heightfield {
             let svc = self.build_heightfield_vertices();
             let fpc = if self.render_flow_particles {
                 self.build_flow_particles()
             } else {
                 0
             };
-            (svc, fpc, Vec::new())
+            // Build water heightfield mesh FIRST (populates water_heightfield for filtering)
+            let wmvc = self.build_water_heightfield_mesh();
+            // For SSFR: build sorted particle instances (water first, then sediment)
+            // Now uses water_heightfield to filter - only overtopping particles are splats
+            let (instances, wpc, spc) = self.build_particle_instances_sorted();
+            (svc, fpc, instances, wpc, spc, wmvc)
         } else {
-            // Non-heightfield mode: draw all particles
-            (0, 0, self.build_all_particle_instances())
+            // Non-heightfield mode: draw all particles (unsorted)
+            let instances = self.build_all_particle_instances();
+            let count = instances.len();
+            (0, 0, instances, count, 0, 0)  // Treat all as "water" for unsorted mode
         };
         let instance_count = all_instances.len();
 
@@ -2123,6 +3562,14 @@ impl App {
                 &gpu.surface_vertex_buffer,
                 0,
                 bytemuck::cast_slice(&self.surface_vertices),
+            );
+        }
+        // Upload water heightfield mesh
+        if water_mesh_vertex_count > 0 {
+            gpu.queue.write_buffer(
+                &gpu.water_surface_buffer,
+                0,
+                bytemuck::cast_slice(&self.water_surface_vertices),
             );
         }
         if flow_particle_count > 0 {
@@ -2165,17 +3612,192 @@ impl App {
         gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let frame = gpu.surface.get_current_texture().unwrap();
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let frame_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
 
-        {
+        // Use SSFR for water rendering when heightfield mode is on
+        if self.render_heightfield && gpu.water_ssfr.is_some() {
+            let ssfr = gpu.water_ssfr.as_ref().unwrap();
+
+            // Update water uniforms
+            let water_uniforms = WaterUniforms {
+                view_proj: view_proj.to_cols_array_2d(),
+                view: view.to_cols_array_2d(),
+                proj: proj.to_cols_array_2d(),
+                inv_proj: proj.inverse().to_cols_array_2d(),
+                camera_pos: eye.to_array(),
+                particle_radius: WATER_PARTICLE_RADIUS,
+                screen_size: [gpu.config.width as f32, gpu.config.height as f32],
+                near: SSFR_NEAR,
+                far: SSFR_FAR,
+            };
+            gpu.queue.write_buffer(&ssfr.water_uniform_buffer, 0, bytemuck::bytes_of(&water_uniforms));
+
+            // Pass 1: Clear scene depth texture (bed mesh rendering skipped for now -
+            // would require depth-only pipeline. Water still renders correctly without bed occlusion)
+            {
+                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Scene Depth Pass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &ssfr.scene_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                // Note: Bed mesh rendering skipped - requires depth-only pipeline
+            }
+
+            // Pass 2: Render water particles to depth + thickness textures
+            if water_particle_count > 0 {
+                // Create a temporary depth texture view for the water depth pass
+                let water_depth_stencil_view = ssfr.scene_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Water Depth Pass"),
+                    color_attachments: &[
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: &ssfr.depth_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color { r: 1.0, g: 0.0, b: 0.0, a: 0.0 }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                    ],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &water_depth_stencil_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                pass.set_pipeline(&ssfr.depth_pipeline);
+                pass.set_bind_group(0, &ssfr.depth_bind_group, &[]);
+                pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
+                pass.set_vertex_buffer(1, gpu.instance_buffer.slice(..));
+                // Draw only water particles (first water_particle_count instances)
+                pass.draw(0..4, 0..water_particle_count as u32);
+            }
+
+            // Pass 3: Bilateral blur (H then V)
+            if water_particle_count > 0 {
+                let workgroup_x = (gpu.config.width + 7) / 8;
+                let workgroup_y = (gpu.config.height + 7) / 8;
+
+                // Update blur uniforms for horizontal pass
+                let blur_h_uniforms = BlurUniforms {
+                    texel_size: [1.0 / gpu.config.width as f32, 1.0 / gpu.config.height as f32],
+                    blur_radius: SSFR_BLUR_RADIUS,
+                    depth_falloff: SSFR_BLUR_DEPTH_FALLOFF,
+                    direction: [1.0, 0.0],
+                    _pad: [0.0, 0.0],
+                };
+                gpu.queue.write_buffer(&ssfr.blur_uniform_buffer, 0, bytemuck::bytes_of(&blur_h_uniforms));
+
+                // Horizontal blur: depth -> temp
+                {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Blur H Pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&ssfr.blur_h_pipeline);
+                    pass.set_bind_group(0, &ssfr.blur_h_bind_group, &[]);
+                    pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
+                }
+
+                // Update blur uniforms for vertical pass
+                let blur_v_uniforms = BlurUniforms {
+                    texel_size: [1.0 / gpu.config.width as f32, 1.0 / gpu.config.height as f32],
+                    blur_radius: SSFR_BLUR_RADIUS,
+                    depth_falloff: SSFR_BLUR_DEPTH_FALLOFF,
+                    direction: [0.0, 1.0],
+                    _pad: [0.0, 0.0],
+                };
+                gpu.queue.write_buffer(&ssfr.blur_uniform_buffer, 0, bytemuck::cast_slice(&[blur_v_uniforms]));
+
+                // Vertical blur: temp -> smoothed
+                {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Blur V Pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&ssfr.blur_v_pipeline);
+                    pass.set_bind_group(0, &ssfr.blur_v_bind_group, &[]);
+                    pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
+                }
+            }
+
+            // Pass 4: Final composite - render scene, then water overlay
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Final Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &frame_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.1, b: 0.15, a: 1.0 }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                pass.set_bind_group(0, &gpu.bind_group, &[]);
+
+                // Draw bed mesh
+                if let (Some(vb), Some(ib)) = (&self.bed_mesh.vertex_buffer, &self.bed_mesh.index_buffer) {
+                    pass.set_pipeline(&gpu.surface_pipeline);
+                    pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..self.bed_mesh.num_indices(), 0, 0..1);
+                }
+
+                // Draw water heightfield mesh (bulk water surface)
+                if water_mesh_vertex_count > 0 {
+                    pass.set_pipeline(&gpu.surface_pipeline);
+                    pass.set_vertex_buffer(0, gpu.water_surface_buffer.slice(..));
+                    pass.draw(0..water_mesh_vertex_count as u32, 0..1);
+                }
+
+                // Composite water splats (overtopping particles only)
+                if water_particle_count > 0 {
+                    pass.set_pipeline(&ssfr.composite_pipeline);
+                    pass.set_bind_group(0, &ssfr.composite_bind_group, &[]);
+                    pass.draw(0..3, 0..1);  // Full-screen triangle
+                }
+
+                // Draw sediment particles on top
+                if sediment_particle_count > 0 {
+                    pass.set_pipeline(&gpu.pipeline);
+                    pass.set_bind_group(0, &gpu.bind_group, &[]);
+                    pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
+                    pass.set_vertex_buffer(1, gpu.instance_buffer.slice(..));
+                    // Sediment particles start after water particles
+                    pass.draw(0..4, water_particle_count as u32..instance_count as u32);
+                }
+            }
+        } else {
+            // Original rendering path (no SSFR)
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: &frame_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.1, b: 0.15, a: 1.0 }),
@@ -2189,27 +3811,15 @@ impl App {
 
             pass.set_bind_group(0, &gpu.bind_group, &[]);
 
-            // Draw solid cells
-            pass.set_pipeline(&gpu.pipeline);
-            pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-            pass.set_vertex_buffer(1, gpu.solid_buffer.slice(..));
-            pass.draw(0..4, 0..self.solid_instances.len() as u32);
+            // Draw bed mesh (3D solid geometry)
+            if let (Some(vb), Some(ib)) = (&self.bed_mesh.vertex_buffer, &self.bed_mesh.index_buffer) {
+                pass.set_pipeline(&gpu.surface_pipeline);
+                pass.set_vertex_buffer(0, vb.slice(..));
+                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..self.bed_mesh.num_indices(), 0, 0..1);
+            }
 
-            if self.render_heightfield {
-                // Draw water surface
-                if surface_vertex_count > 0 {
-                    pass.set_pipeline(&gpu.surface_pipeline);
-                    pass.set_vertex_buffer(0, gpu.surface_vertex_buffer.slice(..));
-                    pass.draw(0..surface_vertex_count as u32, 0..1);
-                }
-                // Draw sparse flow particles to show interior flow
-                if self.render_flow_particles && flow_particle_count > 0 {
-                    pass.set_pipeline(&gpu.pipeline);
-                    pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-                    pass.set_vertex_buffer(1, gpu.instance_buffer.slice(..));
-                    pass.draw(0..4, 0..flow_particle_count as u32);
-                }
-            } else if instance_count > 0 {
+            if instance_count > 0 {
                 // Draw particles directly
                 pass.set_pipeline(&gpu.pipeline);
                 pass.set_bind_group(0, &gpu.bind_group, &[]);
@@ -2341,11 +3951,20 @@ impl ApplicationHandler for App {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let water_surface_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Water Surface Buffer"),
+            size: (MAX_WATER_SURFACE_VERTICES * std::mem::size_of::<SurfaceVertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let solid_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Solid Buffer"),
             contents: bytemuck::cast_slice(&self.solid_instances),
             usage: wgpu::BufferUsages::VERTEX,
         });
+
+        // Upload bed mesh to GPU
+        self.bed_mesh.upload(&device);
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Uniform Buffer"),
@@ -2481,6 +4100,9 @@ impl ApplicationHandler for App {
             cache: None,
         });
 
+        // Create SSFR water rendering
+        let water_ssfr = create_water_ssfr(&device, &config, &vertex_buffer, &instance_buffer);
+
         self.gpu = Some(GpuState {
             surface,
             device,
@@ -2491,9 +4113,11 @@ impl ApplicationHandler for App {
             instance_buffer,
             solid_buffer,
             surface_vertex_buffer,
+            water_surface_buffer,
             uniform_buffer,
             bind_group,
             surface_pipeline,
+            water_ssfr: Some(water_ssfr),
         });
 
         self.window = Some(window);
@@ -2756,6 +4380,278 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return in.color;
+}
+"#;
+
+// Screen-Space Fluid Rendering Shaders
+
+/// Water depth pass - render particles as spherical depth splats
+const WATER_DEPTH_SHADER: &str = r#"
+struct WaterUniforms {
+    view_proj: mat4x4<f32>,
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    inv_proj: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+    particle_radius: f32,
+    screen_size: vec2<f32>,
+    near: f32,
+    far: f32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: WaterUniforms;
+
+struct VertexInput {
+    @location(0) vertex: vec2<f32>,
+    @location(1) position: vec3<f32>,
+    @location(2) color: vec4<f32>,
+}
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) view_pos: vec3<f32>,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    // Billboard facing camera
+    let to_camera = normalize(uniforms.camera_pos - in.position);
+    let world_up = vec3<f32>(0.0, 1.0, 0.0);
+    let right = normalize(cross(world_up, to_camera));
+    let up = cross(to_camera, right);
+
+    let world_pos = in.position + right * in.vertex.x * uniforms.particle_radius
+                                + up * in.vertex.y * uniforms.particle_radius;
+
+    var out: VertexOutput;
+    out.clip_position = uniforms.view_proj * vec4<f32>(world_pos, 1.0);
+    out.uv = in.vertex;  // -1 to 1 range
+    out.view_pos = (uniforms.view * vec4<f32>(in.position, 1.0)).xyz;
+    return out;
+}
+
+struct FragmentOutput {
+    @builtin(frag_depth) frag_depth: f32,
+    @location(0) depth_thickness: vec4<f32>,  // .r = depth, .g = thickness
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> FragmentOutput {
+    // Calculate sphere depth: uv is in -1..1 range
+    let dist_sq = dot(in.uv, in.uv);
+    if (dist_sq > 1.0) {
+        discard;
+    }
+
+    // Sphere surface offset in view space (pointing towards camera = positive z in view)
+    let z_offset = sqrt(1.0 - dist_sq) * uniforms.particle_radius;
+
+    // Adjust view-space z (view space z is negative into screen)
+    let adjusted_view_z = in.view_pos.z + z_offset;
+
+    // Project to get proper depth
+    let adjusted_view_pos = vec4<f32>(in.view_pos.xy, adjusted_view_z, 1.0);
+    let clip_pos = uniforms.proj * adjusted_view_pos;
+    let ndc_depth = clip_pos.z / clip_pos.w;
+
+    // Convert from NDC (-1 to 1) to depth buffer (0 to 1)
+    let depth = ndc_depth * 0.5 + 0.5;
+
+    // Thickness for refraction color
+    let thickness = sqrt(1.0 - dist_sq) * 2.0;  // 0 at edge, 2 at center
+
+    var out: FragmentOutput;
+    out.frag_depth = depth;
+    out.depth_thickness = vec4<f32>(depth, thickness, 0.0, 1.0);  // Store depth in .r, thickness in .g
+    return out;
+}
+"#;
+
+/// Bilateral blur shader - smooths depth while preserving edges
+const WATER_BLUR_SHADER: &str = r#"
+struct BlurUniforms {
+    texel_size: vec2<f32>,
+    blur_radius: i32,
+    depth_falloff: f32,
+    direction: vec2<f32>,
+    _pad: vec2<f32>,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: BlurUniforms;
+@group(0) @binding(1) var input_texture: texture_2d<f32>;
+@group(0) @binding(2) var output_texture: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3) var tex_sampler: sampler;
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let dims = textureDimensions(input_texture);
+    if (global_id.x >= dims.x || global_id.y >= dims.y) {
+        return;
+    }
+
+    let uv = (vec2<f32>(global_id.xy) + 0.5) / vec2<f32>(dims);
+    let center_depth = textureSampleLevel(input_texture, tex_sampler, uv, 0.0).r;
+
+    // Skip if no depth (background)
+    if (center_depth >= 1.0 || center_depth <= 0.0) {
+        textureStore(output_texture, vec2<i32>(global_id.xy), vec4<f32>(center_depth, 0.0, 0.0, 0.0));
+        return;
+    }
+
+    var sum = 0.0;
+    var weight_sum = 0.0;
+
+    for (var i = -uniforms.blur_radius; i <= uniforms.blur_radius; i++) {
+        let offset = vec2<f32>(f32(i)) * uniforms.direction * uniforms.texel_size;
+        let sample_uv = uv + offset;
+        let sample_depth = textureSampleLevel(input_texture, tex_sampler, sample_uv, 0.0).r;
+
+        // Skip background samples
+        if (sample_depth >= 1.0 || sample_depth <= 0.0) {
+            continue;
+        }
+
+        // Spatial weight (Gaussian)
+        let spatial = exp(-0.5 * f32(i * i) / f32(uniforms.blur_radius * uniforms.blur_radius));
+
+        // Depth weight (bilateral term)
+        let depth_diff = abs(sample_depth - center_depth);
+        let depth_weight = exp(-depth_diff * depth_diff / (uniforms.depth_falloff * uniforms.depth_falloff));
+
+        let weight = spatial * depth_weight;
+        sum += sample_depth * weight;
+        weight_sum += weight;
+    }
+
+    let result = select(center_depth, sum / weight_sum, weight_sum > 0.0);
+    textureStore(output_texture, vec2<i32>(global_id.xy), vec4<f32>(result, 0.0, 0.0, 0.0));
+}
+"#;
+
+/// Water composite shader - final water surface rendering
+const WATER_COMPOSITE_SHADER: &str = r#"
+struct WaterUniforms {
+    view_proj: mat4x4<f32>,
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    inv_proj: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+    particle_radius: f32,
+    screen_size: vec2<f32>,
+    near: f32,
+    far: f32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: WaterUniforms;
+@group(0) @binding(1) var depth_texture: texture_2d<f32>;
+@group(0) @binding(2) var thickness_texture: texture_2d<f32>;
+@group(0) @binding(3) var scene_depth_texture: texture_depth_2d;
+@group(0) @binding(4) var tex_sampler: sampler;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+// Full-screen triangle
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0)
+    );
+
+    var out: VertexOutput;
+    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
+    out.uv = positions[vertex_index] * 0.5 + 0.5;
+    out.uv.y = 1.0 - out.uv.y;  // Flip Y for texture coordinates
+    return out;
+}
+
+fn reconstruct_position(uv: vec2<f32>, depth: f32) -> vec3<f32> {
+    let ndc = vec4<f32>(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    var view_pos = uniforms.inv_proj * ndc;
+    return view_pos.xyz / view_pos.w;
+}
+
+fn calculate_normal(uv: vec2<f32>, depth: f32) -> vec3<f32> {
+    let texel = 1.0 / uniforms.screen_size;
+
+    // Sample neighboring depths
+    let depth_l = textureSampleLevel(depth_texture, tex_sampler, uv - vec2<f32>(texel.x, 0.0), 0.0).r;
+    let depth_r = textureSampleLevel(depth_texture, tex_sampler, uv + vec2<f32>(texel.x, 0.0), 0.0).r;
+    let depth_t = textureSampleLevel(depth_texture, tex_sampler, uv - vec2<f32>(0.0, texel.y), 0.0).r;
+    let depth_b = textureSampleLevel(depth_texture, tex_sampler, uv + vec2<f32>(0.0, texel.y), 0.0).r;
+
+    // Reconstruct view-space positions
+    let pos_c = reconstruct_position(uv, depth);
+    let pos_l = reconstruct_position(uv - vec2<f32>(texel.x, 0.0), depth_l);
+    let pos_r = reconstruct_position(uv + vec2<f32>(texel.x, 0.0), depth_r);
+    let pos_t = reconstruct_position(uv - vec2<f32>(0.0, texel.y), depth_t);
+    let pos_b = reconstruct_position(uv + vec2<f32>(0.0, texel.y), depth_b);
+
+    // Calculate derivatives, preferring closer samples
+    var ddx: vec3<f32>;
+    if (abs(depth_l - depth) < abs(depth_r - depth)) {
+        ddx = pos_c - pos_l;
+    } else {
+        ddx = pos_r - pos_c;
+    }
+
+    var ddy: vec3<f32>;
+    if (abs(depth_t - depth) < abs(depth_b - depth)) {
+        ddy = pos_c - pos_t;
+    } else {
+        ddy = pos_b - pos_c;
+    }
+
+    return normalize(cross(ddx, ddy));
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let water_depth = textureSampleLevel(depth_texture, tex_sampler, in.uv, 0.0).r;
+    let scene_depth = textureSampleLevel(scene_depth_texture, tex_sampler, in.uv, 0.0);
+
+    // No water or water behind scene
+    if (water_depth >= 1.0 || water_depth <= 0.0 || water_depth > scene_depth) {
+        discard;
+    }
+
+    // Reconstruct normal from depth
+    let normal = calculate_normal(in.uv, water_depth);
+
+    // View direction (in view space, looking down -Z)
+    let view_pos = reconstruct_position(in.uv, water_depth);
+    let view_dir = normalize(-view_pos);
+
+    // Fresnel effect
+    let fresnel_base = 0.02;
+    let fresnel = fresnel_base + (1.0 - fresnel_base) * pow(1.0 - max(dot(normal, view_dir), 0.0), 5.0);
+
+    // Water color based on thickness - more saturated blue
+    // Thickness is stored in .g of the depth texture (same texture, blurred together)
+    let thickness = textureSampleLevel(depth_texture, tex_sampler, in.uv, 0.0).g;
+    let shallow_color = vec3<f32>(0.2, 0.5, 0.85);  // More saturated blue
+    let deep_color = vec3<f32>(0.05, 0.2, 0.5);     // Deeper blue
+    let water_color = mix(shallow_color, deep_color, saturate(thickness * 0.3));
+
+    // Simple lighting
+    let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
+    let light_view = (uniforms.view * vec4<f32>(light_dir, 0.0)).xyz;
+    let diffuse = max(dot(normal, light_view), 0.0) * 0.4 + 0.6;
+
+    // Specular highlight
+    let half_vec = normalize(light_view + view_dir);
+    let specular = pow(max(dot(normal, half_vec), 0.0), 32.0);
+
+    // Combine - less fresnel to keep color more visible
+    let lit_color = water_color * diffuse + vec3<f32>(1.0) * specular * 0.4;
+    let final_color = mix(lit_color, vec3<f32>(0.7, 0.85, 1.0), fresnel * 0.2);
+
+    return vec4<f32>(final_color, 0.75);  // Semi-transparent
 }
 "#;
 

@@ -68,7 +68,7 @@ impl GpuPressureSolver {
         let cell_type_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Cell Type Buffer"),
             size: (cell_count * std::mem::size_of::<u32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
