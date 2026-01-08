@@ -92,3 +92,13 @@ Archive location for outdated plans: `plans/archive/`
 - Potential issues:
   - Plan appears implemented (GPU G2P modules exist; used by `crates/game/src/gpu/flip_3d.rs`).
   - References 2D-only buffers and CPU transfer.rs line numbers that no longer match.
+
+## `plans/archive/gpu-p2g-implementation.md`
+- Purpose: Plan for GPU P2G implementation (fixed-point atomic scatter).
+- Links/interactions:
+  - `crates/game/src/gpu/p2g.rs` (2D P2G implementation)
+  - `crates/game/src/gpu/p2g_3d.rs` + `crates/game/src/gpu/shaders/p2g_scatter_3d.wgsl`
+  - `crates/game/src/gpu/flip_3d.rs` (uses GPU P2G)
+- Potential issues:
+  - Plan appears implemented (P2G modules and shaders exist).
+  - Mentions 2D-only buffers and performance tables without dates.
