@@ -79,6 +79,7 @@ const SHIELDS_SMOOTH: f32 = 0.02;
 const BEDLOAD_COEFF: f32 = 0.25;
 const ENTRAINMENT_COEFF: f32 = 0.2;
 const RIFFLE_PROBE_PAD: i32 = 2;
+const WALL_MARGIN: usize = 4;  // Wall height above floor+riffle
 const BED_AIR_MARGIN_CELLS: f32 = 1.5;
 const BED_MAX_SLOPE: f32 = 0.7;
 const BED_RELAX_ITERS: usize = 2;
@@ -347,13 +348,15 @@ fn create_industrial_sluice(sim: &mut FlipSimulation3D) {
                     k >= exit_start_z && k < exit_end_z &&
                     j > floor_j && j <= floor_j + exit_height;
 
+                // Wall height: just above floor + riffle + margin (open-top trough)
+                let wall_top = floor_j + riffle_height + WALL_MARGIN;
+
                 let is_boundary =
-                    (i == 0) ||                      // Left wall
-                    (i == width - 1 && !is_exit) ||  // Right wall (except exit)
-                    j <= floor_j ||                   // Sloped floor
-                    j == height - 1 ||                // Ceiling
-                    k == 0 || k == depth - 1 ||       // Z walls
-                    is_riffle;                        // Riffles on floor
+                    j <= floor_j ||                                       // Sloped floor
+                    is_riffle ||                                          // Riffles on floor
+                    (i == 0 && j <= wall_top) ||                          // Left wall (short)
+                    (i == width - 1 && !is_exit && j <= wall_top) ||      // Right wall (short, except exit)
+                    ((k == 0 || k == depth - 1) && j <= wall_top);        // Z walls (short)
 
                 if is_boundary {
                     sim.grid.set_solid(i, j, k);
