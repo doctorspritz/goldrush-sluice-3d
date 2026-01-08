@@ -308,10 +308,10 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
             final_velocity.y += min(lift, sediment_params.settling_velocity * params.dt * 0.9);
         }
 
-        // Sediment doesn't use APIC C matrix (simpler advection)
-        c_col0[id.x] = vec3<f32>(0.0, 0.0, 0.0);
-        c_col1[id.x] = vec3<f32>(0.0, 0.0, 0.0);
-        c_col2[id.x] = vec3<f32>(0.0, 0.0, 0.0);
+        // Sediment keeps APIC C matrix - flows with water but settles
+        c_col0[id.x] = new_c_row0;
+        c_col1[id.x] = new_c_row1;
+        c_col2[id.x] = new_c_row2;
     } else {
         // Water keeps APIC C matrix
         c_col0[id.x] = new_c_row0;

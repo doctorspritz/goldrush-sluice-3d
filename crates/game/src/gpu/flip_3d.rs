@@ -2978,9 +2978,11 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&sediment_cell_params),
             );
 
-            // Run jamming pass multiple times to propagate support from bottom to top
-            // Each iteration allows jamming to propagate up one layer
-            let jamming_iterations = 5;  // Enough for typical pile heights
+            // DISABLED for friction-only model: jamming causes infinite compression
+            // because sediment marked as SOLID doesn't participate in pressure solve.
+            // With friction-only, sediment flows like water but settles + has friction.
+            /*
+            let jamming_iterations = 5;
             for _ in 0..jamming_iterations {
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Sediment Cell Type 3D Encoder"),
@@ -2999,6 +3001,7 @@ impl GpuFlip3D {
                 }
                 queue.submit(std::iter::once(encoder.finish()));
             }
+            */
 
             // DISABLED: Using voxel-based jamming instead of density projection
             /*

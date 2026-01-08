@@ -184,7 +184,7 @@ impl SluiceConfig {
         i == self.grid_width - 1
             && k >= exit_start_z
             && k < exit_end_z
-            && j > floor_j
+            && j >= floor_j  // Allow exit at floor level (for sediment)
             && j <= floor_j + self.exit_height
     }
 

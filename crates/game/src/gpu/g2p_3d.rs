@@ -51,11 +51,11 @@ pub struct SedimentParams3D {
 impl Default for SedimentParams3D {
     fn default() -> Self {
         Self {
-            settling_velocity: 0.05,   // Sand-like
-            friction_threshold: 0.1,   // 10 cm/s
-            friction_strength: 0.4,    // 40% damp per frame when stopped
-            vorticity_lift: 1.5,
-            vorticity_threshold: 2.0,
+            settling_velocity: 0.02,   // Slower settling - travels further
+            friction_threshold: 0.08,  // 8 cm/s threshold
+            friction_strength: 0.2,    // 20% damp - less aggressive
+            vorticity_lift: 2.0,       // More lift from turbulence
+            vorticity_threshold: 1.0,  // Easier to lift
             _pad: [0.0; 3],
         }
     }

@@ -19,7 +19,8 @@ struct Params {
     inv_cell_size: f32,  // 1.0 / cell_size
 }
 
-// Velocity clamping removed - matches CPU behavior and allows proper hydrostatic support
+// Max velocity to prevent explosions at boundary corners
+const MAX_VEL: f32 = 10.0;
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> pressure: array<f32>;
@@ -110,8 +111,9 @@ fn apply_gradient_u(@builtin(global_invocation_id) id: vec3<u32>) {
     let p_right = get_pressure(i32(i), i32(j), i32(k));
     let p_left = get_pressure(i32(i) - 1, i32(j), i32(k));
 
-    // Apply gradient directly - no clamping to match CPU behavior
-    grid_u[idx] = grid_u[idx] - (p_right - p_left) * params.inv_cell_size;
+    // Apply gradient with velocity clamping to prevent boundary explosions
+    var new_u = grid_u[idx] - (p_right - p_left) * params.inv_cell_size;
+    grid_u[idx] = clamp(new_u, -MAX_VEL, MAX_VEL);
 }
 
 // Apply pressure gradient to V velocity component
@@ -143,8 +145,9 @@ fn apply_gradient_v(@builtin(global_invocation_id) id: vec3<u32>) {
     let p_top = get_pressure(i32(i), i32(j), i32(k));
     let p_bottom = get_pressure(i32(i), i32(j) - 1, i32(k));
 
-    // Apply gradient directly - no clamping to match CPU behavior
-    grid_v[idx] = grid_v[idx] - (p_top - p_bottom) * params.inv_cell_size;
+    // Apply gradient with velocity clamping to prevent boundary explosions
+    var new_v = grid_v[idx] - (p_top - p_bottom) * params.inv_cell_size;
+    grid_v[idx] = clamp(new_v, -MAX_VEL, MAX_VEL);
 }
 
 // Apply pressure gradient to W velocity component
@@ -176,6 +179,7 @@ fn apply_gradient_w(@builtin(global_invocation_id) id: vec3<u32>) {
     let p_front = get_pressure(i32(i), i32(j), i32(k));
     let p_back = get_pressure(i32(i), i32(j), i32(k) - 1);
 
-    // Apply gradient directly - no clamping to match CPU behavior
-    grid_w[idx] = grid_w[idx] - (p_front - p_back) * params.inv_cell_size;
+    // Apply gradient with velocity clamping to prevent boundary explosions
+    var new_w = grid_w[idx] - (p_front - p_back) * params.inv_cell_size;
+    grid_w[idx] = clamp(new_w, -MAX_VEL, MAX_VEL);
 }
