@@ -664,7 +664,7 @@ impl GpuFlip3D {
         let vorticity_mag_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vorticity Magnitude 3D"),
             size: (cell_count * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -2157,7 +2157,7 @@ impl GpuFlip3D {
             vorticity_epsilon: 0.05,
             sediment_rest_particles: 8.0,
             sediment_drag_rate: 8.0,
-            sediment_settling_velocity: 0.35,
+            sediment_settling_velocity: 0.35,  // Restored to original value
             sediment_vorticity_lift: 0.08,
             sediment_vorticity_threshold: 0.15,
             sediment_porosity_drag: 3.0,
@@ -3224,6 +3224,13 @@ impl GpuFlip3D {
             mapped_at_creation: false,
         });
 
+        let vorticity_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Vorticity Staging"),
+            size: (self.width * self.height * self.depth * 4) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Jamming Diagnostics Readback"),
         });
@@ -3248,52 +3255,86 @@ impl GpuFlip3D {
             0,
             (self.width * self.height * self.depth * 4) as u64,
         );
+        encoder.copy_buffer_to_buffer(
+            &self.vorticity_mag_buffer,
+            0,
+            &vorticity_staging,
+            0,
+            (self.width * self.height * self.depth * 4) as u64,
+        );
         queue.submit(std::iter::once(encoder.finish()));
 
         // Map and read buffers
         let ct_slice = cell_type_staging.slice(..);
         let sed_slice = sediment_count_staging.slice(..);
         let part_slice = particle_count_staging.slice(..);
+        let vort_slice = vorticity_staging.slice(..);
 
         let (ct_tx, ct_rx) = std::sync::mpsc::channel();
         let (sed_tx, sed_rx) = std::sync::mpsc::channel();
         let (part_tx, part_rx) = std::sync::mpsc::channel();
+        let (vort_tx, vort_rx) = std::sync::mpsc::channel();
 
         ct_slice.map_async(wgpu::MapMode::Read, move |r| { ct_tx.send(r).unwrap(); });
         sed_slice.map_async(wgpu::MapMode::Read, move |r| { sed_tx.send(r).unwrap(); });
         part_slice.map_async(wgpu::MapMode::Read, move |r| { part_tx.send(r).unwrap(); });
+        vort_slice.map_async(wgpu::MapMode::Read, move |r| { vort_tx.send(r).unwrap(); });
 
         device.poll(wgpu::Maintain::Wait);
         ct_rx.recv().unwrap().unwrap();
         sed_rx.recv().unwrap().unwrap();
         part_rx.recv().unwrap().unwrap();
+        vort_rx.recv().unwrap().unwrap();
 
         let ct_data = ct_slice.get_mapped_range();
         let sed_data = sed_slice.get_mapped_range();
         let part_data = part_slice.get_mapped_range();
+        let vort_data = vort_slice.get_mapped_range();
 
         let cell_types: &[u32] = bytemuck::cast_slice(&ct_data);
         let sediment_counts: &[i32] = bytemuck::cast_slice(&sed_data);
         let particle_counts: &[i32] = bytemuck::cast_slice(&part_data);
+        let vorticity_mag: &[f32] = bytemuck::cast_slice(&vort_data);
 
         // Count cell types
         let solid_count = cell_types.iter().filter(|&&ct| ct == 2).count();
         let fluid_count = cell_types.iter().filter(|&&ct| ct == 1).count();
         let air_count = cell_types.iter().filter(|&&ct| ct == 0).count();
 
-        // Find sample cells with sediment
+        // Find sample cells with sediment - sample riffle area (x=12-20) where sediment accumulates
         let mut sample_cells = Vec::new();
-        for j in 0..self.height.min(5) {
+        let sample_i_start = 12u32.min(self.width - 1);
+        let sample_i_end = 20u32.min(self.width - 1);
+        for j in 0..self.height.min(8) {
             for k in (self.depth / 2).saturating_sub(2)..=(self.depth / 2 + 2).min(self.depth - 1) {
-                for i in (self.width / 2).saturating_sub(2)..=(self.width / 2 + 2).min(self.width - 1) {
+                for i in sample_i_start..=sample_i_end {
                     let idx = (k * self.width * self.height + j * self.width + i) as usize;
                     let sed_count = sediment_counts[idx];
                     let total_count = particle_counts[idx];
                     let wat_count = total_count - sed_count;
                     let cell_type = cell_types[idx];
+                    let vort = vorticity_mag[idx];
 
                     if sed_count > 0 || total_count > 0 {
-                        sample_cells.push((i, j, k, sed_count, wat_count, total_count, cell_type));
+                        sample_cells.push((i, j, k, sed_count, wat_count, total_count, cell_type, vort));
+                    }
+                }
+            }
+        }
+
+        // Calculate vorticity statistics in riffle area
+        let mut vort_sum = 0.0f32;
+        let mut vort_count = 0;
+        let mut vort_max = 0.0f32;
+        for j in 0..self.height.min(12) {
+            for k in (self.depth / 2).saturating_sub(2)..=(self.depth / 2 + 2).min(self.depth - 1) {
+                for i in sample_i_start..=sample_i_end {
+                    let idx = (k * self.width * self.height + j * self.width + i) as usize;
+                    let vort = vorticity_mag[idx];
+                    if vort > 0.0 {
+                        vort_sum += vort;
+                        vort_count += 1;
+                        vort_max = vort_max.max(vort);
                     }
                 }
             }
@@ -3304,10 +3345,22 @@ impl GpuFlip3D {
         println!("Cell Types: SOLID={} FLUID={} AIR={} (total={})",
             solid_count, fluid_count, air_count, cell_types.len());
 
+        // Print vorticity statistics
+        let vort_avg = if vort_count > 0 { vort_sum / vort_count as f32 } else { 0.0 };
+        println!("\nVorticity in riffle area:");
+        println!("  avg={:.4}  max={:.4}  threshold={:.2}  lift_coeff={:.2}",
+            vort_avg, vort_max, self.sediment_vorticity_threshold, self.sediment_vorticity_lift);
+
+        // Calculate effective lift
+        let vort_excess_avg = (vort_avg - self.sediment_vorticity_threshold).max(0.0);
+        let lift_factor_avg = (self.sediment_vorticity_lift * vort_excess_avg).min(0.9);
+        let settling_cancellation_pct = lift_factor_avg * 100.0;
+        println!("  → Average lift cancels {:.1}% of settling velocity", settling_cancellation_pct);
+
         if !sample_cells.is_empty() {
-            println!("\nSample cells (center-bottom, j=0-4):");
-            println!("  (i, j, k) -> sed | water | total | type");
-            for (i, j, k, sed, wat, total, ct) in sample_cells.iter().take(15) {
+            println!("\nSample cells (riffle area i=12-20, j=0-7):");
+            println!("  (i, j, k) -> sed | water | total | vort | type");
+            for (i, j, k, sed, wat, total, ct, vort) in sample_cells.iter().take(20) {
                 let type_str = match ct {
                     0 => "AIR",
                     1 => "FLUID",
@@ -3315,29 +3368,32 @@ impl GpuFlip3D {
                     _ => "???",
                 };
                 let dominance = if *sed > *wat { "SED>" } else if *wat > *sed { "WAT>" } else { "=" };
-                println!("  ({:3},{:3},{:3}) -> {:3} | {:3} | {:3} | {} {}",
-                    i, j, k, sed, wat, total, type_str, dominance);
+                println!("  ({:3},{:3},{:3}) -> {:3} | {:3} | {:3} | {:.3} | {} {}",
+                    i, j, k, sed, wat, total, vort, type_str, dominance);
             }
         }
 
-        // Check support chains (sample column at center)
-        let mid_i = self.width / 2;
+        // Check support chains (sample column at riffle area)
+        let riffle_i = 15u32.min(self.width - 1);  // Middle of riffle area
         let mid_k = self.depth / 2;
-        println!("\nCenter column support chain (i={}, k={}):", mid_i, mid_k);
-        for j in 0..self.height.min(10) {
-            let idx = (mid_k * self.width * self.height + j * self.width + mid_i) as usize;
+        println!("\nRiffle column support chain (i={}, k={}):", riffle_i, mid_k);
+        for j in 0..self.height.min(12) {
+            let idx = (mid_k * self.width * self.height + j * self.width + riffle_i) as usize;
             let sed_count = sediment_counts[idx];
             let total_count = particle_counts[idx];
             let wat_count = total_count - sed_count;
             let cell_type = cell_types[idx];
+            let vort = vorticity_mag[idx];
             let type_str = match cell_type {
                 0 => "AIR  ",
                 1 => "FLUID",
                 2 => "SOLID",
                 _ => "???  ",
             };
-            println!("  j={:2}: {} | sed={:2} wat={:2} | {}",
-                j, type_str, sed_count, wat_count,
+            let vort_excess = (vort - self.sediment_vorticity_threshold).max(0.0);
+            let lift_factor = (self.sediment_vorticity_lift * vort_excess).min(0.9);
+            println!("  j={:2}: {} | sed={:2} wat={:2} | vort={:.3} lift={:.0}% | {}",
+                j, type_str, sed_count, wat_count, vort, lift_factor * 100.0,
                 if sed_count > wat_count { "SED>" } else if wat_count > sed_count { "WAT>" } else { "=" });
         }
         println!("=========================================\n");
@@ -3345,8 +3401,10 @@ impl GpuFlip3D {
         drop(ct_data);
         drop(sed_data);
         drop(part_data);
+        drop(vort_data);
         cell_type_staging.unmap();
         sediment_count_staging.unmap();
         particle_count_staging.unmap();
+        vorticity_staging.unmap();
     }
 }
