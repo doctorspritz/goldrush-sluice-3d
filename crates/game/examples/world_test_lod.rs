@@ -1,4 +1,4 @@
-//! World Heightfield Test
+//! World Heightfield Test (LOD Tiles)
 //!
 //! Controls:
 //! - WASD: Move camera
@@ -11,7 +11,7 @@
 //! - R: Reset world
 //! - ESC: Quit
 //!
-//! Run: cargo run --example world_test --release
+//! Run: cargo run --example world_test_lod --release
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
@@ -42,8 +42,18 @@ const WATER_ADD_VOLUME: f32 = 5.0;
 const MOVE_SPEED: f32 = 20.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
 
-const STEPS_PER_FRAME: usize = 10; // More steps for faster filling
+const STEPS_PER_FRAME: usize = 2;
 const DT: f32 = 0.02;
+
+const TILE_SIZE: u32 = 64;
+const MAX_ACTIVE_TILES: usize = 24;
+const CAMERA_TILE_RADIUS: i32 = 2;
+const ACTIVITY_DECAY: f32 = 0.9;
+const ACTIVITY_MIN: f32 = 0.05;
+const ACTIVITY_RADIUS_M: f32 = 120.0;
+const OVERLAY_HEIGHT_OFFSET: f32 = 0.2;
+const OVERLAY_ACTIVE_COLOR: [f32; 4] = [0.2, 0.9, 0.2, 0.22];
+const OVERLAY_CAMERA_COLOR: [f32; 4] = [0.2, 0.55, 1.0, 0.28];
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Default)]
@@ -212,6 +222,27 @@ struct WaterEmitter {
     enabled: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ActivityPoint {
+    position: Vec3,
+    intensity: f32,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct TileCoord {
+    tx: i32,
+    tz: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TileRegion {
+    coord: TileCoord,
+    origin_x: u32,
+    origin_z: u32,
+    width: u32,
+    depth: u32,
+}
+
 use game::gpu::heightfield::GpuHeightfield;
 
 struct GpuState {
@@ -222,8 +253,9 @@ struct GpuState {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
-    depth_texture: wgpu::Texture,
-    depth_view: wgpu::TextureView,
+    terrain: Mesh,
+    water: Mesh,
+    overlay: Mesh,
     heightfield: GpuHeightfield,
 }
 
@@ -236,10 +268,11 @@ struct App {
     input: InputState,
     last_frame: Instant,
     last_stats: Instant,
-    start_time: Instant,
     window_size: (u32, u32),
     selected_material: u32, // 0=sediment, 1=overburden, 2=gravel
     terrain_dirty: bool,    // Rebuild terrain mesh only when true
+    activity_points: Vec<ActivityPoint>,
+    active_tiles: Vec<TileRegion>,
 }
 
 impl App {
@@ -273,19 +306,26 @@ impl App {
             },
             last_frame: Instant::now(),
             last_stats: Instant::now(),
-            start_time: Instant::now(),
             window_size: (1280, 720),
             selected_material: 2, // Default to gravel (most useful for building)
             terrain_dirty: true,  // Build initial terrain mesh
+            activity_points: Vec::new(),
+            active_tiles: Vec::new(),
         }
     }
 
     fn reset_world(&mut self) {
         self.world = build_world();
+        self.activity_points.clear();
+        self.active_tiles.clear();
     }
 
     fn update(&mut self, dt: f32) {
         self.update_camera(dt);
+        self.decay_activity();
+
+        let selected_tiles = self.select_tiles();
+        self.active_tiles = selected_tiles.clone();
 
         if let Some(gpu) = self.gpu.as_mut() {
             // Run GPU Sim with fixed timestep substepping
@@ -293,27 +333,51 @@ impl App {
             let steps = ((dt / sim_dt).ceil() as usize).min(STEPS_PER_FRAME);
             
             for _ in 0..steps {
-                let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Sim Encoder"),
-                });
-                
-                // Update GPU emitter and dispatch (before water sim)
-                gpu.heightfield.update_emitter(
-                    &gpu.queue,
-                    self.emitter.position.x,
-                    self.emitter.position.z,
-                    self.emitter.radius,
-                    self.emitter.rate,
-                    sim_dt,
-                    self.emitter.enabled,
-                );
-                gpu.heightfield.dispatch_emitter(&mut encoder);
-                
-                // Update water sim params and dispatch
-                gpu.heightfield.update_params(&gpu.queue, sim_dt);
-                gpu.heightfield.dispatch(&mut encoder, sim_dt);
-                
-                gpu.queue.submit(Some(encoder.finish()));
+                for tile in &selected_tiles {
+                    let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Sim Tile Encoder"),
+                    });
+
+                    if self.emitter.enabled
+                        && tile_intersects_circle(
+                            tile,
+                            self.world.cell_size,
+                            self.emitter.position.x,
+                            self.emitter.position.z,
+                            self.emitter.radius,
+                        )
+                    {
+                        gpu.heightfield.update_emitter_tile(
+                            &gpu.queue,
+                            self.emitter.position.x,
+                            self.emitter.position.z,
+                            self.emitter.radius,
+                            self.emitter.rate,
+                            sim_dt,
+                            self.emitter.enabled,
+                            tile.origin_x,
+                            tile.origin_z,
+                            tile.width,
+                            tile.depth,
+                        );
+                        gpu.heightfield
+                            .dispatch_emitter_tile(&mut encoder, tile.width, tile.depth);
+                    }
+
+                    // Update water sim params and dispatch
+                    gpu.heightfield.update_params_tile(
+                        &gpu.queue,
+                        sim_dt,
+                        tile.origin_x,
+                        tile.origin_z,
+                        tile.width,
+                        tile.depth,
+                    );
+                    gpu.heightfield
+                        .dispatch_tile(&mut encoder, tile.width, tile.depth);
+
+                    gpu.queue.submit(Some(encoder.finish()));
+                }
             }
             
             // Sync back to CPU for rendering
@@ -327,37 +391,46 @@ impl App {
         // Handle mouse click - material tool
         if self.input.left_mouse {
             if let Some(hit) = self.raycast_terrain() {
+                self.record_activity(hit, 1.0);
+                // Ctrl = add material, else = excavate
+                let is_adding = self.input.keys.contains(&KeyCode::ControlLeft)
+                    || self.input.keys.contains(&KeyCode::ControlRight);
+                
+                let amount = if is_adding { ADD_HEIGHT * 50.0 } else { -(DIG_DEPTH * 50.0) };
+                let radius = if is_adding { ADD_RADIUS } else { DIG_RADIUS };
+                let tool_tiles = self.tiles_for_circle(hit, radius);
+                
                 if let Some(gpu) = self.gpu.as_ref() {
-                    // Ctrl = add material, else = excavate
-                    let is_adding = self.input.keys.contains(&KeyCode::ControlLeft)
-                        || self.input.keys.contains(&KeyCode::ControlRight);
-                    
-                    let amount = if is_adding { ADD_HEIGHT * 50.0 } else { -(DIG_DEPTH * 50.0) };
-                    let radius = if is_adding { ADD_RADIUS } else { DIG_RADIUS };
-                    
-                    // Update material tool params
-                    gpu.heightfield.update_material_tool(
-                        &gpu.queue,
-                        hit.x, hit.z,
-                        radius,
-                        amount,
-                        self.selected_material,
-                        dt,
-                        true, // enabled
-                    );
-                    
-                    // Dispatch appropriate tool
-                    let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Material Tool Encoder"),
-                    });
-                    
-                    if is_adding {
-                        gpu.heightfield.dispatch_material_tool(&mut encoder);
-                    } else {
-                        gpu.heightfield.dispatch_excavate(&mut encoder);
+                    for tile in tool_tiles {
+                        gpu.heightfield.update_material_tool_tile(
+                            &gpu.queue,
+                            hit.x,
+                            hit.z,
+                            radius,
+                            amount,
+                            self.selected_material,
+                            dt,
+                            true, // enabled
+                            tile.origin_x,
+                            tile.origin_z,
+                            tile.width,
+                            tile.depth,
+                        );
+
+                        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Material Tool Encoder"),
+                        });
+
+                        if is_adding {
+                            gpu.heightfield
+                                .dispatch_material_tool_tile(&mut encoder, tile.width, tile.depth);
+                        } else {
+                            gpu.heightfield
+                                .dispatch_excavate_tile(&mut encoder, tile.width, tile.depth);
+                        }
+
+                        gpu.queue.submit(Some(encoder.finish()));
                     }
-                    
-                    gpu.queue.submit(Some(encoder.finish()));
                     self.terrain_dirty = true; // Rebuild terrain mesh on next render
                 }
             }
@@ -366,22 +439,161 @@ impl App {
         if self.last_stats.elapsed() > Duration::from_secs(1) {
             let water = self.world.total_water_volume();
             let sediment = self.world.total_sediment_volume();
-            println!("Water volume: {:.2}, sediment volume: {:.2}", water, sediment);
+            println!(
+                "Water volume: {:.2}, sediment volume: {:.2}, active tiles: {}",
+                water,
+                sediment,
+                selected_tiles.len()
+            );
             self.last_stats = Instant::now();
         }
     }
 
     fn add_water_at_cursor(&mut self) {
         if let Some(hit) = self.raycast_terrain() {
+            self.record_activity(hit, 0.6);
             self.world.add_water(hit, WATER_ADD_VOLUME);
         }
     }
 
     fn add_muddy_water_at_cursor(&mut self) {
         if let Some(hit) = self.raycast_terrain() {
+            self.record_activity(hit, 0.6);
             self.world
                 .add_sediment_water(hit, WATER_ADD_VOLUME, WATER_ADD_VOLUME * 0.1);
         }
+    }
+
+    fn record_activity(&mut self, position: Vec3, intensity: f32) {
+        self.activity_points.push(ActivityPoint { position, intensity });
+    }
+
+    fn decay_activity(&mut self) {
+        for point in &mut self.activity_points {
+            point.intensity *= ACTIVITY_DECAY;
+        }
+        self.activity_points
+            .retain(|point| point.intensity >= ACTIVITY_MIN);
+    }
+
+    fn select_tiles(&self) -> Vec<TileRegion> {
+        let (tiles_x, tiles_z) = self.tile_grid_dims();
+        let tile_world_size = TILE_SIZE as f32 * self.world.cell_size;
+        let mut scores: std::collections::HashMap<TileCoord, f32> = std::collections::HashMap::new();
+
+        let camera_tile = world_to_tile(self.camera.position, tile_world_size);
+        for dz in -CAMERA_TILE_RADIUS..=CAMERA_TILE_RADIUS {
+            for dx in -CAMERA_TILE_RADIUS..=CAMERA_TILE_RADIUS {
+                if dx * dx + dz * dz > CAMERA_TILE_RADIUS * CAMERA_TILE_RADIUS {
+                    continue;
+                }
+                let coord = TileCoord {
+                    tx: camera_tile.tx + dx,
+                    tz: camera_tile.tz + dz,
+                };
+                if coord.tx < 0 || coord.tz < 0 || coord.tx >= tiles_x || coord.tz >= tiles_z {
+                    continue;
+                }
+                scores
+                    .entry(coord)
+                    .and_modify(|score| *score = score.max(10.0))
+                    .or_insert(10.0);
+            }
+        }
+
+        let mut sources = self.activity_points.clone();
+        if self.emitter.enabled {
+            sources.push(ActivityPoint {
+                position: self.emitter.position,
+                intensity: 1.0,
+            });
+        }
+
+        let radius_tiles = (ACTIVITY_RADIUS_M / tile_world_size).ceil() as i32;
+        for source in sources {
+            let center_tile = world_to_tile(source.position, tile_world_size);
+            for dz in -radius_tiles..=radius_tiles {
+                for dx in -radius_tiles..=radius_tiles {
+                    let coord = TileCoord {
+                        tx: center_tile.tx + dx,
+                        tz: center_tile.tz + dz,
+                    };
+                    if coord.tx < 0 || coord.tz < 0 || coord.tx >= tiles_x || coord.tz >= tiles_z {
+                        continue;
+                    }
+                    let center = tile_center_world(coord, tile_world_size);
+                    let dist = (center - Vec3::new(source.position.x, 0.0, source.position.z)).length();
+                    if dist > ACTIVITY_RADIUS_M {
+                        continue;
+                    }
+                    let falloff = 1.0 - dist / ACTIVITY_RADIUS_M;
+                    let score = source.intensity * falloff;
+                    scores
+                        .entry(coord)
+                        .and_modify(|s| *s = s.max(score))
+                        .or_insert(score);
+                }
+            }
+        }
+
+        let mut scored_tiles: Vec<(TileCoord, f32)> = scores.into_iter().collect();
+        scored_tiles.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored_tiles.truncate(MAX_ACTIVE_TILES);
+
+        scored_tiles
+            .into_iter()
+            .filter_map(|(coord, _)| self.tile_region(coord))
+            .collect()
+    }
+
+    fn tiles_for_circle(&self, center: Vec3, radius: f32) -> Vec<TileRegion> {
+        let (tiles_x, tiles_z) = self.tile_grid_dims();
+        let tile_world_size = TILE_SIZE as f32 * self.world.cell_size;
+        let radius_tiles = (radius / tile_world_size).ceil() as i32 + 1;
+        let center_tile = world_to_tile(center, tile_world_size);
+
+        let mut tiles = Vec::new();
+        for dz in -radius_tiles..=radius_tiles {
+            for dx in -radius_tiles..=radius_tiles {
+                let coord = TileCoord {
+                    tx: center_tile.tx + dx,
+                    tz: center_tile.tz + dz,
+                };
+                if coord.tx < 0 || coord.tz < 0 || coord.tx >= tiles_x || coord.tz >= tiles_z {
+                    continue;
+                }
+                if let Some(tile) = self.tile_region(coord) {
+                    if tile_intersects_circle(&tile, self.world.cell_size, center.x, center.z, radius) {
+                        tiles.push(tile);
+                    }
+                }
+            }
+        }
+        tiles
+    }
+
+    fn tile_grid_dims(&self) -> (i32, i32) {
+        let tiles_x = ((self.world.width as u32 + TILE_SIZE - 1) / TILE_SIZE) as i32;
+        let tiles_z = ((self.world.depth as u32 + TILE_SIZE - 1) / TILE_SIZE) as i32;
+        (tiles_x, tiles_z)
+    }
+
+    fn tile_region(&self, coord: TileCoord) -> Option<TileRegion> {
+        let (tiles_x, tiles_z) = self.tile_grid_dims();
+        if coord.tx < 0 || coord.tz < 0 || coord.tx >= tiles_x || coord.tz >= tiles_z {
+            return None;
+        }
+        let origin_x = (coord.tx as u32) * TILE_SIZE;
+        let origin_z = (coord.tz as u32) * TILE_SIZE;
+        let width = (self.world.width as u32).saturating_sub(origin_x).min(TILE_SIZE);
+        let depth = (self.world.depth as u32).saturating_sub(origin_z).min(TILE_SIZE);
+        Some(TileRegion {
+            coord,
+            origin_x,
+            origin_z,
+            width,
+            depth,
+        })
     }
 
     fn update_camera(&mut self, dt: f32) {
@@ -408,11 +620,6 @@ impl App {
 
         if direction.length_squared() > 0.0 {
             self.camera.position += direction.normalize() * self.camera.speed * dt;
-        }
-
-        if let Some(gpu) = &mut self.gpu {
-            // ... (Wait, this is update_camera, not update?)
-            // update_camera has no gpu argument.
         }
 
         // Apply scroll zoom
@@ -599,30 +806,21 @@ impl App {
             cache: None,
         });
 
-        // Depth texture
-        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (terrain_vertices, terrain_indices) = build_terrain_mesh(&self.world);
+        let (water_vertices, water_indices) = build_water_mesh(&self.world);
+        let (overlay_vertices, overlay_indices) =
+            build_tile_overlay_mesh(&self.world, &self.active_tiles, self.camera.position);
+
+        let terrain = Mesh::new(&device, &terrain_vertices, &terrain_indices, "Terrain");
+        let water = Mesh::new(&device, &water_vertices, &water_indices, "Water");
+        let overlay = Mesh::new(&device, &overlay_vertices, &overlay_indices, "Overlay");
 
         let heightfield = GpuHeightfield::new(
             &device, 
             self.world.width as u32, 
             self.world.depth as u32, 
             self.world.cell_size,
-            INITIAL_HEIGHT,
-            config.format,
+            INITIAL_HEIGHT
         );
         heightfield.upload_from_world(&queue, &self.world);
 
@@ -634,8 +832,9 @@ impl App {
             pipeline,
             uniform_buffer,
             bind_group,
-            depth_texture,
-            depth_view,
+            terrain,
+            water,
+            overlay,
             heightfield,
         });
     }
@@ -666,12 +865,24 @@ impl App {
 
         // Only rebuild terrain mesh when it changes (expensive with side faces)
         if self.terrain_dirty {
-            // Force update? Shader handles vertex displacement, so we don't need to rebuild geometry.
-            // But we should ensure buffers are up to date?
-            // GpuHeightfield buffers (bedrock etc) are updated explicitly by dispatch/download?
-            // "Displacement" uses buffers directly. So if sim runs, rendering is up to date.
+            let (terrain_vertices, terrain_indices) = build_terrain_mesh(&self.world);
+            gpu.terrain
+                .update(&gpu.device, &gpu.queue, &terrain_vertices, &terrain_indices, "Terrain");
             self.terrain_dirty = false;
         }
+        
+        // Water mesh updates every frame (simulation changes it)
+        let (water_vertices, water_indices) = build_water_mesh(&self.world);
+        gpu.water
+            .update(&gpu.device, &gpu.queue, &water_vertices, &water_indices, "Water");
+
+        let (overlay_vertices, overlay_indices) =
+            build_tile_overlay_mesh(&self.world, &self.active_tiles, self.camera.position);
+        gpu.overlay
+            .update(&gpu.device, &gpu.queue, &overlay_vertices, &overlay_indices, "Overlay");
+
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let output = match gpu.surface.get_current_texture() {
             Ok(t) => t,
@@ -680,16 +891,41 @@ impl App {
         let frame_view = output.texture.create_view(&Default::default());
 
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        
-        gpu.heightfield.render(
-            &mut encoder,
-            &frame_view,
-            &gpu.depth_view,
-            &gpu.queue,
-            view_proj.to_cols_array_2d(),
-            self.camera.position.to_array(),
-            self.start_time.elapsed().as_secs_f32(),
-        );
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &frame_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.08,
+                            g: 0.08,
+                            b: 0.1,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+
+            pass.set_pipeline(&gpu.pipeline);
+            pass.set_bind_group(0, &gpu.bind_group, &[]);
+
+            pass.set_vertex_buffer(0, gpu.terrain.vertex_buffer.slice(..));
+            pass.set_index_buffer(gpu.terrain.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..gpu.terrain.num_indices, 0, 0..1);
+
+            pass.set_vertex_buffer(0, gpu.water.vertex_buffer.slice(..));
+            pass.set_index_buffer(gpu.water.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..gpu.water.num_indices, 0, 0..1);
+
+            pass.set_vertex_buffer(0, gpu.overlay.vertex_buffer.slice(..));
+            pass.set_index_buffer(gpu.overlay.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..gpu.overlay.num_indices, 0, 0..1);
+        }
 
         gpu.queue.submit(std::iter::once(encoder.finish()));
         output.present();
@@ -720,24 +956,6 @@ impl ApplicationHandler for App {
                     gpu.config.width = size.width.max(1);
                     gpu.config.height = size.height.max(1);
                     gpu.surface.configure(&gpu.device, &gpu.config);
-                    
-                    // Recreate depth texture
-                    let depth_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("Depth Texture"),
-                        size: wgpu::Extent3d {
-                            width: gpu.config.width,
-                            height: gpu.config.height,
-                            depth_or_array_layers: 1,
-                        },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Depth32Float,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[],
-                    });
-                    gpu.depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-                    gpu.depth_texture = depth_texture;
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -1237,6 +1455,117 @@ fn build_water_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
     }
 
     (vertices, indices)
+}
+
+fn build_tile_overlay_mesh(
+    world: &World,
+    tiles: &[TileRegion],
+    camera_pos: Vec3,
+) -> (Vec<WorldVertex>, Vec<u32>) {
+    let mut vertices = Vec::with_capacity(tiles.len() * 4);
+    let mut indices = Vec::with_capacity(tiles.len() * 6);
+
+    if tiles.is_empty() {
+        return (vertices, indices);
+    }
+
+    let tile_world_size = TILE_SIZE as f32 * world.cell_size;
+    let camera_tile = world_to_tile(camera_pos, tile_world_size);
+    let camera_radius_sq = CAMERA_TILE_RADIUS * CAMERA_TILE_RADIUS;
+
+    for tile in tiles {
+        let dx = tile.coord.tx - camera_tile.tx;
+        let dz = tile.coord.tz - camera_tile.tz;
+        let is_camera = dx * dx + dz * dz <= camera_radius_sq;
+        let color = if is_camera {
+            OVERLAY_CAMERA_COLOR
+        } else {
+            OVERLAY_ACTIVE_COLOR
+        };
+
+        let height = tile_surface_height(world, tile) + OVERLAY_HEIGHT_OFFSET;
+        let x0 = tile.origin_x as f32 * world.cell_size;
+        let x1 = (tile.origin_x + tile.width) as f32 * world.cell_size;
+        let z0 = tile.origin_z as f32 * world.cell_size;
+        let z1 = (tile.origin_z + tile.depth) as f32 * world.cell_size;
+
+        let base = vertices.len() as u32;
+        vertices.push(WorldVertex {
+            position: [x0, height, z0],
+            color,
+        });
+        vertices.push(WorldVertex {
+            position: [x1, height, z0],
+            color,
+        });
+        vertices.push(WorldVertex {
+            position: [x1, height, z1],
+            color,
+        });
+        vertices.push(WorldVertex {
+            position: [x0, height, z1],
+            color,
+        });
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    (vertices, indices)
+}
+
+fn tile_surface_height(world: &World, tile: &TileRegion) -> f32 {
+    let start_x = tile.origin_x as usize;
+    let start_z = tile.origin_z as usize;
+    let end_x = (tile.origin_x + tile.width) as usize;
+    let end_z = (tile.origin_z + tile.depth) as usize;
+
+    let mut max_height = f32::MIN;
+    for z in start_z..end_z {
+        for x in start_x..end_x {
+            let idx = world.idx(x, z);
+            let ground = world.ground_height(x, z);
+            let surface = ground.max(world.water_surface[idx]);
+            if surface > max_height {
+                max_height = surface;
+            }
+        }
+    }
+
+    if max_height == f32::MIN {
+        0.0
+    } else {
+        max_height
+    }
+}
+
+fn world_to_tile(position: Vec3, tile_world_size: f32) -> TileCoord {
+    let tx = (position.x / tile_world_size).floor() as i32;
+    let tz = (position.z / tile_world_size).floor() as i32;
+    TileCoord { tx, tz }
+}
+
+fn tile_center_world(coord: TileCoord, tile_world_size: f32) -> Vec3 {
+    let center_x = (coord.tx as f32 + 0.5) * tile_world_size;
+    let center_z = (coord.tz as f32 + 0.5) * tile_world_size;
+    Vec3::new(center_x, 0.0, center_z)
+}
+
+fn tile_intersects_circle(
+    tile: &TileRegion,
+    cell_size: f32,
+    center_x: f32,
+    center_z: f32,
+    radius: f32,
+) -> bool {
+    let min_x = tile.origin_x as f32 * cell_size;
+    let min_z = tile.origin_z as f32 * cell_size;
+    let max_x = (tile.origin_x + tile.width) as f32 * cell_size;
+    let max_z = (tile.origin_z + tile.depth) as f32 * cell_size;
+
+    let closest_x = center_x.clamp(min_x, max_x);
+    let closest_z = center_z.clamp(min_z, max_z);
+    let dx = center_x - closest_x;
+    let dz = center_z - closest_z;
+    dx * dx + dz * dz <= radius * radius
 }
 
 const SHADER: &str = r#"

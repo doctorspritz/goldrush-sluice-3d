@@ -2,8 +2,12 @@
 // Slope collapse / angle of repose mechanics
 
 struct Params {
-    width: u32,
-    depth: u32,
+    world_width: u32,
+    world_depth: u32,
+    tile_width: u32,
+    tile_depth: u32,
+    origin_x: u32,
+    origin_z: u32,
     _pad0: vec2<u32>,
     cell_size: f32,
     dt: f32,
@@ -29,7 +33,7 @@ const K_COLLAPSE: f32 = 0.5;
 @group(2) @binding(4) var<storage, read_write> sediment: array<f32>;
 
 fn get_idx(x: u32, z: u32) -> u32 {
-    return z * params.width + x;
+    return z * params.world_width + x;
 }
 
 fn get_ground_height(idx: u32) -> f32 {
@@ -48,9 +52,12 @@ fn get_collapse_amount(slope: f32, tan_limit: f32, available: f32) -> f32 {
 
 @compute @workgroup_size(16, 16)
 fn update_collapse(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let x = global_id.x;
-    let z = global_id.y;
-    if (x >= params.width || z >= params.depth) { return; }
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
+    let x = tile_x + params.origin_x;
+    let z = tile_z + params.origin_z;
+    if (x >= params.world_width || z >= params.world_depth) { return; }
     
     let idx = get_idx(x, z);
     let my_height = get_ground_height(idx);
@@ -70,7 +77,7 @@ fn update_collapse(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let nz = i32(z) + offsets[i].y;
         
         // Bounds check
-        if (nx < 0 || nx >= i32(params.width) || nz < 0 || nz >= i32(params.depth)) {
+        if (nx < 0 || nx >= i32(params.world_width) || nz < 0 || nz >= i32(params.world_depth)) {
             continue;
         }
         
@@ -132,7 +139,7 @@ fn update_collapse(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let nx = i32(x) + offsets[i].x;
         let nz = i32(z) + offsets[i].y;
         
-        if (nx < 0 || nx >= i32(params.width) || nz < 0 || nz >= i32(params.depth)) {
+        if (nx < 0 || nx >= i32(params.world_width) || nz < 0 || nz >= i32(params.world_depth)) {
             continue;
         }
         

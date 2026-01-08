@@ -8,8 +8,12 @@ struct ToolParams {
     amount: f32,          // Positive = add, Negative = remove (per second)
     material_type: u32,   // 0=sediment, 1=overburden, 2=gravel
     enabled: u32,         // 0 = disabled, 1 = enabled
-    width: u32,           // Grid width
-    depth: u32,           // Grid depth
+    world_width: u32,     // World width
+    world_depth: u32,     // World depth
+    tile_width: u32,      // Tile width
+    tile_depth: u32,      // Tile depth
+    origin_x: u32,        // Tile origin X
+    origin_z: u32,        // Tile origin Z
     cell_size: f32,       // Cell size
     dt: f32,              // Delta time
     _pad: vec2<f32>,      // Padding to 64 bytes
@@ -25,16 +29,19 @@ struct ToolParams {
 @group(1) @binding(4) var<storage, read_write> sediment: array<f32>;
 
 fn get_idx(x: u32, z: u32) -> u32 {
-    return z * tool.width + x;
+    return z * tool.world_width + x;
 }
 
 @compute @workgroup_size(16, 16)
 fn apply_material_tool(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (tool.enabled == 0u) { return; }
     
-    let x = global_id.x;
-    let z = global_id.y;
-    if (x >= tool.width || z >= tool.depth) { return; }
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= tool.tile_width || tile_z >= tool.tile_depth) { return; }
+    let x = tile_x + tool.origin_x;
+    let z = tile_z + tool.origin_z;
+    if (x >= tool.world_width || z >= tool.world_depth) { return; }
     
     let idx = get_idx(x, z);
     
@@ -83,9 +90,12 @@ fn apply_material_tool(@builtin(global_invocation_id) global_id: vec3<u32>) {
 fn excavate(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (tool.enabled == 0u) { return; }
     
-    let x = global_id.x;
-    let z = global_id.y;
-    if (x >= tool.width || z >= tool.depth) { return; }
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= tool.tile_width || tile_z >= tool.tile_depth) { return; }
+    let x = tile_x + tool.origin_x;
+    let z = tile_z + tool.origin_z;
+    if (x >= tool.world_width || z >= tool.world_depth) { return; }
     
     let idx = get_idx(x, z);
     

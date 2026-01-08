@@ -8,28 +8,37 @@ struct EmitterParams {
     rate: f32,  // volume per second
     dt: f32,
     enabled: u32,  // 0 or 1
-    width: u32,
-    depth: u32,
+    world_width: u32,
+    world_depth: u32,
+    tile_width: u32,
+    tile_depth: u32,
+    origin_x: u32,
+    origin_z: u32,
+    cell_size: f32,
+    _pad0: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: EmitterParams;
 @group(0) @binding(1) var<storage, read_write> water_depth: array<f32>;
 
 fn get_idx(x: u32, z: u32) -> u32 {
-    return z * params.width + x;
+    return z * params.world_width + x;
 }
 
 @compute @workgroup_size(16, 16)
 fn add_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (params.enabled == 0u) { return; }
     
-    let x = global_id.x;
-    let z = global_id.y;
-    if (x >= params.width || z >= params.depth) { return; }
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
+    let x = tile_x + params.origin_x;
+    let z = tile_z + params.origin_z;
+    if (x >= params.world_width || z >= params.world_depth) { return; }
     
     // Calculate distance from emitter center
-    let fx = f32(x);
-    let fz = f32(z);
+    let fx = f32(x) * params.cell_size + params.cell_size * 0.5;
+    let fz = f32(z) * params.cell_size + params.cell_size * 0.5;
     let dx = fx - params.pos_x;
     let dz = fz - params.pos_z;
     let dist = sqrt(dx * dx + dz * dz);

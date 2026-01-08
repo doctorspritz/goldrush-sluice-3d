@@ -53,6 +53,9 @@ pub fn generate_klondike_terrain(
     let valley_center_x = (width as f32 * cell_size) / 2.0;
     
     for z in 0..depth {
+        let mut min_ground_in_creek = 10000.0;
+        let mut creek_indices = Vec::new();
+
         for x in 0..width {
             let idx = z * width + x;
             let world_x = x as f32 * cell_size;
@@ -110,10 +113,22 @@ pub fn generate_klondike_terrain(
                 let creek_depth = carve_factor * (config.min_overburden * 0.8); // Carve most of overburden
                 world.overburden_thickness[idx] = (overburden - creek_depth).max(0.5);
                 
-                // Add some water in the creek
-                let water_height = bedrock + paydirt + gravel + world.overburden_thickness[idx] + 0.3;
-                world.water_surface[idx] = water_height;
+                // Track for water pass
+                let ground_height = bedrock + paydirt + gravel + world.overburden_thickness[idx];
+                if ground_height < min_ground_in_creek {
+                    min_ground_in_creek = ground_height;
+                }
+                creek_indices.push(idx);
             }
+        }
+
+        // 7. Water Pass: Fill creek to a flat mechanical level
+        let water_level = min_ground_in_creek + 0.8; // Fill 0.8m above the lowest point
+        for idx in creek_indices {
+             // Simply set the flat water level.
+             // Where water_level < ground, it will be hidden by terrain (and my shader fix handles it).
+             // Where water_level > ground, it forms a pool.
+             world.water_surface[idx] = water_level;
         }
     }
     

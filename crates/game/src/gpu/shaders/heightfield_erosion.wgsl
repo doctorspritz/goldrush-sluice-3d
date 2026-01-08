@@ -2,8 +2,12 @@
 // Hydraulic Erosion and Sediment Transport
 
 struct Params {
-    width: u32,
-    depth: u32,
+    world_width: u32,
+    world_depth: u32,
+    tile_width: u32,
+    tile_depth: u32,
+    origin_x: u32,
+    origin_z: u32,
     _pad0: vec2<u32>,
     cell_size: f32,
     dt: f32,
@@ -40,15 +44,18 @@ const MAX_CAPACITY: f32 = 1.0;        // Allow more sediment per cell
 @group(2) @binding(4) var<storage, read_write> sediment: array<f32>;
 
 fn get_idx(x: u32, z: u32) -> u32 {
-    return z * params.width + x;
+    return z * params.world_width + x;
 }
 
 // 1. Erosion & Deposition
 @compute @workgroup_size(16, 16)
 fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let x = global_id.x;
-    let z = global_id.y;
-    if (x >= params.width || z >= params.depth) { return; }
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
+    let x = tile_x + params.origin_x;
+    let z = tile_z + params.origin_z;
+    if (x >= params.world_width || z >= params.world_depth) { return; }
     
     let idx = get_idx(x, z);
     
@@ -131,9 +138,12 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // 2. Advect Sediment (Semi-Lagrangian)
 @compute @workgroup_size(16, 16)
 fn advect_sediment(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let x = global_id.x;
-    let z = global_id.y;
-    if (x >= params.width || z >= params.depth) { return; }
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
+    let x = tile_x + params.origin_x;
+    let z = tile_z + params.origin_z;
+    if (x >= params.world_width || z >= params.world_depth) { return; }
     
     let idx = get_idx(x, z);
     
@@ -147,8 +157,8 @@ fn advect_sediment(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Bilinear Interpolate suspended_sediment at (src_x, src_z)
     // Boundary checks
-    if (src_x < 0.0 || src_x >= f32(params.width) - 1.0 || 
-        src_z < 0.0 || src_z >= f32(params.depth) - 1.0) {
+    if (src_x < 0.0 || src_x >= f32(params.world_width) - 1.0 || 
+        src_z < 0.0 || src_z >= f32(params.world_depth) - 1.0) {
         
         // Out of bounds: assumes 0 or clamp?
         // Let's flow out.
@@ -175,9 +185,12 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
     // Transport = Water_Flux * Concentration_upwind
     // Use upwind scheme: concentration from cell that flux flows FROM
     
-    let x = global_id.x;
-    let z = global_id.y;
-    if (x >= params.width || z >= params.depth) { return; }
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
+    let x = tile_x + params.origin_x;
+    let z = tile_z + params.origin_z;
+    if (x >= params.world_width || z >= params.world_depth) { return; }
     let idx = get_idx(x, z);
     
     let depth = water_depth[idx];
@@ -205,7 +218,7 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
     }
     
     // Outflow to right (flux_x[idx] > 0 means flow from x to x+1)
-    if (x < params.width - 1) {
+    if (x < params.world_width - 1) {
         let fx = flux_x[idx];
         if (fx > 0.0) {
             // Outflow to right - use local concentration
@@ -232,7 +245,7 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
         }
     }
     
-    if (z < params.depth - 1) {
+    if (z < params.world_depth - 1) {
         let fz = flux_z[idx];
         if (fz > 0.0) {
             net_sediment -= fz * local_conc;
@@ -251,4 +264,3 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
     // Clamp to non-negative and reasonable max
     suspended_sediment[idx] = clamp(new_sed, 0.0, 10.0);
 }
-

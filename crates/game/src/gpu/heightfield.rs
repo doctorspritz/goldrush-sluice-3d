@@ -1,5 +1,22 @@
-use std::sync::Arc;
 use wgpu::util::DeviceExt;
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GridVertex {
+    pub position: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct RenderUniforms {
+    pub view_proj: [[f32; 4]; 4],
+    pub camera_pos: [f32; 3],
+    pub cell_size: f32,
+    pub grid_width: u32,
+    pub grid_depth: u32,
+    pub time: f32,
+    pub _pad: u32,
+}
 
 /// GPU-accelerated Heightfield Simulation.
 /// 
@@ -10,6 +27,7 @@ use wgpu::util::DeviceExt;
 pub struct GpuHeightfield {
     width: u32,
     depth: u32,
+    cell_size: f32,
     
     // Geology Buffers
     pub bedrock_buffer: wgpu::Buffer,
@@ -56,12 +74,29 @@ pub struct GpuHeightfield {
     pub material_tool_terrain_bind_group: wgpu::BindGroup,
     
     // Params Buffer (to update every frame)
+    // Params Buffer (to update every frame)
     pub params_buffer: wgpu::Buffer,
+    
+    // Rendering
+    pub render_pipeline: wgpu::RenderPipeline,
+    pub water_pipeline: wgpu::RenderPipeline,
+    pub render_bind_group: wgpu::BindGroup,
+    pub render_uniform_buffer: wgpu::Buffer,
+    pub grid_vertex_buffer: wgpu::Buffer,
+    pub grid_index_buffer: wgpu::Buffer,
+    pub num_indices: u32,
 }
 
 impl GpuHeightfield {
-    pub fn new(device: &wgpu::Device, width: u32, depth: u32, initial_height: f32) -> Self {
-        let size = (width * depth) as usize * std::mem::size_of::<f32>();
+    pub fn new(
+        device: &wgpu::Device,
+        width: u32,
+        depth: u32,
+        cell_size: f32,
+        initial_height: f32,
+        format: wgpu::TextureFormat,
+    ) -> Self {
+        let _size = (width * depth) as usize * std::mem::size_of::<f32>();
         
         // Helper to create valid storage buffers
         let create_storage = |label: &str, init_val: f32| -> wgpu::Buffer {
@@ -87,7 +122,7 @@ impl GpuHeightfield {
         let suspended = create_storage("Suspended Sediment Buffer", 0.0);
         
         // 3. Initialize Intermediate
-        let water_surface = create_storage("Water Surface Buffer", initial_height); // approx
+        let water_surface = create_storage("Water Surface Buffer", 0.0);
         let flux_x = create_storage("Flux X Buffer", 0.0);
         let flux_z = create_storage("Flux Z Buffer", 0.0);
 
@@ -95,7 +130,7 @@ impl GpuHeightfield {
         // For now constructing the struct fields. simpler to create layout and bindgroups here.
         
         // 4. Uniforms
-        let params_size = std::mem::size_of::<[u32; 8]>(); // Alignment padding safe size
+        let params_size = std::mem::size_of::<[u32; 12]>(); // Alignment padding safe size
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Heightfield Params"),
             size: params_size as u64,
@@ -271,10 +306,10 @@ impl GpuHeightfield {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/heightfield_emitter.wgsl").into()),
         });
 
-        // Emitter params buffer (pos_x, pos_z, radius, rate, dt, enabled, width, depth)
+        // Emitter params buffer (pos/radius/rate + world/tile dims + origin + cell_size)
         let emitter_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Emitter Params Buffer"),
-            size: 32, // 8 x f32/u32
+            size: 64, // 16 x f32/u32
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -341,7 +376,7 @@ impl GpuHeightfield {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/heightfield_material_tool.wgsl").into()),
         });
 
-        // Material tool params buffer (64 bytes: pos_x, pos_z, radius, amount, material_type, enabled, width, depth, cell_size, dt, pad[2])
+        // Material tool params buffer (pos/radius/amount + world/tile dims + origin + cell_size/dt)
         let material_tool_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Material Tool Params Buffer"),
             size: 64,
@@ -413,9 +448,178 @@ impl GpuHeightfield {
             cache: None,
         });
 
+        // --- Rendering Setup ---
+        
+        // 1. Grid Mesh (Static)
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        for z in 0..depth {
+            for x in 0..width {
+                // vertices
+                vertices.push(GridVertex { position: [x as f32, z as f32] });
+                
+                // indices (quads)
+                if x < width - 1 && z < depth - 1 {
+                    let i = z * width + x;
+                    // Triangle 1
+                    indices.push(i);
+                    indices.push(i + width);
+                    indices.push(i + 1);
+                    // Triangle 2
+                    indices.push(i + 1);
+                    indices.push(i + width);
+                    indices.push(i + width + 1);
+                }
+            }
+        }
+        let num_indices = indices.len() as u32;
+
+        let grid_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Grid Vertex Buffer"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let grid_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Grid Index Buffer"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        // 2. Render Uniforms
+        let render_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Render Uniform Buffer"),
+            size: std::mem::size_of::<RenderUniforms>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // 3. Render Bind Group
+        let render_bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Render Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 7, visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            ],
+        });
+
+        let render_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Render Bind Group"),
+            layout: &render_bg_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: render_uniform_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: bedrock.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: paydirt.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: gravel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: overburden.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: sediment.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: water_surface.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: water_depth.as_entire_binding() },
+            ],
+        });
+
+        // 4. Pipelines
+        let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Heightfield Render Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/heightfield_render.wgsl").into()),
+        });
+
+        let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[&render_bg_layout],
+            push_constant_ranges: &[],
+        });
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Terrain Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &render_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<GridVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &render_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let water_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Water Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &render_shader,
+                entry_point: Some("vs_water"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<GridVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &render_shader,
+                entry_point: Some("fs_water"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         Self {
             width,
             depth,
+            cell_size,
             bedrock_buffer: bedrock,
             paydirt_buffer: paydirt,
             gravel_buffer: gravel,
@@ -453,69 +657,119 @@ impl GpuHeightfield {
             material_tool_terrain_bind_group,
             
             params_buffer,
+            
+            render_pipeline,
+            water_pipeline,
+            render_bind_group,
+            render_uniform_buffer,
+            grid_vertex_buffer,
+            grid_index_buffer,
+            num_indices,
         }
     }
 
     pub fn dispatch(&self, encoder: &mut wgpu::CommandEncoder, dt: f32) {
-         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("Heightfield Compute Pass"),
-            timestamp_writes: None,
-         });
+         let _ = dt;
+         self.dispatch_tile(encoder, self.width, self.depth);
+    }
+
+    pub fn dispatch_tile(&self, encoder: &mut wgpu::CommandEncoder, tile_width: u32, tile_depth: u32) {
+         let x_groups = (tile_width + 15) / 16;
+         let z_groups = (tile_depth + 15) / 16;
          
-         let x_groups = (self.width + 15) / 16;
-         let z_groups = (self.depth + 15) / 16;
+         // Helper to create a new compute pass for each step to enforce memory visibility
+         let mut dispatch_step = |label: &str, pipeline: &wgpu::ComputePipeline| {
+             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                 label: Some(label),
+                 timestamp_writes: None,
+             });
+             pass.set_bind_group(0, &self.params_bind_group, &[]);
+             pass.set_bind_group(1, &self.water_bind_group, &[]);
+             pass.set_bind_group(2, &self.terrain_bind_group, &[]);
+             pass.set_pipeline(pipeline);
+             pass.dispatch_workgroups(x_groups, z_groups, 1);
+         };
+
+         // 1. Update Flux (Updates Velocity + Flux) - Reads Surface
+         dispatch_step("Update Flux", &self.flux_pipeline);
          
-         pass.set_bind_group(0, &self.params_bind_group, &[]);
-         pass.set_bind_group(1, &self.water_bind_group, &[]);
-         pass.set_bind_group(2, &self.terrain_bind_group, &[]);
+         // 2. Update Depth (Volume) - Reads Flux
+         dispatch_step("Update Depth", &self.depth_pipeline);
          
-         // 1. Update Surface
-         pass.set_pipeline(&self.surface_pipeline);
-         pass.dispatch_workgroups(x_groups, z_groups, 1);
+         // 3. Erosion (post-flux velocity) - Reads Depth/Vel, writes Terrain
+         dispatch_step("Update Erosion", &self.erosion_pipeline);
          
-         // 2. Erosion & Deposition (Requires Velocity, which is updated in Flux step?)
-         // Wait, Flux step updates Velocity. So Erosion should be AFTER Flux?
-         // Or using previous frame velocity?
-         // Standard: Flux -> Depth -> Erosion (using updated depth/vel implied).
+         // 4. Sediment Transport (flux-based advection) - Reads Flux, writes Sediment
+         dispatch_step("Update Sediment Transport", &self.sediment_transport_pipeline);
          
-         // 3. Update Flux (Updates Velocity + Flux)
-         pass.set_pipeline(&self.flux_pipeline);
-         pass.dispatch_workgroups(x_groups, z_groups, 1);
-         
-         // 4. Update Depth (Volume)
-         pass.set_pipeline(&self.depth_pipeline);
-         pass.dispatch_workgroups(x_groups, z_groups, 1);
-         
-         // 5. Erosion (post-flux velocity)
-         pass.set_pipeline(&self.erosion_pipeline);
-         pass.dispatch_workgroups(x_groups, z_groups, 1);
-         
-         // 6. Sediment Transport (flux-based advection)
-         pass.set_pipeline(&self.sediment_transport_pipeline);
-         pass.dispatch_workgroups(x_groups, z_groups, 1);
-         
-         // 7. Collapse (angle of repose / slope stability)
-         pass.set_pipeline(&self.collapse_pipeline);
-         pass.dispatch_workgroups(x_groups, z_groups, 1);
+         // 5. Collapse (angle of repose / slope stability) - Writes Terrain
+         dispatch_step("Update Collapse", &self.collapse_pipeline);
+
+         // 6. Update Surface - Reads Ground/Depth, writes Surface
+         // Move to end so rendering sees the LATEST surface reflecting erosion/depth changes
+         dispatch_step("Update Surface", &self.surface_pipeline);
     }
     
     pub fn update_params(&self, queue: &wgpu::Queue, dt: f32) {
-        let params = [
+        self.update_params_tile(queue, dt, 0, 0, self.width, self.depth);
+    }
+
+    pub fn update_params_tile(
+        &self,
+        queue: &wgpu::Queue,
+        dt: f32,
+        origin_x: u32,
+        origin_z: u32,
+        tile_width: u32,
+        tile_depth: u32,
+    ) {
+        let params: [u32; 12] = [
             self.width,
             self.depth,
-            0, 0, // padding
-            bytemuck::cast(1.0f32), // cell_size
+            tile_width,
+            tile_depth,
+            origin_x,
+            origin_z,
+            0,
+            0,
+            bytemuck::cast(self.cell_size),
             bytemuck::cast(dt),
-            bytemuck::cast(9.81f32), // gravity
-            bytemuck::cast(0.99f32), // damping
+            bytemuck::cast(9.81f32),
+            bytemuck::cast(0.99f32),
         ];
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&params));
     }
     
     /// Update GPU emitter parameters
-    pub fn update_emitter(&self, queue: &wgpu::Queue, pos_x: f32, pos_z: f32, radius: f32, rate: f32, dt: f32, enabled: bool) {
-        // EmitterParams struct: pos_x, pos_z, radius, rate, dt, enabled, width, depth
-        let params: [u32; 8] = [
+    pub fn update_emitter(
+        &self,
+        queue: &wgpu::Queue,
+        pos_x: f32,
+        pos_z: f32,
+        radius: f32,
+        rate: f32,
+        dt: f32,
+        enabled: bool,
+    ) {
+        self.update_emitter_tile(queue, pos_x, pos_z, radius, rate, dt, enabled, 0, 0, self.width, self.depth);
+    }
+
+    pub fn update_emitter_tile(
+        &self,
+        queue: &wgpu::Queue,
+        pos_x: f32,
+        pos_z: f32,
+        radius: f32,
+        rate: f32,
+        dt: f32,
+        enabled: bool,
+        origin_x: u32,
+        origin_z: u32,
+        tile_width: u32,
+        tile_depth: u32,
+    ) {
+        // EmitterParams struct: pos_x, pos_z, radius, rate, dt, enabled, world/tile dims, origin, cell_size
+        let params: [u32; 16] = [
             bytemuck::cast(pos_x),
             bytemuck::cast(pos_z),
             bytemuck::cast(radius),
@@ -524,19 +778,36 @@ impl GpuHeightfield {
             if enabled { 1 } else { 0 },
             self.width,
             self.depth,
+            tile_width,
+            tile_depth,
+            origin_x,
+            origin_z,
+            bytemuck::cast(self.cell_size),
+            0,
+            0,
+            0,
         ];
         queue.write_buffer(&self.emitter_params_buffer, 0, bytemuck::cast_slice(&params));
     }
     
     /// Dispatch emitter compute pass - call before main dispatch
     pub fn dispatch_emitter(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.dispatch_emitter_tile(encoder, self.width, self.depth);
+    }
+
+    pub fn dispatch_emitter_tile(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+    ) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Emitter Compute Pass"),
             timestamp_writes: None,
         });
         
-        let x_groups = (self.width + 15) / 16;
-        let z_groups = (self.depth + 15) / 16;
+        let x_groups = (tile_width + 15) / 16;
+        let z_groups = (tile_depth + 15) / 16;
         
         pass.set_pipeline(&self.emitter_pipeline);
         pass.set_bind_group(0, &self.emitter_bind_group, &[]);
@@ -545,9 +816,49 @@ impl GpuHeightfield {
 
     /// Update GPU material tool parameters
     /// material_type: 0=sediment, 1=overburden, 2=gravel
-    pub fn update_material_tool(&self, queue: &wgpu::Queue, pos_x: f32, pos_z: f32, radius: f32, amount: f32, material_type: u32, dt: f32, enabled: bool) {
-        // ToolParams struct: pos_x, pos_z, radius, amount, material_type, enabled, width, depth, cell_size, dt, pad[2]
-        let params: [u32; 12] = [
+    pub fn update_material_tool(
+        &self,
+        queue: &wgpu::Queue,
+        pos_x: f32,
+        pos_z: f32,
+        radius: f32,
+        amount: f32,
+        material_type: u32,
+        dt: f32,
+        enabled: bool,
+    ) {
+        self.update_material_tool_tile(
+            queue,
+            pos_x,
+            pos_z,
+            radius,
+            amount,
+            material_type,
+            dt,
+            enabled,
+            0,
+            0,
+            self.width,
+            self.depth,
+        );
+    }
+
+    pub fn update_material_tool_tile(
+        &self,
+        queue: &wgpu::Queue,
+        pos_x: f32,
+        pos_z: f32,
+        radius: f32,
+        amount: f32,
+        material_type: u32,
+        dt: f32,
+        enabled: bool,
+        origin_x: u32,
+        origin_z: u32,
+        tile_width: u32,
+        tile_depth: u32,
+    ) {
+        let params: [u32; 16] = [
             bytemuck::cast(pos_x),
             bytemuck::cast(pos_z),
             bytemuck::cast(radius),
@@ -556,22 +867,36 @@ impl GpuHeightfield {
             if enabled { 1 } else { 0 },
             self.width,
             self.depth,
-            bytemuck::cast(1.0f32), // cell_size
+            tile_width,
+            tile_depth,
+            origin_x,
+            origin_z,
+            bytemuck::cast(self.cell_size),
             bytemuck::cast(dt),
-            0, 0, // padding
+            0,
+            0,
         ];
         queue.write_buffer(&self.material_tool_params_buffer, 0, bytemuck::cast_slice(&params));
     }
     
     /// Dispatch material tool (add/remove specific material type)
     pub fn dispatch_material_tool(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.dispatch_material_tool_tile(encoder, self.width, self.depth);
+    }
+
+    pub fn dispatch_material_tool_tile(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+    ) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Material Tool Compute Pass"),
             timestamp_writes: None,
         });
         
-        let x_groups = (self.width + 15) / 16;
-        let z_groups = (self.depth + 15) / 16;
+        let x_groups = (tile_width + 15) / 16;
+        let z_groups = (tile_depth + 15) / 16;
         
         pass.set_pipeline(&self.material_tool_pipeline);
         pass.set_bind_group(0, &self.material_tool_bind_group, &[]);
@@ -581,13 +906,22 @@ impl GpuHeightfield {
     
     /// Dispatch excavation (generic dig from top layer down)
     pub fn dispatch_excavate(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.dispatch_excavate_tile(encoder, self.width, self.depth);
+    }
+
+    pub fn dispatch_excavate_tile(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+    ) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Excavate Compute Pass"),
             timestamp_writes: None,
         });
         
-        let x_groups = (self.width + 15) / 16;
-        let z_groups = (self.depth + 15) / 16;
+        let x_groups = (tile_width + 15) / 16;
+        let z_groups = (tile_depth + 15) / 16;
         
         pass.set_pipeline(&self.excavate_pipeline);
         pass.set_bind_group(0, &self.material_tool_bind_group, &[]);
@@ -623,6 +957,9 @@ impl GpuHeightfield {
              depth_data[i] = (world.water_surface[i] - ground).max(0.0);
         }
         queue.write_buffer(&self.water_depth_buffer, 0, bytemuck::cast_slice(&depth_data));
+        
+        // Sync Water Surface as well (important for rendering if we don't wait for first dispatch)
+        queue.write_buffer(&self.water_surface_buffer, 0, bytemuck::cast_slice(&world.water_surface));
         
         // Velocity
         // World uses staggered flow? flow_x[i] is at face?
@@ -709,5 +1046,62 @@ impl GpuHeightfield {
                         + world.terrain_sediment[i];
               world.water_surface[i] = ground + water_depth[i];
          }
+    }
+    pub fn render(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+        queue: &wgpu::Queue,
+        view_proj: [[f32; 4]; 4],
+        camera_pos: [f32; 3],
+        time: f32,
+    ) {
+        // Update Uniforms
+        let uniforms = RenderUniforms {
+            view_proj,
+            camera_pos,
+            cell_size: self.cell_size,
+            grid_width: self.width,
+            grid_depth: self.depth,
+            time,
+            _pad: 0,
+        };
+        queue.write_buffer(&self.render_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+        // Render Pass
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Heightfield Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.1, g: 0.1, b: 0.1, a: 1.0, 
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        rpass.set_pipeline(&self.render_pipeline);
+        rpass.set_bind_group(0, &self.render_bind_group, &[]);
+        rpass.set_vertex_buffer(0, self.grid_vertex_buffer.slice(..));
+        rpass.set_index_buffer(self.grid_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        rpass.draw_indexed(0..self.num_indices, 0, 0..1);
+        
+        // Water
+        rpass.set_pipeline(&self.water_pipeline);
+        rpass.draw_indexed(0..self.num_indices, 0, 0..1);
     }
 }

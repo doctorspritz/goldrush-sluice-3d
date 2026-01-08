@@ -2,8 +2,12 @@
 // Shallow Water Equations (SWE) solver for heightfield water simulation.
 
 struct Params {
-    width: u32,
-    depth: u32,
+    world_width: u32,
+    world_depth: u32,
+    tile_width: u32,
+    tile_depth: u32,
+    origin_x: u32,
+    origin_z: u32,
     _pad0: vec2<u32>,
     cell_size: f32,
     dt: f32,
@@ -28,7 +32,7 @@ struct Params {
 @group(2) @binding(4) var<storage, read_write> sediment: array<f32>;
 
 fn get_idx(x: u32, z: u32) -> u32 {
-    return z * params.width + x;
+    return z * params.world_width + x;
 }
 
 fn get_ground_height(idx: u32) -> f32 {
@@ -38,9 +42,12 @@ fn get_ground_height(idx: u32) -> f32 {
 // 1. Calculate Water Surface Height
 @compute @workgroup_size(16, 16)
 fn update_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let x = global_id.x;
-    let z = global_id.y;
-    if (x >= params.width || z >= params.depth) { return; }
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
+    let x = tile_x + params.origin_x;
+    let z = tile_z + params.origin_z;
+    if (x >= params.world_width || z >= params.world_depth) { return; }
     
     let idx = get_idx(x, z);
     let ground = get_ground_height(idx);
@@ -52,15 +59,18 @@ fn update_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // 2. Calculate Flux (Velocity Update)
 @compute @workgroup_size(16, 16)
 fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let x = global_id.x;
-    let z = global_id.y;
-    if (x >= params.width || z >= params.depth) { return; }
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
+    let x = tile_x + params.origin_x;
+    let z = tile_z + params.origin_z;
+    if (x >= params.world_width || z >= params.world_depth) { return; }
     
     let idx = get_idx(x, z);
     let cell_area = params.cell_size * params.cell_size;
     
     // X-Flux (Flow to Right: x -> x+1)
-    if (x < params.width - 1) {
+    if (x < params.world_width - 1) {
         let idx_r = get_idx(x + 1, z);
         let h_l = water_surface[idx];
         let h_r = water_surface[idx_r];
@@ -100,13 +110,13 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
              water_velocity_x[idx] = 0.0;
              flux_x[idx] = 0.0;
         }
-    } else if (x == params.width - 1) {
+    } else if (x == params.world_width - 1) {
          water_velocity_x[idx] = 0.0;
          flux_x[idx] = 0.0;
     }
     
     // Z-Flux (Flow Forward: z -> z+1)
-    if (z < params.depth - 1) {
+    if (z < params.world_depth - 1) {
         let idx_f = get_idx(x, z + 1);
         let h_b = water_surface[idx];
         let h_f = water_surface[idx_f];
@@ -141,7 +151,7 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
              water_velocity_z[idx] = 0.0;
              flux_z[idx] = 0.0;
         }
-    } else if (z == params.depth - 1) {
+    } else if (z == params.world_depth - 1) {
          water_velocity_z[idx] = 0.0;
          flux_z[idx] = 0.0;
     }
@@ -150,9 +160,12 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // 3. Update Depth (Volume Conservation)
 @compute @workgroup_size(16, 16)
 fn update_depth(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let x = global_id.x;
-    let z = global_id.y;
-    if (x >= params.width || z >= params.depth) { return; }
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
+    let x = tile_x + params.origin_x;
+    let z = tile_z + params.origin_z;
+    if (x >= params.world_width || z >= params.world_depth) { return; }
     
     let idx = get_idx(x, z);
     
@@ -170,7 +183,7 @@ fn update_depth(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let f = flux_x[get_idx(x - 1, z)];
         net_flux += f; // Positive = inflow, Negative = outflow
     }
-    if (x < params.width - 1) {
+    if (x < params.world_width - 1) {
         let f = flux_x[idx];
         net_flux -= f; // Positive = outflow, Negative = inflow  
     }
@@ -180,7 +193,7 @@ fn update_depth(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let f = flux_z[get_idx(x, z - 1)];
         net_flux += f;
     }
-    if (z < params.depth - 1) {
+    if (z < params.world_depth - 1) {
         let f = flux_z[idx];
         net_flux -= f;
     }
@@ -195,7 +208,7 @@ fn update_depth(@builtin(global_invocation_id) global_id: vec3<u32>) {
     new_depth = max(0.0, new_depth);
     
     // Open Boundary: Drain at edges
-    if (x == 0 || x == params.width - 1 || z == 0 || z == params.depth - 1) {
+    if (x == 0 || x == params.world_width - 1 || z == 0 || z == params.world_depth - 1) {
         new_depth = 0.0;
     }
     
