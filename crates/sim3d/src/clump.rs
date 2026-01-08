@@ -275,13 +275,31 @@ impl ClusterSimulation3D {
 
                         let diff = pb - pa;
                         let dist_sq = diff.length_squared();
-                        if dist_sq >= contact_dist_sq || dist_sq < 1.0e-10 {
+                        if dist_sq >= contact_dist_sq {
                             continue;
                         }
 
-                        let dist = dist_sq.sqrt();
-                        let normal = diff / dist;
+                        let (normal, dist) = if dist_sq > 1.0e-10 {
+                            let dist = dist_sq.sqrt();
+                            (diff / dist, dist)
+                        } else {
+                            let rel = vb - va;
+                            let fallback = if rel.length_squared() > 1.0e-10 {
+                                rel.normalize()
+                            } else {
+                                let center = clump_b.position - clump_a.position;
+                                if center.length_squared() > 1.0e-10 {
+                                    center.normalize()
+                                } else {
+                                    Vec3::Y
+                                }
+                            };
+                            (fallback, 0.0)
+                        };
                         let penetration = contact_dist - dist;
+                        if penetration <= 0.0 {
+                            continue;
+                        }
 
                         let rel_vel = vb - va;
                         let v_n = rel_vel.dot(normal);
@@ -478,7 +496,7 @@ impl ClusterSimulation3D {
         }
 
         let pre_correction: Vec<Vec3> = self.clumps.iter().map(|clump| clump.position).collect();
-        self.resolve_dem_penetrations(4);
+        self.resolve_dem_penetrations(6);
         self.resolve_bounds_positions();
         if dt > 0.0 {
             for (clump, prev) in self.clumps.iter_mut().zip(pre_correction) {
@@ -556,7 +574,7 @@ impl ClusterSimulation3D {
 
     fn resolve_dem_penetrations(&mut self, iterations: usize) {
         let slop = 0.001;
-        let percent = 0.6;
+        let percent = 0.75;
         let count = self.clumps.len();
 
         for _ in 0..iterations {
@@ -592,17 +610,32 @@ impl ClusterSimulation3D {
                             let diff = pb - pa;
                             let dist_sq = diff.length_squared();
 
-                            if dist_sq < contact_dist_sq && dist_sq > 1.0e-10 {
+                            if dist_sq >= contact_dist_sq {
+                                continue;
+                            }
+
+                            let (normal, dist) = if dist_sq > 1.0e-10 {
                                 let dist = dist_sq.sqrt();
-                                let normal = diff / dist;
-                                let penetration = contact_dist - dist;
-                                let correction_mag =
-                                    (penetration - slop).max(0.0) * percent / inv_mass_sum;
-                                if correction_mag > 0.0 {
-                                    let correction = normal * correction_mag;
-                                    clump_a.position -= correction * inv_mass_a;
-                                    clump_b.position += correction * inv_mass_b;
-                                }
+                                (diff / dist, dist)
+                            } else {
+                                let center = clump_b.position - clump_a.position;
+                                let fallback = if center.length_squared() > 1.0e-10 {
+                                    center.normalize()
+                                } else {
+                                    Vec3::Y
+                                };
+                                (fallback, 0.0)
+                            };
+                            let penetration = contact_dist - dist;
+                            if penetration <= 0.0 {
+                                continue;
+                            }
+                            let correction_mag =
+                                (penetration - slop).max(0.0) * percent / inv_mass_sum;
+                            if correction_mag > 0.0 {
+                                let correction = normal * correction_mag;
+                                clump_a.position -= correction * inv_mass_a;
+                                clump_b.position += correction * inv_mass_b;
                             }
                         }
                     }
