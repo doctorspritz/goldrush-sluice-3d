@@ -197,7 +197,7 @@ impl GpuP2g3D {
         let sediment_count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Sediment Count"),
             size: (cell_count * std::mem::size_of::<i32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
