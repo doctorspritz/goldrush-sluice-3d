@@ -493,7 +493,7 @@ impl GpuG2p3D {
             d_inv,
             flip_ratio: 0.97,
             dt,
-            max_velocity: 2000.0,
+            max_velocity: 50.0, // Reduced from 2000.0 to 50.0 for stability
             _padding: [0.0; 3],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));

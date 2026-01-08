@@ -130,27 +130,49 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
     let dist = sample_sdf(pos);
     if (dist < 0.0) {
         let normal = sdf_gradient(pos);
-        let penetration = -dist + params.cell_size * 0.1;
+        // Robust penetration clamping: don't push more than 2x cell_size per frame
+        let penetration = min(-dist + params.cell_size * 0.1, params.cell_size * 2.0);
         pos += normal * penetration;
 
         let vel_into = dot(vel, normal);
         if (vel_into < 0.0) {
-            vel -= normal * vel_into * 1.1;
+            vel -= normal * vel_into * 1.0; // Inelastic collision
         }
     }
 
-    let density = densities[pid];
-    if (density > 1.0) {
-        let bed = sample_bed_height(pos);
-        if (pos.y < bed) {
-            pos.y = bed + params.cell_size * 0.05;
-            if (vel.y < 0.0) {
-                vel.y = 0.0;
-            }
-            vel.x *= 0.7;
-            vel.z *= 0.7;
-        }
+    // Strict boundary clamping
+    let margin = params.cell_size * 0.1;
+    let max_x = f32(params.width) * params.cell_size - margin;
+    let max_y = f32(params.height) * params.cell_size - margin;
+    let max_z = f32(params.depth) * params.cell_size - margin;
+    
+    // Catch-all floor at y=0.1
+    if (pos.y < margin) {
+        pos.y = margin;
+        if (vel.y < 0.0) { vel.y = 0.0; }
     }
+    
+    // Ceiling and walls
+    pos.x = clamp(pos.x, margin, max_x);
+    pos.y = clamp(pos.y, margin, max_y);
+    pos.z = clamp(pos.z, margin, max_z);
+    
+    if (pos.y >= max_y - 0.01 && vel.y > 1e-3) {
+        vel.y = 0.0; // Dampen upward momentum at ceiling
+    }
+
+    /* Removing redundant and uninitialized bed height check
+    let bed = sample_bed_height(pos);
+    if (pos.y < bed) {
+        pos.y = bed + params.cell_size * 0.05;
+        if (vel.y < 0.0) {
+            vel.y = 0.0;
+        }
+        // Apply friction
+        vel.x *= 0.7;
+        vel.z *= 0.7;
+    }
+    */
 
     positions[pid] = vec4<f32>(pos, 1.0);
     velocities[pid] = vec4<f32>(vel, 0.0);

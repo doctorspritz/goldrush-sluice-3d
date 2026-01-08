@@ -5,6 +5,11 @@ struct Uniforms {
     view: mat4x4<f32>,
     proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
+    cell_size: f32,
+    grid_width: u32,
+    grid_depth: u32,
+    time: f32,
+    padding: f32,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
