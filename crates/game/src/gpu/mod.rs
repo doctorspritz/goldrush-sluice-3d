@@ -1,4 +1,5 @@
-pub mod bed_3d;
+// Disabled: bed_3d was the Drucker-Prager + heightfield system that had threshold tuning issues
+// pub mod bed_3d;
 pub mod bridge_3d;
 pub mod flip_3d;
 pub mod g2p;

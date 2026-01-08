@@ -7,10 +7,11 @@
 //!
 //! The simulation maintains particle data on CPU but does all heavy computation on GPU.
 
-use super::g2p_3d::{DruckerPragerParams, GpuG2p3D, SedimentParams3D};
+use super::g2p_3d::{GpuG2p3D, SedimentParams3D};
 use super::p2g_3d::GpuP2g3D;
 use super::pressure_3d::GpuPressure3D;
 
+use wgpu::util::DeviceExt;
 use bytemuck::{Pod, Zeroable};
 use std::sync::{mpsc, Arc};
 
@@ -425,8 +426,10 @@ pub struct GpuFlip3D {
     pub vorticity_epsilon: f32,
     /// Target sediment particles per cell for porosity fraction.
     pub sediment_rest_particles: f32,
-    /// Drag rate applied to sediment particles in G2P.
-    pub sediment_drag_rate: f32,
+    /// Speed below which friction kicks in (m/s).
+    pub sediment_friction_threshold: f32,
+    /// How much to damp velocity when slow (0-1 per frame).
+    pub sediment_friction_strength: f32,
     /// Downward settling speed for sediment particles.
     pub sediment_settling_velocity: f32,
     /// Vorticity lift applied to sediment when flow swirls.
@@ -699,9 +702,6 @@ impl GpuFlip3D {
             &grid_v_old_buffer,
             &grid_w_old_buffer,
             &vorticity_mag_buffer,
-            &sediment_pressure_buffer,
-            &p2g.sediment_count_buffer,
-            &p2g.particle_count_buffer,
         );
 
         // Create gravity shader
@@ -2161,10 +2161,11 @@ impl GpuFlip3D {
             cell_size,
             vorticity_epsilon: 0.05,
             sediment_rest_particles: 8.0,
-            sediment_drag_rate: 8.0,
-            sediment_settling_velocity: 0.35,
-            sediment_vorticity_lift: 0.08,
-            sediment_vorticity_threshold: 0.15,
+            sediment_friction_threshold: 0.1,
+            sediment_friction_strength: 0.4,
+            sediment_settling_velocity: 0.05,
+            sediment_vorticity_lift: 1.5,
+            sediment_vorticity_threshold: 2.0,
             sediment_porosity_drag: 3.0,
             positions_buffer,
             velocities_buffer,
@@ -2297,13 +2298,7 @@ impl GpuFlip3D {
         self.pressure.encode(encoder, 40); // 40 iterations
 
         // 3. G2P
-        let sediment_params = SedimentParams3D {
-            drag_rate: 100.0,
-            settling_velocity: 1.0,
-            vorticity_lift: 0.1,
-            vorticity_threshold: 0.1,
-            _pad: [0.0; 4],
-        };
+        let sediment_params = SedimentParams3D::default();
         self.g2p.upload_params(queue, particle_count, self.cell_size, dt, sediment_params);
         self.g2p.encode(encoder, particle_count);
         
@@ -2419,10 +2414,6 @@ impl GpuFlip3D {
 
     pub fn densities_buffer(&self) -> Arc<wgpu::Buffer> {
         self.densities_buffer.clone()
-    }
-
-    pub fn set_drucker_prager_params(&self, queue: &wgpu::Queue, params: DruckerPragerParams) {
-        self.g2p.set_drucker_prager_params(queue, params);
     }
 
     pub fn sdf_buffer(&self) -> &wgpu::Buffer {
@@ -2835,11 +2826,12 @@ impl GpuFlip3D {
 
         // 8. Run G2P using grid buffers already on GPU
         let sediment_params = SedimentParams3D {
-            drag_rate: self.sediment_drag_rate,
             settling_velocity: self.sediment_settling_velocity,
+            friction_threshold: self.sediment_friction_threshold,
+            friction_strength: self.sediment_friction_strength,
             vorticity_lift: self.sediment_vorticity_lift,
             vorticity_threshold: self.sediment_vorticity_threshold,
-            _pad: [0.0; 4],
+            _pad: [0.0; 3],
         };
         let g2p_count = self.g2p.upload_params(queue, count, self.cell_size, dt, sediment_params);
 

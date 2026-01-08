@@ -26,25 +26,14 @@ struct Params {
 }
 
 struct SedimentParams {
-    drag_rate: f32,
-    settling_velocity: f32,
-    vorticity_lift: f32,
-    vorticity_threshold: f32,
+    settling_velocity: f32,     // How fast sediment falls (m/s)
+    friction_threshold: f32,    // Speed below which friction kicks in (m/s)
+    friction_strength: f32,     // How much to damp when slow (0-1 per frame)
+    vorticity_lift: f32,        // How much vorticity suspends sediment
+    vorticity_threshold: f32,   // Minimum vorticity to lift
     _pad0: f32,
     _pad1: f32,
     _pad2: f32,
-    _pad3: f32,
-}
-
-struct DruckerPragerParams {
-    friction_coeff: f32,
-    cohesion: f32,
-    buoyancy_factor: f32,
-    viscosity: f32,
-    jammed_drag: f32,
-    min_pressure: f32,
-    yield_smoothing: f32,
-    _pad0: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -66,10 +55,6 @@ struct DruckerPragerParams {
 @group(0) @binding(12) var<storage, read> densities: array<f32>;
 @group(0) @binding(13) var<uniform> sediment_params: SedimentParams;
 @group(0) @binding(14) var<storage, read> vorticity_mag: array<f32>;
-@group(0) @binding(15) var<uniform> dp_params: DruckerPragerParams;
-@group(0) @binding(16) var<storage, read> sediment_pressure: array<f32>;
-@group(0) @binding(17) var<storage, read> sediment_count: array<atomic<i32>>;
-@group(0) @binding(18) var<storage, read> water_count: array<atomic<i32>>;
 
 // Quadratic B-spline kernel (1D)
 fn quadratic_bspline_1d(x: f32) -> f32 {
@@ -101,24 +86,6 @@ fn w_index(i: i32, j: i32, k: i32) -> u32 {
 
 fn cell_index(i: i32, j: i32, k: i32) -> u32 {
     return u32(k) * params.width * params.height + u32(j) * params.width + u32(i);
-}
-
-// Compute shear rate magnitude from APIC C matrix (velocity gradient).
-fn compute_shear_rate_from_c(c0: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>) -> f32 {
-    // Strain rate tensor (symmetric part): D = 0.5*(C + C^T)
-    let D_xx = c0.x;
-    let D_yy = c1.y;
-    let D_zz = c2.z;
-    let D_xy = 0.5 * (c0.y + c1.x);
-    let D_xz = 0.5 * (c0.z + c2.x);
-    let D_yz = 0.5 * (c1.z + c2.y);
-
-    // Second invariant: |D| = sqrt(0.5 * D:D)
-    // D:D = D_xx^2 + D_yy^2 + D_zz^2 + 2*(D_xy^2 + D_xz^2 + D_yz^2)
-    let D_sq = D_xx*D_xx + D_yy*D_yy + D_zz*D_zz +
-               2.0*(D_xy*D_xy + D_xz*D_xz + D_yz*D_yz);
-
-    return sqrt(0.5 * D_sq);
 }
 
 @compute @workgroup_size(256)
@@ -293,74 +260,9 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let density = densities[id.x];
-    if (density > 1.0) {
-        // ========== SEDIMENT: Drucker-Prager yield model ==========
+    let is_sediment = density > 1.0;
 
-        let cell_i = clamp(i32(pos.x / cell_size), 0, width - 1);
-        let cell_j = clamp(i32(pos.y / cell_size), 0, height - 1);
-        let cell_k = clamp(i32(pos.z / cell_size), 0, depth - 1);
-        let cell_idx = cell_index(cell_i, cell_j, cell_k);
-
-        // Sample sediment pressure (from column weight)
-        let pressure = max(sediment_pressure[cell_idx], dp_params.min_pressure);
-        let water_present = atomicLoad(&water_count[cell_idx]) > 0;
-
-        // Compute shear rate from APIC C matrix
-        let shear_rate = compute_shear_rate_from_c(new_c_row0, new_c_row1, new_c_row2);
-
-        // Drucker-Prager yield criterion
-        let yield_stress = dp_params.cohesion + pressure * dp_params.friction_coeff;
-        let shear_stress = dp_params.viscosity * shear_rate;
-
-        let stress_diff = shear_stress - yield_stress;
-        let yield_ratio = clamp(
-            stress_diff / (dp_params.yield_smoothing * yield_stress + 0.001),
-            0.0,
-            1.0
-        );
-
-        var final_velocity: vec3<f32>;
-
-        if (yield_ratio > 0.01) {
-            // YIELDING - viscoplastic flow
-            let effective_drag = yield_ratio * sediment_params.drag_rate;
-            let drag_factor = select(0.0, 1.0 - exp(-effective_drag * params.dt), water_present);
-            final_velocity = old_particle_vel + (new_velocity - old_particle_vel) * drag_factor;
-
-            // Reduced settling when yielding (material is flowing)
-            let settling_reduction = select(1.0, 1.0 - yield_ratio * 0.7, water_present);
-            final_velocity.y -= sediment_params.settling_velocity * params.dt * settling_reduction;
-        } else {
-            // JAMMED - damp toward rest (resist flow)
-            let jam_damp = 1.0 - exp(-dp_params.jammed_drag * params.dt);
-            final_velocity = old_particle_vel;
-            final_velocity.x *= 1.0 - jam_damp;
-            final_velocity.z *= 1.0 - jam_damp;
-
-            // Full settling when jammed
-            final_velocity.y -= sediment_params.settling_velocity * params.dt;
-        }
-
-        // Vorticity lift (suspension in turbulent flow)
-        let vort = vorticity_mag[cell_idx];
-        let vort_excess = max(vort - sediment_params.vorticity_threshold, 0.0);
-        let lift_factor = clamp(sediment_params.vorticity_lift * vort_excess, 0.0, 0.9);
-        final_velocity.y += sediment_params.settling_velocity * params.dt * lift_factor;
-
-        // Safety clamp
-        let speed = length(final_velocity);
-        if (speed > params.max_velocity) {
-            final_velocity *= params.max_velocity / speed;
-        }
-
-        velocities[id.x] = final_velocity;
-        c_col0[id.x] = vec3<f32>(0.0, 0.0, 0.0);
-        c_col1[id.x] = vec3<f32>(0.0, 0.0, 0.0);
-        c_col2[id.x] = vec3<f32>(0.0, 0.0, 0.0);
-        return;
-    }
-
-    // ========== FLIP/PIC blend ==========
+    // ========== FLIP/PIC blend (same for water and sediment) ==========
     let grid_delta = new_velocity - old_grid_vel;
 
     // Clamp delta to prevent energy explosions (5 cells per frame max)
@@ -376,15 +278,53 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var final_velocity = params.flip_ratio * flip_velocity + (1.0 - params.flip_ratio) * pic_velocity;
 
-    // Safety clamp
-    let speed = length(final_velocity);
-    if (speed > params.max_velocity) {
-        final_velocity *= params.max_velocity / speed;
+    // ========== SEDIMENT: Simple friction model ==========
+    if (is_sediment) {
+        // 1. Settling: sediment falls
+        final_velocity.y -= sediment_params.settling_velocity * params.dt;
+
+        // 2. Friction: when slow, damp velocity (creates clustering)
+        let speed = length(final_velocity);
+        if (speed < sediment_params.friction_threshold && speed > 0.001) {
+            // Smooth ramp: more friction as speed approaches zero
+            let friction_factor = 1.0 - speed / sediment_params.friction_threshold;
+            let friction = sediment_params.friction_strength * friction_factor;
+            // Damp horizontal more than vertical (let it settle)
+            final_velocity.x *= 1.0 - friction;
+            final_velocity.z *= 1.0 - friction;
+            final_velocity.y *= 1.0 - friction * 0.3;  // Less vertical damping
+        }
+
+        // 3. Vorticity lift: turbulence keeps particles suspended
+        let cell_i = clamp(i32(pos.x / cell_size), 0, width - 1);
+        let cell_j = clamp(i32(pos.y / cell_size), 0, height - 1);
+        let cell_k = clamp(i32(pos.z / cell_size), 0, depth - 1);
+        let cell_idx = cell_index(cell_i, cell_j, cell_k);
+        let vort = vorticity_mag[cell_idx];
+
+        if (vort > sediment_params.vorticity_threshold) {
+            let vort_excess = vort - sediment_params.vorticity_threshold;
+            let lift = sediment_params.vorticity_lift * vort_excess * sediment_params.settling_velocity * params.dt;
+            final_velocity.y += min(lift, sediment_params.settling_velocity * params.dt * 0.9);
+        }
+
+        // Sediment doesn't use APIC C matrix (simpler advection)
+        c_col0[id.x] = vec3<f32>(0.0, 0.0, 0.0);
+        c_col1[id.x] = vec3<f32>(0.0, 0.0, 0.0);
+        c_col2[id.x] = vec3<f32>(0.0, 0.0, 0.0);
+    } else {
+        // Water keeps APIC C matrix
+        c_col0[id.x] = new_c_row0;
+        c_col1[id.x] = new_c_row1;
+        c_col2[id.x] = new_c_row2;
     }
 
-    // ========== Write outputs ==========
+    // Safety clamp
+    let final_speed = length(final_velocity);
+    if (final_speed > params.max_velocity) {
+        final_velocity *= params.max_velocity / final_speed;
+    }
+
+    // ========== Write velocity ==========
     velocities[id.x] = final_velocity;
-    c_col0[id.x] = new_c_row0;  // Note: binding named c_col for historical reasons
-    c_col1[id.x] = new_c_row1;
-    c_col2[id.x] = new_c_row2;
 }
