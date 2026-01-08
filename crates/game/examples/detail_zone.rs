@@ -526,8 +526,9 @@ impl App {
                 
                 // Sync results back to FlipSimulation3D
                 let mut avg_y = 0.0;
-                let mut max_y = 0.0;
-                let mut min_y = 1000.0;
+                let mut max_y: f32 = f32::NEG_INFINITY;
+                let mut min_y: f32 = f32::INFINITY;
+                let mut max_vy: f32 = 0.0;
                 for (i, p) in self.flip_sim.particles.list.iter_mut().enumerate() {
                     let pos = self.flip_positions[i];
                     p.position = pos;

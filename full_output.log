@@ -1,0 +1,118 @@
+=== DETAIL ZONE: FLIP + Heightfield ===
+FLIP grid: 64x32x64 at 1.0m
+Press 1 to spawn water
+GpuFlip3D initialized
+Heightfield water: 865.48, sediment: 16.34 | FLIP particles: 0
+Heightfield water: 862.87, sediment: 28.96 | FLIP particles: 0
+Heightfield water: 861.07, sediment: 38.74 | FLIP particles: 0
+Heightfield water: 860.03, sediment: 47.62 | FLIP particles: 0
+Heightfield water: 859.47, sediment: 56.51 | FLIP particles: 0
+Heightfield water: 859.19, sediment: 65.90 | FLIP particles: 0
+Heightfield water: 858.92, sediment: 77.32 | FLIP particles: 0
+Heightfield water: 858.55, sediment: 90.43 | FLIP particles: 0
+Heightfield water: 858.14, sediment: 104.82 | FLIP particles: 0
+Heightfield water: 857.71, sediment: 119.12 | FLIP particles: 10
+Heightfield water: 857.29, sediment: 134.11 | FLIP particles: 190
+Heightfield water: 856.81, sediment: 149.21 | FLIP particles: 380
+Heightfield water: 856.31, sediment: 164.20 | FLIP particles: 570
+Heightfield water: 855.78, sediment: 179.47 | FLIP particles: 760
+Heightfield water: 855.21, sediment: 194.57 | FLIP particles: 950
+Heightfield water: 854.66, sediment: 209.99 | FLIP particles: 1140
+Heightfield water: 854.13, sediment: 224.83 | FLIP particles: 1330
+Heightfield water: 853.61, sediment: 239.63 | FLIP particles: 1520
+Heightfield water: 853.11, sediment: 254.33 | FLIP particles: 1560
+Heightfield water: 852.63, sediment: 269.55 | FLIP particles: 1560
+PARTICLE TELEPORTED: y=10.57 -> 16.01 | vy=0.48 | id=557
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=10.48 -> 15.49 | vy=-0.74 | id=1073
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=11.60 -> 17.36 | vy=-0.05 | id=451
+PARTICLE TELEPORTED: y=11.65 -> 16.85 | vy=-1.19 | id=534
+PARTICLE TELEPORTED: y=11.55 -> 16.92 | vy=-1.75 | id=550
+PARTICLE TELEPORTED: y=11.63 -> 17.39 | vy=-0.05 | id=645
+Total teleports this frame: 11
+PARTICLE TELEPORTED: y=10.65 -> 16.92 | vy=-4.33 | id=1272
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=11.55 -> 17.30 | vy=0.84 | id=36
+PARTICLE TELEPORTED: y=11.49 -> 17.46 | vy=-0.14 | id=337
+PARTICLE TELEPORTED: y=11.63 -> 16.84 | vy=-0.01 | id=364
+PARTICLE TELEPORTED: y=11.64 -> 16.78 | vy=-0.38 | id=417
+Total teleports this frame: 22
+PARTICLE TELEPORTED: y=11.51 -> 16.64 | vy=-0.59 | id=327
+Total teleports this frame: 1
+Heightfield water: 852.15, sediment: 285.31 | FLIP particles: 1560
+PARTICLE TELEPORTED: y=11.59 -> 17.03 | vy=-3.32 | id=141
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=10.31 -> 15.59 | vy=-0.54 | id=81
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=11.50 -> 16.56 | vy=-0.54 | id=235
+PARTICLE TELEPORTED: y=11.54 -> 16.97 | vy=-1.12 | id=586
+PARTICLE TELEPORTED: y=11.53 -> 16.95 | vy=-2.01 | id=825
+PARTICLE TELEPORTED: y=11.69 -> 16.81 | vy=-1.92 | id=1206
+Total teleports this frame: 6
+PARTICLE TELEPORTED: y=11.54 -> 16.95 | vy=-0.48 | id=1095
+PARTICLE TELEPORTED: y=11.59 -> 16.60 | vy=-0.44 | id=1112
+PARTICLE TELEPORTED: y=11.42 -> 16.43 | vy=-0.51 | id=1354
+PARTICLE TELEPORTED: y=11.55 -> 16.56 | vy=-2.24 | id=1413
+Total teleports this frame: 4
+PARTICLE TELEPORTED: y=10.38 -> 17.82 | vy=-0.41 | id=903
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=10.49 -> 15.84 | vy=-0.25 | id=345
+PARTICLE TELEPORTED: y=10.49 -> 15.83 | vy=-0.46 | id=780
+Total teleports this frame: 2
+Heightfield water: 851.72, sediment: 299.32 | FLIP particles: 1560
+PARTICLE TELEPORTED: y=9.85 -> 15.24 | vy=-2.55 | id=443
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=11.51 -> 16.62 | vy=-1.91 | id=953
+PARTICLE TELEPORTED: y=11.44 -> 16.51 | vy=-1.44 | id=1174
+PARTICLE TELEPORTED: y=11.56 -> 16.57 | vy=-1.35 | id=1326
+PARTICLE TELEPORTED: y=11.49 -> 16.73 | vy=-2.59 | id=1367
+Total teleports this frame: 4
+Heightfield water: 851.33, sediment: 312.92 | FLIP particles: 1560
+PARTICLE TELEPORTED: y=10.67 -> 4.84 | vy=-0.44 | id=1333
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=11.26 -> 6.15 | vy=0.11 | id=652
+Total teleports this frame: 1
+Heightfield water: 850.97, sediment: 326.77 | FLIP particles: 1560
+PARTICLE TELEPORTED: y=18.48 -> 10.18 | vy=-163.14 | id=953
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=10.18 -> -9.35 | vy=-415.10 | id=953
+Total teleports this frame: 1
+Heightfield water: 850.65, sediment: 340.64 | FLIP particles: 1560
+Heightfield water: 850.35, sediment: 354.54 | FLIP particles: 1560
+PARTICLE TELEPORTED: y=24.21 -> 18.05 | vy=-141.56 | id=191
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=18.05 -> 4.71 | vy=-307.94 | id=191
+Total teleports this frame: 1
+Heightfield water: 850.09, sediment: 368.17 | FLIP particles: 1560
+PARTICLE TELEPORTED: y=4.71 -> -7.17 | vy=-668.70 | id=191
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=18.80 -> 7.07 | vy=-237.13 | id=1383
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=7.07 -> -3.28 | vy=-590.21 | id=1383
+Total teleports this frame: 1
+Heightfield water: 849.83, sediment: 381.23 | FLIP particles: 1560
+PARTICLE TELEPORTED: y=18.17 -> 11.38 | vy=-198.42 | id=696
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=11.38 -> 5.74 | vy=-347.38 | id=696
+Total teleports this frame: 1
+Heightfield water: 849.47, sediment: 393.97 | FLIP particles: 1560
+Heightfield water: 849.02, sediment: 406.69 | FLIP particles: 1560
+Heightfield water: 848.59, sediment: 419.68 | FLIP particles: 1560
+Heightfield water: 848.17, sediment: 432.21 | FLIP particles: 1560
+PARTICLE TELEPORTED: y=14.34 -> 5.27 | vy=-234.28 | id=713
+Total teleports this frame: 1
+PARTICLE TELEPORTED: y=5.27 -> -10.53 | vy=-453.38 | id=713
+Total teleports this frame: 1
+Heightfield water: 847.82, sediment: 444.85 | FLIP particles: 1560
+Heightfield water: 847.52, sediment: 458.04 | FLIP particles: 1560
+Heightfield water: 847.24, sediment: 469.80 | FLIP particles: 1560
+Heightfield water: 846.89, sediment: 480.91 | FLIP particles: 1560
+Heightfield water: 846.47, sediment: 491.29 | FLIP particles: 1560
+Heightfield water: 846.01, sediment: 501.54 | FLIP particles: 1560
+PARTICLE TELEPORTED: y=21.43 -> 15.86 | vy=-125.55 | id=1086
+Total teleports this frame: 1
+Heightfield water: 845.49, sediment: 511.85 | FLIP particles: 1560
+Heightfield water: 844.93, sediment: 522.03 | FLIP particles: 1560
+Heightfield water: 844.36, sediment: 531.57 | FLIP particles: 1560
+Heightfield water: 843.79, sediment: 540.39 | FLIP particles: 1560
