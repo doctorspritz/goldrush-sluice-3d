@@ -98,10 +98,78 @@ struct ParticleInstance {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, Default)]
 struct SurfaceVertex {
     position: [f32; 3],
     color: [f32; 4],
+}
+
+/// Indexed mesh for efficient 3D rendering
+struct BedMesh {
+    vertices: Vec<SurfaceVertex>,
+    indices: Vec<u32>,
+    vertex_buffer: Option<wgpu::Buffer>,
+    index_buffer: Option<wgpu::Buffer>,
+}
+
+impl BedMesh {
+    fn new() -> Self {
+        Self {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            vertex_buffer: None,
+            index_buffer: None,
+        }
+    }
+
+    fn upload(&mut self, device: &wgpu::Device) {
+        if self.vertices.is_empty() {
+            return;
+        }
+
+        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Bed Vertex Buffer"),
+            contents: bytemuck::cast_slice(&self.vertices),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        }));
+
+        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Bed Index Buffer"),
+            contents: bytemuck::cast_slice(&self.indices),
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+        }));
+    }
+
+    fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
+        if self.vertices.is_empty() {
+            return;
+        }
+
+        // Recreate buffers if size changed (simple approach)
+        if self.vertex_buffer.is_none() {
+            self.upload(device);
+            return;
+        }
+
+        let vb = self.vertex_buffer.as_ref().unwrap();
+        let ib = self.index_buffer.as_ref().unwrap();
+
+        let vertex_bytes = bytemuck::cast_slice(&self.vertices);
+        let index_bytes = bytemuck::cast_slice(&self.indices);
+
+        // Check if buffers are large enough
+        if vb.size() >= vertex_bytes.len() as u64 && ib.size() >= index_bytes.len() as u64 {
+            queue.write_buffer(vb, 0, vertex_bytes);
+            queue.write_buffer(ib, 0, index_bytes);
+        } else {
+            // Recreate larger buffers
+            self.upload(device);
+        }
+    }
+
+    fn num_indices(&self) -> u32 {
+        self.indices.len() as u32
+    }
 }
 
 #[repr(C)]
@@ -124,6 +192,7 @@ struct App {
     camera_distance: f32,
     frame: u32,
     solid_instances: Vec<ParticleInstance>,
+    bed_mesh: BedMesh,
     positions: Vec<Vec3>,
     velocities: Vec<Vec3>,
     c_matrices: Vec<Mat3>,
@@ -414,6 +483,7 @@ impl App {
         let bed_height_residual = vec![0.0f32; bed_column_count];
 
         let solid_instances = Self::collect_solids(&sim);
+        let bed_mesh = Self::build_bed_mesh(&sim);
         let pressure_iters_gpu = sim.pressure_iterations as u32;
 
         println!("Solid cells: {}", solid_instances.len());
@@ -434,6 +504,7 @@ impl App {
             camera_distance: 8.0,  // Start further back for larger scene
             frame: 0,
             solid_instances,
+            bed_mesh,
             positions: Vec::new(),
             velocities: Vec::new(),
             c_matrices: Vec::new(),
@@ -1117,6 +1188,114 @@ impl App {
         solids
     }
 
+    /// Build a 3D indexed mesh for the sluice bed geometry.
+    /// Only exposed faces are included (faces adjacent to non-solid cells).
+    fn build_bed_mesh(sim: &FlipSimulation3D) -> BedMesh {
+        let mut mesh = BedMesh::new();
+        let width = sim.grid.width;
+        let height = sim.grid.height;
+        let depth = sim.grid.depth;
+        let cs = sim.grid.cell_size;
+
+        // Colors for different face orientations (subtle shading)
+        let color_top = [0.55, 0.50, 0.45, 1.0];    // Lighter for top faces
+        let color_side = [0.45, 0.40, 0.35, 1.0];   // Medium for side faces
+        let color_bottom = [0.35, 0.30, 0.25, 1.0]; // Darker for bottom faces
+
+        for k in 0..depth {
+            for j in 0..height {
+                for i in 0..width {
+                    if !sim.grid.is_solid(i, j, k) {
+                        continue;
+                    }
+
+                    let x0 = i as f32 * cs;
+                    let x1 = (i + 1) as f32 * cs;
+                    let y0 = j as f32 * cs;
+                    let y1 = (j + 1) as f32 * cs;
+                    let z0 = k as f32 * cs;
+                    let z1 = (k + 1) as f32 * cs;
+
+                    // -X face (left)
+                    if i == 0 || !sim.grid.is_solid(i - 1, j, k) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x0, y0, z0], color: color_side },
+                            SurfaceVertex { position: [x0, y1, z0], color: color_side },
+                            SurfaceVertex { position: [x0, y1, z1], color: color_side },
+                            SurfaceVertex { position: [x0, y0, z1], color: color_side },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+2, base+1, base, base+3, base+2]);
+                    }
+
+                    // +X face (right)
+                    if i == width - 1 || !sim.grid.is_solid(i + 1, j, k) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x1, y0, z0], color: color_side },
+                            SurfaceVertex { position: [x1, y1, z0], color: color_side },
+                            SurfaceVertex { position: [x1, y1, z1], color: color_side },
+                            SurfaceVertex { position: [x1, y0, z1], color: color_side },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                    }
+
+                    // -Y face (bottom)
+                    if j == 0 || !sim.grid.is_solid(i, j - 1, k) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x0, y0, z0], color: color_bottom },
+                            SurfaceVertex { position: [x1, y0, z0], color: color_bottom },
+                            SurfaceVertex { position: [x1, y0, z1], color: color_bottom },
+                            SurfaceVertex { position: [x0, y0, z1], color: color_bottom },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                    }
+
+                    // +Y face (top) - most visible
+                    if j == height - 1 || !sim.grid.is_solid(i, j + 1, k) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x0, y1, z0], color: color_top },
+                            SurfaceVertex { position: [x1, y1, z0], color: color_top },
+                            SurfaceVertex { position: [x1, y1, z1], color: color_top },
+                            SurfaceVertex { position: [x0, y1, z1], color: color_top },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+2, base+1, base, base+3, base+2]);
+                    }
+
+                    // -Z face (front)
+                    if k == 0 || !sim.grid.is_solid(i, j, k - 1) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x0, y0, z0], color: color_side },
+                            SurfaceVertex { position: [x1, y0, z0], color: color_side },
+                            SurfaceVertex { position: [x1, y1, z0], color: color_side },
+                            SurfaceVertex { position: [x0, y1, z0], color: color_side },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                    }
+
+                    // +Z face (back)
+                    if k == depth - 1 || !sim.grid.is_solid(i, j, k + 1) {
+                        let base = mesh.vertices.len() as u32;
+                        mesh.vertices.extend_from_slice(&[
+                            SurfaceVertex { position: [x0, y0, z1], color: color_side },
+                            SurfaceVertex { position: [x1, y0, z1], color: color_side },
+                            SurfaceVertex { position: [x1, y1, z1], color: color_side },
+                            SurfaceVertex { position: [x0, y1, z1], color: color_side },
+                        ]);
+                        mesh.indices.extend_from_slice(&[base, base+2, base+1, base, base+3, base+2]);
+                    }
+                }
+            }
+        }
+
+        println!("Bed mesh: {} vertices, {} indices ({} triangles)",
+            mesh.vertices.len(), mesh.indices.len(), mesh.indices.len() / 3);
+        mesh
+    }
+
     fn reset_sim(&mut self) {
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
         sim.gravity = Vec3::new(0.0, -9.8, 0.0);
@@ -1139,6 +1318,13 @@ impl App {
 
         if let (Some(gpu_bed), Some(gpu)) = (&self.gpu_bed, &self.gpu) {
             gpu_bed.reset_bed(&gpu.queue, &self.bed_base_height);
+        }
+
+        self.solid_instances = Self::collect_solids(&sim);
+        self.bed_mesh = Self::build_bed_mesh(&sim);
+        // Upload bed mesh to GPU if initialized
+        if let Some(gpu) = &self.gpu {
+            self.bed_mesh.upload(&gpu.device);
         }
 
         self.sim = sim;
@@ -2196,11 +2382,13 @@ impl App {
 
             pass.set_bind_group(0, &gpu.bind_group, &[]);
 
-            // Draw solid cells
-            pass.set_pipeline(&gpu.pipeline);
-            pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
-            pass.set_vertex_buffer(1, gpu.solid_buffer.slice(..));
-            pass.draw(0..4, 0..self.solid_instances.len() as u32);
+            // Draw bed mesh (3D solid geometry)
+            if let (Some(vb), Some(ib)) = (&self.bed_mesh.vertex_buffer, &self.bed_mesh.index_buffer) {
+                pass.set_pipeline(&gpu.surface_pipeline);
+                pass.set_vertex_buffer(0, vb.slice(..));
+                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..self.bed_mesh.num_indices(), 0, 0..1);
+            }
 
             if self.render_heightfield {
                 // Draw water surface
@@ -2353,6 +2541,9 @@ impl ApplicationHandler for App {
             contents: bytemuck::cast_slice(&self.solid_instances),
             usage: wgpu::BufferUsages::VERTEX,
         });
+
+        // Upload bed mesh to GPU
+        self.bed_mesh.upload(&device);
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Uniform Buffer"),
