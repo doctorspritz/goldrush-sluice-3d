@@ -29,6 +29,7 @@
 //! ```
 
 pub mod advection;
+pub mod clump;
 pub mod grid;
 pub mod heightfield;
 pub mod kernels;
@@ -39,6 +40,9 @@ pub mod transfer;
 pub mod world;
 
 pub use glam::{Mat3, Vec3};
+pub use clump::{
+    Clump3D, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, IrregularStyle3D,
+};
 pub use grid::{CellType, Grid3D};
 pub use heightfield::Heightfield;
 pub use particle::{Particle3D, Particles3D};
