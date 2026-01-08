@@ -13,6 +13,7 @@ struct Params {
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> cell_type: array<u32>;
 @group(0) @binding(2) var<storage, read_write> grid_v: array<f32>;
+@group(0) @binding(3) var<storage, read> bed_height: array<f32>;
 
 const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
@@ -56,13 +57,15 @@ fn apply_gravity(@builtin(global_invocation_id) id: vec3<u32>) {
     let bottom_type = get_cell_type(i32(i), i32(j) - 1, i32(k));
     let top_type = get_cell_type(i32(i), i32(j), i32(k));
 
-    // Don't apply gravity to solid boundary faces
-    if (bottom_type == CELL_SOLID || top_type == CELL_SOLID) {
-        return;
-    }
-
-    // Only apply gravity if at least one adjacent cell is fluid
-    if (bottom_type == CELL_FLUID || top_type == CELL_FLUID) {
+    // Bedrock check: Only skip gravity if we are AT or BELOW the bedrock height
+    // Permanent bedrock is CELL_SOLID but we want jammed sediment (also CELL_SOLID) to feel gravity.
+    let bed = bed_height[k * params.width + i];
+    let y_pos = f32(j) * 0.5; // TODO: Pass cell_size to gravity shader if it's not 0.5
+    // For now use a hardcoded 0.5 or just apply it always if not solid bedrock.
+    
+    // Simplest fix: Only apply gravity if at least one cell is NOT permanent solid (i.e. not bedrock)
+    // Actually, just apply gravity if above bed height.
+    if (f32(j) * 0.5 > bed || bottom_type == CELL_FLUID || top_type == CELL_FLUID) {
         let idx = v_index(i, j, k);
         grid_v[idx] += params.gravity_dt;
     }

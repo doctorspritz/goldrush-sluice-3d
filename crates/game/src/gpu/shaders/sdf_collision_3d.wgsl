@@ -152,6 +152,6 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    positions[pid] = vec4<f32>(pos, 0.0);
+    positions[pid] = vec4<f32>(pos, 1.0);
     velocities[pid] = vec4<f32>(vel, 0.0);
 }

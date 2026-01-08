@@ -816,11 +816,12 @@ impl App {
         let overlay = Mesh::new(&device, &overlay_vertices, &overlay_indices, "Overlay");
 
         let heightfield = GpuHeightfield::new(
-            &device, 
-            self.world.width as u32, 
-            self.world.depth as u32, 
+            &device,
+            self.world.width as u32,
+            self.world.depth as u32,
             self.world.cell_size,
-            INITIAL_HEIGHT
+            INITIAL_HEIGHT,
+            config.format,
         );
         heightfield.upload_from_world(&queue, &self.world);
 

@@ -11,7 +11,8 @@ struct Params {
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read_write> cell_type: array<u32>;
-@group(0) @binding(2) var<storage, read> sediment_count: array<atomic<i32>>;
+@group(0) @binding(2) var<storage, read> sediment_count: array<i32>;
+@group(0) @binding(3) var<storage, read> water_count: array<i32>;
 
 const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
@@ -41,12 +42,13 @@ fn build_sediment_cell_type(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    let count = atomicLoad(&sediment_count[idx]);
+    let sed_count = sediment_count[idx];
+    let wat_count = water_count[idx];
 
     // Voxel-based jamming: treat heavily packed cells as solid obstacles
-    if (count >= SEDIMENT_JAM_THRESHOLD) {
+    if (sed_count >= SEDIMENT_JAM_THRESHOLD) {
         cell_type[idx] = CELL_SOLID;
-    } else if (count > 0) {
+    } else if (sed_count > 0 || wat_count > 0) {
         cell_type[idx] = CELL_FLUID;
     } else {
         cell_type[idx] = CELL_AIR;

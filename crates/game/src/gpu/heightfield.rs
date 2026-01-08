@@ -85,6 +85,11 @@ pub struct GpuHeightfield {
     pub grid_vertex_buffer: wgpu::Buffer,
     pub grid_index_buffer: wgpu::Buffer,
     pub num_indices: u32,
+    
+    // Bridge Integration
+    pub bridge_merge_pipeline: wgpu::ComputePipeline,
+    pub bridge_merge_bind_group: Option<wgpu::BindGroup>,
+    pub bridge_merge_bg_layout: wgpu::BindGroupLayout,
 }
 
 impl GpuHeightfield {
@@ -616,6 +621,45 @@ impl GpuHeightfield {
             cache: None,
         });
 
+        // ========== Bridge Merge Pipeline ==========
+        let bridge_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Bridge Merge Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/heightfield_bridge_merge.wgsl").into()),
+        });
+
+        let bridge_merge_bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Bridge Merge Transfer Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
+            ],
+        });
+
+        let bridge_merge_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Bridge Merge Layout"),
+            bind_group_layouts: &[&params_layout, &bridge_merge_bg_layout, &water_layout],
+            push_constant_ranges: &[],
+        });
+
+        let bridge_merge_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Bridge Merge Pipeline"),
+            layout: Some(&bridge_merge_pipeline_layout),
+            module: &bridge_shader,
+            entry_point: Some("merge_particles"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         Self {
             width,
             depth,
@@ -665,6 +709,9 @@ impl GpuHeightfield {
             grid_vertex_buffer,
             grid_index_buffer,
             num_indices,
+            bridge_merge_pipeline,
+            bridge_merge_bind_group: None,
+            bridge_merge_bg_layout,
         }
     }
 
@@ -1103,5 +1150,32 @@ impl GpuHeightfield {
         // Water
         rpass.set_pipeline(&self.water_pipeline);
         rpass.draw_indexed(0..self.num_indices, 0, 0..1);
+    }
+
+    pub fn set_bridge_buffers(&mut self, device: &wgpu::Device, sediment_transfer: &wgpu::Buffer, water_transfer: &wgpu::Buffer) {
+        self.bridge_merge_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Bridge Merge Bind Group"),
+            layout: &self.bridge_merge_bg_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: sediment_transfer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: water_transfer.as_entire_binding() },
+            ],
+        }));
+    }
+
+    pub fn dispatch_bridge_merge(&self, encoder: &mut wgpu::CommandEncoder) {
+        if let Some(bg) = &self.bridge_merge_bind_group {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Bridge Merge Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.bridge_merge_pipeline);
+            pass.set_bind_group(0, &self.params_bind_group, &[]);
+            pass.set_bind_group(1, bg, &[]);
+            pass.set_bind_group(2, &self.water_bind_group, &[]);
+            let workgroups_x = (self.width + 15) / 16;
+            let workgroups_z = (self.depth + 15) / 16;
+            pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
+        }
     }
 }
