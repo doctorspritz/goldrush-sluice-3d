@@ -1,6 +1,6 @@
-<!-- STATUS: Work In Progress -->
+<!-- STATUS: 2D Complete - 3D needs porting (see gap analysis) -->
 
-# Improved Sediment Settling Physics for APIC Fluid Simulation
+# Improved Sediment Settling Physics
 
 ## Overview
 

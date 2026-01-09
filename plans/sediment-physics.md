@@ -1,4 +1,5 @@
-<!-- STATUS: Work In Progress -->
+<!-- STATUS: Partially implemented - needs 3D adaptation -->
+<!-- Note: Many code references point to 2D flip.rs. 3D uses flip_3d.rs + g2p_3d.wgsl -->
 
 # Sediment Physics - Unified Plan
 

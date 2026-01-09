@@ -1,23 +1,25 @@
-<!-- TODO: Review grid resolution recommendations against current 3D implementation -->
-
 # Sluice Physics Architecture
+
+> **Last Updated:** 2026-01-09
+> **Status:** Active - most features implemented
 
 ## Overview
 
-This document captures the architecture discussion for scaling the FLIP simulation from a detailed sluice to world-scale gold mining simulation.
+This document captures the architecture for scaling the FLIP simulation from a detailed sluice to world-scale gold mining simulation.
 
 ## Grid Resolution for Sluice
 
 For a 1.5m x 0.3m x 0.1m sluice with proper riffle vortex resolution:
 
-| Cell Size | Grid Dims | Total Cells | Can Resolve |
-|-----------|-----------|-------------|-------------|
-| 16mm (current) | 94x19x6 | 10k | Basic flow only |
-| 8mm | 188x38x13 | 93k | Large vortexes |
-| **5mm** | 300x60x20 | **360k** | Riffle vortexes |
-| 3mm | 500x100x33 | 1.6M | Fine turbulence |
+| Cell Size | Grid Dims | Total Cells | Can Resolve | Status |
+|-----------|-----------|-------------|-------------|--------|
+| **30mm (current)** | 50×10×3 | ~1.5k | Basic flow | ✅ Implemented |
+| 8mm | 188×38×13 | 93k | Large vortexes | |
+| **5mm (target)** | 300×60×20 | **360k** | Riffle vortexes | 🎯 Future |
+| 3mm | 500×100×33 | 1.6M | Fine turbulence | |
 
-**Recommendation: 5mm cells** - captures riffle physics without excessive cost.
+**Current:** 30mm cells (`CELL_SIZE = 0.03` in `industrial_sluice.rs`)
+**Target:** 5mm cells for proper riffle physics
 
 ## Full Pipeline Architecture
 
