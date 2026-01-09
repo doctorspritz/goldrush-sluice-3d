@@ -11,6 +11,7 @@ pub mod p2g_3d;
 pub mod pressure;
 pub mod pressure_3d;
 pub mod renderer;
+pub mod fluid_renderer;
 
 use std::sync::Arc;
 use wgpu::SurfaceTarget;
