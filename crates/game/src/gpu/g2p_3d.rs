@@ -138,6 +138,9 @@ impl GpuG2p3D {
         grid_v_old_buffer: &wgpu::Buffer,
         grid_w_old_buffer: &wgpu::Buffer,
         vorticity_mag_buffer: &wgpu::Buffer,
+        water_grid_u_buffer: &wgpu::Buffer,
+        water_grid_v_buffer: &wgpu::Buffer,
+        water_grid_w_buffer: &wgpu::Buffer,
     ) -> Self {
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -189,7 +192,7 @@ impl GpuG2p3D {
             mapped_at_creation: false,
         });
 
-        // Create bind group layout (matches shader bindings 0-14)
+        // Create bind group layout (matches shader bindings 0-17)
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("G2P 3D Bind Group Layout"),
             entries: &[
@@ -352,6 +355,37 @@ impl GpuG2p3D {
                     },
                     count: None,
                 },
+                // 15-17: water-only grid_u, grid_v, grid_w (read)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 16,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 17,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -375,6 +409,9 @@ impl GpuG2p3D {
                 wgpu::BindGroupEntry { binding: 12, resource: densities_buffer.as_ref().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 13, resource: sediment_params_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 14, resource: vorticity_mag_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 15, resource: water_grid_u_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 16, resource: water_grid_v_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 17, resource: water_grid_w_buffer.as_entire_binding() },
             ],
         });
 

@@ -29,7 +29,9 @@ struct P2gParams3D {
     height: u32,
     depth: u32,
     particle_count: u32,
-    _padding: [u32; 3], // Align to 32 bytes
+    include_sediment: u32,
+    _pad0: u32,
+    _pad1: u32,
 }
 
 /// GPU-based Particle-to-Grid transfer for 3D simulation
@@ -37,6 +39,7 @@ pub struct GpuP2g3D {
     width: u32,
     height: u32,
     depth: u32,
+    include_sediment: bool,
 
     // Particle buffers (uploaded each frame)
     positions_buffer: Arc<wgpu::Buffer>,
@@ -98,6 +101,7 @@ impl GpuP2g3D {
         height: u32,
         depth: u32,
         max_particles: usize,
+        include_sediment: bool,
         positions_buffer: Arc<wgpu::Buffer>,
         velocities_buffer: Arc<wgpu::Buffer>,
         densities_buffer: Arc<wgpu::Buffer>,
@@ -607,6 +611,7 @@ impl GpuP2g3D {
             width,
             height,
             depth,
+            include_sediment,
             positions_buffer,
             velocities_buffer,
             densities_buffer,
@@ -703,7 +708,9 @@ impl GpuP2g3D {
             height: self.height,
             depth: self.depth,
             particle_count,
-            _padding: [0; 3],
+            include_sediment: if self.include_sediment { 1 } else { 0 },
+            _pad0: 0,
+            _pad1: 0,
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 

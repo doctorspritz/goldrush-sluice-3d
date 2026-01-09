@@ -59,6 +59,9 @@ struct SedimentParams {
 @group(0) @binding(12) var<storage, read> densities: array<f32>;
 @group(0) @binding(13) var<uniform> sediment_params: SedimentParams;
 @group(0) @binding(14) var<storage, read> vorticity_mag: array<f32>;
+@group(0) @binding(15) var<storage, read> water_grid_u: array<f32>;
+@group(0) @binding(16) var<storage, read> water_grid_v: array<f32>;
+@group(0) @binding(17) var<storage, read> water_grid_w: array<f32>;
 
 // Quadratic B-spline kernel (1D)
 fn quadratic_bspline_1d(x: f32) -> f32 {
@@ -101,6 +104,8 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     let pos = positions[id.x];
     let old_particle_vel = velocities[id.x];
     let cell_size = params.cell_size;
+    let density = densities[id.x];
+    let is_sediment = density > 1.0;
     let width = i32(params.width);
     let height = i32(params.height);
     let depth = i32(params.depth);
@@ -112,6 +117,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     var new_c_row1 = vec3<f32>(0.0, 0.0, 0.0);  // Row 1 of C matrix (from V velocity)
     var new_c_row2 = vec3<f32>(0.0, 0.0, 0.0);  // Row 2 of C matrix (from W velocity)
     var weight_sum = vec3<f32>(0.0, 0.0, 0.0);  // u, v, w weight sums
+    var water_velocity = vec3<f32>(0.0, 0.0, 0.0);
 
     // Also sample old grid velocity for FLIP delta
     // NOTE: old and new use same stencil, so weights are identical
@@ -146,6 +152,10 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 new_velocity.x += w * u_val;
                 old_grid_vel.x += w * u_old;
                 weight_sum.x += w;
+                if (is_sediment) {
+                    let u_water = water_grid_u[idx];
+                    water_velocity.x += w * u_water;
+                }
 
                 // C matrix: row 0 (from U velocity component)
                 // APIC: C[0,:] = Σ w * u * offset * d_inv
@@ -189,6 +199,10 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 new_velocity.y += w * v_val;
                 old_grid_vel.y += w * v_old;
                 weight_sum.y += w;
+                if (is_sediment) {
+                    let v_water = water_grid_v[idx];
+                    water_velocity.y += w * v_water;
+                }
 
                 // C matrix: row 1 (from V velocity component)
                 // APIC: C[1,:] = Σ w * v * offset * d_inv
@@ -231,6 +245,10 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 new_velocity.z += w * w_val;
                 old_grid_vel.z += w * w_old;
                 weight_sum.z += w;
+                if (is_sediment) {
+                    let w_water = water_grid_w[idx];
+                    water_velocity.z += w * w_water;
+                }
 
                 // C matrix: row 2 (from W velocity component)
                 // APIC: C[2,:] = Σ w * w * offset * d_inv
@@ -251,22 +269,30 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         new_velocity.x /= weight_sum.x;
         old_grid_vel.x /= weight_sum.x;
         new_c_row0 /= weight_sum.x;
+        if (is_sediment) {
+            water_velocity.x /= weight_sum.x;
+        }
     }
     if (weight_sum.y > 0.0) {
         new_velocity.y /= weight_sum.y;
         old_grid_vel.y /= weight_sum.y;
         new_c_row1 /= weight_sum.y;
+        if (is_sediment) {
+            water_velocity.y /= weight_sum.y;
+        }
     }
     if (weight_sum.z > 0.0) {
         new_velocity.z /= weight_sum.z;
         old_grid_vel.z /= weight_sum.z;
         new_c_row2 /= weight_sum.z;
+        if (is_sediment) {
+            water_velocity.z /= weight_sum.z;
+        }
     }
 
     let density = densities[id.x];
     let is_sediment = density > 1.0;
     let is_gold = density >= sediment_params.gold_density_threshold;
-
     // ========== FLIP/PIC blend ==========
     let grid_delta = new_velocity - old_grid_vel;
 
@@ -290,7 +316,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         // When water flows fast: drag wins → entrainment
         // When water is slow: gravity wins → settling
 
-        let water_vel = new_velocity;  // Current water velocity from grid
+        let water_vel = water_velocity;  // Water-only velocity from grid
         let particle_vel = old_particle_vel;
 
         // Drag force: accelerate toward water velocity

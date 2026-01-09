@@ -22,22 +22,22 @@ use winit::{
     window::{Window, WindowId},
 };
 
-// Grid configuration - coarser grid to match gravel size
-const SLUICE_WIDTH: usize = 40;  // Sluice length in cells (halved for coarser grid)
-const EXIT_BUFFER: usize = 8;    // Buffer zone past exit for clean outflow
-const GRID_WIDTH: usize = SLUICE_WIDTH + EXIT_BUFFER;  // Total simulation width
-const GRID_HEIGHT: usize = 12;   // Reduced height for coarser grid
-const GRID_DEPTH: usize = 12;    // Reduced depth for coarser grid
-const CELL_SIZE: f32 = 0.08;     // Coarser cells (2x) to match gravel scale
+// Grid configuration
+const CELL_SIZE: f32 = 0.01;
+const SLUICE_WIDTH: usize = 150;   // 1.50 m
+const EXIT_BUFFER: usize = 12;
+const GRID_WIDTH: usize = SLUICE_WIDTH + EXIT_BUFFER;
+const GRID_DEPTH: usize = 40;      // 0.40 m
+const GRID_HEIGHT: usize = 52;     // 0.52 m
 const MAX_PARTICLES: usize = 300_000;
 
 // Simulation
 const GRAVITY: f32 = -9.8;
 const PRESSURE_ITERS: u32 = 80;
 
-// Emission rates
-const WATER_EMIT_RATE: usize = 30;   // Higher water flow
-const SEDIMENT_EMIT_RATE: usize = 5;  // More gravel to test settling
+// Emission rates (10-20% solids by mass)
+const WATER_EMIT_RATE: usize = 40;
+const SEDIMENT_EMIT_RATE: usize = 2;
 const GPU_SYNC_STRIDE: u32 = 4;       // GPU readback cadence (frames)
 
 // Grain sizing (relative to cell size)
@@ -114,7 +114,7 @@ struct App {
     gangue_template_idx: usize,
     gold_template_idx: usize,
 
-    // Persistent FLIP↔DEM mapping
+    // Persistent FLIP<->DEM mapping
     // sediment_clump_idx[i] = index into dem.clumps for sediment particle i
     // We track sediment particles separately from water
     sediment_flip_indices: Vec<usize>,  // FLIP particle indices that are sediment
@@ -151,26 +151,40 @@ struct App {
     current_fps: f32,
 }
 
+struct FlowMetrics {
+    sample_count: usize,
+    vel_mean: f32,
+    depth_p50: f32,
+    depth_p90: f32,
+    flow_width: f32,
+    flow_rate_m3s: f32,
+    flow_rate_m3min: f32,
+    sample_x_min: f32,
+    sample_x_max: f32,
+}
+
 impl App {
     fn new() -> Self {
         // Configure sluice geometry - smooth ramp feed, then riffles
         // Sluice ends before the grid boundary, leaving buffer zone for clean outflow
-        // Scaled for coarser grid (cells are 2x larger)
         let sluice_config = SluiceConfig {
             grid_width: SLUICE_WIDTH,  // Sluice width, not full grid width
             grid_height: GRID_HEIGHT,
             grid_depth: GRID_DEPTH,
             cell_size: CELL_SIZE,
-            floor_height_left: 4,       // Gentler slope
-            floor_height_right: 2,      // Low end
-            riffle_spacing: 4,          // Closer riffles (scaled from 8)
-            riffle_height: 3,           // Taller riffles
-            riffle_thickness: 1,
-            riffle_start_x: 12,         // Ramp section (scaled from 25)
-            riffle_end_pad: 4,
-            wall_margin: 2,             // Scaled from 4
-            exit_width_fraction: 1.0,   // Full-width exit
-            exit_height: 6,             // Scaled from 10
+            // slope: 10 deg (drop 26 cells over 150)
+            floor_height_left: 30,
+            floor_height_right: 4,
+            // riffles: spacing 0.32 m, height 0.04 m
+            riffle_spacing: 32,
+            riffle_height: 4,
+            riffle_thickness: 2,
+            riffle_start_x: 40,   // 0.40 m slick plate
+            riffle_end_pad: 12,   // 0.12 m tail clearance
+            // wall height above floor+riffle: (4 + 8) * 0.01 = 0.12 m (H ~ 0.3W)
+            wall_margin: 8,
+            exit_width_fraction: 1.0,
+            exit_height: 12,
             ..Default::default()
         };
 
@@ -314,6 +328,72 @@ impl App {
         9.8 * slope
     }
 
+    fn compute_flow_metrics(&self) -> FlowMetrics {
+        let config = self.sluice_builder.config();
+        let cell_size = config.cell_size;
+        let sample_x_min = 6.0 * cell_size;
+        let mut sample_x_max = (config.riffle_start_x.saturating_sub(4) as f32) * cell_size;
+        if sample_x_max <= sample_x_min {
+            sample_x_max = (config.riffle_start_x as f32 * 0.5) * cell_size;
+        }
+        let sample_x_max = sample_x_max.min(config.grid_width as f32 * cell_size);
+
+        let width_cells = (config.grid_depth as i32 - 2).max(1) as f32;
+        let flow_width = width_cells * cell_size;
+
+        let mut heights: Vec<f32> = Vec::new();
+        let mut vel_sum = 0.0f32;
+        let mut vel_count = 0usize;
+
+        for p in &self.sim.particles.list {
+            if p.density > 1.0 {
+                continue;
+            }
+            if p.position.x < sample_x_min || p.position.x > sample_x_max {
+                continue;
+            }
+            let floor_y = self.floor_height_at(p.position.x);
+            let height = (p.position.y - floor_y).max(0.0);
+            heights.push(height);
+            if p.velocity.x > 0.0 {
+                vel_sum += p.velocity.x;
+                vel_count += 1;
+            }
+        }
+
+        let (depth_p50, depth_p90) = if heights.is_empty() {
+            (0.0, 0.0)
+        } else {
+            heights.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let mid_idx = heights.len() / 2;
+            let p90_idx = ((heights.len() as f32 - 1.0) * 0.9).round() as usize;
+            (
+                heights[mid_idx],
+                heights[p90_idx.min(heights.len() - 1)],
+            )
+        };
+        let vel_mean = if vel_count > 0 {
+            vel_sum / vel_count as f32
+        } else {
+            0.0
+        };
+
+        let flow_rate_m3s = vel_mean * flow_width * depth_p90;
+        let flow_rate_m3min = flow_rate_m3s * 60.0;
+
+        FlowMetrics {
+            sample_count: heights.len(),
+            vel_mean,
+            depth_p50,
+            depth_p90,
+            flow_width,
+            flow_rate_m3s,
+            flow_rate_m3min,
+            sample_x_min,
+            sample_x_max,
+        })
+    }
+
     fn queue_emissions(&mut self) {
         if self.frame % 2 == 0 {
             self.pending_water_emits = self.pending_water_emits.saturating_add(self.water_emit_rate);
@@ -342,13 +422,15 @@ impl App {
         let emit_x = 2.0 * config.cell_size;  // Near left wall (upstream)
         let center_z = config.grid_depth as f32 * config.cell_size * 0.5;
         let floor_y = self.floor_height_at(emit_x);
-        let drop_height = 2.0 * config.cell_size;  // Scaled for coarser grid
+        // Keep the feed sheet thin (<= 2 cells ~ 2 cm at 0.01m)
+        let drop_height = 0.5 * config.cell_size;
+        let sheet_height = 1.5 * config.cell_size;
 
-        let spread_z = (config.grid_depth as f32 - 4.0) * config.cell_size * 0.3;
+        let water_spread_z = (config.grid_depth as f32 - 4.0) * config.cell_size * 0.3;
+        let sediment_spread_z = (config.grid_depth as f32 - 4.0) * config.cell_size * 0.2;
 
-        // Initial velocity - flow direction with some downward momentum
-        // Increased from 0.5 to 1.0 m/s for more visible flow
-        let init_vel = Vec3::new(1.0, -0.3, 0.0);  // Downstream + down
+        // Initial velocity tuned for ~0.3-1.0 m/s sheet flow and CFL < 1.
+        let init_vel = Vec3::new(0.5, -0.05, 0.0);  // Downstream + slight down
 
         // Emit water
         for _ in 0..water_count {
@@ -356,8 +438,8 @@ impl App {
                 break;
             }
             let x = emit_x + (rand_float() - 0.5) * 2.0 * config.cell_size;
-            let z = center_z + (rand_float() - 0.5) * spread_z;
-            let y = floor_y + drop_height + rand_float() * config.cell_size;
+            let z = center_z + (rand_float() - 0.5) * water_spread_z;
+            let y = floor_y + drop_height + rand_float() * sheet_height;
             self.sim.spawn_particle_with_velocity(Vec3::new(x, y, z), init_vel);
         }
 
@@ -367,8 +449,15 @@ impl App {
                 break;
             }
             let x = emit_x + (rand_float() - 0.5) * 2.0 * config.cell_size;
-            let z = center_z + (rand_float() - 0.5) * spread_z;
-            let y = floor_y + drop_height + rand_float() * config.cell_size;
+            let z = center_z + (rand_float() - 0.5) * sediment_spread_z;
+            let band = rand_float();
+            let (band_base, band_jitter, band_vel_scale, band_down) = if band < 0.7 {
+                (0.5 * config.cell_size, 0.7 * config.cell_size, 1.0, 1.0)
+            } else {
+                (0.1 * config.cell_size, 0.3 * config.cell_size, 0.8, 1.2)
+            };
+            let y = floor_y + band_base + rand_float() * band_jitter;
+            let sediment_vel = Vec3::new(init_vel.x * band_vel_scale, init_vel.y * band_down, init_vel.z);
             let pos = Vec3::new(x, y, z);
 
             let is_gold = rand_float() < GOLD_FRACTION;
@@ -381,10 +470,10 @@ impl App {
 
             // Track FLIP particle index before spawning
             let flip_idx = self.sim.particles.len();
-            self.sim.spawn_sediment(pos, init_vel, density);
+            self.sim.spawn_sediment(pos, sediment_vel, density);
 
             // Create corresponding DEM clump
-            self.dem.spawn(template_idx, pos, init_vel);
+            self.dem.spawn(template_idx, pos, sediment_vel);
 
             // Record the mapping
             self.sediment_flip_indices.push(flip_idx);
@@ -468,7 +557,7 @@ impl App {
             // NOTE: Buoyancy-reduced gravity is now applied in the GPU shader (g2p_3d.wgsl)
             // using the drag-based entrainment model. No extra settling needed here.
 
-            // Sync FLIP → DEM: update clump positions/velocities from FLIP results
+            // Sync FLIP -> DEM: update clump positions/velocities from FLIP results
             // but PRESERVE rotation, angular_velocity, and contact history
             for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
                 if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list.len() {
@@ -494,7 +583,7 @@ impl App {
             };
             self.dem.collision_response_only(dt, &sdf_params, true); // wet=true
 
-            // Sync DEM → FLIP: copy results back + enforce back wall
+            // Sync DEM -> FLIP: copy results back + enforce back wall
             let back_wall_x = CELL_SIZE * 1.5;  // Back wall boundary
             for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
                 if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list.len() {
@@ -714,6 +803,27 @@ impl App {
                 "Frame {} | FPS: {:.1} | Particles: {} (water: {}, sediment: {})",
                 self.frame, self.current_fps, self.sim.particles.list.len(), water_count, sediment_count
             );
+            let flow = self.compute_flow_metrics();
+            if flow.sample_count == 0 {
+                println!(
+                    "Flow: n/a (no water samples in [{:.2}m, {:.2}m])",
+                    flow.sample_x_min,
+                    flow.sample_x_max,
+                );
+            } else {
+                println!(
+                    "Flow: v={:.2} m/s | depth p50={:.3} m p90={:.3} m | width={:.3} m | Q={:.3} m3/s ({:.2} m3/min) | samples={} | window=[{:.2}m, {:.2}m]",
+                    flow.vel_mean,
+                    flow.depth_p50,
+                    flow.depth_p90,
+                    flow.flow_width,
+                    flow.flow_rate_m3s,
+                    flow.flow_rate_m3min,
+                    flow.sample_count,
+                    flow.sample_x_min,
+                    flow.sample_x_max,
+                );
+            }
         }
     }
 
@@ -1165,8 +1275,8 @@ impl App {
         // Drag-based entrainment model:
         // - Gravel is pulled toward water velocity (drag)
         // - Buoyancy-reduced gravity pulls it down
-        // - When water is fast, drag wins → entrainment
-        // - When water is slow, gravity wins → settling
+        // - When water is fast, drag wins -> entrainment
+        // - When water is slow, gravity wins -> settling
         gpu_flip.sediment_rest_particles = 0.0;       // Disabled - don't mark sediment as SOLID
         gpu_flip.sediment_porosity_drag = 0.0;        // Disable porosity drag
         gpu_flip.sediment_drag_coefficient = 8.0;     // Drag rate (1/s) - how fast gravel approaches water velocity

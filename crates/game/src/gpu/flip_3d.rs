@@ -465,6 +465,7 @@ pub struct GpuFlip3D {
 
     // Sub-solvers
     p2g: GpuP2g3D,
+    water_p2g: GpuP2g3D,
     g2p: GpuG2p3D,
     pressure: GpuPressure3D,
 
@@ -619,6 +620,22 @@ impl GpuFlip3D {
             height,
             depth,
             max_particles,
+            true,
+            Arc::clone(&positions_buffer),
+            Arc::clone(&velocities_buffer),
+            Arc::clone(&densities_buffer),
+            Arc::clone(&c_col0_buffer),
+            Arc::clone(&c_col1_buffer),
+            Arc::clone(&c_col2_buffer),
+        );
+
+        let water_p2g = GpuP2g3D::new(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            false,
             Arc::clone(&positions_buffer),
             Arc::clone(&velocities_buffer),
             Arc::clone(&densities_buffer),
@@ -718,6 +735,9 @@ impl GpuFlip3D {
             &grid_v_old_buffer,
             &grid_w_old_buffer,
             &vorticity_mag_buffer,
+            &water_p2g.grid_u_buffer,
+            &water_p2g.grid_v_buffer,
+            &water_p2g.grid_w_buffer,
         );
 
         // Create gravity shader
@@ -2189,11 +2209,11 @@ impl GpuFlip3D {
             vorticity_epsilon: 0.05,
             sediment_rest_particles: 8.0,
             sediment_friction_threshold: 0.1,
-            sediment_friction_strength: 0.4,
+            sediment_friction_strength: 0.5,
             sediment_settling_velocity: 0.05,
             sediment_vorticity_lift: 1.5,
-            sediment_vorticity_threshold: 2.0,
-            sediment_drag_coefficient: 10.0,  // Moderate drag - particles entrain in flow
+            sediment_vorticity_threshold: 3.0,
+            sediment_drag_coefficient: 6.0,  // Moderate drag - particles entrain in flow
             gold_density_threshold: 10.0,
             gold_drag_multiplier: 1.0,
             gold_settling_velocity: 0.02,
@@ -2206,6 +2226,7 @@ impl GpuFlip3D {
             c_col2_buffer,
             densities_buffer,
             p2g,
+            water_p2g,
             g2p,
             pressure,
             gravity_pipeline,
@@ -2325,7 +2346,9 @@ impl GpuFlip3D {
 
         // 1. P2G
         self.p2g.prepare(queue, particle_count, self.cell_size);
+        self.water_p2g.prepare(queue, particle_count, self.cell_size);
         self.p2g.encode(encoder, particle_count);
+        self.water_p2g.encode(encoder, particle_count);
 
         // 2. Pressure (Simplified for now - might need more steps for stability)
         self.pressure.encode(encoder, 40); // 40 iterations
@@ -2596,12 +2619,15 @@ impl GpuFlip3D {
     ) -> u32 {
         let count = particle_count;
 
+        self.water_p2g.prepare(queue, count, self.cell_size);
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D Step Encoder"),
         });
 
         // Run P2G scatter and divide
         self.p2g.encode(&mut encoder, count);
+        self.water_p2g.encode(&mut encoder, count);
 
         queue.submit(std::iter::once(encoder.finish()));
 

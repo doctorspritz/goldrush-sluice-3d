@@ -7,7 +7,10 @@
 //! - WASD: Move camera
 //! - SPACE/SHIFT: Up/Down
 //! - Right Mouse: Look
-//! - 1: Spawn water at cursor
+//! - 1: Add heightfield water at cursor
+//! - 2: Add muddy water at cursor
+//! - 3: Toggle heightfield emitter
+//! - F: Toggle FLIP emitter
 //! - R: Reset
 //! - ESC: Quit
 //!
@@ -40,6 +43,14 @@ const DIG_DEPTH: f32 = 0.5;
 const ADD_RADIUS: f32 = 3.0;
 const ADD_HEIGHT: f32 = 0.5;
 const WATER_ADD_VOLUME: f32 = 5.0;
+
+const BOWL_RADIUS: f32 = 20.0;
+const BOWL_FLAT_RADIUS: f32 = 26.0;
+const BOWL_DEPTH: f32 = 6.0;
+const FLIP_EMITTER_RATE: f32 = 1200.0;
+const FLIP_EMITTER_RADIUS: f32 = 2.0;
+const FLIP_EMITTER_HEIGHT: f32 = 8.0;
+const FLIP_EMITTER_SPREAD: f32 = 0.5;
 
 const MOVE_SPEED: f32 = 20.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
@@ -214,6 +225,16 @@ struct WaterEmitter {
     enabled: bool,
 }
 
+struct FlipEmitter {
+    position: Vec3,
+    rate: f32, // Particles per second
+    radius: f32,
+    velocity: Vec3,
+    spread: f32,
+    density: f32,
+    enabled: bool,
+}
+
 use game::gpu::heightfield::GpuHeightfield;
 
 struct GpuState {
@@ -238,6 +259,8 @@ struct App {
     gpu: Option<GpuState>,
     world: World,
     emitter: WaterEmitter,
+    flip_emitter: FlipEmitter,
+    flip_emitter_accum: f32,
     camera: Camera,
     input: InputState,
     last_frame: Instant,
@@ -298,16 +321,16 @@ impl App {
         
         println!("=== DETAIL ZONE: FLIP + Heightfield ===");
         println!("FLIP grid: {}x{}x{} at {:.1}m", FLIP_GRID_X, FLIP_GRID_Y, FLIP_GRID_Z, FLIP_CELL_SIZE);
-        println!("Press 1 to spawn water");
+        println!("Press F to toggle FLIP emitter");
 
         // Initialize flip_origin to center of world at terrain height
         let center_x = (WORLD_WIDTH / 2) as usize;
         let center_z = (WORLD_DEPTH / 2) as usize;
         let terrain_y = world.ground_height(center_x, center_z);
-        // We set the origin so the terrain is roughly at Y=5 in our 32m high grid
+        // Keep the bowl bottom within the 32m grid for visibility
         let flip_origin = Vec3::new(
             (center_x as f32) - (FLIP_GRID_X as f32 * 0.5),
-            terrain_y - 5.0,
+            terrain_y - (BOWL_DEPTH + 2.0),
             (center_z as f32) - (FLIP_GRID_Z as f32 * 0.5),
         );
 
@@ -321,6 +344,16 @@ impl App {
                 radius: 5.0,
                 enabled: false,
             },
+            flip_emitter: FlipEmitter {
+                position: Vec3::new(center_x as f32, terrain_y + FLIP_EMITTER_HEIGHT, center_z as f32),
+                rate: FLIP_EMITTER_RATE,
+                radius: FLIP_EMITTER_RADIUS,
+                velocity: Vec3::new(0.0, -1.0, 0.0),
+                spread: FLIP_EMITTER_SPREAD,
+                density: 1.0,
+                enabled: true,
+            },
+            flip_emitter_accum: 0.0,
             camera: Camera {
                 position: Vec3::new(center_x as f32, terrain_y + 50.0, center_z as f32 + 50.0), 
                 yaw: -1.57, // Looking -Z

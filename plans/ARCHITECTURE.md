@@ -99,6 +99,38 @@ Player skill = understanding and managing interconnected physical systems.
 
 ---
 
+## Detail Zone LOD (2.5D + 3D GPU)
+
+The world runs as a wide 2.5D heightfield for terrain + water, while a local 3D "detail zone"
+overlays a small region with full FLIP/DEM simulation. The 2.5D heightfield remains the
+authoritative surface; the detail zone samples bed height into the 3D grid and can optionally
+push settled material back out.
+
+### GPU-Resident Path (detail_zone example)
+- Bed height resample: GPU heightfield buffers -> FLIP bed_height buffer (compute).
+- Cell types: GPU marks SOLID/AIR from bed height (no CPU SDF when enabled).
+- Particle sim: GPU-resident FLIP (positions/velocities/C) via `step_in_place`.
+- Spawn: GPU emitter writes particles directly into FLIP buffers.
+- Render: particle positions read from storage buffer (no CPU readback).
+
+### CPU Fallback Path
+- CPU builds solids/cell types and SDF from the heightfield.
+- Particle arrays sync CPU <-> GPU each step for simulation and rendering.
+
+### Residency Map
+CPU:
+- World-scale gameplay state (equipment, zone placement, scripted interactions).
+- Input, camera, UI, and high-level control logic.
+- Optional readback for debug or non-resident path.
+
+GPU:
+- Heightfield buffers (bedrock, sediment, water, surface).
+- Bed-height resample output + FLIP cell types.
+- FLIP grid + particle buffers.
+- Particle rendering buffers + pipelines.
+
+---
+
 ## Data Flow
 
 ### Mining → Processing → Tailings
