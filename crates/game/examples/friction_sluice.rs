@@ -7,8 +7,8 @@
 
 use bytemuck::{Pod, Zeroable};
 use game::gpu::flip_3d::GpuFlip3D;
+use game::gpu::fluid_renderer::ScreenSpaceFluidRenderer;
 use game::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder, SluiceVertex};
-use game::water_heightfield::{WaterHeightfieldRenderer, WaterRenderConfig, WaterVertex};
 use glam::{Mat3, Mat4, Vec3};
 use sim3d::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, SdfParams};
 use std::sync::Arc;
@@ -88,7 +88,6 @@ struct GpuState {
 
     // Pipelines
     sluice_pipeline: wgpu::RenderPipeline,
-    water_pipeline: wgpu::RenderPipeline,
     sediment_pipeline: wgpu::RenderPipeline,
 
     // Buffers
@@ -96,7 +95,6 @@ struct GpuState {
     uniform_bind_group: wgpu::BindGroup,
     sluice_vertex_buffer: wgpu::Buffer,
     sluice_index_buffer: wgpu::Buffer,
-    water_vertex_buffer: wgpu::Buffer,
     rock_mesh_vertex_buffer: wgpu::Buffer,
     rock_mesh_vertex_count: u32,
     sediment_instance_buffer: wgpu::Buffer,
@@ -112,7 +110,7 @@ struct App {
     gpu_flip: Option<GpuFlip3D>,
     sim: FlipSimulation3D,
     sluice_builder: SluiceGeometryBuilder,
-    water_renderer: WaterHeightfieldRenderer,
+    fluid_renderer: ScreenSpaceFluidRenderer,
     dem: ClusterSimulation3D,
     gangue_template_idx: usize,
     gold_template_idx: usize,
@@ -237,17 +235,10 @@ impl App {
             );
         }
 
-        // Water renderer
-        let water_config = WaterRenderConfig {
-            subdivisions: 2,
-            ..Default::default()
-        };
-        let water_renderer = WaterHeightfieldRenderer::new(
-            GRID_WIDTH,
-            GRID_DEPTH,
-            CELL_SIZE,
-            water_config,
-        );
+        // Screen-space fluid renderer (water only)
+        let mut fluid_renderer = ScreenSpaceFluidRenderer::new(&device, config.format);
+        fluid_renderer.particle_radius = CELL_SIZE * 0.5;
+        fluid_renderer.resize(&device, config.width, config.height);
 
         // DEM for sediment - using existing ClusterSimulation3D with single-sphere clumps
         let bounds_min = Vec3::ZERO;
@@ -302,7 +293,7 @@ impl App {
             gpu_flip: None,
             sim,
             sluice_builder,
-            water_renderer,
+            fluid_renderer,
             dem,
             gangue_template_idx,
             gold_template_idx,
@@ -991,51 +982,6 @@ impl App {
         };
         gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // Build water mesh
-        let time = self.start_time.elapsed().as_secs_f32();
-
-        // Update sediment heights first (for water surface bridging over gravel)
-        let sediment_particles = self.sim.particles.list.iter()
-            .filter(|p| p.density > 1.0)
-            .map(|p| p.position.to_array());
-        self.water_renderer.update_sediment(sediment_particles);
-
-        // Now build water mesh with sediment-aware bridging
-        let water_particles = self.sim.particles.list.iter()
-            .filter(|p| p.density <= 1.0)
-            .map(|p| (p.position.to_array(), p.velocity.to_array()));
-
-        // Capture floor height params to avoid borrowing self in closure
-        // Note: floor_height_* is the cell index of the top solid cell.
-        // The TOP of that cell (visible floor surface) is at (floor_height + 1) * cell_size
-        let (floor_surface_left, floor_surface_right, total_width) = {
-            let config = self.sluice_builder.config();
-            (
-                (config.floor_height_left + 1) as f32 * config.cell_size,  // Top of floor cell
-                (config.floor_height_right + 1) as f32 * config.cell_size, // Top of floor cell
-                config.grid_width as f32 * config.cell_size,
-            )
-        };
-
-        self.water_renderer.build_mesh(
-            water_particles,
-            time,
-            |x| {
-                let t = x / total_width;
-                floor_surface_left * (1.0 - t) + floor_surface_right * t
-            },
-        );
-
-        // Upload water vertices
-        let water_vertices = self.water_renderer.vertices();
-        if !water_vertices.is_empty() {
-            gpu.queue.write_buffer(
-                &gpu.water_vertex_buffer,
-                0,
-                bytemuck::cast_slice(water_vertices),
-            );
-        }
-
         // Build sediment instances from DEM clumps
         let sediment_instances: Vec<SedimentInstance> = self.dem.clumps.iter()
             .map(|clump| {
@@ -1095,13 +1041,6 @@ impl App {
             pass.set_index_buffer(gpu.sluice_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..self.sluice_builder.indices().len() as u32, 0, 0..1);
 
-            // Draw water
-            if !water_vertices.is_empty() {
-                pass.set_pipeline(&gpu.water_pipeline);
-                pass.set_vertex_buffer(0, gpu.water_vertex_buffer.slice(..));
-                pass.draw(0..water_vertices.len() as u32, 0..1);
-            }
-
             // Draw sediment as 3D rocks
             if !sediment_instances.is_empty() {
                 pass.set_pipeline(&gpu.sediment_pipeline);
@@ -1109,6 +1048,23 @@ impl App {
                 pass.set_vertex_buffer(1, gpu.sediment_instance_buffer.slice(..));
                 pass.draw(0..gpu.rock_mesh_vertex_count, 0..sediment_instances.len() as u32);
             }
+        }
+
+        if let (Some(gpu_flip), Some(_)) = (&self.gpu_flip, &self.gpu) {
+            let active_count = self.sim.particles.list.len() as u32;
+            self.fluid_renderer.render(
+                &gpu.device,
+                &gpu.queue,
+                &mut encoder,
+                &view,
+                gpu_flip,
+                active_count,
+                view_matrix.to_cols_array_2d(),
+                proj_matrix.to_cols_array_2d(),
+                eye.to_array(),
+                gpu.config.width,
+                gpu.config.height,
+            );
         }
 
         gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -1245,50 +1201,6 @@ impl App {
             cache: None,
         });
 
-        // Water pipeline (same vertex format as sluice)
-        let water_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Water Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<WaterVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x3 },
-                        wgpu::VertexAttribute { offset: 12, shader_location: 1, format: wgpu::VertexFormat::Float32x4 },
-                    ],
-                }],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None, // Water visible from both sides
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
         // Sediment shader (3D rock mesh with lighting)
         let sediment_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Sediment Shader"),
@@ -1364,13 +1276,6 @@ impl App {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let water_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Water Vertices"),
-            size: (GRID_WIDTH * GRID_DEPTH * 6 * 4 * std::mem::size_of::<WaterVertex>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         // Rock mesh for sediment (icosahedron with jitter)
         let rock_mesh_vertices = build_rock_mesh();
         let rock_mesh_vertex_count = rock_mesh_vertices.len() as u32;
@@ -1426,13 +1331,11 @@ impl App {
             surface,
             config,
             sluice_pipeline,
-            water_pipeline,
             sediment_pipeline,
             uniform_buffer,
             uniform_bind_group,
             sluice_vertex_buffer,
             sluice_index_buffer,
-            water_vertex_buffer,
             rock_mesh_vertex_buffer,
             rock_mesh_vertex_count,
             sediment_instance_buffer,
@@ -1467,6 +1370,7 @@ impl ApplicationHandler for App {
                     let (depth_texture, depth_view) = create_depth_texture(&gpu.device, &gpu.config);
                     gpu.depth_texture = depth_texture;
                     gpu.depth_view = depth_view;
+                    self.fluid_renderer.resize(&gpu.device, gpu.config.width, gpu.config.height);
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
