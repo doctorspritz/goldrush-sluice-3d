@@ -163,6 +163,7 @@ struct SdfCollisionParams3D {
 
 #[derive(Copy, Clone)]
 enum ReadbackMode {
+    None,
     Sync,
     Async,
 }
@@ -2362,6 +2363,41 @@ impl GpuFlip3D {
         );
     }
 
+    /// Run one simulation step without any readback (upload + GPU passes only).
+    pub fn step_no_readback(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        positions: &mut [glam::Vec3],
+        velocities: &mut [glam::Vec3],
+        c_matrices: &mut [glam::Mat3],
+        densities: &[f32],
+        cell_types: &[u32],
+        sdf: Option<&[f32]>,
+        bed_height: Option<&[f32]>,
+        dt: f32,
+        gravity: f32,
+        flow_accel: f32,
+        pressure_iterations: u32,
+    ) {
+        let _ = self.step_internal(
+            device,
+            queue,
+            positions,
+            velocities,
+            c_matrices,
+            densities,
+            cell_types,
+            sdf,
+            bed_height,
+            dt,
+            gravity,
+            flow_accel,
+            pressure_iterations,
+            ReadbackMode::None,
+        );
+    }
+
     /// Run one simulation step and schedule an async readback.
     ///
     /// Call `try_readback` on subsequent frames to pull results without stalling.
@@ -2417,6 +2453,17 @@ impl GpuFlip3D {
             }
         }
         None
+    }
+
+    /// Schedule a readback of the current GPU particle buffers without uploading.
+    pub fn request_readback(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        particle_count: usize,
+    ) -> bool {
+        let count = particle_count.min(self.max_particles);
+        self.schedule_readback(device, queue, count)
     }
 
     pub fn positions_buffer(&self) -> Arc<wgpu::Buffer> {
@@ -3209,6 +3256,7 @@ impl GpuFlip3D {
         );
 
         match readback {
+            ReadbackMode::None => true,
             ReadbackMode::Sync => {
                 // Download results (velocities + C matrix + positions).
                 self.g2p.download(device, queue, g2p_count, velocities, c_matrices);

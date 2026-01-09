@@ -38,6 +38,7 @@ const PRESSURE_ITERS: u32 = 80;
 // Emission rates
 const WATER_EMIT_RATE: usize = 30;   // Higher water flow
 const SEDIMENT_EMIT_RATE: usize = 5;  // More gravel to test settling
+const GPU_SYNC_STRIDE: u32 = 4;       // GPU readback cadence (frames)
 
 // Sediment color (brownish)
 const SEDIMENT_COLOR: [f32; 4] = [0.6, 0.4, 0.2, 1.0];
@@ -127,6 +128,12 @@ struct App {
     water_emit_rate: usize,
     sediment_emit_rate: usize,
     use_dem: bool,  // Toggle DEM on/off
+    use_async_readback: bool,
+    gpu_readback_pending: bool,
+    gpu_sync_substep: u32,
+    gpu_needs_upload: bool,
+    pending_water_emits: usize,
+    pending_sediment_emits: usize,
 
     // Timing
     start_time: Instant,
@@ -253,6 +260,12 @@ impl App {
             water_emit_rate: WATER_EMIT_RATE,
             sediment_emit_rate: SEDIMENT_EMIT_RATE,
             use_dem: true,  // Enable DEM by default
+            use_async_readback: true,
+            gpu_readback_pending: false,
+            gpu_sync_substep: 0,
+            gpu_needs_upload: true,
+            pending_water_emits: 0,
+            pending_sediment_emits: 0,
             start_time: Instant::now(),
             last_fps_time: Instant::now(),
             fps_frame_count: 0,
@@ -279,7 +292,25 @@ impl App {
         9.8 * slope
     }
 
-    fn emit_particles(&mut self) {
+    fn queue_emissions(&mut self) {
+        if self.frame % 2 == 0 {
+            self.pending_water_emits = self.pending_water_emits.saturating_add(self.water_emit_rate);
+            self.pending_sediment_emits = self.pending_sediment_emits.saturating_add(self.sediment_emit_rate);
+        }
+    }
+
+    fn emit_pending_particles(&mut self) {
+        let water_count = self.pending_water_emits;
+        let sediment_count = self.pending_sediment_emits;
+        if water_count == 0 && sediment_count == 0 {
+            return;
+        }
+        self.pending_water_emits = 0;
+        self.pending_sediment_emits = 0;
+        self.emit_particles(water_count, sediment_count);
+    }
+
+    fn emit_particles(&mut self, water_count: usize, sediment_count: usize) {
         if self.paused || self.sim.particles.len() >= MAX_PARTICLES {
             return;
         }
@@ -298,7 +329,7 @@ impl App {
         let init_vel = Vec3::new(1.0, -0.3, 0.0);  // Downstream + down
 
         // Emit water
-        for _ in 0..self.water_emit_rate {
+        for _ in 0..water_count {
             if self.sim.particles.len() >= MAX_PARTICLES {
                 break;
             }
@@ -309,7 +340,7 @@ impl App {
         }
 
         // Emit sediment - create both FLIP particle and DEM clump
-        for _ in 0..self.sediment_emit_rate {
+        for _ in 0..sediment_count {
             if self.sim.particles.len() >= MAX_PARTICLES {
                 break;
             }
@@ -330,20 +361,7 @@ impl App {
         }
     }
 
-    fn update(&mut self) {
-        if self.paused {
-            return;
-        }
-
-        let dt = 1.0 / 60.0;
-        let flow_accel = self.flow_accel();
-
-        // Emit every other frame
-        if self.frame % 2 == 0 {
-            self.emit_particles();
-        }
-
-        // Sync to GPU
+    fn prepare_gpu_inputs(&mut self) {
         self.positions.clear();
         self.velocities.clear();
         self.affine_vels.clear();
@@ -356,7 +374,6 @@ impl App {
             self.densities.push(p.density);
         }
 
-        // Update cell types
         self.cell_types.clear();
         self.cell_types.resize(GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH, 0);
 
@@ -379,37 +396,36 @@ impl App {
                 }
             }
         }
+    }
 
-        // GPU simulation step
-        if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
-            let sdf = self.sim.grid.sdf.as_slice();
+    fn ensure_readback_buffers_len(&mut self, particle_count: usize) {
+        if self.positions.len() < particle_count {
+            self.positions.resize(particle_count, Vec3::ZERO);
+        }
+        if self.velocities.len() < particle_count {
+            self.velocities.resize(particle_count, Vec3::ZERO);
+        }
+        if self.affine_vels.len() < particle_count {
+            self.affine_vels.resize(particle_count, Mat3::ZERO);
+        }
+    }
 
-            gpu_flip.step(
-                &gpu.device,
-                &gpu.queue,
-                &mut self.positions,
-                &mut self.velocities,
-                &mut self.affine_vels,
-                &self.densities,
-                &self.cell_types,
-                Some(sdf),
-                None,
-                dt,
-                GRAVITY,
-                flow_accel,
-                PRESSURE_ITERS,
-            );
-
-            // Sync back to CPU sim
-            for (i, p) in self.sim.particles.list.iter_mut().enumerate() {
-                if i < self.positions.len() {
-                    p.position = self.positions[i];
-                    p.velocity = self.velocities[i];
-                    p.affine_velocity = self.affine_vels[i];
-                }
+    fn apply_gpu_results(&mut self, count: usize) {
+        let limit = count.min(self.sim.particles.list.len());
+        for (i, p) in self.sim.particles.list.iter_mut().enumerate().take(limit) {
+            if i < self.positions.len() {
+                p.position = self.positions[i];
+            }
+            if i < self.velocities.len() {
+                p.velocity = self.velocities[i];
+            }
+            if i < self.affine_vels.len() {
+                p.affine_velocity = self.affine_vels[i];
             }
         }
+    }
 
+    fn run_dem_and_cleanup(&mut self, dt: f32) {
         // Run DEM collision response on sediment particles (after GPU FLIP)
         // DEM clumps are persistent - we sync state, not rebuild
         // IMPORTANT: Use collision_response_only, NOT step_with_sdf
@@ -467,8 +483,11 @@ impl App {
                     if self.frame % 60 == 0 && clump_idx == 0 {
                         let flip_vel = flip_vels.get(clump_idx).copied().unwrap_or(Vec3::ZERO);
                         let dem_vel = clump.velocity;
-                        println!("Gravel[0] FLIP vel: {:5.2} m/s | DEM vel: {:5.2} m/s",
-                            flip_vel.length(), dem_vel.length());
+                        println!(
+                            "Gravel[0] FLIP vel: {:5.2} m/s | DEM vel: {:5.2} m/s",
+                            flip_vel.length(),
+                            dem_vel.length()
+                        );
                     }
 
                     p.position = clump.position;
@@ -521,6 +540,131 @@ impl App {
                     *flip_idx = del_idx;
                 }
             }
+        }
+    }
+
+    fn update(&mut self) {
+        if self.paused {
+            return;
+        }
+
+        let dt = 1.0 / 60.0;
+        let flow_accel = self.flow_accel();
+
+        if self.use_async_readback {
+            if self.gpu_readback_pending {
+                let readback = if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                    gpu_flip.try_readback(
+                        &gpu.device,
+                        &mut self.positions,
+                        &mut self.velocities,
+                        &mut self.affine_vels,
+                    )
+                } else {
+                    None
+                };
+
+                if let Some(count) = readback {
+                    self.gpu_readback_pending = false;
+                    self.apply_gpu_results(count);
+                    self.gpu_needs_upload = true;
+                } else {
+                    return;
+                }
+            }
+
+            self.queue_emissions();
+
+            if self.gpu_needs_upload {
+                self.emit_pending_particles();
+                self.run_dem_and_cleanup(dt);
+                self.prepare_gpu_inputs();
+            }
+
+            let particle_count = self.sim.particles.list.len();
+            let next_substep = if particle_count > 0 {
+                self.gpu_sync_substep.saturating_add(1)
+            } else {
+                self.gpu_sync_substep
+            };
+            let schedule_readback = particle_count > 0 && next_substep >= GPU_SYNC_STRIDE;
+            if schedule_readback {
+                self.ensure_readback_buffers_len(particle_count);
+            }
+
+            if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                let sdf = self.sim.grid.sdf.as_slice();
+
+                if self.gpu_needs_upload {
+                    gpu_flip.step_no_readback(
+                        &gpu.device,
+                        &gpu.queue,
+                        &mut self.positions,
+                        &mut self.velocities,
+                        &mut self.affine_vels,
+                        &self.densities,
+                        &self.cell_types,
+                        Some(sdf),
+                        None,
+                        dt,
+                        GRAVITY,
+                        flow_accel,
+                        PRESSURE_ITERS,
+                    );
+                    self.gpu_needs_upload = false;
+                } else {
+                    gpu_flip.step_in_place(
+                        &gpu.device,
+                        &gpu.queue,
+                        particle_count as u32,
+                        &self.cell_types,
+                        Some(sdf),
+                        None,
+                        dt,
+                        GRAVITY,
+                        flow_accel,
+                        PRESSURE_ITERS,
+                    );
+                }
+
+                if schedule_readback {
+                    if gpu_flip.request_readback(&gpu.device, &gpu.queue, particle_count) {
+                        self.gpu_readback_pending = true;
+                        self.gpu_sync_substep = 0;
+                    } else {
+                        self.gpu_sync_substep = next_substep;
+                    }
+                } else {
+                    self.gpu_sync_substep = next_substep;
+                }
+            }
+        } else {
+            self.queue_emissions();
+            self.emit_pending_particles();
+            self.prepare_gpu_inputs();
+
+            if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                let sdf = self.sim.grid.sdf.as_slice();
+
+                gpu_flip.step(
+                    &gpu.device,
+                    &gpu.queue,
+                    &mut self.positions,
+                    &mut self.velocities,
+                    &mut self.affine_vels,
+                    &self.densities,
+                    &self.cell_types,
+                    Some(sdf),
+                    None,
+                    dt,
+                    GRAVITY,
+                    flow_accel,
+                    PRESSURE_ITERS,
+                );
+                self.apply_gpu_results(self.positions.len());
+            }
+
+            self.run_dem_and_cleanup(dt);
         }
 
         self.frame += 1;
@@ -1052,6 +1196,16 @@ impl ApplicationHandler for App {
                             self.dem.clumps.clear();
                             self.sediment_flip_indices.clear();
                             self.frame = 0;
+                            self.gpu_readback_pending = false;
+                            self.gpu_sync_substep = 0;
+                            self.gpu_needs_upload = true;
+                            self.pending_water_emits = 0;
+                            self.pending_sediment_emits = 0;
+                            self.positions.clear();
+                            self.velocities.clear();
+                            self.affine_vels.clear();
+                            self.densities.clear();
+                            self.cell_types.clear();
                         }
                         PhysicalKey::Code(KeyCode::ArrowUp) => {
                             self.water_emit_rate = (self.water_emit_rate + 25).min(500);
