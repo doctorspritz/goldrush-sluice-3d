@@ -32,6 +32,10 @@ struct SedimentParams {
     vorticity_lift: f32,        // How much vorticity suspends sediment
     vorticity_threshold: f32,   // Minimum vorticity to lift
     drag_coefficient: f32,      // Rate at which particle approaches water velocity (1/s)
+    gold_density_threshold: f32,
+    gold_drag_multiplier: f32,
+    gold_settling_velocity: f32,
+    gold_flake_lift: f32,
     _pad0: f32,
     _pad1: f32,
 }
@@ -261,6 +265,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let density = densities[id.x];
     let is_sediment = density > 1.0;
+    let is_gold = density >= sediment_params.gold_density_threshold;
 
     // ========== FLIP/PIC blend ==========
     let grid_delta = new_velocity - old_grid_vel;
@@ -291,7 +296,10 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         // Drag force: accelerate toward water velocity
         // drag_blend = how much to blend toward water velocity per frame
         // Scaled by 1/density so heavier particles feel less drag
-        let drag_rate = sediment_params.drag_coefficient / density;  // 1/s, scaled by mass
+        var drag_rate = sediment_params.drag_coefficient / density;  // 1/s, scaled by mass
+        if (is_gold) {
+            drag_rate *= sediment_params.gold_drag_multiplier;
+        }
         let drag_blend = min(drag_rate * params.dt, 0.9);  // Clamp to prevent overshoot
 
         // Blend particle velocity toward water velocity
@@ -327,10 +335,21 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         let cell_idx = cell_index(cell_i, cell_j, cell_k);
         let vort = vorticity_mag[cell_idx];
 
+        let settling_velocity = select(
+            sediment_params.settling_velocity,
+            sediment_params.gold_settling_velocity,
+            is_gold
+        );
+
         if (vort > sediment_params.vorticity_threshold) {
             let vort_excess = vort - sediment_params.vorticity_threshold;
-            let lift = sediment_params.vorticity_lift * vort_excess * sediment_params.settling_velocity * params.dt;
-            final_velocity.y += min(lift, sediment_params.settling_velocity * params.dt * 0.9);
+            let lift = sediment_params.vorticity_lift * vort_excess * settling_velocity * params.dt;
+            final_velocity.y += min(lift, settling_velocity * params.dt * 0.9);
+        }
+
+        if (is_gold && sediment_params.gold_flake_lift > 0.0) {
+            let float_factor = smoothstep(0.0, sediment_params.friction_threshold, sediment_params.friction_threshold - speed);
+            final_velocity.y += sediment_params.gold_flake_lift * float_factor * params.dt;
         }
     }
 

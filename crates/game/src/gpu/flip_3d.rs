@@ -444,6 +444,14 @@ pub struct GpuFlip3D {
     /// Rate at which particle velocity approaches water velocity (1/s).
     /// Higher = more entrainment. Typical: 5.0-20.0. Scaled by 1/density.
     pub sediment_drag_coefficient: f32,
+    /// Density threshold for gold particles (treat as gold above this).
+    pub gold_density_threshold: f32,
+    /// Drag multiplier applied to gold (fine gold entrains more).
+    pub gold_drag_multiplier: f32,
+    /// Settling velocity used for gold-specific lift (m/s).
+    pub gold_settling_velocity: f32,
+    /// Upward bias for flaky gold near the surface (m/s^2).
+    pub gold_flake_lift: f32,
     /// Porosity-based drag applied to grid velocities.
     pub sediment_porosity_drag: f32,
 
@@ -2186,6 +2194,10 @@ impl GpuFlip3D {
             sediment_vorticity_lift: 1.5,
             sediment_vorticity_threshold: 2.0,
             sediment_drag_coefficient: 10.0,  // Moderate drag - particles entrain in flow
+            gold_density_threshold: 10.0,
+            gold_drag_multiplier: 1.0,
+            gold_settling_velocity: 0.02,
+            gold_flake_lift: 0.0,
             sediment_porosity_drag: 3.0,
             positions_buffer,
             velocities_buffer,
@@ -2903,6 +2915,10 @@ impl GpuFlip3D {
             vorticity_lift: self.sediment_vorticity_lift,
             vorticity_threshold: self.sediment_vorticity_threshold,
             drag_coefficient: self.sediment_drag_coefficient,
+            gold_density_threshold: self.gold_density_threshold,
+            gold_drag_multiplier: self.gold_drag_multiplier,
+            gold_settling_velocity: self.gold_settling_velocity,
+            gold_flake_lift: self.gold_flake_lift,
             _pad: [0.0; 2],
         };
         let g2p_count = self.g2p.upload_params(queue, count, self.cell_size, dt, sediment_params);

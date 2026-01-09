@@ -49,6 +49,14 @@ pub struct SedimentParams3D {
     /// Higher = more entrainment. Typical: 5.0-20.0
     /// Scaled by 1/density so heavier particles entrain less.
     pub drag_coefficient: f32,
+    /// Density threshold for gold particles.
+    pub gold_density_threshold: f32,
+    /// Drag multiplier applied to gold (fine gold entrains more).
+    pub gold_drag_multiplier: f32,
+    /// Settling velocity used for gold-specific lift (m/s).
+    pub gold_settling_velocity: f32,
+    /// Upward bias for flaky gold near the surface (m/s^2).
+    pub gold_flake_lift: f32,
     pub _pad: [f32; 2],
 }
 
@@ -61,6 +69,10 @@ impl Default for SedimentParams3D {
             vorticity_lift: 0.0,       // Not needed with no settling
             vorticity_threshold: 999.0,  // Never triggers
             drag_coefficient: 10.0,    // Moderate drag - particles entrain in flow
+            gold_density_threshold: 10.0,
+            gold_drag_multiplier: 1.0,
+            gold_settling_velocity: 0.0,
+            gold_flake_lift: 0.0,
             _pad: [0.0; 2],
         }
     }

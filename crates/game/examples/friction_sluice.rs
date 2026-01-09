@@ -40,8 +40,16 @@ const WATER_EMIT_RATE: usize = 30;   // Higher water flow
 const SEDIMENT_EMIT_RATE: usize = 5;  // More gravel to test settling
 const GPU_SYNC_STRIDE: u32 = 4;       // GPU readback cadence (frames)
 
-// Sediment color (brownish)
-const SEDIMENT_COLOR: [f32; 4] = [0.6, 0.4, 0.2, 1.0];
+// Grain sizing (relative to cell size)
+const GANGUE_RADIUS_CELLS: f32 = 0.12; // Coarse gangue grains
+const GOLD_RADIUS_CELLS: f32 = 0.02;   // Fine gold grains
+const GANGUE_DENSITY: f32 = 2.7;
+const GOLD_DENSITY: f32 = 19.3;
+const GOLD_FRACTION: f32 = 0.05; // 5% of sediment spawns as gold
+
+// Sediment colors
+const GANGUE_COLOR: [f32; 4] = [0.6, 0.4, 0.2, 1.0];
+const GOLD_COLOR: [f32; 4] = [0.95, 0.85, 0.2, 1.0];
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -103,7 +111,8 @@ struct App {
     sluice_builder: SluiceGeometryBuilder,
     water_renderer: WaterHeightfieldRenderer,
     dem: ClusterSimulation3D,
-    dem_template_idx: usize,  // Single-sphere template for sediment
+    gangue_template_idx: usize,
+    gold_template_idx: usize,
 
     // Persistent FLIP↔DEM mapping
     // sediment_clump_idx[i] = index into dem.clumps for sediment particle i
@@ -219,21 +228,33 @@ impl App {
         dem.rolling_friction = 0.05;
         dem.use_dem = true;
 
-        // Create single-sphere template for sediment particles
-        // Using irregular shape with count=1 gives us a single sphere
-        // Fixed world size - gravel is ~1.2cm radius regardless of grid resolution
-        let sediment_radius = 0.012;  // 1.2cm radius (fixed world size)
-        let sediment_mass = 2.5;  // Dense gravel
-        let template = ClumpTemplate3D::generate(
+        let gangue_radius = CELL_SIZE * GANGUE_RADIUS_CELLS;
+        let gangue_mass = GANGUE_DENSITY
+            * (4.0 / 3.0)
+            * std::f32::consts::PI
+            * gangue_radius.powi(3);
+        let gangue_template = ClumpTemplate3D::generate(
             ClumpShape3D::Irregular {
                 count: 1,
                 seed: 42,
                 style: sim3d::IrregularStyle3D::Round,
             },
-            sediment_radius,
-            sediment_mass,
+            gangue_radius,
+            gangue_mass,
         );
-        let dem_template_idx = dem.add_template(template);
+        let gangue_template_idx = dem.add_template(gangue_template);
+
+        let gold_radius = CELL_SIZE * GOLD_RADIUS_CELLS;
+        let gold_mass = GOLD_DENSITY
+            * (4.0 / 3.0)
+            * std::f32::consts::PI
+            * gold_radius.powi(3);
+        let gold_template = ClumpTemplate3D::generate(
+            ClumpShape3D::Flat4,
+            gold_radius,
+            gold_mass,
+        );
+        let gold_template_idx = dem.add_template(gold_template);
 
         Self {
             window: None,
@@ -243,7 +264,8 @@ impl App {
             sluice_builder,
             water_renderer,
             dem,
-            dem_template_idx,
+            gangue_template_idx,
+            gold_template_idx,
             sediment_flip_indices: Vec::new(),
             positions: Vec::new(),
             velocities: Vec::new(),
@@ -349,12 +371,20 @@ impl App {
             let y = floor_y + drop_height + rand_float() * config.cell_size;
             let pos = Vec3::new(x, y, z);
 
+            let is_gold = rand_float() < GOLD_FRACTION;
+            let density = if is_gold { GOLD_DENSITY } else { GANGUE_DENSITY };
+            let template_idx = if is_gold {
+                self.gold_template_idx
+            } else {
+                self.gangue_template_idx
+            };
+
             // Track FLIP particle index before spawning
             let flip_idx = self.sim.particles.len();
-            self.sim.spawn_sediment(pos, init_vel, 2.5);
+            self.sim.spawn_sediment(pos, init_vel, density);
 
             // Create corresponding DEM clump
-            self.dem.spawn(self.dem_template_idx, pos, init_vel);
+            self.dem.spawn(template_idx, pos, init_vel);
 
             // Record the mapping
             self.sediment_flip_indices.push(flip_idx);
@@ -765,13 +795,20 @@ impl App {
         }
 
         // Build sediment instances from DEM clumps
-        let sediment_scale = 0.012;  // Match template radius (fixed world size)
         let sediment_instances: Vec<SedimentInstance> = self.dem.clumps.iter()
-            .map(|clump| SedimentInstance {
-                position: clump.position.to_array(),
-                scale: sediment_scale,
-                rotation: clump.rotation.to_array(),
-                color: SEDIMENT_COLOR,
+            .map(|clump| {
+                let template = &self.dem.templates[clump.template_idx];
+                let color = if clump.template_idx == self.gold_template_idx {
+                    GOLD_COLOR
+                } else {
+                    GANGUE_COLOR
+                };
+                SedimentInstance {
+                    position: clump.position.to_array(),
+                    scale: template.particle_radius,
+                    rotation: clump.rotation.to_array(),
+                    color,
+                }
             })
             .collect();
 
@@ -1136,6 +1173,10 @@ impl App {
         gpu_flip.sediment_settling_velocity = 0.5;    // For vorticity lift calculation
         gpu_flip.sediment_friction_threshold = 0.05;  // Low threshold - let gravel move freely
         gpu_flip.sediment_friction_strength = 0.1;    // Light friction when slow
+        gpu_flip.gold_density_threshold = 10.0;
+        gpu_flip.gold_drag_multiplier = 3.0;          // Fine gold entrains more than gangue
+        gpu_flip.gold_settling_velocity = 0.1;
+        gpu_flip.gold_flake_lift = 0.6;
 
         self.gpu = Some(GpuState {
             device,
