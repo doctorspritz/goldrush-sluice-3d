@@ -436,6 +436,9 @@ pub struct GpuFlip3D {
     pub sediment_vorticity_lift: f32,
     /// Minimum vorticity magnitude to apply lift.
     pub sediment_vorticity_threshold: f32,
+    /// Rate at which particle velocity approaches water velocity (1/s).
+    /// Higher = more entrainment. Typical: 5.0-20.0. Scaled by 1/density.
+    pub sediment_drag_coefficient: f32,
     /// Porosity-based drag applied to grid velocities.
     pub sediment_porosity_drag: f32,
 
@@ -2177,6 +2180,7 @@ impl GpuFlip3D {
             sediment_settling_velocity: 0.05,
             sediment_vorticity_lift: 1.5,
             sediment_vorticity_threshold: 2.0,
+            sediment_drag_coefficient: 10.0,  // Moderate drag - particles entrain in flow
             sediment_porosity_drag: 3.0,
             positions_buffer,
             velocities_buffer,
@@ -2842,7 +2846,8 @@ impl GpuFlip3D {
             friction_strength: self.sediment_friction_strength,
             vorticity_lift: self.sediment_vorticity_lift,
             vorticity_threshold: self.sediment_vorticity_threshold,
-            _pad: [0.0; 3],
+            drag_coefficient: self.sediment_drag_coefficient,
+            _pad: [0.0; 2],
         };
         let g2p_count = self.g2p.upload_params(queue, count, self.cell_size, dt, sediment_params);
 

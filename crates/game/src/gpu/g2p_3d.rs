@@ -31,7 +31,7 @@ struct G2pParams3D {
     _padding: [f32; 3], // Align to 48 bytes
 }
 
-/// Sediment parameters for G2P - simplified friction model.
+/// Sediment parameters for G2P - drag-based entrainment model.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct SedimentParams3D {
@@ -45,18 +45,23 @@ pub struct SedimentParams3D {
     pub vorticity_lift: f32,
     /// Minimum vorticity to lift. Typical: 1.0-5.0
     pub vorticity_threshold: f32,
-    pub _pad: [f32; 3],
+    /// Rate at which particle velocity approaches water velocity (1/s).
+    /// Higher = more entrainment. Typical: 5.0-20.0
+    /// Scaled by 1/density so heavier particles entrain less.
+    pub drag_coefficient: f32,
+    pub _pad: [f32; 2],
 }
 
 impl Default for SedimentParams3D {
     fn default() -> Self {
         Self {
-            settling_velocity: 0.02,   // Slower settling - travels further
-            friction_threshold: 0.08,  // 8 cm/s threshold
-            friction_strength: 0.2,    // 20% damp - less aggressive
-            vorticity_lift: 2.0,       // More lift from turbulence
-            vorticity_threshold: 1.0,  // Easier to lift
-            _pad: [0.0; 3],
+            settling_velocity: 0.0,    // No settling - pure fluid
+            friction_threshold: 0.0,   // No friction threshold
+            friction_strength: 0.0,    // No friction - sediment = colored water
+            vorticity_lift: 0.0,       // Not needed with no settling
+            vorticity_threshold: 999.0,  // Never triggers
+            drag_coefficient: 10.0,    // Moderate drag - particles entrain in flow
+            _pad: [0.0; 2],
         }
     }
 }

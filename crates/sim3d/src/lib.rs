@@ -29,6 +29,7 @@
 //! ```
 
 pub mod advection;
+pub mod clump;
 pub mod grid;
 pub mod heightfield;
 pub mod kernels;
@@ -38,6 +39,9 @@ pub mod terrain_generator;
 pub mod transfer;
 pub mod world;
 
+pub use clump::{
+    Clump3D, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, IrregularStyle3D, SdfParams,
+};
 pub use glam::{Mat3, Vec3};
 pub use grid::{CellType, Grid3D};
 pub use heightfield::Heightfield;

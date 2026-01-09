@@ -134,6 +134,8 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var pos = positions[pid].xyz;
     var vel = velocities[pid].xyz;
+    let density = densities[pid];
+    let is_sediment = density > 1.0;
 
     // Euler advection
     pos += vel * params.dt;
@@ -147,64 +149,77 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
 
         let vel_into = dot(vel, normal);
         if (vel_into < 0.0) {
-            vel -= normal * vel_into * 1.1;
+            if (is_sediment) {
+                // Sediment: no bounce, just stop + friction
+                vel -= normal * vel_into;  // Remove velocity into surface
+                // Apply friction to tangential velocity
+                let tangent_vel = vel - normal * dot(vel, normal);
+                vel = tangent_vel * 0.8;  // 20% friction loss
+            } else {
+                // Water: slight bounce
+                vel -= normal * vel_into * 1.1;
+            }
         }
     }
 
     // Check if particle would enter a jammed sediment cell (voxel collision)
-    let cell_i = i32(pos.x / params.cell_size);
-    let cell_j = i32(pos.y / params.cell_size);
-    let cell_k = i32(pos.z / params.cell_size);
+    // Skip for sediment particles - DEM handles their collision properly
+    if (!is_sediment) {
+        let cell_i = i32(pos.x / params.cell_size);
+        let cell_j = i32(pos.y / params.cell_size);
+        let cell_k = i32(pos.z / params.cell_size);
 
-    if (is_cell_solid(cell_i, cell_j, cell_k)) {
-        // Particle is trying to enter a jammed cell - push it back
-        let old_pos = positions[pid].xyz;
+        if (is_cell_solid(cell_i, cell_j, cell_k)) {
+            // Particle is trying to enter a jammed cell - push it back
+            let old_pos = positions[pid].xyz;
 
-        // Find the nearest non-solid cell by checking neighbors
-        var best_pos = old_pos;
-        var found_valid = false;
+            // Find the nearest non-solid cell by checking neighbors
+            var best_pos = old_pos;
+            var found_valid = false;
 
-        for (var dj: i32 = 1; dj <= 2; dj++) {
-            for (var dk: i32 = -1; dk <= 1; dk++) {
-                for (var di: i32 = -1; di <= 1; di++) {
-                    let test_i = cell_i + di;
-                    let test_j = cell_j + dj;  // Prefer upward
-                    let test_k = cell_k + dk;
+            for (var dj: i32 = 1; dj <= 2; dj++) {
+                for (var dk: i32 = -1; dk <= 1; dk++) {
+                    for (var di: i32 = -1; di <= 1; di++) {
+                        let test_i = cell_i + di;
+                        let test_j = cell_j + dj;  // Prefer upward
+                        let test_k = cell_k + dk;
 
-                    if (!is_cell_solid(test_i, test_j, test_k)) {
-                        let test_pos = vec3<f32>(
-                            (f32(test_i) + 0.5) * params.cell_size,
-                            (f32(test_j) + 0.5) * params.cell_size,
-                            (f32(test_k) + 0.5) * params.cell_size
-                        );
-                        best_pos = test_pos;
-                        found_valid = true;
-                        break;
+                        if (!is_cell_solid(test_i, test_j, test_k)) {
+                            let test_pos = vec3<f32>(
+                                (f32(test_i) + 0.5) * params.cell_size,
+                                (f32(test_j) + 0.5) * params.cell_size,
+                                (f32(test_k) + 0.5) * params.cell_size
+                            );
+                            best_pos = test_pos;
+                            found_valid = true;
+                            break;
+                        }
                     }
+                    if (found_valid) { break; }
                 }
                 if (found_valid) { break; }
             }
-            if (found_valid) { break; }
-        }
 
-        pos = best_pos;
+            pos = best_pos;
 
-        // Damp velocity when hitting jammed sediment
-        vel *= 0.3;
-    }
-
-    let density = densities[pid];
-    if (density > 1.0) {
-        let bed = sample_bed_height(pos);
-        if (pos.y < bed) {
-            pos.y = bed + params.cell_size * 0.05;
-            if (vel.y < 0.0) {
-                vel.y = 0.0;
-            }
-            vel.x *= 0.7;
-            vel.z *= 0.7;
+            // Damp velocity when hitting jammed sediment
+            vel *= 0.3;
         }
     }
+
+    // Sediment bed collision disabled - let sediment flow freely like water
+    // let density = densities[pid];
+    // if (density > 1.0) {
+    //     let bed = sample_bed_height(pos);
+    //     if (pos.y < bed) {
+    //         pos.y = bed + params.cell_size * 0.05;
+    //         if (vel.y < 0.0) {
+    //             vel.y = 0.0;
+    //         }
+    //         vel.x *= 0.7;
+    //         vel.z *= 0.7;
+    //     }
+    // }
 
     positions[pid] = vec4<f32>(pos, 1.0);
     velocities[pid] = vec4<f32>(vel, 0.0);

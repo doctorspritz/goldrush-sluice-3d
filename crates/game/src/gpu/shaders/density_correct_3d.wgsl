@@ -175,9 +175,9 @@ fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    if (densities[pid] > SEDIMENT_DENSITY_THRESHOLD) {
-        return;
-    }
+    // Apply density correction to ALL particles (including sediment)
+    // so they get pushed apart like water does.
+    // Previously skipped sediment: if (densities[pid] > SEDIMENT_DENSITY_THRESHOLD) { return; }
 
     let pos = positions[pid].xyz;
     let cell_size = params.cell_size;

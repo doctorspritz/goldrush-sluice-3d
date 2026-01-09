@@ -132,6 +132,9 @@ pub struct WaterHeightfieldRenderer {
     vel_z: Vec<f32>,
     vel_y: Vec<f32>,
 
+    // Sediment tracking - max sediment height per cell
+    sediment_height: Vec<f32>,
+
     // Output
     vertices: Vec<WaterVertex>,
 }
@@ -153,6 +156,7 @@ impl WaterHeightfieldRenderer {
             vel_x: vec![0.0; cell_count],
             vel_z: vec![0.0; cell_count],
             vel_y: vec![0.0; cell_count],
+            sediment_height: vec![f32::NEG_INFINITY; cell_count],
             vertices: Vec::with_capacity(max_vertices),
         }
     }
@@ -165,6 +169,33 @@ impl WaterHeightfieldRenderer {
     /// Get the output vertices
     pub fn vertices(&self) -> &[WaterVertex] {
         &self.vertices
+    }
+
+    /// Update sediment height map from sediment particle positions
+    /// Call this before build_mesh each frame
+    pub fn update_sediment<I>(&mut self, sediment_particles: I)
+    where
+        I: Iterator<Item = [f32; 3]>,
+    {
+        // Reset sediment heightfield
+        self.sediment_height.fill(f32::NEG_INFINITY);
+
+        let width = self.width;
+        let depth = self.depth;
+        let cell_size = self.cell_size;
+
+        // Build sediment heightfield - max height of sediment in each XZ cell
+        for pos in sediment_particles {
+            let i = (pos[0] / cell_size).floor() as i32;
+            let k = (pos[2] / cell_size).floor() as i32;
+            if i >= 0 && i < width as i32 && k >= 0 && k < depth as i32 {
+                let idx = k as usize * width + i as usize;
+                let y = pos[1];
+                if y > self.sediment_height[idx] {
+                    self.sediment_height[idx] = y;
+                }
+            }
+        }
     }
 
     /// Build the water mesh from particle data
@@ -296,6 +327,55 @@ impl WaterHeightfieldRenderer {
                 }
                 if count > 0 {
                     smoothed[idx] = sum / count as f32;
+                }
+            }
+        }
+
+        // Bridge water over sediment cells:
+        // If a cell has sediment but no water particles, and neighbors have water,
+        // interpolate the water height over the sediment
+        for k in 0..depth {
+            for i in 0..width {
+                let idx = k * width + i;
+
+                // Skip if already has water
+                if smoothed[idx].is_finite() {
+                    continue;
+                }
+
+                // Check if this cell has sediment
+                let sed_h = self.sediment_height[idx];
+                if !sed_h.is_finite() {
+                    continue;
+                }
+
+                // Check neighbors for water
+                let mut neighbor_sum = 0.0;
+                let mut neighbor_count = 0;
+                for dk in -1i32..=1 {
+                    for di in -1i32..=1 {
+                        if di == 0 && dk == 0 {
+                            continue;
+                        }
+                        let ni = i as i32 + di;
+                        let nk = k as i32 + dk;
+                        if ni >= 0 && ni < width as i32 && nk >= 0 && nk < depth as i32 {
+                            let nidx = nk as usize * width + ni as usize;
+                            let h = smoothed[nidx];
+                            if h.is_finite() && h > sed_h {
+                                // Neighbor has water above our sediment level
+                                neighbor_sum += h;
+                                neighbor_count += 1;
+                            }
+                        }
+                    }
+                }
+
+                // If we have wet neighbors above our sediment, bridge the water
+                if neighbor_count >= 2 {
+                    // Interpolate water height, but clamp to at least sediment height + small margin
+                    let interpolated = neighbor_sum / neighbor_count as f32;
+                    smoothed[idx] = interpolated.max(sed_h + cell_size * 0.1);
                 }
             }
         }
@@ -753,6 +833,7 @@ impl WaterHeightfieldRenderer {
         self.vel_x.fill(0.0);
         self.vel_z.fill(0.0);
         self.vel_y.fill(0.0);
+        self.sediment_height.fill(f32::NEG_INFINITY);
         self.vertices.clear();
     }
 }
