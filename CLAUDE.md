@@ -4,6 +4,9 @@
 
 ### GIT SAFETY - ABSOLUTELY NEVER VIOLATE
 
+**MANDATORY: Run `/boot` workflow as your very first action in EVERY session.**
+Check `.agent/workflows/boot.md` for pre-flight requirements.
+
 **NEVER run destructive git commands without EXPLICIT user approval:**
 
 ```bash
@@ -24,25 +27,21 @@ git clean -fd
 
 **Uncommitted changes may be the user's working solution. Destroying them wastes hours of work.**
 
-### WORKTREE SAFETY
+### WORKTREE SAFETY - READ FIRST
+
+**STEP ZERO for EVERY session:**
+1. Run `git worktree list` immediately.
+2. Check if your current directory is the root repo (`.../goldrush-sluice-3d`) on `master`.
+3. **If yes: STOP.** You are in the "Read-Only" master root.
+4. Search for a relevant worktree or ASK the user to create/assign one.
+5. **NEVER** write implementation code or modify project files (except docs/plans) in the root `master` branch.
+
+**WORKTREE-FIRST COMMANDS:**
+- Start new feature: `git worktree add .worktrees/<name> -b feature/<name>`
+- List active zones: `git worktree list`
+- Remove zone: `git worktree remove .worktrees/<name>` (exit directory first!)
 
 **NEVER remove a worktree while your shell is inside it.**
-
-```bash
-# WRONG - will break shell and lose track of current directory:
-cd .worktrees/feature
-# ... do work ...
-git worktree remove .worktrees/feature  # BREAKS: you're inside it!
-
-# RIGHT - exit first, then remove:
-cd /path/to/main/repo                    # exit worktree FIRST
-git worktree remove .worktrees/feature   # safe to remove now
-```
-
-**Before `git worktree remove`:**
-1. Run `pwd` to verify you're NOT in the worktree
-2. If you are, `cd` to the main repo first
-3. Then remove the worktree
 
 ### NO PATCH FIXING - DEBUG NEW CODE
 
@@ -98,16 +97,16 @@ The goal is 1 million particles. Optimize for that, not for toy demos.
 FLIP/APIC fluid simulation with sediment transport.
 
 ### Key Files
-- `crates/sim/src/flip.rs` - Main simulation
-- `crates/sim/src/grid.rs` - MAC grid, pressure solver
-- `crates/sim/src/particle.rs` - Particle types
-- `crates/game/src/main.rs` - Visual demo
+- `crates/sim3d/src/lib.rs` - Main 3D simulation entry
+- `crates/sim3d/src/world.rs` - 2.5D World Stack (Terrain + SWE)
+- `crates/game/src/gpu/flip_3d.rs` - GPU-accelerated 3D FLIP
+- `crates/game/src/main.rs` - Primary 3D Visual Simulation
 
 ### Running
 ```bash
-cargo run --bin game --release        # Main visual sim
-cargo run --example <name> --release  # Examples
-cargo test -p sim                     # Tests
+cargo run --release                   # Main 3D visual sim
+cargo run --example <name> --release  # 3D/2.5D Examples
+cargo test -p sim3d                   # Unit tests
 ```
 
 ## Documentation

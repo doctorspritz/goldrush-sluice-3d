@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/sim",
   "crates/sim3d",
   "crates/game",
 ]
