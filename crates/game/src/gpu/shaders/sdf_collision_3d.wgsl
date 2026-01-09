@@ -122,21 +122,25 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var pos = positions[pid].xyz;
     var vel = velocities[pid].xyz;
+    let density = densities[pid];
+    let is_sediment = density > 1.0;
 
     // Euler advection
     pos += vel * params.dt;
 
-    // SDF collision
-    let dist = sample_sdf(pos);
-    if (dist < 0.0) {
-        let normal = sdf_gradient(pos);
-        // Robust penetration clamping: don't push more than 2x cell_size per frame
-        let penetration = min(-dist + params.cell_size * 0.1, params.cell_size * 2.0);
-        pos += normal * penetration;
+    // SDF collision (sediment handled by DEM)
+    if (!is_sediment) {
+        let dist = sample_sdf(pos);
+        if (dist < 0.0) {
+            let normal = sdf_gradient(pos);
+            // Robust penetration clamping: don't push more than 2x cell_size per frame
+            let penetration = min(-dist + params.cell_size * 0.1, params.cell_size * 2.0);
+            pos += normal * penetration;
 
-        let vel_into = dot(vel, normal);
-        if (vel_into < 0.0) {
-            vel -= normal * vel_into * 1.0; // Inelastic collision
+            let vel_into = dot(vel, normal);
+            if (vel_into < 0.0) {
+                vel -= normal * vel_into * 1.0; // Inelastic collision
+            }
         }
     }
 

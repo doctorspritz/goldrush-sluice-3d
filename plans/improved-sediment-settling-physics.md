@@ -9,6 +9,50 @@ Research and implementation plan for improving non-water particle behavior in th
 - **Black sands** (magnetite, ilmenite) drop into riffle pockets
 - **Gold** settles fastest into the lowest part of riffle eddies
 
+---
+
+## Design Decision: Clumps vs FLIP Particles (2026-01-09)
+
+> **Decision:** Use `clump.rs` rigid clumps for fine gold in 3D detail zones. Defer flour gold FLIP settling to later.
+
+### Context
+The project evolved from 2D APIC (where this plan was written) to 3D FLIP+DEM. We're now at the point of deciding whether to:
+- **Option A:** Use FLIP for smaller particles (individual particle settling)
+- **Option B:** Scale FLIP coarser so even fine gold is represented as clumps
+
+### Decision Rationale
+- `clump.rs` already has shape-based behavior (flat catches in riffles, round rolls)
+- This matches real gold behavior in sluices
+- Fewer particles = better performance
+- Flour gold (< 0.5mm) can be added later if needed
+
+### Gold Size Approach
+| Gold Type | Size | Approach | Status |
+|-----------|------|----------|--------|
+| Picker gold | 2mm+ | Clumps (definite) | clump.rs ready |
+| Fine gold | 0.5-2mm | Small clumps | Use clump.rs with smaller templates |
+| Flour gold | < 0.5mm | FLIP settling | **Deferred** |
+
+### Current Implementation State
+| Component | Purpose | Location |
+|-----------|---------|----------|
+| `clump.rs` | Rigid gravel clumps (roll/slide/catch) | `crates/sim/src/clump.rs` |
+| `dem.rs` | Individual particle DEM (buoyancy, simple drag) | `crates/sim/src/dem.rs` |
+| This plan | Ferguson-Church physics-based settling | Implemented in 2D FLIP, needs 3D adaptation |
+
+### TODO: Grid Sizing Analysis
+> **Need to plan:** Determine correct FLIP grid coarseness and cell sizing to allow multi-particle clumps in the 3D sluice while maintaining both performance and accuracy.
+>
+> Key considerations:
+> - Real gold flakes: 0.5-2mm typical fine gold
+> - Real sluice: ~1.5m long × 0.3m wide
+> - Need clumps small enough to show stratification in riffles
+> - Need grid coarse enough for real-time performance
+> - **Analysis needed:** Can we make it performant AND accurate?
+
+---
+
+
 ## Problem Statement
 
 The current implementation (`flip.rs:450-505`) uses a simplified drag model:
