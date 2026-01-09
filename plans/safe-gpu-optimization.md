@@ -1,3 +1,5 @@
+<!-- TODO: Review for current GPU architecture -->
+
 # Plan: Safe GPU Transfer Optimization
 
 ## Problem Analysis

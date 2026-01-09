@@ -1,3 +1,5 @@
+<!-- TODO: Review for 2.5D map usage - consider combining these two docs -->
+
 # Implementation Plan: Drucker-Prager Yield for Sediment
 
 This plan is for Codex to implement. Follow each phase in order. Test after each phase before proceeding.

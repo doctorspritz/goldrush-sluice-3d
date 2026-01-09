@@ -1,3 +1,5 @@
+<!-- Useful for 3D sluice -->
+
 # Plan: Sluice Angle Control
 
 ## Goal

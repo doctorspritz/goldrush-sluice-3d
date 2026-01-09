@@ -1,3 +1,5 @@
+<!-- STATUS: Work In Progress -->
+
 # Improved Sediment Settling Physics for APIC Fluid Simulation
 
 ## Overview

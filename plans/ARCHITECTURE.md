@@ -1,3 +1,5 @@
+<!-- TODO: Update this architecture doc to reflect current 3D FLIP + DEM approach -->
+
 # Gold Rush: Physics-Driven Mining Simulation
 
 ## Vision

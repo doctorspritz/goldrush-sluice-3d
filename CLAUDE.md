@@ -113,3 +113,32 @@ cargo test -p sim                     # Tests
 ## Documentation
 
 See `docs/solutions/` for documented problems and solutions.
+
+## CONVERSATION ARCHIVING
+
+**This project's development history is valuable for retrospective documentation.**
+
+### Before Major Git Operations
+
+Before `git push`, `git merge`, or ending a long session, **remind the user:**
+
+> "📝 Consider exporting this conversation to `archive/conversations/` before proceeding.  
+> Suggested filename: `YYYY-MM-DD-<brief-description>.md`"
+
+### Archive Location
+```
+archive/conversations/
+├── 2025-12-20-initial-gpu-rendering.md
+├── 2025-12-21-sediment-physics-journey.md
+├── 2026-01-08-3d-flip-integration.md
+└── ...
+```
+
+### Why This Matters
+The user is building a physics simulation iteratively with LLM assistance. The conversation logs document:
+- Design decisions and alternatives considered
+- Debugging journeys and dead ends (valuable lessons)
+- Evolution from 2D → 3D, CPU → GPU
+- Material for a future blog post about LLM-assisted development
+
+**Note:** The AI cannot programmatically export conversations. This is a manual reminder for the user to use their UI's export function.

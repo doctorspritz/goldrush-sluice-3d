@@ -1,3 +1,5 @@
+<!-- TODO: Review for 2.5D map usage - consider combining these two docs -->
+
 # Plan: Drucker-Prager Yield for Sediment (Granular Clogging Physics)
 
 ## Problem Statement

@@ -1,3 +1,5 @@
+<!-- Relevant for DEM stratification -->
+
 # Multi-Sediment Types Implementation Plan
 
 ## Goal

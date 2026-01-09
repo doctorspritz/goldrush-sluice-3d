@@ -1,3 +1,5 @@
+<!-- STATUS: Work In Progress -->
+
 # Sediment Entrainment Implementation Plan
 
 **Type**: feat: Re-entrainment of deposited sediment

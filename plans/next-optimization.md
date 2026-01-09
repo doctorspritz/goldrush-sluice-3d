@@ -1,3 +1,5 @@
+<!-- TODO: Review for current GPU architecture -->
+
 # perf: Next optimization target for GPU FLIP (1M particles)
 
 ## Summary

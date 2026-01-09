@@ -102,3 +102,56 @@ Archive location for outdated plans: `plans/archive/`
 - Potential issues:
   - Plan appears implemented (P2G modules and shaders exist).
   - Mentions 2D-only buffers and performance tables without dates.
+
+## `plans/archive/gpu-terrain-rendering-fixes.md`
+- Purpose: Notes on GPU heightfield rendering integration and visual stability fixes.
+- Links/interactions:
+  - `crates/game/src/gpu/heightfield.rs` + `crates/game/src/gpu/shaders/heightfield_render.wgsl`
+  - `crates/game/examples/world_test.rs`
+- Potential issues:
+  - Reads as a completed change log; likely historical and safe to archive.
+
+## `plans/archive/gpu-sdf-collision.md`
+- Purpose: Plan to move SDF collision to GPU.
+- Links/interactions:
+  - `crates/game/src/gpu/shaders/sdf_collision_3d.wgsl`
+  - `crates/game/src/gpu/flip_3d.rs` (sdf_collision pipeline/bindings)
+  - `crates/game/examples/box_3d_test.rs` (CPU collision removal target)
+- Potential issues:
+  - GPU SDF collision is already implemented (shader + pipeline present).
+
+## `plans/archive/gpu3d-slurry.md`
+- Purpose: Plan for 3D GPU slurry (water + sediment) with deposition/entrainment.
+- Links/interactions:
+  - `crates/game/src/gpu/p2g_3d.rs`, `crates/game/src/gpu/shaders/p2g_scatter_3d.wgsl`
+  - `crates/game/src/gpu/shaders/sediment_fraction_3d.wgsl`
+  - `crates/game/src/gpu/g2p_3d.rs`, `crates/game/src/gpu/shaders/g2p_3d.wgsl`
+  - `crates/game/src/gpu/shaders/porosity_drag_3d.wgsl`
+  - `crates/game/src/gpu/bed_3d.rs`, `crates/game/src/gpu/shaders/bed_flux_3d.wgsl`
+- Potential issues:
+  - Core phases appear implemented (sediment buffers, G2P sediment branch, porosity drag, bed evolution).
+
+## `plans/archive/phase1-mgpcg.md`
+- Purpose: Detailed plan for GPU MGPCG pressure solver.
+- Links/interactions:
+  - `crates/game/src/gpu/mgpcg.rs`
+  - `crates/game/src/gpu/shaders/mg_smooth.wgsl`, `mg_restrict.wgsl`, `mg_prolongate.wgsl`, `mg_residual.wgsl`
+  - `crates/game/src/gpu/shaders/pcg_ops.wgsl`
+- Potential issues:
+  - Plan appears implemented (MGPCG modules/shaders exist).
+
+## `plans/archive/implement-multigrid-pressure-solver.md`
+- Purpose: CPU multigrid pressure solver plan.
+- Links/interactions:
+  - `crates/sim/src/grid/mod.rs`
+  - `crates/sim/src/grid/pressure.rs`
+- Potential issues:
+  - Plan appears implemented (multigrid data structures and V-cycle code exist).
+
+## `plans/archive/module-split-implementation.md`
+- Purpose: Plan for splitting `flip.rs` and `grid.rs` into module subfolders.
+- Links/interactions:
+  - `crates/sim/src/flip/` and `crates/sim/src/grid/`
+  - `crates/sim/src/lib.rs`
+- Potential issues:
+  - Plan appears implemented; current structure matches target layout.

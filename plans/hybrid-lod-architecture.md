@@ -1,3 +1,5 @@
+<!-- TODO: Review this doc in light of current 3D FLIP+DEM architecture and 2.5D-3D coupling work -->
+
 # Architecture: Hybrid LOD Simulation & Rendering
 
 ## Objective

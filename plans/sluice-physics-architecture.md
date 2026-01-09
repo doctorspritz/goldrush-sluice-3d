@@ -1,3 +1,5 @@
+<!-- TODO: Review grid resolution recommendations against current 3D implementation -->
+
 # Sluice Physics Architecture
 
 ## Overview
