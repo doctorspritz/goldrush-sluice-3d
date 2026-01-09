@@ -97,16 +97,16 @@ The goal is 1 million particles. Optimize for that, not for toy demos.
 FLIP/APIC fluid simulation with sediment transport.
 
 ### Key Files
-- `crates/sim/src/flip.rs` - Main simulation
-- `crates/sim/src/grid.rs` - MAC grid, pressure solver
-- `crates/sim/src/particle.rs` - Particle types
-- `crates/game/src/main.rs` - Visual demo
+- `crates/sim3d/src/lib.rs` - Main 3D simulation entry
+- `crates/sim3d/src/world.rs` - 2.5D World Stack (Terrain + SWE)
+- `crates/game/src/gpu/flip_3d.rs` - GPU-accelerated 3D FLIP
+- `crates/game/src/main.rs` - Primary 3D Visual Simulation
 
 ### Running
 ```bash
-cargo run --bin game --release        # Main visual sim
-cargo run --example <name> --release  # Examples
-cargo test -p sim                     # Tests
+cargo run --release                   # Main 3D visual sim
+cargo run --example <name> --release  # 3D/2.5D Examples
+cargo test -p sim3d                   # Unit tests
 ```
 
 ## Documentation
