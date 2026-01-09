@@ -1,7 +1,13 @@
+<!-- TODO: Review this doc in light of current 3D FLIP+DEM architecture and 2.5D-3D coupling work -->
+
 # Architecture: Hybrid LOD Simulation & Rendering
 
 ## Objective
 Scaling the world to high resolution (1cm - 10cm) across large areas (1km+) while integrating high-fidelity 3D particle physics (PIC/FLIP/DEM) for dynamic machinery and local phenomena.
+
+## Status (cleanup review)
+- Conceptual plan; type names and implementation details may differ from current code.
+- Current anchors: `crates/game/src/gpu/heightfield.rs`, `crates/game/src/gpu/shaders/heightfield_render.wgsl`, `crates/game/src/gpu/shaders/heightfield_water.wgsl`, `crates/game/src/gpu/shaders/heightfield_erosion.wgsl`.
 
 ---
 
@@ -49,15 +55,15 @@ A hybrid approach where physics transitions based on complexity needs.
 ## 3. Implementation Roadmap
 
 ### Phase 1: Rendering LOD (Clipmaps)
-- Refactor `HeightfieldRender` to support multi-layer nested grids.
-- Implement morphing/stitching in `heightfield_render.wgsl`.
+- Refactor heightfield rendering to support multi-layer nested grids.
+- Implement morphing/stitching in `crates/game/src/gpu/shaders/heightfield_render.wgsl`.
 
 ### Phase 2: Sparse/Tiled Compute
-- Partition the Sweet simulation into tiles.
+- Partition the SWE simulation into tiles.
 - Only dispatch compute workgroups for tiles "marked" as dirty or containing water.
 
 ### Phase 3: High-Fidelity "Active Zones"
-- Create a `ParticleSimulationZone` struct that defines a 3D box in the world.
+- Create a simulation zone struct that defines a 3D box in the world.
 - Implement mass transfer logic: `SWE mass <-> FLIP particles`.
 - Example: A wash plant emitter box that spawns tailings into the world heightfield.
 

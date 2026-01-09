@@ -23,6 +23,10 @@ struct GravityParams3D {
     height: u32,
     depth: u32,
     gravity_dt: f32,
+    cell_size: f32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 /// Flow acceleration parameters (for sluice downstream flow)
@@ -2256,7 +2260,8 @@ impl GpuFlip3D {
         }
     }
 
-    fn upload_sdf(&mut self, queue: &wgpu::Queue, sdf: &[f32]) {
+    /// Upload SDF data to GPU.
+    pub fn upload_sdf(&mut self, queue: &wgpu::Queue, sdf: &[f32]) {
         if self.sdf_uploaded {
             return;
         }
@@ -2659,6 +2664,10 @@ impl GpuFlip3D {
             height: self.height,
             depth: self.depth,
             gravity_dt: gravity * dt,
+            cell_size: self.cell_size,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
         };
         queue.write_buffer(&self.gravity_params_buffer, 0, bytemuck::bytes_of(&gravity_params));
 

@@ -61,8 +61,8 @@ pub fn enforce_particle_boundaries(particles: &mut Particles3D, grid: &Grid3D) {
             // Reflect velocity component into solid
             let vel_into_solid = particle.velocity.dot(normal);
             if vel_into_solid < 0.0 {
-                // Remove velocity into solid, add small bounce
-                particle.velocity -= normal * vel_into_solid * 1.1;
+                // Remove velocity into solid, total inelastic collision
+                particle.velocity -= normal * vel_into_solid * 1.0;
             }
         }
     }

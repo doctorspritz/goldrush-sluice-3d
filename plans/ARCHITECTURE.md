@@ -1,5 +1,8 @@
 # Gold Rush: Physics-Driven Mining Simulation
 
+> **Last Updated:** 2026-01-09
+> **Status:** Active - 3D FLIP+DEM core implemented
+
 ## Vision
 
 An open-world gold mining game where **everything is physics**. No scripted events, no artificial constraints. Success and failure emerge from the simulation itself.
@@ -69,11 +72,12 @@ Player skill = understanding and managing interconnected physical systems.
 │                    ACTIVE ZONES                             │
 │         (Where full particle simulation runs)               │
 │                                                             │
-│   FLIP/APIC water       - Vorticity, turbulence            │
-│   Drucker-Prager solids - Angle of repose, yield, clog     │
-│   Multi-material        - Water, sand, gravel, gold        │
+│   3D GPU FLIP water     - Vorticity, turbulence  ✅        │
+│   Drucker-Prager solids - Yield, settling        ✅        │
+│   DEM clumps            - Gravel, rocks          ✅        │
+│   Multi-material        - Water, sand, gold      ✅        │
 │                                                             │
-│   Plans: gpu3d-slurry.md, drucker-prager-sediment-impl.md  │
+│   Code: flip_3d.rs, g2p_3d.wgsl, clump.rs                  │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -316,20 +320,23 @@ Zones can overlap. Boundaries handle transitions.
 
 ## Implementation Roadmap
 
-### Phase 1: Foundation (Current)
-- [x] FLIP/APIC water (vorticity works)
-- [x] Basic sediment (settling, drag)
-- [ ] Drucker-Prager yield (`drucker-prager-sediment-impl.md`)
-- [ ] Heightfield terrain collapse (`dig_test.rs` exists)
+### Phase 1: Foundation ✅ Complete
+- [x] 3D GPU FLIP water (`flip_3d.rs`, `p2g_3d.wgsl`, `g2p_3d.wgsl`)
+- [x] Vorticity confinement (`vorticity_3d.wgsl`)
+- [x] Sediment settling + drag (`SedimentParams3D`)
+- [x] Drucker-Prager yield (`DruckerPragerParams`)
+- [x] DEM clumps for gravel (`clump.rs`, `sim3d/clump.rs`)
+- [x] SDF collision (`sdf_collision_3d.wgsl`)
+- [x] Porosity drag
 
-### Phase 2: World Layer
+### Phase 2: World Layer (Current)
+- [x] GPU heightfield erosion (`heightfield.rs`)
+- [x] Shallow water on heightfield
+- [/] Zone transitions (heightfield ↔ particles) → `detail_zone.rs` in progress
 - [ ] Unified terrain (base + sediment layers)
-- [ ] Water heightfield (shallow water equations)
-- [ ] Sediment settling to terrain
-- [ ] Zone transitions (heightfield ↔ particles)
 
 ### Phase 3: Full Loop
-- [ ] Water source → plant → tailings flow
+- [/] Water source → plant → tailings (`tailings_pond.rs`)
 - [ ] Excavation → particles → processing
 - [ ] Gold separation in sluice
 - [ ] Tailings settling feedback
@@ -339,7 +346,7 @@ Zones can overlap. Boundaries handle transitions.
 - [ ] Hopper/feeder (buffer, throughput limit)
 - [ ] Trommel (size separation)
 - [ ] Conveyor (transport, capacity)
-- [ ] Sluice (gold recovery)
+- [/] Sluice (gold recovery) → `industrial_sluice.rs`
 
 ### Phase 5: World
 - [ ] Procedural terrain generation
@@ -357,13 +364,15 @@ Zones can overlap. Boundaries handle transitions.
 
 ## Detailed Plans
 
-| System | Plan File | Status |
+| System | Plan/Code | Status |
 |--------|-----------|--------|
-| GPU water + sediment | `gpu3d-slurry.md` | On branch |
-| Drucker-Prager yield | `drucker-prager-sediment-impl.md` | Ready for Codex |
-| Terrain collapse | `dig_test.rs` | Exists |
-| Water + tailings | `low-fidelity-water-tailings.md` | Written |
-| 3D vorticity | `3d-vorticity-confinement.md` | Merged |
+| 3D FLIP | `flip_3d.rs`, `g2p_3d.wgsl` | ✅ Implemented |
+| Drucker-Prager | `2.5d-physics.md` | 🎯 In plan |
+| Sediment physics | `sediment-physics.md` | ⚠️ Needs update |
+| GPU optimization | `gpu-optimization.md` | 🔧 Active WIP |
+| Sluice architecture | `sluice-physics-architecture.md` | ✅ Updated |
+| Heightfield LOD | `hybrid-lod-architecture.md` | 📋 Conceptual |
+| Scale constants | `scale-constants-todo.md` | 📝 TODO |
 
 ---
 

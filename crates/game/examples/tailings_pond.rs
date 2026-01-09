@@ -385,39 +385,90 @@ impl ApplicationHandler for App {
                 // 1. Simulation Steps
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
                 
-                // Interactive Spawning
+                // Calculate view/proj matrices for raycasting
+                let view_matrix = self.camera.view_matrix();
+                let config = self.config.as_ref().unwrap();
+                let proj_matrix = Mat4::perspective_rh(0.8, config.width as f32 / config.height as f32, 0.1, 2000.0);
+                
+                // Raycast from mouse
+                let (mouse_x, mouse_y) = self.input.mouse_pos;
+                let size = self.window.as_ref().unwrap().inner_size();
+                let ndc_x = (mouse_x / size.width as f32) * 2.0 - 1.0;
+                let ndc_y = 1.0 - (mouse_y / size.height as f32) * 2.0;
+
+                let view_proj = proj_matrix * view_matrix;
+                let inv_view_proj = view_proj.inverse();
+                
+                // Ray start (near plane) and end (far plane)
+                let ray_start_clip = glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+                let ray_end_clip = glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+                
+                let mut ray_start = inv_view_proj * ray_start_clip;
+                ray_start /= ray_start.w;
+                let mut ray_end = inv_view_proj * ray_end_clip;
+                ray_end /= ray_end.w;
+                
+                let ray_origin = ray_start.truncate();
+                let ray_dir = (ray_end.truncate() - ray_origin).normalize();
+
+                // Raycast against terrain (simple steps)
+                let mut hit_pos = ray_origin + ray_dir * 10.0; // Default
+                let mut t = 0.0;
+                let max_dist = 200.0;
+                let step = 0.5;
+                
+                while t < max_dist {
+                    let p = ray_origin + ray_dir * t;
+                    if p.x >= 0.0 && p.x < WORLD_WIDTH as f32 && p.z >= 0.0 && p.z < WORLD_DEPTH as f32 {
+                        let idx = (p.z as usize) * WORLD_WIDTH + (p.x as usize);
+                        let terrain_h = self.world.bedrock_elevation[idx] + self.world.overburden_thickness[idx] + self.world.paydirt_thickness[idx];
+                        if p.y < terrain_h {
+                            hit_pos = p;
+                            break;
+                        }
+                    } else if p.y < 0.0 {
+                         // Hit base plane
+                         hit_pos = p;
+                         break;
+                    }
+                    t += step;
+                }
+
                 let mut spawned_this_frame = 0;
+
                 if self.input.keys.contains(&KeyCode::Digit1) {
-                    // Spawn Tailings (Brown)
-                    let mut pos = self.camera.position + self.camera.forward() * 10.0;
-                    pos.y = 20.0; // Force spawn high up for debugging
-                    let vel = glam::Vec3::new(0.0, -5.0, 0.0); // Drop straight down
+                    // Spawn Tailings (Brown) - continuous stream
+                    let mut pos = hit_pos;
+                    pos.y += 20.0; // Spawn 20m above hit
+                    let vel = glam::Vec3::new(0.0, -5.0, 0.0);
                     bridge.dispatch_emitter(queue, &mut encoder, 
                         pos.into(), vel.into(), 
-                        0.2, 0.1, 30, 2.5, 
+                        0.1, 0.05, 5, 2.5,  // Smaller radius, fewer particles per frame
                         self.start_time.elapsed().as_secs_f32()
                     );
-                    spawned_this_frame = 30;
+                    spawned_this_frame = 5;
                 } else if self.input.keys.contains(&KeyCode::Digit2) {
-                    // Spawn Water (Blue)
-                    let mut pos = self.camera.position + self.camera.forward() * 10.0;
-                    pos.y = 20.0; // Force spawn high up for debugging
-                    let vel = glam::Vec3::new(0.0, -5.0, 0.0); // Drop straight down
+                    // Spawn Water (Blue) - continuous stream
+                    let mut pos = hit_pos;
+                    pos.y += 20.0; // Spawn 20m above hit
+                    let vel = glam::Vec3::new(0.0, -5.0, 0.0);
                     bridge.dispatch_emitter(queue, &mut encoder, 
                         pos.into(), vel.into(), 
-                        0.2, 0.1, 30, 1.0, 
+                        0.1, 0.05, 5, 1.0,  // Smaller radius, fewer particles per frame
                         self.start_time.elapsed().as_secs_f32()
                     );
-                    spawned_this_frame = 30;
+                    spawned_this_frame = 5;
                 }
                 
                 if spawned_this_frame > 0 {
                     self.active_particles = self.active_particles.saturating_add(spawned_this_frame).min(200000);
                 }
                 
-                // Sync bedrock to flip (so particles bounce off ground)
+                // Sync full terrain surface to flip (so particles bounce off ground)
                 for i in 0..self.bed_heights.len() {
-                    self.bed_heights[i] = self.world.bedrock_elevation[i];
+                    self.bed_heights[i] = self.world.bedrock_elevation[i] 
+                        + self.world.overburden_thickness[i] 
+                        + self.world.paydirt_thickness[i];
                 }
 
                 flip.step_in_place(
