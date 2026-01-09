@@ -10,7 +10,7 @@ use game::gpu::flip_3d::GpuFlip3D;
 use game::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder, SluiceVertex};
 use game::water_heightfield::{WaterHeightfieldRenderer, WaterRenderConfig, WaterVertex};
 use glam::{Mat3, Mat4, Vec3};
-use sim3d::FlipSimulation3D;
+use sim3d::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, SdfParams};
 use std::sync::Arc;
 use std::time::Instant;
 use wgpu::util::DeviceExt;
@@ -22,25 +22,28 @@ use winit::{
     window::{Window, WindowId},
 };
 
-// Grid configuration - shorter sluice with steeper angle
-const SLUICE_WIDTH: usize = 80;  // Sluice length in cells
-const EXIT_BUFFER: usize = 15;   // Buffer zone past exit for clean outflow
+// Grid configuration - coarser grid to match gravel size
+const SLUICE_WIDTH: usize = 40;  // Sluice length in cells (halved for coarser grid)
+const EXIT_BUFFER: usize = 8;    // Buffer zone past exit for clean outflow
 const GRID_WIDTH: usize = SLUICE_WIDTH + EXIT_BUFFER;  // Total simulation width
-const GRID_HEIGHT: usize = 40;
-const GRID_DEPTH: usize = 20;
-const CELL_SIZE: f32 = 0.04;    // Slightly larger cells
+const GRID_HEIGHT: usize = 12;   // Reduced height for coarser grid
+const GRID_DEPTH: usize = 12;    // Reduced depth for coarser grid
+const CELL_SIZE: f32 = 0.08;     // Coarser cells (2x) to match gravel scale
 const MAX_PARTICLES: usize = 300_000;
 
 // Simulation
 const GRAVITY: f32 = -9.8;
 const PRESSURE_ITERS: u32 = 80;
 
-// Emission
-const WATER_EMIT_RATE: usize = 100;
-const SEDIMENT_EMIT_RATE: usize = 30;
+// Emission rates
+const WATER_EMIT_RATE: usize = 30;   // Higher water flow
+const SEDIMENT_EMIT_RATE: usize = 5;  // More gravel to test settling
+const GPU_SYNC_STRIDE: u32 = 4;       // GPU readback cadence (frames)
 
 // Sediment color (brownish)
 const SEDIMENT_COLOR: [f32; 4] = [0.6, 0.4, 0.2, 1.0];
+
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -52,8 +55,17 @@ struct Uniforms {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct ParticleInstance {
+struct MeshVertex {
     position: [f32; 3],
+    normal: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct SedimentInstance {
+    position: [f32; 3],
+    scale: f32,
+    rotation: [f32; 4],
     color: [f32; 4],
 }
 
@@ -66,7 +78,7 @@ struct GpuState {
     // Pipelines
     sluice_pipeline: wgpu::RenderPipeline,
     water_pipeline: wgpu::RenderPipeline,
-    particle_pipeline: wgpu::RenderPipeline,
+    sediment_pipeline: wgpu::RenderPipeline,
 
     // Buffers
     uniform_buffer: wgpu::Buffer,
@@ -74,8 +86,13 @@ struct GpuState {
     sluice_vertex_buffer: wgpu::Buffer,
     sluice_index_buffer: wgpu::Buffer,
     water_vertex_buffer: wgpu::Buffer,
-    particle_vertex_buffer: wgpu::Buffer,
-    particle_instance_buffer: wgpu::Buffer,
+    rock_mesh_vertex_buffer: wgpu::Buffer,
+    rock_mesh_vertex_count: u32,
+    sediment_instance_buffer: wgpu::Buffer,
+
+    // Depth
+    depth_texture: wgpu::Texture,
+    depth_view: wgpu::TextureView,
 }
 
 struct App {
@@ -85,6 +102,13 @@ struct App {
     sim: FlipSimulation3D,
     sluice_builder: SluiceGeometryBuilder,
     water_renderer: WaterHeightfieldRenderer,
+    dem: ClusterSimulation3D,
+    dem_template_idx: usize,  // Single-sphere template for sediment
+
+    // Persistent FLIP↔DEM mapping
+    // sediment_clump_idx[i] = index into dem.clumps for sediment particle i
+    // We track sediment particles separately from water
+    sediment_flip_indices: Vec<usize>,  // FLIP particle indices that are sediment
 
     // Particle data for GPU transfer
     positions: Vec<Vec3>,
@@ -103,6 +127,13 @@ struct App {
     last_mouse_pos: Option<(f64, f64)>,
     water_emit_rate: usize,
     sediment_emit_rate: usize,
+    use_dem: bool,  // Toggle DEM on/off
+    use_async_readback: bool,
+    gpu_readback_pending: bool,
+    gpu_sync_substep: u32,
+    gpu_needs_upload: bool,
+    pending_water_emits: usize,
+    pending_sediment_emits: usize,
 
     // Timing
     start_time: Instant,
@@ -115,21 +146,22 @@ impl App {
     fn new() -> Self {
         // Configure sluice geometry - smooth ramp feed, then riffles
         // Sluice ends before the grid boundary, leaving buffer zone for clean outflow
+        // Scaled for coarser grid (cells are 2x larger)
         let sluice_config = SluiceConfig {
             grid_width: SLUICE_WIDTH,  // Sluice width, not full grid width
             grid_height: GRID_HEIGHT,
             grid_depth: GRID_DEPTH,
             cell_size: CELL_SIZE,
-            floor_height_left: 15,      // Higher start (steeper)
-            floor_height_right: 3,      // Low end
-            riffle_spacing: 8,          // Closer riffles in riffle section
-            riffle_height: 2,           // Shorter riffles
-            riffle_thickness: 2,
-            riffle_start_x: 25,         // Ramp section: first 25 cells are smooth
-            riffle_end_pad: 8,
-            wall_margin: 4,
-            exit_width_fraction: 1.0,   // Full-width exit to avoid corner pressure spikes
-            exit_height: 10,            // Tall exit
+            floor_height_left: 4,       // Gentler slope
+            floor_height_right: 2,      // Low end
+            riffle_spacing: 4,          // Closer riffles (scaled from 8)
+            riffle_height: 3,           // Taller riffles
+            riffle_thickness: 1,
+            riffle_start_x: 12,         // Ramp section (scaled from 25)
+            riffle_end_pad: 4,
+            wall_margin: 2,             // Scaled from 4
+            exit_width_fraction: 1.0,   // Full-width exit
+            exit_height: 6,             // Scaled from 10
             ..Default::default()
         };
 
@@ -168,6 +200,41 @@ impl App {
             water_config,
         );
 
+        // DEM for sediment - using existing ClusterSimulation3D with single-sphere clumps
+        let bounds_min = Vec3::ZERO;
+        let bounds_max = Vec3::new(
+            GRID_WIDTH as f32 * CELL_SIZE,
+            GRID_HEIGHT as f32 * CELL_SIZE,
+            GRID_DEPTH as f32 * CELL_SIZE,
+        );
+        let mut dem = ClusterSimulation3D::new(bounds_min, bounds_max);
+        // Zero gravity - FLIP already applies gravity to sediment particles.
+        // DEM is only for collision detection and friction.
+        dem.gravity = Vec3::ZERO;
+        dem.restitution = 0.0;     // No bounce - gravel should not bounce out of water
+        dem.friction = 0.5;        // Sand friction
+        dem.floor_friction = 0.6;  // Higher on floor
+        dem.normal_stiffness = 5000.0;
+        dem.tangential_stiffness = 2500.0;
+        dem.rolling_friction = 0.05;
+        dem.use_dem = true;
+
+        // Create single-sphere template for sediment particles
+        // Using irregular shape with count=1 gives us a single sphere
+        // Fixed world size - gravel is ~1.2cm radius regardless of grid resolution
+        let sediment_radius = 0.012;  // 1.2cm radius (fixed world size)
+        let sediment_mass = 2.5;  // Dense gravel
+        let template = ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 1,
+                seed: 42,
+                style: sim3d::IrregularStyle3D::Round,
+            },
+            sediment_radius,
+            sediment_mass,
+        );
+        let dem_template_idx = dem.add_template(template);
+
         Self {
             window: None,
             gpu: None,
@@ -175,6 +242,9 @@ impl App {
             sim,
             sluice_builder,
             water_renderer,
+            dem,
+            dem_template_idx,
+            sediment_flip_indices: Vec::new(),
             positions: Vec::new(),
             velocities: Vec::new(),
             affine_vels: Vec::new(),
@@ -189,6 +259,13 @@ impl App {
             last_mouse_pos: None,
             water_emit_rate: WATER_EMIT_RATE,
             sediment_emit_rate: SEDIMENT_EMIT_RATE,
+            use_dem: true,  // Enable DEM by default
+            use_async_readback: true,
+            gpu_readback_pending: false,
+            gpu_sync_substep: 0,
+            gpu_needs_upload: true,
+            pending_water_emits: 0,
+            pending_sediment_emits: 0,
             start_time: Instant::now(),
             last_fps_time: Instant::now(),
             fps_frame_count: 0,
@@ -196,11 +273,14 @@ impl App {
         }
     }
 
+    /// Get the floor surface height (top of solid floor) at a given X position.
+    /// Note: floor_height_* is the cell index of the top solid cell,
+    /// so the floor surface is at (floor_height + 1) * cell_size.
     fn floor_height_at(&self, x: f32) -> f32 {
         let config = self.sluice_builder.config();
         let t = x / (config.grid_width as f32 * config.cell_size);
-        let left = config.floor_height_left as f32 * config.cell_size;
-        let right = config.floor_height_right as f32 * config.cell_size;
+        let left = (config.floor_height_left + 1) as f32 * config.cell_size;
+        let right = (config.floor_height_right + 1) as f32 * config.cell_size;
         left * (1.0 - t) + right * t
     }
 
@@ -212,57 +292,76 @@ impl App {
         9.8 * slope
     }
 
-    fn emit_particles(&mut self) {
+    fn queue_emissions(&mut self) {
+        if self.frame % 2 == 0 {
+            self.pending_water_emits = self.pending_water_emits.saturating_add(self.water_emit_rate);
+            self.pending_sediment_emits = self.pending_sediment_emits.saturating_add(self.sediment_emit_rate);
+        }
+    }
+
+    fn emit_pending_particles(&mut self) {
+        let water_count = self.pending_water_emits;
+        let sediment_count = self.pending_sediment_emits;
+        if water_count == 0 && sediment_count == 0 {
+            return;
+        }
+        self.pending_water_emits = 0;
+        self.pending_sediment_emits = 0;
+        self.emit_particles(water_count, sediment_count);
+    }
+
+    fn emit_particles(&mut self, water_count: usize, sediment_count: usize) {
         if self.paused || self.sim.particles.len() >= MAX_PARTICLES {
             return;
         }
 
         let config = self.sluice_builder.config();
         // Emit at upstream (high) end, before the riffles
-        let emit_x = 3.0 * config.cell_size;  // Near left wall (upstream)
+        let emit_x = 2.0 * config.cell_size;  // Near left wall (upstream)
         let center_z = config.grid_depth as f32 * config.cell_size * 0.5;
         let floor_y = self.floor_height_at(emit_x);
-        let drop_height = 4.0 * config.cell_size;
+        let drop_height = 2.0 * config.cell_size;  // Scaled for coarser grid
 
-        let spread_z = (config.grid_depth as f32 - 4.0) * config.cell_size * 0.4;
+        let spread_z = (config.grid_depth as f32 - 4.0) * config.cell_size * 0.3;
+
+        // Initial velocity - flow direction with some downward momentum
+        // Increased from 0.5 to 1.0 m/s for more visible flow
+        let init_vel = Vec3::new(1.0, -0.3, 0.0);  // Downstream + down
 
         // Emit water
-        for _ in 0..self.water_emit_rate {
+        for _ in 0..water_count {
             if self.sim.particles.len() >= MAX_PARTICLES {
                 break;
             }
             let x = emit_x + (rand_float() - 0.5) * 2.0 * config.cell_size;
             let z = center_z + (rand_float() - 0.5) * spread_z;
             let y = floor_y + drop_height + rand_float() * config.cell_size;
-            self.sim.spawn_particle(Vec3::new(x, y, z));
+            self.sim.spawn_particle_with_velocity(Vec3::new(x, y, z), init_vel);
         }
 
-        // Emit sediment
-        for _ in 0..self.sediment_emit_rate {
+        // Emit sediment - create both FLIP particle and DEM clump
+        for _ in 0..sediment_count {
             if self.sim.particles.len() >= MAX_PARTICLES {
                 break;
             }
             let x = emit_x + (rand_float() - 0.5) * 2.0 * config.cell_size;
             let z = center_z + (rand_float() - 0.5) * spread_z;
             let y = floor_y + drop_height + rand_float() * config.cell_size;
-            self.sim.spawn_sediment(Vec3::new(x, y, z), Vec3::ZERO, 2.5);
+            let pos = Vec3::new(x, y, z);
+
+            // Track FLIP particle index before spawning
+            let flip_idx = self.sim.particles.len();
+            self.sim.spawn_sediment(pos, init_vel, 2.5);
+
+            // Create corresponding DEM clump
+            self.dem.spawn(self.dem_template_idx, pos, init_vel);
+
+            // Record the mapping
+            self.sediment_flip_indices.push(flip_idx);
         }
     }
 
-    fn update(&mut self) {
-        if self.paused {
-            return;
-        }
-
-        let dt = 1.0 / 60.0;
-        let flow_accel = self.flow_accel();
-
-        // Emit every other frame
-        if self.frame % 2 == 0 {
-            self.emit_particles();
-        }
-
-        // Sync to GPU
+    fn prepare_gpu_inputs(&mut self) {
         self.positions.clear();
         self.velocities.clear();
         self.affine_vels.clear();
@@ -275,7 +374,6 @@ impl App {
             self.densities.push(p.density);
         }
 
-        // Update cell types
         self.cell_types.clear();
         self.cell_types.resize(GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH, 0);
 
@@ -298,47 +396,275 @@ impl App {
                 }
             }
         }
+    }
 
-        // GPU simulation step
-        if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
-            let sdf = self.sim.grid.sdf.as_slice();
+    fn ensure_readback_buffers_len(&mut self, particle_count: usize) {
+        if self.positions.len() < particle_count {
+            self.positions.resize(particle_count, Vec3::ZERO);
+        }
+        if self.velocities.len() < particle_count {
+            self.velocities.resize(particle_count, Vec3::ZERO);
+        }
+        if self.affine_vels.len() < particle_count {
+            self.affine_vels.resize(particle_count, Mat3::ZERO);
+        }
+    }
 
-            gpu_flip.step(
-                &gpu.device,
-                &gpu.queue,
-                &mut self.positions,
-                &mut self.velocities,
-                &mut self.affine_vels,
-                &self.densities,
-                &self.cell_types,
-                Some(sdf),
-                None,
-                dt,
-                GRAVITY,
-                flow_accel,
-                PRESSURE_ITERS,
-            );
+    fn apply_gpu_results(&mut self, count: usize) {
+        let limit = count.min(self.sim.particles.list.len());
+        for (i, p) in self.sim.particles.list.iter_mut().enumerate().take(limit) {
+            if i < self.positions.len() {
+                p.position = self.positions[i];
+            }
+            if i < self.velocities.len() {
+                p.velocity = self.velocities[i];
+            }
+            if i < self.affine_vels.len() {
+                p.affine_velocity = self.affine_vels[i];
+            }
+        }
+    }
 
-            // Sync back to CPU sim
-            for (i, p) in self.sim.particles.list.iter_mut().enumerate() {
-                if i < self.positions.len() {
-                    p.position = self.positions[i];
-                    p.velocity = self.velocities[i];
-                    p.affine_velocity = self.affine_vels[i];
+    fn run_dem_and_cleanup(&mut self, dt: f32) {
+        // Run DEM collision response on sediment particles (after GPU FLIP)
+        // DEM clumps are persistent - we sync state, not rebuild
+        // IMPORTANT: Use collision_response_only, NOT step_with_sdf
+        // step_with_sdf does full physics integration (double-moves particles)
+        // collision_response_only only handles collision detection + velocity correction
+        if self.use_dem && !self.sediment_flip_indices.is_empty() {
+            // Debug: track velocities
+            let mut flip_vels: Vec<Vec3> = Vec::new();
+
+            // NOTE: Buoyancy-reduced gravity is now applied in the GPU shader (g2p_3d.wgsl)
+            // using the drag-based entrainment model. No extra settling needed here.
+
+            // Sync FLIP → DEM: update clump positions/velocities from FLIP results
+            // but PRESERVE rotation, angular_velocity, and contact history
+            for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
+                if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list.len() {
+                    let p = &self.sim.particles.list[flip_idx];
+                    let clump = &mut self.dem.clumps[clump_idx];
+                    flip_vels.push(p.velocity);
+                    // Take position/velocity from FLIP (which includes pressure, advection, drag, gravity)
+                    clump.position = p.position;
+                    clump.velocity = p.velocity;
+                    // rotation and angular_velocity are PRESERVED from previous frame
                 }
             }
 
-            // Remove particles that exited the sluice (not the grid - buffer zone is part of grid)
-            // Delete at sluice boundary, not grid boundary, for clean outflow
-            let sluice_exit_x = SLUICE_WIDTH as f32 * CELL_SIZE;
-            self.sim.particles.list.retain(|p| {
-                p.position.x > 0.0 &&
-                p.position.x < sluice_exit_x &&  // Delete at sluice exit, not grid edge
-                p.position.y > -CELL_SIZE &&
-                p.position.y < GRID_HEIGHT as f32 * CELL_SIZE &&
-                p.position.z > 0.0 &&
-                p.position.z < GRID_DEPTH as f32 * CELL_SIZE
-            });
+            // Run DEM collision response only - detects collisions, pushes out of solids,
+            // corrects velocity (bounce/friction), but does NOT integrate position
+            // wet=true because gravel is in water - uses low friction so it slides
+            let sdf_params = SdfParams {
+                sdf: &self.sim.grid.sdf,
+                grid_width: GRID_WIDTH,
+                grid_height: GRID_HEIGHT,
+                grid_depth: GRID_DEPTH,
+                cell_size: CELL_SIZE,
+            };
+            self.dem.collision_response_only(dt, &sdf_params, true); // wet=true
+
+            // Sync DEM → FLIP: copy results back + enforce back wall
+            let back_wall_x = CELL_SIZE * 1.5;  // Back wall boundary
+            for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
+                if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list.len() {
+                    let clump = &mut self.dem.clumps[clump_idx];
+                    let p = &mut self.sim.particles.list[flip_idx];
+
+                    // Enforce back wall - gravel can't go behind x=back_wall_x
+                    if clump.position.x < back_wall_x {
+                        clump.position.x = back_wall_x;
+                        if clump.velocity.x < 0.0 {
+                            clump.velocity.x = 0.0;
+                        }
+                    }
+
+                    // Debug: compare FLIP vs DEM velocities
+                    if self.frame % 60 == 0 && clump_idx == 0 {
+                        let flip_vel = flip_vels.get(clump_idx).copied().unwrap_or(Vec3::ZERO);
+                        let dem_vel = clump.velocity;
+                        println!(
+                            "Gravel[0] FLIP vel: {:5.2} m/s | DEM vel: {:5.2} m/s",
+                            flip_vel.length(),
+                            dem_vel.length()
+                        );
+                    }
+
+                    p.position = clump.position;
+                    p.velocity = clump.velocity;
+                }
+            }
+        }
+
+        // Remove particles that exited the sluice (not the grid - buffer zone is part of grid)
+        // Delete at sluice boundary, not grid boundary, for clean outflow
+        // Must also delete corresponding DEM clumps and update mappings
+        let sluice_exit_x = SLUICE_WIDTH as f32 * CELL_SIZE;
+        let bounds_check = |p: &sim3d::Particle3D| {
+            p.position.x > 0.0 &&
+            p.position.x < sluice_exit_x &&
+            p.position.y > -CELL_SIZE &&
+            p.position.y < GRID_HEIGHT as f32 * CELL_SIZE &&
+            p.position.z > 0.0 &&
+            p.position.z < GRID_DEPTH as f32 * CELL_SIZE
+        };
+
+        // Find which particles to delete
+        let mut delete_indices: Vec<usize> = Vec::new();
+        for (i, p) in self.sim.particles.list.iter().enumerate() {
+            if !bounds_check(p) {
+                delete_indices.push(i);
+            }
+        }
+
+        // Delete from back to front to preserve indices
+        for &del_idx in delete_indices.iter().rev() {
+            // Check if this is a sediment particle (has corresponding DEM clump)
+            if let Some(sediment_pos) = self.sediment_flip_indices.iter().position(|&idx| idx == del_idx) {
+                // Delete the DEM clump
+                if sediment_pos < self.dem.clumps.len() {
+                    self.dem.clumps.swap_remove(sediment_pos);
+                }
+                self.sediment_flip_indices.swap_remove(sediment_pos);
+            }
+
+            // Delete the FLIP particle
+            self.sim.particles.list.swap_remove(del_idx);
+
+            // Update sediment_flip_indices: any index > del_idx needs to be decremented
+            // Also, if we swap_removed, the last particle moved to del_idx
+            let last_idx = self.sim.particles.list.len(); // This is the OLD last index (before swap_remove)
+            for flip_idx in &mut self.sediment_flip_indices {
+                if *flip_idx == last_idx {
+                    // This particle was swapped into del_idx's position
+                    *flip_idx = del_idx;
+                }
+            }
+        }
+    }
+
+    fn update(&mut self) {
+        if self.paused {
+            return;
+        }
+
+        let dt = 1.0 / 60.0;
+        let flow_accel = self.flow_accel();
+
+        if self.use_async_readback {
+            if self.gpu_readback_pending {
+                let readback = if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                    gpu_flip.try_readback(
+                        &gpu.device,
+                        &mut self.positions,
+                        &mut self.velocities,
+                        &mut self.affine_vels,
+                    )
+                } else {
+                    None
+                };
+
+                if let Some(count) = readback {
+                    self.gpu_readback_pending = false;
+                    self.apply_gpu_results(count);
+                    self.gpu_needs_upload = true;
+                } else {
+                    return;
+                }
+            }
+
+            self.queue_emissions();
+
+            if self.gpu_needs_upload {
+                self.emit_pending_particles();
+                self.run_dem_and_cleanup(dt);
+                self.prepare_gpu_inputs();
+            }
+
+            let particle_count = self.sim.particles.list.len();
+            let next_substep = if particle_count > 0 {
+                self.gpu_sync_substep.saturating_add(1)
+            } else {
+                self.gpu_sync_substep
+            };
+            let schedule_readback = particle_count > 0 && next_substep >= GPU_SYNC_STRIDE;
+            if schedule_readback {
+                self.ensure_readback_buffers_len(particle_count);
+            }
+
+            if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                let sdf = self.sim.grid.sdf.as_slice();
+
+                if self.gpu_needs_upload {
+                    gpu_flip.step_no_readback(
+                        &gpu.device,
+                        &gpu.queue,
+                        &mut self.positions,
+                        &mut self.velocities,
+                        &mut self.affine_vels,
+                        &self.densities,
+                        &self.cell_types,
+                        Some(sdf),
+                        None,
+                        dt,
+                        GRAVITY,
+                        flow_accel,
+                        PRESSURE_ITERS,
+                    );
+                    self.gpu_needs_upload = false;
+                } else {
+                    gpu_flip.step_in_place(
+                        &gpu.device,
+                        &gpu.queue,
+                        particle_count as u32,
+                        &self.cell_types,
+                        Some(sdf),
+                        None,
+                        dt,
+                        GRAVITY,
+                        flow_accel,
+                        PRESSURE_ITERS,
+                    );
+                }
+
+                if schedule_readback {
+                    if gpu_flip.request_readback(&gpu.device, &gpu.queue, particle_count) {
+                        self.gpu_readback_pending = true;
+                        self.gpu_sync_substep = 0;
+                    } else {
+                        self.gpu_sync_substep = next_substep;
+                    }
+                } else {
+                    self.gpu_sync_substep = next_substep;
+                }
+            }
+        } else {
+            self.queue_emissions();
+            self.emit_pending_particles();
+            self.prepare_gpu_inputs();
+
+            if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                let sdf = self.sim.grid.sdf.as_slice();
+
+                gpu_flip.step(
+                    &gpu.device,
+                    &gpu.queue,
+                    &mut self.positions,
+                    &mut self.velocities,
+                    &mut self.affine_vels,
+                    &self.densities,
+                    &self.cell_types,
+                    Some(sdf),
+                    None,
+                    dt,
+                    GRAVITY,
+                    flow_accel,
+                    PRESSURE_ITERS,
+                );
+                self.apply_gpu_results(self.positions.len());
+            }
+
+            self.run_dem_and_cleanup(dt);
         }
 
         self.frame += 1;
@@ -395,16 +721,26 @@ impl App {
 
         // Build water mesh
         let time = self.start_time.elapsed().as_secs_f32();
+
+        // Update sediment heights first (for water surface bridging over gravel)
+        let sediment_particles = self.sim.particles.list.iter()
+            .filter(|p| p.density > 1.0)
+            .map(|p| p.position.to_array());
+        self.water_renderer.update_sediment(sediment_particles);
+
+        // Now build water mesh with sediment-aware bridging
         let water_particles = self.sim.particles.list.iter()
             .filter(|p| p.density <= 1.0)
             .map(|p| (p.position.to_array(), p.velocity.to_array()));
 
         // Capture floor height params to avoid borrowing self in closure
-        let (floor_height_left, floor_height_right, total_width) = {
+        // Note: floor_height_* is the cell index of the top solid cell.
+        // The TOP of that cell (visible floor surface) is at (floor_height + 1) * cell_size
+        let (floor_surface_left, floor_surface_right, total_width) = {
             let config = self.sluice_builder.config();
             (
-                config.floor_height_left as f32 * config.cell_size,
-                config.floor_height_right as f32 * config.cell_size,
+                (config.floor_height_left + 1) as f32 * config.cell_size,  // Top of floor cell
+                (config.floor_height_right + 1) as f32 * config.cell_size, // Top of floor cell
                 config.grid_width as f32 * config.cell_size,
             )
         };
@@ -414,7 +750,7 @@ impl App {
             time,
             |x| {
                 let t = x / total_width;
-                floor_height_left * (1.0 - t) + floor_height_right * t
+                floor_surface_left * (1.0 - t) + floor_surface_right * t
             },
         );
 
@@ -428,18 +764,20 @@ impl App {
             );
         }
 
-        // Build sediment instances
-        let sediment_instances: Vec<ParticleInstance> = self.sim.particles.list.iter()
-            .filter(|p| p.density > 1.0)
-            .map(|p| ParticleInstance {
-                position: p.position.to_array(),
+        // Build sediment instances from DEM clumps
+        let sediment_scale = 0.012;  // Match template radius (fixed world size)
+        let sediment_instances: Vec<SedimentInstance> = self.dem.clumps.iter()
+            .map(|clump| SedimentInstance {
+                position: clump.position.to_array(),
+                scale: sediment_scale,
+                rotation: clump.rotation.to_array(),
                 color: SEDIMENT_COLOR,
             })
             .collect();
 
         if !sediment_instances.is_empty() {
             gpu.queue.write_buffer(
-                &gpu.particle_instance_buffer,
+                &gpu.sediment_instance_buffer,
                 0,
                 bytemuck::cast_slice(&sediment_instances),
             );
@@ -459,7 +797,14 @@ impl App {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &gpu.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 ..Default::default()
             });
 
@@ -478,12 +823,12 @@ impl App {
                 pass.draw(0..water_vertices.len() as u32, 0..1);
             }
 
-            // Draw sediment particles
+            // Draw sediment as 3D rocks
             if !sediment_instances.is_empty() {
-                pass.set_pipeline(&gpu.particle_pipeline);
-                pass.set_vertex_buffer(0, gpu.particle_vertex_buffer.slice(..));
-                pass.set_vertex_buffer(1, gpu.particle_instance_buffer.slice(..));
-                pass.draw(0..6, 0..sediment_instances.len() as u32);
+                pass.set_pipeline(&gpu.sediment_pipeline);
+                pass.set_vertex_buffer(0, gpu.rock_mesh_vertex_buffer.slice(..));
+                pass.set_vertex_buffer(1, gpu.sediment_instance_buffer.slice(..));
+                pass.draw(0..gpu.rock_mesh_vertex_count, 0..sediment_instances.len() as u32);
             }
         }
 
@@ -559,7 +904,7 @@ impl App {
             label: Some("Uniform Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -609,7 +954,13 @@ impl App {
                 cull_mode: Some(wgpu::Face::Back),
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
@@ -647,42 +998,57 @@ impl App {
                 cull_mode: None, // Water visible from both sides
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
         });
 
-        // Particle pipeline (instanced quads)
-        let particle_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Particle Pipeline"),
+        // Sediment shader (3D rock mesh with lighting)
+        let sediment_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Sediment Shader"),
+            source: wgpu::ShaderSource::Wgsl(SEDIMENT_SHADER.into()),
+        });
+
+        // Sediment pipeline (instanced 3D rocks)
+        let sediment_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Sediment Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_particle"),
+                module: &sediment_shader,
+                entry_point: Some("vs_main"),
                 buffers: &[
-                    // Quad vertices
+                    // Rock mesh vertices
                     wgpu::VertexBufferLayout {
-                        array_stride: 8,
+                        array_stride: std::mem::size_of::<MeshVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &[wgpu::VertexAttribute {
-                            offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2,
-                        }],
+                        attributes: &[
+                            wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x3 },
+                            wgpu::VertexAttribute { offset: 12, shader_location: 1, format: wgpu::VertexFormat::Float32x3 },
+                        ],
                     },
                     // Instance data
                     wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<ParticleInstance>() as u64,
+                        array_stride: std::mem::size_of::<SedimentInstance>() as u64,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &[
-                            wgpu::VertexAttribute { offset: 0, shader_location: 2, format: wgpu::VertexFormat::Float32x3 },
-                            wgpu::VertexAttribute { offset: 12, shader_location: 3, format: wgpu::VertexFormat::Float32x4 },
+                            wgpu::VertexAttribute { offset: 0, shader_location: 2, format: wgpu::VertexFormat::Float32x3 },  // position
+                            wgpu::VertexAttribute { offset: 12, shader_location: 3, format: wgpu::VertexFormat::Float32 },   // scale
+                            wgpu::VertexAttribute { offset: 16, shader_location: 4, format: wgpu::VertexFormat::Float32x4 }, // rotation
+                            wgpu::VertexAttribute { offset: 32, shader_location: 5, format: wgpu::VertexFormat::Float32x4 }, // color
                         ],
                     },
                 ],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &sediment_shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
@@ -695,7 +1061,13 @@ impl App {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
@@ -720,26 +1092,27 @@ impl App {
             mapped_at_creation: false,
         });
 
-        // Quad for particles
-        let quad_verts: [[f32; 2]; 6] = [
-            [-1.0, -1.0], [1.0, -1.0], [1.0, 1.0],
-            [-1.0, -1.0], [1.0, 1.0], [-1.0, 1.0],
-        ];
-        let particle_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Particle Quad"),
-            contents: bytemuck::cast_slice(&quad_verts),
+        // Rock mesh for sediment (icosahedron with jitter)
+        let rock_mesh_vertices = build_rock_mesh();
+        let rock_mesh_vertex_count = rock_mesh_vertices.len() as u32;
+        let rock_mesh_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Rock Mesh"),
+            contents: bytemuck::cast_slice(&rock_mesh_vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let particle_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Particle Instances"),
-            size: (MAX_PARTICLES * std::mem::size_of::<ParticleInstance>()) as u64,
+        let sediment_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Sediment Instances"),
+            size: (MAX_PARTICLES * std::mem::size_of::<SedimentInstance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
+        // Depth texture
+        let (depth_texture, depth_view) = create_depth_texture(&device, &config);
+
         // GPU FLIP
-        let gpu_flip = GpuFlip3D::new(
+        let mut gpu_flip = GpuFlip3D::new(
             &device,
             GRID_WIDTH as u32,
             GRID_HEIGHT as u32,
@@ -748,6 +1121,22 @@ impl App {
             MAX_PARTICLES,
         );
 
+        // Friction-only sediment model:
+        // - Sediment flows like water but settles and has friction when slow
+        // - Density correction now applies to sediment, so it won't bunch unnaturally
+        // - When sediment accumulates (friction > flow), cells marked SOLID so water flows OVER
+        // Drag-based entrainment model:
+        // - Gravel is pulled toward water velocity (drag)
+        // - Buoyancy-reduced gravity pulls it down
+        // - When water is fast, drag wins → entrainment
+        // - When water is slow, gravity wins → settling
+        gpu_flip.sediment_rest_particles = 0.0;       // Disabled - don't mark sediment as SOLID
+        gpu_flip.sediment_porosity_drag = 0.0;        // Disable porosity drag
+        gpu_flip.sediment_drag_coefficient = 8.0;     // Drag rate (1/s) - how fast gravel approaches water velocity
+        gpu_flip.sediment_settling_velocity = 0.5;    // For vorticity lift calculation
+        gpu_flip.sediment_friction_threshold = 0.05;  // Low threshold - let gravel move freely
+        gpu_flip.sediment_friction_strength = 0.1;    // Light friction when slow
+
         self.gpu = Some(GpuState {
             device,
             queue,
@@ -755,14 +1144,17 @@ impl App {
             config,
             sluice_pipeline,
             water_pipeline,
-            particle_pipeline,
+            sediment_pipeline,
             uniform_buffer,
             uniform_bind_group,
             sluice_vertex_buffer,
             sluice_index_buffer,
             water_vertex_buffer,
-            particle_vertex_buffer,
-            particle_instance_buffer,
+            rock_mesh_vertex_buffer,
+            rock_mesh_vertex_count,
+            sediment_instance_buffer,
+            depth_texture,
+            depth_view,
         });
         self.gpu_flip = Some(gpu_flip);
         self.window = Some(window);
@@ -788,6 +1180,10 @@ impl ApplicationHandler for App {
                     gpu.config.width = size.width.max(1);
                     gpu.config.height = size.height.max(1);
                     gpu.surface.configure(&gpu.device, &gpu.config);
+                    // Recreate depth texture for new size
+                    let (depth_texture, depth_view) = create_depth_texture(&gpu.device, &gpu.config);
+                    gpu.depth_texture = depth_texture;
+                    gpu.depth_view = depth_view;
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -797,7 +1193,19 @@ impl ApplicationHandler for App {
                         PhysicalKey::Code(KeyCode::Space) => self.paused = !self.paused,
                         PhysicalKey::Code(KeyCode::KeyR) => {
                             self.sim.particles.list.clear();
+                            self.dem.clumps.clear();
+                            self.sediment_flip_indices.clear();
                             self.frame = 0;
+                            self.gpu_readback_pending = false;
+                            self.gpu_sync_substep = 0;
+                            self.gpu_needs_upload = true;
+                            self.pending_water_emits = 0;
+                            self.pending_sediment_emits = 0;
+                            self.positions.clear();
+                            self.velocities.clear();
+                            self.affine_vels.clear();
+                            self.densities.clear();
+                            self.cell_types.clear();
                         }
                         PhysicalKey::Code(KeyCode::ArrowUp) => {
                             self.water_emit_rate = (self.water_emit_rate + 25).min(500);
@@ -810,6 +1218,10 @@ impl ApplicationHandler for App {
                         }
                         PhysicalKey::Code(KeyCode::ArrowLeft) => {
                             self.sediment_emit_rate = self.sediment_emit_rate.saturating_sub(10);
+                        }
+                        PhysicalKey::Code(KeyCode::KeyD) => {
+                            self.use_dem = !self.use_dem;
+                            println!("DEM: {}", if self.use_dem { "ON" } else { "OFF" });
                         }
                         _ => {}
                     }
@@ -903,6 +1315,163 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return in.color;
 }
 "#;
+
+const SEDIMENT_SHADER: &str = r#"
+struct Uniforms {
+    view_proj: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) instance_pos: vec3<f32>,
+    @location(3) instance_scale: f32,
+    @location(4) instance_rot: vec4<f32>,
+    @location(5) color: vec4<f32>,
+}
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    let scaled = in.position * in.instance_scale;
+    let world_pos = in.instance_pos + quat_rotate(in.instance_rot, scaled);
+    let normal = normalize(quat_rotate(in.instance_rot, in.normal));
+    let light_dir = normalize(vec3<f32>(0.4, 1.0, 0.2));
+    let diffuse = max(dot(normal, light_dir), 0.0);
+    let view_dir = normalize(uniforms.camera_pos - world_pos);
+    let rim = pow(1.0 - max(dot(normal, view_dir), 0.0), 2.0);
+    let shade = 0.35 + 0.65 * diffuse;
+    let tint = in.color.rgb * shade + vec3<f32>(0.08) * rim;
+
+    var out: VertexOutput;
+    out.clip_position = uniforms.view_proj * vec4<f32>(world_pos, 1.0);
+    out.color = vec4<f32>(tint, in.color.a);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return in.color;
+}
+
+fn quat_rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+    let qv = q.xyz;
+    let t = 2.0 * cross(qv, v);
+    return v + q.w * t + cross(qv, t);
+}
+"#;
+
+/// Build an icosahedron mesh with slight jitter for rock-like appearance
+fn build_rock_mesh() -> Vec<MeshVertex> {
+    let phi = (1.0 + 5.0_f32.sqrt()) * 0.5;
+    let inv_len = 1.0 / (1.0 + phi * phi).sqrt();
+    let a = inv_len;
+    let b = phi * inv_len;
+
+    // Icosahedron vertices with jitter
+    let mut verts = [
+        Vec3::new(-a, b, 0.0),
+        Vec3::new(a, b, 0.0),
+        Vec3::new(-a, -b, 0.0),
+        Vec3::new(a, -b, 0.0),
+        Vec3::new(0.0, -a, b),
+        Vec3::new(0.0, a, b),
+        Vec3::new(0.0, -a, -b),
+        Vec3::new(0.0, a, -b),
+        Vec3::new(b, 0.0, -a),
+        Vec3::new(b, 0.0, a),
+        Vec3::new(-b, 0.0, -a),
+        Vec3::new(-b, 0.0, a),
+    ];
+
+    // Apply slight jitter for rock-like appearance
+    let seed = 0xB2D4_09A7_u32;
+    for (idx, pos) in verts.iter_mut().enumerate() {
+        let idx_u = idx as u32;
+        let radial = 1.0 + 0.08 * hash_to_unit(seed ^ idx_u.wrapping_mul(11));
+        let lateral = Vec3::new(
+            hash_to_unit(seed ^ idx_u.wrapping_mul(13)),
+            hash_to_unit(seed ^ idx_u.wrapping_mul(17)),
+            hash_to_unit(seed ^ idx_u.wrapping_mul(19)),
+        ) * 0.04;
+        *pos = (*pos * radial) + lateral;
+    }
+
+    // Normalize to unit sphere
+    let mut max_len = 0.0_f32;
+    for pos in &verts {
+        max_len = max_len.max(pos.length());
+    }
+    if max_len > 0.0 {
+        for pos in &mut verts {
+            *pos /= max_len;
+        }
+    }
+
+    // Icosahedron faces
+    let indices: [[usize; 3]; 20] = [
+        [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+        [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+        [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+    ];
+
+    let mut vertices = Vec::with_capacity(indices.len() * 3);
+    for tri in indices {
+        let va = verts[tri[0]];
+        let vb = verts[tri[1]];
+        let vc = verts[tri[2]];
+        let normal = (vb - va).cross(vc - va).normalize();
+        for pos in [va, vb, vc] {
+            vertices.push(MeshVertex {
+                position: pos.to_array(),
+                normal: normal.to_array(),
+            });
+        }
+    }
+
+    vertices
+}
+
+fn hash_to_unit(mut x: u32) -> f32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7FEB_352D);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846C_A68B);
+    x ^= x >> 16;
+    let unit = x as f32 / u32::MAX as f32;
+    unit * 2.0 - 1.0
+}
+
+fn create_depth_texture(
+    device: &wgpu::Device,
+    config: &wgpu::SurfaceConfiguration,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let size = wgpu::Extent3d {
+        width: config.width,
+        height: config.height,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Depth Texture"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
 
 fn main() {
     env_logger::init();

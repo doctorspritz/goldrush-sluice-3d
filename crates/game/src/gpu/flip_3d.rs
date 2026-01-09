@@ -167,6 +167,7 @@ struct SdfCollisionParams3D {
 
 #[derive(Copy, Clone)]
 enum ReadbackMode {
+    None,
     Sync,
     Async,
 }
@@ -440,6 +441,9 @@ pub struct GpuFlip3D {
     pub sediment_vorticity_lift: f32,
     /// Minimum vorticity magnitude to apply lift.
     pub sediment_vorticity_threshold: f32,
+    /// Rate at which particle velocity approaches water velocity (1/s).
+    /// Higher = more entrainment. Typical: 5.0-20.0. Scaled by 1/density.
+    pub sediment_drag_coefficient: f32,
     /// Porosity-based drag applied to grid velocities.
     pub sediment_porosity_drag: f32,
 
@@ -2181,6 +2185,7 @@ impl GpuFlip3D {
             sediment_settling_velocity: 0.05,
             sediment_vorticity_lift: 1.5,
             sediment_vorticity_threshold: 2.0,
+            sediment_drag_coefficient: 10.0,  // Moderate drag - particles entrain in flow
             sediment_porosity_drag: 3.0,
             positions_buffer,
             velocities_buffer,
@@ -2363,6 +2368,41 @@ impl GpuFlip3D {
         );
     }
 
+    /// Run one simulation step without any readback (upload + GPU passes only).
+    pub fn step_no_readback(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        positions: &mut [glam::Vec3],
+        velocities: &mut [glam::Vec3],
+        c_matrices: &mut [glam::Mat3],
+        densities: &[f32],
+        cell_types: &[u32],
+        sdf: Option<&[f32]>,
+        bed_height: Option<&[f32]>,
+        dt: f32,
+        gravity: f32,
+        flow_accel: f32,
+        pressure_iterations: u32,
+    ) {
+        let _ = self.step_internal(
+            device,
+            queue,
+            positions,
+            velocities,
+            c_matrices,
+            densities,
+            cell_types,
+            sdf,
+            bed_height,
+            dt,
+            gravity,
+            flow_accel,
+            pressure_iterations,
+            ReadbackMode::None,
+        );
+    }
+
     /// Run one simulation step and schedule an async readback.
     ///
     /// Call `try_readback` on subsequent frames to pull results without stalling.
@@ -2418,6 +2458,17 @@ impl GpuFlip3D {
             }
         }
         None
+    }
+
+    /// Schedule a readback of the current GPU particle buffers without uploading.
+    pub fn request_readback(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        particle_count: usize,
+    ) -> bool {
+        let count = particle_count.min(self.max_particles);
+        self.schedule_readback(device, queue, count)
     }
 
     pub fn positions_buffer(&self) -> Arc<wgpu::Buffer> {
@@ -2851,7 +2902,8 @@ impl GpuFlip3D {
             friction_strength: self.sediment_friction_strength,
             vorticity_lift: self.sediment_vorticity_lift,
             vorticity_threshold: self.sediment_vorticity_threshold,
-            _pad: [0.0; 3],
+            drag_coefficient: self.sediment_drag_coefficient,
+            _pad: [0.0; 2],
         };
         let g2p_count = self.g2p.upload_params(queue, count, self.cell_size, dt, sediment_params);
 
@@ -3213,6 +3265,7 @@ impl GpuFlip3D {
         );
 
         match readback {
+            ReadbackMode::None => true,
             ReadbackMode::Sync => {
                 // Download results (velocities + C matrix + positions).
                 self.g2p.download(device, queue, g2p_count, velocities, c_matrices);

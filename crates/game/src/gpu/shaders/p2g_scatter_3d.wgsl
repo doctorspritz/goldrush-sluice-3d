@@ -104,10 +104,10 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     let home_k = u32(clamp(i32(pos.z / cell_size), 0, i32(depth) - 1));
     let home_idx = cell_index(home_i, home_j, home_k);
 
-    // Sediment does not contribute to grid momentum; count it and exit early.
+    // Count sediment but let it contribute to grid momentum like water
     if (density > 1.0) {
         atomicAdd(&sediment_count[home_idx], 1);
-        return;
+        // Don't return early - sediment participates in FLIP like water
     }
 
     // ========== U component (staggered on left YZ faces) ==========

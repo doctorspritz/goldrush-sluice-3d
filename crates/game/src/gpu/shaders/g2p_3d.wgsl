@@ -31,9 +31,9 @@ struct SedimentParams {
     friction_strength: f32,     // How much to damp when slow (0-1 per frame)
     vorticity_lift: f32,        // How much vorticity suspends sediment
     vorticity_threshold: f32,   // Minimum vorticity to lift
+    drag_coefficient: f32,      // Rate at which particle approaches water velocity (1/s)
     _pad0: f32,
     _pad1: f32,
-    _pad2: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -262,7 +262,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     let density = densities[id.x];
     let is_sediment = density > 1.0;
 
-    // ========== FLIP/PIC blend (same for water and sediment) ==========
+    // ========== FLIP/PIC blend ==========
     let grid_delta = new_velocity - old_grid_vel;
 
     // Clamp delta to prevent energy explosions (5 cells per frame max)
@@ -276,26 +276,51 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     let flip_velocity = old_particle_vel + clamped_delta;
     let pic_velocity = new_velocity;
 
-    var final_velocity = params.flip_ratio * flip_velocity + (1.0 - params.flip_ratio) * pic_velocity;
+    var final_velocity: vec3<f32>;
 
-    // ========== SEDIMENT: Simple friction model ==========
     if (is_sediment) {
-        // 1. Settling: sediment falls
-        final_velocity.y -= sediment_params.settling_velocity * params.dt;
+        // ========== DRAG-BASED ENTRAINMENT MODEL ==========
+        // Sediment is pulled toward water velocity by drag,
+        // while gravity (reduced by buoyancy) pulls it down.
+        // When water flows fast: drag wins → entrainment
+        // When water is slow: gravity wins → settling
 
-        // 2. Friction: when slow, damp velocity (creates clustering)
+        let water_vel = new_velocity;  // Current water velocity from grid
+        let particle_vel = old_particle_vel;
+
+        // Drag force: accelerate toward water velocity
+        // drag_blend = how much to blend toward water velocity per frame
+        // Scaled by 1/density so heavier particles feel less drag
+        let drag_rate = sediment_params.drag_coefficient / density;  // 1/s, scaled by mass
+        let drag_blend = min(drag_rate * params.dt, 0.9);  // Clamp to prevent overshoot
+
+        // Blend particle velocity toward water velocity
+        final_velocity = mix(particle_vel, water_vel, drag_blend);
+
+        // Buoyancy-reduced gravity: effective_g = g * (density - 1) / density
+        // For density 2.5: effective_g = 9.8 * 1.5/2.5 = 5.88 m/s²
+        // This accounts for buoyant force reducing apparent weight
+        let buoyancy_factor = (density - 1.0) / density;
+        let effective_gravity = -9.8 * buoyancy_factor;
+        final_velocity.y += effective_gravity * params.dt;
+    } else {
+        // Water: full FLIP/PIC blend
+        final_velocity = params.flip_ratio * flip_velocity + (1.0 - params.flip_ratio) * pic_velocity;
+    }
+
+    // ========== SEDIMENT: Friction for slow particles ==========
+    if (is_sediment) {
+        // Friction: when slow, damp velocity (creates clustering/settling)
         let speed = length(final_velocity);
         if (speed < sediment_params.friction_threshold && speed > 0.001) {
             // Smooth ramp: more friction as speed approaches zero
             let friction_factor = 1.0 - speed / sediment_params.friction_threshold;
             let friction = sediment_params.friction_strength * friction_factor;
-            // Damp horizontal more than vertical (let it settle)
-            final_velocity.x *= 1.0 - friction;
-            final_velocity.z *= 1.0 - friction;
-            final_velocity.y *= 1.0 - friction * 0.3;  // Less vertical damping
+            // Apply friction uniformly - drag model handles entrainment
+            final_velocity *= 1.0 - friction;
         }
 
-        // 3. Vorticity lift: turbulence keeps particles suspended
+        // Vorticity lift: turbulence can suspend particles
         let cell_i = clamp(i32(pos.x / cell_size), 0, width - 1);
         let cell_j = clamp(i32(pos.y / cell_size), 0, height - 1);
         let cell_k = clamp(i32(pos.z / cell_size), 0, depth - 1);
@@ -307,17 +332,12 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
             let lift = sediment_params.vorticity_lift * vort_excess * sediment_params.settling_velocity * params.dt;
             final_velocity.y += min(lift, sediment_params.settling_velocity * params.dt * 0.9);
         }
-
-        // Sediment keeps APIC C matrix - flows with water but settles
-        c_col0[id.x] = new_c_row0;
-        c_col1[id.x] = new_c_row1;
-        c_col2[id.x] = new_c_row2;
-    } else {
-        // Water keeps APIC C matrix
-        c_col0[id.x] = new_c_row0;
-        c_col1[id.x] = new_c_row1;
-        c_col2[id.x] = new_c_row2;
     }
+
+    // All particles keep APIC C matrix for angular momentum transfer
+    c_col0[id.x] = new_c_row0;
+    c_col1[id.x] = new_c_row1;
+    c_col2[id.x] = new_c_row2;
 
     // Safety clamp
     let final_speed = length(final_velocity);
