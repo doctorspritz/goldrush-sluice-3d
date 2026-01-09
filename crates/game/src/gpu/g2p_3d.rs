@@ -474,7 +474,7 @@ impl GpuG2p3D {
             depth: self.depth,
             particle_count,
             d_inv,
-            flip_ratio: 0.97,
+            flip_ratio: 0.99,
             dt,
             max_velocity: 50.0, // Reduced from 2000.0 to 50.0 for stability
             _padding: [0.0; 3],

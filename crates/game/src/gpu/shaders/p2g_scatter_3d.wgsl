@@ -286,6 +286,8 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    // Count water particle for density projection.
-    atomicAdd(&particle_count[home_idx], 1);
+    // Count water particle for density projection (exclude sediment).
+    if (density <= 1.0) {
+        atomicAdd(&particle_count[home_idx], 1);
+    }
 }
