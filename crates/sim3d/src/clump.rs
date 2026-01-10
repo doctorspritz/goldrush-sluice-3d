@@ -744,6 +744,41 @@ impl ClusterSimulation3D {
             clump.rotation = (delta * clump.rotation).normalize();
         }
 
+        // Safety: clamp deep SDF penetration to avoid runaway forces.
+        if let Some(sdf) = sdf_params {
+            let max_speed = 50.0;
+            for clump in &mut self.clumps {
+                let template = &self.templates[clump.template_idx];
+                let max_penetration = template.particle_radius * 0.5;
+                for offset in &template.local_offsets {
+                    let r = clump.rotation * *offset;
+                    let pos = clump.position + r;
+                    let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
+                        sdf.sdf,
+                        pos,
+                        sdf.grid_width,
+                        sdf.grid_height,
+                        sdf.grid_depth,
+                        sdf.cell_size,
+                    );
+                    let penetration = template.particle_radius - sdf_value;
+                    if penetration > max_penetration && sdf_normal.length_squared() > 1e-6 {
+                        let normal = sdf_normal.normalize();
+                        let excess = penetration - max_penetration;
+                        clump.position += normal * excess;
+                        let v_n = clump.velocity.dot(normal);
+                        if v_n < 0.0 {
+                            clump.velocity -= normal * v_n;
+                        }
+                    }
+                }
+                let speed_sq = clump.velocity.length_squared();
+                if speed_sq > max_speed * max_speed {
+                    clump.velocity = clump.velocity.normalize() * max_speed;
+                }
+            }
+        }
+
         let pre_correction: Vec<Vec3> = self.clumps.iter().map(|clump| clump.position).collect();
         self.resolve_dem_penetrations(6);
         self.resolve_bounds_positions();
@@ -1284,7 +1319,7 @@ fn sample_sdf_with_gradient(
     let grad_y = (sample_at(0.0, h, 0.0) - sample_at(0.0, -h, 0.0)) / (2.0 * h * cell_size);
     let grad_z = (sample_at(0.0, 0.0, h) - sample_at(0.0, 0.0, -h)) / (2.0 * h * cell_size);
 
-    (sdf_value * cell_size, Vec3::new(grad_x, grad_y, grad_z))
+    (sdf_value, Vec3::new(grad_x, grad_y, grad_z))
 }
 
 #[cfg(test)]

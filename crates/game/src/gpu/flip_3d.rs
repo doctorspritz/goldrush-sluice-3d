@@ -15,6 +15,28 @@ use wgpu::util::DeviceExt;
 use bytemuck::{Pod, Zeroable};
 use std::sync::{mpsc, Arc};
 
+const GRAVEL_OBSTACLE_MAX: u32 = 2048;
+
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct GravelObstacle {
+    pub position: [f32; 3],
+    pub radius: f32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct GravelObstacleParams3D {
+    width: u32,
+    height: u32,
+    depth: u32,
+    obstacle_count: u32,
+    cell_size: f32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+}
+
 /// Gravity application parameters
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -555,6 +577,15 @@ pub struct GpuFlip3D {
     sdf_buffer: wgpu::Buffer,
     bed_height_buffer: Arc<wgpu::Buffer>,
     sdf_uploaded: bool,
+
+    // Gravel obstacles (dynamic solids)
+    gravel_obstacle_pipeline: wgpu::ComputePipeline,
+    gravel_obstacle_bind_group: wgpu::BindGroup,
+    gravel_obstacle_params_buffer: wgpu::Buffer,
+    gravel_obstacle_buffer: wgpu::Buffer,
+    gravel_obstacle_count: u32,
+    gravel_porosity_pipeline: wgpu::ComputePipeline,
+    gravel_porosity_bind_group: wgpu::BindGroup,
 
     // Maximum particles supported
     max_particles: usize,
@@ -1946,10 +1977,24 @@ impl GpuFlip3D {
             label: Some("Sediment Cell Type 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sediment_cell_type_3d.wgsl").into()),
         });
+        let gravel_obstacle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Gravel Obstacle 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/gravel_obstacle_3d.wgsl").into()),
+        });
+        let gravel_porosity_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Gravel Porosity 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/gravel_porosity_3d.wgsl").into()),
+        });
 
         let sediment_cell_type_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Sediment Cell Type Params 3D"),
             size: std::mem::size_of::<SedimentCellTypeParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let gravel_obstacle_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Gravel Obstacle Params 3D"),
+            size: std::mem::size_of::<GravelObstacleParams3D>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1999,6 +2044,76 @@ impl GpuFlip3D {
                 },
             ],
         });
+        let gravel_obstacle_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Gravel Obstacle 3D Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let gravel_porosity_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Gravel Porosity 3D Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
 
         let sediment_cell_type_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Sediment Cell Type 3D Bind Group"),
@@ -2010,10 +2125,44 @@ impl GpuFlip3D {
                 wgpu::BindGroupEntry { binding: 3, resource: p2g.particle_count_buffer.as_entire_binding() },
             ],
         });
+        let gravel_obstacle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Gravel Obstacle Buffer"),
+            size: (std::mem::size_of::<GravelObstacle>() * GRAVEL_OBSTACLE_MAX as usize) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let gravel_obstacle_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Gravel Obstacle 3D Bind Group"),
+            layout: &gravel_obstacle_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: gravel_obstacle_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: pressure.cell_type_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: gravel_obstacle_buffer.as_entire_binding() },
+            ],
+        });
+        let gravel_porosity_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Gravel Porosity 3D Bind Group"),
+            layout: &gravel_porosity_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: gravel_obstacle_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: sediment_fraction_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: gravel_obstacle_buffer.as_entire_binding() },
+            ],
+        });
 
         let sediment_cell_type_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Sediment Cell Type 3D Pipeline Layout"),
             bind_group_layouts: &[&sediment_cell_type_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        let gravel_obstacle_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Gravel Obstacle 3D Pipeline Layout"),
+            bind_group_layouts: &[&gravel_obstacle_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        let gravel_porosity_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Gravel Porosity 3D Pipeline Layout"),
+            bind_group_layouts: &[&gravel_porosity_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -2022,6 +2171,22 @@ impl GpuFlip3D {
             layout: Some(&sediment_cell_type_pipeline_layout),
             module: &sediment_cell_type_shader,
             entry_point: Some("build_sediment_cell_type"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let gravel_obstacle_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Gravel Obstacle 3D Pipeline"),
+            layout: Some(&gravel_obstacle_pipeline_layout),
+            module: &gravel_obstacle_shader,
+            entry_point: Some("build_gravel_obstacles"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let gravel_porosity_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Gravel Porosity 3D Pipeline"),
+            layout: Some(&gravel_porosity_pipeline_layout),
+            module: &gravel_porosity_shader,
+            entry_point: Some("apply_gravel_porosity"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -2286,6 +2451,13 @@ impl GpuFlip3D {
             sediment_density_error_pipeline,
             sediment_density_error_bind_group,
             sediment_density_correct_pipeline,
+            gravel_obstacle_pipeline,
+            gravel_obstacle_bind_group,
+            gravel_porosity_pipeline,
+            gravel_porosity_bind_group,
+            gravel_obstacle_params_buffer,
+            gravel_obstacle_buffer,
+            gravel_obstacle_count: 0,
             sdf_collision_pipeline,
             sdf_collision_bind_group,
             sdf_collision_params_buffer,
@@ -2315,6 +2487,73 @@ impl GpuFlip3D {
 
         queue.write_buffer(&self.sdf_buffer, 0, bytemuck::cast_slice(sdf));
         self.sdf_uploaded = true;
+    }
+
+    /// Force upload SDF data to GPU (for dynamic obstacles).
+    pub fn upload_sdf_force(&mut self, queue: &wgpu::Queue, sdf: &[f32]) {
+        let expected_sdf_len = (self.width * self.height * self.depth) as usize;
+        assert_eq!(
+            sdf.len(),
+            expected_sdf_len,
+            "SDF size mismatch: got {}, expected {}",
+            sdf.len(),
+            expected_sdf_len
+        );
+        queue.write_buffer(&self.sdf_buffer, 0, bytemuck::cast_slice(sdf));
+        self.sdf_uploaded = true;
+    }
+
+    pub fn upload_gravel_obstacles(&mut self, queue: &wgpu::Queue, obstacles: &[GravelObstacle]) {
+        let count = obstacles.len().min(GRAVEL_OBSTACLE_MAX as usize);
+        if count == 0 {
+            self.gravel_obstacle_count = 0;
+            return;
+        }
+        queue.write_buffer(
+            &self.gravel_obstacle_buffer,
+            0,
+            bytemuck::cast_slice(&obstacles[..count]),
+        );
+        self.gravel_obstacle_count = count as u32;
+    }
+
+    fn apply_gravel_obstacles(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.gravel_obstacle_count == 0 {
+            return;
+        }
+
+        let params = GravelObstacleParams3D {
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+            obstacle_count: self.gravel_obstacle_count,
+            cell_size: self.cell_size,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+        };
+        queue.write_buffer(
+            &self.gravel_obstacle_params_buffer,
+            0,
+            bytemuck::bytes_of(&params),
+        );
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Gravel Obstacle Encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Gravel Obstacle Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.gravel_obstacle_pipeline);
+            pass.set_bind_group(0, &self.gravel_obstacle_bind_group, &[]);
+            let workgroups_x = (self.width + 7) / 8;
+            let workgroups_y = (self.height + 7) / 8;
+            let workgroups_z = (self.depth + 3) / 4;
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
     /// Run one simulation step (sync readback).
@@ -2590,6 +2829,7 @@ impl GpuFlip3D {
         }
 
         self.upload_bc_and_cell_types(queue, cell_types);
+        self.apply_gravel_obstacles(device, queue);
         self.p2g.prepare(queue, particle_count, self.cell_size);
 
         let _ = self.run_gpu_passes(
@@ -2649,6 +2889,18 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.sediment_fraction_pipeline);
             pass.set_bind_group(0, &self.sediment_fraction_bind_group, &[]);
+            let workgroups_x = (self.width + 7) / 8;
+            let workgroups_y = (self.height + 7) / 8;
+            let workgroups_z = (self.depth + 3) / 4;
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+        if self.gravel_obstacle_count > 0 {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Gravel Porosity 3D Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.gravel_porosity_pipeline);
+            pass.set_bind_group(0, &self.gravel_porosity_bind_group, &[]);
             let workgroups_x = (self.width + 7) / 8;
             let workgroups_y = (self.height + 7) / 8;
             let workgroups_z = (self.depth + 3) / 4;
@@ -3283,6 +3535,7 @@ impl GpuFlip3D {
         }
 
         self.upload_bc_and_cell_types(queue, cell_types);
+        self.apply_gravel_obstacles(device, queue);
 
         // 1. Upload particles and run P2G
         let count = self.p2g.upload_particles(

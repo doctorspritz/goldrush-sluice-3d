@@ -290,8 +290,6 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    let density = densities[id.x];
-    let is_sediment = density > 1.0;
     let is_gold = density >= sediment_params.gold_density_threshold;
     // ========== FLIP/PIC blend ==========
     let grid_delta = new_velocity - old_grid_vel;

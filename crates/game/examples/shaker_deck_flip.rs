@@ -1,16 +1,15 @@
-//! Friction-Only Sediment Sluice Demo
+//! Shaker Deck FLIP Demo
 //!
-//! Clean example using the new sluice_geometry and water_heightfield modules
-//! with friction-only sediment physics.
+//! Minimal FLIP setup for a perforated shaker deck with a gutter below.
 //!
-//! Run with: cargo run --example friction_sluice --release
+//! Run with: cargo run --example shaker_deck_flip --release
 
 use bytemuck::{Pod, Zeroable};
-use game::gpu::flip_3d::GpuFlip3D;
+use game::gpu::flip_3d::{GpuFlip3D, GravelObstacle};
 use game::gpu::fluid_renderer::ScreenSpaceFluidRenderer;
-use game::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder, SluiceVertex};
-use glam::{Mat3, Mat4, Vec3};
-use sim3d::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, SdfParams};
+use game::sluice_geometry::SluiceVertex;
+use glam::{Mat3, Mat4, Quat, Vec3};
+use sim3d::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, Grid3D, SdfParams};
 use std::sync::Arc;
 use std::time::Instant;
 use wgpu::util::DeviceExt;
@@ -23,24 +22,43 @@ use winit::{
 };
 
 // Grid configuration
-const CELL_SIZE: f32 = 0.01;
-const SLUICE_WIDTH: usize = 150;   // 1.50 m
-const EXIT_BUFFER: usize = 12;
-const GRID_WIDTH: usize = SLUICE_WIDTH + EXIT_BUFFER;
-const GRID_DEPTH: usize = 40;      // 0.40 m
-const GRID_HEIGHT: usize = 52;     // 0.52 m
-const MAX_PARTICLES: usize = 300_000;
+const CELL_SIZE: f32 = 0.05;
+const GRID_WIDTH: usize = 140;
+const GRID_DEPTH: usize = 64;
+const GRID_HEIGHT: usize = 60;
+const MAX_PARTICLES: usize = 80_000;
+
+// Shaker deck geometry (meters)
+const DECK_LENGTH: f32 = 6.0;
+const DECK_WIDTH: f32 = 2.2;
+const DECK_ORIGIN_X: f32 = 0.4;
+const DECK_ORIGIN_Y: f32 = 1.6;
+const DECK_ORIGIN_Z: f32 = 0.4;
+const DECK_ANGLE_DEG: f32 = 12.0;
+const DECK_THICKNESS: f32 = 0.14;
+const DECK_WALL_HEIGHT: f32 = 0.25;
+const DECK_WALL_THICKNESS: f32 = 0.08;
+const DECK_SAFETY_WALL_HEIGHT: f32 = 0.6;
+const GRAVEL_DECK_PAD: f32 = CELL_SIZE * 2.0;
+const HOLE_SPACING: f32 = 0.18;
+const HOLE_RADIUS: f32 = 0.02;
+
+const GUTTER_OFFSET_CELLS: f32 = 2.0;
+const GUTTER_WALL_HEIGHT: f32 = 0.3;
+const GUTTER_WALL_THICKNESS: f32 = 0.1;
 
 // Simulation
 const GRAVITY: f32 = -9.8;
-const PRESSURE_ITERS: u32 = 120;
-const SUBSTEPS: u32 = 2;
-const TRACER_INTERVAL_FRAMES: u32 = 300; // 5s at 60 FPS
-const TRACER_COUNT: u32 = 3;
+const PRESSURE_ITERS: u32 = 50;
+const SUBSTEPS: u32 = 1;
+
+const SPRAY_BAR_COUNT: usize = 4;
+const SPRAY_BAR_HEIGHT: f32 = 0.5;
+const GRAVEL_ONLY: bool = false;
 
 // Emission rates (10-20% solids by mass)
-const WATER_EMIT_RATE: usize = 200;
-const SEDIMENT_EMIT_RATE: usize = 2;
+const WATER_EMIT_RATE: usize = 20;
+const SEDIMENT_EMIT_RATE: usize = 0;
 const GPU_SYNC_STRIDE: u32 = 4;       // GPU readback cadence (frames)
 
 // Grain sizing (relative to cell size)
@@ -50,9 +68,25 @@ const GANGUE_DENSITY: f32 = 2.7;
 const GOLD_DENSITY: f32 = 19.3;
 const GOLD_FRACTION: f32 = 0.05; // 5% of sediment spawns as gold
 
+const GRAVEL_RADII: [f32; 5] = [0.03, 0.003, 0.0025, 0.002, 0.0015];
+const LARGE_GRAVEL_CHANCE: f32 = 0.02;
+const GRAVEL_OBSTACLE_RADIUS_CUTOFF: f32 = 0.003;
+const GRAVEL_COUNTS: [usize; 4] = [0, 0, 0, 0];
+const NUGGET_RADII: [f32; 2] = [0.02, 0.012];
+const NUGGET_COUNTS: [usize; 2] = [0, 0];
+
+const GRAVEL_STREAM_ENABLED: bool = true;
+const GRAVEL_STREAM_INTERVAL_SECONDS: f32 = 0.01;
+const GRAVEL_STREAM_BATCH: usize = 50;
+const GRAVEL_STREAM_GAP_MULTIPLIER: f32 = 2.2;
+const GRAVEL_WATER_DRAG: f32 = 2.0;
+
 // Sediment colors
 const GANGUE_COLOR: [f32; 4] = [0.6, 0.4, 0.2, 1.0];
 const GOLD_COLOR: [f32; 4] = [0.95, 0.85, 0.2, 1.0];
+const GRAVEL_COLOR: [f32; 4] = [0.38, 0.35, 0.32, 1.0];
+const GRAVEL_VISUAL_SCALE: f32 = 1.0;
+const NUGGET_VISUAL_SCALE: f32 = 1.0;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -93,8 +127,9 @@ struct GpuState {
     // Buffers
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
-    sluice_vertex_buffer: wgpu::Buffer,
-    sluice_index_buffer: wgpu::Buffer,
+    deck_vertex_buffer: wgpu::Buffer,
+    deck_index_buffer: wgpu::Buffer,
+    deck_index_count: u32,
     rock_mesh_vertex_buffer: wgpu::Buffer,
     rock_mesh_vertex_count: u32,
     sediment_instance_buffer: wgpu::Buffer,
@@ -109,17 +144,21 @@ struct App {
     gpu: Option<GpuState>,
     gpu_flip: Option<GpuFlip3D>,
     sim: FlipSimulation3D,
-    sluice_builder: SluiceGeometryBuilder,
+    deck_mesh: DeckMesh,
     fluid_renderer: Option<ScreenSpaceFluidRenderer>,
     dem: ClusterSimulation3D,
+    dem_gravel: ClusterSimulation3D,
+    gravel_sdf: Vec<f32>,
     gangue_template_idx: usize,
     gold_template_idx: usize,
+    gravel_template_indices: Vec<usize>,
+    nugget_template_indices: Vec<usize>,
 
     // Persistent FLIP<->DEM mapping
     // sediment_clump_idx[i] = index into dem.clumps for sediment particle i
     // We track sediment particles separately from water
     sediment_flip_indices: Vec<usize>,  // FLIP particle indices that are sediment
-    tracer_particles: Vec<TracerInfo>,
+    sediment_clump_indices: Vec<usize>,
 
     // Particle data for GPU transfer
     positions: Vec<Vec3>,
@@ -148,92 +187,78 @@ struct App {
 
     // Timing
     start_time: Instant,
+    gravel_stream_timer: f32,
     last_fps_time: Instant,
     fps_frame_count: u32,
     current_fps: f32,
 }
 
-struct TracerInfo {
-    index: usize,
-    spawn_frame: u32,
-}
-struct FlowMetrics {
-    sample_count: usize,
-    vel_mean: f32,
-    depth_p50: f32,
-    depth_p90: f32,
-    flow_width: f32,
-    flow_rate_m3s: f32,
-    flow_rate_m3min: f32,
-    sample_x_min: f32,
-    sample_x_max: f32,
+struct DeckMesh {
+    vertices: Vec<SluiceVertex>,
+    indices: Vec<u32>,
 }
 
 impl App {
     fn new() -> Self {
-        // Configure sluice geometry - smooth ramp feed, then riffles
-        // Sluice ends before the grid boundary, leaving buffer zone for clean outflow
-        let sluice_config = SluiceConfig {
-            grid_width: SLUICE_WIDTH,  // Sluice width, not full grid width
-            grid_height: GRID_HEIGHT,
-            grid_depth: GRID_DEPTH,
-            cell_size: CELL_SIZE,
-            // slope: 10 deg (drop 26 cells over 150)
-            floor_height_left: 30,
-            floor_height_right: 4,
-            // riffles: spacing 0.32 m, height 0.03 m
-            riffle_spacing: 32,
-            riffle_height: 3,
-            riffle_thickness: 2,
-            riffle_start_x: 40,   // 0.40 m slick plate
-            riffle_end_pad: 12,   // 0.12 m tail clearance
-            // wall height above floor+riffle: (4 + 8) * 0.01 = 0.12 m (H ~ 0.3W)
-            wall_margin: 8,
-            exit_width_fraction: 1.0,
-            exit_height: 12,
-            ..Default::default()
-        };
-
-        let sluice_builder = SluiceGeometryBuilder::new(sluice_config.clone());
+        let deck_slope = -DECK_ANGLE_DEG.to_radians().tan();
+        let gutter_floor_y = gutter_floor_y(deck_slope);
+        let deck_mesh = build_deck_mesh(deck_slope, gutter_floor_y);
+        let gravel_sdf = build_gravel_sdf(deck_slope, gutter_floor_y);
 
         // Create simulation
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
         sim.pressure_iterations = PRESSURE_ITERS as usize;
 
-        // Mark solid cells from sluice geometry
+        // Mark solid cells for deck plate + gutter channel
         let mut solid_count = 0;
-        for (i, j, k) in sluice_builder.solid_cells() {
-            sim.grid.set_solid(i, j, k);
-            solid_count += 1;
+        for k in 0..GRID_DEPTH {
+            for j in 0..GRID_HEIGHT {
+                for i in 0..GRID_WIDTH {
+                    let x = (i as f32 + 0.5) * CELL_SIZE;
+                    let y = (j as f32 + 0.5) * CELL_SIZE;
+                    let z = (k as f32 + 0.5) * CELL_SIZE;
+
+                    if x < DECK_ORIGIN_X
+                        || x > DECK_ORIGIN_X + DECK_LENGTH
+                        || z < DECK_ORIGIN_Z
+                        || z > DECK_ORIGIN_Z + DECK_WIDTH
+                    {
+                        continue;
+                    }
+
+                    let deck_height = DECK_ORIGIN_Y + deck_slope * (x - DECK_ORIGIN_X);
+                    let deck_bottom = deck_height - DECK_THICKNESS;
+                    let in_plate = y <= deck_height && y >= deck_bottom;
+                    let mut solid = false;
+
+                    if in_plate && !in_hole(x, z) {
+                        solid = true;
+                    }
+
+                    if y <= gutter_floor_y {
+                        solid = true;
+                    }
+
+                    let wall_bottom = gutter_floor_y;
+                    let wall_top = deck_height + DECK_WALL_HEIGHT;
+                    let near_side_wall = z <= DECK_ORIGIN_Z + DECK_WALL_THICKNESS
+                        || z >= DECK_ORIGIN_Z + DECK_WIDTH - DECK_WALL_THICKNESS;
+                    let near_back_wall = x <= DECK_ORIGIN_X + GUTTER_WALL_THICKNESS;
+                    if (near_side_wall || near_back_wall) && y >= wall_bottom && y <= wall_top {
+                        solid = true;
+                    }
+
+                    if solid {
+                        sim.grid.set_solid(i, j, k);
+                        solid_count += 1;
+                    }
+                }
+            }
         }
-        println!("Sluice: Marked {} solid cells", solid_count);
+        println!("Deck solids: {}", solid_count);
 
         // Compute SDF from solid cells
         sim.grid.compute_sdf();
-
-        // Debug: Check SDF values
-        let sdf_min = sim.grid.sdf.iter().cloned().fold(f32::INFINITY, f32::min);
-        let sdf_max = sim.grid.sdf.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let sdf_neg_count = sim.grid.sdf.iter().filter(|&&v| v < 0.0).count();
-        println!("SDF: min={:.3}, max={:.3}, negative_count={}", sdf_min, sdf_max, sdf_neg_count);
-        let sample_k = GRID_DEPTH / 2;
-        for &(label, sample_i) in &[("emit", 2usize), ("riffle", sluice_config.riffle_start_x)] {
-            let floor_j = sluice_config.floor_height_at(sample_i);
-            let idx = |i: usize, j: usize, k: usize| {
-                k * GRID_WIDTH * GRID_HEIGHT + j * GRID_WIDTH + i
-            };
-            let sdf_floor = sim.grid.sdf[idx(sample_i, floor_j, sample_k)];
-            let sdf_above = sim.grid.sdf[idx(sample_i, floor_j + 1, sample_k)];
-            let sdf_below = if floor_j > 0 {
-                sim.grid.sdf[idx(sample_i, floor_j - 1, sample_k)]
-            } else {
-                0.0
-            };
-            println!(
-                "SDF sample {}: i={} j={} k={} | sdf[j-1]={:.3} sdf[j]={:.3} sdf[j+1]={:.3}",
-                label, sample_i, floor_j, sample_k, sdf_below, sdf_floor, sdf_above
-            );
-        }
 
 
         // DEM for sediment - using existing ClusterSimulation3D with single-sphere clumps
@@ -283,18 +308,61 @@ impl App {
         );
         let gold_template_idx = dem.add_template(gold_template);
 
-        Self {
+        let mut dem_gravel = ClusterSimulation3D::new(bounds_min, bounds_max);
+        dem_gravel.gravity = Vec3::new(0.0, -9.8, 0.0);
+        dem_gravel.restitution = 0.2;
+        dem_gravel.friction = 0.3;
+        dem_gravel.floor_friction = 0.3;
+        dem_gravel.normal_stiffness = 6000.0;
+        dem_gravel.tangential_stiffness = 3500.0;
+        dem_gravel.rolling_friction = 0.08;
+        // Use simple integration + SDF push-out (avoid stiff DEM spring explosions).
+        dem_gravel.use_dem = false;
+
+        let mut gravel_template_indices = Vec::new();
+        for (idx, radius) in GRAVEL_RADII.iter().enumerate() {
+            let mass = GANGUE_DENSITY
+                * (4.0 / 3.0)
+                * std::f32::consts::PI
+                * radius.powi(3);
+            let template = ClumpTemplate3D::generate(
+                ClumpShape3D::Irregular {
+                    count: 6,
+                    seed: 100 + idx as u64,
+                    style: sim3d::IrregularStyle3D::Sharp,
+                },
+                *radius,
+                mass,
+            );
+            gravel_template_indices.push(dem_gravel.add_template(template));
+        }
+
+        let mut nugget_template_indices = Vec::new();
+        for (idx, radius) in NUGGET_RADII.iter().enumerate() {
+            let mass = GOLD_DENSITY
+                * (4.0 / 3.0)
+                * std::f32::consts::PI
+                * radius.powi(3);
+            let template = ClumpTemplate3D::generate(ClumpShape3D::Flat4, *radius, mass);
+            nugget_template_indices.push(dem_gravel.add_template(template));
+        }
+
+        let mut app = Self {
             window: None,
             gpu: None,
             gpu_flip: None,
             sim,
-            sluice_builder,
+            deck_mesh,
             fluid_renderer: None,
             dem,
+            dem_gravel,
+            gravel_sdf,
             gangue_template_idx,
             gold_template_idx,
+            gravel_template_indices,
+            nugget_template_indices,
             sediment_flip_indices: Vec::new(),
-            tracer_particles: Vec::new(),
+            sediment_clump_indices: Vec::new(),
             positions: Vec::new(),
             velocities: Vec::new(),
             affine_vels: Vec::new(),
@@ -320,122 +388,242 @@ impl App {
             last_fps_time: Instant::now(),
             fps_frame_count: 0,
             current_fps: 0.0,
-        }
+            gravel_stream_timer: 0.0,
+        };
+
+        app.spawn_gravel_and_nuggets();
+        app
     }
 
-    /// Get the floor surface height (top of solid floor) at a given X position.
-    /// Note: floor_height_* is the cell index of the top solid cell,
-    /// so the floor surface is at (floor_height + 1) * cell_size.
-    fn floor_height_at(&self, x: f32) -> f32 {
-        let config = self.sluice_builder.config();
-        let t = x / (config.grid_width as f32 * config.cell_size);
-        let left = (config.floor_height_left + 1) as f32 * config.cell_size;
-        let right = (config.floor_height_right + 1) as f32 * config.cell_size;
-        left * (1.0 - t) + right * t
+    fn deck_height_at(&self, x: f32) -> f32 {
+        let slope = -DECK_ANGLE_DEG.to_radians().tan();
+        DECK_ORIGIN_Y + slope * (x - DECK_ORIGIN_X)
     }
 
     fn flow_accel(&self) -> f32 {
-        let config = self.sluice_builder.config();
-        let rise = (config.floor_height_left as f32 - config.floor_height_right as f32) * config.cell_size;
-        let run = config.grid_width as f32 * config.cell_size;
-        let slope = rise / run;
+        let slope = DECK_ANGLE_DEG.to_radians().tan();
         9.8 * slope
     }
 
-    fn compute_flow_metrics(&self) -> FlowMetrics {
-        let config = self.sluice_builder.config();
-        let cell_size = config.cell_size;
-        let sample_x_min = 6.0 * cell_size;
-        let mut sample_x_max = (config.riffle_start_x.saturating_sub(4) as f32) * cell_size;
-        if sample_x_max <= sample_x_min {
-            sample_x_max = (config.riffle_start_x as f32 * 0.5) * cell_size;
-        }
-        let sample_x_max = sample_x_max.min(config.grid_width as f32 * cell_size);
-        let i_min = (sample_x_min / cell_size).floor() as i32;
-        let i_max = (sample_x_max / cell_size).floor() as i32;
-        let i_min = i_min.clamp(0, (config.grid_width as i32 - 1).max(0));
-        let i_max = i_max.clamp(0, (config.grid_width as i32 - 1).max(0));
-        let i_count = (i_max - i_min + 1).max(0) as usize;
-        let depth_count = config.grid_depth.max(1);
-        let mut max_depth_cells = vec![-1i32; i_count * depth_count];
+    fn spawn_gravel_and_nuggets(&mut self) {
+        // Spawn a tighter, single-stream band near the top of the deck.
+        let x_min = DECK_ORIGIN_X + 0.4;
+        let x_max = DECK_ORIGIN_X + DECK_LENGTH * 0.18;
+        let z_center = DECK_ORIGIN_Z + DECK_WIDTH * 0.5;
+        let z_span = 0.12;
+        let z_min = z_center - z_span;
+        let z_max = z_center + z_span;
+        let mut spawn_positions: Vec<(Vec3, f32)> = Vec::new();
+        let max_attempts = 32;
 
-        let mut vel_sum = 0.0f32;
-        let mut vel_count = 0usize;
-        let mut min_k = config.grid_depth as i32;
-        let mut max_k = -1i32;
-
-        for p in &self.sim.particles.list {
-            if p.density > 1.0 {
-                continue;
-            }
-            if p.position.x < sample_x_min || p.position.x > sample_x_max {
-                continue;
-            }
-            let i = (p.position.x / cell_size).floor() as i32;
-            let j = (p.position.y / cell_size).floor() as i32;
-            let k = (p.position.z / cell_size).floor() as i32;
-            if i < i_min || i > i_max || k < 0 || k >= config.grid_depth as i32 {
-                continue;
-            }
-            let floor_j = config.floor_height_at(i as usize) as i32;
-            let depth_cells = j - floor_j;
-            if depth_cells > 0 {
-                let idx = (i - i_min) as usize * depth_count + k as usize;
-                if depth_cells > max_depth_cells[idx] {
-                    max_depth_cells[idx] = depth_cells;
+        for (template_idx, count) in self.gravel_template_indices.iter().zip(GRAVEL_COUNTS) {
+            let radius = self.dem_gravel.templates[*template_idx].particle_radius;
+            for _ in 0..count {
+                let mut spawned = false;
+                for _ in 0..max_attempts {
+                    let x = x_min + rand_float() * (x_max - x_min);
+                    let z = z_min + rand_float() * (z_max - z_min);
+                    let y = self.deck_height_at(x) + radius + 0.28 + rand_float() * 0.18;
+                    let pos = Vec3::new(x, y, z);
+                    if spawn_positions.iter().all(|(p, r)| {
+                        let min_sep = (radius + *r) * 2.2;
+                        (pos - *p).length_squared() > min_sep * min_sep
+                    }) {
+                        self.dem_gravel.spawn(*template_idx, pos, Vec3::ZERO);
+                        spawn_positions.push((pos, radius));
+                        spawned = true;
+                        break;
+                    }
                 }
-                min_k = min_k.min(k);
-                max_k = max_k.max(k);
-            }
-            if p.velocity.x > 0.0 {
-                vel_sum += p.velocity.x;
-                vel_count += 1;
+                if !spawned {
+                    break;
+                }
             }
         }
 
-        let mut depths: Vec<f32> = Vec::new();
-        for depth_cells in max_depth_cells {
-            if depth_cells > 0 {
-                depths.push(depth_cells as f32 * cell_size);
+        for (template_idx, count) in self.nugget_template_indices.iter().zip(NUGGET_COUNTS) {
+            let radius = self.dem_gravel.templates[*template_idx].particle_radius;
+            for _ in 0..count {
+                let mut spawned = false;
+                for _ in 0..max_attempts {
+                    let x = x_min + rand_float() * (x_max - x_min);
+                    let z = z_min + rand_float() * (z_max - z_min);
+                    let y = self.deck_height_at(x) + radius + 0.20 + rand_float() * 0.12;
+                    let pos = Vec3::new(x, y, z);
+                    if spawn_positions.iter().all(|(p, r)| {
+                        let min_sep = (radius + *r) * 2.2;
+                        (pos - *p).length_squared() > min_sep * min_sep
+                    }) {
+                        self.dem_gravel.spawn(*template_idx, pos, Vec3::ZERO);
+                        spawn_positions.push((pos, radius));
+                        spawned = true;
+                        break;
+                    }
+                }
+                if !spawned {
+                    break;
+                }
             }
         }
+    }
 
-        let (depth_p50, depth_p90) = if depths.is_empty() {
-            (0.0, 0.0)
-        } else {
-            depths.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let mid_idx = depths.len() / 2;
-            let p90_idx = ((depths.len() as f32 - 1.0) * 0.9).round() as usize;
-            (
-                depths[mid_idx],
-                depths[p90_idx.min(depths.len() - 1)],
-            )
-        };
-        let vel_mean = if vel_count > 0 {
-            vel_sum / vel_count as f32
-        } else {
-            0.0
-        };
-
-        let flow_width = if max_k >= min_k {
-            (max_k - min_k + 1) as f32 * cell_size
-        } else {
-            0.0
-        };
-        let flow_rate_m3s = vel_mean * flow_width * depth_p90;
-        let flow_rate_m3min = flow_rate_m3s * 60.0;
-
-        FlowMetrics {
-            sample_count: depths.len(),
-            vel_mean,
-            depth_p50,
-            depth_p90,
-            flow_width,
-            flow_rate_m3s,
-            flow_rate_m3min,
-            sample_x_min,
-            sample_x_max,
+    fn emit_gravel_stream(&mut self) {
+        if self.gravel_stream_timer < GRAVEL_STREAM_INTERVAL_SECONDS {
+            return;
         }
+        self.gravel_stream_timer -= GRAVEL_STREAM_INTERVAL_SECONDS;
+
+        // Spawn a tighter, single-stream band near the top of the deck.
+        let x_min = DECK_ORIGIN_X + 0.4;
+        let x_max = DECK_ORIGIN_X + DECK_LENGTH * 0.18;
+        let z_center = DECK_ORIGIN_Z + DECK_WIDTH * 0.5;
+        let z_span = DECK_WIDTH * 0.38;
+        let z_min = z_center - z_span;
+        let z_max = z_center + z_span;
+
+        let max_attempts = 32;
+        let template_count = self.gravel_template_indices.len();
+        if template_count == 0 {
+            return;
+        }
+
+        for _ in 0..GRAVEL_STREAM_BATCH {
+            let template_idx = if template_count > 1 && rand_float() < LARGE_GRAVEL_CHANCE {
+                self.gravel_template_indices[0]
+            } else {
+                let small_count = template_count.saturating_sub(1).max(1);
+                let emit_idx = 1 + ((rand_float() * small_count as f32) as usize % small_count);
+                self.gravel_template_indices[emit_idx]
+            };
+            let radius = self.dem_gravel.templates[template_idx].particle_radius;
+            for _ in 0..max_attempts {
+                let x = x_min + rand_float() * (x_max - x_min);
+                let z = z_min + rand_float() * (z_max - z_min);
+                let y = self.deck_height_at(x) + radius + 0.28 + rand_float() * 0.18;
+                let pos = Vec3::new(x, y, z);
+                let clear = self.dem_gravel.clumps.iter().all(|clump| {
+                    let other = &self.dem_gravel.templates[clump.template_idx];
+                    let min_sep = (radius + other.particle_radius) * GRAVEL_STREAM_GAP_MULTIPLIER;
+                    (pos - clump.position).length_squared() > min_sep * min_sep
+                });
+                if clear {
+                    self.dem_gravel.spawn(template_idx, pos, Vec3::ZERO);
+                    break;
+                }
+            }
+        }
+    }
+
+    fn integrate_gravel(&mut self, dt: f32) {
+        // Simple integration without clump-clump impulses to avoid energy injection.
+        let bounds_min = self.dem_gravel.bounds_min;
+        let bounds_max = self.dem_gravel.bounds_max;
+        let downhill_accel = self.flow_accel() * 0.6;
+        let deck_origin_y = DECK_ORIGIN_Y;
+        let deck_origin_x = DECK_ORIGIN_X;
+        let deck_slope = -DECK_ANGLE_DEG.to_radians().tan();
+        let grid = &self.sim.grid;
+        for clump in &mut self.dem_gravel.clumps {
+            let template = &self.dem_gravel.templates[clump.template_idx];
+            let deck_height = deck_origin_y + deck_slope * (clump.position.x - deck_origin_x);
+            if clump.position.y <= deck_height + CELL_SIZE * 2.0 {
+                clump.velocity.x += downhill_accel * dt;
+                if in_hole(clump.position.x, clump.position.z) && clump.velocity.y < 0.0 {
+                    // Grate impact: damp vertical velocity and add a small lateral scatter.
+                    clump.velocity.y *= 0.4;
+                    let jitter = 0.15 + rand_float() * 0.1;
+                    let dir = if rand_float() > 0.5 { 1.0 } else { -1.0 };
+                    clump.velocity.x += jitter * dir;
+                    clump.velocity.z += jitter * (1.0 - rand_float() * 2.0);
+                }
+            }
+            if !GRAVEL_ONLY {
+                let water_vel = sample_grid_velocity(grid, clump.position);
+                let drag = (water_vel - clump.velocity) * (GRAVEL_WATER_DRAG * dt);
+                clump.velocity += drag;
+            }
+            clump.velocity += self.dem_gravel.gravity * dt;
+            clump.position += clump.velocity * dt;
+            if clump.angular_velocity.length_squared() > 1.0e-10 {
+                let delta = Quat::from_scaled_axis(clump.angular_velocity * dt);
+                clump.rotation = (delta * clump.rotation).normalize();
+            }
+
+            // Soft bounds clamp to keep gravel within the sim box.
+            let r = template.particle_radius;
+            if clump.position.x < bounds_min.x + r {
+                clump.position.x = bounds_min.x + r;
+                clump.velocity.x = clump.velocity.x.max(0.4);
+            } else if clump.position.x < bounds_min.x + r + CELL_SIZE * 0.5 {
+                clump.velocity.x = clump.velocity.x.max(0.2);
+            }
+            if clump.position.y < bounds_min.y + r {
+                clump.position.y = bounds_min.y + r;
+                clump.velocity.y = 0.0;
+            } else if clump.position.y > bounds_max.y - r {
+                clump.position.y = bounds_max.y - r;
+                clump.velocity.y = 0.0;
+            }
+            let z_min = bounds_min.z + r;
+            let z_max = bounds_max.z - r;
+            if clump.position.z < z_min {
+                clump.position.z = bounds_min.z + r;
+                clump.velocity.z = 0.0;
+            } else if clump.position.z > z_max {
+                clump.position.z = bounds_max.z - r;
+                clump.velocity.z = 0.0;
+            }
+            clump.position.z = clump.position.z.clamp(z_min, z_max);
+        }
+    }
+
+    fn clamp_gravel_bounds(&mut self) {
+        let bounds_min = self.dem_gravel.bounds_min;
+        let bounds_max = self.dem_gravel.bounds_max;
+        for clump in &mut self.dem_gravel.clumps {
+            let r = self.dem_gravel.templates[clump.template_idx].particle_radius;
+            if clump.position.x < bounds_min.x + r {
+                clump.position.x = bounds_min.x + r;
+                clump.velocity.x = clump.velocity.x.max(0.4);
+            }
+            if clump.position.y < bounds_min.y + r {
+                clump.position.y = bounds_min.y + r;
+                clump.velocity.y = 0.0;
+            } else if clump.position.y > bounds_max.y - r {
+                clump.position.y = bounds_max.y - r;
+                clump.velocity.y = 0.0;
+            }
+            if clump.position.z < bounds_min.z + r {
+                clump.position.z = bounds_min.z + r;
+                clump.velocity.z = 0.0;
+            } else if clump.position.z > bounds_max.z - r {
+                clump.position.z = bounds_max.z - r;
+                clump.velocity.z = 0.0;
+            }
+        }
+    }
+
+    fn cull_gravel_outflow(&mut self) {
+        let max_x = self.dem_gravel.bounds_max.x + CELL_SIZE * 2.0;
+        let templates = &self.dem_gravel.templates;
+        self.dem_gravel.clumps.retain(|clump| {
+            let r = templates[clump.template_idx].particle_radius;
+            clump.position.x <= max_x + r
+        });
+    }
+
+    fn build_gravel_obstacles(&self) -> Vec<GravelObstacle> {
+        let mut obstacles: Vec<GravelObstacle> = Vec::new();
+        for clump in &self.dem_gravel.clumps {
+            let radius = self.dem_gravel.templates[clump.template_idx].particle_radius;
+            if radius > GRAVEL_OBSTACLE_RADIUS_CUTOFF {
+                obstacles.push(GravelObstacle {
+                    position: clump.position.to_array(),
+                    radius,
+                });
+            }
+        }
+        obstacles
     }
 
     fn queue_emissions(&mut self) {
@@ -447,7 +635,11 @@ impl App {
 
     fn emit_pending_particles(&mut self) {
         let water_count = self.pending_water_emits;
-        let sediment_count = self.pending_sediment_emits;
+        let sediment_count = if self.sediment_emit_rate == 0 {
+            0
+        } else {
+            self.pending_sediment_emits
+        };
         if water_count == 0 && sediment_count == 0 {
             return;
         }
@@ -461,50 +653,71 @@ impl App {
             return;
         }
 
-        let config = self.sluice_builder.config();
-        let cell_size = config.cell_size;
-        let grid_depth = config.grid_depth;
-        // Emit at upstream (high) end, before the riffles
-        let emit_x = 2.0 * cell_size;  // Near left wall (upstream)
-        let center_z = grid_depth as f32 * cell_size * 0.5;
-        let floor_y = self.floor_height_at(emit_x);
-        // Keep the feed sheet thin (<= 2 cells ~ 2 cm at 0.01m)
-        let drop_height = 2.5 * cell_size;
-        let sheet_height = 4.0 * cell_size;
+        let cell_size = CELL_SIZE;
+        let grid_depth = GRID_DEPTH;
+        // Spray bars above the grate so sediment falls through the holes
+        let span = DECK_LENGTH * 0.7;
+        let start_x = DECK_ORIGIN_X + DECK_LENGTH * 0.15;
+        let bar_spacing = span / SPRAY_BAR_COUNT.max(1) as f32;
+        let center_z = DECK_ORIGIN_Z + DECK_WIDTH * 0.5;
 
-        let water_spread_z = (grid_depth as f32 - 4.0) * cell_size * 0.3;
-        let sediment_spread_z = (grid_depth as f32 - 4.0) * cell_size * 0.2;
+        let water_spread_z = DECK_WIDTH;
+        let sediment_spread_z = DECK_WIDTH * 0.6;
 
-        // Initial velocity tuned for ~0.3-1.0 m/s sheet flow and CFL < 1.
-        let init_vel = Vec3::new(0.5, -0.05, 0.0);  // Downstream + slight down
+        // Initial velocity tuned for spray + slight downstream push.
+        let init_vel = Vec3::new(0.35, -0.45, 0.0);
 
-        // Emit water
-        for _ in 0..water_count {
-            if self.sim.particles.len() >= MAX_PARTICLES {
-                break;
+        // Emit water from a single transverse emitter above the grate near the start.
+        if water_count > 0 {
+            let water_x = DECK_ORIGIN_X + DECK_LENGTH * 0.12;
+            let deck_y = self.deck_height_at(water_x);
+            let water_y = deck_y + SPRAY_BAR_HEIGHT + rand_float() * 0.1;
+            for i in 0..water_count {
+                if self.sim.particles.len() >= MAX_PARTICLES {
+                    break;
+                }
+                let t = (i as f32 + 0.5) / water_count.max(1) as f32;
+                let x = water_x + (rand_float() - 0.5) * 2.0 * cell_size;
+                let z = DECK_ORIGIN_Z
+                    + t * water_spread_z
+                    + (rand_float() - 0.5) * 0.12;
+                let y = water_y + rand_float() * 0.1;
+                self.sim.spawn_particle_with_velocity(Vec3::new(x, y, z), init_vel);
             }
-            let x = emit_x + (rand_float() - 0.5) * 2.0 * cell_size;
-            let z = center_z + (rand_float() - 0.5) * water_spread_z;
-            let y = floor_y + drop_height + rand_float() * sheet_height;
-            self.sim.spawn_particle_with_velocity(Vec3::new(x, y, z), init_vel);
         }
 
-        // Emit sediment - create both FLIP particle and DEM clump
-        for _ in 0..sediment_count {
-            if self.sim.particles.len() >= MAX_PARTICLES {
+        let mut sediment_remaining = sediment_count;
+
+        for bar in 0..SPRAY_BAR_COUNT {
+            if sediment_remaining == 0 {
                 break;
             }
-            let x = emit_x + (rand_float() - 0.5) * 2.0 * cell_size;
-            let z = center_z + (rand_float() - 0.5) * sediment_spread_z;
-            let band = rand_float();
-            let (band_base, band_jitter, band_vel_scale, band_down) = if band < 0.7 {
-                (0.5 * cell_size, 0.7 * cell_size, 1.0, 1.0)
-            } else {
-                (0.1 * cell_size, 0.3 * cell_size, 0.8, 1.2)
-            };
-            let y = floor_y + band_base + rand_float() * band_jitter;
-            let sediment_vel = Vec3::new(init_vel.x * band_vel_scale, init_vel.y * band_down, init_vel.z);
-            let pos = Vec3::new(x, y, z);
+            let bar_x = start_x + (bar as f32 + 0.5) * bar_spacing;
+            let deck_y = self.deck_height_at(bar_x);
+            let sediment_emit = (sediment_remaining + (SPRAY_BAR_COUNT - bar - 1))
+                / (SPRAY_BAR_COUNT - bar);
+            sediment_remaining = sediment_remaining.saturating_sub(sediment_emit);
+
+            // Emit sediment - create both FLIP particle and DEM clump
+            for i in 0..sediment_emit {
+                if self.sim.particles.len() >= MAX_PARTICLES {
+                    break;
+                }
+                let t = (i as f32 + 0.5) / sediment_emit.max(1) as f32;
+                let x = bar_x + (rand_float() - 0.5) * 2.0 * cell_size;
+                let z = center_z
+                    + (t - 0.5) * sediment_spread_z
+                    + (rand_float() - 0.5) * 0.06;
+                let band = rand_float();
+                let (band_base, band_jitter, band_vel_scale, band_down) = if band < 0.7 {
+                    (0.5 * cell_size, 0.7 * cell_size, 1.0, 1.0)
+                } else {
+                    (0.1 * cell_size, 0.3 * cell_size, 0.8, 1.2)
+                };
+                let y = deck_y + SPRAY_BAR_HEIGHT + band_base + rand_float() * band_jitter;
+                let sediment_vel =
+                    Vec3::new(init_vel.x * band_vel_scale, init_vel.y * band_down, init_vel.z);
+                let pos = Vec3::new(x, y, z);
 
             let is_gold = rand_float() < GOLD_FRACTION;
             let density = if is_gold { GOLD_DENSITY } else { GANGUE_DENSITY };
@@ -514,57 +727,18 @@ impl App {
                 self.gangue_template_idx
             };
 
-            // Track FLIP particle index before spawning
-            let flip_idx = self.sim.particles.len();
-            self.sim.spawn_sediment(pos, sediment_vel, density);
+                // Track FLIP particle index before spawning
+                let flip_idx = self.sim.particles.len();
+                self.sim.spawn_sediment(pos, sediment_vel, density);
 
-            // Create corresponding DEM clump
-            self.dem.spawn(template_idx, pos, sediment_vel);
-
-            // Record the mapping
-            self.sediment_flip_indices.push(flip_idx);
-        }
-
-        if water_count > 0 && self.frame % TRACER_INTERVAL_FRAMES == 0 {
-            for _ in 0..TRACER_COUNT {
-                self.spawn_tracer(
-                    emit_x,
-                    center_z,
-                    floor_y,
-                    drop_height,
-                    sheet_height,
-                    water_spread_z,
-                    init_vel,
-                    cell_size,
-                );
+                // Create corresponding DEM clump
+                let clump_idx = self.dem.spawn(template_idx, pos, sediment_vel);
+                // Record the mapping
+                self.sediment_flip_indices.push(flip_idx);
+                self.sediment_clump_indices.push(clump_idx);
             }
         }
-    }
 
-    fn spawn_tracer(
-        &mut self,
-        emit_x: f32,
-        center_z: f32,
-        floor_y: f32,
-        drop_height: f32,
-        sheet_height: f32,
-        water_spread_z: f32,
-        init_vel: Vec3,
-        cell_size: f32,
-    ) {
-        if self.sim.particles.len() >= MAX_PARTICLES {
-            return;
-        }
-        let x = emit_x + (rand_float() - 0.5) * 2.0 * cell_size;
-        let z = center_z + (rand_float() - 0.5) * water_spread_z;
-        let y = floor_y + drop_height + 0.5 * sheet_height;
-        let idx = self.sim.particles.len();
-        self.sim.spawn_particle_with_velocity(Vec3::new(x, y, z), init_vel);
-        self.tracer_particles.push(TracerInfo {
-            index: idx,
-            spawn_frame: self.frame,
-        });
-        println!("Tracer spawned at frame {} (idx {})", self.frame, idx);
     }
 
     fn prepare_gpu_inputs(&mut self) {
@@ -631,6 +805,18 @@ impl App {
         }
     }
 
+    fn strip_sediment_particles(&mut self) {
+        if self.sediment_emit_rate != 0 {
+            return;
+        }
+        if !self.sediment_flip_indices.is_empty() || !self.dem.clumps.is_empty() {
+            self.sediment_flip_indices.clear();
+            self.sediment_clump_indices.clear();
+            self.dem.clumps.clear();
+        }
+        self.sim.particles.list.retain(|p| p.density <= 1.0);
+    }
+
     fn run_dem_and_cleanup(&mut self, dt: f32) {
         // Run DEM collision response on sediment particles (after GPU FLIP)
         // DEM clumps are persistent - we sync state, not rebuild
@@ -646,7 +832,8 @@ impl App {
 
             // Sync FLIP -> DEM: update clump positions/velocities from FLIP results
             // but PRESERVE rotation, angular_velocity, and contact history
-            for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
+            for (map_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
+                let clump_idx = *self.sediment_clump_indices.get(map_idx).unwrap_or(&usize::MAX);
                 if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list.len() {
                     let p = &self.sim.particles.list[flip_idx];
                     let clump = &mut self.dem.clumps[clump_idx];
@@ -672,7 +859,8 @@ impl App {
 
             // Sync DEM -> FLIP: copy results back + enforce back wall
             let back_wall_x = CELL_SIZE * 1.5;  // Back wall boundary
-            for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
+            for (map_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
+                let clump_idx = *self.sediment_clump_indices.get(map_idx).unwrap_or(&usize::MAX);
                 if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list.len() {
                     let clump = &mut self.dem.clumps[clump_idx];
                     let p = &mut self.sim.particles.list[flip_idx];
@@ -702,17 +890,38 @@ impl App {
             }
         }
 
-        // Remove particles that exited the sluice (not the grid - buffer zone is part of grid)
-        // Delete at sluice boundary, not grid boundary, for clean outflow
-        // Must also delete corresponding DEM clumps and update mappings
-        let sluice_exit_x = SLUICE_WIDTH as f32 * CELL_SIZE;
+        // Remove particles that exited the grid bounds.
+        // Must also delete corresponding DEM clumps and update mappings.
+        let x_max = GRID_WIDTH as f32 * CELL_SIZE;
+        let y_max = GRID_HEIGHT as f32 * CELL_SIZE;
+        let z_max = GRID_DEPTH as f32 * CELL_SIZE;
+        let deck_x_min = DECK_ORIGIN_X - CELL_SIZE;
+        let deck_x_max = DECK_ORIGIN_X + DECK_LENGTH + CELL_SIZE * 2.0;
+        let deck_z_min = DECK_ORIGIN_Z - CELL_SIZE;
+        let deck_z_max = DECK_ORIGIN_Z + DECK_WIDTH + CELL_SIZE;
+        let gutter_y = gutter_floor_y(-DECK_ANGLE_DEG.to_radians().tan());
+        let deck_y_min = gutter_y - CELL_SIZE * 2.0;
+        let deck_y_max = DECK_ORIGIN_Y + DECK_WALL_HEIGHT + DECK_SAFETY_WALL_HEIGHT + CELL_SIZE * 2.0;
+
         let bounds_check = |p: &sim3d::Particle3D| {
-            p.position.x > 0.0 &&
-            p.position.x < sluice_exit_x &&
-            p.position.y > -CELL_SIZE &&
-            p.position.y < GRID_HEIGHT as f32 * CELL_SIZE &&
-            p.position.z > 0.0 &&
-            p.position.z < GRID_DEPTH as f32 * CELL_SIZE
+            let in_grid = p.position.x > 0.0
+                && p.position.x < x_max
+                && p.position.y > -CELL_SIZE
+                && p.position.y < y_max
+                && p.position.z > 0.0
+                && p.position.z < z_max;
+            if !in_grid {
+                return false;
+            }
+            if p.density <= 1.0 {
+                return p.position.x >= deck_x_min
+                    && p.position.x <= deck_x_max
+                    && p.position.z >= deck_z_min
+                    && p.position.z <= deck_z_max
+                    && p.position.y >= deck_y_min
+                    && p.position.y <= deck_y_max;
+            }
+            true
         };
 
         // Find which particles to delete
@@ -728,18 +937,19 @@ impl App {
             // Check if this is a sediment particle (has corresponding DEM clump)
             if let Some(sediment_pos) = self.sediment_flip_indices.iter().position(|&idx| idx == del_idx) {
                 // Delete the DEM clump
-                if sediment_pos < self.dem.clumps.len() {
-                    self.dem.clumps.swap_remove(sediment_pos);
+                if let Some(&clump_idx) = self.sediment_clump_indices.get(sediment_pos) {
+                    if clump_idx < self.dem.clumps.len() {
+                        let last_idx = self.dem.clumps.len() - 1;
+                        self.dem.clumps.swap_remove(clump_idx);
+                        for idx in &mut self.sediment_clump_indices {
+                            if *idx == last_idx {
+                                *idx = clump_idx;
+                            }
+                        }
+                    }
                 }
                 self.sediment_flip_indices.swap_remove(sediment_pos);
-            }
-
-            if let Some(tracer_pos) = self.tracer_particles.iter().position(|t| t.index == del_idx) {
-                let spawn_frame = self.tracer_particles[tracer_pos].spawn_frame;
-                let travel_frames = self.frame.saturating_sub(spawn_frame);
-                let travel_seconds = travel_frames as f32 / 60.0;
-                println!("Tracer exited in {:.2} s ({} frames)", travel_seconds, travel_frames);
-                self.tracer_particles.swap_remove(tracer_pos);
+                self.sediment_clump_indices.swap_remove(sediment_pos);
             }
 
             // Delete the FLIP particle
@@ -754,11 +964,6 @@ impl App {
                     *flip_idx = del_idx;
                 }
             }
-            for tracer in &mut self.tracer_particles {
-                if tracer.index == last_idx {
-                    tracer.index = del_idx;
-                }
-            }
         }
     }
 
@@ -770,6 +975,64 @@ impl App {
         let dt = 1.0 / 60.0;
         let dt_sub = dt / SUBSTEPS as f32;
         let flow_accel = self.flow_accel();
+        if GRAVEL_STREAM_ENABLED {
+            self.gravel_stream_timer += dt;
+            self.emit_gravel_stream();
+        }
+        let gravel_substeps = 2;
+        let gravel_dt = dt / gravel_substeps as f32;
+        for _ in 0..gravel_substeps {
+            self.integrate_gravel(gravel_dt);
+            let sdf_params = SdfParams {
+                sdf: &self.gravel_sdf,
+                grid_width: GRID_WIDTH,
+                grid_height: GRID_HEIGHT,
+                grid_depth: GRID_DEPTH,
+                cell_size: CELL_SIZE,
+            };
+            for _ in 0..2 {
+                self.dem_gravel
+                    .collision_response_only(gravel_dt, &sdf_params, true);
+            }
+            self.clamp_gravel_bounds();
+            self.cull_gravel_outflow();
+            for clump in &mut self.dem_gravel.clumps {
+                clump.velocity *= 0.998;
+            }
+        }
+        if self.frame % 60 == 0 {
+            if let Some(clump) = self.dem_gravel.clumps.first() {
+                let p = clump.position;
+                let v = clump.velocity;
+                println!(
+                    "Gravel: count={} pos=({:.2},{:.2},{:.2}) vel=({:.2},{:.2},{:.2})",
+                    self.dem_gravel.clumps.len(),
+                    p.x,
+                    p.y,
+                    p.z,
+                    v.x,
+                    v.y,
+                    v.z
+                );
+            } else {
+                println!("Gravel: count=0");
+            }
+        }
+        let reset_x = DECK_ORIGIN_X + 0.6;
+        let reset_z = DECK_ORIGIN_Z + 0.5 * DECK_WIDTH;
+        let reset_y = self.deck_height_at(reset_x) + 0.2;
+        for clump in &mut self.dem_gravel.clumps {
+            let p = clump.position;
+            if !(p.x.is_finite() && p.y.is_finite() && p.z.is_finite()) {
+                clump.position = Vec3::new(reset_x, reset_y, reset_z);
+                clump.velocity = Vec3::ZERO;
+                clump.angular_velocity = Vec3::ZERO;
+            }
+        }
+
+        if GRAVEL_ONLY {
+            return;
+        }
 
         if self.use_async_readback {
             if self.gpu_readback_pending {
@@ -797,6 +1060,7 @@ impl App {
 
             if self.gpu_needs_upload {
                 self.emit_pending_particles();
+                self.strip_sediment_particles();
                 self.run_dem_and_cleanup(dt);
                 self.prepare_gpu_inputs();
             }
@@ -812,8 +1076,16 @@ impl App {
                 self.ensure_readback_buffers_len(particle_count);
             }
 
+            let gravel_obstacles = if !GRAVEL_ONLY {
+                self.build_gravel_obstacles()
+            } else {
+                Vec::new()
+            };
             if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
                 let sdf = self.sim.grid.sdf.as_slice();
+                if !gravel_obstacles.is_empty() {
+                    gpu_flip.upload_gravel_obstacles(&gpu.queue, &gravel_obstacles);
+                }
 
                 if self.gpu_needs_upload {
                     gpu_flip.step_no_readback(
@@ -877,10 +1149,19 @@ impl App {
         } else {
             self.queue_emissions();
             self.emit_pending_particles();
+            self.strip_sediment_particles();
             self.prepare_gpu_inputs();
 
+            let gravel_obstacles = if !GRAVEL_ONLY {
+                self.build_gravel_obstacles()
+            } else {
+                Vec::new()
+            };
             if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
                 let sdf = self.sim.grid.sdf.as_slice();
+                if !gravel_obstacles.is_empty() {
+                    gpu_flip.upload_gravel_obstacles(&gpu.queue, &gravel_obstacles);
+                }
 
                 for _ in 0..SUBSTEPS {
                     gpu_flip.step(
@@ -922,27 +1203,6 @@ impl App {
                 "Frame {} | FPS: {:.1} | Particles: {} (water: {}, sediment: {})",
                 self.frame, self.current_fps, self.sim.particles.list.len(), water_count, sediment_count
             );
-            let flow = self.compute_flow_metrics();
-            if flow.sample_count == 0 {
-                println!(
-                    "Flow: n/a (no water samples in [{:.2}m, {:.2}m])",
-                    flow.sample_x_min,
-                    flow.sample_x_max,
-                );
-            } else {
-                println!(
-                    "Flow: v={:.2} m/s | depth p50={:.3} m p90={:.3} m | width={:.3} m | Q={:.3} m3/s ({:.2} m3/min) | samples={} | window=[{:.2}m, {:.2}m]",
-                    flow.vel_mean,
-                    flow.depth_p50,
-                    flow.depth_p90,
-                    flow.flow_width,
-                    flow.flow_rate_m3s,
-                    flow.flow_rate_m3min,
-                    flow.sample_count,
-                    flow.sample_x_min,
-                    flow.sample_x_max,
-                );
-            }
         }
     }
 
@@ -957,9 +1217,9 @@ impl App {
 
         // Update uniforms
         let center = Vec3::new(
-            GRID_WIDTH as f32 * CELL_SIZE * 0.5,
-            GRID_HEIGHT as f32 * CELL_SIZE * 0.3,
-            GRID_DEPTH as f32 * CELL_SIZE * 0.5,
+            DECK_ORIGIN_X + DECK_LENGTH * 0.5,
+            DECK_ORIGIN_Y + 0.2,
+            DECK_ORIGIN_Z + DECK_WIDTH * 0.5,
         );
         let eye = center + Vec3::new(
             self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
@@ -978,23 +1238,23 @@ impl App {
         };
         gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // Build sediment instances from DEM clumps
-        let sediment_instances: Vec<SedimentInstance> = self.dem.clumps.iter()
-            .map(|clump| {
-                let template = &self.dem.templates[clump.template_idx];
-                let color = if clump.template_idx == self.gold_template_idx {
-                    GOLD_COLOR
-                } else {
-                    GANGUE_COLOR
-                };
-                SedimentInstance {
-                    position: clump.position.to_array(),
-                    scale: template.particle_radius,
-                    rotation: clump.rotation.to_array(),
-                    color,
-                }
-            })
-            .collect();
+        // Build gravel-only instances from DEM clumps
+        let sediment_instances: Vec<SedimentInstance> = self.dem_gravel.clumps.iter().map(|clump| {
+            let template = &self.dem_gravel.templates[clump.template_idx];
+            let is_nugget = self.nugget_template_indices.contains(&clump.template_idx);
+            let color = if is_nugget { GOLD_COLOR } else { GRAVEL_COLOR };
+            let scale = if is_nugget {
+                template.particle_radius * NUGGET_VISUAL_SCALE
+            } else {
+                template.particle_radius * GRAVEL_VISUAL_SCALE
+            };
+            SedimentInstance {
+                position: clump.position.to_array(),
+                scale,
+                rotation: clump.rotation.to_array(),
+                color,
+            }
+        }).collect();
 
         if !sediment_instances.is_empty() {
             gpu.queue.write_buffer(
@@ -1031,27 +1291,20 @@ impl App {
 
             pass.set_bind_group(0, &gpu.uniform_bind_group, &[]);
 
-            // Draw sluice
+            // Draw deck + gutter
             pass.set_pipeline(&gpu.sluice_pipeline);
-            pass.set_vertex_buffer(0, gpu.sluice_vertex_buffer.slice(..));
-            pass.set_index_buffer(gpu.sluice_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..self.sluice_builder.indices().len() as u32, 0, 0..1);
-
-            // Draw sediment as 3D rocks
-            if !sediment_instances.is_empty() {
-                pass.set_pipeline(&gpu.sediment_pipeline);
-                pass.set_vertex_buffer(0, gpu.rock_mesh_vertex_buffer.slice(..));
-                pass.set_vertex_buffer(1, gpu.sediment_instance_buffer.slice(..));
-                pass.draw(0..gpu.rock_mesh_vertex_count, 0..sediment_instances.len() as u32);
-            }
+            pass.set_vertex_buffer(0, gpu.deck_vertex_buffer.slice(..));
+            pass.set_index_buffer(gpu.deck_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..gpu.deck_index_count, 0, 0..1);
         }
 
-        if let (Some(gpu_flip), Some(_)) = (&self.gpu_flip, &self.gpu) {
-            let active_count = self.sim.particles.list.len() as u32;
-            if let Some(fluid_renderer) = &self.fluid_renderer {
-                fluid_renderer.render(
-                    &gpu.device,
-                    &gpu.queue,
+        if !GRAVEL_ONLY {
+            if let (Some(gpu_flip), Some(_)) = (&self.gpu_flip, &self.gpu) {
+                let active_count = self.sim.particles.list.len() as u32;
+                if let Some(fluid_renderer) = &self.fluid_renderer {
+                    fluid_renderer.render(
+                        &gpu.device,
+                        &gpu.queue,
                     &mut encoder,
                     &view,
                     gpu_flip,
@@ -1059,10 +1312,39 @@ impl App {
                     view_matrix.to_cols_array_2d(),
                     proj_matrix.to_cols_array_2d(),
                     eye.to_array(),
-                    gpu.config.width,
-                    gpu.config.height,
-                );
+                        gpu.config.width,
+                        gpu.config.height,
+                    );
+                }
             }
+        }
+
+        if !sediment_instances.is_empty() {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Sediment Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &gpu.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &gpu.uniform_bind_group, &[]);
+            pass.set_pipeline(&gpu.sediment_pipeline);
+            pass.set_vertex_buffer(0, gpu.rock_mesh_vertex_buffer.slice(..));
+            pass.set_vertex_buffer(1, gpu.sediment_instance_buffer.slice(..));
+            pass.draw(0..gpu.rock_mesh_vertex_count, 0..sediment_instances.len() as u32);
         }
 
         gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -1120,10 +1402,6 @@ impl App {
         fluid_renderer.particle_radius = CELL_SIZE * 0.5;
         fluid_renderer.resize(&device, config.width, config.height);
         self.fluid_renderer = Some(fluid_renderer);
-
-        // Build sluice mesh
-        self.sluice_builder.build_mesh(|i, j, k| self.sim.grid.is_solid(i, j, k));
-        self.sluice_builder.upload(&device);
 
         // Create shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1189,13 +1467,13 @@ impl App {
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -1267,17 +1545,18 @@ impl App {
             cache: None,
         });
 
-        // Buffers - create from builder data
-        let sluice_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Sluice Vertices"),
-            contents: bytemuck::cast_slice(self.sluice_builder.vertices()),
+        // Buffers - create from deck mesh data
+        let deck_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Deck Vertices"),
+            contents: bytemuck::cast_slice(&self.deck_mesh.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        let sluice_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Sluice Indices"),
-            contents: bytemuck::cast_slice(self.sluice_builder.indices()),
+        let deck_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Deck Indices"),
+            contents: bytemuck::cast_slice(&self.deck_mesh.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
+        let deck_index_count = self.deck_mesh.indices.len() as u32;
 
         // Rock mesh for sediment (icosahedron with jitter)
         let rock_mesh_vertices = build_rock_mesh();
@@ -1337,8 +1616,9 @@ impl App {
             sediment_pipeline,
             uniform_buffer,
             uniform_bind_group,
-            sluice_vertex_buffer,
-            sluice_index_buffer,
+            deck_vertex_buffer,
+            deck_index_buffer,
+            deck_index_count,
             rock_mesh_vertex_buffer,
             rock_mesh_vertex_count,
             sediment_instance_buffer,
@@ -1354,7 +1634,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
             let attrs = Window::default_attributes()
-                .with_title("Friction Sluice - Sediment Test")
+                .with_title("Shaker Deck - FLIP Variant")
                 .with_inner_size(winit::dpi::LogicalSize::new(1200, 800));
             let window = Arc::new(event_loop.create_window(attrs).unwrap());
             self.init_gpu(window.clone());
@@ -1386,7 +1666,9 @@ impl ApplicationHandler for App {
                         PhysicalKey::Code(KeyCode::KeyR) => {
                             self.sim.particles.list.clear();
                             self.dem.clumps.clear();
+                            self.dem_gravel.clumps.clear();
                             self.sediment_flip_indices.clear();
+                            self.sediment_clump_indices.clear();
                             self.frame = 0;
                             self.gpu_readback_pending = false;
                             self.gpu_sync_substep = 0;
@@ -1398,6 +1680,7 @@ impl ApplicationHandler for App {
                             self.affine_vels.clear();
                             self.densities.clear();
                             self.cell_types.clear();
+                            self.spawn_gravel_and_nuggets();
                         }
                         PhysicalKey::Code(KeyCode::ArrowUp) => {
                             self.water_emit_rate = (self.water_emit_rate + 25).min(500);
@@ -1452,12 +1735,342 @@ impl ApplicationHandler for App {
     }
 }
 
+fn in_hole(x: f32, z: f32) -> bool {
+    let local_x = x - DECK_ORIGIN_X;
+    let local_z = z - DECK_ORIGIN_Z;
+    let gx = (local_x / HOLE_SPACING).round();
+    let gz = (local_z / HOLE_SPACING).round();
+    let cx = gx * HOLE_SPACING;
+    let cz = gz * HOLE_SPACING;
+    let dx = local_x - cx;
+    let dz = local_z - cz;
+    dx * dx + dz * dz <= HOLE_RADIUS * HOLE_RADIUS
+}
+
+fn sample_grid_velocity(grid: &Grid3D, pos: Vec3) -> Vec3 {
+    let cell_size = grid.cell_size;
+    let mut i = (pos.x / cell_size).floor() as i32;
+    let mut j = (pos.y / cell_size).floor() as i32;
+    let mut k = (pos.z / cell_size).floor() as i32;
+
+    i = i.clamp(0, grid.width as i32 - 1);
+    j = j.clamp(0, grid.height as i32 - 1);
+    k = k.clamp(0, grid.depth as i32 - 1);
+
+    let i0 = i as usize;
+    let j0 = j as usize;
+    let k0 = k as usize;
+
+    let i1 = (i0 + 1).min(grid.width);
+    let j1 = (j0 + 1).min(grid.height);
+    let k1 = (k0 + 1).min(grid.depth);
+
+    let u0 = grid.u[grid.u_index(i0, j0, k0)];
+    let u1 = grid.u[grid.u_index(i1, j0, k0)];
+    let v0 = grid.v[grid.v_index(i0, j0, k0)];
+    let v1 = grid.v[grid.v_index(i0, j1, k0)];
+    let w0 = grid.w[grid.w_index(i0, j0, k0)];
+    let w1 = grid.w[grid.w_index(i0, j0, k1)];
+
+    Vec3::new(0.5 * (u0 + u1), 0.5 * (v0 + v1), 0.5 * (w0 + w1))
+}
+
+fn push_quad(
+    vertices: &mut Vec<SluiceVertex>,
+    indices: &mut Vec<u32>,
+    a: [f32; 3],
+    b: [f32; 3],
+    c: [f32; 3],
+    d: [f32; 3],
+    color: [f32; 4],
+) {
+    let base = vertices.len() as u32;
+    vertices.push(SluiceVertex::new(a, color));
+    vertices.push(SluiceVertex::new(b, color));
+    vertices.push(SluiceVertex::new(c, color));
+    vertices.push(SluiceVertex::new(d, color));
+    indices.extend_from_slice(&[
+        base,
+        base + 1,
+        base + 2,
+        base,
+        base + 2,
+        base + 3,
+    ]);
+}
+
+fn build_deck_mesh(deck_slope: f32, gutter_floor_y: f32) -> DeckMesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    let x0 = DECK_ORIGIN_X;
+    let x1 = DECK_ORIGIN_X + DECK_LENGTH;
+    let z0 = DECK_ORIGIN_Z;
+    let z1 = DECK_ORIGIN_Z + DECK_WIDTH;
+    let y0 = DECK_ORIGIN_Y + deck_slope * (x0 - DECK_ORIGIN_X);
+    let y1 = DECK_ORIGIN_Y + deck_slope * (x1 - DECK_ORIGIN_X);
+    let y0b = y0 - DECK_THICKNESS;
+    let y1b = y1 - DECK_THICKNESS;
+
+    let deck_color = [0.26, 0.28, 0.3, 1.0];
+    let gutter_color = [0.15, 0.16, 0.17, 1.0];
+    let wall_color = [0.2, 0.21, 0.22, 1.0];
+    let safety_wall_color = [0.22, 0.25, 0.28, 0.2];
+    let y0_high = y0 + DECK_WALL_HEIGHT;
+    let y1_high = y1 + DECK_WALL_HEIGHT;
+    let y0_safety = y0_high + DECK_SAFETY_WALL_HEIGHT;
+    let y1_safety = y1_high + DECK_SAFETY_WALL_HEIGHT;
+
+    // Deck top with literal holes (skip quads near hole centers)
+    let step = HOLE_SPACING * 0.2;
+    let mut x = x0;
+    while x < x1 {
+        let x_next = (x + step).min(x1);
+        let y_a = DECK_ORIGIN_Y + deck_slope * (x - DECK_ORIGIN_X);
+        let y_b = DECK_ORIGIN_Y + deck_slope * (x_next - DECK_ORIGIN_X);
+        let mut z = z0;
+        while z < z1 {
+            let z_next = (z + step).min(z1);
+            let cx = 0.5 * (x + x_next);
+            let cz = 0.5 * (z + z_next);
+            let in_hole_quad = in_hole(cx, cz)
+                || in_hole(x, z)
+                || in_hole(x_next, z)
+                || in_hole(x, z_next)
+                || in_hole(x_next, z_next);
+            if !in_hole_quad {
+                push_quad(
+                    &mut vertices,
+                    &mut indices,
+                    [x, y_a, z],
+                    [x_next, y_b, z],
+                    [x_next, y_b, z_next],
+                    [x, y_a, z_next],
+                    deck_color,
+                );
+                // Double-sided so the grate renders from above and below.
+                push_quad(
+                    &mut vertices,
+                    &mut indices,
+                    [x, y_a, z],
+                    [x, y_a, z_next],
+                    [x_next, y_b, z_next],
+                    [x_next, y_b, z],
+                    deck_color,
+                );
+            }
+            z = z_next;
+        }
+        x = x_next;
+    }
+
+    // Deck bottom with matching holes
+    let mut xb = x0;
+    while xb < x1 {
+        let xb_next = (xb + step).min(x1);
+        let y_b0 = DECK_ORIGIN_Y + deck_slope * (xb - DECK_ORIGIN_X) - DECK_THICKNESS;
+        let y_b1 = DECK_ORIGIN_Y + deck_slope * (xb_next - DECK_ORIGIN_X) - DECK_THICKNESS;
+        let mut zb = z0;
+        while zb < z1 {
+            let zb_next = (zb + step).min(z1);
+            let cx = 0.5 * (xb + xb_next);
+            let cz = 0.5 * (zb + zb_next);
+            let in_hole_quad = in_hole(cx, cz)
+                || in_hole(xb, zb)
+                || in_hole(xb_next, zb)
+                || in_hole(xb, zb_next)
+                || in_hole(xb_next, zb_next);
+            if !in_hole_quad {
+                push_quad(
+                    &mut vertices,
+                    &mut indices,
+                    [xb, y_b0, zb],
+                    [xb, y_b0, zb_next],
+                    [xb_next, y_b1, zb_next],
+                    [xb_next, y_b1, zb],
+                    deck_color,
+                );
+            }
+            zb = zb_next;
+        }
+        xb = xb_next;
+    }
+
+    // Deck side skirts
+    push_quad(
+        &mut vertices,
+        &mut indices,
+        [x0, y0b, z0],
+        [x1, y1b, z0],
+        [x1, y1, z0],
+        [x0, y0, z0],
+        deck_color,
+    );
+    push_quad(
+        &mut vertices,
+        &mut indices,
+        [x0, y0b, z1],
+        [x0, y0, z1],
+        [x1, y1, z1],
+        [x1, y1b, z1],
+        deck_color,
+    );
+    push_quad(
+        &mut vertices,
+        &mut indices,
+        [x0, y0b, z0],
+        [x0, y0, z0],
+        [x0, y0, z1],
+        [x0, y0b, z1],
+        deck_color,
+    );
+    push_quad(
+        &mut vertices,
+        &mut indices,
+        [x1, y1b, z0],
+        [x1, y1b, z1],
+        [x1, y1, z1],
+        [x1, y1, z0],
+        deck_color,
+    );
+
+    // Deck side walls (left/right) - extend down to gutter floor to avoid gaps.
+    push_quad(
+        &mut vertices,
+        &mut indices,
+        [x0, gutter_floor_y, z0],
+        [x1, gutter_floor_y, z0],
+        [x1, y1_high, z0],
+        [x0, y0_high, z0],
+        wall_color,
+    );
+    push_quad(
+        &mut vertices,
+        &mut indices,
+        [x0, gutter_floor_y, z1],
+        [x0, y0_high, z1],
+        [x1, y1_high, z1],
+        [x1, gutter_floor_y, z1],
+        wall_color,
+    );
+
+    // Safety wall above deck (low alpha).
+    push_quad(
+        &mut vertices,
+        &mut indices,
+        [x0, y0_high, z0],
+        [x1, y1_high, z0],
+        [x1, y1_safety, z0],
+        [x0, y0_safety, z0],
+        safety_wall_color,
+    );
+    push_quad(
+        &mut vertices,
+        &mut indices,
+        [x0, y0_high, z1],
+        [x0, y0_safety, z1],
+        [x1, y1_safety, z1],
+        [x1, y1_high, z1],
+        safety_wall_color,
+    );
+
+    // Gutter floor
+    push_quad(
+        &mut vertices,
+        &mut indices,
+        [x0, gutter_floor_y, z0],
+        [x1, gutter_floor_y, z0],
+        [x1, gutter_floor_y, z1],
+        [x0, gutter_floor_y, z1],
+        gutter_color,
+    );
+
+    // Back wall (upstream) - connect gutter floor to deck wall top.
+    push_quad(
+        &mut vertices,
+        &mut indices,
+        [x0, gutter_floor_y, z0],
+        [x0, gutter_floor_y, z1],
+        [x0, y0_high, z1],
+        [x0, y0_high, z0],
+        wall_color,
+    );
+    push_quad(
+        &mut vertices,
+        &mut indices,
+        [x0, y0_high, z0],
+        [x0, y0_high, z1],
+        [x0, y0_safety, z1],
+        [x0, y0_safety, z0],
+        safety_wall_color,
+    );
+
+    DeckMesh { vertices, indices }
+}
+
 fn rand_float() -> f32 {
     static mut SEED: u32 = 12345;
     unsafe {
         SEED = SEED.wrapping_mul(1103515245).wrapping_add(12345);
         (SEED as f32) / (u32::MAX as f32)
     }
+}
+
+fn gutter_floor_y(deck_slope: f32) -> f32 {
+    let x_end = DECK_ORIGIN_X + DECK_LENGTH;
+    let y_low = DECK_ORIGIN_Y + deck_slope * (x_end - DECK_ORIGIN_X);
+    y_low - DECK_THICKNESS - GUTTER_OFFSET_CELLS * CELL_SIZE
+}
+
+fn build_gravel_sdf(deck_slope: f32, gutter_floor_y: f32) -> Vec<f32> {
+    let mut grid = Grid3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
+
+    for k in 0..GRID_DEPTH {
+        for j in 0..GRID_HEIGHT {
+            for i in 0..GRID_WIDTH {
+                let x = (i as f32 + 0.5) * CELL_SIZE;
+                let y = (j as f32 + 0.5) * CELL_SIZE;
+                let z = (k as f32 + 0.5) * CELL_SIZE;
+
+                if x < DECK_ORIGIN_X
+                    || x > DECK_ORIGIN_X + DECK_LENGTH
+                    || z < DECK_ORIGIN_Z
+                    || z > DECK_ORIGIN_Z + DECK_WIDTH
+                {
+                    continue;
+                }
+
+                let deck_height = DECK_ORIGIN_Y + deck_slope * (x - DECK_ORIGIN_X);
+                let deck_bottom = deck_height - DECK_THICKNESS - GRAVEL_DECK_PAD;
+                let in_plate = y <= deck_height && y >= deck_bottom;
+                let mut solid = false;
+
+                if in_plate {
+                    solid = true;
+                }
+
+                if y <= gutter_floor_y {
+                    solid = true;
+                }
+
+                let wall_bottom = gutter_floor_y;
+                let wall_top = deck_height + DECK_WALL_HEIGHT;
+                let near_side_wall = z <= DECK_ORIGIN_Z + DECK_WALL_THICKNESS
+                    || z >= DECK_ORIGIN_Z + DECK_WIDTH - DECK_WALL_THICKNESS;
+                let near_back_wall = x <= DECK_ORIGIN_X + GUTTER_WALL_THICKNESS;
+                if (near_side_wall || near_back_wall) && y >= wall_bottom && y <= wall_top {
+                    solid = true;
+                }
+
+                if solid {
+                    grid.set_solid(i, j, k);
+                }
+            }
+        }
+    }
+
+    grid.compute_sdf();
+    grid.sdf
 }
 
 const SHADER: &str = r#"
