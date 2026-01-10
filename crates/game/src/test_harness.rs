@@ -186,10 +186,10 @@ pub mod levels {
         fn name(&self) -> &str { "Level 2: Flow Over Riffles" }
 
         fn invariants(&self) -> Vec<Invariant> {
+            // Note: No ParticleCountStable for flow-through tests with continuous emission
             vec![
                 Invariant::NoNaN,
                 Invariant::NoParticlesInSolid,
-                Invariant::ParticleCountStable { tolerance_pct: 0.10 },
                 Invariant::MaxVelocityBelow { limit: 10.0 },
                 Invariant::DivergenceBelow { threshold: 50.0 },
             ]

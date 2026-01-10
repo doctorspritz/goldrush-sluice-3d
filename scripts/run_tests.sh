@@ -17,7 +17,7 @@ echo ""
 
 # Determine which levels to run
 if [ $# -eq 0 ]; then
-    LEVELS=(0)  # For now, only level 0 is implemented
+    LEVELS=(0 2)  # Implemented levels: 0 (dam break), 2 (riffles)
 elif [ $# -eq 1 ]; then
     LEVELS=($1)
 else
