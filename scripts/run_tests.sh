@@ -1,12 +1,13 @@
 #!/bin/bash
 # Simulation Test Suite Runner
 #
-# Runs all test levels in sequence. Exits on first failure.
+# Runs physics validation first, then test levels in sequence.
+# Exits on first failure.
 #
 # Usage:
-#   ./scripts/run_tests.sh        # Run all levels
-#   ./scripts/run_tests.sh 0      # Run specific level
-#   ./scripts/run_tests.sh 0 2    # Run range of levels
+#   ./scripts/run_tests.sh        # Run all tests
+#   ./scripts/run_tests.sh 0      # Run specific level only
+#   ./scripts/run_tests.sh 0 2    # Run range of levels only
 
 set -e
 
@@ -14,6 +15,31 @@ echo "========================================"
 echo " Sluice Simulation Test Suite"
 echo "========================================"
 echo ""
+
+PASSED=0
+FAILED=0
+SKIPPED=0
+
+# Always run physics validation first (unless specific level requested)
+if [ $# -eq 0 ]; then
+    echo "----------------------------------------"
+    echo "Running Physics Validation..."
+    echo "----------------------------------------"
+
+    if cargo run --example test_physics_validation --release; then
+        echo "PASS: Physics Validation"
+        ((PASSED++))
+    else
+        echo "FAIL: Physics Validation"
+        ((FAILED++))
+        echo ""
+        echo "========================================"
+        echo " TEST SUITE FAILED at Physics Validation"
+        echo "========================================"
+        exit 1
+    fi
+    echo ""
+fi
 
 # Determine which levels to run
 if [ $# -eq 0 ]; then
@@ -23,10 +49,6 @@ elif [ $# -eq 1 ]; then
 else
     LEVELS=($(seq $1 $2))
 fi
-
-PASSED=0
-FAILED=0
-SKIPPED=0
 
 for level in "${LEVELS[@]}"; do
     EXAMPLE="test_level_$level"
