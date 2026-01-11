@@ -13,6 +13,41 @@ const CELL_SIZE: f32 = 0.02;
 const GRID_SIZE: usize = 32;
 const MAX_PARTICLES: usize = 10_000;
 
+/// Update cell types from particle positions.
+/// This marks cells containing particles as FLUID (1), preserving SOLID (2) cells.
+fn update_cell_types_from_particles(
+    cell_types: &mut [u32],
+    positions: &[Vec3],
+    grid_width: usize,
+    grid_height: usize,
+    grid_depth: usize,
+    cell_size: f32,
+) {
+    // Reset non-solid cells to AIR
+    for ct in cell_types.iter_mut() {
+        if *ct != 2 {
+            *ct = 0; // AIR
+        }
+    }
+
+    // Mark cells containing particles as FLUID
+    for pos in positions {
+        let i = (pos.x / cell_size) as i32;
+        let j = (pos.y / cell_size) as i32;
+        let k = (pos.z / cell_size) as i32;
+
+        if i >= 0 && i < grid_width as i32
+            && j >= 0 && j < grid_height as i32
+            && k >= 0 && k < grid_depth as i32
+        {
+            let idx = k as usize * grid_width * grid_height + j as usize * grid_width + i as usize;
+            if cell_types[idx] != 2 {
+                cell_types[idx] = 1; // FLUID
+            }
+        }
+    }
+}
+
 fn main() {
     println!("\n{}", "=".repeat(70));
     println!(" PHYSICS VALIDATION TESTS");
@@ -144,6 +179,10 @@ fn test_gravity_acceleration(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
     let frames = (target_time / dt) as u32;
 
     for _ in 0..frames {
+        update_cell_types_from_particles(
+            &mut cell_types, &positions,
+            GRID_SIZE, GRID_SIZE, GRID_SIZE, CELL_SIZE,
+        );
         flip.step(
             device,
             queue,
@@ -259,8 +298,12 @@ fn test_hydrostatic_pressure(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
     let dt = 1.0 / 60.0;
     let gravity = -9.8;
 
-    // Let system settle
-    for _ in 0..60 {
+    // Let system settle (3 seconds at 60 FPS)
+    for _ in 0..180 {
+        update_cell_types_from_particles(
+            &mut cell_types, &positions,
+            GRID_SIZE, GRID_SIZE, GRID_SIZE, CELL_SIZE,
+        );
         flip.step(
             device,
             queue,
@@ -368,6 +411,10 @@ fn test_incompressibility(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
 
     // Run simulation
     for _ in 0..120 {
+        update_cell_types_from_particles(
+            &mut cell_types, &positions,
+            GRID_SIZE, GRID_SIZE, GRID_SIZE, CELL_SIZE,
+        );
         flip.step(
             device,
             queue,
@@ -485,6 +532,10 @@ fn test_particle_conservation(device: &wgpu::Device, queue: &wgpu::Queue) -> boo
 
     // Run for 5 seconds of sim time
     for _ in 0..300 {
+        update_cell_types_from_particles(
+            &mut cell_types, &positions,
+            GRID_SIZE, GRID_SIZE, GRID_SIZE, CELL_SIZE,
+        );
         flip.step(
             device,
             queue,
@@ -599,6 +650,10 @@ fn test_solid_boundaries(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
 
     // Run and check each frame
     for frame in 0..120 {
+        update_cell_types_from_particles(
+            &mut cell_types, &positions,
+            GRID_SIZE, GRID_SIZE, GRID_SIZE, CELL_SIZE,
+        );
         flip.step(
             device,
             queue,

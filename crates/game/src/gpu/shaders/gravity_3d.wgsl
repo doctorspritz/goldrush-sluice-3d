@@ -61,7 +61,19 @@ fn apply_gravity(@builtin(global_invocation_id) id: vec3<u32>) {
     let bottom_type = get_cell_type(i32(i), i32(j) - 1, i32(k));
     let top_type = get_cell_type(i32(i), i32(j), i32(k));
 
-    // Apply gravity to all non-solid vertical velocity nodes
+    // CRITICAL: Do NOT apply gravity at solid boundaries!
+    // If we apply gravity to floor V faces, divergence becomes zero
+    // and no hydrostatic pressure is generated.
+    if (bottom_type == CELL_SOLID || top_type == CELL_SOLID) {
+        return;
+    }
+
+    // Skip if both sides are air (no fluid to accelerate)
+    if (bottom_type == CELL_AIR && top_type == CELL_AIR) {
+        return;
+    }
+
+    // Apply gravity to V faces adjacent to at least one fluid cell
     let idx = v_index(i, j, k);
     grid_v[idx] += params.gravity_dt;
 }
