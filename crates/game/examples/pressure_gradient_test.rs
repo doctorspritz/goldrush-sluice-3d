@@ -63,7 +63,10 @@ fn main() {
     println!("Geometry:");
     println!("  Floor at y=0");
     println!("  Riffle at x={}, y=1 to y={}", riffle_x, riffle_height);
-    println!("  Riffle top at y={} (cell {})", riffle_height, riffle_height);
+    println!(
+        "  Riffle top at y={} (cell {})",
+        riffle_height, riffle_height
+    );
     println!("  Above riffle (y>{}) is OPEN", riffle_height);
     println!();
 
@@ -76,7 +79,7 @@ fn main() {
     for k in 2..4 {
         // Spawn directly above the riffle, with upward velocity
         let pos = Vec3::new(
-            (riffle_x as f32 + 0.5) * CELL_SIZE,  // AT the riffle x position
+            (riffle_x as f32 + 0.5) * CELL_SIZE, // AT the riffle x position
             (riffle_height as f32 + 1.5) * CELL_SIZE, // Just above riffle top (y=5.5)
             (k as f32 + 0.5) * CELL_SIZE,
         );
@@ -116,9 +119,18 @@ fn main() {
     }
 
     println!("Particles spawned:");
-    println!("  Above riffle (upward vel): {} particles", test_particles.len());
-    println!("  Above riffle (downward vel): {} particles", downward_particles.len());
-    println!("  Far above riffle (horizontal vel): {} particles", above_particles.len());
+    println!(
+        "  Above riffle (upward vel): {} particles",
+        test_particles.len()
+    );
+    println!(
+        "  Above riffle (downward vel): {} particles",
+        downward_particles.len()
+    );
+    println!(
+        "  Far above riffle (horizontal vel): {} particles",
+        above_particles.len()
+    );
     println!();
 
     // Initialize GPU
@@ -167,7 +179,12 @@ fn main() {
     // Prepare GPU data
     let mut positions: Vec<Vec3> = sim.particles.list.iter().map(|p| p.position).collect();
     let mut velocities: Vec<Vec3> = sim.particles.list.iter().map(|p| p.velocity).collect();
-    let mut c_matrices: Vec<Mat3> = sim.particles.list.iter().map(|p| p.affine_velocity).collect();
+    let mut c_matrices: Vec<Mat3> = sim
+        .particles
+        .list
+        .iter()
+        .map(|p| p.affine_velocity)
+        .collect();
     let densities: Vec<f32> = sim.particles.list.iter().map(|p| p.density).collect();
     let bed_height: Vec<f32> = vec![0.0; GRID_WIDTH * GRID_DEPTH];
 
@@ -191,21 +208,29 @@ fn main() {
 
     // Check specific cells around the riffle
     println!("Riffle cells at x={}:", riffle_x);
-    println!("Cell index formula: k * {} * {} + j * {} + i", GRID_WIDTH, GRID_HEIGHT, GRID_WIDTH);
+    println!(
+        "Cell index formula: k * {} * {} + j * {} + i",
+        GRID_WIDTH, GRID_HEIGHT, GRID_WIDTH
+    );
     for y in 0..=riffle_height + 2 {
         let k = 2; // middle of depth
         let idx = k * GRID_WIDTH * GRID_HEIGHT + y * GRID_WIDTH + riffle_x;
         let is_solid = sim.grid.is_solid(riffle_x, y, k);
         let cell_type = cell_types[idx];
-        println!("  Cell ({}, {}, {}): idx={}, is_solid={}, cell_type={}",
-                 riffle_x, y, k, idx, is_solid, cell_type);
+        println!(
+            "  Cell ({}, {}, {}): idx={}, is_solid={}, cell_type={}",
+            riffle_x, y, k, idx, is_solid, cell_type
+        );
     }
 
     // V face at j=5 checks cells [i, 4, k] and [i, 5, k]
     // For the pressure gradient shader to zero V, cell [6, 4, 2] must be solid
     let critical_idx = 2 * GRID_WIDTH * GRID_HEIGHT + 4 * GRID_WIDTH + riffle_x;
     println!("\nCritical check: V face at j=5 tests cell (6, 4, 2)");
-    println!("  Index = {}, cell_type[{}] = {}", critical_idx, critical_idx, cell_types[critical_idx]);
+    println!(
+        "  Index = {}, cell_type[{}] = {}",
+        critical_idx, critical_idx, cell_types[critical_idx]
+    );
     println!("  Expected: 2 (SOLID)");
 
     // Mark fluid cells
@@ -213,7 +238,13 @@ fn main() {
         let i = (p.position.x / CELL_SIZE).floor() as i32;
         let j = (p.position.y / CELL_SIZE).floor() as i32;
         let k = (p.position.z / CELL_SIZE).floor() as i32;
-        if i >= 0 && i < GRID_WIDTH as i32 && j >= 0 && j < GRID_HEIGHT as i32 && k >= 0 && k < GRID_DEPTH as i32 {
+        if i >= 0
+            && i < GRID_WIDTH as i32
+            && j >= 0
+            && j < GRID_HEIGHT as i32
+            && k >= 0
+            && k < GRID_DEPTH as i32
+        {
             let idx = k as usize * GRID_WIDTH * GRID_HEIGHT + j as usize * GRID_WIDTH + i as usize;
             if cell_types[idx] != 2 {
                 cell_types[idx] = 1; // fluid
@@ -228,28 +259,42 @@ fn main() {
         let cell_i = (p.position.x / CELL_SIZE).floor() as usize;
         let cell_j = (p.position.y / CELL_SIZE).floor() as usize;
         let cell_k = (p.position.z / CELL_SIZE).floor() as usize;
-        println!("  Upward particle {}: pos=({:.2}, {:.2}, {:.2}) -> cell=({}, {}, {})",
-                 idx, p.position.x, p.position.y, p.position.z, cell_i, cell_j, cell_k);
+        println!(
+            "  Upward particle {}: pos=({:.2}, {:.2}, {:.2}) -> cell=({}, {}, {})",
+            idx, p.position.x, p.position.y, p.position.z, cell_i, cell_j, cell_k
+        );
     }
     println!();
 
     // Record initial velocities
-    let initial_vy_up: f32 = test_particles.iter()
-        .map(|&i| velocities[i].y)
-        .sum::<f32>() / test_particles.len() as f32;
+    let initial_vy_up: f32 =
+        test_particles.iter().map(|&i| velocities[i].y).sum::<f32>() / test_particles.len() as f32;
 
-    let initial_vy_down: f32 = downward_particles.iter()
+    let initial_vy_down: f32 = downward_particles
+        .iter()
         .map(|&i| velocities[i].y)
-        .sum::<f32>() / downward_particles.len() as f32;
+        .sum::<f32>()
+        / downward_particles.len() as f32;
 
-    let initial_vx_above: f32 = above_particles.iter()
+    let initial_vx_above: f32 = above_particles
+        .iter()
         .map(|&i| velocities[i].x)
-        .sum::<f32>() / above_particles.len() as f32;
+        .sum::<f32>()
+        / above_particles.len() as f32;
 
     println!("Initial velocities:");
-    println!("  Upward particles (Vy): {:.3} (rising away from riffle)", initial_vy_up);
-    println!("  Downward particles (Vy): {:.3} (falling toward riffle)", initial_vy_down);
-    println!("  Horizontal particles (Vx): {:.3} (flowing above)", initial_vx_above);
+    println!(
+        "  Upward particles (Vy): {:.3} (rising away from riffle)",
+        initial_vy_up
+    );
+    println!(
+        "  Downward particles (Vy): {:.3} (falling toward riffle)",
+        initial_vy_down
+    );
+    println!(
+        "  Horizontal particles (Vx): {:.3} (flowing above)",
+        initial_vx_above
+    );
     println!();
 
     // Run ONE GPU step
@@ -264,8 +309,8 @@ fn main() {
         None,
         Some(&bed_height),
         DT,
-        0.0,  // No gravity
-        0.0,  // No flow accel
+        0.0, // No gravity
+        0.0, // No flow accel
         sim.pressure_iterations as u32,
     );
 
@@ -276,22 +321,34 @@ fn main() {
     println!();
 
     // Check final velocities
-    let final_vy_up: f32 = test_particles.iter()
-        .map(|&i| velocities[i].y)
-        .sum::<f32>() / test_particles.len() as f32;
+    let final_vy_up: f32 =
+        test_particles.iter().map(|&i| velocities[i].y).sum::<f32>() / test_particles.len() as f32;
 
-    let final_vy_down: f32 = downward_particles.iter()
+    let final_vy_down: f32 = downward_particles
+        .iter()
         .map(|&i| velocities[i].y)
-        .sum::<f32>() / downward_particles.len() as f32;
+        .sum::<f32>()
+        / downward_particles.len() as f32;
 
-    let final_vx_above: f32 = above_particles.iter()
+    let final_vx_above: f32 = above_particles
+        .iter()
         .map(|&i| velocities[i].x)
-        .sum::<f32>() / above_particles.len() as f32;
+        .sum::<f32>()
+        / above_particles.len() as f32;
 
     println!("After pressure solve:");
-    println!("  Upward particles (Vy): {:.3} (was {:.3})", final_vy_up, initial_vy_up);
-    println!("  Downward particles (Vy): {:.3} (was {:.3})", final_vy_down, initial_vy_down);
-    println!("  Horizontal particles (Vx): {:.3} (was {:.3})", final_vx_above, initial_vx_above);
+    println!(
+        "  Upward particles (Vy): {:.3} (was {:.3})",
+        final_vy_up, initial_vy_up
+    );
+    println!(
+        "  Downward particles (Vy): {:.3} (was {:.3})",
+        final_vy_down, initial_vy_down
+    );
+    println!(
+        "  Horizontal particles (Vx): {:.3} (was {:.3})",
+        final_vx_above, initial_vx_above
+    );
     println!();
 
     // TESTS
@@ -318,7 +375,10 @@ fn main() {
         println!("WARN: Downward Vy = {:.3} (not blocked)", final_vy_down);
         println!("      Water may penetrate the riffle");
     } else {
-        println!("PASS: Downward Vy = {:.3} (blocked or reversed)", final_vy_down);
+        println!(
+            "PASS: Downward Vy = {:.3} (blocked or reversed)",
+            final_vy_down
+        );
         println!("      No-penetration working");
     }
 

@@ -36,7 +36,13 @@ fn main() {
 
     let template_ids: Vec<usize> = templates
         .iter()
-        .map(|shape| sim.add_template(ClumpTemplate3D::generate(*shape, particle_radius, particle_mass)))
+        .map(|shape| {
+            sim.add_template(ClumpTemplate3D::generate(
+                *shape,
+                particle_radius,
+                particle_mass,
+            ))
+        })
         .collect();
 
     let mut rng = StdRng::seed_from_u64(123);

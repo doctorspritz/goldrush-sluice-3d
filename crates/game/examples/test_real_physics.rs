@@ -37,12 +37,16 @@ fn update_cell_types_from_particles(
         let j = (pos.y / cell_size) as i32;
         let k = (pos.z / cell_size) as i32;
 
-        if i >= 0 && i < grid_width as i32
-            && j >= 0 && j < grid_height as i32
-            && k >= 0 && k < grid_depth as i32
+        if i >= 0
+            && i < grid_width as i32
+            && j >= 0
+            && j < grid_height as i32
+            && k >= 0
+            && k < grid_depth as i32
         {
             let idx = k as usize * grid_width * grid_height + j as usize * grid_width + i as usize;
-            if cell_types[idx] != 2 { // Preserve solids
+            if cell_types[idx] != 2 {
+                // Preserve solids
                 cell_types[idx] = 1; // FLUID
             }
         }
@@ -62,32 +66,56 @@ fn main() {
 
     // Test 1: Galileo's Law of Falling Bodies
     let (pass, error) = test_galileo_free_fall(&device, &queue);
-    if pass { passed += 1; } else { failed += 1; }
+    if pass {
+        passed += 1;
+    } else {
+        failed += 1;
+    }
     println!("  -> Error from theory: {:.1}%\n", error);
 
     // Test 2: Torricelli's Law (outflow velocity)
     let (pass, error) = test_torricelli_outflow(&device, &queue);
-    if pass { passed += 1; } else { failed += 1; }
+    if pass {
+        passed += 1;
+    } else {
+        failed += 1;
+    }
     println!("  -> Error from theory: {:.1}%\n", error);
 
     // Test 3: Water settles to rest (damping/stability)
     let (pass, max_vel) = test_archimedes_buoyancy(&device, &queue);
-    if pass { passed += 1; } else { failed += 1; }
+    if pass {
+        passed += 1;
+    } else {
+        failed += 1;
+    }
     println!("  -> Max velocity after settling: {:.3} m/s\n", max_vel);
 
     // Test 4: Dam Break (forward motion)
     let (pass, advance_cm) = test_ritter_dam_break(&device, &queue);
-    if pass { passed += 1; } else { failed += 1; }
+    if pass {
+        passed += 1;
+    } else {
+        failed += 1;
+    }
     println!("  -> Front advance: {:.1}cm\n", advance_cm);
 
     // Test 5: Momentum Conservation
     let (pass, error) = test_momentum_conservation(&device, &queue);
-    if pass { passed += 1; } else { failed += 1; }
+    if pass {
+        passed += 1;
+    } else {
+        failed += 1;
+    }
     println!("  -> Momentum deviation: {:.2}%\n", error);
 
     // Test 6: Energy Dissipation (2nd Law of Thermodynamics)
     let (pass, ratio) = test_energy_dissipation(&device, &queue);
-    if pass { passed += 1; } else { failed += 1; }
+    if pass {
+        passed += 1;
+    } else {
+        failed += 1;
+    }
     println!("  -> Energy ratio (final/initial): {:.3}\n", ratio);
 
     println!("{}", "=".repeat(70));
@@ -119,8 +147,12 @@ fn test_galileo_free_fall(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool, 
     println!("Expected: v_y = -2.45 m/s after 0.25 seconds");
 
     let mut flip = GpuFlip3D::new(
-        device, GRID_SIZE as u32, GRID_SIZE as u32, GRID_SIZE as u32,
-        CELL_SIZE, MAX_PARTICLES,
+        device,
+        GRID_SIZE as u32,
+        GRID_SIZE as u32,
+        GRID_SIZE as u32,
+        CELL_SIZE,
+        MAX_PARTICLES,
     );
 
     // Create a compact blob of water particles high up
@@ -178,14 +210,27 @@ fn test_galileo_free_fall(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool, 
     for _ in 0..frames {
         // Update cell types before each step
         update_cell_types_from_particles(
-            &mut cell_types, &positions,
-            GRID_SIZE, GRID_SIZE, GRID_SIZE, CELL_SIZE,
+            &mut cell_types,
+            &positions,
+            GRID_SIZE,
+            GRID_SIZE,
+            GRID_SIZE,
+            CELL_SIZE,
         );
         flip.step(
-            device, queue,
-            &mut positions, &mut velocities, &mut c_matrices, &densities,
-            &cell_types, Some(&sdf), None,
-            dt, gravity, 0.0, 40,
+            device,
+            queue,
+            &mut positions,
+            &mut velocities,
+            &mut c_matrices,
+            &densities,
+            &cell_types,
+            Some(&sdf),
+            None,
+            dt,
+            gravity,
+            0.0,
+            40,
         );
     }
 
@@ -220,8 +265,12 @@ fn test_torricelli_outflow(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
     // Larger grid for proper tank geometry
     let grid_size = 48;
     let mut flip = GpuFlip3D::new(
-        device, grid_size as u32, grid_size as u32, grid_size as u32,
-        CELL_SIZE, MAX_PARTICLES,
+        device,
+        grid_size as u32,
+        grid_size as u32,
+        grid_size as u32,
+        CELL_SIZE,
+        MAX_PARTICLES,
     );
 
     let mut positions = Vec::new();
@@ -231,11 +280,11 @@ fn test_torricelli_outflow(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
 
     // Tank dimensions
     let tank_left = 4;
-    let tank_right = 20;  // Right wall has outlet
+    let tank_right = 20; // Right wall has outlet
     let tank_front = 4;
     let tank_back = grid_size - 4;
     let floor_j = 2;
-    let water_height_cells = 24;  // 0.24m water column
+    let water_height_cells = 24; // 0.24m water column
     let water_height_m = water_height_cells as f32 * CELL_SIZE;
 
     // Outlet: gap in right wall at floor level (j = floor_j+1 to floor_j+4)
@@ -265,7 +314,10 @@ fn test_torricelli_outflow(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
         }
     }
 
-    println!("  Water height: {:.2}m ({} cells)", water_height_m, water_height_cells);
+    println!(
+        "  Water height: {:.2}m ({} cells)",
+        water_height_m, water_height_cells
+    );
     println!("  Outlet at x = {:.3}m (floor level)", outlet_x);
     println!("  Particles: {}", positions.len());
 
@@ -289,8 +341,8 @@ fn test_torricelli_outflow(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
                 // Right wall WITH OUTLET GAP
                 else if i >= tank_right {
                     // Outlet gap: don't mark as solid if in outlet region
-                    let in_outlet = j >= outlet_bottom && j <= outlet_top
-                                 && k > tank_front && k < tank_back;
+                    let in_outlet =
+                        j >= outlet_bottom && j <= outlet_top && k > tank_front && k < tank_back;
                     if !in_outlet {
                         cell_types[idx] = 2;
                     }
@@ -320,15 +372,19 @@ fn test_torricelli_outflow(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
             let dist_back = (tank_back as f32 - k as f32 - 0.5) * CELL_SIZE;
 
             // Right wall distance (but not in outlet)
-            let in_outlet = j >= outlet_bottom && j <= outlet_top
-                         && k > tank_front && k < tank_back;
+            let in_outlet =
+                j >= outlet_bottom && j <= outlet_top && k > tank_front && k < tank_back;
             let dist_right = if in_outlet {
-                1.0  // Far from wall in outlet region
+                1.0 // Far from wall in outlet region
             } else {
                 (tank_right as f32 - i as f32 - 0.5) * CELL_SIZE
             };
 
-            dist_floor.min(dist_left).min(dist_right).min(dist_front).min(dist_back)
+            dist_floor
+                .min(dist_left)
+                .min(dist_right)
+                .min(dist_front)
+                .min(dist_back)
         })
         .collect();
 
@@ -339,17 +395,31 @@ fn test_torricelli_outflow(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
     let mut max_outlet_velocity: f32 = 0.0;
     let mut outlet_samples = 0;
 
-    for frame in 0..90 {  // 1.5 seconds
+    for frame in 0..90 {
+        // 1.5 seconds
         // Update cell types before each step
         update_cell_types_from_particles(
-            &mut cell_types, &positions,
-            grid_size, grid_size, grid_size, CELL_SIZE,
+            &mut cell_types,
+            &positions,
+            grid_size,
+            grid_size,
+            grid_size,
+            CELL_SIZE,
         );
         flip.step(
-            device, queue,
-            &mut positions, &mut velocities, &mut c_matrices, &densities,
-            &cell_types, Some(&sdf), None,
-            dt, gravity, 0.0, 60,
+            device,
+            queue,
+            &mut positions,
+            &mut velocities,
+            &mut c_matrices,
+            &densities,
+            &cell_types,
+            Some(&sdf),
+            None,
+            dt,
+            gravity,
+            0.0,
+            60,
         );
 
         // Measure velocity of particles AT the outlet plane (within 1 cell)
@@ -357,9 +427,9 @@ fn test_torricelli_outflow(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
             // Particle is crossing the outlet plane
             let at_outlet_x = (pos.x - outlet_x).abs() < CELL_SIZE;
             let in_outlet_y = pos.y >= (outlet_bottom as f32) * CELL_SIZE
-                           && pos.y <= (outlet_top as f32 + 1.0) * CELL_SIZE;
+                && pos.y <= (outlet_top as f32 + 1.0) * CELL_SIZE;
             let in_outlet_z = pos.z > (tank_front as f32 + 1.0) * CELL_SIZE
-                           && pos.z < (tank_back as f32 - 1.0) * CELL_SIZE;
+                && pos.z < (tank_back as f32 - 1.0) * CELL_SIZE;
 
             if at_outlet_x && in_outlet_y && in_outlet_z {
                 // Track max horizontal velocity (should approach Torricelli)
@@ -373,8 +443,10 @@ fn test_torricelli_outflow(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
 
         if frame == 44 {
             let past_outlet = positions.iter().filter(|p| p.x > outlet_x).count();
-            println!("  Frame 45: max outlet velocity = {:.3} m/s ({} samples so far)",
-                     max_outlet_velocity, outlet_samples);
+            println!(
+                "  Frame 45: max outlet velocity = {:.3} m/s ({} samples so far)",
+                max_outlet_velocity, outlet_samples
+            );
             println!("  Debug: {} particles past outlet", past_outlet);
         }
     }
@@ -388,8 +460,10 @@ fn test_torricelli_outflow(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
         100.0
     };
 
-    println!("  Max outlet velocity: {:.3} m/s ({} measurements)",
-             max_outlet_velocity, outlet_samples);
+    println!(
+        "  Max outlet velocity: {:.3} m/s ({} measurements)",
+        max_outlet_velocity, outlet_samples
+    );
     println!("  Torricelli prediction: {:.3} m/s", expected_v);
     println!("  Error: {:.1}%", error_pct);
 
@@ -414,8 +488,12 @@ fn test_archimedes_buoyancy(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool
 
     let grid_size = 32;
     let mut flip = GpuFlip3D::new(
-        device, grid_size as u32, grid_size as u32, grid_size as u32,
-        CELL_SIZE, MAX_PARTICLES,
+        device,
+        grid_size as u32,
+        grid_size as u32,
+        grid_size as u32,
+        CELL_SIZE,
+        MAX_PARTICLES,
     );
 
     let mut positions = Vec::new();
@@ -425,7 +503,7 @@ fn test_archimedes_buoyancy(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool
 
     // Water blob on one side (will slosh)
     for j in 2..12 {
-        for k in 4..grid_size-4 {
+        for k in 4..grid_size - 4 {
             for i in 4..16 {
                 for pj in 0..2 {
                     for pk in 0..2 {
@@ -456,7 +534,7 @@ fn test_archimedes_buoyancy(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool
         for j in 0..grid_size {
             for i in 0..grid_size {
                 let idx = k * grid_size * grid_size + j * grid_size + i;
-                if j <= 1 || i <= 1 || i >= grid_size-2 || k <= 1 || k >= grid_size-2 {
+                if j <= 1 || i <= 1 || i >= grid_size - 2 || k <= 1 || k >= grid_size - 2 {
                     cell_types[idx] = 2;
                 }
             }
@@ -476,7 +554,11 @@ fn test_archimedes_buoyancy(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool
             let dist_front = (k as f32 - 1.5) * CELL_SIZE;
             let dist_back = ((grid_size - 2 - k) as f32 - 0.5) * CELL_SIZE;
 
-            dist_floor.min(dist_left).min(dist_right).min(dist_front).min(dist_back)
+            dist_floor
+                .min(dist_left)
+                .min(dist_right)
+                .min(dist_front)
+                .min(dist_back)
         })
         .collect();
 
@@ -484,22 +566,40 @@ fn test_archimedes_buoyancy(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool
     let gravity = -9.8;
 
     // Run and let water settle
-    for _ in 0..180 { // 3 seconds
+    for _ in 0..180 {
+        // 3 seconds
         update_cell_types_from_particles(
-            &mut cell_types, &positions,
-            grid_size, grid_size, grid_size, CELL_SIZE,
+            &mut cell_types,
+            &positions,
+            grid_size,
+            grid_size,
+            grid_size,
+            CELL_SIZE,
         );
         flip.step(
-            device, queue,
-            &mut positions, &mut velocities, &mut c_matrices, &densities,
-            &cell_types, Some(&sdf), None,
-            dt, gravity, 0.0, 60,
+            device,
+            queue,
+            &mut positions,
+            &mut velocities,
+            &mut c_matrices,
+            &densities,
+            &cell_types,
+            Some(&sdf),
+            None,
+            dt,
+            gravity,
+            0.0,
+            60,
         );
     }
 
     // Measure final max velocity (should be near zero)
-    let max_velocity = velocities.iter().map(|v| v.length()).fold(0.0f32, |a, b| a.max(b));
-    let avg_velocity: f32 = velocities.iter().map(|v| v.length()).sum::<f32>() / velocities.len() as f32;
+    let max_velocity = velocities
+        .iter()
+        .map(|v| v.length())
+        .fold(0.0f32, |a, b| a.max(b));
+    let avg_velocity: f32 =
+        velocities.iter().map(|v| v.length()).sum::<f32>() / velocities.len() as f32;
 
     println!("  After 3s settling:");
     println!("  Max velocity: {:.3} m/s", max_velocity);
@@ -528,8 +628,12 @@ fn test_ritter_dam_break(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool, f
     let grid_size = 32;
 
     let mut flip = GpuFlip3D::new(
-        device, grid_size as u32, grid_size as u32, grid_size as u32,
-        CELL_SIZE, MAX_PARTICLES,
+        device,
+        grid_size as u32,
+        grid_size as u32,
+        grid_size as u32,
+        CELL_SIZE,
+        MAX_PARTICLES,
     );
 
     let mut positions = Vec::new();
@@ -615,14 +719,27 @@ fn test_ritter_dam_break(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool, f
     // Run dam break
     for _ in 0..frames {
         update_cell_types_from_particles(
-            &mut cell_types, &positions,
-            grid_size, grid_size, grid_size, CELL_SIZE,
+            &mut cell_types,
+            &positions,
+            grid_size,
+            grid_size,
+            grid_size,
+            CELL_SIZE,
         );
         flip.step(
-            device, queue,
-            &mut positions, &mut velocities, &mut c_matrices, &densities,
-            &cell_types, Some(&sdf), None,
-            dt, gravity, 0.0, 40,
+            device,
+            queue,
+            &mut positions,
+            &mut velocities,
+            &mut c_matrices,
+            &densities,
+            &cell_types,
+            Some(&sdf),
+            None,
+            dt,
+            gravity,
+            0.0,
+            40,
         );
     }
 
@@ -659,8 +776,12 @@ fn test_momentum_conservation(device: &wgpu::Device, queue: &wgpu::Queue) -> (bo
 
     let grid_size = 48;
     let mut flip = GpuFlip3D::new(
-        device, grid_size as u32, grid_size as u32, grid_size as u32,
-        CELL_SIZE, MAX_PARTICLES,
+        device,
+        grid_size as u32,
+        grid_size as u32,
+        grid_size as u32,
+        CELL_SIZE,
+        MAX_PARTICLES,
     );
 
     let mut positions = Vec::new();
@@ -672,8 +793,8 @@ fn test_momentum_conservation(device: &wgpu::Device, queue: &wgpu::Queue) -> (bo
     let center_z = grid_size as f32 * CELL_SIZE / 2.0;
 
     // Left blob moving right (+x)
-    for j in (grid_size/2 - 3)..(grid_size/2 + 3) {
-        for k in (grid_size/2 - 3)..(grid_size/2 + 3) {
+    for j in (grid_size / 2 - 3)..(grid_size / 2 + 3) {
+        for k in (grid_size / 2 - 3)..(grid_size / 2 + 3) {
             for i in 8..14 {
                 positions.push(Vec3::new(
                     (i as f32 + 0.5) * CELL_SIZE,
@@ -688,8 +809,8 @@ fn test_momentum_conservation(device: &wgpu::Device, queue: &wgpu::Queue) -> (bo
     }
 
     // Right blob moving left (-x)
-    for j in (grid_size/2 - 3)..(grid_size/2 + 3) {
-        for k in (grid_size/2 - 3)..(grid_size/2 + 3) {
+    for j in (grid_size / 2 - 3)..(grid_size / 2 + 3) {
+        for k in (grid_size / 2 - 3)..(grid_size / 2 + 3) {
             for i in (grid_size - 14)..(grid_size - 8) {
                 positions.push(Vec3::new(
                     (i as f32 + 0.5) * CELL_SIZE,
@@ -707,8 +828,10 @@ fn test_momentum_conservation(device: &wgpu::Device, queue: &wgpu::Queue) -> (bo
 
     // Calculate initial momentum
     let initial_momentum: Vec3 = velocities.iter().sum();
-    println!("  Initial momentum: ({:.3}, {:.3}, {:.3})",
-             initial_momentum.x, initial_momentum.y, initial_momentum.z);
+    println!(
+        "  Initial momentum: ({:.3}, {:.3}, {:.3})",
+        initial_momentum.x, initial_momentum.y, initial_momentum.z
+    );
 
     // No solid cells, no gravity - pure momentum test
     let cell_count = grid_size * grid_size * grid_size;
@@ -720,17 +843,28 @@ fn test_momentum_conservation(device: &wgpu::Device, queue: &wgpu::Queue) -> (bo
     // Run collision
     for _ in 0..60 {
         flip.step(
-            device, queue,
-            &mut positions, &mut velocities, &mut c_matrices, &densities,
-            &cell_types, Some(&sdf), None,
-            dt, 0.0, 0.0, 40, // No gravity
+            device,
+            queue,
+            &mut positions,
+            &mut velocities,
+            &mut c_matrices,
+            &densities,
+            &cell_types,
+            Some(&sdf),
+            None,
+            dt,
+            0.0,
+            0.0,
+            40, // No gravity
         );
     }
 
     // Calculate final momentum
     let final_momentum: Vec3 = velocities.iter().sum();
-    println!("  Final momentum: ({:.3}, {:.3}, {:.3})",
-             final_momentum.x, final_momentum.y, final_momentum.z);
+    println!(
+        "  Final momentum: ({:.3}, {:.3}, {:.3})",
+        final_momentum.x, final_momentum.y, final_momentum.z
+    );
 
     // Momentum should be approximately zero (equal and opposite initially)
     let initial_mag = initial_momentum.length();
@@ -760,8 +894,12 @@ fn test_energy_dissipation(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
 
     let grid_size = 32;
     let mut flip = GpuFlip3D::new(
-        device, grid_size as u32, grid_size as u32, grid_size as u32,
-        CELL_SIZE, MAX_PARTICLES,
+        device,
+        grid_size as u32,
+        grid_size as u32,
+        grid_size as u32,
+        CELL_SIZE,
+        MAX_PARTICLES,
     );
 
     let mut positions = Vec::new();
@@ -770,9 +908,9 @@ fn test_energy_dissipation(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
     let mut c_matrices = Vec::new();
 
     // Water blob with initial velocity
-    for j in grid_size/4..3*grid_size/4 {
-        for k in grid_size/4..3*grid_size/4 {
-            for i in grid_size/4..3*grid_size/4 {
+    for j in grid_size / 4..3 * grid_size / 4 {
+        for k in grid_size / 4..3 * grid_size / 4 {
+            for i in grid_size / 4..3 * grid_size / 4 {
                 positions.push(Vec3::new(
                     (i as f32 + 0.5) * CELL_SIZE,
                     (j as f32 + 0.5) * CELL_SIZE,
@@ -803,9 +941,13 @@ fn test_energy_dissipation(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
         for j in 0..grid_size {
             for i in 0..grid_size {
                 let idx = k * grid_size * grid_size + j * grid_size + i;
-                if j <= 1 || j >= grid_size-2 ||
-                   i <= 1 || i >= grid_size-2 ||
-                   k <= 1 || k >= grid_size-2 {
+                if j <= 1
+                    || j >= grid_size - 2
+                    || i <= 1
+                    || i >= grid_size - 2
+                    || k <= 1
+                    || k >= grid_size - 2
+                {
                     cell_types[idx] = 2;
                 }
             }
@@ -823,7 +965,12 @@ fn test_energy_dissipation(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
             let d_right = ((grid_size - 2) as f32 - i as f32 - 0.5) * CELL_SIZE;
             let d_front = (k as f32 - 1.5) * CELL_SIZE;
             let d_back = ((grid_size - 2) as f32 - k as f32 - 0.5) * CELL_SIZE;
-            d_floor.min(d_ceil).min(d_left).min(d_right).min(d_front).min(d_back)
+            d_floor
+                .min(d_ceil)
+                .min(d_left)
+                .min(d_right)
+                .min(d_front)
+                .min(d_back)
         })
         .collect();
 
@@ -832,14 +979,27 @@ fn test_energy_dissipation(device: &wgpu::Device, queue: &wgpu::Queue) -> (bool,
     // Run without gravity
     for _ in 0..120 {
         update_cell_types_from_particles(
-            &mut cell_types, &positions,
-            grid_size, grid_size, grid_size, CELL_SIZE,
+            &mut cell_types,
+            &positions,
+            grid_size,
+            grid_size,
+            grid_size,
+            CELL_SIZE,
         );
         flip.step(
-            device, queue,
-            &mut positions, &mut velocities, &mut c_matrices, &densities,
-            &cell_types, Some(&sdf), None,
-            dt, 0.0, 0.0, 40, // No gravity
+            device,
+            queue,
+            &mut positions,
+            &mut velocities,
+            &mut c_matrices,
+            &densities,
+            &cell_types,
+            Some(&sdf),
+            None,
+            dt,
+            0.0,
+            0.0,
+            40, // No gravity
         );
     }
 

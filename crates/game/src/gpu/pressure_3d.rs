@@ -27,8 +27,8 @@ struct PressureParams3D {
     width: u32,
     height: u32,
     depth: u32,
-    omega: f32,  // SOR relaxation factor (1.5-1.9)
-    h_sq: f32,   // cell_size^2, for Poisson equation scaling
+    omega: f32, // SOR relaxation factor (1.5-1.9)
+    h_sq: f32,  // cell_size^2, for Poisson equation scaling
 }
 
 /// GPU-based pressure solver for 3D FLIP
@@ -40,7 +40,7 @@ pub struct GpuPressure3D {
     // Pressure and divergence buffers (public for density projection reuse)
     pub pressure_buffer: wgpu::Buffer,
     pub divergence_buffer: wgpu::Buffer,
-    pub cell_type_buffer: wgpu::Buffer,  // Public so gravity shader can use it
+    pub cell_type_buffer: wgpu::Buffer, // Public so gravity shader can use it
 
     // Parameters
     grid_params_buffer: wgpu::Buffer,
@@ -86,28 +86,36 @@ impl GpuPressure3D {
 
         let gradient_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Pressure Gradient 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/pressure_gradient_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("shaders/pressure_gradient_3d.wgsl").into(),
+            ),
         });
 
         // Create buffers
         let pressure_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Pressure 3D"),
             size: (cell_count * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
         let divergence_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Divergence 3D"),
             size: (cell_count * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
         let cell_type_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Cell Type 3D"),
             size: (cell_count * std::mem::size_of::<u32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -126,213 +134,234 @@ impl GpuPressure3D {
         });
 
         // Create divergence bind group layout
-        let divergence_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Divergence 3D Bind Group Layout"),
-            entries: &[
-                // 0: params
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let divergence_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Divergence 3D Bind Group Layout"),
+                entries: &[
+                    // 0: params
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 1: grid_u
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 1: grid_u
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 2: grid_v
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 2: grid_v
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 3: grid_w
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 3: grid_w
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 4: cell_type
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 4: cell_type
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 5: divergence (output)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 5: divergence (output)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
         // Create pressure bind group layout
-        let pressure_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Pressure 3D Bind Group Layout"),
-            entries: &[
-                // 0: pressure (read_write)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let pressure_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Pressure 3D Bind Group Layout"),
+                entries: &[
+                    // 0: pressure (read_write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 1: divergence (read)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 1: divergence (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 2: cell_type (read)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 2: cell_type (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 3: params (uniform)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 3: params (uniform)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
         // Create gradient bind group layout
-        let gradient_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Gradient 3D Bind Group Layout"),
-            entries: &[
-                // 0: params
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let gradient_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Gradient 3D Bind Group Layout"),
+                entries: &[
+                    // 0: params
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 1: pressure (read)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 1: pressure (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 2: cell_type (read)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 2: cell_type (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 3: grid_u (read_write)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 3: grid_u (read_write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 4: grid_v (read_write)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 4: grid_v (read_write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 5: grid_w (read_write)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 5: grid_w (read_write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
         // Create bind groups
         let divergence_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Divergence 3D Bind Group"),
             layout: &divergence_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: grid_params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: grid_u_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: grid_v_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: grid_w_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: cell_type_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: divergence_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: grid_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: grid_u_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: grid_v_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: grid_w_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: cell_type_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: divergence_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -340,10 +369,22 @@ impl GpuPressure3D {
             label: Some("Pressure 3D Bind Group"),
             layout: &pressure_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: pressure_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: divergence_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: cell_type_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: pressure_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: pressure_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: divergence_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: cell_type_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: pressure_params_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -351,87 +392,114 @@ impl GpuPressure3D {
             label: Some("Gradient 3D Bind Group"),
             layout: &gradient_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: grid_params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: pressure_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: cell_type_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: grid_u_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: grid_v_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: grid_w_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: grid_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: pressure_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: cell_type_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: grid_u_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: grid_v_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: grid_w_buffer.as_entire_binding(),
+                },
             ],
         });
 
         // Create pipelines
-        let divergence_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Divergence 3D Pipeline Layout"),
-            bind_group_layouts: &[&divergence_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let divergence_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Divergence 3D Pipeline Layout"),
+                bind_group_layouts: &[&divergence_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let divergence_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Divergence 3D Pipeline"),
-            layout: Some(&divergence_pipeline_layout),
-            module: &divergence_shader,
-            entry_point: Some("compute_divergence"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let divergence_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Divergence 3D Pipeline"),
+                layout: Some(&divergence_pipeline_layout),
+                module: &divergence_shader,
+                entry_point: Some("compute_divergence"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
-        let pressure_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Pressure 3D Pipeline Layout"),
-            bind_group_layouts: &[&pressure_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pressure_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Pressure 3D Pipeline Layout"),
+                bind_group_layouts: &[&pressure_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let pressure_red_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Pressure Red 3D Pipeline"),
-            layout: Some(&pressure_pipeline_layout),
-            module: &pressure_shader,
-            entry_point: Some("pressure_red"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pressure_red_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Pressure Red 3D Pipeline"),
+                layout: Some(&pressure_pipeline_layout),
+                module: &pressure_shader,
+                entry_point: Some("pressure_red"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
-        let pressure_black_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Pressure Black 3D Pipeline"),
-            layout: Some(&pressure_pipeline_layout),
-            module: &pressure_shader,
-            entry_point: Some("pressure_black"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pressure_black_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Pressure Black 3D Pipeline"),
+                layout: Some(&pressure_pipeline_layout),
+                module: &pressure_shader,
+                entry_point: Some("pressure_black"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
-        let gradient_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Gradient 3D Pipeline Layout"),
-            bind_group_layouts: &[&gradient_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let gradient_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Gradient 3D Pipeline Layout"),
+                bind_group_layouts: &[&gradient_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let gradient_u_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Gradient U 3D Pipeline"),
-            layout: Some(&gradient_pipeline_layout),
-            module: &gradient_shader,
-            entry_point: Some("apply_gradient_u"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let gradient_u_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Gradient U 3D Pipeline"),
+                layout: Some(&gradient_pipeline_layout),
+                module: &gradient_shader,
+                entry_point: Some("apply_gradient_u"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
-        let gradient_v_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Gradient V 3D Pipeline"),
-            layout: Some(&gradient_pipeline_layout),
-            module: &gradient_shader,
-            entry_point: Some("apply_gradient_v"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let gradient_v_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Gradient V 3D Pipeline"),
+                layout: Some(&gradient_pipeline_layout),
+                module: &gradient_shader,
+                entry_point: Some("apply_gradient_v"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
-        let gradient_w_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Gradient W 3D Pipeline"),
-            layout: Some(&gradient_pipeline_layout),
-            module: &gradient_shader,
-            entry_point: Some("apply_gradient_w"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let gradient_w_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Gradient W 3D Pipeline"),
+                layout: Some(&gradient_pipeline_layout),
+                module: &gradient_shader,
+                entry_point: Some("apply_gradient_w"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         Self {
             width,
@@ -469,7 +537,11 @@ impl GpuPressure3D {
             depth: self.depth,
             inv_cell_size: 1.0 / cell_size,
         };
-        queue.write_buffer(&self.grid_params_buffer, 0, bytemuck::bytes_of(&grid_params));
+        queue.write_buffer(
+            &self.grid_params_buffer,
+            0,
+            bytemuck::bytes_of(&grid_params),
+        );
 
         // Upload pressure params
         // NOTE: For 3D grids, optimal SOR omega is approximately:
@@ -482,7 +554,11 @@ impl GpuPressure3D {
             omega: 1.85, // SOR over-relaxation for faster convergence (was 1.0)
             h_sq: cell_size * cell_size, // Poisson equation needs dx²
         };
-        queue.write_buffer(&self.pressure_params_buffer, 0, bytemuck::bytes_of(&pressure_params));
+        queue.write_buffer(
+            &self.pressure_params_buffer,
+            0,
+            bytemuck::bytes_of(&pressure_params),
+        );
     }
 
     /// Encode full pressure solve: divergence → iterations → gradient

@@ -3,7 +3,7 @@
 //! Tests divergence computation, pressure solve, and gradient application
 //! specifically for 3D grid configurations.
 
-use sim3d::{FlipSimulation3D, CellType, Vec3};
+use sim3d::{CellType, FlipSimulation3D, Vec3};
 
 /// Test that divergence of zero velocity field is zero
 #[test]
@@ -47,7 +47,7 @@ fn test_divergence_includes_w_component() {
     let w_back = sim.grid.w_index(4, 4, 4);
     let w_front = sim.grid.w_index(4, 4, 5);
     sim.grid.w[w_back] = 0.0;
-    sim.grid.w[w_front] = 1.0;  // Flow exiting in +Z direction
+    sim.grid.w[w_front] = 1.0; // Flow exiting in +Z direction
 
     sim3d::pressure::compute_divergence(&mut sim.grid);
 
@@ -85,7 +85,10 @@ fn test_pressure_solver_reduces_divergence() {
 
     // Compute initial divergence
     sim3d::pressure::compute_divergence(&mut sim.grid);
-    let max_div_before: f32 = sim.grid.divergence.iter()
+    let max_div_before: f32 = sim
+        .grid
+        .divergence
+        .iter()
         .map(|d| d.abs())
         .fold(0.0, f32::max);
 
@@ -95,14 +98,18 @@ fn test_pressure_solver_reduces_divergence() {
 
     // Recompute divergence
     sim3d::pressure::compute_divergence(&mut sim.grid);
-    let max_div_after: f32 = sim.grid.divergence.iter()
+    let max_div_after: f32 = sim
+        .grid
+        .divergence
+        .iter()
         .map(|d| d.abs())
         .fold(0.0, f32::max);
 
     assert!(
         max_div_after < max_div_before * 0.1,
         "Pressure solver should significantly reduce divergence. Before: {}, After: {}",
-        max_div_before, max_div_after
+        max_div_before,
+        max_div_after
     );
 }
 
@@ -129,7 +136,10 @@ fn test_z_boundary_conditions() {
 
     // Interior W velocities should be unchanged
     let interior_idx = sim.grid.w_index(4, 4, 4);
-    assert_eq!(sim.grid.w[interior_idx], 5.0, "Interior W should be unchanged");
+    assert_eq!(
+        sim.grid.w[interior_idx], 5.0,
+        "Interior W should be unchanged"
+    );
 }
 
 /// Test that all three velocity components are affected by pressure solve
@@ -153,21 +163,21 @@ fn test_pressure_affects_all_components() {
     // U: only on one side (creating positive divergence)
     for k in 2..6 {
         for j in 2..6 {
-            let idx = sim.grid.u_index(5, j, k);  // Only set outflow U
+            let idx = sim.grid.u_index(5, j, k); // Only set outflow U
             sim.grid.u[idx] = 2.0;
         }
     }
     // V: only on top (creating positive divergence)
     for k in 2..6 {
         for i in 2..6 {
-            let idx = sim.grid.v_index(i, 5, k);  // Only set outflow V
+            let idx = sim.grid.v_index(i, 5, k); // Only set outflow V
             sim.grid.v[idx] = 2.0;
         }
     }
     // W: only on front (creating positive divergence)
     for j in 2..6 {
         for i in 2..6 {
-            let idx = sim.grid.w_index(i, j, 5);  // Only set outflow W
+            let idx = sim.grid.w_index(i, j, 5); // Only set outflow W
             sim.grid.w[idx] = 2.0;
         }
     }
@@ -207,7 +217,16 @@ fn test_pressure_affects_all_components() {
         }
     }
 
-    assert!(u_inflow_created, "Pressure should create U inflow to balance divergence");
-    assert!(v_inflow_created, "Pressure should create V inflow to balance divergence");
-    assert!(w_inflow_created, "Pressure should create W inflow to balance divergence");
+    assert!(
+        u_inflow_created,
+        "Pressure should create U inflow to balance divergence"
+    );
+    assert!(
+        v_inflow_created,
+        "Pressure should create V inflow to balance divergence"
+    );
+    assert!(
+        w_inflow_created,
+        "Pressure should create W inflow to balance divergence"
+    );
 }

@@ -360,26 +360,50 @@ impl Grid3D {
                     if self.solid[idx] {
                         // Check neighbors
                         let mut has_air_neighbor = false;
-                        if i > 0 && !self.solid[self.cell_index(i - 1, j, k)] { has_air_neighbor = true; }
-                        if i < self.width - 1 && !self.solid[self.cell_index(i + 1, j, k)] { has_air_neighbor = true; }
-                        if j > 0 && !self.solid[self.cell_index(i, j - 1, k)] { has_air_neighbor = true; }
-                        if j < self.height - 1 && !self.solid[self.cell_index(i, j + 1, k)] { has_air_neighbor = true; }
-                        if k > 0 && !self.solid[self.cell_index(i, j, k - 1)] { has_air_neighbor = true; }
-                        if k < self.depth - 1 && !self.solid[self.cell_index(i, j, k + 1)] { has_air_neighbor = true; }
-                        
+                        if i > 0 && !self.solid[self.cell_index(i - 1, j, k)] {
+                            has_air_neighbor = true;
+                        }
+                        if i < self.width - 1 && !self.solid[self.cell_index(i + 1, j, k)] {
+                            has_air_neighbor = true;
+                        }
+                        if j > 0 && !self.solid[self.cell_index(i, j - 1, k)] {
+                            has_air_neighbor = true;
+                        }
+                        if j < self.height - 1 && !self.solid[self.cell_index(i, j + 1, k)] {
+                            has_air_neighbor = true;
+                        }
+                        if k > 0 && !self.solid[self.cell_index(i, j, k - 1)] {
+                            has_air_neighbor = true;
+                        }
+                        if k < self.depth - 1 && !self.solid[self.cell_index(i, j, k + 1)] {
+                            has_air_neighbor = true;
+                        }
+
                         if has_air_neighbor {
                             self.sdf[idx] = -0.5 * dx;
                         }
                     } else {
                         // Check neighbors
                         let mut has_solid_neighbor = false;
-                        if i > 0 && self.solid[self.cell_index(i - 1, j, k)] { has_solid_neighbor = true; }
-                        if i < self.width - 1 && self.solid[self.cell_index(i + 1, j, k)] { has_solid_neighbor = true; }
-                        if j > 0 && self.solid[self.cell_index(i, j - 1, k)] { has_solid_neighbor = true; }
-                        if j < self.height - 1 && self.solid[self.cell_index(i, j + 1, k)] { has_solid_neighbor = true; }
-                        if k > 0 && self.solid[self.cell_index(i, j, k - 1)] { has_solid_neighbor = true; }
-                        if k < self.depth - 1 && self.solid[self.cell_index(i, j, k + 1)] { has_solid_neighbor = true; }
-                        
+                        if i > 0 && self.solid[self.cell_index(i - 1, j, k)] {
+                            has_solid_neighbor = true;
+                        }
+                        if i < self.width - 1 && self.solid[self.cell_index(i + 1, j, k)] {
+                            has_solid_neighbor = true;
+                        }
+                        if j > 0 && self.solid[self.cell_index(i, j - 1, k)] {
+                            has_solid_neighbor = true;
+                        }
+                        if j < self.height - 1 && self.solid[self.cell_index(i, j + 1, k)] {
+                            has_solid_neighbor = true;
+                        }
+                        if k > 0 && self.solid[self.cell_index(i, j, k - 1)] {
+                            has_solid_neighbor = true;
+                        }
+                        if k < self.depth - 1 && self.solid[self.cell_index(i, j, k + 1)] {
+                            has_solid_neighbor = true;
+                        }
+
                         if has_solid_neighbor {
                             self.sdf[idx] = 0.5 * dx;
                         }
@@ -414,11 +438,23 @@ impl Grid3D {
         let h = self.height as i32;
         let d = self.depth as i32;
 
-        let i_range: Box<dyn Iterator<Item = i32>> = if di > 0 { Box::new(0..w) } else { Box::new((0..w).rev()) };
+        let i_range: Box<dyn Iterator<Item = i32>> = if di > 0 {
+            Box::new(0..w)
+        } else {
+            Box::new((0..w).rev())
+        };
         for i in i_range {
-            let j_range: Box<dyn Iterator<Item = i32>> = if dj > 0 { Box::new(0..h) } else { Box::new((0..h).rev()) };
+            let j_range: Box<dyn Iterator<Item = i32>> = if dj > 0 {
+                Box::new(0..h)
+            } else {
+                Box::new((0..h).rev())
+            };
             for j in j_range {
-                let k_range: Box<dyn Iterator<Item = i32>> = if dk > 0 { Box::new(0..d) } else { Box::new((0..d).rev()) };
+                let k_range: Box<dyn Iterator<Item = i32>> = if dk > 0 {
+                    Box::new(0..d)
+                } else {
+                    Box::new((0..d).rev())
+                };
                 for k in k_range {
                     let idx = self.cell_index(i as usize, j as usize, k as usize);
                     let val = self.sdf[idx];
@@ -430,7 +466,7 @@ impl Grid3D {
                         if ni >= 0 && ni < w && nj >= 0 && nj < h && nk >= 0 && nk < d {
                             let nidx = self.cell_index(ni as usize, nj as usize, nk as usize);
                             let nval = self.sdf[nidx];
-                            
+
                             if val >= 0.0 && nval >= 0.0 {
                                 self.sdf[idx] = self.sdf[idx].min(nval + dx);
                             } else if val < 0.0 && nval < 0.0 {

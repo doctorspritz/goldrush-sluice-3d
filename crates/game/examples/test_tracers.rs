@@ -48,8 +48,7 @@ fn update_cell_types_from_particles(
             && k >= 0
             && k < grid_depth as i32
         {
-            let idx =
-                k as usize * grid_width * grid_height + j as usize * grid_width + i as usize;
+            let idx = k as usize * grid_width * grid_height + j as usize * grid_width + i as usize;
             if cell_types[idx] != 2 {
                 // Preserve solids
                 cell_types[idx] = 1; // FLUID
@@ -101,7 +100,11 @@ fn main() {
     if failed == 0 {
         println!(" ALL TRACER TESTS PASSED ({}/{})", passed, passed + failed);
     } else {
-        println!(" TRACER TESTS FAILED: {}/{} passed", passed, passed + failed);
+        println!(
+            " TRACER TESTS FAILED: {}/{} passed",
+            passed,
+            passed + failed
+        );
     }
     println!("{}", "=".repeat(70));
 
@@ -141,8 +144,8 @@ fn test_downstream_advection(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
     let blob_end_y = 3 * grid_size / 4;
 
     for j in blob_start_y..blob_end_y {
-        for k in grid_size/4..3*grid_size/4 {
-            for i in grid_size/4..3*grid_size/4 {
+        for k in grid_size / 4..3 * grid_size / 4 {
+            for i in grid_size / 4..3 * grid_size / 4 {
                 for pj in 0..2 {
                     for pk in 0..2 {
                         for pi in 0..2 {
@@ -315,9 +318,13 @@ fn test_gravity_settling(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
         for j in 0..grid_size {
             for i in 0..grid_size {
                 let idx = k * grid_size * grid_size + j * grid_size + i;
-                if i <= 1 || i >= grid_size - 2 ||
-                   j <= 1 || j >= grid_size - 2 ||
-                   k <= 1 || k >= grid_size - 2 {
+                if i <= 1
+                    || i >= grid_size - 2
+                    || j <= 1
+                    || j >= grid_size - 2
+                    || k <= 1
+                    || k >= grid_size - 2
+                {
                     cell_types[idx] = 2;
                     sdf[idx] = -CELL_SIZE;
                 }
@@ -363,8 +370,14 @@ fn test_gravity_settling(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
     let water_drop = water_tracer_start_y - water_final_y;
     let dense_drop = dense_tracer_start_y - dense_final_y;
 
-    println!("  Water tracer: y = {:.3}m (dropped {:.3}m)", water_final_y, water_drop);
-    println!("  Dense tracer: y = {:.3}m (dropped {:.3}m)", dense_final_y, dense_drop);
+    println!(
+        "  Water tracer: y = {:.3}m (dropped {:.3}m)",
+        water_final_y, water_drop
+    );
+    println!(
+        "  Dense tracer: y = {:.3}m (dropped {:.3}m)",
+        dense_final_y, dense_drop
+    );
 
     // Dense tracer should drop more than water tracer
     let pass = dense_drop > water_drop;
@@ -472,7 +485,8 @@ fn test_no_teleportation(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
     }
 
     // Store previous positions after settling
-    let mut prev_positions: Vec<Vec3> = tracer_indices.iter()
+    let mut prev_positions: Vec<Vec3> = tracer_indices
+        .iter()
         .filter_map(|&idx| positions.get(idx).copied())
         .collect();
 
@@ -522,8 +536,10 @@ fn test_no_teleportation(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
                 if displacement > expected_max {
                     teleport_count += 1;
                     if teleport_count <= 3 {
-                        println!("  WARNING frame {}: tracer {} jumped {:.4}m (expected < {:.4}m)",
-                                 frame, i, displacement, expected_max);
+                        println!(
+                            "  WARNING frame {}: tracer {} jumped {:.4}m (expected < {:.4}m)",
+                            frame, i, displacement, expected_max
+                        );
                     }
                 }
 
@@ -592,7 +608,10 @@ fn test_velocity_consistency(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
         .filter(|&idx| idx < positions.len())
         .collect();
 
-    println!("  Tracking {} tracers for velocity consistency", tracer_indices.len());
+    println!(
+        "  Tracking {} tracers for velocity consistency",
+        tracer_indices.len()
+    );
 
     // Build geometry
     let cell_count = GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH;
@@ -647,8 +666,10 @@ fn test_velocity_consistency(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
     let total_vel: Vec3 = velocities.iter().sum();
     let avg_vel = total_vel / velocities.len() as f32;
 
-    println!("  Average flow velocity: ({:.3}, {:.3}, {:.3}) m/s",
-             avg_vel.x, avg_vel.y, avg_vel.z);
+    println!(
+        "  Average flow velocity: ({:.3}, {:.3}, {:.3}) m/s",
+        avg_vel.x, avg_vel.y, avg_vel.z
+    );
 
     // Check tracer velocities are close to average
     let mut max_deviation = 0.0f32;
@@ -658,8 +679,10 @@ fn test_velocity_consistency(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
             let deviation = (tracer_vel - avg_vel).length();
             max_deviation = max_deviation.max(deviation);
 
-            println!("  Tracer {}: vel = ({:.3}, {:.3}, {:.3}), deviation = {:.3} m/s",
-                     i, tracer_vel.x, tracer_vel.y, tracer_vel.z, deviation);
+            println!(
+                "  Tracer {}: vel = ({:.3}, {:.3}, {:.3}), deviation = {:.3} m/s",
+                i, tracer_vel.x, tracer_vel.y, tracer_vel.z, deviation
+            );
         }
     }
 
@@ -668,7 +691,10 @@ fn test_velocity_consistency(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
     let tolerance = avg_vel.length() * 0.6 + 0.15;
     let pass = max_deviation < tolerance;
 
-    println!("  Max deviation: {:.3} m/s (tolerance: {:.3})", max_deviation, tolerance);
+    println!(
+        "  Max deviation: {:.3} m/s (tolerance: {:.3})",
+        max_deviation, tolerance
+    );
     println!("  Result: {}", if pass { "PASS" } else { "FAIL" });
     pass
 }

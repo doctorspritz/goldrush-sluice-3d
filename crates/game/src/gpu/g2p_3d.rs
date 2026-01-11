@@ -23,10 +23,10 @@ struct G2pParams3D {
     height: u32,
     depth: u32,
     particle_count: u32,
-    d_inv: f32,        // APIC D inverse = 4/dx^2
-    flip_ratio: f32,   // FLIP blend ratio (0.97 for water)
-    dt: f32,           // Time step for velocity clamping
-    max_velocity: f32, // Safety clamp (2000.0)
+    d_inv: f32,         // APIC D inverse = 4/dx^2
+    flip_ratio: f32,    // FLIP blend ratio (0.97 for water)
+    dt: f32,            // Time step for velocity clamping
+    max_velocity: f32,  // Safety clamp (2000.0)
     _padding: [f32; 3], // Align to 48 bytes
 }
 
@@ -62,12 +62,12 @@ pub struct SedimentParams3D {
 impl Default for SedimentParams3D {
     fn default() -> Self {
         Self {
-            settling_velocity: 0.0,    // No settling - pure fluid
-            friction_threshold: 0.0,   // No friction threshold
-            friction_strength: 0.0,    // No friction - sediment = colored water
-            vorticity_lift: 0.0,       // Not needed with no settling
-            vorticity_threshold: 999.0,  // Never triggers
-            drag_coefficient: 10.0,    // Moderate drag - particles entrain in flow
+            settling_velocity: 0.0,     // No settling - pure fluid
+            friction_threshold: 0.0,    // No friction threshold
+            friction_strength: 0.0,     // No friction - sediment = colored water
+            vorticity_lift: 0.0,        // Not needed with no settling
+            vorticity_threshold: 999.0, // Never triggers
+            drag_coefficient: 10.0,     // Moderate drag - particles entrain in flow
             gold_density_threshold: 10.0,
             gold_drag_multiplier: 1.0,
             gold_settling_velocity: 0.0,
@@ -76,7 +76,6 @@ impl Default for SedimentParams3D {
         }
     }
 }
-
 
 /// GPU-based Grid-to-Particle transfer for 3D simulation
 pub struct GpuG2p3D {
@@ -393,24 +392,78 @@ impl GpuG2p3D {
             label: Some("G2P 3D Bind Group"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: positions_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: velocities_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: c_col0_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: c_col1_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: c_col2_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: grid_u_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: grid_v_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 8, resource: grid_w_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 9, resource: grid_u_old_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 10, resource: grid_v_old_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 11, resource: grid_w_old_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 12, resource: densities_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 13, resource: sediment_params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 14, resource: vorticity_mag_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 15, resource: water_grid_u_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 16, resource: water_grid_v_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 17, resource: water_grid_w_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: positions_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: velocities_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: c_col0_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: c_col1_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: c_col2_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: grid_u_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: grid_v_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: grid_w_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: grid_u_old_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: grid_v_old_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: grid_w_old_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: densities_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: sediment_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: vorticity_mag_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: water_grid_u_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: water_grid_v_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 17,
+                    resource: water_grid_w_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -479,7 +532,11 @@ impl GpuG2p3D {
             _padding: [0.0; 3],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
-        queue.write_buffer(&self.sediment_params_buffer, 0, bytemuck::bytes_of(&sediment_params));
+        queue.write_buffer(
+            &self.sediment_params_buffer,
+            0,
+            bytemuck::bytes_of(&sediment_params),
+        );
 
         particle_count
     }
@@ -512,10 +569,34 @@ impl GpuG2p3D {
         });
 
         // Copy to staging
-        encoder.copy_buffer_to_buffer(&self.velocities_buffer, 0, &self.velocities_staging, 0, (count * 16) as u64);
-        encoder.copy_buffer_to_buffer(&self.c_col0_buffer, 0, &self.c_col0_staging, 0, (count * 16) as u64);
-        encoder.copy_buffer_to_buffer(&self.c_col1_buffer, 0, &self.c_col1_staging, 0, (count * 16) as u64);
-        encoder.copy_buffer_to_buffer(&self.c_col2_buffer, 0, &self.c_col2_staging, 0, (count * 16) as u64);
+        encoder.copy_buffer_to_buffer(
+            &self.velocities_buffer,
+            0,
+            &self.velocities_staging,
+            0,
+            (count * 16) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.c_col0_buffer,
+            0,
+            &self.c_col0_staging,
+            0,
+            (count * 16) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.c_col1_buffer,
+            0,
+            &self.c_col1_staging,
+            0,
+            (count * 16) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.c_col2_buffer,
+            0,
+            &self.c_col2_staging,
+            0,
+            (count * 16) as u64,
+        );
 
         queue.submit(std::iter::once(encoder.finish()));
 
@@ -539,7 +620,11 @@ impl GpuG2p3D {
         }
     }
 
-    fn read_staging_buffer_vec4(device: &wgpu::Device, buffer: &wgpu::Buffer, count: usize) -> Vec<[f32; 4]> {
+    fn read_staging_buffer_vec4(
+        device: &wgpu::Device,
+        buffer: &wgpu::Buffer,
+        count: usize,
+    ) -> Vec<[f32; 4]> {
         let buffer_slice = buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {

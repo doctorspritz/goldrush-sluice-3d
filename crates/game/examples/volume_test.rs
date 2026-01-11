@@ -24,9 +24,9 @@ use winit::{
 // 100k particles / 8 = 12.5k cells target
 // 20x30x20 = 12k cells (close to target)
 const GRID_WIDTH: usize = 20;
-const GRID_HEIGHT: usize = 30;  // Taller to see water rise/fall
+const GRID_HEIGHT: usize = 30; // Taller to see water rise/fall
 const GRID_DEPTH: usize = 20;
-const CELL_SIZE: f32 = 0.05;  // Larger cells for fewer total
+const CELL_SIZE: f32 = 0.05; // Larger cells for fewer total
 const MAX_PARTICLES: usize = 150000;
 const DT: f32 = 1.0 / 60.0;
 
@@ -78,7 +78,7 @@ struct App {
     current_fps: f32,
     // Volume tracking
     initial_particle_count: usize,
-    avg_height_history: Vec<f32>,  // Track avg Y over time
+    avg_height_history: Vec<f32>, // Track avg Y over time
 }
 
 struct GpuState {
@@ -124,10 +124,10 @@ fn spawn_water_block(sim: &mut FlipSimulation3D, count: usize) {
     let margin = 2.0;
     let spawn_width = (GRID_WIDTH as f32) - 2.0 * margin;
     let spawn_depth = (GRID_DEPTH as f32) - 2.0 * margin;
-    let spawn_height = 15.0;  // Water fills lower 15 cells (proportional to smaller grid)
+    let spawn_height = 15.0; // Water fills lower 15 cells (proportional to smaller grid)
 
     let start_x = margin * cell_size;
-    let start_y = 1.5 * cell_size;  // Just above floor
+    let start_y = 1.5 * cell_size; // Just above floor
     let start_z = margin * cell_size;
 
     // Calculate spacing
@@ -185,7 +185,7 @@ impl App {
         create_open_box(&mut sim);
 
         // Spawn initial water block
-        let initial_count = 10000;  // Start small to verify shaders work
+        let initial_count = 10000; // Start small to verify shaders work
         spawn_water_block(&mut sim, initial_count);
 
         let solid_instances = Self::collect_solids(&sim);
@@ -234,13 +234,12 @@ impl App {
                 for i in 0..width {
                     if sim.grid.is_solid(i, j, k) {
                         // Only render exposed faces
-                        let exposed =
-                            (i == 0 || !sim.grid.is_solid(i-1, j, k)) ||
-                            (i == width-1 || !sim.grid.is_solid(i+1, j, k)) ||
-                            (j == 0 || !sim.grid.is_solid(i, j-1, k)) ||
-                            (j == height-1 || !sim.grid.is_solid(i, j+1, k)) ||
-                            (k == 0 || !sim.grid.is_solid(i, j, k-1)) ||
-                            (k == depth-1 || !sim.grid.is_solid(i, j, k+1));
+                        let exposed = (i == 0 || !sim.grid.is_solid(i - 1, j, k))
+                            || (i == width - 1 || !sim.grid.is_solid(i + 1, j, k))
+                            || (j == 0 || !sim.grid.is_solid(i, j - 1, k))
+                            || (j == height - 1 || !sim.grid.is_solid(i, j + 1, k))
+                            || (k == 0 || !sim.grid.is_solid(i, j, k - 1))
+                            || (k == depth - 1 || !sim.grid.is_solid(i, j, k + 1));
 
                         if exposed {
                             solids.push(ParticleInstance {
@@ -375,7 +374,7 @@ impl App {
                     Some(&self.bed_height),
                     DT,
                     -9.8,
-                    0.0,  // No flow acceleration
+                    0.0, // No flow acceleration
                     pressure_iters,
                 );
             }
@@ -394,16 +393,34 @@ impl App {
                 let min_x = cell_size * 1.01;
                 let max_x = (GRID_WIDTH as f32 - 1.01) * cell_size;
                 let min_y = cell_size * 1.01;
-                let max_y = (GRID_HEIGHT as f32 - 0.01) * cell_size;  // Open top
+                let max_y = (GRID_HEIGHT as f32 - 0.01) * cell_size; // Open top
                 let min_z = cell_size * 1.01;
                 let max_z = (GRID_DEPTH as f32 - 1.01) * cell_size;
 
-                if p.position.x < min_x { p.position.x = min_x; p.velocity.x = 0.0; }
-                if p.position.x > max_x { p.position.x = max_x; p.velocity.x = 0.0; }
-                if p.position.y < min_y { p.position.y = min_y; p.velocity.y = 0.0; }
-                if p.position.y > max_y { p.position.y = max_y; p.velocity.y = 0.0; }
-                if p.position.z < min_z { p.position.z = min_z; p.velocity.z = 0.0; }
-                if p.position.z > max_z { p.position.z = max_z; p.velocity.z = 0.0; }
+                if p.position.x < min_x {
+                    p.position.x = min_x;
+                    p.velocity.x = 0.0;
+                }
+                if p.position.x > max_x {
+                    p.position.x = max_x;
+                    p.velocity.x = 0.0;
+                }
+                if p.position.y < min_y {
+                    p.position.y = min_y;
+                    p.velocity.y = 0.0;
+                }
+                if p.position.y > max_y {
+                    p.position.y = max_y;
+                    p.velocity.y = 0.0;
+                }
+                if p.position.z < min_z {
+                    p.position.z = min_z;
+                    p.velocity.z = 0.0;
+                }
+                if p.position.z > max_z {
+                    p.position.z = max_z;
+                    p.velocity.z = 0.0;
+                }
             }
 
             self.frame += 1;
@@ -427,7 +444,11 @@ impl App {
             // Compute drift from initial
             let initial_avg = self.avg_height_history.first().copied().unwrap_or(avg_y);
             let drift = avg_y - initial_avg;
-            let drift_pct = if initial_avg > 0.0 { drift / initial_avg * 100.0 } else { 0.0 };
+            let drift_pct = if initial_avg > 0.0 {
+                drift / initial_avg * 100.0
+            } else {
+                0.0
+            };
 
             println!(
                 "Frame {:5} | Particles: {:5} | AvgY: {:.4} | MaxY: {:.4} | MinY: {:.4} | StdY: {:.4} | Drift: {:+.2}%",
@@ -468,7 +489,8 @@ impl App {
         let gpu = self.gpu.as_ref().unwrap();
         let window = self.window.as_ref().unwrap();
 
-        gpu.queue.write_buffer(&gpu.instance_buffer, 0, bytemuck::cast_slice(&instances));
+        gpu.queue
+            .write_buffer(&gpu.instance_buffer, 0, bytemuck::cast_slice(&instances));
 
         // Update camera
         let center = Vec3::new(
@@ -476,11 +498,12 @@ impl App {
             GRID_HEIGHT as f32 * CELL_SIZE * 0.5,
             GRID_DEPTH as f32 * CELL_SIZE * 0.5,
         );
-        let eye = center + Vec3::new(
-            self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
-            self.camera_distance * self.camera_pitch.sin(),
-            self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
-        );
+        let eye = center
+            + Vec3::new(
+                self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
+                self.camera_distance * self.camera_pitch.sin(),
+                self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
+            );
 
         let view = Mat4::look_at_rh(eye, center, Vec3::Y);
         let aspect = gpu.config.width as f32 / gpu.config.height as f32;
@@ -492,14 +515,19 @@ impl App {
             camera_pos: eye.to_array(),
             _pad: 0.0,
         };
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let frame = gpu.surface.get_current_texture().unwrap();
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -508,7 +536,12 @@ impl App {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.1, b: 0.15, a: 1.0 }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.15,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -608,10 +641,18 @@ impl ApplicationHandler for App {
         });
 
         let vertices = [
-            Vertex { position: [-1.0, -1.0] },
-            Vertex { position: [1.0, -1.0] },
-            Vertex { position: [-1.0, 1.0] },
-            Vertex { position: [1.0, 1.0] },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, -1.0],
+            },
+            Vertex {
+                position: [-1.0, 1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+            },
         ];
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),

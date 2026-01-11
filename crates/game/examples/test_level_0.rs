@@ -8,8 +8,8 @@
 use game::gpu::flip_3d::GpuFlip3D;
 use game::test_harness::{levels::Level0DamBreak, Invariant, SimTest, TestMetrics};
 use glam::{Mat3, Vec3};
-use std::time::Instant;
 use pollster::block_on;
+use std::time::Instant;
 
 // Test configuration
 const CELL_SIZE: f32 = 0.05;
@@ -194,7 +194,11 @@ fn main() {
             let fps = frame as f32 / elapsed.max(0.001);
             print!(
                 "\rFrame {}/{} | FPS: {:.1} | Particles: {} | Max vel: {:.2}",
-                frame, total_frames, fps, positions.len(), metrics.max_velocity
+                frame,
+                total_frames,
+                fps,
+                positions.len(),
+                metrics.max_velocity
             );
         }
     }
@@ -217,11 +221,18 @@ fn main() {
 
     println!("\nMetrics:");
     println!("  Frames: {}", metrics.frame_count);
-    println!("  Particles: {} -> {}", metrics.particle_count_start, metrics.particle_count_end);
+    println!(
+        "  Particles: {} -> {}",
+        metrics.particle_count_start, metrics.particle_count_end
+    );
     println!("  Max velocity: {:.2} m/s", metrics.max_velocity);
     println!("  NaN detected: {}", metrics.nan_detected);
     println!("  Particles in solid: {}", metrics.particles_in_solid);
-    println!("  Elapsed: {:.2}s ({:.1} FPS)", metrics.elapsed_seconds, metrics.frame_count as f32 / metrics.elapsed_seconds);
+    println!(
+        "  Elapsed: {:.2}s ({:.1} FPS)",
+        metrics.elapsed_seconds,
+        metrics.frame_count as f32 / metrics.elapsed_seconds
+    );
 
     if !failures.is_empty() {
         std::process::exit(1);

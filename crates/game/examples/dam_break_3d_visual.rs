@@ -173,12 +173,24 @@ impl App {
 
         // Vertex buffer (quad)
         let vertices = [
-            Vertex { position: [-1.0, -1.0] },
-            Vertex { position: [1.0, -1.0] },
-            Vertex { position: [1.0, 1.0] },
-            Vertex { position: [-1.0, -1.0] },
-            Vertex { position: [1.0, 1.0] },
-            Vertex { position: [-1.0, 1.0] },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+            },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+            },
+            Vertex {
+                position: [-1.0, 1.0],
+            },
         ];
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -319,7 +331,8 @@ impl App {
             camera_pos: camera_pos.to_array(),
             _pad: 0.0,
         };
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Update instances
         let instances: Vec<ParticleInstance> = self
@@ -339,11 +352,8 @@ impl App {
             .collect();
 
         if !instances.is_empty() {
-            gpu.queue.write_buffer(
-                &gpu.instance_buffer,
-                0,
-                bytemuck::cast_slice(&instances),
-            );
+            gpu.queue
+                .write_buffer(&gpu.instance_buffer, 0, bytemuck::cast_slice(&instances));
         }
 
         // Render
@@ -410,7 +420,9 @@ impl ApplicationHandler for App {
                         PhysicalKey::Code(KeyCode::KeyR) => self.reset_sim(),
                         PhysicalKey::Code(KeyCode::ArrowLeft) => self.camera_angle -= 0.1,
                         PhysicalKey::Code(KeyCode::ArrowRight) => self.camera_angle += 0.1,
-                        PhysicalKey::Code(KeyCode::ArrowUp) => self.camera_distance = (self.camera_distance - 0.5).max(2.0),
+                        PhysicalKey::Code(KeyCode::ArrowUp) => {
+                            self.camera_distance = (self.camera_distance - 0.5).max(2.0)
+                        }
                         PhysicalKey::Code(KeyCode::ArrowDown) => self.camera_distance += 0.5,
                         PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
                         _ => {}

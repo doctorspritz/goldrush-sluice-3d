@@ -36,9 +36,12 @@ fn update_cell_types_from_particles(
         let j = (pos.y / cell_size) as i32;
         let k = (pos.z / cell_size) as i32;
 
-        if i >= 0 && i < grid_width as i32
-            && j >= 0 && j < grid_height as i32
-            && k >= 0 && k < grid_depth as i32
+        if i >= 0
+            && i < grid_width as i32
+            && j >= 0
+            && j < grid_height as i32
+            && k >= 0
+            && k < grid_depth as i32
         {
             let idx = k as usize * grid_width * grid_height + j as usize * grid_width + i as usize;
             if cell_types[idx] != 2 {
@@ -98,7 +101,11 @@ fn main() {
     if failed == 0 {
         println!(" ALL PHYSICS TESTS PASSED ({}/{})", passed, passed + failed);
     } else {
-        println!(" PHYSICS TESTS FAILED: {}/{} passed", passed, passed + failed);
+        println!(
+            " PHYSICS TESTS FAILED: {}/{} passed",
+            passed,
+            passed + failed
+        );
     }
     println!("{}", "=".repeat(70));
 
@@ -180,8 +187,12 @@ fn test_gravity_acceleration(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
 
     for _ in 0..frames {
         update_cell_types_from_particles(
-            &mut cell_types, &positions,
-            GRID_SIZE, GRID_SIZE, GRID_SIZE, CELL_SIZE,
+            &mut cell_types,
+            &positions,
+            GRID_SIZE,
+            GRID_SIZE,
+            GRID_SIZE,
+            CELL_SIZE,
         );
         flip.step(
             device,
@@ -245,8 +256,8 @@ fn test_hydrostatic_pressure(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
 
     let water_height = GRID_SIZE / 2;
     for j in 2..water_height {
-        for k in GRID_SIZE/4..3*GRID_SIZE/4 {
-            for i in GRID_SIZE/4..3*GRID_SIZE/4 {
+        for k in GRID_SIZE / 4..3 * GRID_SIZE / 4 {
+            for i in GRID_SIZE / 4..3 * GRID_SIZE / 4 {
                 for pj in 0..2 {
                     for pk in 0..2 {
                         for pi in 0..2 {
@@ -276,7 +287,7 @@ fn test_hydrostatic_pressure(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
         for j in 0..GRID_SIZE {
             for i in 0..GRID_SIZE {
                 let idx = k * GRID_SIZE * GRID_SIZE + j * GRID_SIZE + i;
-                if j <= 1 || i == 0 || i == GRID_SIZE-1 || k == 0 || k == GRID_SIZE-1 {
+                if j <= 1 || i == 0 || i == GRID_SIZE - 1 || k == 0 || k == GRID_SIZE - 1 {
                     cell_types[idx] = 2;
                 }
             }
@@ -289,8 +300,10 @@ fn test_hydrostatic_pressure(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
             let j = (idx / GRID_SIZE) % GRID_SIZE;
             let k = idx / (GRID_SIZE * GRID_SIZE);
             let dist_floor = (j as f32 - 1.5) * CELL_SIZE;
-            let dist_walls = ((i as f32 - 0.5).min((GRID_SIZE - 1 - i) as f32 - 0.5)
-                .min((k as f32 - 0.5).min((GRID_SIZE - 1 - k) as f32 - 0.5))) * CELL_SIZE;
+            let dist_walls = ((i as f32 - 0.5)
+                .min((GRID_SIZE - 1 - i) as f32 - 0.5)
+                .min((k as f32 - 0.5).min((GRID_SIZE - 1 - k) as f32 - 0.5)))
+                * CELL_SIZE;
             dist_floor.min(dist_walls)
         })
         .collect();
@@ -301,8 +314,12 @@ fn test_hydrostatic_pressure(device: &wgpu::Device, queue: &wgpu::Queue) -> bool
     // Let system settle (3 seconds at 60 FPS)
     for _ in 0..180 {
         update_cell_types_from_particles(
-            &mut cell_types, &positions,
-            GRID_SIZE, GRID_SIZE, GRID_SIZE, CELL_SIZE,
+            &mut cell_types,
+            &positions,
+            GRID_SIZE,
+            GRID_SIZE,
+            GRID_SIZE,
+            CELL_SIZE,
         );
         flip.step(
             device,
@@ -368,9 +385,9 @@ fn test_incompressibility(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
     let center = GRID_SIZE as f32 * CELL_SIZE / 2.0;
     let radius = GRID_SIZE as f32 * CELL_SIZE / 4.0;
 
-    for j in GRID_SIZE/4..3*GRID_SIZE/4 {
-        for k in GRID_SIZE/4..3*GRID_SIZE/4 {
-            for i in GRID_SIZE/4..3*GRID_SIZE/4 {
+    for j in GRID_SIZE / 4..3 * GRID_SIZE / 4 {
+        for k in GRID_SIZE / 4..3 * GRID_SIZE / 4 {
+            for i in GRID_SIZE / 4..3 * GRID_SIZE / 4 {
                 let pos = Vec3::new(
                     (i as f32 + 0.5) * CELL_SIZE,
                     (j as f32 + 0.5) * CELL_SIZE,
@@ -412,8 +429,12 @@ fn test_incompressibility(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
     // Run simulation
     for _ in 0..120 {
         update_cell_types_from_particles(
-            &mut cell_types, &positions,
-            GRID_SIZE, GRID_SIZE, GRID_SIZE, CELL_SIZE,
+            &mut cell_types,
+            &positions,
+            GRID_SIZE,
+            GRID_SIZE,
+            GRID_SIZE,
+            CELL_SIZE,
         );
         flip.step(
             device,
@@ -447,7 +468,10 @@ fn test_incompressibility(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
     println!("  Max velocity:      {:.2} m/s (should be < 20)", max_vel);
 
     let pass = count_preserved && vel_reasonable;
-    println!("  Result:            {}", if pass { "PASS" } else { "FAIL" });
+    println!(
+        "  Result:            {}",
+        if pass { "PASS" } else { "FAIL" }
+    );
     pass
 }
 
@@ -477,9 +501,9 @@ fn test_particle_conservation(device: &wgpu::Device, queue: &wgpu::Queue) -> boo
     let mut densities = Vec::new();
     let mut c_matrices = Vec::new();
 
-    for j in 2..GRID_SIZE/2 {
-        for k in 2..GRID_SIZE/2 {
-            for i in 2..GRID_SIZE/2 {
+    for j in 2..GRID_SIZE / 2 {
+        for k in 2..GRID_SIZE / 2 {
+            for i in 2..GRID_SIZE / 2 {
                 positions.push(Vec3::new(
                     (i as f32 + 0.5) * CELL_SIZE,
                     (j as f32 + 0.5) * CELL_SIZE,
@@ -504,9 +528,13 @@ fn test_particle_conservation(device: &wgpu::Device, queue: &wgpu::Queue) -> boo
             for i in 0..GRID_SIZE {
                 let idx = k * GRID_SIZE * GRID_SIZE + j * GRID_SIZE + i;
                 // All boundary cells are solid
-                if i == 0 || i == GRID_SIZE-1 ||
-                   j == 0 || j == GRID_SIZE-1 ||
-                   k == 0 || k == GRID_SIZE-1 {
+                if i == 0
+                    || i == GRID_SIZE - 1
+                    || j == 0
+                    || j == GRID_SIZE - 1
+                    || k == 0
+                    || k == GRID_SIZE - 1
+                {
                     cell_types[idx] = 2;
                 }
             }
@@ -533,8 +561,12 @@ fn test_particle_conservation(device: &wgpu::Device, queue: &wgpu::Queue) -> boo
     // Run for 5 seconds of sim time
     for _ in 0..300 {
         update_cell_types_from_particles(
-            &mut cell_types, &positions,
-            GRID_SIZE, GRID_SIZE, GRID_SIZE, CELL_SIZE,
+            &mut cell_types,
+            &positions,
+            GRID_SIZE,
+            GRID_SIZE,
+            GRID_SIZE,
+            CELL_SIZE,
         );
         flip.step(
             device,
@@ -557,8 +589,14 @@ fn test_particle_conservation(device: &wgpu::Device, queue: &wgpu::Queue) -> boo
     let pass = final_count == initial_count;
 
     println!("  Final particles:   {}", final_count);
-    println!("  Lost/gained:       {}", final_count as i32 - initial_count as i32);
-    println!("  Result:            {}", if pass { "PASS" } else { "FAIL" });
+    println!(
+        "  Lost/gained:       {}",
+        final_count as i32 - initial_count as i32
+    );
+    println!(
+        "  Result:            {}",
+        if pass { "PASS" } else { "FAIL" }
+    );
     pass
 }
 
@@ -588,9 +626,9 @@ fn test_solid_boundaries(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
     let mut densities = Vec::new();
     let mut c_matrices = Vec::new();
 
-    for j in GRID_SIZE/2..3*GRID_SIZE/4 {
-        for k in GRID_SIZE/4..3*GRID_SIZE/4 {
-            for i in GRID_SIZE/4..3*GRID_SIZE/4 {
+    for j in GRID_SIZE / 2..3 * GRID_SIZE / 4 {
+        for k in GRID_SIZE / 4..3 * GRID_SIZE / 4 {
+            for i in GRID_SIZE / 4..3 * GRID_SIZE / 4 {
                 positions.push(Vec3::new(
                     (i as f32 + 0.5) * CELL_SIZE,
                     (j as f32 + 0.5) * CELL_SIZE,
@@ -618,9 +656,13 @@ fn test_solid_boundaries(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
                     cell_types[idx] = 2;
                 }
                 // Some obstacle blocks
-                if i >= GRID_SIZE/3 && i < GRID_SIZE/3 + 3 &&
-                   k >= GRID_SIZE/3 && k < GRID_SIZE/3 + 3 &&
-                   j >= 3 && j < 6 {
+                if i >= GRID_SIZE / 3
+                    && i < GRID_SIZE / 3 + 3
+                    && k >= GRID_SIZE / 3
+                    && k < GRID_SIZE / 3 + 3
+                    && j >= 3
+                    && j < 6
+                {
                     cell_types[idx] = 2;
                 }
             }
@@ -651,8 +693,12 @@ fn test_solid_boundaries(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
     // Run and check each frame
     for frame in 0..120 {
         update_cell_types_from_particles(
-            &mut cell_types, &positions,
-            GRID_SIZE, GRID_SIZE, GRID_SIZE, CELL_SIZE,
+            &mut cell_types,
+            &positions,
+            GRID_SIZE,
+            GRID_SIZE,
+            GRID_SIZE,
+            CELL_SIZE,
         );
         flip.step(
             device,
@@ -691,7 +737,10 @@ fn test_solid_boundaries(device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
     println!("  Max violations:    {}", max_violations);
 
     let pass = max_violations == 0;
-    println!("  Result:            {}", if pass { "PASS" } else { "FAIL" });
+    println!(
+        "  Result:            {}",
+        if pass { "PASS" } else { "FAIL" }
+    );
     pass
 }
 

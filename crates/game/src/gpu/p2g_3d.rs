@@ -171,21 +171,27 @@ impl GpuP2g3D {
         let grid_u_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid U"),
             size: (u_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let grid_v_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid V"),
             size: (v_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let grid_w_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid W"),
             size: (w_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -194,14 +200,18 @@ impl GpuP2g3D {
         let particle_count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Particle Count"),
             size: (cell_count * std::mem::size_of::<i32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
         let sediment_count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Sediment Count"),
             size: (cell_count * std::mem::size_of::<i32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -236,307 +246,354 @@ impl GpuP2g3D {
         });
 
         // Create scatter bind group layout
-        let scatter_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("P2G 3D Scatter Bind Group Layout"),
-            entries: &[
-                // 0: params (uniform)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let scatter_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("P2G 3D Scatter Bind Group Layout"),
+                entries: &[
+                    // 0: params (uniform)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 1: positions (read)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 1: positions (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 2: velocities (read)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 2: velocities (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 3: c_col0 (read)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 3: c_col0 (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 4: c_col1 (read)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 4: c_col1 (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 5: c_col2 (read)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 5: c_col2 (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 6: u_sum (read_write atomic)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 6: u_sum (read_write atomic)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 7: u_weight (read_write atomic)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 7: u_weight (read_write atomic)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 8: v_sum (read_write atomic)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 8: v_sum (read_write atomic)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 9: v_weight (read_write atomic)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 9: v_weight (read_write atomic)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 10: w_sum (read_write atomic)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 10: w_sum (read_write atomic)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 10,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 11: w_weight (read_write atomic)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 11: w_weight (read_write atomic)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 11,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 12: particle_count (read_write atomic) - for density projection
-                wgpu::BindGroupLayoutEntry {
-                    binding: 12,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 12: particle_count (read_write atomic) - for density projection
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 12,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 13: densities (read)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 13,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 13: densities (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 13,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 14: sediment_count (read_write atomic)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 14,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 14: sediment_count (read_write atomic)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 14,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
         // Create divide bind group layout
-        let divide_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("P2G 3D Divide Bind Group Layout"),
-            entries: &[
-                // 0: params (uniform)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let divide_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("P2G 3D Divide Bind Group Layout"),
+                entries: &[
+                    // 0: params (uniform)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 1-6: sum/weight pairs (read)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 1-6: sum/weight pairs (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 7-9: output grids (read_write)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 7-9: output grids (read_write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
         // Create scatter bind group
         let scatter_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("P2G 3D Scatter Bind Group"),
             layout: &scatter_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: positions_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: velocities_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: c_col0_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: c_col1_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: c_col2_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: u_sum_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: u_weight_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 8, resource: v_sum_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 9, resource: v_weight_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 10, resource: w_sum_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 11, resource: w_weight_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 12, resource: particle_count_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 13, resource: densities_buffer.as_ref().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 14, resource: sediment_count_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: positions_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: velocities_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: c_col0_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: c_col1_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: c_col2_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: u_sum_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: u_weight_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: v_sum_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: v_weight_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: w_sum_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: w_weight_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: particle_count_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: densities_buffer.as_ref().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: sediment_count_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -545,25 +602,56 @@ impl GpuP2g3D {
             label: Some("P2G 3D Divide Bind Group"),
             layout: &divide_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: u_sum_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: u_weight_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: v_sum_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: v_weight_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: w_sum_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: w_weight_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: grid_u_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 8, resource: grid_v_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 9, resource: grid_w_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: u_sum_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: u_weight_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: v_sum_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: v_weight_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: w_sum_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: w_weight_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: grid_u_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: grid_v_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: grid_w_buffer.as_entire_binding(),
+                },
             ],
         });
 
         // Create pipelines
-        let scatter_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("P2G 3D Scatter Pipeline Layout"),
-            bind_group_layouts: &[&scatter_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let scatter_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("P2G 3D Scatter Pipeline Layout"),
+                bind_group_layouts: &[&scatter_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("P2G 3D Scatter Pipeline"),
@@ -574,11 +662,12 @@ impl GpuP2g3D {
             cache: None,
         });
 
-        let divide_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("P2G 3D Divide Pipeline Layout"),
-            bind_group_layouts: &[&divide_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let divide_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("P2G 3D Divide Pipeline Layout"),
+                bind_group_layouts: &[&divide_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let divide_u_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("P2G 3D Divide U Pipeline"),
@@ -660,40 +749,57 @@ impl GpuP2g3D {
         let density_count = densities.len().min(self.max_particles);
 
         // Convert to padded vec4 format for GPU
-        let positions_padded: Vec<[f32; 4]> = positions.iter()
+        let positions_padded: Vec<[f32; 4]> = positions
+            .iter()
             .take(particle_count as usize)
             .map(|p| [p.x, p.y, p.z, 0.0])
             .collect();
 
-        let velocities_padded: Vec<[f32; 4]> = velocities.iter()
+        let velocities_padded: Vec<[f32; 4]> = velocities
+            .iter()
             .take(particle_count as usize)
             .map(|v| [v.x, v.y, v.z, 0.0])
             .collect();
 
         // Extract C matrix columns
-        let c_col0: Vec<[f32; 4]> = c_matrices.iter()
+        let c_col0: Vec<[f32; 4]> = c_matrices
+            .iter()
             .take(particle_count as usize)
             .map(|c| [c.x_axis.x, c.x_axis.y, c.x_axis.z, 0.0])
             .collect();
 
-        let c_col1: Vec<[f32; 4]> = c_matrices.iter()
+        let c_col1: Vec<[f32; 4]> = c_matrices
+            .iter()
             .take(particle_count as usize)
             .map(|c| [c.y_axis.x, c.y_axis.y, c.y_axis.z, 0.0])
             .collect();
 
-        let c_col2: Vec<[f32; 4]> = c_matrices.iter()
+        let c_col2: Vec<[f32; 4]> = c_matrices
+            .iter()
             .take(particle_count as usize)
             .map(|c| [c.z_axis.x, c.z_axis.y, c.z_axis.z, 0.0])
             .collect();
 
         // Upload to GPU
-        queue.write_buffer(&self.positions_buffer, 0, bytemuck::cast_slice(&positions_padded));
-        queue.write_buffer(&self.velocities_buffer, 0, bytemuck::cast_slice(&velocities_padded));
+        queue.write_buffer(
+            &self.positions_buffer,
+            0,
+            bytemuck::cast_slice(&positions_padded),
+        );
+        queue.write_buffer(
+            &self.velocities_buffer,
+            0,
+            bytemuck::cast_slice(&velocities_padded),
+        );
         queue.write_buffer(&self.c_col0_buffer, 0, bytemuck::cast_slice(&c_col0));
         queue.write_buffer(&self.c_col1_buffer, 0, bytemuck::cast_slice(&c_col1));
         queue.write_buffer(&self.c_col2_buffer, 0, bytemuck::cast_slice(&c_col2));
         if density_count > 0 {
-            queue.write_buffer(&self.densities_buffer, 0, bytemuck::cast_slice(&densities[..density_count]));
+            queue.write_buffer(
+                &self.densities_buffer,
+                0,
+                bytemuck::cast_slice(&densities[..density_count]),
+            );
         }
 
         self.prepare(queue, particle_count, cell_size);
@@ -743,7 +849,8 @@ impl GpuP2g3D {
             });
             pass.set_pipeline(&self.scatter_pipeline);
             pass.set_bind_group(0, &self.scatter_bind_group, &[]);
-            let workgroups = (particle_count + self.scatter_workgroup_size - 1) / self.scatter_workgroup_size;
+            let workgroups =
+                (particle_count + self.scatter_workgroup_size - 1) / self.scatter_workgroup_size;
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
@@ -807,9 +914,27 @@ impl GpuP2g3D {
             label: Some("P2G 3D Download Encoder"),
         });
 
-        encoder.copy_buffer_to_buffer(&self.grid_u_buffer, 0, &self.grid_u_staging, 0, (u_size * 4) as u64);
-        encoder.copy_buffer_to_buffer(&self.grid_v_buffer, 0, &self.grid_v_staging, 0, (v_size * 4) as u64);
-        encoder.copy_buffer_to_buffer(&self.grid_w_buffer, 0, &self.grid_w_staging, 0, (w_size * 4) as u64);
+        encoder.copy_buffer_to_buffer(
+            &self.grid_u_buffer,
+            0,
+            &self.grid_u_staging,
+            0,
+            (u_size * 4) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.grid_v_buffer,
+            0,
+            &self.grid_v_staging,
+            0,
+            (v_size * 4) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.grid_w_buffer,
+            0,
+            &self.grid_w_staging,
+            0,
+            (w_size * 4) as u64,
+        );
 
         queue.submit(std::iter::once(encoder.finish()));
 

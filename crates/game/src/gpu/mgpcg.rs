@@ -10,8 +10,8 @@
 //! - Red-Black Gauss-Seidel smoother at each level
 //! - Full-weighting restriction, bilinear prolongation
 
-use bytemuck::{Pod, Zeroable};
 use super::GpuContext;
+use bytemuck::{Pod, Zeroable};
 
 /// Parameters for a single multigrid level
 #[repr(C)]
@@ -49,8 +49,8 @@ pub struct ProlongateParams {
 pub struct PcgParams {
     pub width: u32,
     pub height: u32,
-    pub alpha: f32,       // Scalar for axpy/xpay operations
-    pub length: u32,      // Total number of elements (for 1D ops)
+    pub alpha: f32,  // Scalar for axpy/xpay operations
+    pub length: u32, // Total number of elements (for 1D ops)
 }
 
 /// Scalar value for GPU reduction operations
@@ -89,8 +89,8 @@ impl MgLevel {
             label: Some(&format!("MG Level {} Pressure", level)),
             size: buffer_size,
             usage: wgpu::BufferUsages::STORAGE
-                 | wgpu::BufferUsages::COPY_SRC
-                 | wgpu::BufferUsages::COPY_DST,
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -98,8 +98,8 @@ impl MgLevel {
             label: Some(&format!("MG Level {} Residual", level)),
             size: buffer_size,
             usage: wgpu::BufferUsages::STORAGE
-                 | wgpu::BufferUsages::COPY_SRC
-                 | wgpu::BufferUsages::COPY_DST,
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -107,8 +107,8 @@ impl MgLevel {
             label: Some(&format!("MG Level {} Divergence", level)),
             size: buffer_size,
             usage: wgpu::BufferUsages::STORAGE
-                 | wgpu::BufferUsages::COPY_SRC
-                 | wgpu::BufferUsages::COPY_DST,
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -117,8 +117,8 @@ impl MgLevel {
             label: Some(&format!("MG Level {} Cell Type", level)),
             size: (cell_count * std::mem::size_of::<u32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
-                 | wgpu::BufferUsages::COPY_SRC
-                 | wgpu::BufferUsages::COPY_DST,
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -135,7 +135,8 @@ impl MgLevel {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        gpu.queue.write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
+        gpu.queue
+            .write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
 
         Self {
             width,
@@ -277,7 +278,8 @@ impl GpuMgpcgSolver {
         log::info!(
             "MGPCG: Created {} levels: {}",
             num_levels,
-            levels.iter()
+            levels
+                .iter()
                 .map(|l| format!("{}x{}", l.width, l.height))
                 .collect::<Vec<_>>()
                 .join(" → ")
@@ -288,8 +290,8 @@ impl GpuMgpcgSolver {
             label: Some("PCG r (residual)"),
             size: buffer_size,
             usage: wgpu::BufferUsages::STORAGE
-                 | wgpu::BufferUsages::COPY_SRC
-                 | wgpu::BufferUsages::COPY_DST,
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -297,8 +299,8 @@ impl GpuMgpcgSolver {
             label: Some("PCG z (preconditioned)"),
             size: buffer_size,
             usage: wgpu::BufferUsages::STORAGE
-                 | wgpu::BufferUsages::COPY_SRC
-                 | wgpu::BufferUsages::COPY_DST,
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -306,8 +308,8 @@ impl GpuMgpcgSolver {
             label: Some("PCG p (direction)"),
             size: buffer_size,
             usage: wgpu::BufferUsages::STORAGE
-                 | wgpu::BufferUsages::COPY_SRC
-                 | wgpu::BufferUsages::COPY_DST,
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -315,8 +317,8 @@ impl GpuMgpcgSolver {
             label: Some("PCG Ap (matrix-vector)"),
             size: buffer_size,
             usage: wgpu::BufferUsages::STORAGE
-                 | wgpu::BufferUsages::COPY_SRC
-                 | wgpu::BufferUsages::COPY_DST,
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -327,8 +329,8 @@ impl GpuMgpcgSolver {
             label: Some("Dot Product Partial Sums"),
             size: (max_workgroups * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
-                 | wgpu::BufferUsages::COPY_SRC
-                 | wgpu::BufferUsages::COPY_DST,
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -336,8 +338,8 @@ impl GpuMgpcgSolver {
             label: Some("Dot Product Final Sum"),
             size: std::mem::size_of::<ScalarValue>() as u64,
             usage: wgpu::BufferUsages::STORAGE
-                 | wgpu::BufferUsages::COPY_SRC
-                 | wgpu::BufferUsages::COPY_DST,
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -365,8 +367,12 @@ impl GpuMgpcgSolver {
         });
 
         // Create smooth pipelines and bind groups
-        let (smooth_bind_group_layout, smooth_red_pipeline, smooth_black_pipeline, smooth_bind_groups) =
-            Self::create_smooth_pipelines(gpu, &levels);
+        let (
+            smooth_bind_group_layout,
+            smooth_red_pipeline,
+            smooth_black_pipeline,
+            smooth_bind_groups,
+        ) = Self::create_smooth_pipelines(gpu, &levels);
 
         // Create restrict pipelines and bind groups (between adjacent levels)
         let (restrict_bind_group_layout, restrict_pipeline, restrict_bind_groups) =
@@ -461,88 +467,103 @@ impl GpuMgpcgSolver {
     fn create_smooth_pipelines(
         gpu: &GpuContext,
         levels: &[MgLevel],
-    ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline, wgpu::ComputePipeline, Vec<wgpu::BindGroup>) {
+    ) -> (
+        wgpu::BindGroupLayout,
+        wgpu::ComputePipeline,
+        wgpu::ComputePipeline,
+        Vec<wgpu::BindGroup>,
+    ) {
         // Create shader module
-        let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("MG Smooth Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mg_smooth.wgsl").into()),
-        });
+        let shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("MG Smooth Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mg_smooth.wgsl").into()),
+            });
 
         // Create bind group layout
         // @group(0) @binding(0) pressure: storage read_write
         // @group(0) @binding(1) divergence: storage read
         // @group(0) @binding(2) cell_type: storage read
         // @group(0) @binding(3) params: uniform
-        let bind_group_layout = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("MG Smooth Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let bind_group_layout =
+            gpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("MG Smooth Bind Group Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
 
-        let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("MG Smooth Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = gpu
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("MG Smooth Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         // Create red and black pipelines
-        let red_pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("MG Smooth Red Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("smooth_red"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let red_pipeline = gpu
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("MG Smooth Red Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("smooth_red"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
-        let black_pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("MG Smooth Black Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("smooth_black"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let black_pipeline = gpu
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("MG Smooth Black Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("smooth_black"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         // Create bind groups for each level
         let bind_groups: Vec<wgpu::BindGroup> = levels
@@ -615,12 +636,18 @@ impl GpuMgpcgSolver {
     fn create_restrict_pipelines(
         gpu: &GpuContext,
         levels: &[MgLevel],
-    ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline, Vec<wgpu::BindGroup>) {
+    ) -> (
+        wgpu::BindGroupLayout,
+        wgpu::ComputePipeline,
+        Vec<wgpu::BindGroup>,
+    ) {
         // Create shader module
-        let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("MG Restrict Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mg_restrict.wgsl").into()),
-        });
+        let shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("MG Restrict Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mg_restrict.wgsl").into()),
+            });
 
         // Create bind group layout
         // @group(0) @binding(0) fine_residual: storage read
@@ -628,76 +655,82 @@ impl GpuMgpcgSolver {
         // @group(0) @binding(2) coarse_divergence: storage read_write
         // @group(0) @binding(3) coarse_cell_type: storage read_write
         // @group(0) @binding(4) params: uniform
-        let bind_group_layout = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("MG Restrict Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let bind_group_layout =
+            gpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("MG Restrict Bind Group Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
 
-        let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("MG Restrict Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = gpu
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("MG Restrict Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("MG Restrict Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("mg_restrict"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline = gpu
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("MG Restrict Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("mg_restrict"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         // Create bind groups for each level transition (fine → coarse)
         // We need num_levels - 1 bind groups
@@ -721,7 +754,8 @@ impl GpuMgpcgSolver {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            gpu.queue.write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
+            gpu.queue
+                .write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
             params_buffers.push(params_buffer);
         }
 
@@ -788,78 +822,90 @@ impl GpuMgpcgSolver {
     fn create_prolongate_pipelines(
         gpu: &GpuContext,
         levels: &[MgLevel],
-    ) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline, Vec<wgpu::BindGroup>) {
+    ) -> (
+        wgpu::BindGroupLayout,
+        wgpu::ComputePipeline,
+        Vec<wgpu::BindGroup>,
+    ) {
         // Create shader module
-        let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("MG Prolongate Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mg_prolongate.wgsl").into()),
-        });
+        let shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("MG Prolongate Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mg_prolongate.wgsl").into()),
+            });
 
         // Create bind group layout
         // @group(0) @binding(0) coarse_pressure: storage read
         // @group(0) @binding(1) fine_pressure: storage read_write
         // @group(0) @binding(2) fine_cell_type: storage read
         // @group(0) @binding(3) params: uniform
-        let bind_group_layout = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("MG Prolongate Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let bind_group_layout =
+            gpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("MG Prolongate Bind Group Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
 
-        let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("MG Prolongate Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = gpu
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("MG Prolongate Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("MG Prolongate Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("prolongate"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline = gpu
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("MG Prolongate Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("prolongate"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         // Create bind groups for each level transition (coarse → fine)
         // We need num_levels - 1 bind groups
@@ -883,7 +929,8 @@ impl GpuMgpcgSolver {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            gpu.queue.write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
+            gpu.queue
+                .write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
             params_buffers.push(params_buffer);
         }
 
@@ -934,7 +981,11 @@ impl GpuMgpcgSolver {
         let workgroup_y = (fine.height + 7) / 8;
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some(&format!("MG Prolongate {} <- {}", coarse_level - 1, coarse_level)),
+            label: Some(&format!(
+                "MG Prolongate {} <- {}",
+                coarse_level - 1,
+                coarse_level
+            )),
             timestamp_writes: None,
         });
         pass.set_pipeline(self.prolongate_pipeline.as_ref().unwrap());
@@ -946,12 +997,18 @@ impl GpuMgpcgSolver {
     fn create_residual_pipelines(
         gpu: &GpuContext,
         levels: &[MgLevel],
-    ) -> (wgpu::ComputePipeline, wgpu::ComputePipeline, Vec<wgpu::BindGroup>) {
+    ) -> (
+        wgpu::ComputePipeline,
+        wgpu::ComputePipeline,
+        Vec<wgpu::BindGroup>,
+    ) {
         // Create shader module
-        let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("MG Residual Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mg_residual.wgsl").into()),
-        });
+        let shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("MG Residual Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mg_residual.wgsl").into()),
+            });
 
         // Create bind group layout
         // @group(0) @binding(0) pressure: storage read
@@ -959,85 +1016,93 @@ impl GpuMgpcgSolver {
         // @group(0) @binding(2) cell_type: storage read
         // @group(0) @binding(3) residual: storage read_write
         // @group(0) @binding(4) params: uniform
-        let bind_group_layout = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("MG Residual Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let bind_group_layout =
+            gpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("MG Residual Bind Group Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
 
-        let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("MG Residual Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = gpu
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("MG Residual Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let residual_pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("MG Residual Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("compute_residual"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let residual_pipeline =
+            gpu.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("MG Residual Pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some("compute_residual"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
 
-        let clear_pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("MG Clear Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("clear_buffer"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let clear_pipeline = gpu
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("MG Clear Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("clear_buffer"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         // Create bind groups for each level
         let bind_groups: Vec<wgpu::BindGroup> = levels
@@ -1089,28 +1154,30 @@ impl GpuMgpcgSolver {
         params_buffer: &wgpu::Buffer,
     ) -> (
         wgpu::BindGroupLayout,
-        wgpu::ComputePipeline,  // residual
-        wgpu::ComputePipeline,  // laplacian
-        wgpu::ComputePipeline,  // axpy
-        wgpu::ComputePipeline,  // xpay
-        wgpu::ComputePipeline,  // copy
-        wgpu::ComputePipeline,  // dot_partial
-        wgpu::ComputePipeline,  // dot_finalize
-        wgpu::BindGroup,        // residual bind group
-        wgpu::BindGroup,        // laplacian bind group
-        wgpu::BindGroup,        // x_update bind group
-        wgpu::BindGroup,        // r_update bind group
-        wgpu::BindGroup,        // p_update bind group
-        wgpu::BindGroup,        // copy_to_div bind group
-        wgpu::BindGroup,        // copy_from_pressure bind group
-        wgpu::BindGroup,        // dot_rz bind group
-        wgpu::BindGroup,        // dot_pap bind group
+        wgpu::ComputePipeline, // residual
+        wgpu::ComputePipeline, // laplacian
+        wgpu::ComputePipeline, // axpy
+        wgpu::ComputePipeline, // xpay
+        wgpu::ComputePipeline, // copy
+        wgpu::ComputePipeline, // dot_partial
+        wgpu::ComputePipeline, // dot_finalize
+        wgpu::BindGroup,       // residual bind group
+        wgpu::BindGroup,       // laplacian bind group
+        wgpu::BindGroup,       // x_update bind group
+        wgpu::BindGroup,       // r_update bind group
+        wgpu::BindGroup,       // p_update bind group
+        wgpu::BindGroup,       // copy_to_div bind group
+        wgpu::BindGroup,       // copy_from_pressure bind group
+        wgpu::BindGroup,       // dot_rz bind group
+        wgpu::BindGroup,       // dot_pap bind group
     ) {
         // Create shader module
-        let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("PCG Ops Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/pcg_ops.wgsl").into()),
-        });
+        let shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("PCG Ops Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/pcg_ops.wgsl").into()),
+            });
 
         // Bind group layout matches pcg_ops.wgsl:
         // @group(0) @binding(0) buffer_a: storage read_write
@@ -1118,131 +1185,149 @@ impl GpuMgpcgSolver {
         // @group(0) @binding(2) buffer_c: storage read
         // @group(0) @binding(3) buffer_d: storage read_write
         // @group(0) @binding(4) params: uniform
-        let bind_group_layout = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("PCG Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let bind_group_layout =
+            gpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("PCG Bind Group Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
 
-        let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("PCG Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = gpu
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("PCG Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         // Create pipelines for each operation
-        let residual_pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("PCG Residual Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("compute_pcg_residual"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let residual_pipeline =
+            gpu.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("PCG Residual Pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some("compute_pcg_residual"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
 
-        let laplacian_pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("PCG Laplacian Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("apply_laplacian"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let laplacian_pipeline =
+            gpu.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("PCG Laplacian Pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some("apply_laplacian"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
 
-        let axpy_pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("PCG AXPY Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("axpy"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let axpy_pipeline = gpu
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("PCG AXPY Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("axpy"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
-        let xpay_pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("PCG XPAY Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("xpay"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let xpay_pipeline = gpu
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("PCG XPAY Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("xpay"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
-        let copy_pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("PCG Copy Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("copy_buffer"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let copy_pipeline = gpu
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("PCG Copy Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("copy_buffer"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
-        let dot_partial_pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("PCG Dot Partial Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("dot_partial"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let dot_partial_pipeline =
+            gpu.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("PCG Dot Partial Pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some("dot_partial"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
 
-        let dot_finalize_pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("PCG Dot Finalize Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("dot_finalize"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let dot_finalize_pipeline =
+            gpu.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("PCG Dot Finalize Pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader,
+                    entry_point: Some("dot_finalize"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
 
         // Bind group for residual: r = b - Ax
         // buffer_a = pressure (x), buffer_b = divergence (b), buffer_c = cell_type, buffer_d = r
@@ -1285,7 +1370,7 @@ impl GpuMgpcgSolver {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: level0.divergence.as_entire_binding(),  // unused but needed
+                    resource: level0.divergence.as_entire_binding(), // unused but needed
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -1307,11 +1392,26 @@ impl GpuMgpcgSolver {
             label: Some("PCG X Update Bind Group"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: level0.pressure.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: p.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: level0.cell_type.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: partial_sums.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: level0.pressure.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: p.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: level0.cell_type.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: partial_sums.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -1320,11 +1420,26 @@ impl GpuMgpcgSolver {
             label: Some("PCG R Update Bind Group"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: r.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: ap.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: level0.cell_type.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: partial_sums.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: r.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: ap.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: level0.cell_type.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: partial_sums.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -1333,11 +1448,26 @@ impl GpuMgpcgSolver {
             label: Some("PCG P Update Bind Group"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: p.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: z.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: level0.cell_type.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: partial_sums.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: p.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: z.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: level0.cell_type.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: partial_sums.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -1346,37 +1476,83 @@ impl GpuMgpcgSolver {
             label: Some("PCG Copy To Div Bind Group"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: level0.divergence.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: r.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: level0.cell_type.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: partial_sums.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: level0.divergence.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: r.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: level0.cell_type.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: partial_sums.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buffer.as_entire_binding(),
+                },
             ],
         });
 
         // Bind group for z = pressure (copy V-cycle output)
-        let copy_from_pressure_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("PCG Copy From Pressure Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: z.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: level0.pressure.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: level0.cell_type.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: partial_sums.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: params_buffer.as_entire_binding() },
-            ],
-        });
+        let copy_from_pressure_bind_group =
+            gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("PCG Copy From Pressure Bind Group"),
+                layout: &bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: z.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: level0.pressure.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: level0.cell_type.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: partial_sums.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: params_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
         // Bind group for dot(r, z)
         let dot_rz_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("PCG Dot RZ Bind Group"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: r.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: z.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: level0.cell_type.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: partial_sums.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: r.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: z.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: level0.cell_type.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: partial_sums.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -1385,11 +1561,26 @@ impl GpuMgpcgSolver {
             label: Some("PCG Dot PAp Bind Group"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: p.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: ap.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: level0.cell_type.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: partial_sums.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: p.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: ap.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: level0.cell_type.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: partial_sums.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -1463,7 +1654,12 @@ impl GpuMgpcgSolver {
     }
 
     /// Recursive V-cycle implementation
-    fn dispatch_vcycle_recursive(&self, encoder: &mut wgpu::CommandEncoder, level: usize, max_level: usize) {
+    fn dispatch_vcycle_recursive(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        level: usize,
+        max_level: usize,
+    ) {
         const PRE_SMOOTH: usize = 3;
         const POST_SMOOTH: usize = 3;
         const COARSE_SOLVE: usize = 15;
@@ -1508,9 +1704,11 @@ impl GpuMgpcgSolver {
     ///
     /// Call `upload()` or `upload_warm()` first, then `solve()`, then `download()`.
     pub fn solve(&self, gpu: &GpuContext, num_vcycles: u32) {
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("MGPCG Solve Encoder"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("MGPCG Solve Encoder"),
+            });
 
         for _ in 0..num_vcycles {
             self.dispatch_vcycle(&mut encoder);
@@ -1523,9 +1721,11 @@ impl GpuMgpcgSolver {
     pub fn solve_timed(&self, gpu: &GpuContext, num_vcycles: u32) -> std::time::Duration {
         let start = std::time::Instant::now();
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("MGPCG Solve Encoder"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("MGPCG Solve Encoder"),
+            });
 
         for _ in 0..num_vcycles {
             self.dispatch_vcycle(&mut encoder);
@@ -1558,13 +1758,16 @@ impl GpuMgpcgSolver {
             alpha: 0.0,
             length: cell_count as u32,
         };
-        gpu.queue.write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
+        gpu.queue
+            .write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
 
         // Step 1: Compute initial residual r = b - Ax
         {
-            let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("PCG Initial Residual"),
-            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("PCG Initial Residual"),
+                });
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Compute r = b - Ax"),
                 timestamp_writes: None,
@@ -1581,9 +1784,11 @@ impl GpuMgpcgSolver {
 
         // Step 3: p = z (copy z to p)
         {
-            let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("PCG p = z"),
-            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("PCG p = z"),
+                });
             // We need a bind group for p = z, but we have p_update which does p = z + beta*p
             // Let's use copy instead: p = z
             // Need a different bind group for this... or use a buffer copy
@@ -1592,7 +1797,11 @@ impl GpuMgpcgSolver {
         }
 
         // Step 4: rz = dot(r, z)
-        let mut rz = self.compute_dot_product(gpu, workgroup_count_1d, self.pcg_dot_rz_bind_group.as_ref().unwrap());
+        let mut rz = self.compute_dot_product(
+            gpu,
+            workgroup_count_1d,
+            self.pcg_dot_rz_bind_group.as_ref().unwrap(),
+        );
 
         // Main PCG iteration loop
         for _iter in 0..max_iterations {
@@ -1603,9 +1812,11 @@ impl GpuMgpcgSolver {
 
             // Ap = A*p (apply Laplacian)
             {
-                let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("PCG Ap = A*p"),
-                });
+                let mut encoder =
+                    gpu.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("PCG Ap = A*p"),
+                        });
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Apply Laplacian"),
                     timestamp_writes: None,
@@ -1618,16 +1829,30 @@ impl GpuMgpcgSolver {
             }
 
             // pAp = dot(p, Ap)
-            let pap = self.compute_dot_product(gpu, workgroup_count_1d, self.pcg_dot_pap_bind_group.as_ref().unwrap());
+            let pap = self.compute_dot_product(
+                gpu,
+                workgroup_count_1d,
+                self.pcg_dot_pap_bind_group.as_ref().unwrap(),
+            );
 
             // Compute alpha = rz / pAp
             let alpha = if pap.abs() > 1e-20 { rz / pap } else { 0.0 };
 
             // x = x + alpha*p
-            self.dispatch_axpy(gpu, alpha, self.pcg_x_update_bind_group.as_ref().unwrap(), workgroup_count_1d);
+            self.dispatch_axpy(
+                gpu,
+                alpha,
+                self.pcg_x_update_bind_group.as_ref().unwrap(),
+                workgroup_count_1d,
+            );
 
             // r = r - alpha*Ap (note: negative alpha)
-            self.dispatch_axpy(gpu, -alpha, self.pcg_r_update_bind_group.as_ref().unwrap(), workgroup_count_1d);
+            self.dispatch_axpy(
+                gpu,
+                -alpha,
+                self.pcg_r_update_bind_group.as_ref().unwrap(),
+                workgroup_count_1d,
+            );
 
             // Save old rz
             let rz_old = rz;
@@ -1636,10 +1861,18 @@ impl GpuMgpcgSolver {
             self.apply_preconditioner(gpu, workgroup_count_1d);
 
             // rz = dot(r, z)
-            rz = self.compute_dot_product(gpu, workgroup_count_1d, self.pcg_dot_rz_bind_group.as_ref().unwrap());
+            rz = self.compute_dot_product(
+                gpu,
+                workgroup_count_1d,
+                self.pcg_dot_rz_bind_group.as_ref().unwrap(),
+            );
 
             // Compute beta = rz / rz_old
-            let beta = if rz_old.abs() > 1e-20 { rz / rz_old } else { 0.0 };
+            let beta = if rz_old.abs() > 1e-20 {
+                rz / rz_old
+            } else {
+                0.0
+            };
 
             // p = z + beta*p (xpay operation)
             self.dispatch_xpay(gpu, beta, workgroup_count_1d);
@@ -1656,9 +1889,11 @@ impl GpuMgpcgSolver {
         // Step 1: Save x (levels[0].pressure) to ap buffer temporarily
         // (ap is only used after V-cycle for Laplacian(p), so it's safe to use here)
         {
-            let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("PCG save x to ap"),
-            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("PCG save x to ap"),
+                });
             encoder.copy_buffer_to_buffer(&self.levels[0].pressure, 0, &self.ap, 0, cell_size);
             gpu.queue.submit(std::iter::once(encoder.finish()));
         }
@@ -1673,11 +1908,14 @@ impl GpuMgpcgSolver {
                 alpha: -1.0,
                 length: (self.width * self.height) as u32,
             };
-            gpu.queue.write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
+            gpu.queue
+                .write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
 
-            let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("PCG copy -r to div"),
-            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("PCG copy -r to div"),
+                });
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Copy -r to divergence"),
                 timestamp_writes: None,
@@ -1695,9 +1933,11 @@ impl GpuMgpcgSolver {
         // Step 4: Run V-cycle to compute z ≈ M⁻¹r
         // Use all available levels now that we've fixed the x preservation
         {
-            let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("PCG V-cycle"),
-            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("PCG V-cycle"),
+                });
             // Limit to 2 levels for now - more levels may have convergence issues
             let max_level = 1.min(self.num_levels - 1);
             self.dispatch_vcycle_recursive(&mut encoder, 0, max_level);
@@ -1713,17 +1953,24 @@ impl GpuMgpcgSolver {
                 alpha: 1.0,
                 length: (self.width * self.height) as u32,
             };
-            gpu.queue.write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
+            gpu.queue
+                .write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
 
-            let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("PCG copy pressure to z"),
-            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("PCG copy pressure to z"),
+                });
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Copy pressure to z"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(self.copy_pipeline.as_ref().unwrap());
-            pass.set_bind_group(0, self.pcg_copy_from_pressure_bind_group.as_ref().unwrap(), &[]);
+            pass.set_bind_group(
+                0,
+                self.pcg_copy_from_pressure_bind_group.as_ref().unwrap(),
+                &[],
+            );
             pass.dispatch_workgroups(workgroup_count_1d, 1, 1);
             drop(pass);
             gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -1731,21 +1978,30 @@ impl GpuMgpcgSolver {
 
         // Step 6: Restore x from ap back to levels[0].pressure
         {
-            let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("PCG restore x from ap"),
-            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("PCG restore x from ap"),
+                });
             encoder.copy_buffer_to_buffer(&self.ap, 0, &self.levels[0].pressure, 0, cell_size);
             gpu.queue.submit(std::iter::once(encoder.finish()));
         }
     }
 
     /// Compute dot product and read result back to CPU
-    fn compute_dot_product(&self, gpu: &GpuContext, workgroup_count: u32, bind_group: &wgpu::BindGroup) -> f32 {
+    fn compute_dot_product(
+        &self,
+        gpu: &GpuContext,
+        workgroup_count: u32,
+        bind_group: &wgpu::BindGroup,
+    ) -> f32 {
         // Dispatch partial sum computation
         {
-            let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Dot Partial"),
-            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Dot Partial"),
+                });
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Dot Partial Sums"),
                 timestamp_writes: None,
@@ -1759,9 +2015,11 @@ impl GpuMgpcgSolver {
 
         // Dispatch finalize to sum partial sums
         {
-            let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Dot Finalize"),
-            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Dot Finalize"),
+                });
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Dot Finalize"),
                 timestamp_writes: None,
@@ -1801,7 +2059,13 @@ impl GpuMgpcgSolver {
     }
 
     /// Dispatch axpy: buffer_a += alpha * buffer_b
-    fn dispatch_axpy(&self, gpu: &GpuContext, alpha: f32, bind_group: &wgpu::BindGroup, workgroup_count: u32) {
+    fn dispatch_axpy(
+        &self,
+        gpu: &GpuContext,
+        alpha: f32,
+        bind_group: &wgpu::BindGroup,
+        workgroup_count: u32,
+    ) {
         // Update params with alpha
         let params = PcgParams {
             width: self.width,
@@ -1809,11 +2073,14 @@ impl GpuMgpcgSolver {
             alpha,
             length: (self.width * self.height) as u32,
         };
-        gpu.queue.write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
+        gpu.queue
+            .write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("PCG AXPY"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("PCG AXPY"),
+            });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("AXPY"),
             timestamp_writes: None,
@@ -1834,11 +2101,14 @@ impl GpuMgpcgSolver {
             alpha: beta,
             length: (self.width * self.height) as u32,
         };
-        gpu.queue.write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
+        gpu.queue
+            .write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("PCG XPAY"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("PCG XPAY"),
+            });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("XPAY p = z + beta*p"),
             timestamp_writes: None,
@@ -1853,28 +2123,41 @@ impl GpuMgpcgSolver {
     /// Upload divergence and cell_type from CPU to level 0
     pub fn upload(&self, gpu: &GpuContext, divergence: &[f32], cell_type: &[u32]) {
         let level0 = &self.levels[0];
-        gpu.queue.write_buffer(&level0.divergence, 0, bytemuck::cast_slice(divergence));
-        gpu.queue.write_buffer(&level0.cell_type, 0, bytemuck::cast_slice(cell_type));
+        gpu.queue
+            .write_buffer(&level0.divergence, 0, bytemuck::cast_slice(divergence));
+        gpu.queue
+            .write_buffer(&level0.cell_type, 0, bytemuck::cast_slice(cell_type));
 
         // Clear pressure to zero
         level0.clear_pressure(gpu);
     }
 
     /// Upload with warm start from previous pressure
-    pub fn upload_warm(&self, gpu: &GpuContext, divergence: &[f32], cell_type: &[u32], pressure: &[f32]) {
+    pub fn upload_warm(
+        &self,
+        gpu: &GpuContext,
+        divergence: &[f32],
+        cell_type: &[u32],
+        pressure: &[f32],
+    ) {
         let level0 = &self.levels[0];
-        gpu.queue.write_buffer(&level0.divergence, 0, bytemuck::cast_slice(divergence));
-        gpu.queue.write_buffer(&level0.cell_type, 0, bytemuck::cast_slice(cell_type));
-        gpu.queue.write_buffer(&level0.pressure, 0, bytemuck::cast_slice(pressure));
+        gpu.queue
+            .write_buffer(&level0.divergence, 0, bytemuck::cast_slice(divergence));
+        gpu.queue
+            .write_buffer(&level0.cell_type, 0, bytemuck::cast_slice(cell_type));
+        gpu.queue
+            .write_buffer(&level0.pressure, 0, bytemuck::cast_slice(pressure));
     }
 
     /// Download pressure results from GPU
     pub fn download(&self, gpu: &GpuContext, pressure: &mut [f32]) {
         let level0 = &self.levels[0];
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Pressure Download Encoder"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Pressure Download Encoder"),
+            });
 
         encoder.copy_buffer_to_buffer(
             &level0.pressure,

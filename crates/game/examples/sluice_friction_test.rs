@@ -156,12 +156,24 @@ impl App {
         let rot_speed = 1.5 * dt;
 
         // WASD for rotation
-        if self.keys_held[0] { self.camera_pitch += rot_speed; } // W - pitch up
-        if self.keys_held[2] { self.camera_pitch -= rot_speed; } // S - pitch down
-        if self.keys_held[1] { self.camera_angle -= rot_speed; } // A - rotate left
-        if self.keys_held[3] { self.camera_angle += rot_speed; } // D - rotate right
-        if self.keys_held[4] { self.camera_distance -= speed; }  // Q - zoom in
-        if self.keys_held[5] { self.camera_distance += speed; }  // E - zoom out
+        if self.keys_held[0] {
+            self.camera_pitch += rot_speed;
+        } // W - pitch up
+        if self.keys_held[2] {
+            self.camera_pitch -= rot_speed;
+        } // S - pitch down
+        if self.keys_held[1] {
+            self.camera_angle -= rot_speed;
+        } // A - rotate left
+        if self.keys_held[3] {
+            self.camera_angle += rot_speed;
+        } // D - rotate right
+        if self.keys_held[4] {
+            self.camera_distance -= speed;
+        } // Q - zoom in
+        if self.keys_held[5] {
+            self.camera_distance += speed;
+        } // E - zoom out
 
         self.camera_pitch = self.camera_pitch.clamp(-1.4, 1.4);
         self.camera_distance = self.camera_distance.clamp(0.5, 10.0);
@@ -187,7 +199,8 @@ impl App {
 
                     // Sloped floor
                     let t = i as f32 / (GRID_WIDTH - 1) as f32;
-                    let floor_j = FLOOR_HEIGHT_LEFT as f32 * (1.0 - t) + FLOOR_HEIGHT_RIGHT as f32 * t;
+                    let floor_j =
+                        FLOOR_HEIGHT_LEFT as f32 * (1.0 - t) + FLOOR_HEIGHT_RIGHT as f32 * t;
                     let floor_dist = (j as f32 - floor_j) * CELL_SIZE;
 
                     // Riffles (small bumps on the floor)
@@ -306,11 +319,8 @@ impl App {
         }
 
         // Upload instances
-        gpu.queue.write_buffer(
-            &gpu.instance_buffer,
-            0,
-            bytemuck::cast_slice(&instances),
-        );
+        gpu.queue
+            .write_buffer(&gpu.instance_buffer, 0, bytemuck::cast_slice(&instances));
 
         // Camera
         let center = Vec3::new(
@@ -318,11 +328,12 @@ impl App {
             GRID_HEIGHT as f32 * CELL_SIZE * 0.3,
             GRID_DEPTH as f32 * CELL_SIZE * 0.5,
         );
-        let eye = center + Vec3::new(
-            self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
-            self.camera_distance * self.camera_pitch.sin(),
-            self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
-        );
+        let eye = center
+            + Vec3::new(
+                self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
+                self.camera_distance * self.camera_pitch.sin(),
+                self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
+            );
         let view = Mat4::look_at_rh(eye, center, Vec3::Y);
         let proj = Mat4::perspective_rh(
             std::f32::consts::FRAC_PI_4,
@@ -337,14 +348,19 @@ impl App {
             camera_pos: eye.to_array(),
             _pad: 0.0,
         };
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Render
         let frame = gpu.surface.get_current_texture().unwrap();
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -409,19 +425,21 @@ impl ApplicationHandler for App {
         }))
         .unwrap();
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("Device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits {
-                    max_storage_buffers_per_shader_stage: 16,
-                    ..wgpu::Limits::default()
-                }
-                .using_resolution(adapter.limits()),
-                memory_hints: wgpu::MemoryHints::Performance,
-            },
-            None,
-        ))
+        let (device, queue) = pollster::block_on(
+            adapter.request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("Device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits {
+                        max_storage_buffers_per_shader_stage: 16,
+                        ..wgpu::Limits::default()
+                    }
+                    .using_resolution(adapter.limits()),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                },
+                None,
+            ),
+        )
         .unwrap();
 
         let size = window.inner_size();
@@ -512,12 +530,24 @@ impl ApplicationHandler for App {
 
         // Quad vertices for particle billboards
         let vertices = [
-            Vertex { position: [-1.0, -1.0] },
-            Vertex { position: [1.0, -1.0] },
-            Vertex { position: [1.0, 1.0] },
-            Vertex { position: [-1.0, -1.0] },
-            Vertex { position: [1.0, 1.0] },
-            Vertex { position: [-1.0, 1.0] },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+            },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+            },
+            Vertex {
+                position: [-1.0, 1.0],
+            },
         ];
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -718,12 +748,17 @@ impl ApplicationHandler for App {
                 // Print stats periodically
                 self.frame += 1;
                 if self.frame % 120 == 0 {
-                    let avg_fps: f32 = self.fps_history.iter().sum::<f32>() / self.fps_history.len().max(1) as f32;
+                    let avg_fps: f32 =
+                        self.fps_history.iter().sum::<f32>() / self.fps_history.len().max(1) as f32;
                     let water_count = self.densities.iter().filter(|&&d| d < 1.5).count();
                     let sediment_count = self.densities.iter().filter(|&&d| d >= 1.5).count();
                     println!(
                         "Frame {}: {} total ({} water, {} sediment), {:.1} FPS",
-                        self.frame, self.positions.len(), water_count, sediment_count, avg_fps
+                        self.frame,
+                        self.positions.len(),
+                        water_count,
+                        sediment_count,
+                        avg_fps
                     );
                 }
 

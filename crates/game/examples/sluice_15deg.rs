@@ -33,10 +33,10 @@ const SLOPE_ANGLE_DEG: f32 = 15.0;
 const SLOPE_TAN: f32 = 0.268;
 
 /// Grid dimensions
-const GRID_WIDTH: usize = 150;   // Flow direction (X) - ~2.4m sluice length
-const GRID_HEIGHT: usize = 90;   // Vertical (Y) - enough for slope + water + headroom
-const GRID_DEPTH: usize = 25;    // Width (Z) - channel width
-const CELL_SIZE: f32 = 0.016;    // 1.6cm cells - fine enough for vortices
+const GRID_WIDTH: usize = 150; // Flow direction (X) - ~2.4m sluice length
+const GRID_HEIGHT: usize = 90; // Vertical (Y) - enough for slope + water + headroom
+const GRID_DEPTH: usize = 25; // Width (Z) - channel width
+const CELL_SIZE: f32 = 0.016; // 1.6cm cells - fine enough for vortices
 
 const MAX_PARTICLES: usize = 500_000;
 const MAX_SOLIDS: usize = 100_000;
@@ -45,14 +45,14 @@ const MAX_SOLIDS: usize = 100_000;
 const FLOW_ACCEL: f32 = 2.54;
 
 /// Riffle configuration
-const RIFFLE_HEIGHT_CELLS: usize = 6;     // 6 cells = ~9.6cm - tall for vortex
-const RIFFLE_THICKNESS_CELLS: usize = 2;  // 2 cells thick
-const RIFFLE_SPACING_CELLS: usize = 20;   // 20 cells between riffles
-const NUM_RIFFLES: usize = 5;             // 5 evenly spaced riffles
-const SLICK_PLATE_CELLS: usize = 15;      // Smooth section before first riffle
+const RIFFLE_HEIGHT_CELLS: usize = 6; // 6 cells = ~9.6cm - tall for vortex
+const RIFFLE_THICKNESS_CELLS: usize = 2; // 2 cells thick
+const RIFFLE_SPACING_CELLS: usize = 20; // 20 cells between riffles
+const NUM_RIFFLES: usize = 5; // 5 evenly spaced riffles
+const SLICK_PLATE_CELLS: usize = 15; // Smooth section before first riffle
 
 /// Wall configuration
-const WALL_HEIGHT_CELLS: usize = 10;      // Side wall height above floor
+const WALL_HEIGHT_CELLS: usize = 10; // Side wall height above floor
 
 // ============================================================================
 // GPU TYPES
@@ -135,17 +135,31 @@ impl App {
         spawn_water(&mut sim, 2500, Vec3::new(0.8, 0.0, 0.0));
 
         println!("=== 15-DEGREE SLUICE BOX ===");
-        println!("Grid: {}x{}x{} cells at {:.3}m", GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
-        println!("Physical size: {:.2}m x {:.2}m x {:.2}m",
+        println!(
+            "Grid: {}x{}x{} cells at {:.3}m",
+            GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE
+        );
+        println!(
+            "Physical size: {:.2}m x {:.2}m x {:.2}m",
             GRID_WIDTH as f32 * CELL_SIZE,
             GRID_HEIGHT as f32 * CELL_SIZE,
             GRID_DEPTH as f32 * CELL_SIZE
         );
-        println!("Slope: {:.1}° ({:.1}% grade)", SLOPE_ANGLE_DEG, SLOPE_TAN * 100.0);
-        println!("Riffle height: {} cells = {:.1}cm", RIFFLE_HEIGHT_CELLS,
-            RIFFLE_HEIGHT_CELLS as f32 * CELL_SIZE * 100.0);
-        println!("Riffle spacing: {} cells = {:.1}cm", RIFFLE_SPACING_CELLS,
-            RIFFLE_SPACING_CELLS as f32 * CELL_SIZE * 100.0);
+        println!(
+            "Slope: {:.1}° ({:.1}% grade)",
+            SLOPE_ANGLE_DEG,
+            SLOPE_TAN * 100.0
+        );
+        println!(
+            "Riffle height: {} cells = {:.1}cm",
+            RIFFLE_HEIGHT_CELLS,
+            RIFFLE_HEIGHT_CELLS as f32 * CELL_SIZE * 100.0
+        );
+        println!(
+            "Riffle spacing: {} cells = {:.1}cm",
+            RIFFLE_SPACING_CELLS,
+            RIFFLE_SPACING_CELLS as f32 * CELL_SIZE * 100.0
+        );
         println!("{} riffles", NUM_RIFFLES);
         println!("Initial particles: {}", sim.particle_count());
         println!("Solid cells: {}", solid_instances.len());
@@ -253,12 +267,24 @@ impl App {
         });
 
         let vertices = [
-            Vertex { position: [-1.0, -1.0] },
-            Vertex { position: [1.0, -1.0] },
-            Vertex { position: [1.0, 1.0] },
-            Vertex { position: [-1.0, -1.0] },
-            Vertex { position: [1.0, 1.0] },
-            Vertex { position: [-1.0, 1.0] },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+            },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+            },
+            Vertex {
+                position: [-1.0, 1.0],
+            },
         ];
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -281,7 +307,11 @@ impl App {
         });
 
         if !self.solid_instances.is_empty() {
-            queue.write_buffer(&solid_buffer, 0, bytemuck::cast_slice(&self.solid_instances));
+            queue.write_buffer(
+                &solid_buffer,
+                0,
+                bytemuck::cast_slice(&self.solid_instances),
+            );
         }
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -430,7 +460,13 @@ impl App {
                         let i = (p.position.x / CELL_SIZE).floor() as i32;
                         let j = (p.position.y / CELL_SIZE).floor() as i32;
                         let k = (p.position.z / CELL_SIZE).floor() as i32;
-                        if i >= 0 && i < w as i32 && j >= 0 && j < h as i32 && k >= 0 && k < d as i32 {
+                        if i >= 0
+                            && i < w as i32
+                            && j >= 0
+                            && j < h as i32
+                            && k >= 0
+                            && k < d as i32
+                        {
                             let idx = k as usize * w * h + j as usize * w + i as usize;
                             if self.cell_types[idx] != 2 {
                                 self.cell_types[idx] = 1;
@@ -521,16 +557,28 @@ impl App {
             if elapsed >= 1.0 {
                 self.current_fps = self.fps_frame_count as f32 / elapsed;
                 let avg_vel: Vec3 = if !self.sim.particles.list.is_empty() {
-                    self.sim.particles.list.iter()
+                    self.sim
+                        .particles
+                        .list
+                        .iter()
                         .map(|p| p.velocity)
-                        .fold(Vec3::ZERO, |a, b| a + b) / self.sim.particles.list.len() as f32
+                        .fold(Vec3::ZERO, |a, b| a + b)
+                        / self.sim.particles.list.len() as f32
                 } else {
                     Vec3::ZERO
                 };
-                let max_y = self.sim.particles.list.iter()
+                let max_y = self
+                    .sim
+                    .particles
+                    .list
+                    .iter()
                     .map(|p| p.position.y)
                     .fold(0.0f32, f32::max);
-                let max_x = self.sim.particles.list.iter()
+                let max_x = self
+                    .sim
+                    .particles
+                    .list
+                    .iter()
                     .map(|p| p.position.x)
                     .fold(0.0f32, f32::max);
                 println!(
@@ -571,7 +619,8 @@ impl App {
             camera_pos: camera_pos.to_array(),
             _pad: 0.0,
         };
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Color particles: blue base, lighter for fast flow, cyan tint for vortex motion
         let water_instances: Vec<ParticleInstance> = self
@@ -590,9 +639,9 @@ impl App {
 
                 // Blue water, greener for vortex, lighter for speed
                 let color = [
-                    0.15 + v * 0.25,         // R: more for vortex
+                    0.15 + v * 0.25,            // R: more for vortex
                     0.35 + t * 0.35 + v * 0.15, // G: speed + vortex
-                    0.75 + t * 0.15,         // B: base water
+                    0.75 + t * 0.15,            // B: base water
                     0.85,
                 ];
                 ParticleInstance {
@@ -603,7 +652,11 @@ impl App {
             .collect();
 
         if !water_instances.is_empty() {
-            gpu.queue.write_buffer(&gpu.instance_buffer, 0, bytemuck::cast_slice(&water_instances));
+            gpu.queue.write_buffer(
+                &gpu.instance_buffer,
+                0,
+                bytemuck::cast_slice(&water_instances),
+            );
         }
 
         let output = match gpu.surface.get_current_texture() {
@@ -755,8 +808,8 @@ fn build_sluice(sim: &mut FlipSimulation3D) {
         for dy in 1..=WALL_HEIGHT_CELLS {
             let y = floor_y + dy;
             if y < GRID_HEIGHT {
-                sim.grid.set_solid(i, y, 0);                  // Front wall (z=0)
-                sim.grid.set_solid(i, y, GRID_DEPTH - 1);     // Back wall (z=max)
+                sim.grid.set_solid(i, y, 0); // Front wall (z=0)
+                sim.grid.set_solid(i, y, GRID_DEPTH - 1); // Back wall (z=max)
             }
         }
     }
@@ -803,8 +856,10 @@ fn build_sluice(sim: &mut FlipSimulation3D) {
         }
     }
 
-    println!("Built {} riffles, {} cells tall, {} cells apart",
-        NUM_RIFFLES, RIFFLE_HEIGHT_CELLS, RIFFLE_SPACING_CELLS);
+    println!(
+        "Built {} riffles, {} cells tall, {} cells apart",
+        NUM_RIFFLES, RIFFLE_HEIGHT_CELLS, RIFFLE_SPACING_CELLS
+    );
 
     // Compute SDF for particle collision
     sim.grid.compute_sdf();
@@ -835,7 +890,11 @@ fn spawn_water(sim: &mut FlipSimulation3D, count: usize, velocity: Vec3) {
     let mut spawned = 0;
 
     for zi in 0..num_z {
-        let t = if num_z > 1 { zi as f32 / (num_z - 1) as f32 } else { 0.5 };
+        let t = if num_z > 1 {
+            zi as f32 / (num_z - 1) as f32
+        } else {
+            0.5
+        };
         let z = z_start + t * (z_end - z_start);
 
         for xi in 0..cluster_dim {
@@ -877,13 +936,12 @@ fn collect_solids(sim: &FlipSimulation3D) -> Vec<ParticleInstance> {
                 }
 
                 // Only render surface cells
-                let is_surface =
-                    (i == 0 || !sim.grid.is_solid(i - 1, j, k)) ||
-                    (i == w - 1 || !sim.grid.is_solid(i + 1, j, k)) ||
-                    (j == 0 || !sim.grid.is_solid(i, j - 1, k)) ||
-                    (j == h - 1 || !sim.grid.is_solid(i, j + 1, k)) ||
-                    (k == 0 || !sim.grid.is_solid(i, j, k - 1)) ||
-                    (k == d - 1 || !sim.grid.is_solid(i, j, k + 1));
+                let is_surface = (i == 0 || !sim.grid.is_solid(i - 1, j, k))
+                    || (i == w - 1 || !sim.grid.is_solid(i + 1, j, k))
+                    || (j == 0 || !sim.grid.is_solid(i, j - 1, k))
+                    || (j == h - 1 || !sim.grid.is_solid(i, j + 1, k))
+                    || (k == 0 || !sim.grid.is_solid(i, j, k - 1))
+                    || (k == d - 1 || !sim.grid.is_solid(i, j, k + 1));
 
                 if !is_surface {
                     continue;

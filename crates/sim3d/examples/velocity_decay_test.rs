@@ -31,17 +31,28 @@ fn main() {
         }
     }
 
-    println!("Initial: {} particles with velocity {:?}", sim.particle_count(), initial_vel);
+    println!(
+        "Initial: {} particles with velocity {:?}",
+        sim.particle_count(),
+        initial_vel
+    );
 
     // Run simulation and track velocity
     let dt = 1.0 / 60.0;
     for frame in 0..120 {
         // Compute average velocity
-        let avg_vel: Vec3 = sim.particles.list.iter()
+        let avg_vel: Vec3 = sim
+            .particles
+            .list
+            .iter()
             .map(|p| p.velocity)
-            .fold(Vec3::ZERO, |a, b| a + b) / sim.particle_count() as f32;
+            .fold(Vec3::ZERO, |a, b| a + b)
+            / sim.particle_count() as f32;
 
-        let max_vel: f32 = sim.particles.list.iter()
+        let max_vel: f32 = sim
+            .particles
+            .list
+            .iter()
             .map(|p| p.velocity.length())
             .fold(0.0, f32::max);
 
@@ -56,19 +67,31 @@ fn main() {
     }
 
     // Final state
-    let avg_vel: Vec3 = sim.particles.list.iter()
+    let avg_vel: Vec3 = sim
+        .particles
+        .list
+        .iter()
         .map(|p| p.velocity)
-        .fold(Vec3::ZERO, |a, b| a + b) / sim.particle_count() as f32;
+        .fold(Vec3::ZERO, |a, b| a + b)
+        / sim.particle_count() as f32;
 
-    println!("\nFinal: avg_vel=({:.3}, {:.3}, {:.3})", avg_vel.x, avg_vel.y, avg_vel.z);
+    println!(
+        "\nFinal: avg_vel=({:.3}, {:.3}, {:.3})",
+        avg_vel.x, avg_vel.y, avg_vel.z
+    );
 
     // Sample individual particles
     println!("\nSample particles:");
     for (i, p) in sim.particles.list.iter().enumerate().take(5) {
         println!(
             "  [{}] pos=({:.2}, {:.2}, {:.2}), vel=({:.3}, {:.3}, {:.3}), C={:?}",
-            i, p.position.x, p.position.y, p.position.z,
-            p.velocity.x, p.velocity.y, p.velocity.z,
+            i,
+            p.position.x,
+            p.position.y,
+            p.position.z,
+            p.velocity.x,
+            p.velocity.y,
+            p.velocity.z,
             p.affine_velocity
         );
     }
@@ -96,9 +119,13 @@ fn main() {
     }
 
     for frame in 0..60 {
-        let avg_vel: Vec3 = sim2.particles.list.iter()
+        let avg_vel: Vec3 = sim2
+            .particles
+            .list
+            .iter()
             .map(|p| p.velocity)
-            .fold(Vec3::ZERO, |a, b| a + b) / sim2.particle_count() as f32;
+            .fold(Vec3::ZERO, |a, b| a + b)
+            / sim2.particle_count() as f32;
 
         if frame % 10 == 0 {
             println!(
@@ -133,9 +160,13 @@ fn main() {
     }
 
     for frame in 0..60 {
-        let avg_vel: Vec3 = sim3.particles.list.iter()
+        let avg_vel: Vec3 = sim3
+            .particles
+            .list
+            .iter()
             .map(|p| p.velocity)
-            .fold(Vec3::ZERO, |a, b| a + b) / sim3.particle_count() as f32;
+            .fold(Vec3::ZERO, |a, b| a + b)
+            / sim3.particle_count() as f32;
 
         if frame % 10 == 0 {
             println!(

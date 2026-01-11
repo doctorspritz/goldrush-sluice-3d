@@ -21,12 +21,7 @@ fn main() {
     let mut failed = 0;
 
     // Test 1: Galileo's Law - Freefall
-    run_test(
-        "DEM Freefall",
-        test_dem_freefall,
-        &mut passed,
-        &mut failed,
-    );
+    run_test("DEM Freefall", test_dem_freefall, &mut passed, &mut failed);
 
     // Test 2: Terminal Velocity with simple drag model
     run_test(
@@ -73,19 +68,23 @@ fn test_dem_freefall() -> (bool, f32) {
     let sim_time = 0.3; // s (short to avoid floor collision)
     let steps = (sim_time / DT) as usize;
 
-    println!("Drop clump from h = {:.2}m for t = {:.2}s", start_height, sim_time);
+    println!(
+        "Drop clump from h = {:.2}m for t = {:.2}s",
+        start_height, sim_time
+    );
 
     // Expected values
     let expected_y = start_height - 0.5 * GRAVITY.abs() * sim_time * sim_time;
     let expected_vy = GRAVITY * sim_time;
 
-    println!("Expected: y = {:.3}m, v_y = {:.3}m/s", expected_y, expected_vy);
+    println!(
+        "Expected: y = {:.3}m, v_y = {:.3}m/s",
+        expected_y, expected_vy
+    );
 
     // Create DEM simulation with large bounds (no collisions)
-    let mut sim = ClusterSimulation3D::new(
-        Vec3::new(-10.0, -10.0, -10.0),
-        Vec3::new(10.0, 10.0, 10.0),
-    );
+    let mut sim =
+        ClusterSimulation3D::new(Vec3::new(-10.0, -10.0, -10.0), Vec3::new(10.0, 10.0, 10.0));
     sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
     sim.use_dem = true;
 
@@ -108,7 +107,10 @@ fn test_dem_freefall() -> (bool, f32) {
     let measured_y = clump.position.y;
     let measured_vy = clump.velocity.y;
 
-    println!("Measured: y = {:.3}m, v_y = {:.3}m/s", measured_y, measured_vy);
+    println!(
+        "Measured: y = {:.3}m, v_y = {:.3}m/s",
+        measured_y, measured_vy
+    );
 
     // Check for NaN
     if measured_y.is_nan() || measured_vy.is_nan() || clump.angular_velocity.is_nan() {
@@ -129,7 +131,10 @@ fn test_dem_freefall() -> (bool, f32) {
     // Check rotation didn't appear (pure translation)
     let angular_speed = clump.angular_velocity.length();
     if angular_speed > 0.1 {
-        println!("Warning: Unexpected rotation detected: {:.3} rad/s", angular_speed);
+        println!(
+            "Warning: Unexpected rotation detected: {:.3} rad/s",
+            angular_speed
+        );
     }
 
     // Pass if both within 3% tolerance (allow small DEM collision correction errors)
@@ -182,9 +187,15 @@ fn test_dem_terminal_velocity() -> (bool, f32) {
     // v_term = mg / b
     let v_term_analytical = (total_mass * GRAVITY.abs()) / drag_coeff;
 
-    println!("Clump: mass={:.4}kg, radius={:.3}m", total_mass, particle_radius);
+    println!(
+        "Clump: mass={:.4}kg, radius={:.3}m",
+        total_mass, particle_radius
+    );
     println!("Drag coefficient: {:.3} N·s/m", drag_coeff);
-    println!("Expected terminal velocity: {:.3} m/s (by construction)", v_term_analytical);
+    println!(
+        "Expected terminal velocity: {:.3} m/s (by construction)",
+        v_term_analytical
+    );
 
     // Create DEM simulation with very large bounds (no collisions)
     let mut sim = ClusterSimulation3D::new(
@@ -221,13 +232,19 @@ fn test_dem_terminal_velocity() -> (bool, f32) {
     }
 
     // Analyze terminal velocity
-    let avg_vy: f32 = velocities_last_second.iter().sum::<f32>() / velocities_last_second.len() as f32;
-    let variance: f32 = velocities_last_second.iter()
+    let avg_vy: f32 =
+        velocities_last_second.iter().sum::<f32>() / velocities_last_second.len() as f32;
+    let variance: f32 = velocities_last_second
+        .iter()
         .map(|v| (v - avg_vy).powi(2))
-        .sum::<f32>() / velocities_last_second.len() as f32;
+        .sum::<f32>()
+        / velocities_last_second.len() as f32;
     let std_dev = variance.sqrt();
 
-    println!("Measured terminal velocity: {:.3} m/s (avg over last 1s)", avg_vy.abs());
+    println!(
+        "Measured terminal velocity: {:.3} m/s (avg over last 1s)",
+        avg_vy.abs()
+    );
     println!("Velocity std dev: {:.3} m/s (stability check)", std_dev);
 
     // Check for NaN
@@ -239,7 +256,10 @@ fn test_dem_terminal_velocity() -> (bool, f32) {
 
     // Check velocity stabilized (std dev < 0.01 m/s = 1% of typical terminal velocity)
     if std_dev > 0.05 {
-        println!("Warning: Velocity not fully stabilized (std dev = {:.3})", std_dev);
+        println!(
+            "Warning: Velocity not fully stabilized (std dev = {:.3})",
+            std_dev
+        );
     }
 
     // Calculate error from analytical terminal velocity
@@ -256,7 +276,10 @@ fn test_dem_terminal_velocity() -> (bool, f32) {
     if pass {
         println!("PASS: Terminal velocity matches analytical solution within 5%");
     } else {
-        println!("FAIL: Terminal velocity error = {:.2}% (exceeds 5% tolerance)", error_percent);
+        println!(
+            "FAIL: Terminal velocity error = {:.2}% (exceeds 5% tolerance)",
+            error_percent
+        );
         println!("  Expected: {:.3} m/s", v_term_analytical);
         println!("  Measured: {:.3} m/s", v_term_measured);
     }

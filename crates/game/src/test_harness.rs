@@ -50,7 +50,11 @@ pub enum Invariant {
 
 impl Invariant {
     /// Check this invariant against current metrics
-    pub fn check(&self, metrics: &TestMetrics, _prev_metrics: Option<&TestMetrics>) -> Result<(), String> {
+    pub fn check(
+        &self,
+        metrics: &TestMetrics,
+        _prev_metrics: Option<&TestMetrics>,
+    ) -> Result<(), String> {
         match self {
             Invariant::ParticleCountStable { tolerance_pct } => {
                 if metrics.particle_count_start == 0 {
@@ -137,18 +141,24 @@ pub mod levels {
     pub struct Level0DamBreak;
 
     impl SimTest for Level0DamBreak {
-        fn name(&self) -> &str { "Level 0: Dam Break" }
+        fn name(&self) -> &str {
+            "Level 0: Dam Break"
+        }
 
         fn invariants(&self) -> Vec<Invariant> {
             vec![
                 Invariant::NoNaN,
                 Invariant::NoParticlesInSolid,
-                Invariant::ParticleCountStable { tolerance_pct: 0.05 },
+                Invariant::ParticleCountStable {
+                    tolerance_pct: 0.05,
+                },
                 Invariant::MaxVelocityBelow { limit: 20.0 },
             ]
         }
 
-        fn run_frames(&self) -> u32 { 300 }
+        fn run_frames(&self) -> u32 {
+            300
+        }
 
         fn description(&self) -> &str {
             "Pure FLIP water simulation. A block of water collapses under gravity in a box. \
@@ -160,18 +170,24 @@ pub mod levels {
     pub struct Level1SlopedFloor;
 
     impl SimTest for Level1SlopedFloor {
-        fn name(&self) -> &str { "Level 1: Sloped Floor Flow" }
+        fn name(&self) -> &str {
+            "Level 1: Sloped Floor Flow"
+        }
 
         fn invariants(&self) -> Vec<Invariant> {
             vec![
                 Invariant::NoNaN,
                 Invariant::NoParticlesInSolid,
-                Invariant::ParticleCountStable { tolerance_pct: 0.05 },
+                Invariant::ParticleCountStable {
+                    tolerance_pct: 0.05,
+                },
                 Invariant::MaxVelocityBelow { limit: 15.0 },
             ]
         }
 
-        fn run_frames(&self) -> u32 { 500 }
+        fn run_frames(&self) -> u32 {
+            500
+        }
 
         fn description(&self) -> &str {
             "Water flows down a sloped floor with continuous inlet. \
@@ -183,7 +199,9 @@ pub mod levels {
     pub struct Level2Riffles;
 
     impl SimTest for Level2Riffles {
-        fn name(&self) -> &str { "Level 2: Flow Over Riffles" }
+        fn name(&self) -> &str {
+            "Level 2: Flow Over Riffles"
+        }
 
         fn invariants(&self) -> Vec<Invariant> {
             // Note: No ParticleCountStable for flow-through tests with continuous emission
@@ -195,7 +213,9 @@ pub mod levels {
             ]
         }
 
-        fn run_frames(&self) -> u32 { 600 }
+        fn run_frames(&self) -> u32 {
+            600
+        }
 
         fn description(&self) -> &str {
             "Water flows over riffle obstacles without sediment. \
@@ -207,17 +227,23 @@ pub mod levels {
     pub struct Level3PassiveSediment;
 
     impl SimTest for Level3PassiveSediment {
-        fn name(&self) -> &str { "Level 3: Passive Sediment" }
+        fn name(&self) -> &str {
+            "Level 3: Passive Sediment"
+        }
 
         fn invariants(&self) -> Vec<Invariant> {
             vec![
                 Invariant::NoNaN,
-                Invariant::ParticleCountStable { tolerance_pct: 0.15 },
+                Invariant::ParticleCountStable {
+                    tolerance_pct: 0.15,
+                },
                 Invariant::DivergenceBelow { threshold: 100.0 },
             ]
         }
 
-        fn run_frames(&self) -> u32 { 600 }
+        fn run_frames(&self) -> u32 {
+            600
+        }
 
         fn description(&self) -> &str {
             "Sediment particles are transported by water without feedback. \
@@ -229,16 +255,22 @@ pub mod levels {
     pub struct Level4SedimentSettling;
 
     impl SimTest for Level4SedimentSettling {
-        fn name(&self) -> &str { "Level 4: Sediment Settling" }
+        fn name(&self) -> &str {
+            "Level 4: Sediment Settling"
+        }
 
         fn invariants(&self) -> Vec<Invariant> {
             vec![
                 Invariant::NoNaN,
-                Invariant::ParticleCountStable { tolerance_pct: 0.10 },
+                Invariant::ParticleCountStable {
+                    tolerance_pct: 0.10,
+                },
             ]
         }
 
-        fn run_frames(&self) -> u32 { 600 }
+        fn run_frames(&self) -> u32 {
+            600
+        }
 
         fn description(&self) -> &str {
             "Heavy sediment should settle through water. \
@@ -250,16 +282,22 @@ pub mod levels {
     pub struct Level5VorticitySuspension;
 
     impl SimTest for Level5VorticitySuspension {
-        fn name(&self) -> &str { "Level 5: Vorticity Suspension" }
+        fn name(&self) -> &str {
+            "Level 5: Vorticity Suspension"
+        }
 
         fn invariants(&self) -> Vec<Invariant> {
             vec![
                 Invariant::NoNaN,
-                Invariant::ParticleCountStable { tolerance_pct: 0.15 },
+                Invariant::ParticleCountStable {
+                    tolerance_pct: 0.15,
+                },
             ]
         }
 
-        fn run_frames(&self) -> u32 { 800 }
+        fn run_frames(&self) -> u32 {
+            800
+        }
 
         fn description(&self) -> &str {
             "Sediment should be lifted by vorticity in turbulent regions. \
@@ -271,16 +309,22 @@ pub mod levels {
     pub struct Level6BedFormation;
 
     impl SimTest for Level6BedFormation {
-        fn name(&self) -> &str { "Level 6: Bed Formation" }
+        fn name(&self) -> &str {
+            "Level 6: Bed Formation"
+        }
 
         fn invariants(&self) -> Vec<Invariant> {
             vec![
                 Invariant::NoNaN,
-                Invariant::ParticleCountStable { tolerance_pct: 0.20 },
+                Invariant::ParticleCountStable {
+                    tolerance_pct: 0.20,
+                },
             ]
         }
 
-        fn run_frames(&self) -> u32 { 1200 }
+        fn run_frames(&self) -> u32 {
+            1200
+        }
 
         fn description(&self) -> &str {
             "Sediment should accumulate and form a bed heightfield. \
@@ -292,16 +336,22 @@ pub mod levels {
     pub struct Level7GoldSeparation;
 
     impl SimTest for Level7GoldSeparation {
-        fn name(&self) -> &str { "Level 7: Gold Separation" }
+        fn name(&self) -> &str {
+            "Level 7: Gold Separation"
+        }
 
         fn invariants(&self) -> Vec<Invariant> {
             vec![
                 Invariant::NoNaN,
-                Invariant::ParticleCountStable { tolerance_pct: 0.20 },
+                Invariant::ParticleCountStable {
+                    tolerance_pct: 0.20,
+                },
             ]
         }
 
-        fn run_frames(&self) -> u32 { 1800 }
+        fn run_frames(&self) -> u32 {
+            1800
+        }
 
         fn description(&self) -> &str {
             "Gold should concentrate in riffle pockets while gangue washes out. \
@@ -313,16 +363,22 @@ pub mod levels {
     pub struct Level8FullSluice;
 
     impl SimTest for Level8FullSluice {
-        fn name(&self) -> &str { "Level 8: Full Sluice" }
+        fn name(&self) -> &str {
+            "Level 8: Full Sluice"
+        }
 
         fn invariants(&self) -> Vec<Invariant> {
             vec![
                 Invariant::NoNaN,
-                Invariant::ParticleCountStable { tolerance_pct: 0.25 },
+                Invariant::ParticleCountStable {
+                    tolerance_pct: 0.25,
+                },
             ]
         }
 
-        fn run_frames(&self) -> u32 { 3600 } // 60 seconds at 60 FPS
+        fn run_frames(&self) -> u32 {
+            3600
+        } // 60 seconds at 60 FPS
 
         fn description(&self) -> &str {
             "Complete sluice operation with continuous feed and exit. \

@@ -51,7 +51,11 @@ impl TransferBuffers {
 ///
 /// Each velocity component uses a 3x3x3 stencil centered on the particle.
 /// APIC adds the affine velocity term: momentum = (v + C*(x_node - x_particle)) * weight
-pub fn particles_to_grid(grid: &mut Grid3D, particles: &Particles3D, buffers: &mut TransferBuffers) {
+pub fn particles_to_grid(
+    grid: &mut Grid3D,
+    particles: &Particles3D,
+    buffers: &mut TransferBuffers,
+) {
     buffers.clear();
 
     let cell_size = grid.cell_size;
@@ -107,9 +111,8 @@ pub fn particles_to_grid(grid: &mut Grid3D, particles: &Particles3D, buffers: &m
                         continue;
                     }
 
-                    let w = u_wx[(di + 1) as usize]
-                        * u_wy[(dj + 1) as usize]
-                        * u_wz[(dk + 1) as usize];
+                    let w =
+                        u_wx[(di + 1) as usize] * u_wy[(dj + 1) as usize] * u_wz[(dk + 1) as usize];
 
                     if w < 1e-10 {
                         continue;
@@ -170,9 +173,8 @@ pub fn particles_to_grid(grid: &mut Grid3D, particles: &Particles3D, buffers: &m
                         continue;
                     }
 
-                    let w = v_wx[(di + 1) as usize]
-                        * v_wy[(dj + 1) as usize]
-                        * v_wz[(dk + 1) as usize];
+                    let w =
+                        v_wx[(di + 1) as usize] * v_wy[(dj + 1) as usize] * v_wz[(dk + 1) as usize];
 
                     if w < 1e-10 {
                         continue;
@@ -232,9 +234,8 @@ pub fn particles_to_grid(grid: &mut Grid3D, particles: &Particles3D, buffers: &m
                         continue;
                     }
 
-                    let w = w_wx[(di + 1) as usize]
-                        * w_wy[(dj + 1) as usize]
-                        * w_wz[(dk + 1) as usize];
+                    let w =
+                        w_wx[(di + 1) as usize] * w_wy[(dj + 1) as usize] * w_wz[(dk + 1) as usize];
 
                     if w < 1e-10 {
                         continue;
@@ -354,9 +355,8 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                         continue;
                     }
 
-                    let w = u_wx[(di + 1) as usize]
-                        * u_wy[(dj + 1) as usize]
-                        * u_wz[(dk + 1) as usize];
+                    let w =
+                        u_wx[(di + 1) as usize] * u_wy[(dj + 1) as usize] * u_wz[(dk + 1) as usize];
 
                     if w < 1e-10 {
                         continue;
@@ -437,9 +437,8 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                         continue;
                     }
 
-                    let w = v_wx[(di + 1) as usize]
-                        * v_wy[(dj + 1) as usize]
-                        * v_wz[(dk + 1) as usize];
+                    let w =
+                        v_wx[(di + 1) as usize] * v_wy[(dj + 1) as usize] * v_wz[(dk + 1) as usize];
 
                     if w < 1e-10 {
                         continue;
@@ -520,9 +519,8 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                         continue;
                     }
 
-                    let w = w_wx[(di + 1) as usize]
-                        * w_wy[(dj + 1) as usize]
-                        * w_wz[(dk + 1) as usize];
+                    let w =
+                        w_wx[(di + 1) as usize] * w_wy[(dj + 1) as usize] * w_wz[(dk + 1) as usize];
 
                     if w < 1e-10 {
                         continue;
@@ -618,7 +616,9 @@ mod tests {
         grid.w_old.fill(0.0);
 
         // Place particle in center
-        particles.list.push(Particle3D::new(Vec3::new(2.0, 2.0, 2.0), Vec3::ZERO));
+        particles
+            .list
+            .push(Particle3D::new(Vec3::new(2.0, 2.0, 2.0), Vec3::ZERO));
 
         grid_to_particles(&grid, &mut particles, 0.97);
 

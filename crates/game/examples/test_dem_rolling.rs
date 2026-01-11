@@ -46,7 +46,11 @@ fn main() {
 
     println!("{}", "=".repeat(70));
     if failed == 0 {
-        println!(" ALL DEM ROLLING TESTS PASSED ({}/{})", passed, passed + failed);
+        println!(
+            " ALL DEM ROLLING TESTS PASSED ({}/{})",
+            passed,
+            passed + failed
+        );
         println!(" Rotation mechanisms verified.");
     } else {
         println!(" DEM ROLLING TESTS: {}/{} passed", passed, passed + failed);
@@ -73,10 +77,7 @@ fn test_dem_rolling_friction() -> (bool, f32) {
     println!("Test: Sphere-sphere contact rolling friction exists");
 
     // Test rolling friction on sphere-sphere contact
-    let mut sim = ClusterSimulation3D::new(
-        Vec3::new(-5.0, -1.0, -5.0),
-        Vec3::new(5.0, 10.0, 5.0),
-    );
+    let mut sim = ClusterSimulation3D::new(Vec3::new(-5.0, -1.0, -5.0), Vec3::new(5.0, 10.0, 5.0));
     sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
     sim.use_dem = true;
     sim.rolling_friction = 0.05; // Higher rolling friction for measurable effect
@@ -87,8 +88,16 @@ fn test_dem_rolling_friction() -> (bool, f32) {
 
     // Place two clumps in gentle contact
     let spacing = template.bounding_radius * 2.1; // Just touching
-    sim.spawn(template_idx, Vec3::new(-spacing/2.0, 0.02, 0.0), Vec3::ZERO);
-    sim.spawn(template_idx, Vec3::new(spacing/2.0, 0.02, 0.0), Vec3::ZERO);
+    sim.spawn(
+        template_idx,
+        Vec3::new(-spacing / 2.0, 0.02, 0.0),
+        Vec3::ZERO,
+    );
+    sim.spawn(
+        template_idx,
+        Vec3::new(spacing / 2.0, 0.02, 0.0),
+        Vec3::ZERO,
+    );
 
     // Give first clump modest angular velocity
     sim.clumps[0].angular_velocity = Vec3::new(2.0, 0.0, 0.0);
@@ -97,7 +106,8 @@ fn test_dem_rolling_friction() -> (bool, f32) {
     println!("Initial angular speed: {:.3} rad/s", initial_speed);
 
     // Run simulation
-    for _ in 0..120 { // 1 second
+    for _ in 0..120 {
+        // 1 second
         sim.step(DT);
     }
 
@@ -170,7 +180,10 @@ fn test_dem_spin_conservation() -> (bool, f32) {
     let l_initial = compute_angular_momentum(&sim.clumps[0], &template);
     let l_initial_mag = l_initial.length();
 
-    println!("Initial angular momentum: |L₀| = {:.6} kg·m²/s", l_initial_mag);
+    println!(
+        "Initial angular momentum: |L₀| = {:.6} kg·m²/s",
+        l_initial_mag
+    );
 
     let mut max_drift_percent: f32 = 0.0;
 
@@ -207,7 +220,10 @@ fn test_dem_spin_conservation() -> (bool, f32) {
     if pass {
         println!("PASS: Angular momentum conserved (drift < 0.1%)");
     } else {
-        println!("FAIL: Angular momentum drift {:.4}% exceeds 0.1% tolerance", max_drift_percent);
+        println!(
+            "FAIL: Angular momentum drift {:.4}% exceeds 0.1% tolerance",
+            max_drift_percent
+        );
     }
 
     (pass, max_drift_percent)
@@ -227,10 +243,8 @@ fn test_dem_torque_from_contact() -> (bool, f32) {
     println!("Physics: τ = r × F (contact offset creates torque)");
 
     // Large bounds, no walls
-    let mut sim = ClusterSimulation3D::new(
-        Vec3::new(-10.0, -10.0, -10.0),
-        Vec3::new(10.0, 10.0, 10.0),
-    );
+    let mut sim =
+        ClusterSimulation3D::new(Vec3::new(-10.0, -10.0, -10.0), Vec3::new(10.0, 10.0, 10.0));
     sim.gravity = Vec3::ZERO; // No gravity - isolate contact torque
     sim.use_dem = true;
 
@@ -243,7 +257,11 @@ fn test_dem_torque_from_contact() -> (bool, f32) {
 
     // Moving clump approaches from side at offset Y position (off-center collision)
     let offset_y = 0.015; // Offset so impact is NOT through center of mass
-    sim.spawn(template_idx, Vec3::new(-0.1, offset_y, 0.0), Vec3::new(5.0, 0.0, 0.0));
+    sim.spawn(
+        template_idx,
+        Vec3::new(-0.1, offset_y, 0.0),
+        Vec3::new(5.0, 0.0, 0.0),
+    );
 
     // Both start with zero angular velocity
     sim.clumps[0].angular_velocity = Vec3::ZERO;
@@ -258,17 +276,25 @@ fn test_dem_torque_from_contact() -> (bool, f32) {
     let initial_omega_1 = sim.clumps[1].angular_velocity.length();
 
     // Run simulation to collision and beyond
-    for step in 0..80 { // 0.67 seconds
+    for step in 0..80 {
+        // 0.67 seconds
         sim.step(DT);
 
         if step == 20 || step == 40 || step == 60 {
             let omega_0 = sim.clumps[0].angular_velocity;
             let omega_1 = sim.clumps[1].angular_velocity;
             let dist = (sim.clumps[1].position - sim.clumps[0].position).length();
-            println!("  t={:.2}s: dist={:.3} m, ω0=({:.2}, {:.2}, {:.2}), ω1=({:.2}, {:.2}, {:.2})",
-                     step as f32 * DT, dist,
-                     omega_0.x, omega_0.y, omega_0.z,
-                     omega_1.x, omega_1.y, omega_1.z);
+            println!(
+                "  t={:.2}s: dist={:.3} m, ω0=({:.2}, {:.2}, {:.2}), ω1=({:.2}, {:.2}, {:.2})",
+                step as f32 * DT,
+                dist,
+                omega_0.x,
+                omega_0.y,
+                omega_0.z,
+                omega_1.x,
+                omega_1.y,
+                omega_1.z
+            );
         }
     }
 
@@ -277,8 +303,14 @@ fn test_dem_torque_from_contact() -> (bool, f32) {
     let max_omega = final_omega_0.max(final_omega_1);
 
     println!("Final angular speeds:");
-    println!("  Clump 0: {:.4} rad/s (initially {:.4})", final_omega_0, initial_omega_0);
-    println!("  Clump 1: {:.4} rad/s (initially {:.4})", final_omega_1, initial_omega_1);
+    println!(
+        "  Clump 0: {:.4} rad/s (initially {:.4})",
+        final_omega_0, initial_omega_0
+    );
+    println!(
+        "  Clump 1: {:.4} rad/s (initially {:.4})",
+        final_omega_1, initial_omega_1
+    );
 
     // Check for NaN
     if sim.clumps[0].angular_velocity.is_nan() || sim.clumps[1].angular_velocity.is_nan() {
@@ -296,7 +328,10 @@ fn test_dem_torque_from_contact() -> (bool, f32) {
     };
 
     if pass {
-        println!("PASS: Off-center collision generated torque (max ω = {:.3} rad/s)", max_omega);
+        println!(
+            "PASS: Off-center collision generated torque (max ω = {:.3} rad/s)",
+            max_omega
+        );
     } else {
         println!("FAIL: Insufficient torque from off-center contacts");
     }

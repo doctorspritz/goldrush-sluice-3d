@@ -213,7 +213,9 @@ impl App {
         if self.input.keys.contains(&KeyCode::Space) {
             direction.y += 1.0;
         }
-        if self.input.keys.contains(&KeyCode::ShiftLeft) || self.input.keys.contains(&KeyCode::ShiftRight) {
+        if self.input.keys.contains(&KeyCode::ShiftLeft)
+            || self.input.keys.contains(&KeyCode::ShiftRight)
+        {
             direction.y -= 1.0;
         }
 
@@ -251,10 +253,7 @@ impl App {
     fn handle_click(&mut self, screen_x: f32, screen_y: f32) {
         let ray_origin = self.camera.position;
         let ray_dir = self.screen_to_world_ray(screen_x, screen_y);
-        let add_mode = self
-            .input
-            .keys
-            .contains(&KeyCode::ControlLeft)
+        let add_mode = self.input.keys.contains(&KeyCode::ControlLeft)
             || self.input.keys.contains(&KeyCode::ControlRight);
 
         if let Some(hit) = self.heightfield.raycast(ray_origin, ray_dir) {
@@ -377,7 +376,12 @@ impl App {
         }
 
         let mut changed = false;
-        for (height, delta) in self.heightfield.heights.iter_mut().zip(self.collapse_deltas.iter()) {
+        for (height, delta) in self
+            .heightfield
+            .heights
+            .iter_mut()
+            .zip(self.collapse_deltas.iter())
+        {
             if *delta != 0.0 {
                 *height = (*height + *delta).clamp(0.0, WORLD_HEIGHT);
                 changed = true;
@@ -565,7 +569,8 @@ impl App {
             gpu.terrain.update(&gpu.queue, &self.heightfield);
             self.heightfield_dirty = false;
         }
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let output = match gpu.surface.get_current_texture() {
             Ok(t) => t,
@@ -597,7 +602,10 @@ impl App {
             pass.set_pipeline(&gpu.pipeline);
             pass.set_bind_group(0, &gpu.bind_group, &[]);
             pass.set_vertex_buffer(0, gpu.terrain.vertex_buffer.slice(..));
-            pass.set_index_buffer(gpu.terrain.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_index_buffer(
+                gpu.terrain.index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
             pass.draw_indexed(0..gpu.terrain.num_indices, 0, 0..1);
         }
 
@@ -649,23 +657,21 @@ impl ApplicationHandler for App {
                     }
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => {
-                match button {
-                    MouseButton::Right => {
-                        self.input.mouse_look = state == ElementState::Pressed;
-                        if !self.input.mouse_look {
-                            self.input.last_mouse_pos = None;
-                        }
+            WindowEvent::MouseInput { state, button, .. } => match button {
+                MouseButton::Right => {
+                    self.input.mouse_look = state == ElementState::Pressed;
+                    if !self.input.mouse_look {
+                        self.input.last_mouse_pos = None;
                     }
-                    MouseButton::Left => {
-                        if state == ElementState::Pressed {
-                            let (x, y) = self.input.mouse_pos;
-                            self.handle_click(x, y);
-                        }
-                    }
-                    _ => {}
                 }
-            }
+                MouseButton::Left => {
+                    if state == ElementState::Pressed {
+                        let (x, y) = self.input.mouse_pos;
+                        self.handle_click(x, y);
+                    }
+                }
+                _ => {}
+            },
             WindowEvent::CursorMoved { position, .. } => {
                 self.input.mouse_pos = (position.x as f32, position.y as f32);
 
@@ -674,8 +680,8 @@ impl ApplicationHandler for App {
                         let dx = (position.x - last_x) as f32;
                         let dy = (position.y - last_y) as f32;
                         self.camera.yaw += dx * self.camera.sensitivity;
-                        self.camera.pitch = (self.camera.pitch - dy * self.camera.sensitivity)
-                            .clamp(-1.4, 1.4);
+                        self.camera.pitch =
+                            (self.camera.pitch - dy * self.camera.sensitivity).clamp(-1.4, 1.4);
                     }
                     self.input.last_mouse_pos = Some((position.x, position.y));
                 }
@@ -727,10 +733,22 @@ fn build_heightfield_vertices(heightfield: &Heightfield) -> Vec<TerrainVertex> {
             let z0 = z as f32 * heightfield.cell_size;
             let z1 = (z + 1) as f32 * heightfield.cell_size;
 
-            vertices.push(TerrainVertex { position: [x0, h, z0], color });
-            vertices.push(TerrainVertex { position: [x1, h, z0], color });
-            vertices.push(TerrainVertex { position: [x1, h, z1], color });
-            vertices.push(TerrainVertex { position: [x0, h, z1], color });
+            vertices.push(TerrainVertex {
+                position: [x0, h, z0],
+                color,
+            });
+            vertices.push(TerrainVertex {
+                position: [x1, h, z0],
+                color,
+            });
+            vertices.push(TerrainVertex {
+                position: [x1, h, z1],
+                color,
+            });
+            vertices.push(TerrainVertex {
+                position: [x0, h, z1],
+                color,
+            });
         }
     }
 
@@ -743,14 +761,7 @@ fn build_heightfield_indices(width: usize, depth: usize) -> Vec<u32> {
     for z in 0..depth {
         for x in 0..width {
             let base = (z * width + x) as u32 * 4;
-            indices.extend_from_slice(&[
-                base,
-                base + 1,
-                base + 2,
-                base,
-                base + 2,
-                base + 3,
-            ]);
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
     }
 

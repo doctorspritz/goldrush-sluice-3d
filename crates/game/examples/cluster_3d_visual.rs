@@ -670,7 +670,8 @@ impl ApplicationHandler for App {
                     gpu.config.width = size.width.max(1);
                     gpu.config.height = size.height.max(1);
                     gpu.surface.configure(&gpu.device, &gpu.config);
-                    let (depth_texture, depth_view) = create_depth_texture(&gpu.device, &gpu.config);
+                    let (depth_texture, depth_view) =
+                        create_depth_texture(&gpu.device, &gpu.config);
                     gpu.depth_texture = depth_texture;
                     gpu.depth_view = depth_view;
                 }

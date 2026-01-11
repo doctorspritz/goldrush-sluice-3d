@@ -25,11 +25,11 @@ use winit::{
 };
 
 // INDUSTRIAL SCALE - much larger than box_3d_test
-const GRID_WIDTH: usize = 160;   // 5x wider (was 32)
-const GRID_HEIGHT: usize = 40;   // Taller for water depth
-const GRID_DEPTH: usize = 24;    // Thinner sluice (was 32)
-const CELL_SIZE: f32 = 0.03;     // Smaller cells for detail
-const MAX_PARTICLES: usize = 500_000;  // Increased cap to avoid emitter saturation
+const GRID_WIDTH: usize = 160; // 5x wider (was 32)
+const GRID_HEIGHT: usize = 40; // Taller for water depth
+const GRID_DEPTH: usize = 24; // Thinner sluice (was 32)
+const CELL_SIZE: f32 = 0.03; // Smaller cells for detail
+const MAX_PARTICLES: usize = 500_000; // Increased cap to avoid emitter saturation
 const FLOW_PARTICLE_STRIDE: usize = 8; // Render every Nth particle for flow viz
 const MAX_FLOW_PARTICLES: usize = MAX_PARTICLES / FLOW_PARTICLE_STRIDE;
 const TARGET_FPS: f32 = 60.0;
@@ -81,23 +81,24 @@ const SHIELDS_SMOOTH: f32 = 0.02;
 const BEDLOAD_COEFF: f32 = 0.25;
 const ENTRAINMENT_COEFF: f32 = 0.2;
 const RIFFLE_PROBE_PAD: i32 = 2;
-const WALL_MARGIN: usize = 4;  // Wall height above floor+riffle
+const WALL_MARGIN: usize = 4; // Wall height above floor+riffle
 const BED_AIR_MARGIN_CELLS: f32 = 1.5;
 const BED_MAX_SLOPE: f32 = 0.7;
 const BED_RELAX_ITERS: usize = 2;
 const BED_MAX_DELTA_LAYERS: f32 = 1.0;
 
 // Screen-space fluid rendering constants
-const WATER_PARTICLE_RADIUS: f32 = 0.025;  // Larger for better depth overlap
-const SSFR_BLUR_RADIUS: i32 = 15;          // Bigger blur for smoother surface
-const SSFR_BLUR_DEPTH_FALLOFF: f32 = 0.2;  // More permissive depth falloff
+const WATER_PARTICLE_RADIUS: f32 = 0.025; // Larger for better depth overlap
+const SSFR_BLUR_RADIUS: i32 = 15; // Bigger blur for smoother surface
+const SSFR_BLUR_DEPTH_FALLOFF: f32 = 0.2; // More permissive depth falloff
 const SSFR_NEAR: f32 = 0.01;
 const SSFR_FAR: f32 = 100.0;
 
 // Hybrid water rendering: heightfield mesh + splats for overtopping
-const WATER_MESH_SUBDIVISIONS: usize = 2;  // 2x2 = 4 sub-cells per grid cell (faster)
-const MAX_WATER_SURFACE_VERTICES: usize = GRID_WIDTH * GRID_DEPTH * 6 * (WATER_MESH_SUBDIVISIONS * WATER_MESH_SUBDIVISIONS * 2);  // Surface + sides only
-const WATER_OVERTOP_THRESHOLD: f32 = 0.02;  // Particles must be this much above heightfield to be splats
+const WATER_MESH_SUBDIVISIONS: usize = 2; // 2x2 = 4 sub-cells per grid cell (faster)
+const MAX_WATER_SURFACE_VERTICES: usize =
+    GRID_WIDTH * GRID_DEPTH * 6 * (WATER_MESH_SUBDIVISIONS * WATER_MESH_SUBDIVISIONS * 2); // Surface + sides only
+const WATER_OVERTOP_THRESHOLD: f32 = 0.02; // Particles must be this much above heightfield to be splats
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -142,17 +143,21 @@ impl BedMesh {
             return;
         }
 
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Bed Vertex Buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.vertex_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Bed Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
 
-        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Bed Index Buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.index_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Bed Index Buffer"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
     }
 
     fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
@@ -282,8 +287,8 @@ struct App {
     flow_particles: Vec<ParticleInstance>,
     // Water heightfield for hybrid rendering
     water_heightfield: Vec<f32>,
-    water_heightfield_smoothed: Vec<f32>,  // Temporally smoothed heightfield
-    water_presence: Vec<f32>,  // Smooth presence [0,1] for edge fading
+    water_heightfield_smoothed: Vec<f32>, // Temporally smoothed heightfield
+    water_presence: Vec<f32>,             // Smooth presence [0,1] for edge fading
     water_surface_vertices: Vec<SurfaceVertex>,
     // Time for wave animation
     simulation_time: f32,
@@ -344,7 +349,7 @@ struct WaterSSFR {
     depth_view: wgpu::TextureView,
     smoothed_depth_texture: wgpu::Texture,
     smoothed_depth_view: wgpu::TextureView,
-    temp_blur_texture: wgpu::Texture,  // For separable blur
+    temp_blur_texture: wgpu::Texture, // For separable blur
     temp_blur_view: wgpu::TextureView,
     thickness_texture: wgpu::Texture,
     thickness_view: wgpu::TextureView,
@@ -379,7 +384,7 @@ struct GpuState {
     instance_buffer: wgpu::Buffer,
     solid_buffer: wgpu::Buffer,
     surface_vertex_buffer: wgpu::Buffer,
-    water_surface_buffer: wgpu::Buffer,  // For hybrid water heightfield mesh
+    water_surface_buffer: wgpu::Buffer, // For hybrid water heightfield mesh
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     surface_pipeline: wgpu::RenderPipeline,
@@ -397,13 +402,13 @@ fn create_industrial_sluice(sim: &mut FlipSimulation3D) {
     let depth = sim.grid.depth;
 
     // 2° slope: over 160 cells, drop = 160 * tan(2°) ≈ 5.6 cells
-    let floor_height_left = FLOOR_HEIGHT_LEFT;  // Start 10 cells high
-    let floor_height_right = FLOOR_HEIGHT_RIGHT;  // End 4 cells high (6 cell drop over 160 cells ≈ 2.1°)
+    let floor_height_left = FLOOR_HEIGHT_LEFT; // Start 10 cells high
+    let floor_height_right = FLOOR_HEIGHT_RIGHT; // End 4 cells high (6 cell drop over 160 cells ≈ 2.1°)
 
     // Riffle parameters - more riffles for industrial scale
-    let riffle_spacing = RIFFLE_SPACING;     // Riffles every 12 cells
-    let riffle_height = RIFFLE_HEIGHT;       // Riffles are 4 cells tall (deeper pooling)
-    let riffle_start_x = RIFFLE_START_X;     // Start riffles after inlet
+    let riffle_spacing = RIFFLE_SPACING; // Riffles every 12 cells
+    let riffle_height = RIFFLE_HEIGHT; // Riffles are 4 cells tall (deeper pooling)
+    let riffle_start_x = RIFFLE_START_X; // Start riffles after inlet
     let riffle_end_x = width - RIFFLE_END_PAD; // Stop before exit
 
     // Exit parameters - wide exit
@@ -416,29 +421,32 @@ fn create_industrial_sluice(sim: &mut FlipSimulation3D) {
             for i in 0..width {
                 // Calculate floor height at this x position (linear interpolation)
                 let t = i as f32 / (width - 1) as f32;
-                let floor_height = floor_height_left as f32 * (1.0 - t) + floor_height_right as f32 * t;
+                let floor_height =
+                    floor_height_left as f32 * (1.0 - t) + floor_height_right as f32 * t;
                 let floor_j = floor_height as usize;
 
                 // Check if this is a riffle position
-                let is_riffle = i >= riffle_start_x && i < riffle_end_x &&
-                    (i - riffle_start_x) % riffle_spacing < 2 &&
-                    j <= floor_j + riffle_height &&
-                    j > floor_j;
+                let is_riffle = i >= riffle_start_x
+                    && i < riffle_end_x
+                    && (i - riffle_start_x) % riffle_spacing < 2
+                    && j <= floor_j + riffle_height
+                    && j > floor_j;
 
                 // Check if this is the exit opening
-                let is_exit = i == width - 1 &&
-                    k >= exit_start_z && k < exit_end_z &&
-                    j > floor_j && j <= floor_j + exit_height;
+                let is_exit = i == width - 1
+                    && k >= exit_start_z
+                    && k < exit_end_z
+                    && j > floor_j
+                    && j <= floor_j + exit_height;
 
                 // Wall height: just above floor + riffle + margin (open-top trough)
                 let wall_top = floor_j + riffle_height + WALL_MARGIN;
 
-                let is_boundary =
-                    j <= floor_j ||                                       // Sloped floor
+                let is_boundary = j <= floor_j ||                                       // Sloped floor
                     is_riffle ||                                          // Riffles on floor
                     (i == 0 && j <= wall_top) ||                          // Left wall (short)
                     (i == width - 1 && !is_exit && j <= wall_top) ||      // Right wall (short, except exit)
-                    ((k == 0 || k == depth - 1) && j <= wall_top);        // Z walls (short)
+                    ((k == 0 || k == depth - 1) && j <= wall_top); // Z walls (short)
 
                 if is_boundary {
                     sim.grid.set_solid(i, j, k);
@@ -450,10 +458,19 @@ fn create_industrial_sluice(sim: &mut FlipSimulation3D) {
     sim.grid.compute_sdf();
 
     let num_riffles = ((riffle_end_x - riffle_start_x) / riffle_spacing) as usize;
-    let slope_deg = ((floor_height_left - floor_height_right) as f32 / width as f32).atan().to_degrees();
+    let slope_deg = ((floor_height_left - floor_height_right) as f32 / width as f32)
+        .atan()
+        .to_degrees();
     println!("Industrial sluice: {}x{}x{} grid", width, height, depth);
-    println!("  Slope: {:.1}° ({} → {} cells)", slope_deg, floor_height_left, floor_height_right);
-    println!("  {} riffles, exit width: {} cells", num_riffles, exit_end_z - exit_start_z);
+    println!(
+        "  Slope: {:.1}° ({} → {} cells)",
+        slope_deg, floor_height_left, floor_height_right
+    );
+    println!(
+        "  {} riffles, exit width: {} cells",
+        num_riffles,
+        exit_end_z - exit_start_z
+    );
 }
 
 /// Create Screen-Space Fluid Rendering resources
@@ -469,7 +486,11 @@ fn create_water_ssfr(
     // Create depth texture for water particles
     let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Water Depth Texture"),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -482,7 +503,11 @@ fn create_water_ssfr(
     // Smoothed depth (after blur)
     let smoothed_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Water Smoothed Depth Texture"),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -490,12 +515,17 @@ fn create_water_ssfr(
         usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
-    let smoothed_depth_view = smoothed_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let smoothed_depth_view =
+        smoothed_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     // Temp texture for separable blur
     let temp_blur_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Water Temp Blur Texture"),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -508,7 +538,11 @@ fn create_water_ssfr(
     // Thickness texture
     let thickness_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Water Thickness Texture"),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -521,7 +555,11 @@ fn create_water_ssfr(
     // Scene depth texture (for depth testing against scene geometry)
     let scene_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Scene Depth Texture"),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -571,19 +609,20 @@ fn create_water_ssfr(
     });
 
     // Depth pass bind group layout and pipeline
-    let depth_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Water Depth Bind Group Layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
-    });
+    let depth_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Water Depth Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
 
     let depth_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Water Depth Bind Group"),
@@ -662,57 +701,70 @@ fn create_water_ssfr(
     });
 
     // Blur pass bind group layout and pipelines
-    let blur_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Water Blur Bind Group Layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+    let blur_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Water Blur Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::WriteOnly,
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    view_dimension: wgpu::TextureViewDimension::D2,
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
                 },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
     // Horizontal blur: depth -> temp
     let blur_h_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Water Blur H Bind Group"),
         layout: &blur_bind_group_layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: blur_uniform_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&depth_view) },
-            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&temp_blur_view) },
-            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&sampler) },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: blur_uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&depth_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&temp_blur_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
         ],
     });
 
@@ -721,10 +773,22 @@ fn create_water_ssfr(
         label: Some("Water Blur V Bind Group"),
         layout: &blur_bind_group_layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: blur_uniform_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&temp_blur_view) },
-            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&smoothed_depth_view) },
-            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&sampler) },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: blur_uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&temp_blur_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&smoothed_depth_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
         ],
     });
 
@@ -753,75 +817,92 @@ fn create_water_ssfr(
     });
 
     // Composite pass bind group layout and pipeline
-    let composite_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Water Composite Bind Group Layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+    let composite_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Water Composite Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Depth,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 4,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
     let composite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Water Composite Bind Group"),
         layout: &composite_bind_group_layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: water_uniform_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&smoothed_depth_view) },
-            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&thickness_view) },
-            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&scene_depth_view) },
-            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&sampler) },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: water_uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&smoothed_depth_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&thickness_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&scene_depth_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
         ],
     });
 
-    let composite_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Water Composite Pipeline Layout"),
-        bind_group_layouts: &[&composite_bind_group_layout],
-        push_constant_ranges: &[],
-    });
+    let composite_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Water Composite Pipeline Layout"),
+            bind_group_layouts: &[&composite_bind_group_layout],
+            push_constant_ranges: &[],
+        });
 
     let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Water Composite Pipeline"),
@@ -934,7 +1015,7 @@ impl App {
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
         sim.gravity = Vec3::new(0.0, -9.8, 0.0);
         sim.flip_ratio = 0.97;
-        sim.pressure_iterations = 80;  // Reduced for better FPS (was 150)
+        sim.pressure_iterations = 80; // Reduced for better FPS (was 150)
 
         create_industrial_sluice(&mut sim);
 
@@ -969,7 +1050,7 @@ impl App {
             paused: false,
             camera_angle: 0.3,
             camera_pitch: 0.3,
-            camera_distance: 8.0,  // Start further back for larger scene
+            camera_distance: 8.0, // Start further back for larger scene
             frame: 0,
             solid_instances,
             bed_mesh,
@@ -1086,7 +1167,8 @@ impl App {
 
             let y = bed_y + drop_height + rand_float() * 2.0 * cell_size;
             let vel = Vec3::ZERO;
-            self.sim.spawn_sediment(Vec3::new(x, y, z), vel, SEDIMENT_REL_DENSITY);
+            self.sim
+                .spawn_sediment(Vec3::new(x, y, z), vel, SEDIMENT_REL_DENSITY);
         }
     }
 
@@ -1101,7 +1183,13 @@ impl App {
         }
     }
 
-    fn emit_particles_at(&mut self, center_x: f32, center_z: f32, water_count: usize, sediment_count: usize) {
+    fn emit_particles_at(
+        &mut self,
+        center_x: f32,
+        center_z: f32,
+        water_count: usize,
+        sediment_count: usize,
+    ) {
         if self.sim.particles.len() >= MAX_PARTICLES {
             return;
         }
@@ -1135,11 +1223,18 @@ impl App {
             let z = (center_z + (rand_float() - 0.5) * spread).clamp(0.0, max_z - 0.5 * cell_size);
             let bed_y = self.bed_height_at(x, z);
             let y = bed_y + CLICK_SEDIMENT_LIFT + rand_float() * cell_size;
-            self.sim.spawn_sediment(Vec3::new(x, y, z), Vec3::ZERO, SEDIMENT_REL_DENSITY);
+            self.sim
+                .spawn_sediment(Vec3::new(x, y, z), Vec3::ZERO, SEDIMENT_REL_DENSITY);
         }
     }
 
-    fn screen_to_world_ray(&self, screen_x: f32, screen_y: f32, width: f32, height: f32) -> (Vec3, Vec3) {
+    fn screen_to_world_ray(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        width: f32,
+        height: f32,
+    ) -> (Vec3, Vec3) {
         let ndc_x = (2.0 * screen_x / width) - 1.0;
         let ndc_y = 1.0 - (2.0 * screen_y / height);
 
@@ -1148,11 +1243,12 @@ impl App {
             GRID_HEIGHT as f32 * CELL_SIZE * 0.3,
             GRID_DEPTH as f32 * CELL_SIZE * 0.5,
         );
-        let eye = center + Vec3::new(
-            self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
-            self.camera_distance * self.camera_pitch.sin(),
-            self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
-        );
+        let eye = center
+            + Vec3::new(
+                self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
+                self.camera_distance * self.camera_pitch.sin(),
+                self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
+            );
 
         let view = Mat4::look_at_rh(eye, center, Vec3::Y);
         let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, width / height, 0.01, 100.0);
@@ -1305,7 +1401,8 @@ impl App {
             } else {
                 0.0
             };
-            let shear_factor = 1.0 - smoothstep(SHIELDS_CRITICAL * 0.7, SHIELDS_CRITICAL * 1.3, theta);
+            let shear_factor =
+                1.0 - smoothstep(SHIELDS_CRITICAL * 0.7, SHIELDS_CRITICAL * 1.3, theta);
             let deposit_rate = SEDIMENT_SETTLING_VELOCITY * sediment_conc * shear_factor;
             let entrain_rate = ENTRAINMENT_COEFF * excess;
             let desired_delta = (deposit_rate - entrain_rate) * dt;
@@ -1324,9 +1421,17 @@ impl App {
         for k in 0..d {
             for i in 0..w {
                 let idx = k * w + i;
-                let fx_p = if i + 1 < w { self.bed_flux_x[idx + 1] } else { 0.0 };
+                let fx_p = if i + 1 < w {
+                    self.bed_flux_x[idx + 1]
+                } else {
+                    0.0
+                };
                 let fx_m = if i > 0 { self.bed_flux_x[idx - 1] } else { 0.0 };
-                let fz_p = if k + 1 < d { self.bed_flux_z[idx + w] } else { 0.0 };
+                let fz_p = if k + 1 < d {
+                    self.bed_flux_z[idx + w]
+                } else {
+                    0.0
+                };
                 let fz_m = if k > 0 { self.bed_flux_z[idx - w] } else { 0.0 };
                 let div = (fx_p - fx_m + fz_p - fz_m) / (2.0 * cell_size);
                 bedload_delta[idx] = -div * dt / (1.0 - BED_POROSITY);
@@ -1366,10 +1471,12 @@ impl App {
                     }
                     let x = (i as f32 + rand_float()) * cell_size;
                     let z = (k as f32 + rand_float()) * cell_size;
-                    let y = self.bed_height[idx] + 0.25 * cell_size + rand_float() * 0.5 * cell_size;
+                    let y =
+                        self.bed_height[idx] + 0.25 * cell_size + rand_float() * 0.5 * cell_size;
                     let mut vel = avg_vel;
                     vel.y = vel.y.max(0.0) + 0.05;
-                    self.sim.spawn_sediment(Vec3::new(x, y, z), vel, SEDIMENT_REL_DENSITY);
+                    self.sim
+                        .spawn_sediment(Vec3::new(x, y, z), vel, SEDIMENT_REL_DENSITY);
                     spawned += 1;
                 }
             }
@@ -1377,7 +1484,8 @@ impl App {
             let delta_particles = removed[idx] as i32 - spawned as i32;
             self.bed_height[idx] += delta_particles as f32 * particle_height;
             self.bed_height[idx] += bedload_delta[idx];
-            self.bed_height[idx] = self.bed_height[idx].clamp(self.bed_base_height[idx], max_bed_height);
+            self.bed_height[idx] =
+                self.bed_height[idx].clamp(self.bed_base_height[idx], max_bed_height);
         }
     }
 
@@ -1448,7 +1556,8 @@ impl App {
                     let k = (p.position.z / cell_size).floor() as i32;
                     if i >= 0 && i < w as i32 && k >= 0 && k < d as i32 {
                         let idx = k as usize * w + i as usize;
-                        if deposit_quota[idx] > 0 && p.position.y <= bed_height[idx] + sediment_band {
+                        if deposit_quota[idx] > 0 && p.position.y <= bed_height[idx] + sediment_band
+                        {
                             deposit_quota[idx] -= 1;
                             removed[idx] += 1;
                             return false;
@@ -1477,7 +1586,8 @@ impl App {
                 let y = self.bed_height[idx] + 0.25 * cell_size + rand_float() * 0.5 * cell_size;
                 let mut vel = avg_vel;
                 vel.y = vel.y.max(0.0) + 0.05;
-                self.sim.spawn_sediment(Vec3::new(x, y, z), vel, SEDIMENT_REL_DENSITY);
+                self.sim
+                    .spawn_sediment(Vec3::new(x, y, z), vel, SEDIMENT_REL_DENSITY);
                 spawned[idx] += 1;
             }
         }
@@ -1489,7 +1599,8 @@ impl App {
             let leftover = desired_delta - actual_delta;
             if leftover != 0.0 {
                 self.bed_height[idx] -= leftover;
-                self.bed_height[idx] = self.bed_height[idx].clamp(self.bed_base_height[idx], max_bed_height);
+                self.bed_height[idx] =
+                    self.bed_height[idx].clamp(self.bed_base_height[idx], max_bed_height);
             }
             self.bed_height_residual[idx] = 0.0;
         }
@@ -1612,7 +1723,8 @@ impl App {
             let exit_start_z = GRID_DEPTH as f32 * cell_size / 6.0;
             let exit_end_z = GRID_DEPTH as f32 * cell_size * 5.0 / 6.0;
             let exit_max_y = (floor_height + 8.0) * cell_size;
-            let is_in_exit_zone = p.position.z >= exit_start_z && p.position.z < exit_end_z
+            let is_in_exit_zone = p.position.z >= exit_start_z
+                && p.position.z < exit_end_z
                 && p.position.y < exit_max_y;
 
             if p.position.x >= (GRID_WIDTH as f32 - 0.5) * cell_size && is_in_exit_zone {
@@ -1637,13 +1749,12 @@ impl App {
             for j in 0..height {
                 for i in 0..width {
                     if sim.grid.is_solid(i, j, k) {
-                        let exposed =
-                            (i == 0 || !sim.grid.is_solid(i-1, j, k)) ||
-                            (i == width-1 || !sim.grid.is_solid(i+1, j, k)) ||
-                            (j == 0 || !sim.grid.is_solid(i, j-1, k)) ||
-                            (j == height-1 || !sim.grid.is_solid(i, j+1, k)) ||
-                            (k == 0 || !sim.grid.is_solid(i, j, k-1)) ||
-                            (k == depth-1 || !sim.grid.is_solid(i, j, k+1));
+                        let exposed = (i == 0 || !sim.grid.is_solid(i - 1, j, k))
+                            || (i == width - 1 || !sim.grid.is_solid(i + 1, j, k))
+                            || (j == 0 || !sim.grid.is_solid(i, j - 1, k))
+                            || (j == height - 1 || !sim.grid.is_solid(i, j + 1, k))
+                            || (k == 0 || !sim.grid.is_solid(i, j, k - 1))
+                            || (k == depth - 1 || !sim.grid.is_solid(i, j, k + 1));
 
                         if exposed {
                             solids.push(ParticleInstance {
@@ -1672,8 +1783,8 @@ impl App {
         let cs = sim.grid.cell_size;
 
         // Colors for different face orientations (subtle shading)
-        let color_top = [0.55, 0.50, 0.45, 1.0];    // Lighter for top faces
-        let color_side = [0.45, 0.40, 0.35, 1.0];   // Medium for side faces
+        let color_top = [0.55, 0.50, 0.45, 1.0]; // Lighter for top faces
+        let color_side = [0.45, 0.40, 0.35, 1.0]; // Medium for side faces
         let color_bottom = [0.35, 0.30, 0.25, 1.0]; // Darker for bottom faces
 
         for k in 0..depth {
@@ -1694,79 +1805,197 @@ impl App {
                     if i == 0 || !sim.grid.is_solid(i - 1, j, k) {
                         let base = mesh.vertices.len() as u32;
                         mesh.vertices.extend_from_slice(&[
-                            SurfaceVertex { position: [x0, y0, z0], color: color_side },
-                            SurfaceVertex { position: [x0, y1, z0], color: color_side },
-                            SurfaceVertex { position: [x0, y1, z1], color: color_side },
-                            SurfaceVertex { position: [x0, y0, z1], color: color_side },
+                            SurfaceVertex {
+                                position: [x0, y0, z0],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x0, y1, z0],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x0, y1, z1],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x0, y0, z1],
+                                color: color_side,
+                            },
                         ]);
-                        mesh.indices.extend_from_slice(&[base, base+2, base+1, base, base+3, base+2]);
+                        mesh.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     // +X face (right)
                     if i == width - 1 || !sim.grid.is_solid(i + 1, j, k) {
                         let base = mesh.vertices.len() as u32;
                         mesh.vertices.extend_from_slice(&[
-                            SurfaceVertex { position: [x1, y0, z0], color: color_side },
-                            SurfaceVertex { position: [x1, y1, z0], color: color_side },
-                            SurfaceVertex { position: [x1, y1, z1], color: color_side },
-                            SurfaceVertex { position: [x1, y0, z1], color: color_side },
+                            SurfaceVertex {
+                                position: [x1, y0, z0],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x1, y1, z0],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x1, y1, z1],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x1, y0, z1],
+                                color: color_side,
+                            },
                         ]);
-                        mesh.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                        mesh.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // -Y face (bottom)
                     if j == 0 || !sim.grid.is_solid(i, j - 1, k) {
                         let base = mesh.vertices.len() as u32;
                         mesh.vertices.extend_from_slice(&[
-                            SurfaceVertex { position: [x0, y0, z0], color: color_bottom },
-                            SurfaceVertex { position: [x1, y0, z0], color: color_bottom },
-                            SurfaceVertex { position: [x1, y0, z1], color: color_bottom },
-                            SurfaceVertex { position: [x0, y0, z1], color: color_bottom },
+                            SurfaceVertex {
+                                position: [x0, y0, z0],
+                                color: color_bottom,
+                            },
+                            SurfaceVertex {
+                                position: [x1, y0, z0],
+                                color: color_bottom,
+                            },
+                            SurfaceVertex {
+                                position: [x1, y0, z1],
+                                color: color_bottom,
+                            },
+                            SurfaceVertex {
+                                position: [x0, y0, z1],
+                                color: color_bottom,
+                            },
                         ]);
-                        mesh.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                        mesh.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // +Y face (top) - most visible
                     if j == height - 1 || !sim.grid.is_solid(i, j + 1, k) {
                         let base = mesh.vertices.len() as u32;
                         mesh.vertices.extend_from_slice(&[
-                            SurfaceVertex { position: [x0, y1, z0], color: color_top },
-                            SurfaceVertex { position: [x1, y1, z0], color: color_top },
-                            SurfaceVertex { position: [x1, y1, z1], color: color_top },
-                            SurfaceVertex { position: [x0, y1, z1], color: color_top },
+                            SurfaceVertex {
+                                position: [x0, y1, z0],
+                                color: color_top,
+                            },
+                            SurfaceVertex {
+                                position: [x1, y1, z0],
+                                color: color_top,
+                            },
+                            SurfaceVertex {
+                                position: [x1, y1, z1],
+                                color: color_top,
+                            },
+                            SurfaceVertex {
+                                position: [x0, y1, z1],
+                                color: color_top,
+                            },
                         ]);
-                        mesh.indices.extend_from_slice(&[base, base+2, base+1, base, base+3, base+2]);
+                        mesh.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     // -Z face (front)
                     if k == 0 || !sim.grid.is_solid(i, j, k - 1) {
                         let base = mesh.vertices.len() as u32;
                         mesh.vertices.extend_from_slice(&[
-                            SurfaceVertex { position: [x0, y0, z0], color: color_side },
-                            SurfaceVertex { position: [x1, y0, z0], color: color_side },
-                            SurfaceVertex { position: [x1, y1, z0], color: color_side },
-                            SurfaceVertex { position: [x0, y1, z0], color: color_side },
+                            SurfaceVertex {
+                                position: [x0, y0, z0],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x1, y0, z0],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x1, y1, z0],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x0, y1, z0],
+                                color: color_side,
+                            },
                         ]);
-                        mesh.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+                        mesh.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // +Z face (back)
                     if k == depth - 1 || !sim.grid.is_solid(i, j, k + 1) {
                         let base = mesh.vertices.len() as u32;
                         mesh.vertices.extend_from_slice(&[
-                            SurfaceVertex { position: [x0, y0, z1], color: color_side },
-                            SurfaceVertex { position: [x1, y0, z1], color: color_side },
-                            SurfaceVertex { position: [x1, y1, z1], color: color_side },
-                            SurfaceVertex { position: [x0, y1, z1], color: color_side },
+                            SurfaceVertex {
+                                position: [x0, y0, z1],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x1, y0, z1],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x1, y1, z1],
+                                color: color_side,
+                            },
+                            SurfaceVertex {
+                                position: [x0, y1, z1],
+                                color: color_side,
+                            },
                         ]);
-                        mesh.indices.extend_from_slice(&[base, base+2, base+1, base, base+3, base+2]);
+                        mesh.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
                 }
             }
         }
 
-        println!("Bed mesh: {} vertices, {} indices ({} triangles)",
-            mesh.vertices.len(), mesh.indices.len(), mesh.indices.len() / 3);
+        println!(
+            "Bed mesh: {} vertices, {} indices ({} triangles)",
+            mesh.vertices.len(),
+            mesh.indices.len(),
+            mesh.indices.len() / 3
+        );
         mesh
     }
 
@@ -1840,7 +2069,11 @@ impl App {
         }
 
         let count = self.sim.particles.len() as f32;
-        let avg_vel = if count > 0.0 { sum_vel / count } else { Vec3::ZERO };
+        let avg_vel = if count > 0.0 {
+            sum_vel / count
+        } else {
+            Vec3::ZERO
+        };
 
         (avg_vel, max_vel, max_y, max_x)
     }
@@ -1963,12 +2196,36 @@ impl App {
             return None;
         }
 
-        let water_avg_y = if water_count > 0 { water_sum_y / water_count as f32 } else { 0.0 };
-        let sediment_avg_y = if sediment_count > 0 { sediment_sum_y / sediment_count as f32 } else { 0.0 };
-        let water_avg_vy = if water_count > 0 { water_sum_vy / water_count as f32 } else { 0.0 };
-        let sediment_avg_vy = if sediment_count > 0 { sediment_sum_vy / sediment_count as f32 } else { 0.0 };
-        let water_avg_offset = if water_count > 0 { water_sum_offset / water_count as f32 } else { 0.0 };
-        let sediment_avg_offset = if sediment_count > 0 { sediment_sum_offset / sediment_count as f32 } else { 0.0 };
+        let water_avg_y = if water_count > 0 {
+            water_sum_y / water_count as f32
+        } else {
+            0.0
+        };
+        let sediment_avg_y = if sediment_count > 0 {
+            sediment_sum_y / sediment_count as f32
+        } else {
+            0.0
+        };
+        let water_avg_vy = if water_count > 0 {
+            water_sum_vy / water_count as f32
+        } else {
+            0.0
+        };
+        let sediment_avg_vy = if sediment_count > 0 {
+            sediment_sum_vy / sediment_count as f32
+        } else {
+            0.0
+        };
+        let water_avg_offset = if water_count > 0 {
+            water_sum_offset / water_count as f32
+        } else {
+            0.0
+        };
+        let sediment_avg_offset = if sediment_count > 0 {
+            sediment_sum_offset / sediment_count as f32
+        } else {
+            0.0
+        };
         if water_max_offset.is_infinite() {
             water_max_offset = 0.0;
         }
@@ -2118,12 +2375,30 @@ impl App {
                 let y = y + y_offset;
 
                 self.surface_vertices.extend_from_slice(&[
-                    SurfaceVertex { position: [x0, y, z0], color },
-                    SurfaceVertex { position: [x1, y, z0], color },
-                    SurfaceVertex { position: [x1, y, z1], color },
-                    SurfaceVertex { position: [x0, y, z0], color },
-                    SurfaceVertex { position: [x1, y, z1], color },
-                    SurfaceVertex { position: [x0, y, z1], color },
+                    SurfaceVertex {
+                        position: [x0, y, z0],
+                        color,
+                    },
+                    SurfaceVertex {
+                        position: [x1, y, z0],
+                        color,
+                    },
+                    SurfaceVertex {
+                        position: [x1, y, z1],
+                        color,
+                    },
+                    SurfaceVertex {
+                        position: [x0, y, z0],
+                        color,
+                    },
+                    SurfaceVertex {
+                        position: [x1, y, z1],
+                        color,
+                    },
+                    SurfaceVertex {
+                        position: [x0, y, z1],
+                        color,
+                    },
                 ]);
             }
         }
@@ -2143,18 +2418,18 @@ impl App {
         let time = self.simulation_time;
 
         // Wave parameters - rushing water feel
-        const BASE_WAVE_AMPLITUDE: f32 = 0.001;  // Base ripple
-        const VELOCITY_WAVE_SCALE: f32 = 0.003;  // Amplitude per m/s for main wave
-        const CHOP_SCALE: f32 = 0.002;           // High-frequency chop amplitude per m/s
-        const TURBULENCE_SCALE: f32 = 0.002;     // Splash amplitude
-        const WAVE_FREQ: f32 = 5.0;              // Main wave frequency
-        const CHOP_FREQ: f32 = 25.0;             // High-frequency chop
-        const WAVE_SPEED_MULT: f32 = 8.0;        // How fast waves animate with flow
+        const BASE_WAVE_AMPLITUDE: f32 = 0.001; // Base ripple
+        const VELOCITY_WAVE_SCALE: f32 = 0.003; // Amplitude per m/s for main wave
+        const CHOP_SCALE: f32 = 0.002; // High-frequency chop amplitude per m/s
+        const TURBULENCE_SCALE: f32 = 0.002; // Splash amplitude
+        const WAVE_FREQ: f32 = 5.0; // Main wave frequency
+        const CHOP_FREQ: f32 = 25.0; // High-frequency chop
+        const WAVE_SPEED_MULT: f32 = 8.0; // How fast waves animate with flow
 
         // Velocity field per cell (for physics-based waves)
         let mut vel_sum_x = vec![0.0f32; width * depth];
         let mut vel_sum_z = vec![0.0f32; width * depth];
-        let mut vel_sum_y = vec![0.0f32; width * depth];  // Vertical velocity for splashing
+        let mut vel_sum_y = vec![0.0f32; width * depth]; // Vertical velocity for splashing
         let mut vel_count = vec![0u32; width * depth];
 
         // Maximum reasonable water height (reject outlier particles)
@@ -2267,9 +2542,9 @@ impl App {
         }
 
         // Third pass: temporal smoothing (blend with previous frame)
-        const TEMPORAL_BLEND: f32 = 0.3;  // 0.3 = 30% new, 70% old (smoother)
-        const PRESENCE_RISE_RATE: f32 = 0.15;  // How fast presence increases (slower = smoother edge appearance)
-        const PRESENCE_FALL_RATE: f32 = 0.08;  // How fast presence decreases (slower = smoother edge disappearance)
+        const TEMPORAL_BLEND: f32 = 0.3; // 0.3 = 30% new, 70% old (smoother)
+        const PRESENCE_RISE_RATE: f32 = 0.15; // How fast presence increases (slower = smoother edge appearance)
+        const PRESENCE_FALL_RATE: f32 = 0.08; // How fast presence decreases (slower = smoother edge disappearance)
 
         for idx in 0..(width * depth) {
             let new_h = smoothed[idx];
@@ -2299,8 +2574,8 @@ impl App {
         let presence = &self.water_presence;
 
         // Colors for depth-based shading (more transparent)
-        let shallow_color = [0.15, 0.45, 0.85, 0.55];  // More transparent
-        let deep_color = [0.06, 0.25, 0.60, 0.70];     // Slightly more opaque when deep
+        let shallow_color = [0.15, 0.45, 0.85, 0.55]; // More transparent
+        let deep_color = [0.06, 0.25, 0.60, 0.70]; // Slightly more opaque when deep
 
         // Physics-based wave displacement function - rushing water feel
         // Combines smooth undulation + high-frequency chop that scales with velocity
@@ -2327,11 +2602,12 @@ impl App {
 
             // === HIGH-FREQUENCY CHOP ===
             // Fast ripples that only appear in moving water - gives "rushing" feel
-            let chop_amp = speed * CHOP_SCALE;  // No chop when still
+            let chop_amp = speed * CHOP_SCALE; // No chop when still
             let chop1 = (flow_dist * CHOP_FREQ - time * speed * 15.0).sin() * chop_amp;
             let chop2 = (cross_dist * CHOP_FREQ * 0.8 + time * 6.0).sin() * chop_amp * 0.5;
             // Diagonal chop for variety
-            let chop3 = ((flow_dist + cross_dist) * CHOP_FREQ * 0.6 - time * 10.0).sin() * chop_amp * 0.3;
+            let chop3 =
+                ((flow_dist + cross_dist) * CHOP_FREQ * 0.6 - time * 10.0).sin() * chop_amp * 0.3;
 
             // === CROSS WAVE ===
             let cross_amp = main_amp * 0.4;
@@ -2393,17 +2669,17 @@ impl App {
             let idx11 = (k + 1) * width + i + 1;
 
             let vx = vel_x[idx00] * (1.0 - fx) * (1.0 - fz)
-                   + vel_x[idx10] * fx * (1.0 - fz)
-                   + vel_x[idx01] * (1.0 - fx) * fz
-                   + vel_x[idx11] * fx * fz;
+                + vel_x[idx10] * fx * (1.0 - fz)
+                + vel_x[idx01] * (1.0 - fx) * fz
+                + vel_x[idx11] * fx * fz;
             let vz = vel_z[idx00] * (1.0 - fx) * (1.0 - fz)
-                   + vel_z[idx10] * fx * (1.0 - fz)
-                   + vel_z[idx01] * (1.0 - fx) * fz
-                   + vel_z[idx11] * fx * fz;
+                + vel_z[idx10] * fx * (1.0 - fz)
+                + vel_z[idx01] * (1.0 - fx) * fz
+                + vel_z[idx11] * fx * fz;
             let vy = vel_y[idx00] * (1.0 - fx) * (1.0 - fz)
-                   + vel_y[idx10] * fx * (1.0 - fz)
-                   + vel_y[idx01] * (1.0 - fx) * fz
-                   + vel_y[idx11] * fx * fz;
+                + vel_y[idx10] * fx * (1.0 - fz)
+                + vel_y[idx01] * (1.0 - fx) * fz
+                + vel_y[idx11] * fx * fz;
 
             (vx, vz, vy)
         };
@@ -2434,14 +2710,19 @@ impl App {
                     }
                 }
             }
-            if count > 0 { Some(sum / count as f32) } else { None }
+            if count > 0 {
+                Some(sum / count as f32)
+            } else {
+                None
+            }
         };
 
         // Calculate color based on water depth, velocity, AND presence (for edge fading)
         let calc_color = |i: usize, k: usize, center_h: f32, speed: f32| -> [f32; 4] {
             let floor_t = i as f32 / (width - 1) as f32;
             let floor_height = (FLOOR_HEIGHT_LEFT as f32 * (1.0 - floor_t)
-                + FLOOR_HEIGHT_RIGHT as f32 * floor_t) * cell_size;
+                + FLOOR_HEIGHT_RIGHT as f32 * floor_t)
+                * cell_size;
             let water_depth = (center_h - floor_height).max(0.0);
             let depth_factor = (water_depth / (3.0 * cell_size)).min(1.0);
 
@@ -2455,8 +2736,8 @@ impl App {
             let base_a = shallow_color[3] * (1.0 - depth_factor) + deep_color[3] * depth_factor;
 
             // Foam factor: fast water -> whiter (desaturated, brighter)
-            let foam = (speed / 1.5).min(1.0);  // Full foam at 1.5 m/s
-            let foam_color = [0.80, 0.88, 0.95, 0.65];  // Pale blue-white foam, semi-transparent
+            let foam = (speed / 1.5).min(1.0); // Full foam at 1.5 m/s
+            let foam_color = [0.80, 0.88, 0.95, 0.65]; // Pale blue-white foam, semi-transparent
 
             // Apply presence to alpha for smooth edge fading
             let alpha = (base_a * (1.0 - foam * 0.5) + foam_color[3] * foam * 0.5) * cell_presence;
@@ -2508,119 +2789,138 @@ impl App {
                 let y10 = get_height_at(x1, z0, h10);
                 let y01 = get_height_at(x0, z1, h01);
                 let y11 = get_height_at(x1, z1, h11);
-                let ym0 = get_height_at(xm, z0, (h00 + h10) * 0.5);  // Mid bottom edge
-                let ym1 = get_height_at(xm, z1, (h01 + h11) * 0.5);  // Mid top edge
-                let y0m = get_height_at(x0, zm, (h00 + h01) * 0.5);  // Mid left edge
-                let y1m = get_height_at(x1, zm, (h10 + h11) * 0.5);  // Mid right edge
-                let ymm = get_height_at(xm, zm, h_center);           // Center
+                let ym0 = get_height_at(xm, z0, (h00 + h10) * 0.5); // Mid bottom edge
+                let ym1 = get_height_at(xm, z1, (h01 + h11) * 0.5); // Mid top edge
+                let y0m = get_height_at(x0, zm, (h00 + h01) * 0.5); // Mid left edge
+                let y1m = get_height_at(x1, zm, (h10 + h11) * 0.5); // Mid right edge
+                let ymm = get_height_at(xm, zm, h_center); // Center
 
                 // Get cell velocity for foam coloring
                 let cell_speed = (vel_x[idx] * vel_x[idx] + vel_z[idx] * vel_z[idx]).sqrt();
                 let color = calc_color(i, k, center_h, cell_speed);
 
                 // Vertices at 9 positions (corners, edge midpoints, center)
-                let v00 = SurfaceVertex { position: [x0, y00, z0], color };
-                let v10 = SurfaceVertex { position: [x1, y10, z0], color };
-                let v01 = SurfaceVertex { position: [x0, y01, z1], color };
-                let v11 = SurfaceVertex { position: [x1, y11, z1], color };
-                let vm0 = SurfaceVertex { position: [xm, ym0, z0], color };  // Bottom mid
-                let vm1 = SurfaceVertex { position: [xm, ym1, z1], color };  // Top mid
-                let v0m = SurfaceVertex { position: [x0, y0m, zm], color };  // Left mid
-                let v1m = SurfaceVertex { position: [x1, y1m, zm], color };  // Right mid
-                let vmm = SurfaceVertex { position: [xm, ymm, zm], color };  // Center
+                let v00 = SurfaceVertex {
+                    position: [x0, y00, z0],
+                    color,
+                };
+                let v10 = SurfaceVertex {
+                    position: [x1, y10, z0],
+                    color,
+                };
+                let v01 = SurfaceVertex {
+                    position: [x0, y01, z1],
+                    color,
+                };
+                let v11 = SurfaceVertex {
+                    position: [x1, y11, z1],
+                    color,
+                };
+                let vm0 = SurfaceVertex {
+                    position: [xm, ym0, z0],
+                    color,
+                }; // Bottom mid
+                let vm1 = SurfaceVertex {
+                    position: [xm, ym1, z1],
+                    color,
+                }; // Top mid
+                let v0m = SurfaceVertex {
+                    position: [x0, y0m, zm],
+                    color,
+                }; // Left mid
+                let v1m = SurfaceVertex {
+                    position: [x1, y1m, zm],
+                    color,
+                }; // Right mid
+                let vmm = SurfaceVertex {
+                    position: [xm, ymm, zm],
+                    color,
+                }; // Center
 
                 // Generate triangles based on marching squares case
                 // Using edge midpoints creates organic boundaries at water edges
                 match case {
                     // Single corner cases - triangular wedges
-                    1 => { // Only bottom-left
-                        self.water_surface_vertices.extend_from_slice(&[v00, vm0, v0m]);
+                    1 => {
+                        // Only bottom-left
+                        self.water_surface_vertices
+                            .extend_from_slice(&[v00, vm0, v0m]);
                     }
-                    2 => { // Only bottom-right
-                        self.water_surface_vertices.extend_from_slice(&[vm0, v10, v1m]);
+                    2 => {
+                        // Only bottom-right
+                        self.water_surface_vertices
+                            .extend_from_slice(&[vm0, v10, v1m]);
                     }
-                    4 => { // Only top-left
-                        self.water_surface_vertices.extend_from_slice(&[v0m, vm1, v01]);
+                    4 => {
+                        // Only top-left
+                        self.water_surface_vertices
+                            .extend_from_slice(&[v0m, vm1, v01]);
                     }
-                    8 => { // Only top-right
-                        self.water_surface_vertices.extend_from_slice(&[v1m, v11, vm1]);
+                    8 => {
+                        // Only top-right
+                        self.water_surface_vertices
+                            .extend_from_slice(&[v1m, v11, vm1]);
                     }
 
                     // Two adjacent corners - half cells
-                    3 => { // Bottom row
-                        self.water_surface_vertices.extend_from_slice(&[
-                            v00, v10, v1m,
-                            v00, v1m, v0m,
-                        ]);
+                    3 => {
+                        // Bottom row
+                        self.water_surface_vertices
+                            .extend_from_slice(&[v00, v10, v1m, v00, v1m, v0m]);
                     }
-                    5 => { // Left column
-                        self.water_surface_vertices.extend_from_slice(&[
-                            v00, vm0, vm1,
-                            v00, vm1, v01,
-                        ]);
+                    5 => {
+                        // Left column
+                        self.water_surface_vertices
+                            .extend_from_slice(&[v00, vm0, vm1, v00, vm1, v01]);
                     }
-                    10 => { // Right column
-                        self.water_surface_vertices.extend_from_slice(&[
-                            vm0, v10, v11,
-                            vm0, v11, vm1,
-                        ]);
+                    10 => {
+                        // Right column
+                        self.water_surface_vertices
+                            .extend_from_slice(&[vm0, v10, v11, vm0, v11, vm1]);
                     }
-                    12 => { // Top row
-                        self.water_surface_vertices.extend_from_slice(&[
-                            v0m, v1m, v11,
-                            v0m, v11, v01,
-                        ]);
+                    12 => {
+                        // Top row
+                        self.water_surface_vertices
+                            .extend_from_slice(&[v0m, v1m, v11, v0m, v11, v01]);
                     }
 
                     // Diagonal cases - use center point
-                    6 => { // Bottom-right and top-left (diagonal)
+                    6 => {
+                        // Bottom-right and top-left (diagonal)
                         self.water_surface_vertices.extend_from_slice(&[
-                            vm0, v10, v1m,
-                            v1m, vmm, vm0,
-                            v0m, vm1, v01,
-                            v0m, vmm, vm1,
+                            vm0, v10, v1m, v1m, vmm, vm0, v0m, vm1, v01, v0m, vmm, vm1,
                         ]);
                     }
-                    9 => { // Bottom-left and top-right (diagonal)
+                    9 => {
+                        // Bottom-left and top-right (diagonal)
                         self.water_surface_vertices.extend_from_slice(&[
-                            v00, vm0, v0m,
-                            vm0, vmm, v0m,
-                            v1m, v11, vm1,
-                            vmm, v1m, vm1,
+                            v00, vm0, v0m, vm0, vmm, v0m, v1m, v11, vm1, vmm, v1m, vm1,
                         ]);
                     }
 
                     // Three corners - L shapes
-                    7 => { // Missing top-right
+                    7 => {
+                        // Missing top-right
                         self.water_surface_vertices.extend_from_slice(&[
-                            v00, v10, v1m,
-                            v00, v1m, vmm,
-                            v00, vmm, vm1,
-                            v00, vm1, v01,
+                            v00, v10, v1m, v00, v1m, vmm, v00, vmm, vm1, v00, vm1, v01,
                         ]);
                     }
-                    11 => { // Missing top-left
+                    11 => {
+                        // Missing top-left
                         self.water_surface_vertices.extend_from_slice(&[
-                            v00, v10, v11,
-                            v00, v11, vm1,
-                            v00, vm1, vmm,
-                            v00, vmm, v0m,
+                            v00, v10, v11, v00, v11, vm1, v00, vm1, vmm, v00, vmm, v0m,
                         ]);
                     }
-                    13 => { // Missing bottom-right
+                    13 => {
+                        // Missing bottom-right
                         self.water_surface_vertices.extend_from_slice(&[
-                            v00, vm0, vmm,
-                            v00, vmm, v1m,
-                            v00, v1m, v11,
-                            v00, v11, v01,
+                            v00, vm0, vmm, v00, vmm, v1m, v00, v1m, v11, v00, v11, v01,
                         ]);
                     }
-                    14 => { // Missing bottom-left
+                    14 => {
+                        // Missing bottom-left
                         self.water_surface_vertices.extend_from_slice(&[
-                            vm0, v10, v11,
-                            vm0, v11, v01,
-                            vm0, v01, v0m,
-                            vm0, v0m, vmm,
+                            vm0, v10, v11, vm0, v11, v01, vm0, v01, v0m, vm0, v0m, vmm,
                         ]);
                     }
 
@@ -2648,16 +2948,26 @@ impl App {
                                 let szm = (sz0 + sz1) * 0.5;
 
                                 // Bilinear interpolation of base heights at sub-cell corners
-                                let bh00 = h00 * (1.0 - u0) * (1.0 - v0) + h10 * u0 * (1.0 - v0)
-                                         + h01 * (1.0 - u0) * v0 + h11 * u0 * v0;
-                                let bh10 = h00 * (1.0 - u1) * (1.0 - v0) + h10 * u1 * (1.0 - v0)
-                                         + h01 * (1.0 - u1) * v0 + h11 * u1 * v0;
-                                let bh01 = h00 * (1.0 - u0) * (1.0 - v1) + h10 * u0 * (1.0 - v1)
-                                         + h01 * (1.0 - u0) * v1 + h11 * u0 * v1;
-                                let bh11 = h00 * (1.0 - u1) * (1.0 - v1) + h10 * u1 * (1.0 - v1)
-                                         + h01 * (1.0 - u1) * v1 + h11 * u1 * v1;
-                                let bhm = h00 * (1.0 - um) * (1.0 - vm) + h10 * um * (1.0 - vm)
-                                        + h01 * (1.0 - um) * vm + h11 * um * vm;
+                                let bh00 = h00 * (1.0 - u0) * (1.0 - v0)
+                                    + h10 * u0 * (1.0 - v0)
+                                    + h01 * (1.0 - u0) * v0
+                                    + h11 * u0 * v0;
+                                let bh10 = h00 * (1.0 - u1) * (1.0 - v0)
+                                    + h10 * u1 * (1.0 - v0)
+                                    + h01 * (1.0 - u1) * v0
+                                    + h11 * u1 * v0;
+                                let bh01 = h00 * (1.0 - u0) * (1.0 - v1)
+                                    + h10 * u0 * (1.0 - v1)
+                                    + h01 * (1.0 - u0) * v1
+                                    + h11 * u0 * v1;
+                                let bh11 = h00 * (1.0 - u1) * (1.0 - v1)
+                                    + h10 * u1 * (1.0 - v1)
+                                    + h01 * (1.0 - u1) * v1
+                                    + h11 * u1 * v1;
+                                let bhm = h00 * (1.0 - um) * (1.0 - vm)
+                                    + h10 * um * (1.0 - vm)
+                                    + h01 * (1.0 - um) * vm
+                                    + h11 * um * vm;
 
                                 // Heights with wave displacement
                                 let sy00 = get_height_at(sx0, sz0, bh00);
@@ -2672,12 +2982,30 @@ impl App {
 
                                 // Two triangles per sub-cell
                                 self.water_surface_vertices.extend_from_slice(&[
-                                    SurfaceVertex { position: [sx0, sy00, sz0], color: sub_color },
-                                    SurfaceVertex { position: [sx1, sy10, sz0], color: sub_color },
-                                    SurfaceVertex { position: [sx1, sy11, sz1], color: sub_color },
-                                    SurfaceVertex { position: [sx0, sy00, sz0], color: sub_color },
-                                    SurfaceVertex { position: [sx1, sy11, sz1], color: sub_color },
-                                    SurfaceVertex { position: [sx0, sy01, sz1], color: sub_color },
+                                    SurfaceVertex {
+                                        position: [sx0, sy00, sz0],
+                                        color: sub_color,
+                                    },
+                                    SurfaceVertex {
+                                        position: [sx1, sy10, sz0],
+                                        color: sub_color,
+                                    },
+                                    SurfaceVertex {
+                                        position: [sx1, sy11, sz1],
+                                        color: sub_color,
+                                    },
+                                    SurfaceVertex {
+                                        position: [sx0, sy00, sz0],
+                                        color: sub_color,
+                                    },
+                                    SurfaceVertex {
+                                        position: [sx1, sy11, sz1],
+                                        color: sub_color,
+                                    },
+                                    SurfaceVertex {
+                                        position: [sx0, sy01, sz1],
+                                        color: sub_color,
+                                    },
                                 ]);
                             }
                         }
@@ -2710,7 +3038,8 @@ impl App {
                 // Floor height interpolated across the cell
                 let get_floor_y = |x: f32| -> f32 {
                     let t = x / ((width - 1) as f32 * cell_size);
-                    (FLOOR_HEIGHT_LEFT as f32 * (1.0 - t) + FLOOR_HEIGHT_RIGHT as f32 * t) * cell_size
+                    (FLOOR_HEIGHT_LEFT as f32 * (1.0 - t) + FLOOR_HEIGHT_RIGHT as f32 * t)
+                        * cell_size
                 };
 
                 // Get base heights at corners
@@ -2746,48 +3075,120 @@ impl App {
                 // Front edge (z = z0)
                 if k == 0 || !smoothed[(k - 1) * width + i].is_finite() {
                     self.water_surface_vertices.extend_from_slice(&[
-                        SurfaceVertex { position: [x0, floor_y0, z0], color: side_color },
-                        SurfaceVertex { position: [x1, floor_y1, z0], color: side_color },
-                        SurfaceVertex { position: [x1, sy10, z0], color: side_color },
-                        SurfaceVertex { position: [x0, floor_y0, z0], color: side_color },
-                        SurfaceVertex { position: [x1, sy10, z0], color: side_color },
-                        SurfaceVertex { position: [x0, sy00, z0], color: side_color },
+                        SurfaceVertex {
+                            position: [x0, floor_y0, z0],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x1, floor_y1, z0],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x1, sy10, z0],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x0, floor_y0, z0],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x1, sy10, z0],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x0, sy00, z0],
+                            color: side_color,
+                        },
                     ]);
                 }
 
                 // Back edge (z = z1)
                 if k == depth - 1 || !smoothed[(k + 1) * width + i].is_finite() {
                     self.water_surface_vertices.extend_from_slice(&[
-                        SurfaceVertex { position: [x0, floor_y0, z1], color: side_color },
-                        SurfaceVertex { position: [x0, sy01, z1], color: side_color },
-                        SurfaceVertex { position: [x1, sy11, z1], color: side_color },
-                        SurfaceVertex { position: [x0, floor_y0, z1], color: side_color },
-                        SurfaceVertex { position: [x1, sy11, z1], color: side_color },
-                        SurfaceVertex { position: [x1, floor_y1, z1], color: side_color },
+                        SurfaceVertex {
+                            position: [x0, floor_y0, z1],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x0, sy01, z1],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x1, sy11, z1],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x0, floor_y0, z1],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x1, sy11, z1],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x1, floor_y1, z1],
+                            color: side_color,
+                        },
                     ]);
                 }
 
                 // Left edge (x = x0)
                 if i == 0 || !smoothed[k * width + i - 1].is_finite() {
                     self.water_surface_vertices.extend_from_slice(&[
-                        SurfaceVertex { position: [x0, floor_y0, z0], color: side_color },
-                        SurfaceVertex { position: [x0, sy00, z0], color: side_color },
-                        SurfaceVertex { position: [x0, sy01, z1], color: side_color },
-                        SurfaceVertex { position: [x0, floor_y0, z0], color: side_color },
-                        SurfaceVertex { position: [x0, sy01, z1], color: side_color },
-                        SurfaceVertex { position: [x0, floor_y0, z1], color: side_color },
+                        SurfaceVertex {
+                            position: [x0, floor_y0, z0],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x0, sy00, z0],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x0, sy01, z1],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x0, floor_y0, z0],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x0, sy01, z1],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x0, floor_y0, z1],
+                            color: side_color,
+                        },
                     ]);
                 }
 
                 // Right edge (x = x1)
                 if i == width - 1 || !smoothed[k * width + i + 1].is_finite() {
                     self.water_surface_vertices.extend_from_slice(&[
-                        SurfaceVertex { position: [x1, floor_y1, z0], color: side_color },
-                        SurfaceVertex { position: [x1, floor_y1, z1], color: side_color },
-                        SurfaceVertex { position: [x1, sy11, z1], color: side_color },
-                        SurfaceVertex { position: [x1, floor_y1, z0], color: side_color },
-                        SurfaceVertex { position: [x1, sy11, z1], color: side_color },
-                        SurfaceVertex { position: [x1, sy10, z0], color: side_color },
+                        SurfaceVertex {
+                            position: [x1, floor_y1, z0],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x1, floor_y1, z1],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x1, sy11, z1],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x1, floor_y1, z0],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x1, sy11, z1],
+                            color: side_color,
+                        },
+                        SurfaceVertex {
+                            position: [x1, sy10, z0],
+                            color: side_color,
+                        },
                     ]);
                 }
             }
@@ -2816,18 +3217,13 @@ impl App {
             // Color by speed: water=blue/cyan, sediment=golden/brown
             let t = (speed / 2.5).min(1.0);
             let color = if p.is_sediment() {
-                [
-                    0.45 + t * 0.4,
-                    0.35 + t * 0.3,
-                    0.15 + t * 0.2,
-                    0.7,
-                ]
+                [0.45 + t * 0.4, 0.35 + t * 0.3, 0.15 + t * 0.2, 0.7]
             } else {
                 [
-                    0.1 + t * 0.9,      // R: dark -> bright
-                    0.3 + t * 0.7,      // G: blue -> cyan
-                    0.7 + t * 0.3,      // B: stays high
-                    0.6 + t * 0.3,      // A: more visible when fast
+                    0.1 + t * 0.9, // R: dark -> bright
+                    0.3 + t * 0.7, // G: blue -> cyan
+                    0.7 + t * 0.3, // B: stays high
+                    0.6 + t * 0.3, // A: more visible when fast
                 ]
             };
 
@@ -2842,29 +3238,24 @@ impl App {
 
     /// Build ALL particle instances for direct rendering (when heightfield is OFF)
     fn build_all_particle_instances(&self) -> Vec<ParticleInstance> {
-        self.sim.particles.list.iter().map(|p| {
-            let speed = p.velocity.length();
-            let t = (speed / 2.5).min(1.0);
-            let color = if p.is_sediment() {
-                [
-                    0.6 + t * 0.2,
-                    0.5 + t * 0.2,
-                    0.2 + t * 0.1,
-                    0.85,
-                ]
-            } else {
-                [
-                    0.2 + t * 0.6,
-                    0.4 + t * 0.4,
-                    0.8,
-                    0.8,
-                ]
-            };
-            ParticleInstance {
-                position: [p.position.x, p.position.y, p.position.z],
-                color,
-            }
-        }).collect()
+        self.sim
+            .particles
+            .list
+            .iter()
+            .map(|p| {
+                let speed = p.velocity.length();
+                let t = (speed / 2.5).min(1.0);
+                let color = if p.is_sediment() {
+                    [0.6 + t * 0.2, 0.5 + t * 0.2, 0.2 + t * 0.1, 0.85]
+                } else {
+                    [0.2 + t * 0.6, 0.4 + t * 0.4, 0.8, 0.8]
+                };
+                ParticleInstance {
+                    position: [p.position.x, p.position.y, p.position.z],
+                    color,
+                }
+            })
+            .collect()
     }
 
     /// Build particle instances sorted by type (water first, then sediment) for SSFR rendering
@@ -2885,12 +3276,7 @@ impl App {
             if p.is_sediment() {
                 sediment_instances.push(ParticleInstance {
                     position: [p.position.x, p.position.y, p.position.z],
-                    color: [
-                        0.6 + t * 0.2,
-                        0.5 + t * 0.2,
-                        0.2 + t * 0.1,
-                        0.85,
-                    ],
+                    color: [0.6 + t * 0.2, 0.5 + t * 0.2, 0.2 + t * 0.1, 0.85],
                 });
             } else {
                 // For water: only include if above heightfield (overtopping particles)
@@ -2903,14 +3289,14 @@ impl App {
                     // Include if no heightfield data OR particle is above surface + threshold
                     !surface_y.is_finite() || p.position.y > surface_y + WATER_OVERTOP_THRESHOLD
                 } else {
-                    true  // Outside grid, include as splat
+                    true // Outside grid, include as splat
                 };
 
                 if include {
                     water_instances.push(ParticleInstance {
                         position: [p.position.x, p.position.y, p.position.z],
                         color: [
-                            0.3 + t * 0.5,  // Slightly brighter for splash visibility
+                            0.3 + t * 0.5, // Slightly brighter for splash visibility
                             0.5 + t * 0.4,
                             0.9,
                             0.9,
@@ -2966,17 +3352,23 @@ impl App {
                 let do_sync = self.frame % GPU_SYNC_STRIDE == 0;
                 if self.emitter_enabled && self.frame % 2 == 0 {
                     if self.water_emitter_enabled {
-                        self.pending_emit_water = self.pending_emit_water.saturating_add(self.water_emit_rate);
+                        self.pending_emit_water =
+                            self.pending_emit_water.saturating_add(self.water_emit_rate);
                     }
                     if self.sediment_emitter_enabled {
-                        self.pending_emit_sediment = self.pending_emit_sediment.saturating_add(self.sediment_emit_rate);
+                        self.pending_emit_sediment = self
+                            .pending_emit_sediment
+                            .saturating_add(self.sediment_emit_rate);
                     }
                 }
 
                 if should_schedule {
                     if do_sync {
                         if self.pending_emit_water > 0 || self.pending_emit_sediment > 0 {
-                            self.emit_particles(self.pending_emit_water, self.pending_emit_sediment);
+                            self.emit_particles(
+                                self.pending_emit_water,
+                                self.pending_emit_sediment,
+                            );
                             self.pending_emit_water = 0;
                             self.pending_emit_sediment = 0;
                         }
@@ -3020,7 +3412,13 @@ impl App {
                             let i = (p.position.x / CELL_SIZE).floor() as i32;
                             let j = (p.position.y / CELL_SIZE).floor() as i32;
                             let k = (p.position.z / CELL_SIZE).floor() as i32;
-                            if i >= 0 && i < w as i32 && j >= 0 && j < h as i32 && k >= 0 && k < d as i32 {
+                            if i >= 0
+                                && i < w as i32
+                                && j >= 0
+                                && j < h as i32
+                                && k >= 0
+                                && k < d as i32
+                            {
                                 let idx = k as usize * w * h + j as usize * w + i as usize;
                                 if self.cell_types[idx] != 2 {
                                     self.cell_types[idx] = 1;
@@ -3107,7 +3505,8 @@ impl App {
                         //     bed_updated = true;
                         // }
 
-                        if false { // bed_updated always false now
+                        if false {
+                            // bed_updated always false now
                             self.accumulate_bed_height_delta();
                             self.apply_bed_height_residual();
                             self.relax_bed_height();
@@ -3144,8 +3543,16 @@ impl App {
                 }
             } else {
                 if self.emitter_enabled && self.frame % 2 == 0 {
-                    let water = if self.water_emitter_enabled { self.water_emit_rate } else { 0 };
-                    let sediment = if self.sediment_emitter_enabled { self.sediment_emit_rate } else { 0 };
+                    let water = if self.water_emitter_enabled {
+                        self.water_emit_rate
+                    } else {
+                        0
+                    };
+                    let sediment = if self.sediment_emitter_enabled {
+                        self.sediment_emit_rate
+                    } else {
+                        0
+                    };
                     self.emit_particles(water, sediment);
                 }
                 self.sim.update(dt);
@@ -3175,7 +3582,11 @@ impl App {
 
         // Print FPS every 10 frames for visibility
         if self.frame % 10 == 0 {
-            println!(">>> FPS: {:.1} | Particles: {} <<<", self.current_fps, self.sim.particles.len());
+            println!(
+                ">>> FPS: {:.1} | Particles: {} <<<",
+                self.current_fps,
+                self.sim.particles.len()
+            );
         }
 
         // Print full stats every 30 frames
@@ -3240,7 +3651,11 @@ impl App {
                             stats.sediment_up,
                         );
                     } else {
-                        println!("[Probe] Riffle x={}..{} no particles", RIFFLE_START_X, RIFFLE_START_X + 1);
+                        println!(
+                            "[Probe] Riffle x={}..{} no particles",
+                            RIFFLE_START_X,
+                            RIFFLE_START_X + 1
+                        );
                     }
                     if let Some(stats) = self.probe_downstream_riffle() {
                         let riffle_start = RIFFLE_START_X as i32;
@@ -3295,7 +3710,14 @@ impl App {
         }
 
         // Build geometry based on render mode
-        let (surface_vertex_count, flow_particle_count, all_instances, water_particle_count, sediment_particle_count, water_mesh_vertex_count) = if self.render_heightfield {
+        let (
+            surface_vertex_count,
+            flow_particle_count,
+            all_instances,
+            water_particle_count,
+            sediment_particle_count,
+            water_mesh_vertex_count,
+        ) = if self.render_heightfield {
             let svc = self.build_heightfield_vertices();
             let fpc = if self.render_flow_particles {
                 self.build_flow_particles()
@@ -3312,7 +3734,7 @@ impl App {
             // Non-heightfield mode: draw all particles (unsorted)
             let instances = self.build_all_particle_instances();
             let count = instances.len();
-            (0, 0, instances, count, 0, 0)  // Treat all as "water" for unsorted mode
+            (0, 0, instances, count, 0, 0) // Treat all as "water" for unsorted mode
         };
         let instance_count = all_instances.len();
 
@@ -3356,11 +3778,12 @@ impl App {
             GRID_HEIGHT as f32 * CELL_SIZE * 0.3,
             GRID_DEPTH as f32 * CELL_SIZE * 0.5,
         );
-        let eye = center + Vec3::new(
-            self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
-            self.camera_distance * self.camera_pitch.sin(),
-            self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
-        );
+        let eye = center
+            + Vec3::new(
+                self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
+                self.camera_distance * self.camera_pitch.sin(),
+                self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
+            );
 
         let view = Mat4::look_at_rh(eye, center, Vec3::Y);
         let aspect = gpu.config.width as f32 / gpu.config.height as f32;
@@ -3372,14 +3795,19 @@ impl App {
             camera_pos: eye.to_array(),
             _pad: 0.0,
         };
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let frame = gpu.surface.get_current_texture().unwrap();
-        let frame_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let frame_view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
         // Use SSFR for water rendering when heightfield mode is on
         if self.render_heightfield && gpu.water_ssfr.is_some() {
@@ -3397,7 +3825,11 @@ impl App {
                 near: SSFR_NEAR,
                 far: SSFR_FAR,
             };
-            gpu.queue.write_buffer(&ssfr.water_uniform_buffer, 0, bytemuck::bytes_of(&water_uniforms));
+            gpu.queue.write_buffer(
+                &ssfr.water_uniform_buffer,
+                0,
+                bytemuck::bytes_of(&water_uniforms),
+            );
 
             // Pass 1: Clear scene depth texture (bed mesh rendering skipped for now -
             // would require depth-only pipeline. Water still renders correctly without bed occlusion)
@@ -3422,20 +3854,25 @@ impl App {
             // Pass 2: Render water particles to depth + thickness textures
             if water_particle_count > 0 {
                 // Create a temporary depth texture view for the water depth pass
-                let water_depth_stencil_view = ssfr.scene_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let water_depth_stencil_view = ssfr
+                    .scene_depth_texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
 
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Water Depth Pass"),
-                    color_attachments: &[
-                        Some(wgpu::RenderPassColorAttachment {
-                            view: &ssfr.depth_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color { r: 1.0, g: 0.0, b: 0.0, a: 0.0 }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        }),
-                    ],
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &ssfr.depth_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 1.0,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 0.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                         view: &water_depth_stencil_view,
                         depth_ops: Some(wgpu::Operations {
@@ -3463,13 +3900,20 @@ impl App {
 
                 // Update blur uniforms for horizontal pass
                 let blur_h_uniforms = BlurUniforms {
-                    texel_size: [1.0 / gpu.config.width as f32, 1.0 / gpu.config.height as f32],
+                    texel_size: [
+                        1.0 / gpu.config.width as f32,
+                        1.0 / gpu.config.height as f32,
+                    ],
                     blur_radius: SSFR_BLUR_RADIUS,
                     depth_falloff: SSFR_BLUR_DEPTH_FALLOFF,
                     direction: [1.0, 0.0],
                     _pad: [0.0, 0.0],
                 };
-                gpu.queue.write_buffer(&ssfr.blur_uniform_buffer, 0, bytemuck::bytes_of(&blur_h_uniforms));
+                gpu.queue.write_buffer(
+                    &ssfr.blur_uniform_buffer,
+                    0,
+                    bytemuck::bytes_of(&blur_h_uniforms),
+                );
 
                 // Horizontal blur: depth -> temp
                 {
@@ -3484,13 +3928,20 @@ impl App {
 
                 // Update blur uniforms for vertical pass
                 let blur_v_uniforms = BlurUniforms {
-                    texel_size: [1.0 / gpu.config.width as f32, 1.0 / gpu.config.height as f32],
+                    texel_size: [
+                        1.0 / gpu.config.width as f32,
+                        1.0 / gpu.config.height as f32,
+                    ],
                     blur_radius: SSFR_BLUR_RADIUS,
                     depth_falloff: SSFR_BLUR_DEPTH_FALLOFF,
                     direction: [0.0, 1.0],
                     _pad: [0.0, 0.0],
                 };
-                gpu.queue.write_buffer(&ssfr.blur_uniform_buffer, 0, bytemuck::cast_slice(&[blur_v_uniforms]));
+                gpu.queue.write_buffer(
+                    &ssfr.blur_uniform_buffer,
+                    0,
+                    bytemuck::cast_slice(&[blur_v_uniforms]),
+                );
 
                 // Vertical blur: temp -> smoothed
                 {
@@ -3512,7 +3963,12 @@ impl App {
                         view: &frame_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.1, b: 0.15, a: 1.0 }),
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.1,
+                                g: 0.1,
+                                b: 0.15,
+                                a: 1.0,
+                            }),
                             store: wgpu::StoreOp::Store,
                         },
                     })],
@@ -3524,7 +3980,9 @@ impl App {
                 pass.set_bind_group(0, &gpu.bind_group, &[]);
 
                 // Draw bed mesh
-                if let (Some(vb), Some(ib)) = (&self.bed_mesh.vertex_buffer, &self.bed_mesh.index_buffer) {
+                if let (Some(vb), Some(ib)) =
+                    (&self.bed_mesh.vertex_buffer, &self.bed_mesh.index_buffer)
+                {
                     pass.set_pipeline(&gpu.surface_pipeline);
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
@@ -3542,7 +4000,7 @@ impl App {
                 if water_particle_count > 0 {
                     pass.set_pipeline(&ssfr.composite_pipeline);
                     pass.set_bind_group(0, &ssfr.composite_bind_group, &[]);
-                    pass.draw(0..3, 0..1);  // Full-screen triangle
+                    pass.draw(0..3, 0..1); // Full-screen triangle
                 }
 
                 // Draw sediment particles on top
@@ -3563,7 +4021,12 @@ impl App {
                     view: &frame_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.1, b: 0.15, a: 1.0 }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.15,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -3575,7 +4038,9 @@ impl App {
             pass.set_bind_group(0, &gpu.bind_group, &[]);
 
             // Draw bed mesh (3D solid geometry)
-            if let (Some(vb), Some(ib)) = (&self.bed_mesh.vertex_buffer, &self.bed_mesh.index_buffer) {
+            if let (Some(vb), Some(ib)) =
+                (&self.bed_mesh.vertex_buffer, &self.bed_mesh.index_buffer)
+            {
                 pass.set_pipeline(&gpu.surface_pipeline);
                 pass.set_vertex_buffer(0, vb.slice(..));
                 pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
@@ -3679,10 +4144,18 @@ impl ApplicationHandler for App {
         });
 
         let vertices = [
-            Vertex { position: [-1.0, -1.0] },
-            Vertex { position: [1.0, -1.0] },
-            Vertex { position: [-1.0, 1.0] },
-            Vertex { position: [1.0, 1.0] },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, -1.0],
+            },
+            Vertex {
+                position: [-1.0, 1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+            },
         ];
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -3903,17 +4376,27 @@ impl ApplicationHandler for App {
                         PhysicalKey::Code(KeyCode::KeyG) => {
                             self.use_gpu_sim = !self.use_gpu_sim;
                             self.gpu_readback_pending = false;
-                            println!("Simulation mode: {}", if self.use_gpu_sim { "GPU" } else { "CPU" });
+                            println!(
+                                "Simulation mode: {}",
+                                if self.use_gpu_sim { "GPU" } else { "CPU" }
+                            );
                         }
                         PhysicalKey::Code(KeyCode::KeyE) => {
                             self.emitter_enabled = !self.emitter_enabled;
-                            println!("Emitter: {}", if self.emitter_enabled { "ON" } else { "OFF" });
+                            println!(
+                                "Emitter: {}",
+                                if self.emitter_enabled { "ON" } else { "OFF" }
+                            );
                         }
                         PhysicalKey::Code(KeyCode::KeyW) => {
                             self.water_emitter_enabled = !self.water_emitter_enabled;
                             println!(
                                 "Water emit: {} (rate {})",
-                                if self.water_emitter_enabled { "ON" } else { "OFF" },
+                                if self.water_emitter_enabled {
+                                    "ON"
+                                } else {
+                                    "OFF"
+                                },
                                 self.water_emit_rate
                             );
                         }
@@ -3921,7 +4404,11 @@ impl ApplicationHandler for App {
                             self.sediment_emitter_enabled = !self.sediment_emitter_enabled;
                             println!(
                                 "Sediment emit: {} (rate {})",
-                                if self.sediment_emitter_enabled { "ON" } else { "OFF" },
+                                if self.sediment_emitter_enabled {
+                                    "ON"
+                                } else {
+                                    "OFF"
+                                },
                                 self.sediment_emit_rate
                             );
                         }
@@ -3929,40 +4416,60 @@ impl ApplicationHandler for App {
                             self.click_add_sediment = !self.click_add_sediment;
                             println!(
                                 "Click material: {}",
-                                if self.click_add_sediment { "SEDIMENT" } else { "WATER" }
+                                if self.click_add_sediment {
+                                    "SEDIMENT"
+                                } else {
+                                    "WATER"
+                                }
                             );
                         }
                         PhysicalKey::Code(KeyCode::ArrowUp) => {
-                            self.water_emit_rate = (self.water_emit_rate + EMIT_RATE_STEP).min(MAX_EMIT_RATE);
+                            self.water_emit_rate =
+                                (self.water_emit_rate + EMIT_RATE_STEP).min(MAX_EMIT_RATE);
                             println!("Water emit rate: {}", self.water_emit_rate);
                         }
                         PhysicalKey::Code(KeyCode::ArrowDown) => {
-                            self.water_emit_rate = self.water_emit_rate.saturating_sub(EMIT_RATE_STEP);
+                            self.water_emit_rate =
+                                self.water_emit_rate.saturating_sub(EMIT_RATE_STEP);
                             println!("Water emit rate: {}", self.water_emit_rate);
                         }
                         PhysicalKey::Code(KeyCode::ArrowRight) => {
-                            self.sediment_emit_rate = (self.sediment_emit_rate + EMIT_RATE_STEP).min(MAX_EMIT_RATE);
+                            self.sediment_emit_rate =
+                                (self.sediment_emit_rate + EMIT_RATE_STEP).min(MAX_EMIT_RATE);
                             println!("Sediment emit rate: {}", self.sediment_emit_rate);
                         }
                         PhysicalKey::Code(KeyCode::ArrowLeft) => {
-                            self.sediment_emit_rate = self.sediment_emit_rate.saturating_sub(EMIT_RATE_STEP);
+                            self.sediment_emit_rate =
+                                self.sediment_emit_rate.saturating_sub(EMIT_RATE_STEP);
                             println!("Sediment emit rate: {}", self.sediment_emit_rate);
                         }
                         PhysicalKey::Code(KeyCode::KeyH) => {
                             self.render_heightfield = !self.render_heightfield;
-                            println!("Heightfield: {}", if self.render_heightfield { "ON" } else { "OFF" });
+                            println!(
+                                "Heightfield: {}",
+                                if self.render_heightfield { "ON" } else { "OFF" }
+                            );
                         }
                         PhysicalKey::Code(KeyCode::KeyF) => {
                             self.render_flow_particles = !self.render_flow_particles;
-                            println!("Flow particles: {}", if self.render_flow_particles { "ON" } else { "OFF" });
+                            println!(
+                                "Flow particles: {}",
+                                if self.render_flow_particles {
+                                    "ON"
+                                } else {
+                                    "OFF"
+                                }
+                            );
                         }
                         PhysicalKey::Code(KeyCode::KeyV) => {
-                            self.vorticity_epsilon = (self.vorticity_epsilon - VORTICITY_EPSILON_STEP).max(0.0);
+                            self.vorticity_epsilon =
+                                (self.vorticity_epsilon - VORTICITY_EPSILON_STEP).max(0.0);
                             println!("Vorticity epsilon: {:.3}", self.vorticity_epsilon);
                         }
                         PhysicalKey::Code(KeyCode::KeyB) => {
-                            self.vorticity_epsilon =
-                                (self.vorticity_epsilon + VORTICITY_EPSILON_STEP).min(VORTICITY_EPSILON_MAX);
+                            self.vorticity_epsilon = (self.vorticity_epsilon
+                                + VORTICITY_EPSILON_STEP)
+                                .min(VORTICITY_EPSILON_MAX);
                             println!("Vorticity epsilon: {:.3}", self.vorticity_epsilon);
                         }
                         PhysicalKey::Code(KeyCode::Digit1) => {
@@ -3992,11 +4499,13 @@ impl ApplicationHandler for App {
                             println!("DP viscosity: {:.2} Pa*s", self.dp_viscosity);
                         }
                         PhysicalKey::Code(KeyCode::Digit7) => {
-                            self.dp_jammed_drag = (self.dp_jammed_drag - DP_JAMMED_DRAG_STEP).max(10.0);
+                            self.dp_jammed_drag =
+                                (self.dp_jammed_drag - DP_JAMMED_DRAG_STEP).max(10.0);
                             println!("DP jammed drag: {:.1}", self.dp_jammed_drag);
                         }
                         PhysicalKey::Code(KeyCode::Digit8) => {
-                            self.dp_jammed_drag = (self.dp_jammed_drag + DP_JAMMED_DRAG_STEP).min(100.0);
+                            self.dp_jammed_drag =
+                                (self.dp_jammed_drag + DP_JAMMED_DRAG_STEP).min(100.0);
                             println!("DP jammed drag: {:.1}", self.dp_jammed_drag);
                         }
                         PhysicalKey::Code(KeyCode::KeyC) => {
@@ -4010,7 +4519,10 @@ impl ApplicationHandler for App {
                         }
                         PhysicalKey::Code(KeyCode::KeyP) => {
                             self.debug_riffle_probe = !self.debug_riffle_probe;
-                            println!("Riffle probe: {}", if self.debug_riffle_probe { "ON" } else { "OFF" });
+                            println!(
+                                "Riffle probe: {}",
+                                if self.debug_riffle_probe { "ON" } else { "OFF" }
+                            );
                         }
                         PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
                         _ => {}

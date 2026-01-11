@@ -66,7 +66,11 @@ fn main() {
     }
 
     println!("Spawned {} particles", spawn_count);
-    println!("Simulating {} seconds at {:.0} Hz...\n", TOTAL_TIME, 1.0 / DT);
+    println!(
+        "Simulating {} seconds at {:.0} Hz...\n",
+        TOTAL_TIME,
+        1.0 / DT
+    );
 
     // Run simulation
     let total_steps = (TOTAL_TIME / DT) as usize;
@@ -95,12 +99,30 @@ fn main() {
                     .fold(0.0f32, f32::max);
 
                 // Find bounding box
-                let min_x = particles.iter().map(|p| p.position.x).fold(f32::MAX, f32::min);
-                let max_x = particles.iter().map(|p| p.position.x).fold(f32::MIN, f32::max);
-                let min_y = particles.iter().map(|p| p.position.y).fold(f32::MAX, f32::min);
-                let max_y = particles.iter().map(|p| p.position.y).fold(f32::MIN, f32::max);
-                let min_z = particles.iter().map(|p| p.position.z).fold(f32::MAX, f32::min);
-                let max_z = particles.iter().map(|p| p.position.z).fold(f32::MIN, f32::max);
+                let min_x = particles
+                    .iter()
+                    .map(|p| p.position.x)
+                    .fold(f32::MAX, f32::min);
+                let max_x = particles
+                    .iter()
+                    .map(|p| p.position.x)
+                    .fold(f32::MIN, f32::max);
+                let min_y = particles
+                    .iter()
+                    .map(|p| p.position.y)
+                    .fold(f32::MAX, f32::min);
+                let max_y = particles
+                    .iter()
+                    .map(|p| p.position.y)
+                    .fold(f32::MIN, f32::max);
+                let min_z = particles
+                    .iter()
+                    .map(|p| p.position.z)
+                    .fold(f32::MAX, f32::min);
+                let max_z = particles
+                    .iter()
+                    .map(|p| p.position.z)
+                    .fold(f32::MIN, f32::max);
 
                 println!(
                     "t={:.2}s: {} particles, avg_y={:.3}, avg_vel={:.2}, max_vel={:.2}",
@@ -125,8 +147,8 @@ fn main() {
     println!("Final particle count: {}", sim.particle_count());
 
     // Validate behavior
-    let final_avg_y: f32 = sim.particles.list.iter().map(|p| p.position.y).sum::<f32>()
-        / sim.particle_count() as f32;
+    let final_avg_y: f32 =
+        sim.particles.list.iter().map(|p| p.position.y).sum::<f32>() / sim.particle_count() as f32;
 
     if final_avg_y < 0.5 {
         println!("\n✓ Dam collapsed as expected (water settled to floor)");

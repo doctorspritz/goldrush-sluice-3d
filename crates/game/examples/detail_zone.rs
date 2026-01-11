@@ -17,9 +17,9 @@
 //! Run: cargo run --example detail_zone --release
 
 use bytemuck::{Pod, Zeroable};
+use game::gpu::flip_3d::GpuFlip3D;
 use glam::{Mat3, Mat4, Vec3, Vec4};
 use sim3d::{FlipSimulation3D, TerrainMaterial, World};
-use game::gpu::flip_3d::GpuFlip3D;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -159,7 +159,11 @@ impl Mesh {
         label: &str,
     ) -> (wgpu::Buffer, usize) {
         let capacity = indices.len().max(1);
-        let data = if indices.is_empty() { [0u32] } else { [indices[0]] };
+        let data = if indices.is_empty() {
+            [0u32]
+        } else {
+            [indices[0]]
+        };
 
         let contents = if indices.is_empty() {
             bytemuck::cast_slice(&data)
@@ -269,7 +273,7 @@ struct App {
     window_size: (u32, u32),
     selected_material: u32,
     terrain_dirty: bool,
-    
+
     // FLIP simulation
     flip_sim: FlipSimulation3D,
     flip_origin: Vec3,
@@ -284,19 +288,20 @@ struct App {
 impl App {
     fn new() -> Self {
         let world = build_world();
-        
+
         // Create a small FLIP zone: 64x32x64 cells at 1.0m = 64x32x64m
         // This overlays a portion of the heightfield for testing
         const FLIP_GRID_X: usize = 64;
         const FLIP_GRID_Y: usize = 32;
         const FLIP_GRID_Z: usize = 64;
         const FLIP_CELL_SIZE: f32 = 1.0;
-        
-        let mut flip_sim = FlipSimulation3D::new(FLIP_GRID_X, FLIP_GRID_Y, FLIP_GRID_Z, FLIP_CELL_SIZE);
+
+        let mut flip_sim =
+            FlipSimulation3D::new(FLIP_GRID_X, FLIP_GRID_Y, FLIP_GRID_Z, FLIP_CELL_SIZE);
         flip_sim.gravity = Vec3::new(0.0, -9.8, 0.0);
         flip_sim.flip_ratio = 0.95;
         flip_sim.pressure_iterations = 80;
-        
+
         // Build bowl-shaped floor in center of FLIP grid
         for k in 0..FLIP_GRID_Z {
             for i in 0..FLIP_GRID_X {
@@ -305,22 +310,25 @@ impl App {
                 let dx = (i as f32 - cx) / (FLIP_GRID_X as f32 * 0.4);
                 let dz = (k as f32 - cz) / (FLIP_GRID_Z as f32 * 0.4);
                 let dist_sq = dx * dx + dz * dz;
-                
+
                 let floor_height = if dist_sq < 1.0 {
-                    2.0 + 6.0 * dist_sq  // Bowl: 2m center, rising to 8m at edges
+                    2.0 + 6.0 * dist_sq // Bowl: 2m center, rising to 8m at edges
                 } else {
-                    8.0  // Rim height
+                    8.0 // Rim height
                 };
-                
+
                 let floor_cells = (floor_height / FLIP_CELL_SIZE).ceil() as usize;
                 for j in 0..floor_cells.min(FLIP_GRID_Y) {
                     flip_sim.grid.set_solid(i, j, k);
                 }
             }
         }
-        
+
         println!("=== DETAIL ZONE: FLIP + Heightfield ===");
-        println!("FLIP grid: {}x{}x{} at {:.1}m", FLIP_GRID_X, FLIP_GRID_Y, FLIP_GRID_Z, FLIP_CELL_SIZE);
+        println!(
+            "FLIP grid: {}x{}x{} at {:.1}m",
+            FLIP_GRID_X, FLIP_GRID_Y, FLIP_GRID_Z, FLIP_CELL_SIZE
+        );
         println!("Press F to toggle FLIP emitter");
 
         // Initialize flip_origin to center of world at terrain height
@@ -345,7 +353,11 @@ impl App {
                 enabled: false,
             },
             flip_emitter: FlipEmitter {
-                position: Vec3::new(center_x as f32, terrain_y + FLIP_EMITTER_HEIGHT, center_z as f32),
+                position: Vec3::new(
+                    center_x as f32,
+                    terrain_y + FLIP_EMITTER_HEIGHT,
+                    center_z as f32,
+                ),
                 rate: FLIP_EMITTER_RATE,
                 radius: FLIP_EMITTER_RADIUS,
                 velocity: Vec3::new(0.0, -1.0, 0.0),
@@ -355,8 +367,8 @@ impl App {
             },
             flip_emitter_accum: 0.0,
             camera: Camera {
-                position: Vec3::new(center_x as f32, terrain_y + 50.0, center_z as f32 + 50.0), 
-                yaw: -1.57, // Looking -Z
+                position: Vec3::new(center_x as f32, terrain_y + 50.0, center_z as f32 + 50.0),
+                yaw: -1.57,  // Looking -Z
                 pitch: -0.7, // Tilted down
                 speed: MOVE_SPEED,
                 sensitivity: MOUSE_SENSITIVITY,
@@ -375,7 +387,7 @@ impl App {
             window_size: (1280, 720),
             selected_material: 2,
             terrain_dirty: true,
-            
+
             // FLIP
             flip_sim,
             flip_origin,
@@ -399,12 +411,14 @@ impl App {
             // Run GPU Sim with fixed timestep substepping
             let sim_dt = DT; // Use fixed 0.02s timestep
             let steps = ((dt / sim_dt).ceil() as usize).min(STEPS_PER_FRAME);
-            
+
             for _ in 0..steps {
-                let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Sim Encoder"),
-                });
-                
+                let mut encoder =
+                    gpu.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Sim Encoder"),
+                        });
+
                 // Update GPU emitter and dispatch (before water sim)
                 gpu.heightfield.update_emitter(
                     &gpu.queue,
@@ -416,37 +430,43 @@ impl App {
                     self.emitter.enabled,
                 );
                 gpu.heightfield.dispatch_emitter(&mut encoder);
-                
+
                 // Update water sim params and dispatch
                 gpu.heightfield.update_params(&gpu.queue, sim_dt);
                 gpu.heightfield.dispatch(&mut encoder, sim_dt);
-                
+
                 gpu.queue.submit(Some(encoder.finish()));
             }
-            
+
             // Sync back to CPU for rendering
-            pollster::block_on(gpu.heightfield.download_to_world(&gpu.device, &gpu.queue, &mut self.world));
-            
+            pollster::block_on(gpu.heightfield.download_to_world(
+                &gpu.device,
+                &gpu.queue,
+                &mut self.world,
+            ));
         } else {
             // Fallback if no GPU? (Shouldn't happen in this example)
             // self.world.update(dt);
         }
-        
+
         // ===== FLIP Simulation Step =====
         // Auto-spawn water for verification (or when pressing 1)
         let auto_spawn = self.flip_sim.frame < 60 && self.flip_sim.particle_count() < 5000;
-        if (auto_spawn || self.input.keys.contains(&KeyCode::Digit1)) && self.flip_sim.particle_count() < 100_000 {
+        if (auto_spawn || self.input.keys.contains(&KeyCode::Digit1))
+            && self.flip_sim.particle_count() < 100_000
+        {
             let grid = &self.flip_sim.grid;
             let spawn_x = grid.width as f32 * grid.cell_size * 0.5;
             let spawn_y = grid.height as f32 * grid.cell_size * 0.5; // Lowered to 50% height
             let spawn_z = grid.depth as f32 * grid.cell_size * 0.5;
             let pos = Vec3::new(spawn_x, spawn_y, spawn_z);
-            
+
             let d = 4; // Fewer particles per frame (4x4x4=64)
             for i in 0..d {
                 for j in 0..d {
                     for k in 0..d {
-                        let offset = (Vec3::new(i as f32, j as f32 * 2.0, k as f32) / d as f32 - 0.5) * 2.0;
+                        let offset =
+                            (Vec3::new(i as f32, j as f32 * 2.0, k as f32) / d as f32 - 0.5) * 2.0;
                         let jitter = Vec3::new(
                             ((i * 123 + j * 456 + k * 789) as f32 * 0.123).fract() - 0.5,
                             ((i * 789 + j * 123 + k * 456) as f32 * 0.456).fract() - 0.5,
@@ -457,7 +477,7 @@ impl App {
                 }
             }
         }
-        
+
         // Run FLIP GPU step
         if self.flip_sim.particle_count() > 0 {
             if let (Some(gpu), Some(gpu_flip)) = (&self.gpu, &mut self.gpu_flip) {
@@ -466,14 +486,14 @@ impl App {
                 self.flip_velocities.clear();
                 self.flip_c_matrices.clear();
                 self.flip_densities.clear();
-                
+
                 for p in &self.flip_sim.particles.list {
                     self.flip_positions.push(p.position);
                     self.flip_velocities.push(p.velocity);
                     self.flip_c_matrices.push(p.affine_velocity);
                     self.flip_densities.push(p.density);
                 }
-                
+
                 // Update FLIP grid solids based on World heightfield terrain
                 let w = self.flip_sim.grid.width;
                 let h = self.flip_sim.grid.height;
@@ -485,11 +505,11 @@ impl App {
                         // Sample terrain at center of cell in WORLD coordinates
                         let wx = (i as f32 + 0.5) * cell_size + self.flip_origin.x;
                         let wz = (k as f32 + 0.5) * cell_size + self.flip_origin.z;
-                        
+
                         // Get terrain height at this coordinate
                         if let Some((ux, uz)) = self.world.world_to_cell(Vec3::new(wx, 0.0, wz)) {
                             let terrain_height = self.world.ground_height(ux, uz);
-                            
+
                             // Mark cells below terrain as solid
                             for j in 0..h {
                                 let cell_y = (j as f32 + 0.5) * cell_size + self.flip_origin.y;
@@ -510,7 +530,7 @@ impl App {
                 // Build cell types: SOLID where grid says solid, FLUID where particles are
                 self.flip_cell_types.clear();
                 self.flip_cell_types.resize(w * h * d, 0); // AIR by default
-                
+
                 for k in 0..d {
                     for j in 0..h {
                         for i in 0..w {
@@ -521,7 +541,7 @@ impl App {
                         }
                     }
                 }
-                
+
                 // Mark FLUID cells from particles
                 for p in &self.flip_sim.particles.list {
                     let cell_size = self.flip_sim.grid.cell_size;
@@ -535,9 +555,9 @@ impl App {
                         }
                     }
                 }
-                
+
                 let sdf = self.flip_sim.grid.sdf.as_slice();
-                
+
                 // Force SDF re-upload as solids might have changed
                 gpu_flip.upload_sdf(&gpu.queue, &self.flip_sim.grid.sdf);
 
@@ -556,7 +576,7 @@ impl App {
                     0.0,
                     self.flip_sim.pressure_iterations as u32,
                 );
-                
+
                 // Sync results back to FlipSimulation3D
                 let mut avg_y = 0.0;
                 let mut max_y: f32 = f32::NEG_INFINITY;
@@ -567,10 +587,14 @@ impl App {
                     p.position = pos;
                     p.velocity = self.flip_velocities[i];
                     p.affine_velocity = self.flip_c_matrices[i];
-                    
+
                     let vy = p.velocity.y;
                     if vy.abs() > 0.1 {
-                        max_vy = if vy < 0.0 { max_vy.min(vy) } else { max_vy.max(vy) };
+                        max_vy = if vy < 0.0 {
+                            max_vy.min(vy)
+                        } else {
+                            max_vy.max(vy)
+                        };
                     }
 
                     avg_y += pos.y;
@@ -594,32 +618,39 @@ impl App {
                     // Ctrl = add material, else = excavate
                     let is_adding = self.input.keys.contains(&KeyCode::ControlLeft)
                         || self.input.keys.contains(&KeyCode::ControlRight);
-                    
-                    let amount = if is_adding { ADD_HEIGHT * 50.0 } else { -(DIG_DEPTH * 50.0) };
+
+                    let amount = if is_adding {
+                        ADD_HEIGHT * 50.0
+                    } else {
+                        -(DIG_DEPTH * 50.0)
+                    };
                     let radius = if is_adding { ADD_RADIUS } else { DIG_RADIUS };
-                    
+
                     // Update material tool params
                     gpu.heightfield.update_material_tool(
                         &gpu.queue,
-                        hit.x, hit.z,
+                        hit.x,
+                        hit.z,
                         radius,
                         amount,
                         self.selected_material,
                         dt,
                         true, // enabled
                     );
-                    
+
                     // Dispatch appropriate tool
-                    let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Material Tool Encoder"),
-                    });
-                    
+                    let mut encoder =
+                        gpu.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("Material Tool Encoder"),
+                            });
+
                     if is_adding {
                         gpu.heightfield.dispatch_material_tool(&mut encoder);
                     } else {
                         gpu.heightfield.dispatch_excavate(&mut encoder);
                     }
-                    
+
                     gpu.queue.submit(Some(encoder.finish()));
                     self.terrain_dirty = true; // Rebuild terrain mesh on next render
                 }
@@ -630,8 +661,11 @@ impl App {
             let water = self.world.total_water_volume();
             let sediment = self.world.total_sediment_volume();
             let flip_count = self.flip_sim.particle_count();
-            
-            println!("Heightfield water: {:.2}, sediment: {:.2} | FLIP particles: {}", water, sediment, flip_count);
+
+            println!(
+                "Heightfield water: {:.2}, sediment: {:.2} | FLIP particles: {}",
+                water, sediment, flip_count
+            );
             self.last_stats = Instant::now();
         }
     }
@@ -667,7 +701,9 @@ impl App {
         if self.input.keys.contains(&KeyCode::Space) {
             direction.y += 1.0;
         }
-        if self.input.keys.contains(&KeyCode::ShiftLeft) || self.input.keys.contains(&KeyCode::ShiftRight) {
+        if self.input.keys.contains(&KeyCode::ShiftLeft)
+            || self.input.keys.contains(&KeyCode::ShiftRight)
+        {
             direction.y -= 1.0;
         }
 
@@ -763,7 +799,7 @@ impl App {
         let mut limits = wgpu::Limits::default();
         limits.max_storage_buffers_per_shader_stage = 16;
         limits.max_storage_buffer_binding_size = 256 * 1024 * 1024;
-        
+
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
@@ -895,21 +931,21 @@ impl App {
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let heightfield = GpuHeightfield::new(
-            &device, 
-            self.world.width as u32, 
-            self.world.depth as u32, 
+            &device,
+            self.world.width as u32,
+            self.world.depth as u32,
             self.world.cell_size,
             INITIAL_HEIGHT,
             config.format,
         );
         heightfield.upload_from_world(&queue, &self.world);
-        
+
         // ===== Particle Rendering Setup =====
         let particle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Particle Shader"),
             source: wgpu::ShaderSource::Wgsl(PARTICLE_SHADER.into()),
         });
-        
+
         // Quad vertices (billboard)
         let quad_vertices: [[f32; 2]; 4] = [[-1.0, -1.0], [1.0, -1.0], [-1.0, 1.0], [1.0, 1.0]];
         let particle_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -917,7 +953,7 @@ impl App {
             contents: bytemuck::cast_slice(&quad_vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        
+
         // Instance buffer for particle positions
         let particle_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Particle Instances"),
@@ -925,7 +961,7 @@ impl App {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        
+
         // Pipeline for particles
         let particle_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Particle Pipeline"),
@@ -988,7 +1024,7 @@ impl App {
             particle_vertex_buffer,
             particle_instance_buffer,
         });
-        
+
         // Initialize GpuFlip3D for FLIP simulation
         if let Some(gpu) = &self.gpu {
             let flip_grid = &self.flip_sim.grid;
@@ -1045,7 +1081,7 @@ impl App {
         let frame_view = output.texture.create_view(&Default::default());
 
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        
+
         gpu.heightfield.render(
             &mut encoder,
             &frame_view,
@@ -1055,22 +1091,31 @@ impl App {
             self.camera.position.to_array(),
             self.start_time.elapsed().as_secs_f32(),
         );
-        
+
         // ===== Render FLIP particles =====
         let particle_count = self.flip_sim.particle_count();
         if particle_count > 0 {
             // Upload particle positions (with flip_origin offset)
-            let positions: Vec<[f32; 4]> = self.flip_sim.particles.list.iter()
+            let positions: Vec<[f32; 4]> = self
+                .flip_sim
+                .particles
+                .list
+                .iter()
                 .map(|p| {
                     let world_pos = p.position + self.flip_origin;
                     [world_pos.x, world_pos.y, world_pos.z, 0.0]
                 })
                 .collect();
-            gpu.queue.write_buffer(&gpu.particle_instance_buffer, 0, bytemuck::cast_slice(&positions));
-            
+            gpu.queue.write_buffer(
+                &gpu.particle_instance_buffer,
+                0,
+                bytemuck::cast_slice(&positions),
+            );
+
             // Update uniforms for particle rendering
-            gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-            
+            gpu.queue
+                .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
             // Draw particles
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1093,7 +1138,7 @@ impl App {
                     }),
                     ..Default::default()
                 });
-                
+
                 pass.set_pipeline(&gpu.particle_pipeline);
                 pass.set_bind_group(0, &gpu.bind_group, &[]);
                 pass.set_vertex_buffer(0, gpu.particle_vertex_buffer.slice(..));
@@ -1131,7 +1176,7 @@ impl ApplicationHandler for App {
                     gpu.config.width = size.width.max(1);
                     gpu.config.height = size.height.max(1);
                     gpu.surface.configure(&gpu.device, &gpu.config);
-                    
+
                     // Recreate depth texture
                     let depth_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("Depth Texture"),
@@ -1144,10 +1189,12 @@ impl ApplicationHandler for App {
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: wgpu::TextureFormat::Depth32Float,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
                         view_formats: &[],
                     });
-                    gpu.depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+                    gpu.depth_view =
+                        depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
                     gpu.depth_texture = depth_texture;
                 }
             }
@@ -1213,8 +1260,8 @@ impl ApplicationHandler for App {
                         let dx = (position.x - last_x) as f32;
                         let dy = (position.y - last_y) as f32;
                         self.camera.yaw += dx * self.camera.sensitivity;
-                        self.camera.pitch = (self.camera.pitch - dy * self.camera.sensitivity)
-                            .clamp(-1.4, 1.4);
+                        self.camera.pitch =
+                            (self.camera.pitch - dy * self.camera.sensitivity).clamp(-1.4, 1.4);
                     }
                     self.input.last_mouse_pos = Some((position.x, position.y));
                 }
@@ -1234,7 +1281,7 @@ impl ApplicationHandler for App {
 
 fn build_world() -> World {
     use sim3d::{generate_klondike_terrain, TerrainConfig};
-    
+
     let config = TerrainConfig::default();
     generate_klondike_terrain(WORLD_WIDTH, WORLD_DEPTH, CELL_SIZE, &config)
 }
@@ -1243,34 +1290,35 @@ fn build_world() -> World {
 #[allow(dead_code)]
 fn _build_world_old() -> World {
     let mut world = World::new(WORLD_WIDTH, WORLD_DEPTH, CELL_SIZE, INITIAL_HEIGHT);
-    
+
     // Cascading Tailings Ponds Generator
     // Map: 512x512
     // Pond 1: Top (Z: 50-150)
     // Pond 2: Middle (Z: 200-300)
     // Pond 3: Bottom (Z: 350-450)
     // Slope: General slope North-South (Z direction)
-    
+
     let center_x = (WORLD_WIDTH / 2) as f32; // 256.0
-    
+
     for z in 0..WORLD_DEPTH {
         for x in 0..WORLD_WIDTH {
             let idx = world.idx(x, z);
-            
+
             // 1. General Slope
             // Drop 40m over 512m
             let slope_drop = (z as f32 / WORLD_DEPTH as f32) * 40.0;
             let base_h = INITIAL_HEIGHT + 40.0 - slope_drop;
-            
+
             world.bedrock_elevation[idx] = base_h * 0.5; // Deep bedrock
             world.overburden_thickness[idx] = base_h * 0.2;
             world.paydirt_thickness[idx] = base_h * 0.3;
-            
+
             // 2. Sculpt Basins (Deeper areas)
             let mut basin_depth = 0.0;
-            
+
             // Pond 1 (Top) - Reduced Scale
-            if z > 50 && z < 100 && x > 200 && x < 312 { // Length 50, Width 112
+            if z > 50 && z < 100 && x > 200 && x < 312 {
+                // Length 50, Width 112
                 let dx = ((x as f32 - center_x) / 50.0).powi(2);
                 let dz = ((z as f32 - 75.0) / 25.0).powi(2);
                 let d = dx + dz;
@@ -1278,7 +1326,7 @@ fn _build_world_old() -> World {
                     basin_depth = 5.0 * (1.0 - d);
                 }
             }
-            
+
             // Pond 2 (Middle)
             if z > 150 && z < 200 && x > 200 && x < 312 {
                 let dx = ((x as f32 - center_x) / 50.0).powi(2);
@@ -1288,7 +1336,7 @@ fn _build_world_old() -> World {
                     basin_depth = 5.0 * (1.0 - d);
                 }
             }
-            
+
             // Pond 3 (Bottom)
             if z > 250 && z < 300 && x > 200 && x < 312 {
                 let dx = ((x as f32 - center_x) / 50.0).powi(2);
@@ -1298,33 +1346,34 @@ fn _build_world_old() -> World {
                     basin_depth = 5.0 * (1.0 - d);
                 }
             }
-            
+
             // Apply Basin: Dig into layers
             if basin_depth > 0.0 {
-                 // Remove overburden first
-                 let ob = world.overburden_thickness[idx];
-                 let dug_ob = basin_depth.min(ob);
-                 world.overburden_thickness[idx] -= dug_ob;
-                 
-                 let remaining = basin_depth - dug_ob;
-                 if remaining > 0.0 {
-                     world.paydirt_thickness[idx] = (world.paydirt_thickness[idx] - remaining).max(0.0);
-                 }
+                // Remove overburden first
+                let ob = world.overburden_thickness[idx];
+                let dug_ob = basin_depth.min(ob);
+                world.overburden_thickness[idx] -= dug_ob;
+
+                let remaining = basin_depth - dug_ob;
+                if remaining > 0.0 {
+                    world.paydirt_thickness[idx] =
+                        (world.paydirt_thickness[idx] - remaining).max(0.0);
+                }
             }
-            
+
             // 3. Build Berms (Walls) below each pond
             // Berm 1 (Z~110)
             // Berm 2 (Z~210)
             // Berm 3 (Z~310)
-            
+
             let mut berm_height = 0.0;
-            
+
             // Berm 1
             if z > 110 && z < 115 {
                 berm_height = 5.0; // Wall
-                // Spillway (Center)
+                                   // Spillway (Center)
                 if (x as f32 - center_x).abs() < 5.0 {
-                    berm_height = 1.0; 
+                    berm_height = 1.0;
                 }
                 // Pre-cut breach point (offset from spillway for testing)
                 // This creates a weak point that will erode and widen
@@ -1332,24 +1381,24 @@ fn _build_world_old() -> World {
                     berm_height = 3.0; // Lower than wall but higher than spillway
                 }
             }
-            
+
             // Berm 2
-             if z > 210 && z < 215 {
+            if z > 210 && z < 215 {
                 berm_height = 5.0; // Wall
-                // Spillway (Offset Left)
+                                   // Spillway (Offset Left)
                 if (x as f32 - (center_x - 30.0)).abs() < 5.0 {
-                    berm_height = 1.0; 
+                    berm_height = 1.0;
                 }
             }
-             // Berm 3 (End Dam)
-             if z > 310 && z < 315 {
+            // Berm 3 (End Dam)
+            if z > 310 && z < 315 {
                 berm_height = 6.0; // Wall
-                // Spillway (Offset Right)
+                                   // Spillway (Offset Right)
                 if (x as f32 - (center_x + 30.0)).abs() < 5.0 {
-                    berm_height = 2.0; 
+                    berm_height = 2.0;
                 }
             }
-            
+
             if berm_height > 0.0 {
                 // Add Overburden pile (Berm)
                 world.overburden_thickness[idx] += berm_height;
@@ -1360,24 +1409,34 @@ fn _build_world_old() -> World {
 
     // Pre-fill ponds with water to berm spillway level
     // Calculate reference heights for each pond's water level
-    let pond1_water_level = { // Z~75, X~256
+    let pond1_water_level = {
+        // Z~75, X~256
         let ref_idx = world.idx(256, 110); // Berm spillway location
-        world.bedrock_elevation[ref_idx] + world.paydirt_thickness[ref_idx] + world.overburden_thickness[ref_idx] - 1.0 // Below spillway
+        world.bedrock_elevation[ref_idx]
+            + world.paydirt_thickness[ref_idx]
+            + world.overburden_thickness[ref_idx]
+            - 1.0 // Below spillway
     };
     let pond2_water_level = {
         let ref_idx = world.idx(226, 210); // Berm 2 spillway (center_x - 30)
-        world.bedrock_elevation[ref_idx] + world.paydirt_thickness[ref_idx] + world.overburden_thickness[ref_idx] - 1.0
+        world.bedrock_elevation[ref_idx]
+            + world.paydirt_thickness[ref_idx]
+            + world.overburden_thickness[ref_idx]
+            - 1.0
     };
     let pond3_water_level = {
         let ref_idx = world.idx(286, 310); // Berm 3 spillway (center_x + 30)
-        world.bedrock_elevation[ref_idx] + world.paydirt_thickness[ref_idx] + world.overburden_thickness[ref_idx] - 1.0
+        world.bedrock_elevation[ref_idx]
+            + world.paydirt_thickness[ref_idx]
+            + world.overburden_thickness[ref_idx]
+            - 1.0
     };
 
     for z in 0..WORLD_DEPTH {
         for x in 0..WORLD_WIDTH {
             let idx = world.idx(x, z);
             let ground = world.ground_height(x, z);
-            
+
             // Pond 1 fill
             if z > 50 && z < 110 && x > 200 && x < 312 {
                 if ground < pond1_water_level {
@@ -1412,13 +1471,13 @@ fn build_terrain_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
             let height = world.ground_height(x, z);
             let sediment = world.terrain_sediment[idx];
             let sediment_ratio = (sediment / 2.0).min(1.0);
-                let base_color = match world.surface_material(x, z) {
+            let base_color = match world.surface_material(x, z) {
                 TerrainMaterial::Dirt => [0.4, 0.3, 0.2], // Overburden (Brown)
                 TerrainMaterial::Gravel => [0.6, 0.5, 0.2], // Paydirt (Gold-ish gravel)
                 TerrainMaterial::Sand => [0.8, 0.7, 0.5], // Sediment (Tan)
                 TerrainMaterial::Clay => [0.6, 0.4, 0.3],
                 TerrainMaterial::Bedrock => [0.2, 0.2, 0.25], // Bedrock (Dark Grey)
-                };
+            };
 
             let sediment_color = [0.6, 0.5, 0.4];
 
@@ -1453,7 +1512,7 @@ fn build_terrain_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
             });
 
             indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-            
+
             // Add side faces where neighbor is lower
             let side_color = [
                 (color[0] * 0.7).max(0.0), // Darken sides for depth
@@ -1461,59 +1520,135 @@ fn build_terrain_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
                 (color[2] * 0.7).max(0.0),
                 1.0,
             ];
-            
+
             // Check each neighbor and add side quad if lower (0.5m threshold for perf)
             const SIDE_THRESHOLD: f32 = 0.5;
-            
+
             // Right neighbor (X+1)
             if x + 1 < world.width {
                 let neighbor_height = world.ground_height(x + 1, z);
                 if neighbor_height < height - SIDE_THRESHOLD {
                     let base = vertices.len() as u32;
-                    vertices.push(WorldVertex { position: [x1, height, z0], color: side_color });
-                    vertices.push(WorldVertex { position: [x1, height, z1], color: side_color });
-                    vertices.push(WorldVertex { position: [x1, neighbor_height, z1], color: side_color });
-                    vertices.push(WorldVertex { position: [x1, neighbor_height, z0], color: side_color });
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    vertices.push(WorldVertex {
+                        position: [x1, height, z0],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, height, z1],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, neighbor_height, z1],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, neighbor_height, z0],
+                        color: side_color,
+                    });
+                    indices.extend_from_slice(&[
+                        base,
+                        base + 1,
+                        base + 2,
+                        base,
+                        base + 2,
+                        base + 3,
+                    ]);
                 }
             }
-            
+
             // Front neighbor (Z+1)
             if z + 1 < world.depth {
                 let neighbor_height = world.ground_height(x, z + 1);
                 if neighbor_height < height - SIDE_THRESHOLD {
                     let base = vertices.len() as u32;
-                    vertices.push(WorldVertex { position: [x0, height, z1], color: side_color });
-                    vertices.push(WorldVertex { position: [x1, height, z1], color: side_color });
-                    vertices.push(WorldVertex { position: [x1, neighbor_height, z1], color: side_color });
-                    vertices.push(WorldVertex { position: [x0, neighbor_height, z1], color: side_color });
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    vertices.push(WorldVertex {
+                        position: [x0, height, z1],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, height, z1],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, neighbor_height, z1],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, neighbor_height, z1],
+                        color: side_color,
+                    });
+                    indices.extend_from_slice(&[
+                        base,
+                        base + 1,
+                        base + 2,
+                        base,
+                        base + 2,
+                        base + 3,
+                    ]);
                 }
             }
-            
+
             // Left neighbor (X-1)
             if x > 0 {
                 let neighbor_height = world.ground_height(x - 1, z);
                 if neighbor_height < height - SIDE_THRESHOLD {
                     let base = vertices.len() as u32;
-                    vertices.push(WorldVertex { position: [x0, height, z1], color: side_color });
-                    vertices.push(WorldVertex { position: [x0, height, z0], color: side_color });
-                    vertices.push(WorldVertex { position: [x0, neighbor_height, z0], color: side_color });
-                    vertices.push(WorldVertex { position: [x0, neighbor_height, z1], color: side_color });
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    vertices.push(WorldVertex {
+                        position: [x0, height, z1],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, height, z0],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, neighbor_height, z0],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, neighbor_height, z1],
+                        color: side_color,
+                    });
+                    indices.extend_from_slice(&[
+                        base,
+                        base + 1,
+                        base + 2,
+                        base,
+                        base + 2,
+                        base + 3,
+                    ]);
                 }
             }
-            
+
             // Back neighbor (Z-1)
             if z > 0 {
                 let neighbor_height = world.ground_height(x, z - 1);
                 if neighbor_height < height - SIDE_THRESHOLD {
                     let base = vertices.len() as u32;
-                    vertices.push(WorldVertex { position: [x1, height, z0], color: side_color });
-                    vertices.push(WorldVertex { position: [x0, height, z0], color: side_color });
-                    vertices.push(WorldVertex { position: [x0, neighbor_height, z0], color: side_color });
-                    vertices.push(WorldVertex { position: [x1, neighbor_height, z0], color: side_color });
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    vertices.push(WorldVertex {
+                        position: [x1, height, z0],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, height, z0],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, neighbor_height, z0],
+                        color: side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, neighbor_height, z0],
+                        color: side_color,
+                    });
+                    indices.extend_from_slice(&[
+                        base,
+                        base + 1,
+                        base + 2,
+                        base,
+                        base + 2,
+                        base + 3,
+                    ]);
                 }
             }
         }
@@ -1570,16 +1705,11 @@ fn build_water_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
             });
 
             indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-            
+
             // Add side faces for water (down to ground level)
             let ground_height = world.ground_height(x, z);
-            let water_side_color = [
-                color[0] * 0.8,
-                color[1] * 0.8,
-                color[2] * 0.9,
-                alpha * 0.8,
-            ];
-            
+            let water_side_color = [color[0] * 0.8, color[1] * 0.8, color[2] * 0.9, alpha * 0.8];
+
             // Right side (X+1)
             if x + 1 < world.width {
                 let neighbor_water = world.water_surface[world.idx(x + 1, z)];
@@ -1589,14 +1719,33 @@ fn build_water_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
                     // No water in neighbor, draw side down to ground
                     let bottom = ground_height.max(neighbor_ground);
                     let base = vertices.len() as u32;
-                    vertices.push(WorldVertex { position: [x1, height, z0], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x1, height, z1], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x1, bottom, z1], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x1, bottom, z0], color: water_side_color });
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    vertices.push(WorldVertex {
+                        position: [x1, height, z0],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, height, z1],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, bottom, z1],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, bottom, z0],
+                        color: water_side_color,
+                    });
+                    indices.extend_from_slice(&[
+                        base,
+                        base + 1,
+                        base + 2,
+                        base,
+                        base + 2,
+                        base + 3,
+                    ]);
                 }
             }
-            
+
             // Front side (Z+1)
             if z + 1 < world.depth {
                 let neighbor_water = world.water_surface[world.idx(x, z + 1)];
@@ -1605,14 +1754,33 @@ fn build_water_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
                 if neighbor_depth < 0.001 {
                     let bottom = ground_height.max(neighbor_ground);
                     let base = vertices.len() as u32;
-                    vertices.push(WorldVertex { position: [x0, height, z1], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x1, height, z1], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x1, bottom, z1], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x0, bottom, z1], color: water_side_color });
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    vertices.push(WorldVertex {
+                        position: [x0, height, z1],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, height, z1],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, bottom, z1],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, bottom, z1],
+                        color: water_side_color,
+                    });
+                    indices.extend_from_slice(&[
+                        base,
+                        base + 1,
+                        base + 2,
+                        base,
+                        base + 2,
+                        base + 3,
+                    ]);
                 }
             }
-            
+
             // Left side (X-1)
             if x > 0 {
                 let neighbor_water = world.water_surface[world.idx(x - 1, z)];
@@ -1621,14 +1789,33 @@ fn build_water_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
                 if neighbor_depth < 0.001 {
                     let bottom = ground_height.max(neighbor_ground);
                     let base = vertices.len() as u32;
-                    vertices.push(WorldVertex { position: [x0, height, z1], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x0, height, z0], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x0, bottom, z0], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x0, bottom, z1], color: water_side_color });
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    vertices.push(WorldVertex {
+                        position: [x0, height, z1],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, height, z0],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, bottom, z0],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, bottom, z1],
+                        color: water_side_color,
+                    });
+                    indices.extend_from_slice(&[
+                        base,
+                        base + 1,
+                        base + 2,
+                        base,
+                        base + 2,
+                        base + 3,
+                    ]);
                 }
             }
-            
+
             // Back side (Z-1)
             if z > 0 {
                 let neighbor_water = world.water_surface[world.idx(x, z - 1)];
@@ -1637,11 +1824,30 @@ fn build_water_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
                 if neighbor_depth < 0.001 {
                     let bottom = ground_height.max(neighbor_ground);
                     let base = vertices.len() as u32;
-                    vertices.push(WorldVertex { position: [x1, height, z0], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x0, height, z0], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x0, bottom, z0], color: water_side_color });
-                    vertices.push(WorldVertex { position: [x1, bottom, z0], color: water_side_color });
-                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    vertices.push(WorldVertex {
+                        position: [x1, height, z0],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, height, z0],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x0, bottom, z0],
+                        color: water_side_color,
+                    });
+                    vertices.push(WorldVertex {
+                        position: [x1, bottom, z0],
+                        color: water_side_color,
+                    });
+                    indices.extend_from_slice(&[
+                        base,
+                        base + 1,
+                        base + 2,
+                        base,
+                        base + 2,
+                        base + 3,
+                    ]);
                 }
             }
         }

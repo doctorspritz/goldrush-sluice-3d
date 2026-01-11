@@ -81,7 +81,8 @@ impl Particles3D {
 
     /// Add a particle with specified density.
     pub fn spawn_with_density(&mut self, position: Vec3, velocity: Vec3, density: f32) {
-        self.list.push(Particle3D::with_density(position, velocity, density));
+        self.list
+            .push(Particle3D::with_density(position, velocity, density));
     }
 
     /// Add a stationary water particle.

@@ -5,7 +5,7 @@ use std::{f32, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
 use game::gpu::flip_3d::GpuFlip3D;
-use game::panning::{PanInput, PanSim, PanSample};
+use game::panning::{PanInput, PanSample, PanSim};
 use glam::{Mat3, Mat4, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 use wgpu::SurfaceError;
@@ -468,13 +468,15 @@ impl App {
         let center = self.sim.pan_center;
         let radius = self.sim.pan_radius;
         let depth = self.sim.pan_depth;
-        Self::apply_bowl_collision(center, radius, depth, &mut self.positions, &mut self.velocities);
+        Self::apply_bowl_collision(
+            center,
+            radius,
+            depth,
+            &mut self.positions,
+            &mut self.velocities,
+        );
 
-        for (pos, vel) in self
-            .positions
-            .iter_mut()
-            .zip(self.velocities.iter_mut())
-        {
+        for (pos, vel) in self.positions.iter_mut().zip(self.velocities.iter_mut()) {
             let to_center = *pos - center;
             let r = Vec2::new(to_center.x, to_center.z).length();
             if r > radius * 1.2 {
@@ -563,9 +565,8 @@ impl App {
     fn build_instances(&mut self) -> usize {
         self.instances.clear();
 
-        let rotation =
-            Mat4::from_rotation_z(self.sim.current_tilt.x)
-                * Mat4::from_rotation_x(-self.sim.current_tilt.y);
+        let rotation = Mat4::from_rotation_z(self.sim.current_tilt.x)
+            * Mat4::from_rotation_x(-self.sim.current_tilt.y);
         let pan_center = self.sim.pan_center;
         let pivot = self.pan_pivot();
 

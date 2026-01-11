@@ -102,26 +102,27 @@ fn create_closed_box(sim: &mut FlipSimulation3D) {
     let depth = sim.grid.depth;
 
     // Slope parameters: floor height varies from left to right
-    let floor_height_left = 8;   // 8 cells high on left side
-    let floor_height_right = 2;  // 2 cells high on right side
+    let floor_height_left = 8; // 8 cells high on left side
+    let floor_height_right = 2; // 2 cells high on right side
 
     // Riffle parameters
-    let riffle_spacing = 6;      // Riffles every 6 cells
-    let riffle_height = 2;       // Riffles are 2 cells tall
-    let riffle_start_x = 8;      // Start riffles after this X position
+    let riffle_spacing = 6; // Riffles every 6 cells
+    let riffle_height = 2; // Riffles are 2 cells tall
+    let riffle_start_x = 8; // Start riffles after this X position
     let riffle_end_x = width - 4; // Stop riffles before exit
 
     // Exit parameters (opening at right wall)
     let exit_start_z = depth / 4;
     let exit_end_z = 3 * depth / 4;
-    let exit_height = 6;  // Exit opening is 6 cells tall
+    let exit_height = 6; // Exit opening is 6 cells tall
 
     for k in 0..depth {
         for j in 0..height {
             for i in 0..width {
                 // Calculate floor height at this x position (linear interpolation)
                 let t = i as f32 / (width - 1) as f32;
-                let floor_height = floor_height_left as f32 * (1.0 - t) + floor_height_right as f32 * t;
+                let floor_height =
+                    floor_height_left as f32 * (1.0 - t) + floor_height_right as f32 * t;
                 let floor_j = floor_height as usize;
 
                 // Check if this is a riffle position
@@ -131,17 +132,18 @@ fn create_closed_box(sim: &mut FlipSimulation3D) {
                     j > floor_j;
 
                 // Check if this is the exit opening (right wall, middle section, lower part)
-                let is_exit = i == width - 1 &&
-                    k >= exit_start_z && k < exit_end_z &&
-                    j > floor_j && j <= floor_j + exit_height;
+                let is_exit = i == width - 1
+                    && k >= exit_start_z
+                    && k < exit_end_z
+                    && j > floor_j
+                    && j <= floor_j + exit_height;
 
-                let is_boundary =
-                    (i == 0) ||                      // Left wall
+                let is_boundary = (i == 0) ||                      // Left wall
                     (i == width - 1 && !is_exit) ||  // Right wall (except exit)
                     j <= floor_j ||                   // Sloped floor
                     j == height - 1 ||                // Ceiling
                     k == 0 || k == depth - 1 ||       // Z walls
-                    is_riffle;                        // Riffles on floor
+                    is_riffle; // Riffles on floor
 
                 if is_boundary {
                     sim.grid.set_solid(i, j, k);
@@ -154,8 +156,10 @@ fn create_closed_box(sim: &mut FlipSimulation3D) {
 
     // Count riffles
     let num_riffles = ((riffle_end_x - riffle_start_x) / riffle_spacing) as usize;
-    println!("Created sluice: slope {}→{} cells, {} riffles, exit at right wall",
-             floor_height_left, floor_height_right, num_riffles);
+    println!(
+        "Created sluice: slope {}→{} cells, {} riffles, exit at right wall",
+        floor_height_left, floor_height_right, num_riffles
+    );
 }
 
 /// Spawn water block in the center, raised above floor
@@ -167,10 +171,10 @@ fn spawn_water_block(sim: &mut FlipSimulation3D, count: usize) {
     let margin = 2.0;
     let spawn_width = (GRID_WIDTH as f32) - 2.0 * margin;
     let spawn_depth = (GRID_DEPTH as f32) - 2.0 * margin;
-    let spawn_height = 10.0;  // Water block height in cells
+    let spawn_height = 10.0; // Water block height in cells
 
     let start_x = margin * cell_size;
-    let start_y = 1.5 * cell_size;  // Just above floor
+    let start_y = 1.5 * cell_size; // Just above floor
     let start_z = margin * cell_size;
 
     // Calculate spacing from physical volume
@@ -224,7 +228,7 @@ impl App {
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
         sim.gravity = Vec3::new(0.0, -9.8, 0.0);
         sim.flip_ratio = 0.97;
-        sim.pressure_iterations = 100;  // Smaller grid, fewer iterations needed
+        sim.pressure_iterations = 100; // Smaller grid, fewer iterations needed
 
         // Create closed box geometry
         create_closed_box(&mut sim);
@@ -275,7 +279,7 @@ impl App {
         let max_to_spawn = (MAX_PARTICLES - self.sim.particles.len()).min(count);
 
         // Emit from left side, above the sloped floor (floor is 8 cells high on left)
-        let emit_x = 3.0 * cell_size;  // Near left wall
+        let emit_x = 3.0 * cell_size; // Near left wall
         let center_z = GRID_DEPTH as f32 * cell_size * 0.5;
         let emit_y = 12.0 * cell_size; // Above the 8-cell high left floor
 
@@ -304,13 +308,12 @@ impl App {
                 for i in 0..width {
                     if sim.grid.is_solid(i, j, k) {
                         // Only render exposed faces (optimization)
-                        let exposed =
-                            (i == 0 || !sim.grid.is_solid(i-1, j, k)) ||
-                            (i == width-1 || !sim.grid.is_solid(i+1, j, k)) ||
-                            (j == 0 || !sim.grid.is_solid(i, j-1, k)) ||
-                            (j == height-1 || !sim.grid.is_solid(i, j+1, k)) ||
-                            (k == 0 || !sim.grid.is_solid(i, j, k-1)) ||
-                            (k == depth-1 || !sim.grid.is_solid(i, j, k+1));
+                        let exposed = (i == 0 || !sim.grid.is_solid(i - 1, j, k))
+                            || (i == width - 1 || !sim.grid.is_solid(i + 1, j, k))
+                            || (j == 0 || !sim.grid.is_solid(i, j - 1, k))
+                            || (j == height - 1 || !sim.grid.is_solid(i, j + 1, k))
+                            || (k == 0 || !sim.grid.is_solid(i, j, k - 1))
+                            || (k == depth - 1 || !sim.grid.is_solid(i, j, k + 1));
 
                         if exposed {
                             solids.push(ParticleInstance {
@@ -359,7 +362,11 @@ impl App {
         }
 
         let count = self.sim.particles.len() as f32;
-        let avg_vel = if count > 0.0 { sum_vel / count } else { Vec3::ZERO };
+        let avg_vel = if count > 0.0 {
+            sum_vel / count
+        } else {
+            Vec3::ZERO
+        };
 
         (avg_vel, max_vel, max_y, max_x)
     }
@@ -444,7 +451,7 @@ impl App {
                         Some(bed_height),
                         dt,
                         -9.8,
-                        0.0,  // No flow acceleration for closed box
+                        0.0, // No flow acceleration for closed box
                         pressure_iters,
                     );
                 }
@@ -465,8 +472,9 @@ impl App {
                     let floor_height = 8.0 * (1.0 - t) + 2.0 * t; // 8 cells left, 2 cells right
                     let exit_start_z = GRID_DEPTH as f32 * cell_size / 4.0;
                     let exit_end_z = GRID_DEPTH as f32 * cell_size * 3.0 / 4.0;
-                    let exit_max_y = (floor_height + 6.0) * cell_size;  // Exit is 6 cells tall
-                    let is_in_exit_zone = p.position.z >= exit_start_z && p.position.z < exit_end_z
+                    let exit_max_y = (floor_height + 6.0) * cell_size; // Exit is 6 cells tall
+                    let is_in_exit_zone = p.position.z >= exit_start_z
+                        && p.position.z < exit_end_z
                         && p.position.y < exit_max_y;
 
                     if p.position.x >= (GRID_WIDTH as f32 - 0.5) * cell_size && is_in_exit_zone {
@@ -535,7 +543,8 @@ impl App {
         let gpu = self.gpu.as_ref().unwrap();
         let window = self.window.as_ref().unwrap();
 
-        gpu.queue.write_buffer(&gpu.instance_buffer, 0, bytemuck::cast_slice(&instances));
+        gpu.queue
+            .write_buffer(&gpu.instance_buffer, 0, bytemuck::cast_slice(&instances));
 
         // Update camera
         let center = Vec3::new(
@@ -543,11 +552,12 @@ impl App {
             GRID_HEIGHT as f32 * CELL_SIZE * 0.5,
             GRID_DEPTH as f32 * CELL_SIZE * 0.5,
         );
-        let eye = center + Vec3::new(
-            self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
-            self.camera_distance * self.camera_pitch.sin(),
-            self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
-        );
+        let eye = center
+            + Vec3::new(
+                self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
+                self.camera_distance * self.camera_pitch.sin(),
+                self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
+            );
 
         let view = Mat4::look_at_rh(eye, center, Vec3::Y);
         let aspect = gpu.config.width as f32 / gpu.config.height as f32;
@@ -559,15 +569,20 @@ impl App {
             camera_pos: eye.to_array(),
             _pad: 0.0,
         };
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Render
         let frame = gpu.surface.get_current_texture().unwrap();
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -576,7 +591,12 @@ impl App {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.1, b: 0.15, a: 1.0 }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.15,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -677,10 +697,18 @@ impl ApplicationHandler for App {
         });
 
         let vertices = [
-            Vertex { position: [-1.0, -1.0] },
-            Vertex { position: [1.0, -1.0] },
-            Vertex { position: [-1.0, 1.0] },
-            Vertex { position: [1.0, 1.0] },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, -1.0],
+            },
+            Vertex {
+                position: [-1.0, 1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+            },
         ];
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -836,11 +864,17 @@ impl ApplicationHandler for App {
                         }
                         PhysicalKey::Code(KeyCode::KeyG) => {
                             self.use_gpu_sim = !self.use_gpu_sim;
-                            println!("Simulation mode: {}", if self.use_gpu_sim { "GPU" } else { "CPU" });
+                            println!(
+                                "Simulation mode: {}",
+                                if self.use_gpu_sim { "GPU" } else { "CPU" }
+                            );
                         }
                         PhysicalKey::Code(KeyCode::KeyE) => {
                             self.emitter_enabled = !self.emitter_enabled;
-                            println!("Emitter: {}", if self.emitter_enabled { "ON" } else { "OFF" });
+                            println!(
+                                "Emitter: {}",
+                                if self.emitter_enabled { "ON" } else { "OFF" }
+                            );
                         }
                         PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
                         _ => {}

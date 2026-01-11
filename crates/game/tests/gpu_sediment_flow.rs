@@ -35,7 +35,8 @@ fn build_cell_types(width: u32, height: u32, depth: u32) -> Vec<u32> {
     for z in 0..depth {
         for y in 0..height {
             for x in 0..width {
-                if x == 0 || x == width - 1 || y == 0 || y == height - 1 || z == 0 || z == depth - 1 {
+                if x == 0 || x == width - 1 || y == 0 || y == height - 1 || z == 0 || z == depth - 1
+                {
                     let idx = (z * width * height + y * width + x) as usize;
                     cells[idx] = CELL_SOLID;
                 }
@@ -110,9 +111,15 @@ fn sediment_moves_downstream_with_water() {
 
     assert!(positions.len() <= max_particles);
 
-    let avg_x_before = sediment_indices.iter().map(|&idx| positions[idx].x).sum::<f32>()
+    let avg_x_before = sediment_indices
+        .iter()
+        .map(|&idx| positions[idx].x)
+        .sum::<f32>()
         / sediment_indices.len() as f32;
-    let avg_y_before = sediment_indices.iter().map(|&idx| positions[idx].y).sum::<f32>()
+    let avg_y_before = sediment_indices
+        .iter()
+        .map(|&idx| positions[idx].y)
+        .sum::<f32>()
         / sediment_indices.len() as f32;
 
     let dt = 1.0 / 60.0;
@@ -135,9 +142,15 @@ fn sediment_moves_downstream_with_water() {
         );
     }
 
-    let avg_x_after = sediment_indices.iter().map(|&idx| positions[idx].x).sum::<f32>()
+    let avg_x_after = sediment_indices
+        .iter()
+        .map(|&idx| positions[idx].x)
+        .sum::<f32>()
         / sediment_indices.len() as f32;
-    let avg_y_after = sediment_indices.iter().map(|&idx| positions[idx].y).sum::<f32>()
+    let avg_y_after = sediment_indices
+        .iter()
+        .map(|&idx| positions[idx].y)
+        .sum::<f32>()
         / sediment_indices.len() as f32;
 
     let dx = avg_x_after - avg_x_before;

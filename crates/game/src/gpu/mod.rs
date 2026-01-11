@@ -2,12 +2,12 @@
 // pub mod bed_3d;
 pub mod bridge_3d;
 pub mod flip_3d;
+pub mod fluid_renderer;
 pub mod g2p_3d;
 pub mod heightfield;
 pub mod mgpcg;
 pub mod p2g_3d;
 pub mod pressure_3d;
-pub mod fluid_renderer;
 
 use std::sync::Arc;
 use wgpu::SurfaceTarget;
@@ -60,7 +60,8 @@ impl GpuContext {
                     required_limits: wgpu::Limits {
                         max_storage_buffers_per_shader_stage: 16,
                         ..wgpu::Limits::default()
-                    }.using_resolution(adapter.limits()),
+                    }
+                    .using_resolution(adapter.limits()),
                     memory_hints: wgpu::MemoryHints::Performance,
                 },
                 None,

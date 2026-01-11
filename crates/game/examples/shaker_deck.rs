@@ -9,7 +9,9 @@ use bytemuck::{Pod, Zeroable};
 use game::gpu::flip_3d::GpuFlip3D;
 use game::gpu::fluid_renderer::ScreenSpaceFluidRenderer;
 use glam::{Mat3, Mat4, Vec3};
-use sim3d::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, IrregularStyle3D};
+use sim3d::{
+    ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, IrregularStyle3D,
+};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::{
@@ -64,8 +66,8 @@ const BULK_GRAVEL_FRACTION: f32 = 0.70;
 const BULK_SAND_FRACTION: f32 = 0.24;
 const BULK_HEAVY_FRACTION: f32 = 0.002;
 const BULK_GOLD_FRACTION: f32 = 0.0000003;
-const BULK_SILT_FRACTION: f32 = 1.0
-    - (BULK_GRAVEL_FRACTION + BULK_SAND_FRACTION + BULK_HEAVY_FRACTION + BULK_GOLD_FRACTION);
+const BULK_SILT_FRACTION: f32 =
+    1.0 - (BULK_GRAVEL_FRACTION + BULK_SAND_FRACTION + BULK_HEAVY_FRACTION + BULK_GOLD_FRACTION);
 const GOLD_NUGGET_SHARE: f32 = 0.25; // remainder is gold flour -> FLIP
 const SEDIMENT_TOTAL_FRACTION: f32 = BULK_SAND_FRACTION
     + BULK_SILT_FRACTION
@@ -225,8 +227,14 @@ impl App {
 
         println!(
             "Shaker deck: rocks={} gold nuggets={}",
-            materials.iter().filter(|m| **m == MaterialTag::Rock).count(),
-            materials.iter().filter(|m| **m == MaterialTag::Gold).count()
+            materials
+                .iter()
+                .filter(|m| **m == MaterialTag::Rock)
+                .count(),
+            materials
+                .iter()
+                .filter(|m| **m == MaterialTag::Gold)
+                .count()
         );
         println!("Controls: SPACE=pause, R=reset, arrows=orbit/zoom");
 
@@ -664,7 +672,6 @@ impl App {
                 },
                 _ => self.round_instances.push(instance),
             }
-
         }
 
         self.instances.clear();
@@ -948,16 +955,18 @@ impl App {
         let round_mesh = build_round_mesh();
         let sharp_mesh = build_sharp_mesh();
 
-        let round_mesh_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Round Mesh Vertex Buffer"),
-            contents: bytemuck::cast_slice(&round_mesh),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let sharp_mesh_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Sharp Mesh Vertex Buffer"),
-            contents: bytemuck::cast_slice(&sharp_mesh),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let round_mesh_vertex_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Round Mesh Vertex Buffer"),
+                contents: bytemuck::cast_slice(&round_mesh),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let sharp_mesh_vertex_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Sharp Mesh Vertex Buffer"),
+                contents: bytemuck::cast_slice(&sharp_mesh),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
 
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance Buffer"),
@@ -966,7 +975,8 @@ impl App {
             mapped_at_creation: false,
         });
 
-        let (depth_texture, depth_view) = create_depth_texture(&device, config.width, config.height);
+        let (depth_texture, depth_view) =
+            create_depth_texture(&device, config.width, config.height);
 
         let mut gpu_flip = GpuFlip3D::new(
             &device,
@@ -1027,11 +1037,8 @@ impl App {
 
         let total_instances = self.instances.len().min(MAX_INSTANCES);
         let instance_data = &self.instances[..total_instances];
-        gpu.queue.write_buffer(
-            &gpu.instance_buffer,
-            0,
-            bytemuck::cast_slice(instance_data),
-        );
+        gpu.queue
+            .write_buffer(&gpu.instance_buffer, 0, bytemuck::cast_slice(instance_data));
     }
 
     fn camera_matrices(&self) -> (Mat4, Mat4) {
@@ -1234,7 +1241,9 @@ impl ApplicationHandler for App {
                             KeyCode::KeyR => self.reset_sim(),
                             KeyCode::ArrowLeft => self.camera_angle -= 0.1,
                             KeyCode::ArrowRight => self.camera_angle += 0.1,
-                            KeyCode::ArrowUp => self.camera_distance = (self.camera_distance - 0.4).max(2.0),
+                            KeyCode::ArrowUp => {
+                                self.camera_distance = (self.camera_distance - 0.4).max(2.0)
+                            }
                             KeyCode::ArrowDown => self.camera_distance += 0.4,
                             _ => {}
                         }
@@ -1386,9 +1395,7 @@ fn build_sim() -> (
         let z = deck_origin.z
             + 0.4
             + hash_range(0xC1B2_9ED1 ^ seed.wrapping_mul(27), 0.0, DECK_WIDTH * 0.8);
-        let y = deck.height_at(x)
-            + 0.3
-            + hash_range(0x9C5B_D781 ^ seed.wrapping_mul(19), 0.0, 0.2);
+        let y = deck.height_at(x) + 0.3 + hash_range(0x9C5B_D781 ^ seed.wrapping_mul(19), 0.0, 0.2);
         sim.spawn(template_idx, Vec3::new(x, y, z), Vec3::ZERO);
         materials.push(material);
     };

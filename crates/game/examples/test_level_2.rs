@@ -9,23 +9,23 @@ use game::gpu::flip_3d::GpuFlip3D;
 use game::sluice_geometry::SluiceConfig;
 use game::test_harness::{levels::Level2Riffles, SimTest, TestMetrics};
 use glam::{Mat3, Vec3};
-use std::time::Instant;
 use pollster::block_on;
+use std::time::Instant;
 
 // Test configuration - smaller scale for faster testing
 const CELL_SIZE: f32 = 0.02;
-const GRID_WIDTH: usize = 80;   // 1.6m
-const GRID_HEIGHT: usize = 30;  // 0.6m
-const GRID_DEPTH: usize = 20;   // 0.4m
+const GRID_WIDTH: usize = 80; // 1.6m
+const GRID_HEIGHT: usize = 30; // 0.6m
+const GRID_DEPTH: usize = 20; // 0.4m
 const MAX_PARTICLES: usize = 100_000;
 
 const GRAVITY: f32 = -9.8;
-const FLOW_ACCEL: f32 = 1.5;    // Downstream acceleration
+const FLOW_ACCEL: f32 = 1.5; // Downstream acceleration
 const PRESSURE_ITERS: u32 = 60;
 
 // Emission
-const EMIT_RATE: usize = 100;   // Particles per frame
-const EMIT_START_X: f32 = 0.1;  // Where to emit (left side)
+const EMIT_RATE: usize = 100; // Particles per frame
+const EMIT_START_X: f32 = 0.1; // Where to emit (left side)
 
 fn main() {
     let test = Level2Riffles;
@@ -44,7 +44,7 @@ fn main() {
         grid_height: GRID_HEIGHT,
         grid_depth: GRID_DEPTH,
         cell_size: CELL_SIZE,
-        floor_height_left: 8,   // Sloped floor
+        floor_height_left: 8, // Sloped floor
         floor_height_right: 3,
         riffle_spacing: 12,
         riffle_height: 3,
@@ -85,7 +85,8 @@ fn main() {
 
                                 if ni < GRID_WIDTH && nj < GRID_HEIGHT && nk < GRID_DEPTH {
                                     if sluice_config.is_solid(ni, nj, nk) {
-                                        let dist = ((di * di + dj * dj + dk * dk) as f32).sqrt() * CELL_SIZE;
+                                        let dist = ((di * di + dj * dj + dk * dk) as f32).sqrt()
+                                            * CELL_SIZE;
                                         min_dist = min_dist.min(dist);
                                     }
                                 }
@@ -93,7 +94,11 @@ fn main() {
                         }
                     }
 
-                    sdf[idx] = if min_dist < f32::MAX { min_dist } else { CELL_SIZE * 2.0 };
+                    sdf[idx] = if min_dist < f32::MAX {
+                        min_dist
+                    } else {
+                        CELL_SIZE * 2.0
+                    };
                 }
             }
         }
@@ -128,7 +133,10 @@ fn main() {
     let mut failures: Vec<String> = Vec::new();
     let start = Instant::now();
 
-    println!("Running {} frames with continuous emission...\n", total_frames);
+    println!(
+        "Running {} frames with continuous emission...\n",
+        total_frames
+    );
 
     for frame in 0..total_frames {
         // Emit new particles at inlet
@@ -229,7 +237,12 @@ fn main() {
             let fps = (frame + 1) as f32 / elapsed.max(0.001);
             print!(
                 "\rFrame {}/{} | FPS: {:.1} | Particles: {} | Max vel: {:.2} | In solid: {}   ",
-                frame + 1, total_frames, fps, positions.len(), metrics.max_velocity, metrics.particles_in_solid
+                frame + 1,
+                total_frames,
+                fps,
+                positions.len(),
+                metrics.max_velocity,
+                metrics.particles_in_solid
             );
         }
     }
@@ -252,11 +265,18 @@ fn main() {
 
     println!("\nMetrics:");
     println!("  Frames: {}", metrics.frame_count);
-    println!("  Particles: {} -> {}", metrics.particle_count_start, metrics.particle_count_end);
+    println!(
+        "  Particles: {} -> {}",
+        metrics.particle_count_start, metrics.particle_count_end
+    );
     println!("  Max velocity: {:.2} m/s", metrics.max_velocity);
     println!("  NaN detected: {}", metrics.nan_detected);
     println!("  Particles in solid: {}", metrics.particles_in_solid);
-    println!("  Elapsed: {:.2}s ({:.1} FPS)", metrics.elapsed_seconds, metrics.frame_count as f32 / metrics.elapsed_seconds);
+    println!(
+        "  Elapsed: {:.2}s ({:.1} FPS)",
+        metrics.elapsed_seconds,
+        metrics.frame_count as f32 / metrics.elapsed_seconds
+    );
 
     if !failures.is_empty() {
         std::process::exit(1);

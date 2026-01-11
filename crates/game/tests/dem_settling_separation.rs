@@ -2,7 +2,7 @@
 // Validates granular settling behavior, density-based separation, and angle of repose
 
 use glam::Vec3;
-use sim3d::clump::{ClumpTemplate3D, ClumpShape3D, ClusterSimulation3D};
+use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D};
 
 const PARTICLE_RADIUS: f32 = 0.01; // 1cm gravel
 const DT: f32 = 1.0 / 120.0; // 120 Hz timestep
@@ -45,10 +45,7 @@ fn compute_com_y(sim: &ClusterSimulation3D, indices: &[usize]) -> f32 {
     if indices.is_empty() {
         return 0.0;
     }
-    let sum_y: f32 = indices
-        .iter()
-        .map(|&i| sim.clumps[i].position.y)
-        .sum();
+    let sum_y: f32 = indices.iter().map(|&i| sim.clumps[i].position.y).sum();
     sum_y / indices.len() as f32
 }
 
@@ -67,11 +64,7 @@ fn test_dem_settling_time() {
 
     // Standard density (gangue)
     let particle_mass = particle_mass_from_density(PARTICLE_RADIUS, DENSITY_GANGUE);
-    let template = ClumpTemplate3D::generate(
-        ClumpShape3D::Tetra,
-        PARTICLE_RADIUS,
-        particle_mass,
-    );
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, particle_mass);
     let template_idx = sim.add_template(template);
 
     // Spawn 20 clumps from 1m height with pseudo-random positions and small velocities
@@ -96,13 +89,17 @@ fn test_dem_settling_time() {
         clump_indices.push(idx);
     }
 
-    println!("Spawned {} clumps at height {:.2}m", clump_indices.len(), drop_height);
+    println!(
+        "Spawned {} clumps at height {:.2}m",
+        clump_indices.len(),
+        drop_height
+    );
 
     // Run for max 5 seconds (600 steps), check every 0.5s (60 steps)
     let max_steps = 600;
     let check_interval = 60;
     let avg_threshold = 0.05; // m/s
-    let max_threshold = 0.1;  // m/s
+    let max_threshold = 0.1; // m/s
 
     let mut settled = false;
     let mut settling_step = 0;
@@ -114,8 +111,13 @@ fn test_dem_settling_time() {
             let avg_vel = compute_avg_velocity(&sim, &clump_indices);
             let max_vel = compute_max_velocity(&sim, &clump_indices);
 
-            println!("Step {} ({:.2}s): avg_vel={:.4} m/s, max_vel={:.4} m/s",
-                step, step as f32 * DT, avg_vel, max_vel);
+            println!(
+                "Step {} ({:.2}s): avg_vel={:.4} m/s, max_vel={:.4} m/s",
+                step,
+                step as f32 * DT,
+                avg_vel,
+                max_vel
+            );
 
             if avg_vel < avg_threshold && max_vel < max_threshold {
                 settled = true;
@@ -129,11 +131,22 @@ fn test_dem_settling_time() {
     let final_avg_vel = compute_avg_velocity(&sim, &clump_indices);
     let final_max_vel = compute_max_velocity(&sim, &clump_indices);
 
-    println!("Final: avg_vel={:.4} m/s, max_vel={:.4} m/s", final_avg_vel, final_max_vel);
-    println!("Settled: {}, settling_step: {}, time: {:.2}s", settled, settling_step, settling_step as f32 * DT);
+    println!(
+        "Final: avg_vel={:.4} m/s, max_vel={:.4} m/s",
+        final_avg_vel, final_max_vel
+    );
+    println!(
+        "Settled: {}, settling_step: {}, time: {:.2}s",
+        settled,
+        settling_step,
+        settling_step as f32 * DT
+    );
 
-    assert!(settled, "Clumps did not settle within 5 seconds (avg_vel={:.4}, max_vel={:.4})",
-        final_avg_vel, final_max_vel);
+    assert!(
+        settled,
+        "Clumps did not settle within 5 seconds (avg_vel={:.4}, max_vel={:.4})",
+        final_avg_vel, final_max_vel
+    );
 }
 
 /// Test 2: Density Separation - Heavy (gold) vs light (gangue) settling in gravity
@@ -144,24 +157,24 @@ fn test_dem_density_separation() {
 
     // Heavy particles (gold)
     let heavy_mass = particle_mass_from_density(PARTICLE_RADIUS, DENSITY_GOLD);
-    let heavy_template = ClumpTemplate3D::generate(
-        ClumpShape3D::Tetra,
-        PARTICLE_RADIUS,
-        heavy_mass,
-    );
+    let heavy_template =
+        ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, heavy_mass);
     let heavy_idx = sim.add_template(heavy_template);
 
     // Light particles (gangue)
     let light_mass = particle_mass_from_density(PARTICLE_RADIUS, DENSITY_GANGUE);
-    let light_template = ClumpTemplate3D::generate(
-        ClumpShape3D::Tetra,
-        PARTICLE_RADIUS,
-        light_mass,
-    );
+    let light_template =
+        ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, light_mass);
     let light_idx = sim.add_template(light_template);
 
-    println!("Heavy mass: {:.6} kg (gold ρ={} kg/m³)", heavy_mass, DENSITY_GOLD);
-    println!("Light mass: {:.6} kg (gangue ρ={} kg/m³)", light_mass, DENSITY_GANGUE);
+    println!(
+        "Heavy mass: {:.6} kg (gold ρ={} kg/m³)",
+        heavy_mass, DENSITY_GOLD
+    );
+    println!(
+        "Light mass: {:.6} kg (gangue ρ={} kg/m³)",
+        light_mass, DENSITY_GANGUE
+    );
     println!("Mass ratio: {:.2}x", heavy_mass / light_mass);
 
     // Spawn mixed clumps in pseudo-random positions
@@ -188,15 +201,15 @@ fn test_dem_density_separation() {
         heavy_indices.push(heavy);
 
         // Spawn light clump nearby
-        let light = sim.spawn(
-            light_idx,
-            Vec3::new(x + 0.1, y + 0.1, z + 0.1),
-            Vec3::ZERO,
-        );
+        let light = sim.spawn(light_idx, Vec3::new(x + 0.1, y + 0.1, z + 0.1), Vec3::ZERO);
         light_indices.push(light);
     }
 
-    println!("Spawned {} heavy + {} light clumps", heavy_indices.len(), light_indices.len());
+    println!(
+        "Spawned {} heavy + {} light clumps",
+        heavy_indices.len(),
+        light_indices.len()
+    );
 
     // Run for 10 seconds (1200 steps)
     let settling_steps = 1200;
@@ -206,8 +219,14 @@ fn test_dem_density_separation() {
         if step % 240 == 0 {
             let heavy_com_y = compute_com_y(&sim, &heavy_indices);
             let light_com_y = compute_com_y(&sim, &light_indices);
-            println!("Step {} ({:.1}s): heavy_com_y={:.4}, light_com_y={:.4}, separation={:.4}",
-                step, step as f32 * DT, heavy_com_y, light_com_y, light_com_y - heavy_com_y);
+            println!(
+                "Step {} ({:.1}s): heavy_com_y={:.4}, light_com_y={:.4}, separation={:.4}",
+                step,
+                step as f32 * DT,
+                heavy_com_y,
+                light_com_y,
+                light_com_y - heavy_com_y
+            );
         }
     }
 
@@ -216,8 +235,10 @@ fn test_dem_density_separation() {
     let light_com_y = compute_com_y(&sim, &light_indices);
     let separation = light_com_y - heavy_com_y;
 
-    println!("Final: heavy_com_y={:.4} m, light_com_y={:.4} m, separation={:.4} m",
-        heavy_com_y, light_com_y, separation);
+    println!(
+        "Final: heavy_com_y={:.4} m, light_com_y={:.4} m, separation={:.4} m",
+        heavy_com_y, light_com_y, separation
+    );
 
     // Heavy particles should be at least 0.1m below light particles
     let min_separation = 0.1;
@@ -228,7 +249,10 @@ fn test_dem_density_separation() {
         min_separation
     );
 
-    println!("PASS: Heavy particles settled {:.4}m below light particles", separation);
+    println!(
+        "PASS: Heavy particles settled {:.4}m below light particles",
+        separation
+    );
 }
 
 /// Test 3: Angle of Repose - Verify friction coefficient is properly configured
@@ -240,16 +264,16 @@ fn test_dem_angle_of_repose() {
     sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
 
     let particle_mass = particle_mass_from_density(PARTICLE_RADIUS, DENSITY_GANGUE);
-    let template = ClumpTemplate3D::generate(
-        ClumpShape3D::Tetra,
-        PARTICLE_RADIUS,
-        particle_mass,
-    );
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, particle_mass);
     let template_idx = sim.add_template(template);
 
     println!("Validating friction coefficient configuration");
     println!("Friction coefficient (μ): {}", sim.friction);
-    println!("Expected angle of repose: atan({}) = {:.2}°", sim.friction, (sim.friction).atan().to_degrees());
+    println!(
+        "Expected angle of repose: atan({}) = {:.2}°",
+        sim.friction,
+        (sim.friction).atan().to_degrees()
+    );
 
     // Verify friction coefficient is in reasonable range for granular materials
     // Typical values: 0.3-0.6 for sand/gravel
@@ -259,7 +283,10 @@ fn test_dem_angle_of_repose() {
         sim.friction
     );
 
-    println!("Friction coefficient {:.2} is within valid range", sim.friction);
+    println!(
+        "Friction coefficient {:.2} is within valid range",
+        sim.friction
+    );
 
     // Simple stability test: Drop clumps and verify they settle without exploding
     println!("Testing clump settling stability with {} clumps", 10);
@@ -279,17 +306,31 @@ fn test_dem_angle_of_repose() {
 
         if step % 120 == 0 {
             let avg_vel = compute_avg_velocity(&sim, &clump_indices);
-            println!("Step {} ({:.1}s): avg_vel={:.6} m/s", step, step as f32 * DT, avg_vel);
+            println!(
+                "Step {} ({:.1}s): avg_vel={:.6} m/s",
+                step,
+                step as f32 * DT,
+                avg_vel
+            );
         }
     }
 
     // Verify stability
-    let y_positions: Vec<f32> = clump_indices.iter().map(|&i| sim.clumps[i].position.y).collect();
+    let y_positions: Vec<f32> = clump_indices
+        .iter()
+        .map(|&i| sim.clumps[i].position.y)
+        .collect();
     let min_y = y_positions.iter().copied().fold(f32::INFINITY, f32::min);
-    let max_y = y_positions.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let max_y = y_positions
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
     let final_avg_vel = compute_avg_velocity(&sim, &clump_indices);
 
-    println!("Final state: min_y={:.4}, max_y={:.4}, avg_vel={:.6}", min_y, max_y, final_avg_vel);
+    println!(
+        "Final state: min_y={:.4}, max_y={:.4}, avg_vel={:.6}",
+        min_y, max_y, final_avg_vel
+    );
 
     // Verify clumps settled (velocities low)
     assert!(
@@ -313,7 +354,10 @@ fn test_dem_angle_of_repose() {
         particle_radius
     );
 
-    println!("PASS: Friction coefficient configured correctly ({:.2}, expected angle={:.2}°)",
-        sim.friction, (sim.friction).atan().to_degrees());
+    println!(
+        "PASS: Friction coefficient configured correctly ({:.2}, expected angle={:.2}°)",
+        sim.friction,
+        (sim.friction).atan().to_degrees()
+    );
     println!("      Clumps settled stably without numerical issues");
 }

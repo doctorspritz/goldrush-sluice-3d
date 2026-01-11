@@ -3,7 +3,7 @@
 //! Tests particle-to-grid and grid-to-particle transfers specifically
 //! for 3D configurations, ensuring W-velocity is properly handled.
 
-use sim3d::{FlipSimulation3D, CellType, Vec3};
+use sim3d::{CellType, FlipSimulation3D, Vec3};
 
 /// Test that after a simulation step, grid velocities are non-zero
 #[test]
@@ -13,11 +13,11 @@ fn test_p2g_contributes_all_components() {
     // Spawn a particle in the center with velocity in all directions
     sim.spawn_particle_with_velocity(
         Vec3::new(2.0, 2.0, 2.0),
-        Vec3::new(1.0, 2.0, 3.0),  // Non-zero in all components
+        Vec3::new(1.0, 2.0, 3.0), // Non-zero in all components
     );
 
     // Run one simulation step which includes P2G
-    sim.gravity = Vec3::ZERO;  // Disable gravity for cleaner test
+    sim.gravity = Vec3::ZERO; // Disable gravity for cleaner test
     sim.update(1.0 / 60.0);
 
     // Check that grid has non-zero velocities in all components after P2G
@@ -26,7 +26,10 @@ fn test_p2g_contributes_all_components() {
 
     // Just verify the particle still has reasonable velocity
     let vel = sim.particles.list[0].velocity;
-    assert!(!vel.x.is_nan() && !vel.y.is_nan() && !vel.z.is_nan(), "Velocity should not be NaN");
+    assert!(
+        !vel.x.is_nan() && !vel.y.is_nan() && !vel.z.is_nan(),
+        "Velocity should not be NaN"
+    );
     assert!(vel.length() > 0.0, "Particle should retain some velocity");
 }
 
@@ -62,9 +65,21 @@ fn test_g2p_samples_all_components() {
     let vel = sim.particles.list[0].velocity;
 
     // Particle should have picked up velocities in all directions (non-zero)
-    assert!(vel.x.abs() > 0.001, "G2P should sample U velocity, got: {}", vel.x);
-    assert!(vel.y.abs() > 0.001, "G2P should sample V velocity, got: {}", vel.y);
-    assert!(vel.z.abs() > 0.001, "G2P should sample W velocity, got: {}", vel.z);
+    assert!(
+        vel.x.abs() > 0.001,
+        "G2P should sample U velocity, got: {}",
+        vel.x
+    );
+    assert!(
+        vel.y.abs() > 0.001,
+        "G2P should sample V velocity, got: {}",
+        vel.y
+    );
+    assert!(
+        vel.z.abs() > 0.001,
+        "G2P should sample W velocity, got: {}",
+        vel.z
+    );
 }
 
 /// Test that particle at Z boundary gets correct W velocity
@@ -99,8 +114,14 @@ fn test_particle_near_z_boundary() {
 
     // Particle should have some Z velocity (even if clamped by boundary)
     // The exact value depends on interpolation, but should be defined (not NaN)
-    assert!(!vel.z.is_nan(), "Z velocity should not be NaN near boundary");
-    assert!(vel.z.is_finite(), "Z velocity should be finite near boundary");
+    assert!(
+        !vel.z.is_nan(),
+        "Z velocity should not be NaN near boundary"
+    );
+    assert!(
+        vel.z.is_finite(),
+        "Z velocity should be finite near boundary"
+    );
 }
 
 /// Test W-velocity stencil indexing
@@ -114,7 +135,7 @@ fn test_w_grid_indexing() {
         (0, 0, 0),
         (7, 0, 0),
         (0, 7, 0),
-        (0, 0, 8),  // depth+1 = 9, but max k index is 8
+        (0, 0, 8), // depth+1 = 9, but max k index is 8
         (7, 7, 8),
     ];
 
@@ -123,7 +144,11 @@ fn test_w_grid_indexing() {
         assert!(
             idx < sim.grid.w.len(),
             "W index ({}, {}, {}) = {} out of bounds (len={})",
-            i, j, k, idx, sim.grid.w.len()
+            i,
+            j,
+            k,
+            idx,
+            sim.grid.w.len()
         );
     }
 }
@@ -138,7 +163,7 @@ fn test_apic_c_matrix_3d() {
         for j in 0..8 {
             for i in 0..9 {
                 let idx = sim.grid.u_index(i, j, k);
-                sim.grid.u[idx] = (i as f32) * 0.1;  // U increases with x
+                sim.grid.u[idx] = (i as f32) * 0.1; // U increases with x
             }
         }
     }
@@ -146,7 +171,7 @@ fn test_apic_c_matrix_3d() {
         for j in 0..9 {
             for i in 0..8 {
                 let idx = sim.grid.v_index(i, j, k);
-                sim.grid.v[idx] = (j as f32) * 0.1;  // V increases with y
+                sim.grid.v[idx] = (j as f32) * 0.1; // V increases with y
             }
         }
     }
@@ -154,7 +179,7 @@ fn test_apic_c_matrix_3d() {
         for j in 0..8 {
             for i in 0..8 {
                 let idx = sim.grid.w_index(i, j, k);
-                sim.grid.w[idx] = (k as f32) * 0.1;  // W increases with z
+                sim.grid.w[idx] = (k as f32) * 0.1; // W increases with z
             }
         }
     }
@@ -185,8 +210,15 @@ fn test_apic_c_matrix_3d() {
     // Just check that affine_velocity matrix is finite and not all zeros
     let c = p.affine_velocity;
     let c_sum = c.x_axis.length() + c.y_axis.length() + c.z_axis.length();
-    assert!(!c_sum.is_nan(), "Affine velocity matrix should not contain NaN");
-    assert!(c_sum > 0.0, "Affine velocity matrix should not be all zeros, got sum: {}", c_sum);
+    assert!(
+        !c_sum.is_nan(),
+        "Affine velocity matrix should not contain NaN"
+    );
+    assert!(
+        c_sum > 0.0,
+        "Affine velocity matrix should not be all zeros, got sum: {}",
+        c_sum
+    );
 }
 
 /// Test conservation: total momentum should be approximately conserved through transfer cycle
@@ -211,7 +243,10 @@ fn test_momentum_conservation() {
     }
 
     // Calculate initial momentum
-    let initial_momentum: Vec3 = sim.particles.list.iter()
+    let initial_momentum: Vec3 = sim
+        .particles
+        .list
+        .iter()
         .map(|p| p.velocity)
         .fold(Vec3::ZERO, |a, b| a + b);
 
@@ -220,7 +255,10 @@ fn test_momentum_conservation() {
     sim.update(1.0 / 60.0);
 
     // Calculate final momentum
-    let final_momentum: Vec3 = sim.particles.list.iter()
+    let final_momentum: Vec3 = sim
+        .particles
+        .list
+        .iter()
         .map(|p| p.velocity)
         .fold(Vec3::ZERO, |a, b| a + b);
 
@@ -232,6 +270,8 @@ fn test_momentum_conservation() {
     assert!(
         momentum_change < 0.5,
         "Momentum should be approximately conserved. Initial: {:?}, Final: {:?}, Change: {:.1}%",
-        initial_momentum, final_momentum, momentum_change * 100.0
+        initial_momentum,
+        final_momentum,
+        momentum_change * 100.0
     );
 }

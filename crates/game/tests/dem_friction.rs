@@ -5,11 +5,11 @@
 // the real simulation. This ensures we're testing what actually runs in production.
 
 use glam::Vec3;
-use sim3d::clump::{ClumpTemplate3D, ClumpShape3D, ClusterSimulation3D, SdfParams};
+use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, SdfParams};
 
 const PARTICLE_RADIUS: f32 = 0.01; // 1cm gravel
-const PARTICLE_MASS: f32 = 0.01;   // 10g
-const DT: f32 = 1.0 / 120.0;       // 120 Hz timestep
+const PARTICLE_MASS: f32 = 0.01; // 10g
+const DT: f32 = 1.0 / 120.0; // 120 Hz timestep
 const GRAVITY: f32 = -9.81;
 
 // Grid dimensions for SDF
@@ -59,7 +59,11 @@ fn step_with_sdf_collision(sim: &mut ClusterSimulation3D, sdf: &[f32], dt: f32, 
 fn test_dem_static_friction() {
     let mut sim = ClusterSimulation3D::new(
         Vec3::ZERO,
-        Vec3::new(GRID_WIDTH as f32 * CELL_SIZE, GRID_HEIGHT as f32 * CELL_SIZE, GRID_DEPTH as f32 * CELL_SIZE),
+        Vec3::new(
+            GRID_WIDTH as f32 * CELL_SIZE,
+            GRID_HEIGHT as f32 * CELL_SIZE,
+            GRID_DEPTH as f32 * CELL_SIZE,
+        ),
     );
     sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
     sim.floor_friction = 0.6;
@@ -81,7 +85,8 @@ fn test_dem_static_friction() {
     }
 
     let final_pos = sim.clumps[clump_idx].position;
-    let horizontal_displacement = ((final_pos.x - spawn_pos.x).powi(2) + (final_pos.z - spawn_pos.z).powi(2)).sqrt();
+    let horizontal_displacement =
+        ((final_pos.x - spawn_pos.x).powi(2) + (final_pos.z - spawn_pos.z).powi(2)).sqrt();
 
     println!("Static friction test:");
     println!("  Initial: {:?}", spawn_pos);
@@ -101,7 +106,11 @@ fn test_dem_static_friction() {
 fn test_dem_kinetic_friction() {
     let mut sim = ClusterSimulation3D::new(
         Vec3::ZERO,
-        Vec3::new(GRID_WIDTH as f32 * CELL_SIZE, GRID_HEIGHT as f32 * CELL_SIZE, GRID_DEPTH as f32 * CELL_SIZE),
+        Vec3::new(
+            GRID_WIDTH as f32 * CELL_SIZE,
+            GRID_HEIGHT as f32 * CELL_SIZE,
+            GRID_DEPTH as f32 * CELL_SIZE,
+        ),
     );
     sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
     sim.floor_friction = 0.5;
@@ -143,7 +152,8 @@ fn test_dem_kinetic_friction() {
     assert!(
         final_vel < initial_vel * 0.5,
         "Clump didn't decelerate enough: final {:.3} (expected < {:.3})",
-        final_vel, initial_vel * 0.5
+        final_vel,
+        initial_vel * 0.5
     );
 }
 
@@ -157,11 +167,15 @@ fn test_dem_wet_vs_dry_friction() {
     // === DRY friction test ===
     let mut sim_dry = ClusterSimulation3D::new(
         Vec3::ZERO,
-        Vec3::new(GRID_WIDTH as f32 * CELL_SIZE, GRID_HEIGHT as f32 * CELL_SIZE, GRID_DEPTH as f32 * CELL_SIZE),
+        Vec3::new(
+            GRID_WIDTH as f32 * CELL_SIZE,
+            GRID_HEIGHT as f32 * CELL_SIZE,
+            GRID_DEPTH as f32 * CELL_SIZE,
+        ),
     );
     sim_dry.gravity = Vec3::new(0.0, GRAVITY, 0.0);
-    sim_dry.floor_friction = 0.5;       // Higher dry friction
-    sim_dry.wet_friction = 0.08;        // Lower wet friction
+    sim_dry.floor_friction = 0.5; // Higher dry friction
+    sim_dry.wet_friction = 0.08; // Lower wet friction
 
     let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
     let template_idx = sim_dry.add_template(template);
@@ -186,7 +200,11 @@ fn test_dem_wet_vs_dry_friction() {
     // === WET friction test ===
     let mut sim_wet = ClusterSimulation3D::new(
         Vec3::ZERO,
-        Vec3::new(GRID_WIDTH as f32 * CELL_SIZE, GRID_HEIGHT as f32 * CELL_SIZE, GRID_DEPTH as f32 * CELL_SIZE),
+        Vec3::new(
+            GRID_WIDTH as f32 * CELL_SIZE,
+            GRID_HEIGHT as f32 * CELL_SIZE,
+            GRID_DEPTH as f32 * CELL_SIZE,
+        ),
     );
     sim_wet.gravity = Vec3::new(0.0, GRAVITY, 0.0);
     sim_wet.floor_friction = 0.5;
@@ -214,13 +232,18 @@ fn test_dem_wet_vs_dry_friction() {
     println!("Wet vs Dry friction test:");
     println!("  Dry friction (μ=0.5): slid {:.4}m", dry_distance);
     println!("  Wet friction (μ=0.08): slid {:.4}m", wet_distance);
-    println!("  Ratio wet/dry: {:.2}x", wet_distance / dry_distance.max(0.001));
+    println!(
+        "  Ratio wet/dry: {:.2}x",
+        wet_distance / dry_distance.max(0.001)
+    );
 
     // Wet should slide significantly farther (at least 2x)
     assert!(
         wet_distance > dry_distance * 2.0,
         "Wet friction didn't slide farther: wet={:.4}m, dry={:.4}m, ratio={:.2}x",
-        wet_distance, dry_distance, wet_distance / dry_distance.max(0.001)
+        wet_distance,
+        dry_distance,
+        wet_distance / dry_distance.max(0.001)
     );
 }
 
@@ -232,7 +255,11 @@ fn test_dem_wet_vs_dry_friction() {
 fn test_dem_friction_finite() {
     let mut sim = ClusterSimulation3D::new(
         Vec3::ZERO,
-        Vec3::new(GRID_WIDTH as f32 * CELL_SIZE, GRID_HEIGHT as f32 * CELL_SIZE, GRID_DEPTH as f32 * CELL_SIZE),
+        Vec3::new(
+            GRID_WIDTH as f32 * CELL_SIZE,
+            GRID_HEIGHT as f32 * CELL_SIZE,
+            GRID_DEPTH as f32 * CELL_SIZE,
+        ),
     );
     sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
     sim.floor_friction = 0.6;
@@ -270,7 +297,9 @@ fn test_dem_friction_finite() {
     assert!(
         vel_after > vel_before * 0.5,
         "Friction too strong: {:.3} -> {:.3} m/s (retained only {:.1}%)",
-        vel_before, vel_after, 100.0 * vel_after / vel_before
+        vel_before,
+        vel_after,
+        100.0 * vel_after / vel_before
     );
 
     // Should have slowed somewhat (friction is working)

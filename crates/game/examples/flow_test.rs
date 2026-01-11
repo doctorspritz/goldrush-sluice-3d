@@ -23,9 +23,9 @@ const MAX_PARTICLES: usize = 50000;
 const FLOW_ACCEL: f32 = 3.0; // m/s²
 
 // Test thresholds - these MUST pass for flow to be working
-const MIN_AVG_VX: f32 = 0.2;  // Particles must have avg downstream velocity > this
+const MIN_AVG_VX: f32 = 0.2; // Particles must have avg downstream velocity > this
 const MIN_X_PROGRESS_RATIO: f32 = 0.4; // Particles must move >40% of channel length
-const TEST_FRAMES: u32 = 400;  // Run for this many frames
+const TEST_FRAMES: u32 = 400; // Run for this many frames
 const SUBSTEPS: u32 = 2;
 const DT: f32 = 1.0 / 120.0;
 
@@ -71,13 +71,17 @@ fn spawn_water_block(sim: &mut FlipSimulation3D, count: usize, inlet_vel: Vec3) 
 
     for i in 1..spawn_region_x {
         for j in (floor_at_inlet + 1)..(floor_at_inlet + 1 + spawn_region_y) {
-            if j >= sim.grid.height - 1 { continue; }
+            if j >= sim.grid.height - 1 {
+                continue;
+            }
 
-            for k in 1..depth-1 {
+            for k in 1..depth - 1 {
                 // Spawn 4 particles per cell (2x2)
                 for sub_i in 0..2 {
                     for sub_j in 0..2 {
-                        if spawned >= count { break; }
+                        if spawned >= count {
+                            break;
+                        }
 
                         let x = (i as f32 + 0.25 + sub_i as f32 * 0.5) * dx;
                         let y = (j as f32 + 0.25 + sub_j as f32 * 0.5) * dx;
@@ -93,13 +97,19 @@ fn spawn_water_block(sim: &mut FlipSimulation3D, count: usize, inlet_vel: Vec3) 
         }
     }
 
-    println!("Spawned {} particles at inlet (floor_y={})", spawned, floor_at_inlet);
+    println!(
+        "Spawned {} particles at inlet (floor_y={})",
+        spawned, floor_at_inlet
+    );
 }
 
 fn main() {
     println!("=== FLOW TEST ===");
     println!("Verifying water flows downstream on a SIMPLE SLOPE (no riffles).");
-    println!("Grid: {}x{}x{}, cell_size: {}", GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
+    println!(
+        "Grid: {}x{}x{}, cell_size: {}",
+        GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE
+    );
     println!("Flow accel: {} m/s²", FLOW_ACCEL);
     println!("Test frames: {}, substeps: {}", TEST_FRAMES, SUBSTEPS);
     println!();
@@ -119,8 +129,8 @@ fn main() {
     spawn_water_block(&mut sim, 2000, inlet_vel);
 
     let initial_count = sim.particle_count();
-    let initial_avg_x: f32 = sim.particles.list.iter().map(|p| p.position.x).sum::<f32>()
-        / sim.particle_count() as f32;
+    let initial_avg_x: f32 =
+        sim.particles.list.iter().map(|p| p.position.x).sum::<f32>() / sim.particle_count() as f32;
 
     println!("Initial particles: {}", initial_count);
     println!("Initial avg X: {:.3}", initial_avg_x);
@@ -240,7 +250,7 @@ fn main() {
                 Some(&bed_height),
                 DT,
                 -9.8,
-                FLOW_ACCEL,  // <-- THIS IS THE KEY: flow applied on grid before pressure solve
+                FLOW_ACCEL, // <-- THIS IS THE KEY: flow applied on grid before pressure solve
                 sim.pressure_iterations as u32,
             );
 
@@ -320,8 +330,13 @@ fn main() {
                 sim.particles.list.iter().map(|p| p.position.x).sum::<f32>()
                     / sim.particles.list.len() as f32
             };
-            println!("Frame {:3}: particles={:5}, avgVx={:6.3}, avgX={:6.3}",
-                     frame + 1, sim.particles.list.len(), avg_vx, avg_x);
+            println!(
+                "Frame {:3}: particles={:5}, avgVx={:6.3}, avgX={:6.3}",
+                frame + 1,
+                sim.particles.list.len(),
+                avg_vx,
+                avg_x
+            );
         }
     }
 
@@ -347,15 +362,23 @@ fn main() {
     println!();
     println!("=== RESULTS ===");
     println!("Channel length: {:.3}m", channel_length);
-    println!("Final particles: {} (exited: {})", final_count, particles_exited.max(0));
+    println!(
+        "Final particles: {} (exited: {})",
+        final_count,
+        particles_exited.max(0)
+    );
 
     // Check if most particles exited - this is the STRONGEST signal of working flow!
     let exit_ratio = particles_exited as f32 / initial_count as f32;
-    let most_exited = exit_ratio > 0.8;  // >80% of particles exited
+    let most_exited = exit_ratio > 0.8; // >80% of particles exited
 
     if most_exited {
-        println!("✓ PASS: {:.1}% of particles ({}/{}) exited through outlet!",
-                 exit_ratio * 100.0, particles_exited, initial_count);
+        println!(
+            "✓ PASS: {:.1}% of particles ({}/{}) exited through outlet!",
+            exit_ratio * 100.0,
+            particles_exited,
+            initial_count
+        );
         println!("   Flow acceleration is WORKING - water flowed through the entire channel!");
         println!();
         println!("=== ALL TESTS PASSED ===");
@@ -363,26 +386,48 @@ fn main() {
     }
 
     // If particles remain, check velocity and progress
-    println!("Final avg Vx: {:.3} m/s (threshold: > {})", final_avg_vx, MIN_AVG_VX);
-    println!("X progress: {:.3}m ({:.1}% of channel)", x_progress, progress_ratio * 100.0);
-    println!("Progress ratio: {:.3} (threshold: > {})", progress_ratio, MIN_X_PROGRESS_RATIO);
+    println!(
+        "Final avg Vx: {:.3} m/s (threshold: > {})",
+        final_avg_vx, MIN_AVG_VX
+    );
+    println!(
+        "X progress: {:.3}m ({:.1}% of channel)",
+        x_progress,
+        progress_ratio * 100.0
+    );
+    println!(
+        "Progress ratio: {:.3} (threshold: > {})",
+        progress_ratio, MIN_X_PROGRESS_RATIO
+    );
     println!();
 
     // ASSERTIONS - test FAILS if flow is broken
     let mut passed = true;
 
     if final_avg_vx < MIN_AVG_VX && final_count > 0 {
-        println!("❌ FAIL: avg Vx = {:.3} < {} - water is NOT flowing!", final_avg_vx, MIN_AVG_VX);
+        println!(
+            "❌ FAIL: avg Vx = {:.3} < {} - water is NOT flowing!",
+            final_avg_vx, MIN_AVG_VX
+        );
         passed = false;
     } else if final_count > 0 {
-        println!("✓ PASS: avg Vx = {:.3} >= {} - water IS flowing", final_avg_vx, MIN_AVG_VX);
+        println!(
+            "✓ PASS: avg Vx = {:.3} >= {} - water IS flowing",
+            final_avg_vx, MIN_AVG_VX
+        );
     }
 
     if progress_ratio < MIN_X_PROGRESS_RATIO && final_count > 0 {
-        println!("❌ FAIL: progress ratio = {:.3} < {} - water hasn't moved far enough!", progress_ratio, MIN_X_PROGRESS_RATIO);
+        println!(
+            "❌ FAIL: progress ratio = {:.3} < {} - water hasn't moved far enough!",
+            progress_ratio, MIN_X_PROGRESS_RATIO
+        );
         passed = false;
     } else if final_count > 0 {
-        println!("✓ PASS: progress ratio = {:.3} >= {} - water moved downstream", progress_ratio, MIN_X_PROGRESS_RATIO);
+        println!(
+            "✓ PASS: progress ratio = {:.3} >= {} - water moved downstream",
+            progress_ratio, MIN_X_PROGRESS_RATIO
+        );
     }
 
     println!();

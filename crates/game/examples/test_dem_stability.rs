@@ -117,7 +117,10 @@ fn test_dem_energy_dissipation() -> bool {
     println!("  Energy violations:   {}", energy_violations);
 
     let pass = energy_violations == 0;
-    println!("  Result:              {}", if pass { "PASS" } else { "FAIL" });
+    println!(
+        "  Result:              {}",
+        if pass { "PASS" } else { "FAIL" }
+    );
     pass
 }
 
@@ -169,10 +172,16 @@ fn test_dem_no_explosion() -> bool {
     }
 
     println!("  Max velocity (linear):   {:.2} m/s", max_velocity);
-    println!("  Max velocity (angular):  {:.2} rad/s", max_angular_velocity);
+    println!(
+        "  Max velocity (angular):  {:.2} rad/s",
+        max_angular_velocity
+    );
 
     let pass = max_velocity < 100.0 && max_angular_velocity < 1000.0;
-    println!("  Result:                  {}", if pass { "PASS" } else { "FAIL" });
+    println!(
+        "  Result:                  {}",
+        if pass { "PASS" } else { "FAIL" }
+    );
     pass
 }
 
@@ -225,11 +234,12 @@ fn test_dem_determinism() -> bool {
     println!("  Max rotation diff:       {:.6}", max_rot_diff);
     println!("  Max angular vel diff:    {:.6} rad/s", max_angvel_diff);
 
-    let pass = max_pos_diff < 1e-6
-        && max_vel_diff < 1e-6
-        && max_rot_diff < 1e-6
-        && max_angvel_diff < 1e-6;
-    println!("  Result:                  {}", if pass { "PASS" } else { "FAIL" });
+    let pass =
+        max_pos_diff < 1e-6 && max_vel_diff < 1e-6 && max_rot_diff < 1e-6 && max_angvel_diff < 1e-6;
+    println!(
+        "  Result:                  {}",
+        if pass { "PASS" } else { "FAIL" }
+    );
     pass
 }
 

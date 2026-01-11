@@ -85,33 +85,69 @@ fn update_pressure_cell(grid: &mut Grid3D, i: usize, j: usize, k: usize, h_sq: f
     // Neighbor pressures with Neumann BC at solids (dp/dn = 0 means use current pressure)
     let p_xm = if i > 0 {
         let nidx = grid.cell_index(i - 1, j, k);
-        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
-    } else { p };
+        if grid.cell_type[nidx] == CellType::Solid {
+            p
+        } else {
+            grid.pressure[nidx]
+        }
+    } else {
+        p
+    };
 
     let p_xp = if i + 1 < grid.width {
         let nidx = grid.cell_index(i + 1, j, k);
-        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
-    } else { p };
+        if grid.cell_type[nidx] == CellType::Solid {
+            p
+        } else {
+            grid.pressure[nidx]
+        }
+    } else {
+        p
+    };
 
     let p_ym = if j > 0 {
         let nidx = grid.cell_index(i, j - 1, k);
-        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
-    } else { p };
+        if grid.cell_type[nidx] == CellType::Solid {
+            p
+        } else {
+            grid.pressure[nidx]
+        }
+    } else {
+        p
+    };
 
     let p_yp = if j + 1 < grid.height {
         let nidx = grid.cell_index(i, j + 1, k);
-        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
-    } else { p };
+        if grid.cell_type[nidx] == CellType::Solid {
+            p
+        } else {
+            grid.pressure[nidx]
+        }
+    } else {
+        p
+    };
 
     let p_zm = if k > 0 {
         let nidx = grid.cell_index(i, j, k - 1);
-        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
-    } else { p };
+        if grid.cell_type[nidx] == CellType::Solid {
+            p
+        } else {
+            grid.pressure[nidx]
+        }
+    } else {
+        p
+    };
 
     let p_zp = if k + 1 < grid.depth {
         let nidx = grid.cell_index(i, j, k + 1);
-        if grid.cell_type[nidx] == CellType::Solid { p } else { grid.pressure[nidx] }
-    } else { p };
+        if grid.cell_type[nidx] == CellType::Solid {
+            p
+        } else {
+            grid.pressure[nidx]
+        }
+    } else {
+        p
+    };
 
     // 6-neighbor Laplacian: (sum of neighbors - 6*p) / h^2 = div
     // Solve for p: p = (sum of neighbors - h^2 * div) / 6

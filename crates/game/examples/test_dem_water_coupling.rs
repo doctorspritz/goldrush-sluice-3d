@@ -9,9 +9,9 @@ use glam::Vec3;
 use sim3d::clump::{ClumpShape3D, ClumpTemplate3D};
 
 const WATER_DENSITY: f32 = 1000.0; // kg/m³
-const CLUMP_RADIUS: f32 = 0.01;    // 1cm sphere
-const GRAVITY: f32 = -9.81;        // m/s²
-const DT: f32 = 1.0 / 120.0;       // 120 Hz timestep
+const CLUMP_RADIUS: f32 = 0.01; // 1cm sphere
+const GRAVITY: f32 = -9.81; // m/s²
+const DT: f32 = 1.0 / 120.0; // 120 Hz timestep
 
 fn main() {
     println!("\n{}", "=".repeat(70));
@@ -23,12 +23,7 @@ fn main() {
     let mut failed = 0;
 
     // Test 1: Buoyancy Force Direction
-    run_test(
-        "DEM Buoyancy",
-        test_dem_buoyancy,
-        &mut passed,
-        &mut failed,
-    );
+    run_test("DEM Buoyancy", test_dem_buoyancy, &mut passed, &mut failed);
 
     // Test 2: Drag Force Exponential Decay
     run_test(
@@ -105,7 +100,10 @@ fn test_dem_buoyancy() -> (bool, f32) {
         velocity_light.y += accel * DT;
     }
 
-    println!("  Final v_y:  {:.3} m/s (expected: positive)", velocity_light.y);
+    println!(
+        "  Final v_y:  {:.3} m/s (expected: positive)",
+        velocity_light.y
+    );
 
     // Test 1b: Heavy clump (should sink)
     let heavy_density = 2650.0; // kg/m³ (heavier than water, typical gravel)
@@ -125,7 +123,10 @@ fn test_dem_buoyancy() -> (bool, f32) {
         velocity_heavy.y += accel * DT;
     }
 
-    println!("  Final v_y:  {:.3} m/s (expected: negative)", velocity_heavy.y);
+    println!(
+        "  Final v_y:  {:.3} m/s (expected: negative)",
+        velocity_heavy.y
+    );
 
     // Check for NaN
     if velocity_light.is_nan() || velocity_heavy.is_nan() {
@@ -141,15 +142,27 @@ fn test_dem_buoyancy() -> (bool, f32) {
 
     if pass {
         println!("\nPASS: Buoyancy directions correct");
-        println!("  Light clump rises:  v_y = {:.3} m/s > 0.1", velocity_light.y);
-        println!("  Heavy clump sinks:  v_y = {:.3} m/s < -0.1", velocity_heavy.y);
+        println!(
+            "  Light clump rises:  v_y = {:.3} m/s > 0.1",
+            velocity_light.y
+        );
+        println!(
+            "  Heavy clump sinks:  v_y = {:.3} m/s < -0.1",
+            velocity_heavy.y
+        );
     } else {
         println!("\nFAIL: Buoyancy direction incorrect");
         if !light_correct {
-            println!("  Light clump should rise but v_y = {:.3}", velocity_light.y);
+            println!(
+                "  Light clump should rise but v_y = {:.3}",
+                velocity_light.y
+            );
         }
         if !heavy_correct {
-            println!("  Heavy clump should sink but v_y = {:.3}", velocity_heavy.y);
+            println!(
+                "  Heavy clump should sink but v_y = {:.3}",
+                velocity_heavy.y
+            );
         }
     }
 
@@ -210,7 +223,10 @@ fn test_dem_drag_force() -> (bool, f32) {
     let v_analytical = v_initial * (-drag_coeff * sim_time).exp();
     let v_measured = velocities.last().unwrap();
 
-    println!("Expected final velocity: {:.3} m/s (analytical)", v_analytical);
+    println!(
+        "Expected final velocity: {:.3} m/s (analytical)",
+        v_analytical
+    );
     println!("Measured final velocity: {:.3} m/s", v_measured);
 
     // Check for NaN
@@ -233,9 +249,15 @@ fn test_dem_drag_force() -> (bool, f32) {
     if pass {
         println!("\nPASS: Drag force produces exponential decay within 10%");
     } else {
-        println!("\nFAIL: Drag decay error = {:.2}% (exceeds 10% tolerance)", error);
+        println!(
+            "\nFAIL: Drag decay error = {:.2}% (exceeds 10% tolerance)",
+            error
+        );
         if !decayed {
-            println!("  Velocity didn't decay enough: {:.3} vs initial {:.3}", v_measured, v_initial);
+            println!(
+                "  Velocity didn't decay enough: {:.3} vs initial {:.3}",
+                v_measured, v_initial
+            );
         }
         if !no_reversal {
             println!("  Velocity reversed direction: {:.3}", v_measured);
@@ -269,10 +291,14 @@ fn test_dem_water_velocity_coupling() -> (bool, f32) {
     // Drag coefficient (stronger than test 2 for faster convergence)
     let drag_coeff = 5.0; // 1/s
 
-    println!("Water velocity: [{:.1}, {:.1}, {:.1}] m/s",
-             water_velocity.x, water_velocity.y, water_velocity.z);
-    println!("Initial clump velocity: [{:.1}, {:.1}, {:.1}] m/s",
-             clump_velocity.x, clump_velocity.y, clump_velocity.z);
+    println!(
+        "Water velocity: [{:.1}, {:.1}, {:.1}] m/s",
+        water_velocity.x, water_velocity.y, water_velocity.z
+    );
+    println!(
+        "Initial clump velocity: [{:.1}, {:.1}, {:.1}] m/s",
+        clump_velocity.x, clump_velocity.y, clump_velocity.z
+    );
     println!("Drag coefficient: {:.1} 1/s", drag_coeff);
 
     // Simulate 4 seconds to reach steady state
@@ -287,8 +313,10 @@ fn test_dem_water_velocity_coupling() -> (bool, f32) {
         velocities.push(clump_velocity.x);
     }
 
-    println!("Final clump velocity: [{:.3}, {:.3}, {:.3}] m/s",
-             clump_velocity.x, clump_velocity.y, clump_velocity.z);
+    println!(
+        "Final clump velocity: [{:.3}, {:.3}, {:.3}] m/s",
+        clump_velocity.x, clump_velocity.y, clump_velocity.z
+    );
 
     // Check for NaN
     if clump_velocity.is_nan() {
@@ -311,16 +339,20 @@ fn test_dem_water_velocity_coupling() -> (bool, f32) {
 
     if pass {
         println!("\nPASS: Clump entrained by water flow (error < 5%)");
-        println!("  Reached {:.1}% of water velocity",
-                 (clump_velocity.x / water_velocity.x) * 100.0);
+        println!(
+            "  Reached {:.1}% of water velocity",
+            (clump_velocity.x / water_velocity.x) * 100.0
+        );
     } else {
         println!("\nFAIL: Water velocity coupling error = {:.2}%", error);
         if !converged {
             println!("  Didn't converge to water velocity within 5%");
         }
         if !no_overshoot {
-            println!("  Velocity overshot target: {:.3} > {:.3}",
-                     clump_velocity.x, water_velocity.x);
+            println!(
+                "  Velocity overshot target: {:.3} > {:.3}",
+                clump_velocity.x, water_velocity.x
+            );
         }
     }
 

@@ -150,9 +150,15 @@ mod tests {
 
         let p = &particles.list[0];
         // X should NOT be clamped - outlet is open
-        assert!(p.position.x > 4.0, "Outlet should be open, particle should pass through");
+        assert!(
+            p.position.x > 4.0,
+            "Outlet should be open, particle should pass through"
+        );
         // Velocity should be preserved
-        assert!(p.velocity.x > 0.0, "Velocity should be preserved at open outlet");
+        assert!(
+            p.velocity.x > 0.0,
+            "Velocity should be preserved at open outlet"
+        );
     }
 
     #[test]
@@ -161,16 +167,25 @@ mod tests {
         let mut particles = Particles3D::new();
 
         // Particle inside domain
-        particles.list.push(Particle3D::new(Vec3::new(2.0, 2.0, 2.0), Vec3::ZERO));
+        particles
+            .list
+            .push(Particle3D::new(Vec3::new(2.0, 2.0, 2.0), Vec3::ZERO));
         // Particle exited through outlet
-        particles.list.push(Particle3D::new(Vec3::new(5.0, 2.0, 2.0), Vec3::ZERO));
+        particles
+            .list
+            .push(Particle3D::new(Vec3::new(5.0, 2.0, 2.0), Vec3::ZERO));
         // Particle exited through top
-        particles.list.push(Particle3D::new(Vec3::new(2.0, 5.0, 2.0), Vec3::ZERO));
+        particles
+            .list
+            .push(Particle3D::new(Vec3::new(2.0, 5.0, 2.0), Vec3::ZERO));
 
         let removed = remove_exited_particles(&mut particles, &grid);
 
         assert_eq!(removed, 2, "Should remove 2 exited particles");
         assert_eq!(particles.list.len(), 1, "Should have 1 particle remaining");
-        assert!((particles.list[0].position.x - 2.0).abs() < 0.01, "Remaining particle should be the inside one");
+        assert!(
+            (particles.list[0].position.x - 2.0).abs() < 0.01,
+            "Remaining particle should be the inside one"
+        );
     }
 }

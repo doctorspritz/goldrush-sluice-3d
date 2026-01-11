@@ -158,8 +158,7 @@ impl SluiceConfig {
     /// Calculate the floor height at a given X position (in cells).
     pub fn floor_height_at(&self, x: usize) -> usize {
         let t = x as f32 / (self.grid_width - 1).max(1) as f32;
-        let height = self.floor_height_left as f32 * (1.0 - t)
-            + self.floor_height_right as f32 * t;
+        let height = self.floor_height_left as f32 * (1.0 - t) + self.floor_height_right as f32 * t;
         height as usize
     }
 
@@ -177,7 +176,8 @@ impl SluiceConfig {
 
     /// Check if a cell position is in the exit opening.
     pub fn is_exit(&self, i: usize, j: usize, k: usize) -> bool {
-        let exit_start_z = ((1.0 - self.exit_width_fraction) / 2.0 * self.grid_depth as f32) as usize;
+        let exit_start_z =
+            ((1.0 - self.exit_width_fraction) / 2.0 * self.grid_depth as f32) as usize;
         let exit_end_z = self.grid_depth - exit_start_z;
         let floor_j = self.floor_height_at(i);
 
@@ -329,7 +329,14 @@ impl SluiceGeometryBuilder {
                             SluiceVertex::new([x0, y1, z1], color_side),
                             SluiceVertex::new([x0, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     // +X face (right)
@@ -341,7 +348,14 @@ impl SluiceGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x1, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // -Y face (bottom)
@@ -353,7 +367,14 @@ impl SluiceGeometryBuilder {
                             SluiceVertex::new([x1, y0, z1], color_bottom),
                             SluiceVertex::new([x0, y0, z1], color_bottom),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // +Y face (top) - most visible
@@ -365,7 +386,14 @@ impl SluiceGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_top),
                             SluiceVertex::new([x0, y1, z1], color_top),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     // -Z face (front)
@@ -377,7 +405,14 @@ impl SluiceGeometryBuilder {
                             SluiceVertex::new([x1, y1, z0], color_side),
                             SluiceVertex::new([x0, y1, z0], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // +Z face (back)
@@ -389,7 +424,14 @@ impl SluiceGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x0, y1, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
                 }
             }
@@ -431,17 +473,21 @@ impl SluiceGeometryBuilder {
             return;
         }
 
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Sluice Vertex Buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.vertex_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Sluice Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
 
-        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Sluice Index Buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.index_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Sluice Index Buffer"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
     }
 
     /// Update existing GPU buffers, or create new ones if needed.
@@ -581,7 +627,11 @@ mod tests {
 
         assert!(!builder.vertices().is_empty(), "Should have vertices");
         assert!(!builder.indices().is_empty(), "Should have indices");
-        assert_eq!(builder.indices().len() % 3, 0, "Indices should be triangles");
+        assert_eq!(
+            builder.indices().len() % 3,
+            0,
+            "Indices should be triangles"
+        );
     }
 
     #[test]
@@ -595,7 +645,11 @@ mod tests {
 
         let slope = config.slope_degrees();
         // 6 cell drop over 160 cells ≈ 2.1°
-        assert!(slope > 2.0 && slope < 2.5, "Slope should be around 2°, got {}", slope);
+        assert!(
+            slope > 2.0 && slope < 2.5,
+            "Slope should be around 2°, got {}",
+            slope
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 // Validates collision detection correctness and O(n) performance
 
 use glam::Vec3;
-use sim3d::clump::{ClumpTemplate3D, ClumpShape3D, ClusterSimulation3D};
+use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D};
 use std::time::Instant;
 
 const PARTICLE_RADIUS: f32 = 0.01; // 1cm gravel
@@ -22,11 +22,7 @@ fn test_dem_spatial_hash_correctness() {
     sim.gravity = Vec3::ZERO; // Disable gravity to prevent movement
 
     // Generate tetrahedral clump template
-    let template = ClumpTemplate3D::generate(
-        ClumpShape3D::Tetra,
-        PARTICLE_RADIUS,
-        PARTICLE_MASS,
-    );
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
     let template_idx = sim.add_template(template);
     let particle_radius = sim.templates[template_idx].particle_radius;
 
@@ -77,7 +73,11 @@ fn test_dem_spatial_hash_correctness() {
                     assert!(
                         sim.has_contact(i, j),
                         "Missing contact between clumps {} and {} (x-neighbors at [{},{},{}])",
-                        i, j, x, y, z
+                        i,
+                        j,
+                        x,
+                        y,
+                        z
                     );
                 }
 
@@ -87,7 +87,11 @@ fn test_dem_spatial_hash_correctness() {
                     assert!(
                         sim.has_contact(i, j),
                         "Missing contact between clumps {} and {} (y-neighbors at [{},{},{}])",
-                        i, j, x, y, z
+                        i,
+                        j,
+                        x,
+                        y,
+                        z
                     );
                 }
 
@@ -97,7 +101,11 @@ fn test_dem_spatial_hash_correctness() {
                     assert!(
                         sim.has_contact(i, j),
                         "Missing contact between clumps {} and {} (z-neighbors at [{},{},{}])",
-                        i, j, x, y, z
+                        i,
+                        j,
+                        x,
+                        y,
+                        z
                     );
                 }
             }
@@ -121,7 +129,9 @@ fn test_dem_sparse_distribution() {
     assert!(
         ratio >= 1.8 && ratio <= 2.2,
         "Expected linear scaling ratio 1.8-2.2, got {}. times: 1000={:.3}ms, 2000={:.3}ms",
-        ratio, time_1000 * 1000.0, time_2000 * 1000.0
+        ratio,
+        time_1000 * 1000.0,
+        time_2000 * 1000.0
     );
 }
 
@@ -133,11 +143,7 @@ fn measure_sparse_step(num_clumps: usize) -> f64 {
     );
     sim.gravity = Vec3::ZERO;
 
-    let template = ClumpTemplate3D::generate(
-        ClumpShape3D::Tetra,
-        PARTICLE_RADIUS,
-        PARTICLE_MASS,
-    );
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
     let template_idx = sim.add_template(template);
     let template_ref = &sim.templates[template_idx];
 
@@ -186,17 +192,11 @@ fn measure_sparse_step(num_clumps: usize) -> f64 {
 /// Verifies clumps are placed in correct spatial hash cells
 #[test]
 fn test_spatial_hash_cell_assignment() {
-    let mut sim = ClusterSimulation3D::new(
-        Vec3::new(0.0, 0.0, 0.0),
-        Vec3::new(100.0, 100.0, 100.0),
-    );
+    let mut sim =
+        ClusterSimulation3D::new(Vec3::new(0.0, 0.0, 0.0), Vec3::new(100.0, 100.0, 100.0));
     sim.gravity = Vec3::ZERO;
 
-    let template = ClumpTemplate3D::generate(
-        ClumpShape3D::Tetra,
-        PARTICLE_RADIUS,
-        PARTICLE_MASS,
-    );
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
     let template_idx = sim.add_template(template);
     let bounding_radius = sim.templates[template_idx].bounding_radius;
 

@@ -2,7 +2,7 @@
 // Validates collision detection and response for clump-floor, clump-wall, and clump-clump interactions
 
 use glam::Vec3;
-use sim3d::clump::{ClumpTemplate3D, ClumpShape3D, ClusterSimulation3D};
+use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D};
 
 const PARTICLE_RADIUS: f32 = 0.01; // 1cm gravel
 const PARTICLE_MASS: f32 = 1.0;
@@ -25,11 +25,7 @@ fn test_dem_floor_collision() {
     sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
 
     // Create tetrahedral clump
-    let template = ClumpTemplate3D::generate(
-        ClumpShape3D::Tetra,
-        PARTICLE_RADIUS,
-        PARTICLE_MASS,
-    );
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
     let template_idx = sim.add_template(template);
     let particle_radius = sim.templates[template_idx].particle_radius;
 
@@ -58,7 +54,10 @@ fn test_dem_floor_collision() {
         // Check if clump velocity changed sign (bounced)
         if !contacted_floor && y_pos < spawn_y * 0.5 && clump.velocity.y > 0.0 {
             contacted_floor = true;
-            println!("Floor contact detected at step {}, y={:.6}, v_y={:.6}", step_count, y_pos, clump.velocity.y);
+            println!(
+                "Floor contact detected at step {}, y={:.6}, v_y={:.6}",
+                step_count, y_pos, clump.velocity.y
+            );
             break;
         }
 
@@ -66,10 +65,20 @@ fn test_dem_floor_collision() {
     }
 
     if !contacted_floor {
-        println!("DEBUG: min_y_seen={:.6}, particle_radius={:.6}", min_y_seen, particle_radius);
-        println!("DEBUG: final position={:?}, velocity={:?}", sim.clumps[clump_idx].position, sim.clumps[clump_idx].velocity);
+        println!(
+            "DEBUG: min_y_seen={:.6}, particle_radius={:.6}",
+            min_y_seen, particle_radius
+        );
+        println!(
+            "DEBUG: final position={:?}, velocity={:?}",
+            sim.clumps[clump_idx].position, sim.clumps[clump_idx].velocity
+        );
     }
-    assert!(contacted_floor, "Clump never contacted floor after {} steps", max_steps);
+    assert!(
+        contacted_floor,
+        "Clump never contacted floor after {} steps",
+        max_steps
+    );
 
     // Track maximum bounce height after first contact
     let mut max_bounce_height = 0.0;
@@ -91,13 +100,16 @@ fn test_dem_floor_collision() {
 
     // Relaxed tolerance: DEM contact damping causes additional energy loss beyond restitution
     // We verify bounce is in reasonable range (20-100% of theoretical e²)
-    let min_bounce = expected_bounce * 0.2;  // At least 20% of theoretical
+    let min_bounce = expected_bounce * 0.2; // At least 20% of theoretical
     let max_tol_bounce = expected_bounce * 1.5; // Allow up to 50% above (unlikely but safe)
 
     println!("Drop height: {:.6}m", drop_height);
     println!("Expected bounce (e²): {:.6}m", expected_bounce);
     println!("Measured bounce: {:.6}m", max_bounce_height);
-    println!("Acceptable range: {:.6}m to {:.6}m", min_bounce, max_tol_bounce);
+    println!(
+        "Acceptable range: {:.6}m to {:.6}m",
+        min_bounce, max_tol_bounce
+    );
 
     assert!(
         max_bounce_height >= min_bounce && max_bounce_height <= max_tol_bounce,
@@ -115,22 +127,14 @@ fn test_dem_wall_collision() {
     let mut sim = create_test_sim(10.0);
     sim.gravity = Vec3::ZERO; // No gravity for clean horizontal collision
 
-    let template = ClumpTemplate3D::generate(
-        ClumpShape3D::Tetra,
-        PARTICLE_RADIUS,
-        PARTICLE_MASS,
-    );
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
     let template_idx = sim.add_template(template);
 
     // Launch clump toward wall at x=bounds_max with higher velocity
     // Higher velocity ensures bounce is detectable above damping
     let initial_velocity = Vec3::new(5.0, 0.0, 0.0);
     let spawn_x = 5.0; // Mid-domain
-    let clump_idx = sim.spawn(
-        template_idx,
-        Vec3::new(spawn_x, 5.0, 5.0),
-        initial_velocity,
-    );
+    let clump_idx = sim.spawn(template_idx, Vec3::new(spawn_x, 5.0, 5.0), initial_velocity);
 
     // Run until wall contact
     let mut pre_contact_vel = Vec3::ZERO;
@@ -150,7 +154,10 @@ fn test_dem_wall_collision() {
         // Check if velocity reversed (bounced off wall)
         if !contacted && x_pos > spawn_x + 1.0 && clump.velocity.x < 0.0 {
             contacted = true;
-            println!("Wall contact detected at step {}, x={:.6}, v_x={:.6}", step, x_pos, clump.velocity.x);
+            println!(
+                "Wall contact detected at step {}, x={:.6}, v_x={:.6}",
+                step, x_pos, clump.velocity.x
+            );
         }
 
         sim.step(DT);
@@ -164,8 +171,14 @@ fn test_dem_wall_collision() {
     }
 
     if !contacted {
-        println!("DEBUG: max_x_seen={:.6}, bounds_max.x={:.6}", max_x_seen, sim.bounds_max.x);
-        println!("DEBUG: final pos={:?}, vel={:?}", sim.clumps[clump_idx].position, sim.clumps[clump_idx].velocity);
+        println!(
+            "DEBUG: max_x_seen={:.6}, bounds_max.x={:.6}",
+            max_x_seen, sim.bounds_max.x
+        );
+        println!(
+            "DEBUG: final pos={:?}, vel={:?}",
+            sim.clumps[clump_idx].position, sim.clumps[clump_idx].velocity
+        );
     }
     assert!(contacted, "Clump never contacted wall");
 
@@ -203,11 +216,7 @@ fn test_dem_clump_collision() {
     let mut sim = create_test_sim(10.0);
     sim.gravity = Vec3::ZERO; // No gravity for clean collision
 
-    let template = ClumpTemplate3D::generate(
-        ClumpShape3D::Tetra,
-        PARTICLE_RADIUS,
-        PARTICLE_MASS,
-    );
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
     let template_idx = sim.add_template(template);
 
     // Two clumps approaching head-on
@@ -281,8 +290,16 @@ fn test_dem_clump_collision() {
     );
 
     // Verify velocities reversed (negative of initial, with some damping)
-    assert!(vel_a.x < 0.0, "Clump A did not reverse direction (v_x={:.4})", vel_a.x);
-    assert!(vel_b.x > 0.0, "Clump B did not reverse direction (v_x={:.4})", vel_b.x);
+    assert!(
+        vel_a.x < 0.0,
+        "Clump A did not reverse direction (v_x={:.4})",
+        vel_a.x
+    );
+    assert!(
+        vel_b.x > 0.0,
+        "Clump B did not reverse direction (v_x={:.4})",
+        vel_b.x
+    );
 }
 
 /// Test 4: No Penetration - Many clumps settle in box, verify no floor tunneling
@@ -292,11 +309,7 @@ fn test_dem_collision_no_penetration() {
     let mut sim = create_test_sim(10.0);
     sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
 
-    let template = ClumpTemplate3D::generate(
-        ClumpShape3D::Tetra,
-        PARTICLE_RADIUS,
-        PARTICLE_MASS,
-    );
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
     let template_idx = sim.add_template(template);
     let particle_radius = sim.templates[template_idx].particle_radius;
 
@@ -328,7 +341,11 @@ fn test_dem_collision_no_penetration() {
 
     // Run for 5 seconds to allow settling (600 steps at 120Hz)
     let settling_steps = 600;
-    println!("Settling {} clumps for {} steps...", clump_indices.len(), settling_steps);
+    println!(
+        "Settling {} clumps for {} steps...",
+        clump_indices.len(),
+        settling_steps
+    );
 
     for step in 0..settling_steps {
         sim.step(DT);
@@ -358,7 +375,10 @@ fn test_dem_collision_no_penetration() {
         // Clump center must be at least particle_radius above floor
         if y_pos < particle_radius {
             penetration_count += 1;
-            println!("PENETRATION: Clump {} at y={:.6} (below radius {:.6})", idx, y_pos, particle_radius);
+            println!(
+                "PENETRATION: Clump {} at y={:.6} (below radius {:.6})",
+                idx, y_pos, particle_radius
+            );
         }
     }
 
@@ -368,11 +388,9 @@ fn test_dem_collision_no_penetration() {
     println!("Penetrations: {}", penetration_count);
 
     assert_eq!(
-        penetration_count,
-        0,
+        penetration_count, 0,
         "Found {} clumps penetrating floor (y < {})",
-        penetration_count,
-        particle_radius
+        penetration_count, particle_radius
     );
 
     // Verify clumps settled reasonably (not flying off)

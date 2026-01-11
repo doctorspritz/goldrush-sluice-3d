@@ -207,12 +207,7 @@ impl WaterHeightfieldRenderer {
     ///
     /// # Returns
     /// Number of vertices generated
-    pub fn build_mesh<I, F>(
-        &mut self,
-        particles: I,
-        time: f32,
-        floor_height_fn: F,
-    ) -> usize
+    pub fn build_mesh<I, F>(&mut self, particles: I, time: f32, floor_height_fn: F) -> usize
     where
         I: Iterator<Item = ([f32; 3], [f32; 3])>,
         F: Fn(f32) -> f32,
@@ -386,7 +381,8 @@ impl WaterHeightfieldRenderer {
             let old_h = self.heightfield_smoothed[idx];
 
             if new_h.is_finite() && old_h.is_finite() {
-                smoothed[idx] = old_h * (1.0 - config.temporal_blend) + new_h * config.temporal_blend;
+                smoothed[idx] =
+                    old_h * (1.0 - config.temporal_blend) + new_h * config.temporal_blend;
             }
             self.heightfield_smoothed[idx] = smoothed[idx];
 
@@ -456,17 +452,17 @@ impl WaterHeightfieldRenderer {
             let idx11 = (k + 1) * width + i + 1;
 
             let vx = self.vel_x[idx00] * (1.0 - fx) * (1.0 - fz)
-                   + self.vel_x[idx10] * fx * (1.0 - fz)
-                   + self.vel_x[idx01] * (1.0 - fx) * fz
-                   + self.vel_x[idx11] * fx * fz;
+                + self.vel_x[idx10] * fx * (1.0 - fz)
+                + self.vel_x[idx01] * (1.0 - fx) * fz
+                + self.vel_x[idx11] * fx * fz;
             let vz = self.vel_z[idx00] * (1.0 - fx) * (1.0 - fz)
-                   + self.vel_z[idx10] * fx * (1.0 - fz)
-                   + self.vel_z[idx01] * (1.0 - fx) * fz
-                   + self.vel_z[idx11] * fx * fz;
+                + self.vel_z[idx10] * fx * (1.0 - fz)
+                + self.vel_z[idx01] * (1.0 - fx) * fz
+                + self.vel_z[idx11] * fx * fz;
             let vy = self.vel_y[idx00] * (1.0 - fx) * (1.0 - fz)
-                   + self.vel_y[idx10] * fx * (1.0 - fz)
-                   + self.vel_y[idx01] * (1.0 - fx) * fz
-                   + self.vel_y[idx11] * fx * fz;
+                + self.vel_y[idx10] * fx * (1.0 - fz)
+                + self.vel_y[idx01] * (1.0 - fx) * fz
+                + self.vel_y[idx11] * fx * fz;
 
             (vx, vz, vy)
         };
@@ -485,13 +481,16 @@ impl WaterHeightfieldRenderer {
             let cross_dist = -dir_z * x + dir_x * z;
 
             let main_amp = config.base_wave_amplitude + speed * config.velocity_wave_scale;
-            let main_phase = flow_dist * config.wave_freq - time * (2.0 + speed * config.wave_speed_mult);
+            let main_phase =
+                flow_dist * config.wave_freq - time * (2.0 + speed * config.wave_speed_mult);
             let main_wave = main_phase.sin() * main_amp;
 
             let chop_amp = speed * config.chop_scale;
             let chop1 = (flow_dist * config.chop_freq - time * speed * 15.0).sin() * chop_amp;
             let chop2 = (cross_dist * config.chop_freq * 0.8 + time * 6.0).sin() * chop_amp * 0.5;
-            let chop3 = ((flow_dist + cross_dist) * config.chop_freq * 0.6 - time * 10.0).sin() * chop_amp * 0.3;
+            let chop3 = ((flow_dist + cross_dist) * config.chop_freq * 0.6 - time * 10.0).sin()
+                * chop_amp
+                * 0.3;
 
             let cross_amp = main_amp * 0.4;
             let cross_wave = (cross_dist * config.wave_freq * 0.7 + time * 2.5).sin() * cross_amp;
@@ -529,7 +528,11 @@ impl WaterHeightfieldRenderer {
                     }
                 }
             }
-            if count > 0 { Some(sum / count as f32) } else { None }
+            if count > 0 {
+                Some(sum / count as f32)
+            } else {
+                None
+            }
         };
 
         let calc_color = |i: usize, k: usize, center_h: f32, speed: f32| -> [f32; 4] {
@@ -539,13 +542,18 @@ impl WaterHeightfieldRenderer {
 
             let cell_presence = get_presence(i as i32, k as i32);
 
-            let base_r = config.shallow_color[0] * (1.0 - depth_factor) + config.deep_color[0] * depth_factor;
-            let base_g = config.shallow_color[1] * (1.0 - depth_factor) + config.deep_color[1] * depth_factor;
-            let base_b = config.shallow_color[2] * (1.0 - depth_factor) + config.deep_color[2] * depth_factor;
-            let base_a = config.shallow_color[3] * (1.0 - depth_factor) + config.deep_color[3] * depth_factor;
+            let base_r = config.shallow_color[0] * (1.0 - depth_factor)
+                + config.deep_color[0] * depth_factor;
+            let base_g = config.shallow_color[1] * (1.0 - depth_factor)
+                + config.deep_color[1] * depth_factor;
+            let base_b = config.shallow_color[2] * (1.0 - depth_factor)
+                + config.deep_color[2] * depth_factor;
+            let base_a = config.shallow_color[3] * (1.0 - depth_factor)
+                + config.deep_color[3] * depth_factor;
 
             let foam = (speed / config.foam_full_speed).min(1.0);
-            let alpha = (base_a * (1.0 - foam * 0.5) + config.foam_color[3] * foam * 0.5) * cell_presence;
+            let alpha =
+                (base_a * (1.0 - foam * 0.5) + config.foam_color[3] * foam * 0.5) * cell_presence;
 
             [
                 base_r * (1.0 - foam) + config.foam_color[0] * foam,
@@ -595,18 +603,46 @@ impl WaterHeightfieldRenderer {
                 let y1m = get_height_at(x1, zm, (h10 + h11) * 0.5);
                 let ymm = get_height_at(xm, zm, h_center);
 
-                let cell_speed = (self.vel_x[idx] * self.vel_x[idx] + self.vel_z[idx] * self.vel_z[idx]).sqrt();
+                let cell_speed =
+                    (self.vel_x[idx] * self.vel_x[idx] + self.vel_z[idx] * self.vel_z[idx]).sqrt();
                 let color = calc_color(i, k, center_h, cell_speed);
 
-                let v00 = WaterVertex { position: [x0, y00, z0], color };
-                let v10 = WaterVertex { position: [x1, y10, z0], color };
-                let v01 = WaterVertex { position: [x0, y01, z1], color };
-                let v11 = WaterVertex { position: [x1, y11, z1], color };
-                let vm0 = WaterVertex { position: [xm, ym0, z0], color };
-                let vm1 = WaterVertex { position: [xm, ym1, z1], color };
-                let v0m = WaterVertex { position: [x0, y0m, zm], color };
-                let v1m = WaterVertex { position: [x1, y1m, zm], color };
-                let vmm = WaterVertex { position: [xm, ymm, zm], color };
+                let v00 = WaterVertex {
+                    position: [x0, y00, z0],
+                    color,
+                };
+                let v10 = WaterVertex {
+                    position: [x1, y10, z0],
+                    color,
+                };
+                let v01 = WaterVertex {
+                    position: [x0, y01, z1],
+                    color,
+                };
+                let v11 = WaterVertex {
+                    position: [x1, y11, z1],
+                    color,
+                };
+                let vm0 = WaterVertex {
+                    position: [xm, ym0, z0],
+                    color,
+                };
+                let vm1 = WaterVertex {
+                    position: [xm, ym1, z1],
+                    color,
+                };
+                let v0m = WaterVertex {
+                    position: [x0, y0m, zm],
+                    color,
+                };
+                let v1m = WaterVertex {
+                    position: [x1, y1m, zm],
+                    color,
+                };
+                let vmm = WaterVertex {
+                    position: [xm, ymm, zm],
+                    color,
+                };
 
                 // Generate triangles based on marching squares case
                 match case {
@@ -614,16 +650,36 @@ impl WaterHeightfieldRenderer {
                     2 => self.vertices.extend_from_slice(&[vm0, v10, v1m]),
                     4 => self.vertices.extend_from_slice(&[v0m, vm1, v01]),
                     8 => self.vertices.extend_from_slice(&[v1m, v11, vm1]),
-                    3 => self.vertices.extend_from_slice(&[v00, v10, v1m, v00, v1m, v0m]),
-                    5 => self.vertices.extend_from_slice(&[v00, vm0, vm1, v00, vm1, v01]),
-                    10 => self.vertices.extend_from_slice(&[vm0, v10, v11, vm0, v11, vm1]),
-                    12 => self.vertices.extend_from_slice(&[v0m, v1m, v11, v0m, v11, v01]),
-                    6 => self.vertices.extend_from_slice(&[vm0, v10, v1m, v1m, vmm, vm0, v0m, vm1, v01, v0m, vmm, vm1]),
-                    9 => self.vertices.extend_from_slice(&[v00, vm0, v0m, vm0, vmm, v0m, v1m, v11, vm1, vmm, v1m, vm1]),
-                    7 => self.vertices.extend_from_slice(&[v00, v10, v1m, v00, v1m, vmm, v00, vmm, vm1, v00, vm1, v01]),
-                    11 => self.vertices.extend_from_slice(&[v00, v10, v11, v00, v11, vm1, v00, vm1, vmm, v00, vmm, v0m]),
-                    13 => self.vertices.extend_from_slice(&[v00, vm0, vmm, v00, vmm, v1m, v00, v1m, v11, v00, v11, v01]),
-                    14 => self.vertices.extend_from_slice(&[vm0, v10, v11, vm0, v11, v01, vm0, v01, v0m, vm0, v0m, vmm]),
+                    3 => self
+                        .vertices
+                        .extend_from_slice(&[v00, v10, v1m, v00, v1m, v0m]),
+                    5 => self
+                        .vertices
+                        .extend_from_slice(&[v00, vm0, vm1, v00, vm1, v01]),
+                    10 => self
+                        .vertices
+                        .extend_from_slice(&[vm0, v10, v11, vm0, v11, vm1]),
+                    12 => self
+                        .vertices
+                        .extend_from_slice(&[v0m, v1m, v11, v0m, v11, v01]),
+                    6 => self.vertices.extend_from_slice(&[
+                        vm0, v10, v1m, v1m, vmm, vm0, v0m, vm1, v01, v0m, vmm, vm1,
+                    ]),
+                    9 => self.vertices.extend_from_slice(&[
+                        v00, vm0, v0m, vm0, vmm, v0m, v1m, v11, vm1, vmm, v1m, vm1,
+                    ]),
+                    7 => self.vertices.extend_from_slice(&[
+                        v00, v10, v1m, v00, v1m, vmm, v00, vmm, vm1, v00, vm1, v01,
+                    ]),
+                    11 => self.vertices.extend_from_slice(&[
+                        v00, v10, v11, v00, v11, vm1, v00, vm1, vmm, v00, vmm, v0m,
+                    ]),
+                    13 => self.vertices.extend_from_slice(&[
+                        v00, vm0, vmm, v00, vmm, v1m, v00, v1m, v11, v00, v11, v01,
+                    ]),
+                    14 => self.vertices.extend_from_slice(&[
+                        vm0, v10, v11, vm0, v11, v01, vm0, v01, v0m, vm0, v0m, vmm,
+                    ]),
                     15 => {
                         // Full cell - use subdivision
                         let n = config.subdivisions;
@@ -643,18 +699,26 @@ impl WaterHeightfieldRenderer {
                                 let sxm = (sx0 + sx1) * 0.5;
                                 let szm = (sz0 + sz1) * 0.5;
 
-                                let bh00 = h00 * (1.0 - u0) * (1.0 - v0) + h10 * u0 * (1.0 - v0)
-                                         + h01 * (1.0 - u0) * v0 + h11 * u0 * v0;
-                                let bh10 = h00 * (1.0 - u1) * (1.0 - v0) + h10 * u1 * (1.0 - v0)
-                                         + h01 * (1.0 - u1) * v0 + h11 * u1 * v0;
-                                let bh01 = h00 * (1.0 - u0) * (1.0 - v1) + h10 * u0 * (1.0 - v1)
-                                         + h01 * (1.0 - u0) * v1 + h11 * u0 * v1;
-                                let bh11 = h00 * (1.0 - u1) * (1.0 - v1) + h10 * u1 * (1.0 - v1)
-                                         + h01 * (1.0 - u1) * v1 + h11 * u1 * v1;
+                                let bh00 = h00 * (1.0 - u0) * (1.0 - v0)
+                                    + h10 * u0 * (1.0 - v0)
+                                    + h01 * (1.0 - u0) * v0
+                                    + h11 * u0 * v0;
+                                let bh10 = h00 * (1.0 - u1) * (1.0 - v0)
+                                    + h10 * u1 * (1.0 - v0)
+                                    + h01 * (1.0 - u1) * v0
+                                    + h11 * u1 * v0;
+                                let bh01 = h00 * (1.0 - u0) * (1.0 - v1)
+                                    + h10 * u0 * (1.0 - v1)
+                                    + h01 * (1.0 - u0) * v1
+                                    + h11 * u0 * v1;
+                                let bh11 = h00 * (1.0 - u1) * (1.0 - v1)
+                                    + h10 * u1 * (1.0 - v1)
+                                    + h01 * (1.0 - u1) * v1
+                                    + h11 * u1 * v1;
                                 let bhm = h00 * (1.0 - (u0 + u1) * 0.5) * (1.0 - (v0 + v1) * 0.5)
-                                        + h10 * (u0 + u1) * 0.5 * (1.0 - (v0 + v1) * 0.5)
-                                        + h01 * (1.0 - (u0 + u1) * 0.5) * (v0 + v1) * 0.5
-                                        + h11 * (u0 + u1) * 0.5 * (v0 + v1) * 0.5;
+                                    + h10 * (u0 + u1) * 0.5 * (1.0 - (v0 + v1) * 0.5)
+                                    + h01 * (1.0 - (u0 + u1) * 0.5) * (v0 + v1) * 0.5
+                                    + h11 * (u0 + u1) * 0.5 * (v0 + v1) * 0.5;
 
                                 let sy00 = get_height_at(sx0, sz0, bh00);
                                 let sy10 = get_height_at(sx1, sz0, bh10);
@@ -666,12 +730,30 @@ impl WaterHeightfieldRenderer {
                                 let sub_color = calc_color(i, k, bhm, sub_speed);
 
                                 self.vertices.extend_from_slice(&[
-                                    WaterVertex { position: [sx0, sy00, sz0], color: sub_color },
-                                    WaterVertex { position: [sx1, sy10, sz0], color: sub_color },
-                                    WaterVertex { position: [sx1, sy11, sz1], color: sub_color },
-                                    WaterVertex { position: [sx0, sy00, sz0], color: sub_color },
-                                    WaterVertex { position: [sx1, sy11, sz1], color: sub_color },
-                                    WaterVertex { position: [sx0, sy01, sz1], color: sub_color },
+                                    WaterVertex {
+                                        position: [sx0, sy00, sz0],
+                                        color: sub_color,
+                                    },
+                                    WaterVertex {
+                                        position: [sx1, sy10, sz0],
+                                        color: sub_color,
+                                    },
+                                    WaterVertex {
+                                        position: [sx1, sy11, sz1],
+                                        color: sub_color,
+                                    },
+                                    WaterVertex {
+                                        position: [sx0, sy00, sz0],
+                                        color: sub_color,
+                                    },
+                                    WaterVertex {
+                                        position: [sx1, sy11, sz1],
+                                        color: sub_color,
+                                    },
+                                    WaterVertex {
+                                        position: [sx0, sy01, sz1],
+                                        color: sub_color,
+                                    },
                                 ]);
                             }
                         }
@@ -727,7 +809,11 @@ impl WaterHeightfieldRenderer {
                     }
                 }
             }
-            if count > 0 { Some(sum / count as f32) } else { None }
+            if count > 0 {
+                Some(sum / count as f32)
+            } else {
+                None
+            }
         };
 
         for k in 0..depth {
@@ -749,20 +835,26 @@ impl WaterHeightfieldRenderer {
                 let z0 = k as f32 * cell_size;
                 let z1 = (k + 1) as f32 * cell_size;
 
-                let cell_speed = (self.vel_x[idx] * self.vel_x[idx] + self.vel_z[idx] * self.vel_z[idx]).sqrt();
+                let cell_speed =
+                    (self.vel_x[idx] * self.vel_x[idx] + self.vel_z[idx] * self.vel_z[idx]).sqrt();
                 let cell_presence = get_presence(i as i32, k as i32);
 
                 let floor_height = floor_height_fn(x0);
                 let water_depth = (center_h - floor_height).max(0.0);
                 let depth_factor = (water_depth / (config.depth_color_cells * cell_size)).min(1.0);
 
-                let base_r = config.shallow_color[0] * (1.0 - depth_factor) + config.deep_color[0] * depth_factor;
-                let base_g = config.shallow_color[1] * (1.0 - depth_factor) + config.deep_color[1] * depth_factor;
-                let base_b = config.shallow_color[2] * (1.0 - depth_factor) + config.deep_color[2] * depth_factor;
-                let base_a = config.shallow_color[3] * (1.0 - depth_factor) + config.deep_color[3] * depth_factor;
+                let base_r = config.shallow_color[0] * (1.0 - depth_factor)
+                    + config.deep_color[0] * depth_factor;
+                let base_g = config.shallow_color[1] * (1.0 - depth_factor)
+                    + config.deep_color[1] * depth_factor;
+                let base_b = config.shallow_color[2] * (1.0 - depth_factor)
+                    + config.deep_color[2] * depth_factor;
+                let base_a = config.shallow_color[3] * (1.0 - depth_factor)
+                    + config.deep_color[3] * depth_factor;
 
                 let foam = (cell_speed / config.foam_full_speed).min(1.0);
-                let alpha = (base_a * (1.0 - foam * 0.5) + config.foam_color[3] * foam * 0.5) * cell_presence;
+                let alpha = (base_a * (1.0 - foam * 0.5) + config.foam_color[3] * foam * 0.5)
+                    * cell_presence;
 
                 let side_color = [
                     (base_r * (1.0 - foam) + config.foam_color[0] * foam) * 0.8,
@@ -777,48 +869,120 @@ impl WaterHeightfieldRenderer {
                 // Front edge
                 if k == 0 || !smoothed[(k - 1) * width + i].is_finite() {
                     self.vertices.extend_from_slice(&[
-                        WaterVertex { position: [x0, floor_y0, z0], color: side_color },
-                        WaterVertex { position: [x1, floor_y1, z0], color: side_color },
-                        WaterVertex { position: [x1, h10, z0], color: side_color },
-                        WaterVertex { position: [x0, floor_y0, z0], color: side_color },
-                        WaterVertex { position: [x1, h10, z0], color: side_color },
-                        WaterVertex { position: [x0, h00, z0], color: side_color },
+                        WaterVertex {
+                            position: [x0, floor_y0, z0],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x1, floor_y1, z0],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x1, h10, z0],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x0, floor_y0, z0],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x1, h10, z0],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x0, h00, z0],
+                            color: side_color,
+                        },
                     ]);
                 }
 
                 // Back edge
                 if k == depth - 1 || !smoothed[(k + 1) * width + i].is_finite() {
                     self.vertices.extend_from_slice(&[
-                        WaterVertex { position: [x0, floor_y0, z1], color: side_color },
-                        WaterVertex { position: [x0, h01, z1], color: side_color },
-                        WaterVertex { position: [x1, h11, z1], color: side_color },
-                        WaterVertex { position: [x0, floor_y0, z1], color: side_color },
-                        WaterVertex { position: [x1, h11, z1], color: side_color },
-                        WaterVertex { position: [x1, floor_y1, z1], color: side_color },
+                        WaterVertex {
+                            position: [x0, floor_y0, z1],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x0, h01, z1],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x1, h11, z1],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x0, floor_y0, z1],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x1, h11, z1],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x1, floor_y1, z1],
+                            color: side_color,
+                        },
                     ]);
                 }
 
                 // Left edge
                 if i == 0 || !smoothed[k * width + i - 1].is_finite() {
                     self.vertices.extend_from_slice(&[
-                        WaterVertex { position: [x0, floor_y0, z0], color: side_color },
-                        WaterVertex { position: [x0, h00, z0], color: side_color },
-                        WaterVertex { position: [x0, h01, z1], color: side_color },
-                        WaterVertex { position: [x0, floor_y0, z0], color: side_color },
-                        WaterVertex { position: [x0, h01, z1], color: side_color },
-                        WaterVertex { position: [x0, floor_y0, z1], color: side_color },
+                        WaterVertex {
+                            position: [x0, floor_y0, z0],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x0, h00, z0],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x0, h01, z1],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x0, floor_y0, z0],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x0, h01, z1],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x0, floor_y0, z1],
+                            color: side_color,
+                        },
                     ]);
                 }
 
                 // Right edge
                 if i == width - 1 || !smoothed[k * width + i + 1].is_finite() {
                     self.vertices.extend_from_slice(&[
-                        WaterVertex { position: [x1, floor_y1, z0], color: side_color },
-                        WaterVertex { position: [x1, floor_y1, z1], color: side_color },
-                        WaterVertex { position: [x1, h11, z1], color: side_color },
-                        WaterVertex { position: [x1, floor_y1, z0], color: side_color },
-                        WaterVertex { position: [x1, h11, z1], color: side_color },
-                        WaterVertex { position: [x1, h10, z0], color: side_color },
+                        WaterVertex {
+                            position: [x1, floor_y1, z0],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x1, floor_y1, z1],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x1, h11, z1],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x1, floor_y1, z0],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x1, h11, z1],
+                            color: side_color,
+                        },
+                        WaterVertex {
+                            position: [x1, h10, z0],
+                            color: side_color,
+                        },
                     ]);
                 }
             }

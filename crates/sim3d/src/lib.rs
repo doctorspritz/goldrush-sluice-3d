@@ -101,7 +101,8 @@ impl FlipSimulation3D {
 
     /// Spawn a sediment particle with given density.
     pub fn spawn_sediment(&mut self, position: Vec3, velocity: Vec3, density: f32) {
-        self.particles.spawn_with_density(position, velocity, density);
+        self.particles
+            .spawn_with_density(position, velocity, density);
     }
 
     /// Run one simulation step.
@@ -288,7 +289,11 @@ mod tests {
             / sim.particle_count() as f32;
 
         // Initial Y was around 2.25-2.75, should have fallen
-        assert!(avg_y < 2.5, "Particles should have fallen, avg_y = {}", avg_y);
+        assert!(
+            avg_y < 2.5,
+            "Particles should have fallen, avg_y = {}",
+            avg_y
+        );
     }
 
     #[test]
@@ -340,10 +345,6 @@ mod tests {
             .map(|p| p.velocity.length())
             .fold(0.0f32, f32::max);
 
-        assert!(
-            max_vel < 10.0,
-            "Velocities exploded: max_vel = {}",
-            max_vel
-        );
+        assert!(max_vel < 10.0, "Velocities exploded: max_vel = {}", max_vel);
     }
 }

@@ -1,5 +1,5 @@
 //! GPU Vertex Displacement Terrain Rendering Prototype
-//! 
+//!
 //! Renders heightfield terrain using a static grid mesh with vertex displacement
 //! in the vertex shader. Heights are sampled from GPU buffer - zero CPU mesh work.
 //!
@@ -92,7 +92,7 @@ struct GpuState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    
+
     // Terrain rendering
     pipeline: wgpu::RenderPipeline,
     grid_vertex_buffer: wgpu::Buffer,
@@ -106,14 +106,14 @@ struct GpuState {
     overburden_buffer: wgpu::Buffer,
     sediment_buffer: wgpu::Buffer,
     water_buffer: wgpu::Buffer,
-    
+
     // Water rendering pipeline
     water_pipeline: wgpu::RenderPipeline,
-    
+
     // Uniforms
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
-    
+
     // Depth buffer
     depth_texture: wgpu::TextureView,
 }
@@ -160,8 +160,6 @@ impl App {
         self.update_camera(dt);
         // Buffers are static in this prototype (no simulation running)
     }
-    
-
 
     fn update_camera(&mut self, dt: f32) {
         let speed = self.camera.speed * dt;
@@ -183,7 +181,9 @@ impl App {
         if self.input.keys.contains(&KeyCode::Space) {
             self.camera.position.y += speed;
         }
-        if self.input.keys.contains(&KeyCode::ShiftLeft) || self.input.keys.contains(&KeyCode::ShiftRight) {
+        if self.input.keys.contains(&KeyCode::ShiftLeft)
+            || self.input.keys.contains(&KeyCode::ShiftRight)
+        {
             self.camera.position.y -= speed;
         }
     }
@@ -206,18 +206,23 @@ impl App {
             _pad: 0,
         };
 
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let output = match gpu.surface.get_current_texture() {
             Ok(tex) => tex,
             Err(_) => return,
         };
 
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -226,7 +231,12 @@ impl App {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.5, g: 0.7, b: 0.9, a: 1.0 }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.5,
+                            g: 0.7,
+                            b: 0.9,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -245,9 +255,10 @@ impl App {
             render_pass.set_pipeline(&gpu.pipeline);
             render_pass.set_bind_group(0, &gpu.bind_group, &[]);
             render_pass.set_vertex_buffer(0, gpu.grid_vertex_buffer.slice(..));
-            render_pass.set_index_buffer(gpu.grid_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass
+                .set_index_buffer(gpu.grid_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..gpu.num_indices, 0, 0..1);
-            
+
             // Draw Water
             render_pass.set_pipeline(&gpu.water_pipeline);
             render_pass.draw_indexed(0..gpu.num_indices, 0, 0..1);
@@ -260,23 +271,32 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() { return; }
+        if self.window.is_some() {
+            return;
+        }
 
         let window = Arc::new(
-            event_loop.create_window(
-                Window::default_attributes()
-                    .with_title("GPU Terrain Prototype")
-                    .with_inner_size(PhysicalSize::new(1280, 720)),
-            ).unwrap()
+            event_loop
+                .create_window(
+                    Window::default_attributes()
+                        .with_title("GPU Terrain Prototype")
+                        .with_inner_size(PhysicalSize::new(1280, 720)),
+                )
+                .unwrap(),
         );
 
         self.window = Some(window.clone());
-        
+
         // Initialize GPU
         pollster::block_on(self.init_gpu(window));
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -285,7 +305,8 @@ impl ApplicationHandler for App {
                     gpu.config.width = size.width.max(1);
                     gpu.config.height = size.height.max(1);
                     gpu.surface.configure(&gpu.device, &gpu.config);
-                    gpu.depth_texture = create_depth_texture(&gpu.device, size.width.max(1), size.height.max(1));
+                    gpu.depth_texture =
+                        create_depth_texture(&gpu.device, size.width.max(1), size.height.max(1));
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -297,7 +318,11 @@ impl ApplicationHandler for App {
                     window.request_redraw();
                 }
             }
-            WindowEvent::MouseInput { state, button: MouseButton::Right, .. } => {
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Right,
+                ..
+            } => {
                 self.input.mouse_look = state == ElementState::Pressed;
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -307,8 +332,8 @@ impl ApplicationHandler for App {
                         let dx = (current.0 - last.0) as f32;
                         let dy = (current.1 - last.1) as f32;
                         self.camera.yaw += dx * self.camera.sensitivity;
-                        self.camera.pitch = (self.camera.pitch - dy * self.camera.sensitivity)
-                            .clamp(-1.5, 1.5);
+                        self.camera.pitch =
+                            (self.camera.pitch - dy * self.camera.sensitivity).clamp(-1.5, 1.5);
                     }
                 }
                 self.input.last_mouse_pos = Some(current);
@@ -353,7 +378,9 @@ impl App {
             .unwrap();
 
         let size = window.inner_size();
-        let config = surface.get_default_config(&adapter, size.width.max(1), size.height.max(1)).unwrap();
+        let config = surface
+            .get_default_config(&adapter, size.width.max(1), size.height.max(1))
+            .unwrap();
         surface.configure(&device, &config);
 
         // Create static grid mesh (vertices are just X,Z positions)
@@ -374,13 +401,13 @@ impl App {
 
         // Create buffers for all 5 layers
         let buffer_usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;
-        
+
         let bedrock_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Bedrock Buffer"),
             contents: bytemuck::cast_slice(&self.world.bedrock_elevation),
             usage: buffer_usage,
         });
-        
+
         let paydirt_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Paydirt Buffer"),
             contents: bytemuck::cast_slice(&self.world.paydirt_thickness),
@@ -426,43 +453,71 @@ impl App {
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
             ],
@@ -472,20 +527,43 @@ impl App {
             label: Some("Terrain Bind Group"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: bedrock_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: paydirt_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: gravel_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: overburden_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: sediment_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: water_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: bedrock_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: paydirt_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: gravel_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: overburden_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: sediment_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: water_buffer.as_entire_binding(),
+                },
             ],
         });
 
         // Shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Terrain Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../src/gpu/shaders/heightfield_render.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../src/gpu/shaders/heightfield_render.wgsl").into(),
+            ),
         });
 
         // Pipeline
@@ -633,7 +711,11 @@ fn create_grid_mesh(width: usize, depth: usize) -> (Vec<GridVertex>, Vec<u32>) {
 fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Depth Texture"),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -646,14 +728,12 @@ fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu:
 
 use wgpu::util::DeviceExt;
 
-
-
 fn main() {
     env_logger::init();
-    
+
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
-    
+
     let mut app = App::new();
     event_loop.run_app(&mut app).unwrap();
 }

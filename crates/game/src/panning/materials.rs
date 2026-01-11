@@ -134,10 +134,6 @@ impl PanSample {
         let angle = rng.gen_range(0.0..std::f32::consts::TAU);
         let r = rng.gen::<f32>().sqrt() * radius;
 
-        Vec3::new(
-            r * angle.cos(),
-            rng.gen_range(-0.01..0.01),
-            r * angle.sin(),
-        )
+        Vec3::new(r * angle.cos(), rng.gen_range(-0.01..0.01), r * angle.sin())
     }
 }
