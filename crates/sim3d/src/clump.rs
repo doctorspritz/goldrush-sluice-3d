@@ -232,6 +232,18 @@ impl ClusterSimulation3D {
         self.clumps.len() - 1
     }
 
+    /// Returns the number of sphere-sphere contacts detected in the last DEM step
+    pub fn sphere_contact_count(&self) -> usize {
+        self.sphere_contacts.len()
+    }
+
+    /// Checks if two clumps have a sphere-sphere contact (order-independent)
+    pub fn has_contact(&self, i: usize, j: usize) -> bool {
+        self.sphere_contacts.keys().any(|k|
+            (k.a == i && k.b == j) || (k.a == j && k.b == i)
+        )
+    }
+
     pub fn step(&mut self, dt: f32) {
         if self.use_dem {
             self.step_dem_internal(dt, None);

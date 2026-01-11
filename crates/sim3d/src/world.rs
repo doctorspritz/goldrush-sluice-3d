@@ -491,7 +491,7 @@ impl World {
 
                 let idx = self.idx(x as usize, z as usize);
                 let ground_before = self.ground_height(x as usize, z as usize);
-                let _had_water = self.water_surface[idx] > ground_before + 1e-4;
+                let had_water = self.water_surface[idx] > ground_before + 1e-4;
 
                 self.terrain_sediment[idx] += height;
                 // Material tracking is implicit in sediment now
