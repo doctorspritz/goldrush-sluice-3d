@@ -13,7 +13,6 @@
 
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 /// Parameters for G2P 3D compute shader
 #[repr(C)]

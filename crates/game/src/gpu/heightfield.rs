@@ -283,7 +283,7 @@ impl GpuHeightfield {
 
         // Collapse needs params (group 0) and terrain (group 2), but not water (group 1)
         // We'll use a simpler layout for collapse
-        let collapse_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let _collapse_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Collapse Layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },

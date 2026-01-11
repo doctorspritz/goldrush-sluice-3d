@@ -50,7 +50,7 @@ pub enum Invariant {
 
 impl Invariant {
     /// Check this invariant against current metrics
-    pub fn check(&self, metrics: &TestMetrics, prev_metrics: Option<&TestMetrics>) -> Result<(), String> {
+    pub fn check(&self, metrics: &TestMetrics, _prev_metrics: Option<&TestMetrics>) -> Result<(), String> {
         match self {
             Invariant::ParticleCountStable { tolerance_pct } => {
                 if metrics.particle_count_start == 0 {
@@ -337,7 +337,7 @@ pub fn run_test<T: SimTest>(test: &T) -> TestResult {
 
     // Initialize with default metrics
     let mut metrics = TestMetrics::default();
-    let mut failures = Vec::new();
+    let failures = Vec::new();
 
     println!("=== {} ===", test.name());
     println!("{}", test.description());

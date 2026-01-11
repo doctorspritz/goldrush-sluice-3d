@@ -1,7 +1,6 @@
 pub mod shovel;
 
 pub use shovel::Shovel;
-use glam::Vec3;
 
 #[derive(Clone, Copy, Debug)]
 pub enum ToolKind {

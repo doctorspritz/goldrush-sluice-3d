@@ -392,7 +392,7 @@ impl World {
                 
                 // Determine starting ground height for water calculation
                 let ground_before = self.ground_height(x, z);
-                let had_water = self.water_surface[idx] > ground_before + 1e-4;
+                let _had_water = self.water_surface[idx] > ground_before + 1e-4;
 
                 let mut remaining_dig = dig_depth;
                 
@@ -442,6 +442,7 @@ impl World {
                 
                 // 4. Bedrock (Stop or chip?)
                 // For now, bedrock is invincible.
+                let _ = remaining_dig; // Silence unused warning; ready for bedrock digging
 
                 let ground_after = self.ground_height(x, z);
                 // Water surface should never go below ground.
@@ -490,7 +491,7 @@ impl World {
 
                 let idx = self.idx(x as usize, z as usize);
                 let ground_before = self.ground_height(x as usize, z as usize);
-                let had_water = self.water_surface[idx] > ground_before + 1e-4;
+                let _had_water = self.water_surface[idx] > ground_before + 1e-4;
 
                 self.terrain_sediment[idx] += height;
                 // Material tracking is implicit in sediment now

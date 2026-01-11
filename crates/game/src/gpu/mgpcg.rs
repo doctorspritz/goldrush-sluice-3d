@@ -1595,7 +1595,7 @@ impl GpuMgpcgSolver {
         let mut rz = self.compute_dot_product(gpu, workgroup_count_1d, self.pcg_dot_rz_bind_group.as_ref().unwrap());
 
         // Main PCG iteration loop
-        for iter in 0..max_iterations {
+        for _iter in 0..max_iterations {
             // Check for convergence (rz is proportional to error)
             if rz.abs() < 1e-10 {
                 break;
