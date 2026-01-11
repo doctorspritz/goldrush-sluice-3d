@@ -57,6 +57,24 @@ if [ $# -eq 0 ]; then
         exit 1
     fi
     echo ""
+
+    echo "----------------------------------------"
+    echo "Running Real Physics Tests..."
+    echo "----------------------------------------"
+
+    if cargo run --example test_real_physics --release; then
+        echo "PASS: Real Physics Tests"
+        ((PASSED++))
+    else
+        echo "FAIL: Real Physics Tests"
+        ((FAILED++))
+        echo ""
+        echo "========================================"
+        echo " TEST SUITE FAILED at Real Physics Tests"
+        echo "========================================"
+        exit 1
+    fi
+    echo ""
 fi
 
 # Determine which levels to run
