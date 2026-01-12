@@ -8,7 +8,6 @@ pub mod washplant;
 pub mod test_harness;
 pub mod tools;
 pub mod water_heightfield;
-pub mod washplant;
 
 #[cfg(feature = "panning")]
 pub mod panning;
