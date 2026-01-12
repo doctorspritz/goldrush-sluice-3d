@@ -63,7 +63,9 @@ pub struct GpuParticleSort {
     // Intermediate buffers
     cell_keys_buffer: wgpu::Buffer,
     cell_counts_buffer: wgpu::Buffer,
-    cell_offsets_buffer: wgpu::Buffer,
+    /// Cell offsets (exclusive prefix sum of cell counts) - public for cell-centric P2G
+    /// Size: cell_count + 1 (extra element for end-of-last-cell lookup)
+    pub cell_offsets_buffer: Arc<wgpu::Buffer>,
     cell_counters_buffer: wgpu::Buffer,
     block_sums_buffer: wgpu::Buffer,
 
@@ -165,12 +167,13 @@ impl GpuParticleSort {
             mapped_at_creation: false,
         });
 
-        let cell_offsets_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        // cell_count + 1 elements so we can look up cell_offsets[cell + 1] for the last cell
+        let cell_offsets_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Cell Offsets"),
-            size: (cell_count * 4) as u64,
+            size: ((cell_count + 1) * 4) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
-        });
+        }));
 
         let cell_counters_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Cell Counters"),
@@ -564,6 +567,14 @@ impl GpuParticleSort {
         queue.write_buffer(&self.cell_counters_buffer, 0, &vec![0u8; self.cell_count * 4]);
         let num_blocks = (self.cell_count + 511) / 512;
         queue.write_buffer(&self.block_sums_buffer, 0, &vec![0u8; num_blocks * 4]);
+
+        // Set cell_offsets[cell_count] = particle_count for cell-centric P2G
+        // This allows looking up cell_offsets[idx + 1] for the last cell
+        queue.write_buffer(
+            &self.cell_offsets_buffer,
+            (self.cell_count * 4) as u64,
+            bytemuck::bytes_of(&particle_count),
+        );
     }
 
     /// Encode sorting passes into command encoder
