@@ -210,9 +210,12 @@ fn steady_state_velocity_matches_manning() {
         }
     }
 
-    // Run to steady state (longer simulation)
-    let dt = 0.005;
-    for _ in 0..500 {
+    // Run to steady state (needs ~12s for friction time constant)
+    // Run for 30 seconds to ensure equilibrium
+    let dt = 0.01;
+    let total_time = 30.0;
+    let steps = (total_time / dt) as usize;
+    for _ in 0..steps {
         world.update_water_flow(dt);
 
         // Re-add water at upstream to maintain flow
@@ -226,12 +229,13 @@ fn steady_state_velocity_matches_manning() {
     }
 
     // Measure average velocity in the middle section
+    // Use flow_x_idx since velocities are stored at cell faces
     let mut sum_vel = 0.0;
     let mut count = 0;
     for z in 6..10 {
         for x in 25..35 {
-            let idx = world.idx(x, z);
-            sum_vel += world.water_flow_x[idx].abs();
+            let flow_idx = world.flow_x_idx(x, z);
+            sum_vel += world.water_flow_x[flow_idx].abs();
             count += 1;
         }
     }

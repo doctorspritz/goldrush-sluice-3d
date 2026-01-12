@@ -1,5 +1,6 @@
 // heightfield_water.wgsl
 // Shallow Water Equations (SWE) solver for heightfield water simulation.
+// Uses Manning friction for physically accurate flow velocities.
 
 struct Params {
     world_width: u32,
@@ -12,7 +13,7 @@ struct Params {
     cell_size: f32,
     dt: f32,
     gravity: f32,
-    damping: f32,
+    manning_n: f32, // Manning roughness coefficient (typical: 0.03 smooth, 0.05 rough)
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -83,9 +84,18 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Only calculate flow if water exists
         if (d_l > 0.001 || d_r > 0.001) {
              let gradient = (h_l - h_r) / params.cell_size;
+             let avg_depth = max(0.5 * (d_l + d_r), 0.01);
+
+             // Apply gravity
              var vel = water_velocity_x[idx];
              vel += params.gravity * gradient * params.dt;
-             vel *= params.damping;
+
+             // Apply Manning friction (implicit method for stability)
+             // Friction: g * n² * |V| * V / R^(4/3) where R ≈ depth for wide channel
+             let n2 = params.manning_n * params.manning_n;
+             let friction_coeff = params.gravity * n2 / pow(avg_depth, 4.0/3.0);
+             let friction_factor = 1.0 + friction_coeff * abs(vel) * params.dt;
+             vel = vel / friction_factor;
 
              // Clamp velocity
              let max_v = params.cell_size / params.dt * 0.25;
@@ -93,8 +103,7 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
              water_velocity_x[idx] = vel;
 
-             // Compute Flux (volume per timestep)
-             let avg_depth = 0.5 * (d_l + d_r);
+             // Compute Flux (volume per timestep) - reuse avg_depth from above
              var flux = vel * avg_depth * params.cell_size * params.dt;
 
              // Limit flux to available water in source cell
@@ -113,13 +122,18 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     } else if (x == params.world_width - 1) {
         // OPEN BOUNDARY: Allow water to flow OUT at right edge
-        // Use current velocity and local depth to compute outflow
         let d_local = water_depth[idx];
         if (d_local > 0.001) {
             var vel = water_velocity_x[idx];
             // Assume slight downhill gradient to encourage outflow
             vel += params.gravity * 0.01 * params.dt;
-            vel *= params.damping;
+
+            // Apply Manning friction at boundary too
+            let n2 = params.manning_n * params.manning_n;
+            let friction_coeff = params.gravity * n2 / pow(max(d_local, 0.01), 4.0/3.0);
+            let friction_factor = 1.0 + friction_coeff * abs(vel) * params.dt;
+            vel = vel / friction_factor;
+
             // Only allow positive (outward) velocity at open boundary
             vel = max(vel, 0.0);
             let max_v = params.cell_size / params.dt * 0.25;
@@ -146,17 +160,24 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
         
         if (d_b > 0.001 || d_f > 0.001) {
              let gradient = (h_b - h_f) / params.cell_size;
+             let avg_depth_z = max(0.5 * (d_b + d_f), 0.01);
+
+             // Apply gravity
              var vel = water_velocity_z[idx];
              vel += params.gravity * gradient * params.dt;
-             vel *= params.damping;
-             
+
+             // Apply Manning friction (implicit method for stability)
+             let n2_z = params.manning_n * params.manning_n;
+             let friction_coeff_z = params.gravity * n2_z / pow(avg_depth_z, 4.0/3.0);
+             let friction_factor_z = 1.0 + friction_coeff_z * abs(vel) * params.dt;
+             vel = vel / friction_factor_z;
+
              let max_v = params.cell_size / params.dt * 0.25;
              vel = clamp(vel, -max_v, max_v);
-             
+
              water_velocity_z[idx] = vel;
-             
-             let avg_depth = 0.5 * (d_b + d_f);
-             var flux = vel * avg_depth * params.cell_size * params.dt;
+
+             var flux = vel * avg_depth_z * params.cell_size * params.dt;
              
              // Limit flux to available water
              if (flux > 0.0) {

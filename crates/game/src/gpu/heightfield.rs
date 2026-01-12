@@ -1260,7 +1260,7 @@ impl GpuHeightfield {
             bytemuck::cast(self.cell_size),
             bytemuck::cast(dt),
             bytemuck::cast(9.81f32),
-            bytemuck::cast(0.995f32), // Damping to suppress oscillations while allowing flow
+            bytemuck::cast(0.03f32), // Manning's n coefficient (smooth channel)
         ];
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&params));
     }

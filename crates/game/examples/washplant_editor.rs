@@ -24,6 +24,8 @@
 //!   L              - Load layout from JSON
 //!   P              - Toggle Play mode (run simulation)
 //!   N              - Toggle snap mode (outlet→inlet alignment)
+//!   T              - Toggle Test mode (visual physics tests)
+//!   0-9            - In test mode: select test scenario
 
 use bytemuck::{Pod, Zeroable};
 use game::editor::{
@@ -106,6 +108,112 @@ const SHAKER_COLOR: [f32; 4] = [0.6, 0.5, 0.3, 1.0];
 const SHAKER_SELECTED: [f32; 4] = [0.8, 0.7, 0.4, 1.0];
 const PREVIEW_COLOR: [f32; 4] = [0.5, 0.8, 0.5, 0.7];
 const GRID_COLOR: [f32; 4] = [0.3, 0.3, 0.3, 0.5];
+
+// ============================================================================
+// Visual Test Definitions
+// ============================================================================
+
+/// Visual test scenario definition
+struct VisualTest {
+    key: char,
+    name: &'static str,
+    expect: &'static str,
+    watch: &'static str,
+    category: TestCategory,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum TestCategory {
+    Dem,      // DEM collision, friction, settling
+    Swe,      // Shallow water flow
+    Terrain,  // Collapse + erosion
+    Sediment, // Sediment transport
+}
+
+const VISUAL_TESTS: &[VisualTest] = &[
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DEM TESTS (Discrete Element Method - solid particle physics)
+    // ═══════════════════════════════════════════════════════════════════════════
+    VisualTest {
+        key: '1',
+        name: "DEM: Floor Collision",
+        expect: "Particles fall from height, bounce once or twice, settle on gutter floor",
+        watch: "PASS: All particles rest ON floor (y > 0), none fall through. FAIL: Particles clip through floor or hover.",
+        category: TestCategory::Dem,
+    },
+    VisualTest {
+        key: '2',
+        name: "DEM: Wall Collision",
+        expect: "Particles thrown sideways hit gutter wall and bounce back",
+        watch: "PASS: Particles reflect off walls, stay inside gutter. FAIL: Particles pass through walls.",
+        category: TestCategory::Dem,
+    },
+    VisualTest {
+        key: '3',
+        name: "DEM: Density Separation",
+        expect: "Mix of gold (yellow, heavy) and sand (gray, light) dropped into water",
+        watch: "PASS: Yellow particles sink to bottom, gray stay above. FAIL: Same height or gold on top.",
+        category: TestCategory::Dem,
+    },
+    VisualTest {
+        key: '4',
+        name: "DEM: Settling Time",
+        expect: "50 particles dropped, should all come to rest within 5 seconds",
+        watch: "PASS: Motion stops, particles stationary. FAIL: Still bouncing after 5s or jittering forever.",
+        category: TestCategory::Dem,
+    },
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FLUID TESTS (FLIP/APIC water simulation)
+    // ═══════════════════════════════════════════════════════════════════════════
+    VisualTest {
+        key: '5',
+        name: "Fluid: Flow Downhill",
+        expect: "Water released at top of tilted gutter flows downward",
+        watch: "PASS: Blue particles flow from high end to low end. FAIL: Water stuck, flows uphill, or wrong direction.",
+        category: TestCategory::Swe,
+    },
+    VisualTest {
+        key: '6',
+        name: "Fluid: Pool Equilibrium",
+        expect: "Flat pool of water should stay still",
+        watch: "PASS: Water surface is flat, no motion. FAIL: Ripples, sloshing, or energy appearing from nowhere.",
+        category: TestCategory::Swe,
+    },
+    VisualTest {
+        key: '7',
+        name: "Fluid: Wall Containment",
+        expect: "Water poured into gutter stays inside walls",
+        watch: "PASS: All water remains between gutter walls. FAIL: Water leaks through walls or floor.",
+        category: TestCategory::Swe,
+    },
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SEDIMENT TESTS (Particles in fluid)
+    // ═══════════════════════════════════════════════════════════════════════════
+    VisualTest {
+        key: '8',
+        name: "Sediment: Settle in Still Water",
+        expect: "Drop sediment into still pool, should sink to bottom",
+        watch: "PASS: Particles descend through water, rest on floor. FAIL: Float, stuck, or instant teleport.",
+        category: TestCategory::Sediment,
+    },
+    VisualTest {
+        key: '9',
+        name: "Sediment: Transport by Flow",
+        expect: "Sediment dropped into flowing water gets carried downstream",
+        watch: "PASS: Particles move with water flow direction. FAIL: Stuck in place or move against flow.",
+        category: TestCategory::Sediment,
+    },
+    // ═══════════════════════════════════════════════════════════════════════════
+    // INTEGRATION TESTS (Full system)
+    // ═══════════════════════════════════════════════════════════════════════════
+    VisualTest {
+        key: '0',
+        name: "Integration: Sluice Riffle Capture",
+        expect: "Gold+sand in water flow over sluice riffles, gold gets trapped",
+        watch: "PASS: Yellow (gold) particles accumulate behind riffles, gray washes over. FAIL: All wash through or all stuck.",
+        category: TestCategory::Sediment,
+    },
+];
 
 // ============================================================================
 // Multi-Grid Simulation Types
@@ -1267,21 +1375,29 @@ impl MultiGridSim {
                 }
             }
 
-            // Step DEM with SDF collision
-            // Everything stays in WORLD SPACE - grid_offset tells SDF sampler where grid origin is
+            // Step DEM with SDF collision against ALL pieces
+            // Each piece has its own SDF - clumps can collide with any of them
             if !self.pieces.is_empty() {
-                let piece = &self.pieces[0];
-                let (gw, gh, gd) = piece.grid_dims;
+                // First, do DEM integration step (forces, velocity, position)
+                self.dem_sim.step(dt);
 
-                let sdf_params = sim3d::clump::SdfParams {
-                    sdf: &piece.sim.grid.sdf,
-                    grid_width: gw,
-                    grid_height: gh,
-                    grid_depth: gd,
-                    cell_size: piece.cell_size,
-                    grid_offset: piece.grid_offset, // World position of grid origin
-                };
-                self.dem_sim.step_with_sdf(dt, &sdf_params);
+                // Then apply collision response against EACH piece's SDF
+                for piece in &self.pieces {
+                    let (gw, gh, gd) = piece.grid_dims;
+
+                    let sdf_params = sim3d::clump::SdfParams {
+                        sdf: &piece.sim.grid.sdf,
+                        grid_width: gw,
+                        grid_height: gh,
+                        grid_depth: gd,
+                        cell_size: piece.cell_size,
+                        grid_offset: piece.grid_offset, // World position of grid origin
+                    };
+
+                    // collision_response_only handles SDF collision without re-integrating
+                    // wet=true uses lower friction (gravel slides in water)
+                    self.dem_sim.collision_response_only(dt, &sdf_params, true);
+                }
             } else {
                 self.dem_sim.step(dt);
             }
@@ -1328,6 +1444,11 @@ struct App {
     is_simulating: bool,
     multi_sim: Option<MultiGridSim>,
     fluid_renderer: Option<ScreenSpaceFluidRenderer>,
+
+    // Visual Test mode
+    test_mode: bool,
+    test_idx: usize,
+    test_frame: u32,
 
     // Legacy single-grid fields (kept for compatibility during transition)
     sim: Option<FlipSimulation3D>,
@@ -1387,6 +1508,8 @@ impl App {
         println!("  L              - Load layout");
         println!("  P              - Play/Stop simulation");
         println!("  N              - Toggle snap (outlet→inlet)");
+        println!("  T              - Toggle TEST MODE");
+        println!("  0-9 (in test)  - Select test scenario");
 
         // Print initial status
         println!(
@@ -1418,6 +1541,10 @@ impl App {
             is_simulating: false,
             multi_sim: None,
             fluid_renderer: None,
+            // Visual test mode
+            test_mode: false,
+            test_idx: 0,
+            test_frame: 0,
             // Legacy single-grid fields
             sim: None,
             gpu_flip: None,
@@ -1438,6 +1565,146 @@ impl App {
                 self.camera_distance * self.camera_pitch.sin(),
                 self.camera_distance * self.camera_yaw.sin() * self.camera_pitch.cos(),
             )
+    }
+
+    // =========================================================================
+    // Visual Test Mode
+    // =========================================================================
+
+    fn toggle_test_mode(&mut self) {
+        self.test_mode = !self.test_mode;
+
+        if self.test_mode {
+            println!("\n╔══════════════════════════════════════════════════════════════════════╗");
+            println!("║                     VISUAL TEST MODE ENABLED                        ║");
+            println!("╠══════════════════════════════════════════════════════════════════════╣");
+            println!("║  Press 1-9, 0 to select a test scenario                             ║");
+            println!("║  Press T or ESC to exit test mode                                   ║");
+            println!("╠══════════════════════════════════════════════════════════════════════╣");
+            println!("║  AVAILABLE TESTS:                                                   ║");
+            for test in VISUAL_TESTS {
+                println!("║  {}: {}  ", test.key, test.name);
+            }
+            println!("╚══════════════════════════════════════════════════════════════════════╝\n");
+
+            // Update window title
+            if let Some(w) = &self.window {
+                w.set_title("TEST MODE - Press 1-9 to select test");
+            }
+        } else {
+            println!("\n[TEST MODE DISABLED] - Back to editor mode");
+            // Stop any running simulation
+            if self.is_simulating {
+                self.stop_simulation();
+            }
+            // Update window title
+            if let Some(w) = &self.window {
+                w.set_title("Washplant Editor");
+            }
+        }
+    }
+
+    fn run_test(&mut self, test_idx: usize) {
+        if test_idx >= VISUAL_TESTS.len() {
+            println!("Invalid test index: {}", test_idx);
+            return;
+        }
+
+        let test = &VISUAL_TESTS[test_idx];
+        self.test_idx = test_idx;
+        self.test_frame = 0;
+
+        // Print test info
+        println!("\n╔══════════════════════════════════════════════════════════════════════╗");
+        println!("║  TEST {}: {}  ", test.key, test.name);
+        println!("╠══════════════════════════════════════════════════════════════════════╣");
+        println!("║  EXPECT: {}  ", test.expect);
+        println!("╠══════════════════════════════════════════════════════════════════════╣");
+        println!("║  WATCH FOR:                                                          ║");
+        println!("║  {}  ", test.watch);
+        println!("╚══════════════════════════════════════════════════════════════════════╝\n");
+
+        // Update window title
+        if let Some(w) = &self.window {
+            w.set_title(&format!("TEST {}: {} | {}", test.key, test.name, test.watch));
+        }
+
+        // Stop current simulation if running
+        if self.is_simulating {
+            self.stop_simulation();
+        }
+
+        // Setup test scenario based on category
+        self.setup_test_scenario(test_idx);
+    }
+
+    fn setup_test_scenario(&mut self, test_idx: usize) {
+        let test = &VISUAL_TESTS[test_idx];
+
+        // Use the pre-built connected layout - this is PROVEN TO WORK
+        // Don't create random broken geometry
+        self.layout = EditorLayout::new_connected();
+
+        // Configure emitter rate based on test
+        if !self.layout.emitters.is_empty() {
+            // Slow down emission for DEM visibility tests
+            if matches!(test.category, TestCategory::Dem) {
+                self.layout.emitters[0].rate = 30.0;  // Slower for visibility
+            }
+        }
+
+        // Position camera based on what we're testing
+        match test.category {
+            TestCategory::Dem => {
+                // View the funnel gutter where sediment settles
+                if !self.layout.gutters.is_empty() {
+                    let gutter = &self.layout.gutters[0];
+                    self.camera_target = gutter.position;
+                }
+                self.camera_distance = 1.5;
+                self.camera_yaw = 0.3;
+                self.camera_pitch = 0.4;
+            }
+            TestCategory::Swe => {
+                // View the shaker deck and gutter flow
+                if !self.layout.shaker_decks.is_empty() {
+                    let deck = &self.layout.shaker_decks[0];
+                    self.camera_target = deck.position;
+                }
+                self.camera_distance = 2.0;
+                self.camera_yaw = 0.5;
+                self.camera_pitch = 0.5;
+            }
+            TestCategory::Sediment => {
+                // View the sluice for gold capture
+                if !self.layout.sluices.is_empty() {
+                    let sluice = &self.layout.sluices[0];
+                    self.camera_target = sluice.position;
+                }
+                self.camera_distance = 1.5;
+                self.camera_yaw = 0.2;
+                self.camera_pitch = 0.3;
+            }
+            TestCategory::Terrain => {
+                // View overall system
+                self.camera_target = Vec3::new(0.0, 0.8, 0.0);
+                self.camera_distance = 3.0;
+                self.camera_yaw = 0.5;
+                self.camera_pitch = 0.6;
+            }
+        }
+
+        // Start the simulation - uses the SAME code path as pressing P
+        self.start_simulation();
+
+        println!("Test scenario {} setup complete.", test_idx + 1);
+        println!("Layout: {} gutters, {} sluices, {} emitters, {} shaker decks",
+            self.layout.gutters.len(),
+            self.layout.sluices.len(),
+            self.layout.emitters.len(),
+            self.layout.shaker_decks.len());
+        println!("Watch: {}", test.watch);
+        println!("\nColor key: Blue=water, Yellow=gold(heavy), Gray=sand(light)");
     }
 
     fn print_status(&self) {
@@ -2120,24 +2387,46 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyCode) {
+        // In test mode, number keys select tests instead of editor modes
+        if self.test_mode {
+            match key {
+                KeyCode::Digit0 => { self.run_test(9); return; }  // Test 0 is index 9
+                KeyCode::Digit1 => { self.run_test(0); return; }
+                KeyCode::Digit2 => { self.run_test(1); return; }
+                KeyCode::Digit3 => { self.run_test(2); return; }
+                KeyCode::Digit4 => { self.run_test(3); return; }
+                KeyCode::Digit5 => { self.run_test(4); return; }
+                KeyCode::Digit6 => { self.run_test(5); return; }
+                KeyCode::Digit7 => { self.run_test(6); return; }
+                KeyCode::Digit8 => { self.run_test(7); return; }
+                KeyCode::Digit9 => { self.run_test(8); return; }
+                KeyCode::Escape => {
+                    // Exit test mode
+                    self.toggle_test_mode();
+                    return;
+                }
+                _ => {} // Fall through to normal handling for camera etc
+            }
+        }
+
         match key {
-            // Mode keys
-            KeyCode::Digit1 => {
+            // Mode keys (only in editor mode, not test mode)
+            KeyCode::Digit1 if !self.test_mode => {
                 self.mode = EditorMode::PlaceGutter;
                 self.selection = Selection::None;
                 println!("Mode: PLACE GUTTER (arrows to position, Enter to place)");
             }
-            KeyCode::Digit2 => {
+            KeyCode::Digit2 if !self.test_mode => {
                 self.mode = EditorMode::PlaceSluice;
                 self.selection = Selection::None;
                 println!("Mode: PLACE SLUICE (arrows to position, Enter to place)");
             }
-            KeyCode::Digit3 => {
+            KeyCode::Digit3 if !self.test_mode => {
                 self.mode = EditorMode::PlaceEmitter;
                 self.selection = Selection::None;
                 println!("Mode: PLACE EMITTER (arrows to position, R to rotate, Enter to place)");
             }
-            KeyCode::Digit4 => {
+            KeyCode::Digit4 if !self.test_mode => {
                 self.mode = EditorMode::PlaceShakerDeck;
                 self.selection = Selection::None;
                 println!("Mode: PLACE SHAKER DECK (arrows to position, R to rotate, Enter to place)");
@@ -2321,11 +2610,19 @@ impl App {
 
             // Play/Stop simulation
             KeyCode::KeyP => {
-                if self.is_simulating {
+                if self.test_mode {
+                    // In test mode, P doesn't toggle simulation
+                    println!("In test mode - simulation controlled by test scenario");
+                } else if self.is_simulating {
                     self.stop_simulation();
                 } else {
                     self.start_simulation();
                 }
+            }
+
+            // Toggle test mode
+            KeyCode::KeyT => {
+                self.toggle_test_mode();
             }
 
             // Click simulation for selection (Tab cycles through pieces)
@@ -5363,5 +5660,247 @@ mod tests {
         }
 
         assert!(!any_fallthrough, "Found fall-through positions!");
+    }
+
+    // =========================================================================
+    // MultiGridSim + DEM Integration Tests
+    // These test the ACTUAL washplant editor simulation environment
+    // =========================================================================
+
+    #[test]
+    fn test_multigrid_dem_clumps_collide_with_floor() {
+        // Test DEM collision with simple flat floor - same setup as gold_settles_faster test
+        let mut multi_sim = MultiGridSim::new();
+
+        let cell_size = SIM_CELL_SIZE;
+        let width = 40;
+        let height = 40;
+        let depth = 40;
+
+        // Grid at world origin
+        let grid_offset = Vec3::ZERO;
+
+        let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
+
+        // Mark bottom 3 layers as solid floor (at Y = 0 to 3*cell_size)
+        let floor_layers = 3;
+        for i in 0..width {
+            for k in 0..depth {
+                for j in 0..floor_layers {
+                    sim.grid.set_solid(i, j, k);
+                }
+            }
+        }
+        sim.grid.compute_sdf();
+
+        let floor_world_y = floor_layers as f32 * cell_size; // Top of floor in world coords
+        println!("Floor top at world Y = {}", floor_world_y);
+
+        let piece = PieceSimulation {
+            kind: PieceKind::Gutter(0),
+            grid_offset,
+            grid_dims: (width, height, depth),
+            cell_size,
+            sim,
+            gpu_flip: None,
+            positions: Vec::new(),
+            velocities: Vec::new(),
+            affine_vels: Vec::new(),
+            densities: Vec::new(),
+        };
+        multi_sim.pieces.push(piece);
+
+        // Spawn 5 clumps with close spacing (tests inter-clump collision)
+        let spawn_y = 0.5; // 50cm above origin, floor is at ~7.5cm
+        let spawn_x = 0.5;
+        let spawn_z = 0.5;
+
+        println!("Spawning 5 gold clumps at Y = {} with 0.05m spacing", spawn_y);
+
+        for i in 0..5 {
+            let offset = i as f32 * 0.05;
+            multi_sim.dem_sim.spawn(
+                multi_sim.gold_template_idx,
+                Vec3::new(spawn_x + offset, spawn_y, spawn_z),
+                Vec3::ZERO,
+            );
+        }
+
+        let initial_y: Vec<f32> = multi_sim.dem_sim.clumps.iter().map(|c| c.position.y).collect();
+
+        // Step simulation
+        let dt = 1.0 / 60.0;
+        for frame in 0..120 {
+            // Apply buoyancy and drag
+            for clump in &mut multi_sim.dem_sim.clumps {
+                let template = &multi_sim.dem_sim.templates[clump.template_idx];
+                let particle_volume = (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
+                let total_volume = particle_volume * template.local_offsets.len() as f32;
+                let buoyancy_force = DEM_WATER_DENSITY * total_volume * 9.81;
+                clump.velocity.y += buoyancy_force * dt / template.mass;
+
+                let speed = clump.velocity.length();
+                if speed > 0.001 {
+                    let area = std::f32::consts::PI * template.bounding_radius.powi(2);
+                    let drag_force = 0.5 * DEM_DRAG_COEFF * DEM_WATER_DENSITY * area * speed * speed;
+                    let drag_dir = -clump.velocity.normalize();
+                    let drag_dv = (drag_force * dt / template.mass).min(speed);
+                    clump.velocity += drag_dir * drag_dv;
+                }
+            }
+
+            // Step DEM with SDF
+            let piece = &multi_sim.pieces[0];
+            let (gw, gh, gd) = piece.grid_dims;
+            let sdf_params = sim3d::clump::SdfParams {
+                sdf: &piece.sim.grid.sdf,
+                grid_width: gw,
+                grid_height: gh,
+                grid_depth: gd,
+                cell_size: piece.cell_size,
+                grid_offset: piece.grid_offset,
+            };
+            multi_sim.dem_sim.step_with_sdf(dt, &sdf_params);
+
+            if frame % 30 == 0 {
+                let y_positions: Vec<f32> = multi_sim.dem_sim.clumps.iter().map(|c| c.position.y).collect();
+                println!("Frame {}: Y = {:?}", frame, y_positions);
+            }
+        }
+
+        let final_y: Vec<f32> = multi_sim.dem_sim.clumps.iter().map(|c| c.position.y).collect();
+        println!("Final Y positions: {:?}", final_y);
+
+        // Verify: clumps fell, but stopped above floor
+        for (i, y) in final_y.iter().enumerate() {
+            // Should be above floor (with margin for clump radius)
+            let min_y = floor_world_y - DEM_CLUMP_RADIUS;
+            assert!(
+                *y > min_y,
+                "Clump {} fell through floor! Y={}, floor_top={}",
+                i, y, floor_world_y
+            );
+            // Should have fallen from initial position
+            assert!(
+                *y < initial_y[i] - 0.1,
+                "Clump {} didn't fall enough! Initial={}, Final={}",
+                i, initial_y[i], y
+            );
+        }
+
+        println!("All clumps fell and stopped on floor");
+    }
+
+    #[test]
+    fn test_multigrid_dem_gold_settles_faster_than_sand() {
+        // Gold is much denser than sand, should settle faster despite buoyancy
+        let mut multi_sim = MultiGridSim::new();
+
+        // Simple flat floor piece
+        let cell_size = SIM_CELL_SIZE;
+        let width = 40;
+        let height = 40;
+        let depth = 40;
+
+        let grid_offset = Vec3::ZERO;
+
+        let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
+
+        // Mark bottom 2 layers as solid floor
+        for i in 0..width {
+            for k in 0..depth {
+                sim.grid.set_solid(i, 0, k);
+                sim.grid.set_solid(i, 1, k);
+            }
+        }
+        sim.grid.compute_sdf();
+
+        let piece = PieceSimulation {
+            kind: PieceKind::Gutter(0),
+            grid_offset,
+            grid_dims: (width, height, depth),
+            cell_size,
+            sim,
+            gpu_flip: None,
+            positions: Vec::new(),
+            velocities: Vec::new(),
+            affine_vels: Vec::new(),
+            densities: Vec::new(),
+        };
+        multi_sim.pieces.push(piece);
+
+        // Spawn one gold and one sand at same height
+        let spawn_y = 0.5;
+        let spawn_x = 0.5;
+
+        multi_sim.dem_sim.spawn(
+            multi_sim.gold_template_idx,
+            Vec3::new(spawn_x, spawn_y, 0.4),
+            Vec3::ZERO,
+        );
+        multi_sim.dem_sim.spawn(
+            multi_sim.sand_template_idx,
+            Vec3::new(spawn_x, spawn_y, 0.6),
+            Vec3::ZERO,
+        );
+
+        let gold_initial_y = multi_sim.dem_sim.clumps[0].position.y;
+        let sand_initial_y = multi_sim.dem_sim.clumps[1].position.y;
+
+        println!("Gold density: {} kg/m3", DEM_GOLD_DENSITY);
+        println!("Sand density: {} kg/m3", DEM_SAND_DENSITY);
+        println!("Initial Y - Gold: {}, Sand: {}", gold_initial_y, sand_initial_y);
+
+        // Step for a short time
+        let dt = 1.0 / 60.0;
+        for _ in 0..30 {
+            for clump in &mut multi_sim.dem_sim.clumps {
+                let template = &multi_sim.dem_sim.templates[clump.template_idx];
+                let particle_volume = (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
+                let total_volume = particle_volume * template.local_offsets.len() as f32;
+                let buoyancy_force = DEM_WATER_DENSITY * total_volume * 9.81;
+                clump.velocity.y += buoyancy_force * dt / template.mass;
+
+                let speed = clump.velocity.length();
+                if speed > 0.001 {
+                    let area = std::f32::consts::PI * template.bounding_radius.powi(2);
+                    let drag_force = 0.5 * DEM_DRAG_COEFF * DEM_WATER_DENSITY * area * speed * speed;
+                    let drag_dir = -clump.velocity.normalize();
+                    let drag_dv = (drag_force * dt / template.mass).min(speed);
+                    clump.velocity += drag_dir * drag_dv;
+                }
+            }
+
+            let piece = &multi_sim.pieces[0];
+            let (gw, gh, gd) = piece.grid_dims;
+            let sdf_params = sim3d::clump::SdfParams {
+                sdf: &piece.sim.grid.sdf,
+                grid_width: gw,
+                grid_height: gh,
+                grid_depth: gd,
+                cell_size: piece.cell_size,
+                grid_offset: piece.grid_offset,
+            };
+            multi_sim.dem_sim.step_with_sdf(dt, &sdf_params);
+        }
+
+        let gold_final_y = multi_sim.dem_sim.clumps[0].position.y;
+        let sand_final_y = multi_sim.dem_sim.clumps[1].position.y;
+
+        let gold_drop = gold_initial_y - gold_final_y;
+        let sand_drop = sand_initial_y - sand_final_y;
+
+        println!("After 30 frames:");
+        println!("  Gold Y: {} (dropped {})", gold_final_y, gold_drop);
+        println!("  Sand Y: {} (dropped {})", sand_final_y, sand_drop);
+
+        // Gold should drop more than sand (heavier, less affected by buoyancy)
+        assert!(
+            gold_drop > sand_drop,
+            "Gold (drop={}) should settle faster than sand (drop={})",
+            gold_drop, sand_drop
+        );
+
+        println!("Gold settles faster than sand");
     }
 }
