@@ -16,8 +16,10 @@ pub struct WorldParams {
     pub collapse_max_outflow: f32,
     /// Gravity (m/s^2).
     pub gravity: f32,
-    /// Water flow damping (0-1, higher = more damping).
+    /// Water flow damping (0-1, higher = more damping). Deprecated: use manning_n instead.
     pub water_damping: f32,
+    /// Manning roughness coefficient (typical: 0.03 for smooth, 0.05 for rough).
+    pub manning_n: f32,
     /// Sediment settling velocity (m/s).
     pub settling_velocity: f32,
     /// Bed porosity (0-1, fraction that is void space).
@@ -26,6 +28,8 @@ pub struct WorldParams {
     pub hardness_overburden: f32,
     /// Hardness of paydirt (erosion resistance multiplier).
     pub hardness_paydirt: f32,
+    /// Open boundaries - if true, water drains at edges. If false, closed system.
+    pub open_boundaries: bool,
 }
 
 impl Default for WorldParams {
@@ -35,11 +39,13 @@ impl Default for WorldParams {
             collapse_transfer_rate: 0.35,
             collapse_max_outflow: 0.5,
             gravity: 9.81,
-            water_damping: 0.01,
+            water_damping: 0.0, // Deprecated, use manning_n
+            manning_n: 0.03, // Smooth channel roughness
             settling_velocity: 0.01,
             bed_porosity: 0.4,
             hardness_overburden: 1.0,
             hardness_paydirt: 5.0,
+            open_boundaries: true, // Default to open for simulation
         }
     }
 }
@@ -174,13 +180,13 @@ impl FineRegion {
 
     /// Flow X index.
     #[inline]
-    fn flow_x_idx(&self, x: usize, z: usize) -> usize {
+    pub fn flow_x_idx(&self, x: usize, z: usize) -> usize {
         z * (self.width + 1) + x
     }
 
     /// Flow Z index.
     #[inline]
-    fn flow_z_idx(&self, x: usize, z: usize) -> usize {
+    pub fn flow_z_idx(&self, x: usize, z: usize) -> usize {
         z * self.width + x
     }
 
@@ -538,13 +544,13 @@ impl World {
 
     /// Flow X index (faces between cells in X direction).
     #[inline]
-    fn flow_x_idx(&self, x: usize, z: usize) -> usize {
+    pub fn flow_x_idx(&self, x: usize, z: usize) -> usize {
         z * (self.width + 1) + x
     }
 
     /// Flow Z index (faces between cells in Z direction).
     #[inline]
-    fn flow_z_idx(&self, x: usize, z: usize) -> usize {
+    pub fn flow_z_idx(&self, x: usize, z: usize) -> usize {
         z * self.width + x
     }
 
@@ -1199,17 +1205,19 @@ impl World {
         }
 
         // Open Boundary Condition: Edges are sinks (water flow off map)
-        for z in 0..depth {
-            let idx_left = self.idx(0, z);
-            let idx_right = self.idx(width - 1, z);
-            self.water_surface[idx_left] = self.ground_height(0, z);
-            self.water_surface[idx_right] = self.ground_height(width - 1, z);
-        }
-        for x in 0..width {
-            let idx_back = self.idx(x, 0);
-            let idx_front = self.idx(x, depth - 1);
-            self.water_surface[idx_back] = self.ground_height(x, 0);
-            self.water_surface[idx_front] = self.ground_height(x, depth - 1);
+        if self.params.open_boundaries {
+            for z in 0..depth {
+                let idx_left = self.idx(0, z);
+                let idx_right = self.idx(width - 1, z);
+                self.water_surface[idx_left] = self.ground_height(0, z);
+                self.water_surface[idx_right] = self.ground_height(width - 1, z);
+            }
+            for x in 0..width {
+                let idx_back = self.idx(x, 0);
+                let idx_front = self.idx(x, depth - 1);
+                self.water_surface[idx_back] = self.ground_height(x, 0);
+                self.water_surface[idx_front] = self.ground_height(x, depth - 1);
+            }
         }
     }
 

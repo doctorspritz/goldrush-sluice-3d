@@ -173,6 +173,13 @@ impl GutterPiece {
         self.end_width = self.end_width.clamp(0.15, 1.5);
     }
 
+    /// Adjust wall height within bounds
+    pub fn adjust_wall_height(&mut self, delta: f32) {
+        let raw = self.wall_height + delta;
+        self.wall_height = (raw * 100.0).round() / 100.0;
+        self.wall_height = self.wall_height.clamp(0.02, 0.5);
+    }
+
     /// Get width at a position along the gutter (0.0 = inlet, 1.0 = outlet)
     pub fn width_at(&self, t: f32) -> f32 {
         self.width + (self.end_width - self.width) * t.clamp(0.0, 1.0)
@@ -408,8 +415,11 @@ pub struct ShakerDeckPiece {
     pub rotation: Rotation,
     /// Deck length along flow direction (meters)
     pub length: f32,
-    /// Deck width perpendicular to flow (meters)
+    /// Deck width at inlet (meters)
     pub width: f32,
+    /// Deck width at outlet (meters) - for funnel effect
+    #[serde(default = "default_shaker_end_width")]
+    pub end_width: f32,
     /// Slight tilt angle for material to slide off (degrees, typically 5-15)
     pub tilt_deg: f32,
     /// Grid hole size (meters) - particles smaller than this pass through
@@ -420,6 +430,10 @@ pub struct ShakerDeckPiece {
     pub bar_thickness: f32,
 }
 
+fn default_shaker_end_width() -> f32 {
+    0.5 // Same as default width
+}
+
 impl Default for ShakerDeckPiece {
     fn default() -> Self {
         Self {
@@ -428,6 +442,7 @@ impl Default for ShakerDeckPiece {
             rotation: Rotation::R0,
             length: 0.8,
             width: 0.5,
+            end_width: 0.5,
             tilt_deg: 8.0,       // Slight tilt for material flow
             hole_size: 0.005,   // 5mm holes
             wall_height: 0.08,
@@ -516,6 +531,31 @@ impl ShakerDeckPiece {
     pub fn adjust_hole_size(&mut self, delta: f32) {
         self.hole_size = (self.hole_size + delta).clamp(0.001, 0.020);
     }
+
+    /// Adjust end width within bounds
+    pub fn adjust_end_width(&mut self, delta: f32) {
+        let raw = self.end_width + delta;
+        // Round to nearest 0.05 to avoid float drift
+        self.end_width = (raw * 20.0).round() / 20.0;
+        self.end_width = self.end_width.clamp(0.15, 1.5);
+    }
+
+    /// Adjust wall height within bounds
+    pub fn adjust_wall_height(&mut self, delta: f32) {
+        let raw = self.wall_height + delta;
+        self.wall_height = (raw * 100.0).round() / 100.0;
+        self.wall_height = self.wall_height.clamp(0.02, 0.5);
+    }
+
+    /// Get width at a position along the deck (0.0 = inlet, 1.0 = outlet)
+    pub fn width_at(&self, t: f32) -> f32 {
+        self.width + (self.end_width - self.width) * t.clamp(0.0, 1.0)
+    }
+
+    /// Maximum width (for grid sizing)
+    pub fn max_width(&self) -> f32 {
+        self.width.max(self.end_width)
+    }
 }
 
 /// Piece type enum for selection
@@ -571,43 +611,77 @@ impl EditorLayout {
         Self::default()
     }
 
-    /// Create a pre-connected gutter + sluice layout
-    /// The gutter outlet connects directly to the sluice inlet (Y and Z aligned)
+    /// Create a pre-connected layout: Shaker Deck → Funnel Gutter → Sluice
+    /// With emitter positioned above the shaker deck inlet
     pub fn new_connected() -> Self {
         let mut layout = Self::default();
 
-        // Create gutter at a reasonable starting position
+        // === SHAKER DECK (top) ===
+        // Material enters at inlet (high end), oversize exits at outlet (low end)
+        // Fines fall through the perforated deck
+        let shaker_id = layout.next_id();
+        let mut shaker = ShakerDeckPiece::new(shaker_id);
+        shaker.position = Vec3::new(0.0, 1.1, 0.0);
+        shaker.rotation = Rotation::R0;
+        shaker.tilt_deg = 8.0; // Moderate tilt for material flow
+        shaker.length = 0.8;
+        shaker.width = 0.5;
+        shaker.end_width = 0.35; // Slight funnel toward outlet
+        // Use larger holes/bars that can be resolved at sim cell size (25mm)
+        // More bars than holes for better water interaction
+        shaker.hole_size = 0.025;     // 25mm holes (1 cell)
+        shaker.bar_thickness = 0.05;  // 50mm bars (2 cells) - 67% solid
+
+        // === FUNNEL GUTTER (below shaker deck) ===
+        // Catches fines falling through the shaker deck
+        // Wide inlet to catch full width, narrow outlet feeds sluice
         let gutter_id = layout.next_id();
         let mut gutter = GutterPiece::new(gutter_id);
-        gutter.position = Vec3::new(0.0, 0.9, 0.0);
         gutter.rotation = Rotation::R0;
+        gutter.length = 0.7;
+        gutter.width = 0.6;      // Wide inlet to catch fines
+        gutter.end_width = 0.25; // Narrow outlet for sluice
+        gutter.angle_deg = 12.0; // Steep enough for good flow
 
-        // Create sluice - position it so inlet matches gutter outlet
+        // Position funnel gutter below shaker deck underside
+        let shaker_underside = shaker.underside_position();
+        let gutter_half_drop = gutter.height_drop() / 2.0;
+        gutter.position = Vec3::new(
+            shaker_underside.x,
+            shaker_underside.y - 0.08 - gutter_half_drop, // Gap below deck
+            shaker_underside.z,
+        );
+
+        // === SLUICE (bottom) ===
+        // Recovery sluice catches gold from funnel gutter
         let sluice_id = layout.next_id();
         let mut sluice = SluicePiece::new(sluice_id);
         sluice.rotation = Rotation::R0;
+        sluice.length = 1.2;
+        sluice.width = 0.25; // Match funnel gutter outlet width
 
-        // Calculate connection point:
-        // Gutter outlet = gutter.position + (length/2, -half_drop, 0) for R0
-        // Sluice inlet = sluice.position + (-length/2, +half_drop, 0) for R0
-        // So: sluice.position = gutter.outlet - (-length/2, +half_drop, 0)
-        //                     = gutter.outlet + (length/2, -half_drop, 0)
+        // Position sluice so inlet aligns with funnel gutter outlet
         let gutter_outlet = gutter.outlet_position();
         let sluice_half_drop = sluice.height_drop() / 2.0;
-
         sluice.position = Vec3::new(
-            gutter_outlet.x + sluice.length / 2.0, // X: outlet + half sluice length
-            gutter_outlet.y - sluice_half_drop,    // Y: outlet Y - sluice half_drop
-            gutter_outlet.z,                        // Z: same as gutter
+            gutter_outlet.x + sluice.length / 2.0,
+            gutter_outlet.y - sluice_half_drop,
+            gutter_outlet.z,
         );
 
-        // Add emitter above gutter inlet
+        // === EMITTER (above shaker deck) ===
         let emitter_id = layout.next_id();
         let mut emitter = EmitterPiece::new(emitter_id);
-        let gutter_inlet = gutter.inlet_position();
-        emitter.position = Vec3::new(gutter_inlet.x, gutter_inlet.y + 0.15, gutter_inlet.z);
+        let shaker_inlet = shaker.inlet_position();
+        emitter.position = Vec3::new(
+            shaker_inlet.x,
+            shaker_inlet.y + 0.18, // Above shaker inlet
+            shaker_inlet.z,
+        );
         emitter.rotation = Rotation::R0;
+        emitter.rate = 1500.0; // Good flow rate for shaker
 
+        layout.shaker_decks.push(shaker);
         layout.gutters.push(gutter);
         layout.sluices.push(sluice);
         layout.emitters.push(emitter);

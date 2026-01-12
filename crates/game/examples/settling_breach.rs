@@ -352,12 +352,24 @@ impl ApplicationHandler for App {
                     self.inflow_rate > 0.0, // enabled
                 );
 
+                // Debug: print emitter params once
+                static PRINTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                if !PRINTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    println!("Emitter: pos=({}, {}), radius={}, rate={}, dt={}, enabled={}",
+                        pos_x, pos_z, 2.0 * CELL_SIZE, self.inflow_rate, sim_dt, self.inflow_rate > 0.0);
+                }
+
                 // Create encoder for simulation
                 let mut encoder =
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
                 // Inject water via emitter
                 hf.dispatch_emitter(&mut encoder);
+
+                // Track total water added
+                if self.inflow_rate > 0.0 {
+                    self.total_inflow += self.inflow_rate * sim_dt;
+                }
 
                 // Step heightfield simulation (SWE + erosion + collapse)
                 hf.dispatch_tile(&mut encoder, WORLD_WIDTH as u32, WORLD_DEPTH as u32);

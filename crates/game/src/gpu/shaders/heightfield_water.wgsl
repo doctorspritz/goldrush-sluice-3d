@@ -79,43 +79,61 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let h_r = water_surface[idx_r];
         let d_l = water_depth[idx];
         let d_r = water_depth[idx_r];
-        
+
         // Only calculate flow if water exists
         if (d_l > 0.001 || d_r > 0.001) {
              let gradient = (h_l - h_r) / params.cell_size;
              var vel = water_velocity_x[idx];
              vel += params.gravity * gradient * params.dt;
              vel *= params.damping;
-             
+
              // Clamp velocity
-             let max_v = params.cell_size / params.dt * 0.25; // More conservative
+             let max_v = params.cell_size / params.dt * 0.25;
              vel = clamp(vel, -max_v, max_v);
-             
+
              water_velocity_x[idx] = vel;
-             
+
              // Compute Flux (volume per timestep)
              let avg_depth = 0.5 * (d_l + d_r);
              var flux = vel * avg_depth * params.cell_size * params.dt;
-             
-             // CRITICAL: Limit flux to available water in source cell
-             // Positive flux = flow from left to right, source is left cell
-             // Negative flux = flow from right to left, source is right cell
+
+             // Limit flux to available water in source cell
              if (flux > 0.0) {
-                 let max_flux = d_l * cell_area * 0.25; // Max 25% of cell per timestep
+                 let max_flux = d_l * cell_area * 0.25;
                  flux = min(flux, max_flux);
              } else {
                  let max_flux = d_r * cell_area * 0.25;
                  flux = max(flux, -max_flux);
              }
-             
+
              flux_x[idx] = flux;
         } else {
              water_velocity_x[idx] = 0.0;
              flux_x[idx] = 0.0;
         }
     } else if (x == params.world_width - 1) {
-         water_velocity_x[idx] = 0.0;
-         flux_x[idx] = 0.0;
+        // OPEN BOUNDARY: Allow water to flow OUT at right edge
+        // Use current velocity and local depth to compute outflow
+        let d_local = water_depth[idx];
+        if (d_local > 0.001) {
+            var vel = water_velocity_x[idx];
+            // Assume slight downhill gradient to encourage outflow
+            vel += params.gravity * 0.01 * params.dt;
+            vel *= params.damping;
+            // Only allow positive (outward) velocity at open boundary
+            vel = max(vel, 0.0);
+            let max_v = params.cell_size / params.dt * 0.25;
+            vel = min(vel, max_v);
+            water_velocity_x[idx] = vel;
+            // Outflow flux based on local depth
+            var flux = vel * d_local * params.cell_size * params.dt;
+            let max_flux = d_local * cell_area * 0.5; // Allow more outflow at boundary
+            flux = min(flux, max_flux);
+            flux_x[idx] = flux;
+        } else {
+            water_velocity_x[idx] = 0.0;
+            flux_x[idx] = 0.0;
+        }
     }
     
     // Z-Flux (Flow Forward: z -> z+1)
@@ -180,40 +198,34 @@ fn update_depth(@builtin(global_invocation_id) global_id: vec3<u32>) {
     //   - Inflow from right = max(0, -flux_x[x]) (negative flow means x+1 flows to x)
     
     var net_flux = 0.0;
-    
+
     // X direction
     if (x > 0) {
         let f = flux_x[get_idx(x - 1, z)];
-        net_flux += f; // Positive = inflow, Negative = outflow
+        net_flux += f; // Positive = inflow from left
     }
-    if (x < params.world_width - 1) {
-        let f = flux_x[idx];
-        net_flux -= f; // Positive = outflow, Negative = inflow  
-    }
-    
+    // Outflow to the right (includes open boundary at x=max)
+    let f_out_x = flux_x[idx];
+    net_flux -= f_out_x; // Positive = outflow to right
+
     // Z direction
     if (z > 0) {
         let f = flux_z[get_idx(x, z - 1)];
-        net_flux += f;
+        net_flux += f; // Positive = inflow from back
     }
     if (z < params.world_depth - 1) {
         let f = flux_z[idx];
-        net_flux -= f;
+        net_flux -= f; // Positive = outflow to front
     }
-    
+
     // Update Depth
     let cell_area = params.cell_size * params.cell_size;
     let depth_change = net_flux / cell_area;
-    
+
     var new_depth = water_depth[idx] + depth_change;
-    
+
     // Clamp to prevent negative depth
     new_depth = max(0.0, new_depth);
-    
-    // Open Boundary: Drain at edges
-    if (x == 0 || x == params.world_width - 1 || z == 0 || z == params.world_depth - 1) {
-        new_depth = 0.0;
-    }
-    
+
     water_depth[idx] = new_depth;
 }

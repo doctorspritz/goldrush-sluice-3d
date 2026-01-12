@@ -34,6 +34,7 @@ use game::gpu::flip_3d::GpuFlip3D;
 use game::gpu::fluid_renderer::ScreenSpaceFluidRenderer;
 use game::sluice_geometry::SluiceVertex;
 use glam::{Mat3, Mat4, Vec3};
+use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D};
 use sim3d::FlipSimulation3D;
 use std::path::Path;
 use std::sync::Arc;
@@ -58,6 +59,14 @@ const SIM_MAX_PARTICLES: usize = 50_000;
 const SIM_PRESSURE_ITERS: usize = 30; // Reduced for speed
 const SIM_SUBSTEPS: u32 = 2;
 const SIM_GRAVITY: f32 = -9.8;
+
+// DEM constants
+const DEM_CLUMP_RADIUS: f32 = 0.008; // 8mm clumps
+const DEM_GOLD_DENSITY: f32 = 19300.0; // kg/m³
+const DEM_SAND_DENSITY: f32 = 2650.0; // kg/m³
+const DEM_WATER_DENSITY: f32 = 1000.0; // kg/m³
+const DEM_DRAG_COEFF: f32 = 5.0; // Water drag coefficient
+const DEM_SEDIMENT_RATIO: f32 = 0.1; // 10% of particles are sediment
 
 // Grid size limits for reasonable FPS
 const MAX_GRID_WIDTH: usize = 120;
@@ -105,8 +114,9 @@ const GRID_COLOR: [f32; 4] = [0.3, 0.3, 0.3, 0.5];
 /// Which type of piece this simulation belongs to
 #[derive(Clone, Copy, Debug)]
 enum PieceKind {
-    Gutter(usize), // index into layout.gutters
-    Sluice(usize), // index into layout.sluices
+    Gutter(usize),     // index into layout.gutters
+    Sluice(usize),     // index into layout.sluices
+    ShakerDeck(usize), // index into layout.shaker_decks
 }
 
 /// Per-piece simulation grid
@@ -152,14 +162,56 @@ struct MultiGridSim {
     pieces: Vec<PieceSimulation>,
     transfers: Vec<PieceTransfer>,
     frame: u32,
+
+    // DEM simulation (global, not per-piece)
+    dem_sim: ClusterSimulation3D,
+    gold_template_idx: usize,
+    sand_template_idx: usize,
 }
 
 impl MultiGridSim {
     fn new() -> Self {
+        // Create DEM simulation with large bounds (covers all pieces)
+        let mut dem_sim = ClusterSimulation3D::new(
+            Vec3::new(-10.0, -2.0, -10.0),
+            Vec3::new(20.0, 10.0, 20.0),
+        );
+
+        // Create gold template (heavy, ~8mm clumps)
+        // Gold: 19300 kg/m³, water: 1000 kg/m³
+        // Volume of 8mm sphere ≈ 2.68e-7 m³, mass ≈ 5.17g for gold
+        let gold_particle_mass = DEM_GOLD_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * DEM_CLUMP_RADIUS.powi(3);
+        let gold_template = ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 5,
+                seed: 42,
+                style: sim3d::clump::IrregularStyle3D::Round,
+            },
+            DEM_CLUMP_RADIUS,
+            gold_particle_mass,
+        );
+        let gold_template_idx = dem_sim.add_template(gold_template);
+
+        // Create sand/gangue template (lighter)
+        let sand_particle_mass = DEM_SAND_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * DEM_CLUMP_RADIUS.powi(3);
+        let sand_template = ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 4,
+                seed: 123,
+                style: sim3d::clump::IrregularStyle3D::Sharp,
+            },
+            DEM_CLUMP_RADIUS,
+            sand_particle_mass,
+        );
+        let sand_template_idx = dem_sim.add_template(sand_template);
+
         Self {
             pieces: Vec::new(),
             transfers: Vec::new(),
             frame: 0,
+            dem_sim,
+            gold_template_idx,
+            sand_template_idx,
         }
     }
 
@@ -337,6 +389,101 @@ impl MultiGridSim {
         let idx = self.pieces.len();
         self.pieces.push(PieceSimulation {
             kind: PieceKind::Sluice(sluice_idx),
+            grid_offset,
+            grid_dims: (width, height, depth),
+            cell_size,
+            sim,
+            gpu_flip: Some(gpu_flip),
+            positions: Vec::new(),
+            velocities: Vec::new(),
+            affine_vels: Vec::new(),
+            densities: Vec::new(),
+        });
+
+        idx
+    }
+
+    /// Add a shaker deck piece simulation
+    fn add_shaker_deck(
+        &mut self,
+        device: &wgpu::Device,
+        deck: &ShakerDeckPiece,
+        deck_idx: usize,
+    ) -> usize {
+        let cell_size = SIM_CELL_SIZE;
+        let margin = cell_size * 4.0;
+        let max_width = deck.max_width();
+
+        let width = ((deck.length + margin * 2.0) / cell_size).ceil() as usize;
+        // Height includes wall height + headroom for particles
+        let height = ((deck.wall_height + margin + 0.3) / cell_size).ceil() as usize;
+        let depth = ((max_width + margin * 2.0) / cell_size).ceil() as usize;
+
+        let width = width.clamp(10, 60);
+        let height = height.clamp(10, 40);
+        let depth = depth.clamp(10, 40);
+
+        // Grid origin based on rotation
+        let (dir_x, dir_z) = match deck.rotation {
+            Rotation::R0 => (1.0f32, 0.0f32),
+            Rotation::R90 => (0.0, 1.0),
+            Rotation::R180 => (-1.0, 0.0),
+            Rotation::R270 => (0.0, -1.0),
+        };
+
+        // Grid offset accounting for rotation
+        let grid_offset = Vec3::new(
+            deck.position.x
+                - deck.length / 2.0 * dir_x.abs()
+                - max_width / 2.0 * dir_z.abs()
+                - margin,
+            deck.position.y - margin,
+            deck.position.z
+                - deck.length / 2.0 * dir_z.abs()
+                - max_width / 2.0 * dir_x.abs()
+                - margin,
+        );
+
+        let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
+        sim.pressure_iterations = SIM_PRESSURE_ITERS;
+
+        // Mark shaker deck solid cells (walls only - grid is porous)
+        let deck_local = ShakerDeckPiece {
+            id: 0,
+            position: Vec3::new(
+                margin + deck.length / 2.0,
+                margin,
+                margin + deck.max_width() / 2.0,
+            ),
+            rotation: Rotation::R0,
+            length: deck.length,
+            width: deck.width,
+            end_width: deck.end_width,
+            tilt_deg: deck.tilt_deg,
+            hole_size: deck.hole_size,
+            wall_height: deck.wall_height,
+            bar_thickness: deck.bar_thickness,
+        };
+        Self::mark_shaker_deck_solid_cells(&mut sim, &deck_local, cell_size);
+
+        sim.grid.compute_sdf();
+
+        let mut gpu_flip = GpuFlip3D::new(
+            device,
+            width as u32,
+            height as u32,
+            depth as u32,
+            cell_size,
+            20000,
+        );
+        // Shaker deck: +X (outlet) open for oversize material
+        // -Y (bottom) open for fines falling through the perforated deck
+        // Bit 1 (2) = +X, Bit 2 (4) = -Y -> combined = 6
+        gpu_flip.open_boundaries = 6; // +X and -Y open
+
+        let idx = self.pieces.len();
+        self.pieces.push(PieceSimulation {
+            kind: PieceKind::ShakerDeck(deck_idx),
             grid_offset,
             grid_dims: (width, height, depth),
             cell_size,
@@ -643,6 +790,130 @@ impl MultiGridSim {
                     // Particles enter from the inlet side
 
                     if is_floor || is_riffle || is_side_wall {
+                        sim.grid.set_solid(i, j, k);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Mark shaker deck solid cells - walls only (grid is porous)
+    /// Supports variable width (funnel effect)
+    /// Marks side walls, back wall, and grate bars as solid
+    fn mark_shaker_deck_solid_cells(sim: &mut FlipSimulation3D, deck: &ShakerDeckPiece, cell_size: f32) {
+        let width = sim.grid.width;
+        let height = sim.grid.height;
+        let depth = sim.grid.depth;
+
+        // Deck position gives center in X/Z and base height in Y
+        let center_i = (deck.position.x / cell_size).round() as i32;
+        let center_k = (deck.position.z / cell_size).round() as i32;
+
+        // Channel dimensions in cells
+        let half_len_cells = ((deck.length / 2.0) / cell_size).ceil() as i32;
+        // Variable width: inlet vs outlet
+        let inlet_half_wid_cells = ((deck.width / 2.0) / cell_size).ceil() as i32;
+        let outlet_half_wid_cells = ((deck.end_width / 2.0) / cell_size).ceil() as i32;
+
+        // Floor height drop due to tilt
+        let tilt_rad = deck.tilt_deg.to_radians();
+        let total_drop = deck.length * tilt_rad.tan();
+
+        // Wall parameters - deck walls are solid
+        let wall_height_cells = ((deck.wall_height / cell_size).ceil() as i32).max(4);
+        let wall_thick_cells = 2_i32;
+
+        // Grate parameters - bars and holes
+        let bar_spacing = deck.hole_size + deck.bar_thickness;
+        let bar_thick_cells = (deck.bar_thickness / cell_size).ceil() as i32;
+        let hole_cells = (deck.hole_size / cell_size).floor() as i32;
+        let pattern_cells = bar_thick_cells + hole_cells;
+
+        // Cross bar spacing (every 3rd bar_spacing)
+        let cross_spacing = bar_spacing * 3.0;
+        let cross_pattern_cells = (cross_spacing / cell_size).round() as i32;
+
+        // Channel bounds in i (length direction)
+        let i_start = (center_i - half_len_cells).max(0) as usize;
+        let i_end = ((center_i + half_len_cells) as usize).min(width);
+
+        for i in 0..width {
+            let i_i = i as i32;
+
+            // Calculate position along deck (0.0 = inlet, 1.0 = outlet)
+            let t = if i_i <= center_i - half_len_cells {
+                0.0
+            } else if i_i >= center_i + half_len_cells {
+                1.0
+            } else {
+                ((i_i - (center_i - half_len_cells)) as f32)
+                    / ((half_len_cells * 2) as f32).max(1.0)
+            };
+
+            // Variable width at this position (funnel effect)
+            let local_half_wid_cells = (inlet_half_wid_cells as f32
+                + (outlet_half_wid_cells - inlet_half_wid_cells) as f32 * t) as i32;
+
+            // Compute floor_j from mesh floor position
+            let mesh_floor_y = deck.position.y + (total_drop / 2.0) - t * total_drop;
+            let floor_j = (mesh_floor_y / cell_size).floor() as i32;
+            let wall_top_j = floor_j + wall_height_cells;
+
+            let in_channel_length = i >= i_start && i < i_end;
+
+            // Check if this X position is on a cross bar
+            let dist_from_start = i_i - (center_i - half_len_cells);
+            let on_cross_bar = if cross_pattern_cells > 0 {
+                (dist_from_start % cross_pattern_cells) < bar_thick_cells
+            } else {
+                false
+            };
+
+            for k in 0..depth {
+                let k_i = k as i32;
+
+                // Check if this Z position is on a longitudinal bar
+                let dist_from_center_z = (k_i - center_k).abs();
+                let on_long_bar = if pattern_cells > 0 {
+                    (dist_from_center_z % pattern_cells) < bar_thick_cells
+                } else {
+                    true // If no pattern, treat as solid
+                };
+
+                // Within channel width?
+                let in_channel_width = k_i >= (center_k - local_half_wid_cells)
+                    && k_i < (center_k + local_half_wid_cells);
+
+                for j in 0..height {
+                    let j_i = j as i32;
+
+                    // Side walls - mark cells outside channel width as solid
+                    let at_left_wall = k_i < (center_k - local_half_wid_cells);
+                    let at_right_wall = k_i >= (center_k + local_half_wid_cells);
+                    let is_side_wall = (at_left_wall || at_right_wall)
+                        && in_channel_length
+                        && j_i <= wall_top_j
+                        && j_i >= floor_j;
+
+                    // Back wall at inlet
+                    let at_back = i_i >= (center_i - half_len_cells - wall_thick_cells)
+                        && i_i < (center_i - half_len_cells);
+                    let is_back_wall = at_back
+                        && j_i <= wall_top_j
+                        && j_i >= floor_j
+                        && k_i >= (center_k - inlet_half_wid_cells - wall_thick_cells)
+                        && k_i < (center_k + inlet_half_wid_cells + wall_thick_cells);
+
+                    // Grate bars - at floor level, where bars exist (not holes)
+                    // Bars are solid, holes let particles through
+                    // Make bars 4 cells thick to prevent tunneling
+                    let at_floor_level = j_i >= floor_j && j_i <= floor_j + 3;
+                    let is_grate_bar = in_channel_length
+                        && in_channel_width
+                        && at_floor_level
+                        && (on_long_bar || on_cross_bar);
+
+                    if is_side_wall || is_back_wall || is_grate_bar {
                         sim.grid.set_solid(i, j, k);
                     }
                 }
@@ -1171,6 +1442,16 @@ impl App {
             );
         }
 
+        // Add a piece simulation for each shaker deck
+        for (idx, deck) in self.layout.shaker_decks.iter().enumerate() {
+            let piece_idx = multi_sim.add_shaker_deck(&gpu.device, deck, idx);
+            let piece = &multi_sim.pieces[piece_idx];
+            println!(
+                "  ShakerDeck #{}: grid {}x{}x{} at {:?}",
+                idx, piece.grid_dims.0, piece.grid_dims.1, piece.grid_dims.2, piece.grid_offset
+            );
+        }
+
         println!("  Total pieces: {}", multi_sim.pieces.len());
 
         // Create transfers from gutters to sluices
@@ -1247,6 +1528,70 @@ impl App {
             let outlet_in_sluice_local = gutter_outlet_world - sluice_piece.grid_offset;
             println!("    Gutter outlet in sluice local: {:?}", outlet_in_sluice_local);
             println!("    Sluice grid size: {:?}", sluice_piece.grid_dims);
+        }
+
+        // Create transfers from shaker decks to gutters
+        // Particles fall through the perforated deck and need to be captured
+        let num_shaker_decks = self.layout.shaker_decks.len();
+        if num_shaker_decks > 0 && num_gutters > 0 {
+            // Shaker deck index starts after gutters and sluices
+            let shaker_idx = num_gutters + num_sluices;
+            let gutter_idx = 0; // Transfer to first gutter (funnel below)
+
+            let deck = &self.layout.shaker_decks[0];
+            let gutter = &self.layout.gutters[0];
+
+            // Capture region: bottom of shaker deck grid
+            // Particles that fall through the perforated deck end up near Y=0 in local space
+            let margin = SIM_CELL_SIZE * 4.0;
+
+            // Extract values before mutable borrow
+            let deck_grid_dims = multi_sim.pieces[shaker_idx].grid_dims;
+            let deck_cell_size = multi_sim.pieces[shaker_idx].cell_size;
+            let deck_grid_offset = multi_sim.pieces[shaker_idx].grid_offset;
+            let gutter_grid_offset = multi_sim.pieces[gutter_idx].grid_offset;
+
+            // Capture everything near the bottom of the grid (Y close to 0)
+            let capture_y_min = -1.0;
+            let capture_y_max = margin * 0.5; // Just below the deck floor level
+
+            // Full X and Z extent to catch all particles
+            let capture_x_min = 0.0;
+            let capture_x_max = deck_grid_dims.0 as f32 * deck_cell_size;
+            let capture_z_min = 0.0;
+            let capture_z_max = deck_grid_dims.2 as f32 * deck_cell_size;
+
+            println!("    ShakerDeck capture region (local): X=[{:.3}, {:.3}], Y=[{:.3}, {:.3}], Z=[{:.3}, {:.3}]",
+                capture_x_min, capture_x_max, capture_y_min, capture_y_max, capture_z_min, capture_z_max);
+
+            // Injection position: top of funnel gutter (in gutter's local grid space)
+            let gutter_margin = SIM_CELL_SIZE * 4.0;
+            let gutter_half_drop = gutter.height_drop() / 2.0;
+
+            // Inject at inlet end of gutter, at top (where particles would fall in)
+            let inject_x = gutter_margin; // Start of gutter (inlet)
+            let inject_y = gutter_margin + gutter_half_drop + gutter.wall_height * 0.8; // Near top
+            let inject_z = gutter_margin + gutter.max_width() / 2.0; // Centered
+            let inject_pos = Vec3::new(inject_x, inject_y, inject_z);
+
+            // Injection velocity: slight downward to help particles settle
+            let inject_vel = Vec3::new(0.1, -0.3, 0.0);
+
+            multi_sim.add_transfer(
+                shaker_idx,
+                gutter_idx,
+                Vec3::new(capture_x_min, capture_y_min, capture_z_min),
+                Vec3::new(capture_x_max, capture_y_max, capture_z_max),
+                inject_pos,
+                inject_vel,
+            );
+
+            println!("  Created transfer: ShakerDeck #{} -> Gutter #{}", 0, 0);
+
+            // Debug info
+            println!("    ShakerDeck grid offset: {:?}", deck_grid_offset);
+            println!("    Gutter grid offset: {:?}", gutter_grid_offset);
+            println!("    Inject pos (gutter local): {:?}", inject_pos);
         }
 
         // Create fluid renderer
@@ -1557,21 +1902,54 @@ impl App {
         }
     }
 
+    /// Find the best piece to emit into for a given world position
+    fn find_piece_for_emitter(multi_sim: &MultiGridSim, world_pos: Vec3) -> usize {
+        let mut best_piece = 0;
+        let mut best_dist = f32::MAX;
+
+        for (idx, piece) in multi_sim.pieces.iter().enumerate() {
+            // Convert world pos to this piece's local space
+            let local_pos = world_pos - piece.grid_offset;
+            let (gw, gh, gd) = piece.grid_dims;
+            let cs = piece.cell_size;
+
+            // Check if position is within grid bounds (with some margin above)
+            let margin = cs * 4.0;
+            let in_x = local_pos.x >= -margin && local_pos.x < (gw as f32 * cs) + margin;
+            let in_z = local_pos.z >= -margin && local_pos.z < (gd as f32 * cs) + margin;
+            let above = local_pos.y >= 0.0 && local_pos.y < (gh as f32 * cs) + margin * 4.0;
+
+            if in_x && in_z && above {
+                // Compute distance to center of piece
+                let center = Vec3::new(
+                    (gw as f32 * cs) / 2.0,
+                    margin,
+                    (gd as f32 * cs) / 2.0,
+                );
+                let dist = (local_pos - center).length();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_piece = idx;
+                }
+            }
+        }
+
+        best_piece
+    }
+
     /// Emit particles from emitters into multi-grid simulation
     fn emit_from_emitters_multi(&mut self) {
         let Some(multi_sim) = &mut self.multi_sim else {
             return;
         };
 
-        // For now, emit into the first gutter (piece index 0 if it exists)
-        // Later: find which piece the emitter is above/near
-        let target_piece = if multi_sim.pieces.is_empty() {
+        if multi_sim.pieces.is_empty() {
             return;
-        } else {
-            0
-        };
+        }
 
         for emitter in &self.layout.emitters {
+            // Find the best target piece for this emitter
+            let target_piece = Self::find_piece_for_emitter(multi_sim, emitter.position);
             // Calculate emit count based on rate (particles per second at 60 FPS)
             let emit_count = (emitter.rate / 60.0).ceil() as usize;
 
@@ -1616,8 +1994,20 @@ impl App {
 
                 let world_pos = emitter.position + pos_offset;
 
-                // Emit into target piece
+                // Emit water into target piece
                 multi_sim.emit_into_piece(target_piece, world_pos, velocity, 1);
+
+                // Spawn DEM clumps alongside water (DEM_SEDIMENT_RATIO of particles are sediment)
+                if rand_float() < DEM_SEDIMENT_RATIO {
+                    // 20% gold, 80% sand/gangue
+                    let template_idx = if rand_float() < 0.2 {
+                        multi_sim.gold_template_idx
+                    } else {
+                        multi_sim.sand_template_idx
+                    };
+                    // Spawn at same position as water (IN the water flow)
+                    multi_sim.dem_sim.spawn(template_idx, world_pos, velocity);
+                }
             }
         }
 
@@ -1625,11 +2015,24 @@ impl App {
         static PRINTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !PRINTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
             println!("Multi-grid emitter debug:");
-            if let Some(piece) = multi_sim.pieces.first() {
-                println!("  Target piece grid offset: {:?}", piece.grid_offset);
-            }
             for (i, emitter) in self.layout.emitters.iter().enumerate() {
-                println!("  Emitter {}: world={:?}", i, emitter.position);
+                let target = Self::find_piece_for_emitter(multi_sim, emitter.position);
+                let piece = &multi_sim.pieces[target];
+                let local_pos = emitter.position - piece.grid_offset;
+                let (gw, gh, gd) = piece.grid_dims;
+                let cs = piece.cell_size;
+                let in_bounds = local_pos.x >= 0.0 && local_pos.x < gw as f32 * cs
+                    && local_pos.y >= 0.0 && local_pos.y < gh as f32 * cs
+                    && local_pos.z >= 0.0 && local_pos.z < gd as f32 * cs;
+                println!("  Emitter {}: world={:?} -> piece {} (local={:?}, in_bounds={})",
+                    i, emitter.position, target, local_pos, in_bounds);
+                println!("    Piece {} grid: offset={:?}, dims={:?}, size={:.3}x{:.3}x{:.3}",
+                    target, piece.grid_offset, piece.grid_dims,
+                    gw as f32 * cs, gh as f32 * cs, gd as f32 * cs);
+            }
+            println!("  Total pieces: {}", multi_sim.pieces.len());
+            for (i, piece) in multi_sim.pieces.iter().enumerate() {
+                println!("    Piece {}: offset={:?}, dims={:?}", i, piece.grid_offset, piece.grid_dims);
             }
         }
     }
@@ -1827,6 +2230,13 @@ impl App {
             KeyCode::Period => {
                 self.adjust_selected_width(WIDTH_STEP);
             }
+            // Wall height adjustment (H / Shift+H)
+            KeyCode::KeyH if self.shift_pressed => {
+                self.adjust_selected_wall_height(-0.01); // Decrease
+            }
+            KeyCode::KeyH => {
+                self.adjust_selected_wall_height(0.01); // Increase
+            }
 
             // Save/Load (Ctrl+S or just hold shift and press S)
             KeyCode::KeyS if self.shift_pressed => {
@@ -1923,7 +2333,9 @@ impl App {
             }
             EditorMode::PlaceShakerDeck => {
                 self.preview_shaker_deck.translate(delta);
-                // Shaker decks don't snap for now
+                if self.snap_enabled {
+                    self.snap_shaker_preview();
+                }
             }
             EditorMode::Select => match self.selection {
                 Selection::Gutter(idx) => {
@@ -1952,7 +2364,9 @@ impl App {
                     if let Some(d) = self.layout.shaker_decks.get_mut(idx) {
                         d.translate(delta);
                     }
-                    // Shaker decks don't snap for now
+                    if self.snap_enabled {
+                        self.snap_selected_shaker_deck(idx);
+                    }
                 }
                 Selection::None => {}
             },
@@ -1987,6 +2401,18 @@ impl App {
                 return;
             }
         }
+
+        // Check all shaker deck outlets
+        for d in &self.layout.shaker_decks {
+            let outlet = d.outlet_position();
+            let dist = (inlet - outlet).length();
+            if dist < SNAP_DISTANCE {
+                let adjustment = outlet - inlet;
+                self.preview_gutter.position += adjustment;
+                println!("Snapped to shaker outlet (dist={:.3})", dist);
+                return;
+            }
+        }
     }
 
     /// Snap preview sluice's inlet to nearest outlet
@@ -2013,6 +2439,18 @@ impl App {
                 let adjustment = outlet - inlet;
                 self.preview_sluice.position += adjustment;
                 println!("Snapped to sluice outlet (dist={:.3})", dist);
+                return;
+            }
+        }
+
+        // Check all shaker deck outlets
+        for d in &self.layout.shaker_decks {
+            let outlet = d.outlet_position();
+            let dist = (inlet - outlet).length();
+            if dist < SNAP_DISTANCE {
+                let adjustment = outlet - inlet;
+                self.preview_sluice.position += adjustment;
+                println!("Snapped to shaker outlet (dist={:.3})", dist);
                 return;
             }
         }
@@ -2053,6 +2491,20 @@ impl App {
                 return;
             }
         }
+
+        // Check all shaker deck outlets
+        for (i, d) in self.layout.shaker_decks.iter().enumerate() {
+            let outlet = d.outlet_position();
+            let dist = (inlet - outlet).length();
+            if dist < SNAP_DISTANCE {
+                let adjustment = outlet - inlet;
+                if let Some(gutter) = self.layout.gutters.get_mut(idx) {
+                    gutter.position += adjustment;
+                    println!("Snapped to shaker #{} outlet (dist={:.3})", i, dist);
+                }
+                return;
+            }
+        }
     }
 
     /// Snap selected sluice's inlet to nearest outlet
@@ -2086,6 +2538,112 @@ impl App {
                 if let Some(sluice) = self.layout.sluices.get_mut(idx) {
                     sluice.position += adjustment;
                     println!("Snapped to sluice #{} outlet (dist={:.3})", i, dist);
+                }
+                return;
+            }
+        }
+
+        // Check all shaker deck outlets
+        for (i, d) in self.layout.shaker_decks.iter().enumerate() {
+            let outlet = d.outlet_position();
+            let dist = (inlet - outlet).length();
+            if dist < SNAP_DISTANCE {
+                let adjustment = outlet - inlet;
+                if let Some(sluice) = self.layout.sluices.get_mut(idx) {
+                    sluice.position += adjustment;
+                    println!("Snapped to shaker #{} outlet (dist={:.3})", i, dist);
+                }
+                return;
+            }
+        }
+    }
+
+    /// Snap preview shaker deck's inlet to nearest outlet
+    fn snap_shaker_preview(&mut self) {
+        let inlet = self.preview_shaker_deck.inlet_position();
+
+        // Check all gutter outlets
+        for g in &self.layout.gutters {
+            let outlet = g.outlet_position();
+            let dist = (inlet - outlet).length();
+            if dist < SNAP_DISTANCE {
+                let adjustment = outlet - inlet;
+                self.preview_shaker_deck.position += adjustment;
+                println!("Snapped to gutter outlet (dist={:.3})", dist);
+                return;
+            }
+        }
+
+        // Check all sluice outlets
+        for s in &self.layout.sluices {
+            let outlet = s.outlet_position();
+            let dist = (inlet - outlet).length();
+            if dist < SNAP_DISTANCE {
+                let adjustment = outlet - inlet;
+                self.preview_shaker_deck.position += adjustment;
+                println!("Snapped to sluice outlet (dist={:.3})", dist);
+                return;
+            }
+        }
+
+        // Check all other shaker deck outlets
+        for d in &self.layout.shaker_decks {
+            let outlet = d.outlet_position();
+            let dist = (inlet - outlet).length();
+            if dist < SNAP_DISTANCE {
+                let adjustment = outlet - inlet;
+                self.preview_shaker_deck.position += adjustment;
+                println!("Snapped to shaker outlet (dist={:.3})", dist);
+                return;
+            }
+        }
+    }
+
+    /// Snap selected shaker deck's inlet to nearest outlet
+    fn snap_selected_shaker_deck(&mut self, idx: usize) {
+        let inlet = match self.layout.shaker_decks.get(idx) {
+            Some(d) => d.inlet_position(),
+            None => return,
+        };
+
+        // Check all gutter outlets
+        for (i, g) in self.layout.gutters.iter().enumerate() {
+            let outlet = g.outlet_position();
+            let dist = (inlet - outlet).length();
+            if dist < SNAP_DISTANCE {
+                let adjustment = outlet - inlet;
+                if let Some(deck) = self.layout.shaker_decks.get_mut(idx) {
+                    deck.position += adjustment;
+                    println!("Snapped to gutter #{} outlet (dist={:.3})", i, dist);
+                }
+                return;
+            }
+        }
+
+        // Check all sluice outlets
+        for (i, s) in self.layout.sluices.iter().enumerate() {
+            let outlet = s.outlet_position();
+            let dist = (inlet - outlet).length();
+            if dist < SNAP_DISTANCE {
+                let adjustment = outlet - inlet;
+                if let Some(deck) = self.layout.shaker_decks.get_mut(idx) {
+                    deck.position += adjustment;
+                    println!("Snapped to sluice #{} outlet (dist={:.3})", i, dist);
+                }
+                return;
+            }
+        }
+
+        // Check all other shaker deck outlets
+        for (i, d) in self.layout.shaker_decks.iter().enumerate() {
+            if i == idx { continue; }
+            let outlet = d.outlet_position();
+            let dist = (inlet - outlet).length();
+            if dist < SNAP_DISTANCE {
+                let adjustment = outlet - inlet;
+                if let Some(deck) = self.layout.shaker_decks.get_mut(idx) {
+                    deck.position += adjustment;
+                    println!("Snapped to shaker #{} outlet (dist={:.3})", i, dist);
                 }
                 return;
             }
@@ -2357,7 +2915,7 @@ impl App {
     }
 
     fn adjust_selected_end_width(&mut self, delta: f32) {
-        // End width only applies to gutters (for funnel effect)
+        // End width applies to gutters and shaker decks (for funnel effect)
         match self.mode {
             EditorMode::PlaceGutter => {
                 self.preview_gutter.adjust_end_width(delta);
@@ -2366,8 +2924,15 @@ impl App {
                     self.preview_gutter.width, self.preview_gutter.end_width
                 );
             }
-            EditorMode::PlaceSluice | EditorMode::PlaceEmitter | EditorMode::PlaceShakerDeck => {
-                println!("End width only applies to gutters");
+            EditorMode::PlaceShakerDeck => {
+                self.preview_shaker_deck.adjust_end_width(delta);
+                println!(
+                    "Preview shaker: width {:.2}m -> {:.2}m",
+                    self.preview_shaker_deck.width, self.preview_shaker_deck.end_width
+                );
+            }
+            EditorMode::PlaceSluice | EditorMode::PlaceEmitter => {
+                println!("End width only applies to gutters and shakers");
             }
             EditorMode::Select => match self.selection {
                 Selection::Gutter(idx) => {
@@ -2376,8 +2941,49 @@ impl App {
                         println!("Gutter: width {:.2}m -> {:.2}m", g.width, g.end_width);
                     }
                 }
-                Selection::Sluice(_) | Selection::Emitter(_) | Selection::ShakerDeck(_) => {
-                    println!("End width only applies to gutters");
+                Selection::ShakerDeck(idx) => {
+                    if let Some(d) = self.layout.shaker_decks.get_mut(idx) {
+                        d.adjust_end_width(delta);
+                        println!("ShakerDeck: width {:.2}m -> {:.2}m", d.width, d.end_width);
+                    }
+                }
+                Selection::Sluice(_) | Selection::Emitter(_) => {
+                    println!("End width only applies to gutters and shakers");
+                }
+                Selection::None => {}
+            },
+        }
+    }
+
+    fn adjust_selected_wall_height(&mut self, delta: f32) {
+        // Wall height applies to gutters and shaker decks
+        match self.mode {
+            EditorMode::PlaceGutter => {
+                self.preview_gutter.adjust_wall_height(delta);
+                println!("Preview gutter wall height: {:.2}m", self.preview_gutter.wall_height);
+            }
+            EditorMode::PlaceShakerDeck => {
+                self.preview_shaker_deck.adjust_wall_height(delta);
+                println!("Preview shaker wall height: {:.2}m", self.preview_shaker_deck.wall_height);
+            }
+            EditorMode::PlaceSluice | EditorMode::PlaceEmitter => {
+                println!("Wall height adjustment only for gutters and shakers");
+            }
+            EditorMode::Select => match self.selection {
+                Selection::Gutter(idx) => {
+                    if let Some(g) = self.layout.gutters.get_mut(idx) {
+                        g.adjust_wall_height(delta);
+                        println!("Gutter wall height: {:.2}m", g.wall_height);
+                    }
+                }
+                Selection::ShakerDeck(idx) => {
+                    if let Some(d) = self.layout.shaker_decks.get_mut(idx) {
+                        d.adjust_wall_height(delta);
+                        println!("ShakerDeck wall height: {:.2}m", d.wall_height);
+                    }
+                }
+                Selection::Sluice(_) | Selection::Emitter(_) => {
+                    println!("Wall height adjustment only for gutters and shakers");
                 }
                 Selection::None => {}
             },
@@ -2832,7 +3438,9 @@ impl App {
         let pos = deck.position;
         let rot = deck.rotation.radians();
         let half_len = deck.length / 2.0;
-        let half_wid = deck.width / 2.0;
+        // Variable width: inlet (start) vs outlet (end)
+        let half_wid_inlet = deck.width / 2.0;
+        let half_wid_outlet = deck.end_width / 2.0;
         let wall_h = deck.wall_height;
         let half_drop = deck.height_drop() / 2.0;
 
@@ -2842,45 +3450,60 @@ impl App {
             [pos.x + rx, pos.y + y, pos.z + rz]
         };
 
+        // Helper to get half-width at position along deck (t=0 at inlet, t=1 at outlet)
+        let half_wid_at = |t: f32| -> f32 {
+            half_wid_inlet + (half_wid_outlet - half_wid_inlet) * t.clamp(0.0, 1.0)
+        };
+
         // Frame/rim color
         let frame_color = [color[0] * 0.7, color[1] * 0.7, color[2] * 0.7, color[3]];
 
         // Draw the grid surface as bars (representing the screen mesh)
         let grid_color = [color[0] * 0.9, color[1] * 0.9, color[2] * 0.9, color[3]];
         let bar_spacing = deck.hole_size + deck.bar_thickness;
-        let num_bars_x = (deck.length / bar_spacing).ceil() as i32;
-        let num_bars_z = (deck.width / bar_spacing).ceil() as i32;
         let bar_height = 0.005_f32; // Thin bars
 
-        // Longitudinal bars (along length)
+        // Longitudinal bars (along length) - with variable width
+        // Use max width to determine number of bars
+        let max_half_wid = half_wid_inlet.max(half_wid_outlet);
+        let num_bars_z = (max_half_wid * 2.0 / bar_spacing).ceil() as i32;
+
         for i in 0..=num_bars_z {
-            let z = -half_wid + (i as f32) * bar_spacing;
-            if z > half_wid {
-                break;
+            // Position bars relative to center, scaled by local width
+            let bar_frac = i as f32 / num_bars_z as f32;
+
+            // Calculate z at inlet and outlet based on bar fraction
+            let z_inlet = -half_wid_inlet + bar_frac * (half_wid_inlet * 2.0);
+            let z_outlet = -half_wid_outlet + bar_frac * (half_wid_outlet * 2.0);
+
+            // Skip bars outside the smaller width
+            if z_inlet.abs() > half_wid_inlet || z_outlet.abs() > half_wid_outlet {
+                continue;
             }
+
             let base = vertices.len() as u32;
 
-            // Bar as a thin quad
+            // Bar as a thin quad - from inlet to outlet with varying z
             vertices.push(SluiceVertex::new(
-                transform(-half_len, half_drop, z),
+                transform(-half_len, half_drop, z_inlet),
                 grid_color,
             ));
             vertices.push(SluiceVertex::new(
-                transform(-half_len, half_drop + bar_height, z),
+                transform(-half_len, half_drop + bar_height, z_inlet),
                 grid_color,
             ));
             vertices.push(SluiceVertex::new(
-                transform(half_len, -half_drop + bar_height, z),
+                transform(half_len, -half_drop + bar_height, z_outlet),
                 grid_color,
             ));
             vertices.push(SluiceVertex::new(
-                transform(half_len, -half_drop, z),
+                transform(half_len, -half_drop, z_outlet),
                 grid_color,
             ));
             indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
 
-        // Cross bars (along width) - fewer for visual clarity
+        // Cross bars (along width) - at variable widths
         let cross_spacing = bar_spacing * 3.0;
         let num_cross = (deck.length / cross_spacing).ceil() as i32;
         for i in 0..=num_cross {
@@ -2888,34 +3511,36 @@ impl App {
             if x > half_len {
                 break;
             }
-            let y_at_x = half_drop - (x + half_len) / deck.length * deck.height_drop();
+            let t = (x + half_len) / deck.length;
+            let y_at_x = half_drop - t * deck.height_drop();
+            let local_half_wid = half_wid_at(t);
             let base = vertices.len() as u32;
 
             vertices.push(SluiceVertex::new(
-                transform(x, y_at_x, -half_wid),
+                transform(x, y_at_x, -local_half_wid),
                 grid_color,
             ));
             vertices.push(SluiceVertex::new(
-                transform(x, y_at_x + bar_height, -half_wid),
+                transform(x, y_at_x + bar_height, -local_half_wid),
                 grid_color,
             ));
             vertices.push(SluiceVertex::new(
-                transform(x, y_at_x + bar_height, half_wid),
+                transform(x, y_at_x + bar_height, local_half_wid),
                 grid_color,
             ));
             vertices.push(SluiceVertex::new(
-                transform(x, y_at_x, half_wid),
+                transform(x, y_at_x, local_half_wid),
                 grid_color,
             ));
             indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
 
-        // Side walls (left and right)
+        // Side walls (left and right) - trapezoidal for funnel effect
         let left_verts = [
-            transform(-half_len, half_drop, -half_wid),
-            transform(-half_len, half_drop + wall_h, -half_wid),
-            transform(half_len, -half_drop + wall_h, -half_wid),
-            transform(half_len, -half_drop, -half_wid),
+            transform(-half_len, half_drop, -half_wid_inlet),
+            transform(-half_len, half_drop + wall_h, -half_wid_inlet),
+            transform(half_len, -half_drop + wall_h, -half_wid_outlet),
+            transform(half_len, -half_drop, -half_wid_outlet),
         ];
         let base = vertices.len() as u32;
         for v in &left_verts {
@@ -2924,10 +3549,10 @@ impl App {
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 
         let right_verts = [
-            transform(-half_len, half_drop, half_wid),
-            transform(-half_len, half_drop + wall_h, half_wid),
-            transform(half_len, -half_drop + wall_h, half_wid),
-            transform(half_len, -half_drop, half_wid),
+            transform(-half_len, half_drop, half_wid_inlet),
+            transform(-half_len, half_drop + wall_h, half_wid_inlet),
+            transform(half_len, -half_drop + wall_h, half_wid_outlet),
+            transform(half_len, -half_drop, half_wid_outlet),
         ];
         let base = vertices.len() as u32;
         for v in &right_verts {
@@ -2935,12 +3560,12 @@ impl App {
         }
         indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
 
-        // Back wall (inlet end)
+        // Back wall (inlet end) - uses inlet width
         let back_verts = [
-            transform(-half_len, half_drop, -half_wid),
-            transform(-half_len, half_drop + wall_h, -half_wid),
-            transform(-half_len, half_drop + wall_h, half_wid),
-            transform(-half_len, half_drop, half_wid),
+            transform(-half_len, half_drop, -half_wid_inlet),
+            transform(-half_len, half_drop + wall_h, -half_wid_inlet),
+            transform(-half_len, half_drop + wall_h, half_wid_inlet),
+            transform(-half_len, half_drop, half_wid_inlet),
         ];
         let base = vertices.len() as u32;
         for v in &back_verts {
