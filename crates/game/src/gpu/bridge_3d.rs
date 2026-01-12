@@ -394,7 +394,7 @@ impl GpuBridge3D {
         });
         pass.set_pipeline(&self.emitter_pipeline);
         pass.set_bind_group(0, &self.emitter_bind_group, &[]);
-        let groups = (count + 63) / 64;
+        let groups = count.div_ceil(64);
         pass.dispatch_workgroups(groups, 1, 1);
     }
 
@@ -435,7 +435,7 @@ impl GpuBridge3D {
         });
         pass.set_pipeline(&self.absorption_pipeline);
         pass.set_bind_group(0, &self.absorption_bind_group, &[]);
-        let groups = (particle_count + 255) / 256;
+        let groups = particle_count.div_ceil(256);
         pass.dispatch_workgroups(groups, 1, 1);
     }
 

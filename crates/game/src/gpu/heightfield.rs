@@ -903,7 +903,7 @@ impl GpuHeightfield {
                 module: &render_shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: format,
+                    format,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -943,7 +943,7 @@ impl GpuHeightfield {
                 module: &render_shader,
                 entry_point: Some("fs_water"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: format,
+                    format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -1084,8 +1084,8 @@ impl GpuHeightfield {
         tile_width: u32,
         tile_depth: u32,
     ) {
-        let x_groups = (tile_width + 15) / 16;
-        let z_groups = (tile_depth + 15) / 16;
+        let x_groups = tile_width.div_ceil(16);
+        let z_groups = tile_depth.div_ceil(16);
 
         // Helper to create a new compute pass for each step to enforce memory visibility
         let mut dispatch_step = |label: &str, pipeline: &wgpu::ComputePipeline| {
@@ -1225,8 +1225,8 @@ impl GpuHeightfield {
             timestamp_writes: None,
         });
 
-        let x_groups = (tile_width + 15) / 16;
-        let z_groups = (tile_depth + 15) / 16;
+        let x_groups = tile_width.div_ceil(16);
+        let z_groups = tile_depth.div_ceil(16);
 
         pass.set_pipeline(&self.emitter_pipeline);
         pass.set_bind_group(0, &self.emitter_bind_group, &[]);
@@ -1318,8 +1318,8 @@ impl GpuHeightfield {
             timestamp_writes: None,
         });
 
-        let x_groups = (tile_width + 15) / 16;
-        let z_groups = (tile_depth + 15) / 16;
+        let x_groups = tile_width.div_ceil(16);
+        let z_groups = tile_depth.div_ceil(16);
 
         pass.set_pipeline(&self.material_tool_pipeline);
         pass.set_bind_group(0, &self.material_tool_bind_group, &[]);
@@ -1343,8 +1343,8 @@ impl GpuHeightfield {
             timestamp_writes: None,
         });
 
-        let x_groups = (tile_width + 15) / 16;
-        let z_groups = (tile_depth + 15) / 16;
+        let x_groups = tile_width.div_ceil(16);
+        let z_groups = tile_depth.div_ceil(16);
 
         pass.set_pipeline(&self.excavate_pipeline);
         pass.set_bind_group(0, &self.material_tool_bind_group, &[]);
@@ -1491,7 +1491,7 @@ impl GpuHeightfield {
             rx.recv().unwrap().unwrap();
 
             let data = slice.get_mapped_range();
-            let result: Vec<f32> = bytemuck::cast_slice(&*data).to_vec();
+            let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
             drop(data);
             staging.unmap();
             result
@@ -1625,8 +1625,8 @@ impl GpuHeightfield {
             pass.set_bind_group(0, &self.params_bind_group, &[]);
             pass.set_bind_group(1, bg, &[]);
             pass.set_bind_group(2, &self.water_bind_group, &[]);
-            let workgroups_x = (self.width + 15) / 16;
-            let workgroups_z = (self.depth + 15) / 16;
+            let workgroups_x = self.width.div_ceil(16);
+            let workgroups_z = self.depth.div_ceil(16);
             pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
         }
     }

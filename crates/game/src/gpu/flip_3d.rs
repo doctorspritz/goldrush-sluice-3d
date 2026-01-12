@@ -2875,9 +2875,9 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.gravel_obstacle_pipeline);
             pass.set_bind_group(0, &self.gravel_obstacle_bind_group, &[]);
-            let workgroups_x = (self.width + 7) / 8;
-            let workgroups_y = (self.height + 7) / 8;
-            let workgroups_z = (self.depth + 3) / 4;
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
         queue.submit(std::iter::once(encoder.finish()));
@@ -2935,7 +2935,7 @@ impl GpuFlip3D {
         });
         pass.set_pipeline(&self.sdf_collision_pipeline);
         pass.set_bind_group(0, &self.sdf_collision_bind_group, &[]);
-        let workgroups = (particle_count + 255) / 256;
+        let workgroups = particle_count.div_ceil(256);
         pass.dispatch_workgroups(workgroups, 1, 1);
     }
 
@@ -3225,9 +3225,9 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.sediment_fraction_pipeline);
             pass.set_bind_group(0, &self.sediment_fraction_bind_group, &[]);
-            let workgroups_x = (self.width + 7) / 8;
-            let workgroups_y = (self.height + 7) / 8;
-            let workgroups_z = (self.depth + 3) / 4;
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
         if self.gravel_obstacle_count > 0 {
@@ -3237,9 +3237,9 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.gravel_porosity_pipeline);
             pass.set_bind_group(0, &self.gravel_porosity_bind_group, &[]);
-            let workgroups_x = (self.width + 7) / 8;
-            let workgroups_y = (self.height + 7) / 8;
-            let workgroups_z = (self.depth + 3) / 4;
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -3271,8 +3271,8 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.sediment_pressure_pipeline);
             pass.set_bind_group(0, &self.sediment_pressure_bind_group, &[]);
-            let workgroups_x = (self.width + 7) / 8;
-            let workgroups_z = (self.depth + 7) / 8;
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(8);
             pass.dispatch_workgroups(workgroups_x, 1, workgroups_z);
         }
 
@@ -3292,9 +3292,9 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.bc_u_pipeline);
             pass.set_bind_group(0, &self.bc_bind_group, &[]);
-            let workgroups_x = (self.width + 1 + 7) / 8;
-            let workgroups_y = (self.height + 7) / 8;
-            let workgroups_z = (self.depth + 3) / 4;
+            let workgroups_x = (self.width + 1).div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -3306,9 +3306,9 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.bc_v_pipeline);
             pass.set_bind_group(0, &self.bc_bind_group, &[]);
-            let workgroups_x = (self.width + 7) / 8;
-            let workgroups_y = (self.height + 1 + 7) / 8;
-            let workgroups_z = (self.depth + 3) / 4;
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = (self.height + 1).div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -3320,9 +3320,9 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.bc_w_pipeline);
             pass.set_bind_group(0, &self.bc_bind_group, &[]);
-            let workgroups_x = (self.width + 7) / 8;
-            let workgroups_y = (self.height + 7) / 8;
-            let workgroups_z = (self.depth + 1 + 3) / 4;
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = (self.depth + 1).div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -3386,9 +3386,9 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.gravity_pipeline);
             pass.set_bind_group(0, &self.gravity_bind_group, &[]);
-            let workgroups_x = (self.width + 7) / 8;
-            let workgroups_y = (self.height + 1 + 7) / 8;
-            let workgroups_z = (self.depth + 3) / 4;
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = (self.height + 1).div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -3414,9 +3414,9 @@ impl GpuFlip3D {
             pass.set_pipeline(&self.flow_pipeline);
             pass.set_bind_group(0, &self.flow_bind_group, &[]);
             // U grid: (width+1) x height x depth
-            let workgroups_x = (self.width + 1 + 7) / 8;
-            let workgroups_y = (self.height + 7) / 8;
-            let workgroups_z = (self.depth + 3) / 4;
+            let workgroups_x = (self.width + 1).div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -3441,9 +3441,9 @@ impl GpuFlip3D {
                 });
                 pass.set_pipeline(&self.vorticity_compute_pipeline);
                 pass.set_bind_group(0, &self.vorticity_compute_bind_group, &[]);
-                let workgroups_x = (self.width + 7) / 8;
-                let workgroups_y = (self.height + 7) / 8;
-                let workgroups_z = (self.depth + 3) / 4;
+                let workgroups_x = self.width.div_ceil(8);
+                let workgroups_y = self.height.div_ceil(8);
+                let workgroups_z = self.depth.div_ceil(4);
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
 
@@ -3467,9 +3467,9 @@ impl GpuFlip3D {
                 });
                 pass.set_pipeline(&self.vorticity_confine_u_pipeline);
                 pass.set_bind_group(0, &self.vorticity_confine_bind_group, &[]);
-                let workgroups_x = (self.width + 1 + 7) / 8;
-                let workgroups_y = (self.height + 7) / 8;
-                let workgroups_z = (self.depth + 3) / 4;
+                let workgroups_x = (self.width + 1).div_ceil(8);
+                let workgroups_y = self.height.div_ceil(8);
+                let workgroups_z = self.depth.div_ceil(4);
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
 
@@ -3481,9 +3481,9 @@ impl GpuFlip3D {
                 });
                 pass.set_pipeline(&self.vorticity_confine_v_pipeline);
                 pass.set_bind_group(0, &self.vorticity_confine_bind_group, &[]);
-                let workgroups_x = (self.width + 7) / 8;
-                let workgroups_y = (self.height + 1 + 7) / 8;
-                let workgroups_z = (self.depth + 3) / 4;
+                let workgroups_x = self.width.div_ceil(8);
+                let workgroups_y = (self.height + 1).div_ceil(8);
+                let workgroups_z = self.depth.div_ceil(4);
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
 
@@ -3495,9 +3495,9 @@ impl GpuFlip3D {
                 });
                 pass.set_pipeline(&self.vorticity_confine_w_pipeline);
                 pass.set_bind_group(0, &self.vorticity_confine_bind_group, &[]);
-                let workgroups_x = (self.width + 7) / 8;
-                let workgroups_y = (self.height + 7) / 8;
-                let workgroups_z = (self.depth + 1 + 3) / 4;
+                let workgroups_x = self.width.div_ceil(8);
+                let workgroups_y = self.height.div_ceil(8);
+                let workgroups_z = (self.depth + 1).div_ceil(4);
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
         }
@@ -3530,9 +3530,9 @@ impl GpuFlip3D {
                 });
                 pass.set_pipeline(&self.porosity_drag_u_pipeline);
                 pass.set_bind_group(0, &self.porosity_drag_bind_group, &[]);
-                let workgroups_x = (self.width + 1 + 7) / 8;
-                let workgroups_y = (self.height + 7) / 8;
-                let workgroups_z = (self.depth + 3) / 4;
+                let workgroups_x = (self.width + 1).div_ceil(8);
+                let workgroups_y = self.height.div_ceil(8);
+                let workgroups_z = self.depth.div_ceil(4);
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
             {
@@ -3542,9 +3542,9 @@ impl GpuFlip3D {
                 });
                 pass.set_pipeline(&self.porosity_drag_v_pipeline);
                 pass.set_bind_group(0, &self.porosity_drag_bind_group, &[]);
-                let workgroups_x = (self.width + 7) / 8;
-                let workgroups_y = (self.height + 1 + 7) / 8;
-                let workgroups_z = (self.depth + 3) / 4;
+                let workgroups_x = self.width.div_ceil(8);
+                let workgroups_y = (self.height + 1).div_ceil(8);
+                let workgroups_z = self.depth.div_ceil(4);
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
             {
@@ -3554,9 +3554,9 @@ impl GpuFlip3D {
                 });
                 pass.set_pipeline(&self.porosity_drag_w_pipeline);
                 pass.set_bind_group(0, &self.porosity_drag_bind_group, &[]);
-                let workgroups_x = (self.width + 7) / 8;
-                let workgroups_y = (self.height + 7) / 8;
-                let workgroups_z = (self.depth + 1 + 3) / 4;
+                let workgroups_x = self.width.div_ceil(8);
+                let workgroups_y = self.height.div_ceil(8);
+                let workgroups_z = (self.depth + 1).div_ceil(4);
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
 
@@ -3620,9 +3620,9 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.density_error_pipeline);
             pass.set_bind_group(0, &self.density_error_bind_group, &[]);
-            let workgroups_x = (self.width + 7) / 8;
-            let workgroups_y = (self.height + 7) / 8;
-            let workgroups_z = (self.depth + 3) / 4;
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -3669,9 +3669,9 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.density_position_grid_pipeline);
             pass.set_bind_group(0, &self.density_position_grid_bind_group, &[]);
-            let workgroups_x = (self.width + 7) / 8;
-            let workgroups_y = (self.height + 7) / 8;
-            let workgroups_z = (self.depth + 3) / 4;
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -3682,7 +3682,7 @@ impl GpuFlip3D {
             width: self.width,
             height: self.height,
             depth: self.depth,
-            particle_count: particle_count,
+            particle_count,
             cell_size: self.cell_size,
             dt,
             _pad1: 0,
@@ -3706,7 +3706,7 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.density_correct_pipeline);
             pass.set_bind_group(0, &self.density_correct_bind_group, &[]);
-            let workgroups = (particle_count as u32 + 255) / 256;
+            let workgroups = particle_count.div_ceil(256);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
@@ -3879,7 +3879,7 @@ impl GpuFlip3D {
             width: self.width,
             height: self.height,
             depth: self.depth,
-            particle_count: particle_count as u32,
+            particle_count,
             cell_size: self.cell_size,
             dt,
             _pad0: 0,
@@ -3901,7 +3901,7 @@ impl GpuFlip3D {
             });
             pass.set_pipeline(&self.sdf_collision_pipeline);
             pass.set_bind_group(0, &self.sdf_collision_bind_group, &[]);
-            let workgroups = (g2p_count + 255) / 256;
+            let workgroups = g2p_count.div_ceil(256);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
         queue.submit(std::iter::once(encoder.finish()));

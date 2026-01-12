@@ -324,7 +324,7 @@ impl GpuMgpcgSolver {
 
         // Reduction buffers for dot products
         // Max workgroups at level 0: ceil(512*512 / 256) = 1024
-        let max_workgroups = ((width * height) as usize + 255) / 256;
+        let max_workgroups = ((width * height) as usize).div_ceil(256);
         let partial_sums = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Dot Product Partial Sums"),
             size: (max_workgroups * std::mem::size_of::<f32>()) as u64,
@@ -606,8 +606,8 @@ impl GpuMgpcgSolver {
 
         // Workgroup counts: each thread handles one cell, but we process half per pass
         // Using 8x8 workgroups
-        let workgroup_x = (level_data.width / 2 + 7) / 8;
-        let workgroup_y = (level_data.height + 7) / 8;
+        let workgroup_x = (level_data.width / 2).div_ceil(8);
+        let workgroup_y = level_data.height.div_ceil(8);
 
         // Red pass
         {
@@ -806,8 +806,8 @@ impl GpuMgpcgSolver {
         let bind_group = &self.restrict_bind_groups[fine_level];
 
         // Workgroup counts for coarse level (each thread handles one coarse cell)
-        let workgroup_x = (coarse.width + 7) / 8;
-        let workgroup_y = (coarse.height + 7) / 8;
+        let workgroup_x = coarse.width.div_ceil(8);
+        let workgroup_y = coarse.height.div_ceil(8);
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some(&format!("MG Restrict {} -> {}", fine_level, fine_level + 1)),
@@ -977,8 +977,8 @@ impl GpuMgpcgSolver {
         let bind_group = &self.prolongate_bind_groups[coarse_level - 1];
 
         // Workgroup counts for fine level (each thread handles one fine cell)
-        let workgroup_x = (fine.width + 7) / 8;
-        let workgroup_y = (fine.height + 7) / 8;
+        let workgroup_x = fine.width.div_ceil(8);
+        let workgroup_y = fine.height.div_ceil(8);
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some(&format!(
@@ -1611,8 +1611,8 @@ impl GpuMgpcgSolver {
         let level_data = &self.levels[level];
         let bind_group = &self.residual_bind_groups[level];
 
-        let workgroup_x = (level_data.width + 7) / 8;
-        let workgroup_y = (level_data.height + 7) / 8;
+        let workgroup_x = level_data.width.div_ceil(8);
+        let workgroup_y = level_data.height.div_ceil(8);
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some(&format!("MG Residual Level {}", level)),
@@ -1630,7 +1630,7 @@ impl GpuMgpcgSolver {
 
         // Use 256-wide workgroups for 1D clear
         let total_cells = level_data.width * level_data.height;
-        let workgroup_count = (total_cells + 255) / 256;
+        let workgroup_count = total_cells.div_ceil(256);
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some(&format!("MG Clear Level {}", level)),
@@ -1747,9 +1747,9 @@ impl GpuMgpcgSolver {
     /// Call `upload()` or `upload_warm()` first, then `solve_pcg()`, then `download()`.
     pub fn solve_pcg(&self, gpu: &GpuContext, max_iterations: u32) {
         let cell_count = (self.width * self.height) as usize;
-        let workgroup_count_1d = ((cell_count + 255) / 256) as u32;
-        let workgroup_x = (self.width + 7) / 8;
-        let workgroup_y = (self.height + 7) / 8;
+        let workgroup_count_1d = cell_count.div_ceil(256) as u32;
+        let workgroup_x = self.width.div_ceil(8);
+        let workgroup_y = self.height.div_ceil(8);
 
         // Update params buffer with grid dimensions
         let params = PcgParams {
@@ -1906,7 +1906,7 @@ impl GpuMgpcgSolver {
                 width: self.width,
                 height: self.height,
                 alpha: -1.0,
-                length: (self.width * self.height) as u32,
+                length: (self.width * self.height),
             };
             gpu.queue
                 .write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
@@ -1951,7 +1951,7 @@ impl GpuMgpcgSolver {
                 width: self.width,
                 height: self.height,
                 alpha: 1.0,
-                length: (self.width * self.height) as u32,
+                length: (self.width * self.height),
             };
             gpu.queue
                 .write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
@@ -2071,7 +2071,7 @@ impl GpuMgpcgSolver {
             width: self.width,
             height: self.height,
             alpha,
-            length: (self.width * self.height) as u32,
+            length: (self.width * self.height),
         };
         gpu.queue
             .write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
@@ -2099,7 +2099,7 @@ impl GpuMgpcgSolver {
             width: self.width,
             height: self.height,
             alpha: beta,
-            length: (self.width * self.height) as u32,
+            length: (self.width * self.height),
         };
         gpu.queue
             .write_buffer(&self.pcg_params_buffer, 0, bytemuck::bytes_of(&params));
@@ -2198,7 +2198,7 @@ impl GpuMgpcgSolver {
 
         let pcg_memory = (self.width * self.height) as u64 * 4 * 4; // r, z, p, Ap
         let cell_count = (self.width * self.height) as usize;
-        let reduction_memory = ((cell_count + 255) / 256 * 4 + 16) as u64; // partial_sums + final_sum
+        let reduction_memory = (cell_count.div_ceil(256) * 4 + 16) as u64; // partial_sums + final_sum
 
         MgpcgMemoryStats {
             level_memory,
@@ -2220,7 +2220,7 @@ pub struct MgpcgMemoryStats {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     // Note: These tests require a GPU context which isn't available in unit tests
     // Integration tests should be run with the game binary

@@ -5,6 +5,12 @@ pub struct Shovel {
     spec: ToolSpec,
 }
 
+impl Default for Shovel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Shovel {
     pub fn new() -> Self {
         Self {

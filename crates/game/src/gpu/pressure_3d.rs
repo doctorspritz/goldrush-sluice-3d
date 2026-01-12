@@ -563,9 +563,9 @@ impl GpuPressure3D {
 
     /// Encode full pressure solve: divergence → iterations → gradient
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, iterations: u32) {
-        let workgroups_x = (self.width + 7) / 8;
-        let workgroups_y = (self.height + 7) / 8;
-        let workgroups_z = (self.depth + 3) / 4;
+        let workgroups_x = self.width.div_ceil(8);
+        let workgroups_y = self.height.div_ceil(8);
+        let workgroups_z = self.depth.div_ceil(4);
 
         // Compute divergence
         {
@@ -611,7 +611,7 @@ impl GpuPressure3D {
             });
             pass.set_pipeline(&self.gradient_u_pipeline);
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
-            let workgroups_u_x = (self.width + 1 + 7) / 8;
+            let workgroups_u_x = (self.width + 1).div_ceil(8);
             pass.dispatch_workgroups(workgroups_u_x, workgroups_y, workgroups_z);
         }
 
@@ -623,7 +623,7 @@ impl GpuPressure3D {
             });
             pass.set_pipeline(&self.gradient_v_pipeline);
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
-            let workgroups_v_y = (self.height + 1 + 7) / 8;
+            let workgroups_v_y = (self.height + 1).div_ceil(8);
             pass.dispatch_workgroups(workgroups_x, workgroups_v_y, workgroups_z);
         }
 
@@ -635,7 +635,7 @@ impl GpuPressure3D {
             });
             pass.set_pipeline(&self.gradient_w_pipeline);
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
-            let workgroups_w_z = (self.depth + 1 + 3) / 4;
+            let workgroups_w_z = (self.depth + 1).div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_w_z);
         }
     }
@@ -652,9 +652,9 @@ impl GpuPressure3D {
     /// - divergence_buffer is pre-filled with density error
     /// - We want the resulting pressure to apply to particle positions, not grid velocities
     pub fn encode_iterations_only(&self, encoder: &mut wgpu::CommandEncoder, iterations: u32) {
-        let workgroups_x = (self.width + 7) / 8;
-        let workgroups_y = (self.height + 7) / 8;
-        let workgroups_z = (self.depth + 3) / 4;
+        let workgroups_x = self.width.div_ceil(8);
+        let workgroups_y = self.height.div_ceil(8);
+        let workgroups_z = self.depth.div_ceil(4);
 
         // Red-Black Gauss-Seidel iterations
         for _ in 0..iterations {

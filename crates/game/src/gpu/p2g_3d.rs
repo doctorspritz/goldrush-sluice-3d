@@ -850,7 +850,7 @@ impl GpuP2g3D {
             pass.set_pipeline(&self.scatter_pipeline);
             pass.set_bind_group(0, &self.scatter_bind_group, &[]);
             let workgroups =
-                (particle_count + self.scatter_workgroup_size - 1) / self.scatter_workgroup_size;
+                particle_count.div_ceil(self.scatter_workgroup_size);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
@@ -862,9 +862,9 @@ impl GpuP2g3D {
             });
             pass.set_pipeline(&self.divide_u_pipeline);
             pass.set_bind_group(0, &self.divide_bind_group, &[]);
-            let workgroups_x = (self.width + 1 + 7) / 8;
-            let workgroups_y = (self.height + 7) / 8;
-            let workgroups_z = (self.depth + 3) / 4;
+            let workgroups_x = (self.width + 1).div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -876,9 +876,9 @@ impl GpuP2g3D {
             });
             pass.set_pipeline(&self.divide_v_pipeline);
             pass.set_bind_group(0, &self.divide_bind_group, &[]);
-            let workgroups_x = (self.width + 7) / 8;
-            let workgroups_y = (self.height + 1 + 7) / 8;
-            let workgroups_z = (self.depth + 3) / 4;
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = (self.height + 1).div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -890,9 +890,9 @@ impl GpuP2g3D {
             });
             pass.set_pipeline(&self.divide_w_pipeline);
             pass.set_bind_group(0, &self.divide_bind_group, &[]);
-            let workgroups_x = (self.width + 7) / 8;
-            let workgroups_y = (self.height + 7) / 8;
-            let workgroups_z = (self.depth + 1 + 3) / 4;
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = (self.depth + 1).div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
     }

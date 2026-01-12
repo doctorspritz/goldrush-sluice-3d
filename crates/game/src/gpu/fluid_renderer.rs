@@ -312,7 +312,7 @@ impl ScreenSpaceFluidRenderer {
                 module: &shader_compose,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: format,                                // Output to screen
+                    format,                                // Output to screen
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING), // Blend with scene
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -427,7 +427,7 @@ impl ScreenSpaceFluidRenderer {
             texel_size: [1.0 / width as f32, 1.0 / height as f32],
             particle_radius: self.particle_radius,
             blur_depth_falloff: self.blur_depth_falloff,
-            camera_pos: camera_pos,
+            camera_pos,
             padding: 0.0,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));

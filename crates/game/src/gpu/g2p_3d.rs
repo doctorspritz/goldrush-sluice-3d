@@ -549,7 +549,7 @@ impl GpuG2p3D {
         });
         pass.set_pipeline(&self.g2p_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        let workgroups = (particle_count + self.workgroup_size - 1) / self.workgroup_size;
+        let workgroups = particle_count.div_ceil(self.workgroup_size);
         pass.dispatch_workgroups(workgroups, 1, 1);
     }
 
