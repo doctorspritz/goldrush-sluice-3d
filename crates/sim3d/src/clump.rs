@@ -234,6 +234,11 @@ impl ClusterSimulation3D {
         self.sphere_contacts.len()
     }
 
+    /// Returns the number of plane contacts detected in the last DEM step
+    pub fn plane_contact_count(&self) -> usize {
+        self.plane_contacts.len()
+    }
+
     /// Checks if two clumps have a sphere-sphere contact (order-independent)
     pub fn has_contact(&self, i: usize, j: usize) -> bool {
         self.sphere_contacts
@@ -605,6 +610,8 @@ impl ClusterSimulation3D {
                         r,
                         vel,
                         template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
                         dt,
                         &mut forces,
                         &mut torques,
@@ -622,6 +629,8 @@ impl ClusterSimulation3D {
                         r,
                         vel,
                         template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
                         dt,
                         &mut forces,
                         &mut torques,
@@ -641,6 +650,8 @@ impl ClusterSimulation3D {
                         r,
                         vel,
                         template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
                         dt,
                         &mut forces,
                         &mut torques,
@@ -658,6 +669,8 @@ impl ClusterSimulation3D {
                         r,
                         vel,
                         template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
                         dt,
                         &mut forces,
                         &mut torques,
@@ -677,6 +690,8 @@ impl ClusterSimulation3D {
                         r,
                         vel,
                         template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
                         dt,
                         &mut forces,
                         &mut torques,
@@ -694,6 +709,8 @@ impl ClusterSimulation3D {
                         r,
                         vel,
                         template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
                         dt,
                         &mut forces,
                         &mut torques,
@@ -866,6 +883,8 @@ impl ClusterSimulation3D {
         r: Vec3,
         vel: Vec3,
         particle_mass: f32,
+        particle_radius: f32,
+        angular_velocity: Vec3,
         dt: f32,
         forces: &mut [Vec3],
         torques: &mut [Vec3],
@@ -915,6 +934,13 @@ impl ClusterSimulation3D {
         let total = normal * fn_mag + ft;
         forces[clump_idx] += total;
         torques[clump_idx] += r.cross(total);
+
+        // Rolling friction torque (same pattern as SDF and clump-clump contacts)
+        if self.rolling_friction > 0.0 && angular_velocity.length_squared() > 1.0e-8 {
+            let roll_torque = -angular_velocity.normalize()
+                * (self.rolling_friction * fn_mag * particle_radius);
+            torques[clump_idx] += roll_torque;
+        }
     }
 
     fn resolve_dem_penetrations(&mut self, iterations: usize) {
