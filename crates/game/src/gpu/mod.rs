@@ -6,6 +6,7 @@ pub mod g2p_3d;
 pub mod heightfield;
 pub mod mgpcg;
 pub mod p2g_3d;
+pub mod particle_sort;
 pub mod pressure_3d;
 pub mod fluid_renderer;
 

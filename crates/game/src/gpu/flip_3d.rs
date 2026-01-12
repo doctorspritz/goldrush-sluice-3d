@@ -9,6 +9,7 @@
 
 use super::g2p_3d::{GpuG2p3D, SedimentParams3D};
 use super::p2g_3d::GpuP2g3D;
+use super::particle_sort::GpuParticleSort;
 use super::pressure_3d::GpuPressure3D;
 
 use wgpu::util::DeviceExt;
@@ -587,6 +588,12 @@ pub struct GpuFlip3D {
     gravel_porosity_pipeline: wgpu::ComputePipeline,
     gravel_porosity_bind_group: wgpu::BindGroup,
 
+    // Particle sorting for cache coherence
+    sorter: GpuParticleSort,
+    sorted_p2g: GpuP2g3D,
+    /// Enable particle sorting before P2G (for benchmarking)
+    pub use_sorted_p2g: bool,
+
     // Maximum particles supported
     max_particles: usize,
 
@@ -673,6 +680,37 @@ impl GpuFlip3D {
             Arc::clone(&c_col0_buffer),
             Arc::clone(&c_col1_buffer),
             Arc::clone(&c_col2_buffer),
+        );
+
+        // Create particle sorter for cache coherence optimization
+        let sorter = GpuParticleSort::new(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            Arc::clone(&positions_buffer),
+            Arc::clone(&velocities_buffer),
+            Arc::clone(&densities_buffer),
+            Arc::clone(&c_col0_buffer),
+            Arc::clone(&c_col1_buffer),
+            Arc::clone(&c_col2_buffer),
+        );
+
+        // Create P2G that reads from sorted particle buffers
+        let sorted_p2g = GpuP2g3D::new(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            true,
+            Arc::clone(&sorter.out_positions_buffer),
+            Arc::clone(&sorter.out_velocities_buffer),
+            Arc::clone(&sorter.out_densities_buffer),
+            Arc::clone(&sorter.out_c_col0_buffer),
+            Arc::clone(&sorter.out_c_col1_buffer),
+            Arc::clone(&sorter.out_c_col2_buffer),
         );
 
         // Create grid velocity backup buffers for FLIP delta
@@ -2455,6 +2493,9 @@ impl GpuFlip3D {
             gravel_obstacle_bind_group,
             gravel_porosity_pipeline,
             gravel_porosity_bind_group,
+            sorter,
+            sorted_p2g,
+            use_sorted_p2g: true,  // Start with sorting enabled to test
             gravel_obstacle_params_buffer,
             gravel_obstacle_buffer,
             gravel_obstacle_count: 0,
@@ -2865,8 +2906,25 @@ impl GpuFlip3D {
             label: Some("FLIP 3D Step Encoder"),
         });
 
-        // Run P2G scatter and divide
-        self.p2g.encode(&mut encoder, count);
+        // Run P2G scatter and divide (optionally with particle sorting)
+        let (u_size, v_size, w_size) = self.p2g.grid_sizes();
+        let cell_count = (self.width * self.height * self.depth) as usize;
+        if self.use_sorted_p2g {
+            // Sort particles by cell index for cache coherence
+            self.sorter.prepare(queue, count, self.cell_size);
+            self.sorter.encode(&mut encoder, queue, count);
+            // Use sorted P2G that reads from sorted particle buffers
+            self.sorted_p2g.prepare(queue, count, self.cell_size);
+            self.sorted_p2g.encode(&mut encoder, count);
+            // Copy results from sorted_p2g to p2g buffers (rest of pipeline uses p2g buffers)
+            encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_u_buffer, 0, &self.p2g.grid_u_buffer, 0, (u_size * 4) as u64);
+            encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_v_buffer, 0, &self.p2g.grid_v_buffer, 0, (v_size * 4) as u64);
+            encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_w_buffer, 0, &self.p2g.grid_w_buffer, 0, (w_size * 4) as u64);
+            encoder.copy_buffer_to_buffer(&self.sorted_p2g.particle_count_buffer, 0, &self.p2g.particle_count_buffer, 0, (cell_count * 4) as u64);
+            encoder.copy_buffer_to_buffer(&self.sorted_p2g.sediment_count_buffer, 0, &self.p2g.sediment_count_buffer, 0, (cell_count * 4) as u64);
+        } else {
+            self.p2g.encode(&mut encoder, count);
+        }
         self.water_p2g.encode(&mut encoder, count);
 
         queue.submit(std::iter::once(encoder.finish()));
@@ -2989,7 +3047,6 @@ impl GpuFlip3D {
         queue.submit(std::iter::once(encoder.finish()));
 
         // 3. Save grid velocity for FLIP delta (now with proper BCs!)
-        let (u_size, v_size, w_size) = self.p2g.grid_sizes();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D Grid Copy Encoder"),
         });
