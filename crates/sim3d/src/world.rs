@@ -28,6 +28,10 @@ pub struct WorldParams {
     pub hardness_overburden: f32,
     /// Hardness of paydirt (erosion resistance multiplier).
     pub hardness_paydirt: f32,
+    /// Hardness of deposited sediment (erosion resistance multiplier).
+    pub hardness_sediment: f32,
+    /// Hardness of gravel layer (erosion resistance multiplier).
+    pub hardness_gravel: f32,
     /// Open boundaries - if true, water drains at edges. If false, closed system.
     pub open_boundaries: bool,
 }
@@ -45,6 +49,8 @@ impl Default for WorldParams {
             bed_porosity: 0.4,
             hardness_overburden: 1.0,
             hardness_paydirt: 5.0,
+            hardness_sediment: 0.5, // Loose sediment easier than overburden
+            hardness_gravel: 2.0,   // Between overburden (1.0) and paydirt (5.0)
             open_boundaries: true, // Default to open for simulation
         }
     }
@@ -365,7 +371,7 @@ impl FineRegion {
     }
 
     /// Update erosion and sediment transport for fine region.
-    pub fn update_erosion(&mut self, dt: f32, hardness_overburden: f32, hardness_paydirt: f32) {
+    pub fn update_erosion(&mut self, dt: f32, hardness_overburden: f32, hardness_paydirt: f32, hardness_sediment: f32, hardness_gravel: f32) {
         let width = self.width;
         let depth = self.depth;
         let cell_size = self.cell_size;
@@ -414,45 +420,69 @@ impl FineRegion {
                     } else {
                         self.suspended_sediment[idx] = 0.0;
                     }
-                } else if speed > 0.5 {
-                    // Erosion (only if fast enough)
-                    let deficit_vol = transport_capacity - suspended_vol;
-                    let entrain_target_vol = deficit_vol * k_entrain * dt;
-                    let entrain_target_height = (entrain_target_vol / cell_area).min(0.5 * dt);
+                } else {
+                    // Calculate critical velocity based on next material to erode
+                    let critical_velocity = if self.terrain_sediment[idx] > 0.001 {
+                        0.3 // Soft sediment
+                    } else if self.gravel_thickness[idx] > 0.001 {
+                        0.8 // Gravel
+                    } else if self.overburden_thickness[idx] > 0.001 {
+                        0.5 // Overburden
+                    } else {
+                        1.2 // Paydirt (very hard)
+                    };
 
-                    let mut remaining_demand = entrain_target_height;
-                    let mut total_eroded_vol = 0.0;
+                    if speed > critical_velocity {
+                        // Erosion (only if fast enough)
+                        let deficit_vol = transport_capacity - suspended_vol;
+                        let entrain_target_vol = deficit_vol * k_entrain * dt;
+                        let entrain_target_height = (entrain_target_vol / cell_area).min(0.5 * dt);
 
-                    // Erode sediment first
-                    if remaining_demand > 0.0 {
-                        let available = self.terrain_sediment[idx];
-                        let take = remaining_demand.min(available);
-                        self.terrain_sediment[idx] -= take;
-                        total_eroded_vol += take * cell_area;
-                        remaining_demand -= take;
-                    }
+                        let mut remaining_demand = entrain_target_height;
+                        let mut total_eroded_vol = 0.0;
 
-                    // Erode overburden
-                    if remaining_demand > 0.0 {
-                        let available = self.overburden_thickness[idx];
-                        let take = (remaining_demand / hardness_overburden.max(1.0)).min(available);
-                        self.overburden_thickness[idx] -= take;
-                        total_eroded_vol += take * cell_area;
-                        remaining_demand -= take * hardness_overburden;
-                    }
+                        // Erode sediment first
+                        if remaining_demand > 0.0 {
+                            let available = self.terrain_sediment[idx];
+                            let resistance = hardness_sediment;
+                            let take = (remaining_demand / resistance.max(0.1)).min(available);
+                            self.terrain_sediment[idx] -= take;
+                            total_eroded_vol += take * cell_area;
+                            remaining_demand -= take * resistance;
+                        }
 
-                    // Erode paydirt
-                    if remaining_demand > 0.0 {
-                        let available = self.paydirt_thickness[idx];
-                        let take = (remaining_demand / hardness_paydirt.max(1.0)).min(available);
-                        self.paydirt_thickness[idx] -= take;
-                        total_eroded_vol += take * cell_area;
-                    }
+                        // Erode gravel
+                        if remaining_demand > 0.0 {
+                            let available = self.gravel_thickness[idx];
+                            let resistance = hardness_gravel;
+                            let take = (remaining_demand / resistance.max(1.0)).min(available);
+                            self.gravel_thickness[idx] -= take;
+                            total_eroded_vol += take * cell_area;
+                            remaining_demand -= take * resistance;
+                        }
 
-                    // Add to suspended
-                    let new_suspended_vol = suspended_vol + total_eroded_vol;
-                    if water_depth > 1e-4 {
-                        self.suspended_sediment[idx] = new_suspended_vol / (water_depth * cell_area);
+                        // Erode overburden
+                        if remaining_demand > 0.0 {
+                            let available = self.overburden_thickness[idx];
+                            let take = (remaining_demand / hardness_overburden.max(1.0)).min(available);
+                            self.overburden_thickness[idx] -= take;
+                            total_eroded_vol += take * cell_area;
+                            remaining_demand -= take * hardness_overburden;
+                        }
+
+                        // Erode paydirt
+                        if remaining_demand > 0.0 {
+                            let available = self.paydirt_thickness[idx];
+                            let take = (remaining_demand / hardness_paydirt.max(1.0)).min(available);
+                            self.paydirt_thickness[idx] -= take;
+                            total_eroded_vol += take * cell_area;
+                        }
+
+                        // Add to suspended
+                        let new_suspended_vol = suspended_vol + total_eroded_vol;
+                        if water_depth > 1e-4 {
+                            self.suspended_sediment[idx] = new_suspended_vol / (water_depth * cell_area);
+                        }
                     }
                 }
             }
@@ -1507,10 +1537,10 @@ impl World {
                 let total_out = outflow_buffer[src_idx];
                 let cell_vol = self.water_depth(src_idx % width, src_idx / width) * cell_area; // Approx
 
-                let scale = if total_out > 1e-6 {
-                    (cell_vol / total_out).min(1.0)
+                let scale = if total_out > cell_vol {
+                    cell_vol / total_out  // Limit all fluxes proportionally
                 } else {
-                    1.0
+                    1.0  // No limiting needed
                 };
 
                 // Mass Flux = Volume Flux * Concentration * Scale
@@ -1525,8 +1555,8 @@ impl World {
                     continue;
                 }
 
-                let actual_mass_moved = if total_out > 1e-9 {
-                    (flux_vol / total_out) * src_mass * scale // scale applies if total_out > volume
+                let actual_mass_moved = if cell_vol > 1e-9 {
+                    (flux_vol * scale / cell_vol) * src_mass  // flux_vol*scale is actual volume moved, divide by cell_vol to get fraction of mass
                 } else {
                     0.0
                 };
@@ -1585,10 +1615,10 @@ impl World {
                 let total_out = outflow_buffer[src_idx];
                 let cell_vol = self.water_depth(src_idx % width, src_idx / width) * cell_area;
 
-                let scale = if total_out > 1e-6 {
-                    (cell_vol / total_out).min(1.0)
+                let scale = if total_out > cell_vol {
+                    cell_vol / total_out  // Limit all fluxes proportionally
                 } else {
-                    1.0
+                    1.0  // No limiting needed
                 };
 
                 let src_mass = mass_buffer[src_idx];
@@ -1596,8 +1626,8 @@ impl World {
                     continue;
                 }
 
-                let actual_mass_moved = if total_out > 1e-9 {
-                    (flux_vol / total_out) * src_mass * scale
+                let actual_mass_moved = if cell_vol > 1e-9 {
+                    (flux_vol * scale / cell_vol) * src_mass
                 } else {
                     0.0
                 };
@@ -1669,17 +1699,6 @@ impl World {
                 let vel_z = (flow_z_up + flow_z_down) * 0.5;
                 let speed = (vel_x * vel_x + vel_z * vel_z).sqrt();
 
-                if speed < 0.3 { // Threshold: Water must move > 0.3m/s to erode
-                     // But it can still DEPOSIT if it has load!
-                     // So we don't continue, simpler: capacity is just low.
-                     // Actually physically: critical shear stress.
-                     // If we set capacity to 0, it dumps everything. That's wrong.
-                     // It should just have very low capacity relative to speed, effectively deposition dominate.
-                     // Let's rely on the capacity formula speed^2, which drops fast.
-                     // But user says "always erodes".
-                     // Let's clamp entrainment only.
-                }
-
                 let water_depth = self.water_depth(x, z);
                 if water_depth < 0.01 {
                     continue;
@@ -1711,8 +1730,19 @@ impl World {
                     }
                 } else {
                     // Erosion (Hungry water!)
-                    // CRITICAL: Only erode if speed > threshold
-                    if speed > 0.5 {
+                    // Calculate critical velocity for erosion based on next material to erode
+                    let critical_velocity = if self.terrain_sediment[idx] > 0.001 {
+                        0.3 // Soft sediment
+                    } else if self.gravel_thickness[idx] > 0.001 {
+                        0.8 // Gravel
+                    } else if self.overburden_thickness[idx] > 0.001 {
+                        0.5 // Overburden
+                    } else {
+                        1.2 // Paydirt (very hard)
+                    };
+
+                    // CRITICAL: Only erode if speed > material-specific threshold
+                    if speed > critical_velocity {
                         let deficit_vol = transport_capacity - suspended_vol;
                         // How much do we WANT to erode
                         let entrain_target_vol = deficit_vol * k_entrain * dt;
@@ -1727,10 +1757,21 @@ impl World {
                         // Erode Sediment
                         if remaining_demand > 0.0 {
                             let available = self.terrain_sediment[idx];
-                            let take = remaining_demand.min(available);
+                            let resistance = self.params.hardness_sediment;
+                            let take = (remaining_demand / resistance.max(0.1)).min(available);
                             self.terrain_sediment[idx] -= take;
                             total_eroded_vol += take * cell_area;
-                            remaining_demand -= take;
+                            remaining_demand -= take * resistance;
+                        }
+
+                        // Erode Gravel
+                        if remaining_demand > 0.0 {
+                            let available = self.gravel_thickness[idx];
+                            let resistance = self.params.hardness_gravel;
+                            let take = (remaining_demand / resistance.max(1.0)).min(available);
+                            self.gravel_thickness[idx] -= take;
+                            total_eroded_vol += take * cell_area;
+                            remaining_demand -= take * resistance;
                         }
 
                         // Erode Overburden (Harder)
@@ -1777,6 +1818,21 @@ impl World {
     pub fn total_sediment_volume(&self) -> f32 {
         let cell_area = self.cell_size * self.cell_size;
         self.terrain_sediment.iter().sum::<f32>() * cell_area
+    }
+
+    /// Get total suspended sediment mass.
+    pub fn total_suspended_mass(&self) -> f32 {
+        let cell_area = self.cell_size * self.cell_size;
+        self.suspended_sediment
+            .iter()
+            .enumerate()
+            .map(|(i, &conc)| {
+                let x = i % self.width;
+                let z = i / self.width;
+                let depth = self.water_depth(x, z);
+                conc * depth * cell_area
+            })
+            .sum()
     }
 
     /// Get vertex data for terrain mesh rendering.
@@ -1991,6 +2047,8 @@ impl World {
             dt,
             self.params.hardness_overburden,
             self.params.hardness_paydirt,
+            self.params.hardness_sediment,
+            self.params.hardness_gravel,
         );
     }
 
@@ -2309,7 +2367,6 @@ impl World {
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2363,7 +2420,8 @@ mod tests {
 
         let final_total = world.total_water_volume();
 
-        assert!((initial_total - final_total).abs() < 1.0);
+        let diff = (initial_total - final_total).abs();
+        assert!(diff < 1.0, "Water volume changed by {}, initial={}, final={}", diff, initial_total, final_total);
 
         let depth_00 = world.water_depth(0, 0);
         let depth_99 = world.water_depth(9, 9);
@@ -2450,5 +2508,220 @@ mod tests {
         assert!(surface_after > ground, "Water should flow in");
         assert!(surface_after < 14.5, "Water shouldn't level instantly");
     }
+
+    #[test]
+    fn test_erosion_velocity_threshold() {
+        // Test 1: Low velocity should not erode
+        let mut world = World::new(10, 10, 1.0, 10.0);  // Ground at 10m
+        let idx = world.idx(5, 5);
+        world.terrain_sediment[idx] = 1.0;
+        world.water_surface[idx] = 11.0;  // 1m deep water
+        // Erosion calculates speed from averaged flows: vel_x = (flow_x_left + flow_x_right) * 0.5
+        // To get 0.2 m/s, set both flows to 0.4 m/s (below 0.3 threshold)
+        let flow_left = world.flow_x_idx(5, 5);
+        let flow_right = world.flow_x_idx(6, 5);
+        world.water_flow_x[flow_left] = 0.4;
+        world.water_flow_x[flow_right] = 0.4;
+
+        let initial_sediment = world.terrain_sediment[idx];
+        world.update_erosion(0.1);
+
+        // Should not erode at low velocity (0.2 m/s < 0.3 threshold)
+        assert_eq!(world.terrain_sediment[idx], initial_sediment, "Sediment should not erode below threshold");
+
+        // Test 2: High velocity should erode (fresh world to avoid suspended sediment from previous test)
+        let mut world2 = World::new(10, 10, 1.0, 10.0);  // Ground at 10m
+        let idx2 = world2.idx(5, 5);
+        world2.terrain_sediment[idx2] = 1.0;
+        world2.water_surface[idx2] = 11.0;  // 1m deep water
+        // To get 0.4 m/s average (above 0.3 threshold), set both flows to 0.8 m/s
+        let flow_left2 = world2.flow_x_idx(5, 5);
+        let flow_right2 = world2.flow_x_idx(6, 5);
+        world2.water_flow_x[flow_left2] = 0.8;
+        world2.water_flow_x[flow_right2] = 0.8;
+
+        let initial_sediment2 = world2.terrain_sediment[idx2];
+        world2.update_erosion(0.1);
+
+        // Should erode sediment
+        let final_sediment2 = world2.terrain_sediment[idx2];
+        assert!(final_sediment2 < initial_sediment2, "Sediment should erode above threshold (initial={}, final={}, suspended={})",
+            initial_sediment2, final_sediment2, world2.suspended_sediment[idx2]);
+    }
+
+    #[test]
+    fn test_gravel_erosion_with_hardness() {
+        let mut world = World::new(10, 10, 1.0, 0.0);
+        let idx = world.idx(5, 5);
+
+        // Set up gravel layer only
+        world.gravel_thickness[idx] = 1.0;
+        world.water_surface[idx] = 2.0;
+        // To get 1.0 m/s average velocity (above 0.8 gravel threshold), set both flows to 2.0 m/s
+        let flow_left = world.flow_x_idx(5, 5);
+        let flow_right = world.flow_x_idx(6, 5);
+        world.water_flow_x[flow_left] = 2.0;
+        world.water_flow_x[flow_right] = 2.0;
+
+        let initial_gravel = world.gravel_thickness[idx];
+        world.update_erosion(0.1);
+
+        // Gravel should erode
+        assert!(world.gravel_thickness[idx] < initial_gravel, "Gravel should erode at high velocity");
+
+        // Verify it's harder to erode than sediment (hardness_gravel = 2.0 vs hardness_sediment = 0.5)
+        let gravel_eroded = initial_gravel - world.gravel_thickness[idx];
+
+        // Reset with sediment
+        let mut world2 = World::new(10, 10, 1.0, 0.0);
+        let idx2 = world2.idx(5, 5);
+        world2.terrain_sediment[idx2] = 1.0;
+        world2.water_surface[idx2] = 2.0;
+        let flow_left2 = world2.flow_x_idx(5, 5);
+        let flow_right2 = world2.flow_x_idx(6, 5);
+        world2.water_flow_x[flow_left2] = 2.0;
+        world2.water_flow_x[flow_right2] = 2.0;
+
+        let initial_sediment = world2.terrain_sediment[idx2];
+        world2.update_erosion(0.1);
+        let sediment_eroded = initial_sediment - world2.terrain_sediment[idx2];
+
+        // Sediment should erode more than gravel due to lower hardness
+        assert!(sediment_eroded > gravel_eroded, "Sediment should erode more than gravel");
+    }
+
+    #[test]
+    fn test_sediment_hardness_parameter() {
+        let mut world = World::new(10, 10, 1.0, 0.0);
+        let idx = world.idx(5, 5);
+
+        // Verify hardness_sediment is configured
+        assert_eq!(world.params.hardness_sediment, 0.5, "Default hardness_sediment should be 0.5");
+        assert_eq!(world.params.hardness_gravel, 2.0, "Default hardness_gravel should be 2.0");
+
+        // Set up deposited sediment
+        world.terrain_sediment[idx] = 1.0;
+        world.water_surface[idx] = 2.0;
+        // To get 0.5 m/s average velocity, set both flows to 1.0 m/s
+        let flow_left = world.flow_x_idx(5, 5);
+        let flow_right = world.flow_x_idx(6, 5);
+        world.water_flow_x[flow_left] = 1.0;
+        world.water_flow_x[flow_right] = 1.0;
+
+        let initial = world.terrain_sediment[idx];
+        world.update_erosion(0.1);
+        let eroded_soft = initial - world.terrain_sediment[idx];
+
+        // Test with harder sediment
+        let mut world2 = World::new(10, 10, 1.0, 0.0);
+        world2.params.hardness_sediment = 2.0;
+        let idx2 = world2.idx(5, 5);
+        world2.terrain_sediment[idx2] = 1.0;
+        world2.water_surface[idx2] = 2.0;
+        let flow_left2 = world2.flow_x_idx(5, 5);
+        let flow_right2 = world2.flow_x_idx(6, 5);
+        world2.water_flow_x[flow_left2] = 1.0;
+        world2.water_flow_x[flow_right2] = 1.0;
+
+        let initial2 = world2.terrain_sediment[idx2];
+        world2.update_erosion(0.1);
+        let eroded_hard = initial2 - world2.terrain_sediment[idx2];
+
+        // Softer sediment should erode more
+        assert!(eroded_soft > eroded_hard, "Softer sediment should erode more");
+    }
+
+    #[test]
+    fn test_sediment_advection_mass_conservation() {
+        let mut world = World::new(5, 5, 1.0, 0.0);
+
+        // Simple test: single cell with mass, NO flows anywhere
+        // Use 0.3 concentration (below 0.5 clamp limit)
+        let idx = world.idx(2, 2);
+        world.suspended_sediment[idx] = 0.3; // Safe concentration below 0.5 clamp
+        world.water_surface[idx] = 2.0; // 2m deep water
+        // ALL flows default to 0.0 - no movement
+
+        let initial_total_mass = world.total_suspended_mass();
+
+        // Run advection with zero flow - mass should NOT change
+        world.update_sediment_advection(0.1);
+
+        let final_total_mass = world.total_suspended_mass();
+
+        // With zero flow, mass must be perfectly conserved
+        let mass_error = ((final_total_mass - initial_total_mass) / initial_total_mass).abs();
+        assert!(mass_error < 0.001, "Mass conservation violated with ZERO flow: {}% error (initial={}, final={})", mass_error * 100.0, initial_total_mass, final_total_mass);
+    }
+
+    #[test]
+    fn test_erosion_layer_order() {
+        let mut world = World::new(10, 10, 1.0, 0.0);
+        let idx = world.idx(5, 5);
+
+        // Set up multi-layer cell
+        world.terrain_sediment[idx] = 0.1;
+        world.gravel_thickness[idx] = 0.1;
+        world.overburden_thickness[idx] = 0.1;
+        world.paydirt_thickness[idx] = 1.0;
+
+        // High velocity water (2.0 m/s average needs 4.0 m/s flows)
+        world.water_surface[idx] = 3.0;
+        let flow_left = world.flow_x_idx(5, 5);
+        let flow_right = world.flow_x_idx(6, 5);
+        world.water_flow_x[flow_left] = 4.0;
+        world.water_flow_x[flow_right] = 4.0;
+
+        // Run erosion
+        for _ in 0..10 {
+            world.update_erosion(0.1);
+        }
+
+        // Sediment should be gone first
+        assert!(world.terrain_sediment[idx] < 0.01, "Sediment should erode first");
+
+        // Gravel should be partially eroded
+        assert!(world.gravel_thickness[idx] < 0.1, "Gravel should erode after sediment");
+
+        // Overburden might be touched
+        // Paydirt should be mostly intact due to high hardness
+        assert!(world.paydirt_thickness[idx] > 0.9, "Paydirt should erode last");
+    }
+
+    #[test]
+    fn test_fine_region_gravel_erosion() {
+        let mut world = World::new(20, 20, 1.0, 0.0);
+
+        // Create fine region centered at (10, 10) with radius 5 cells and scale 4
+        let center = Vec3::new(10.0, 0.0, 10.0);
+        world.create_fine_region(center, 5, 4);
+
+        if let Some(ref mut fine) = world.fine_region {
+            let idx = fine.idx(8, 8);
+
+            // Set up gravel layer
+            fine.gravel_thickness[idx] = 1.0;
+            fine.water_surface[idx] = 2.0;
+            // To get 1.0 m/s average velocity, set both flows to 2.0 m/s
+            let flow_left = fine.flow_x_idx(8, 8);
+            let flow_right = fine.flow_x_idx(9, 8);
+            fine.water_flow_x[flow_left] = 2.0;
+            fine.water_flow_x[flow_right] = 2.0;
+
+            let initial_gravel = fine.gravel_thickness[idx];
+
+            fine.update_erosion(
+                0.1,
+                world.params.hardness_overburden,
+                world.params.hardness_paydirt,
+                world.params.hardness_sediment,
+                world.params.hardness_gravel,
+            );
+
+            // Gravel should erode
+            assert!(fine.gravel_thickness[idx] < initial_gravel, "Fine region gravel should erode");
+        } else {
+            panic!("Fine region not created");
+        }
+    }
 }
-*/
