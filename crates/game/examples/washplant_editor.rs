@@ -1230,6 +1230,66 @@ impl MultiGridSim {
             }
         }
 
+        // Step DEM with water coupling
+        if !self.dem_sim.clumps.is_empty() {
+            // Apply water-DEM coupling forces to each clump
+            for clump in &mut self.dem_sim.clumps {
+                let template = &self.dem_sim.templates[clump.template_idx];
+
+                // Buoyancy force: F_b = ρ_water * V * g (upward)
+                // Volume of clump ≈ n_particles * (4/3)πr³
+                let particle_volume =
+                    (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
+                let total_volume = particle_volume * template.local_offsets.len() as f32;
+                let buoyancy_force = DEM_WATER_DENSITY * total_volume * 9.81;
+
+                // Drag force: F_d = 0.5 * C_d * ρ_water * A * v²
+                // Approximate cross-sectional area as circle with bounding radius
+                let area = std::f32::consts::PI * template.bounding_radius.powi(2);
+                let speed = clump.velocity.length();
+                let drag_force = if speed > 0.001 {
+                    0.5 * DEM_DRAG_COEFF * DEM_WATER_DENSITY * area * speed * speed
+                } else {
+                    0.0
+                };
+
+                // Apply forces as velocity change (F = ma, so dv = F*dt/m)
+                // Buoyancy acts upward
+                clump.velocity.y += buoyancy_force * dt / template.mass;
+
+                // Drag opposes velocity
+                if speed > 0.001 {
+                    let drag_dir = -clump.velocity.normalize();
+                    let drag_dv = drag_force * dt / template.mass;
+                    // Don't let drag reverse velocity
+                    let max_drag = speed;
+                    clump.velocity += drag_dir * drag_dv.min(max_drag);
+                }
+            }
+
+            // Step DEM with SDF collision
+            // Everything stays in WORLD SPACE - grid_offset tells SDF sampler where grid origin is
+            if !self.pieces.is_empty() {
+                let piece = &self.pieces[0];
+                let (gw, gh, gd) = piece.grid_dims;
+
+                let sdf_params = sim3d::clump::SdfParams {
+                    sdf: &piece.sim.grid.sdf,
+                    grid_width: gw,
+                    grid_height: gh,
+                    grid_depth: gd,
+                    cell_size: piece.cell_size,
+                    grid_offset: piece.grid_offset, // World position of grid origin
+                };
+                self.dem_sim.step_with_sdf(dt, &sdf_params);
+            } else {
+                self.dem_sim.step(dt);
+            }
+
+            // Remove clumps that fall too far below
+            self.dem_sim.clumps.retain(|c| c.position.y > -2.0);
+        }
+
         self.frame += 1;
     }
 
@@ -3873,6 +3933,63 @@ impl App {
                     base + 2,
                     base + 3,
                 ]);
+            }
+        }
+
+        // Render DEM clumps as larger quads with distinct colors
+        if self.is_simulating {
+            if let Some(multi_sim) = &self.multi_sim {
+                let gold_color: [f32; 4] = [1.0, 0.85, 0.0, 1.0]; // Gold/yellow
+                let sand_color: [f32; 4] = [0.76, 0.60, 0.42, 1.0]; // Sandy brown
+                let clump_size = DEM_CLUMP_RADIUS * 3.0; // Make clumps visible
+
+                // Limit DEM render for performance
+                let max_dem_render = 2000.min(multi_sim.dem_sim.clumps.len());
+
+                for i in 0..max_dem_render {
+                    let clump = &multi_sim.dem_sim.clumps[i];
+                    let color = if clump.template_idx == multi_sim.gold_template_idx {
+                        gold_color
+                    } else {
+                        sand_color
+                    };
+
+                    // Create a small billboard quad facing the camera
+                    let to_cam = (camera_pos - clump.position).normalize();
+                    let right = to_cam.cross(Vec3::Y).normalize() * clump_size;
+                    let up = Vec3::Y * clump_size;
+
+                    let p0 = clump.position - right - up;
+                    let p1 = clump.position + right - up;
+                    let p2 = clump.position + right + up;
+                    let p3 = clump.position - right + up;
+
+                    let base = all_vertices.len() as u32;
+                    all_vertices.push(SluiceVertex {
+                        position: p0.to_array(),
+                        color,
+                    });
+                    all_vertices.push(SluiceVertex {
+                        position: p1.to_array(),
+                        color,
+                    });
+                    all_vertices.push(SluiceVertex {
+                        position: p2.to_array(),
+                        color,
+                    });
+                    all_vertices.push(SluiceVertex {
+                        position: p3.to_array(),
+                        color,
+                    });
+                    all_indices.extend_from_slice(&[
+                        base,
+                        base + 1,
+                        base + 2,
+                        base,
+                        base + 2,
+                        base + 3,
+                    ]);
+                }
             }
         }
 

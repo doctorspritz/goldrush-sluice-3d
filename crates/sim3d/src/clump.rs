@@ -171,6 +171,9 @@ pub struct SdfParams<'a> {
     pub grid_height: usize,
     pub grid_depth: usize,
     pub cell_size: f32,
+    /// World-space offset - subtracted from clump positions before SDF sampling
+    /// Set to Vec3::ZERO if clumps are already in grid-local space
+    pub grid_offset: Vec3,
 }
 
 pub struct ClusterSimulation3D {
@@ -325,6 +328,7 @@ impl ClusterSimulation3D {
                 let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
                     sdf_params.sdf,
                     pos,
+                    sdf_params.grid_offset,
                     sdf_params.grid_width,
                     sdf_params.grid_height,
                     sdf_params.grid_depth,
@@ -434,7 +438,7 @@ impl ClusterSimulation3D {
                 for dx in -1..=1 {
                     for dy in -1..=1 {
                         for dz in -1..=1 {
-                            let neighbor_key = (cx + dx, cy + dy, cz + dz);
+                            let neighbor_key = (cx.saturating_add(dx), cy.saturating_add(dy), cz.saturating_add(dz));
                             if let Some(neighbor_indices) = spatial_hash.get(&neighbor_key) {
                                 for &j in neighbor_indices {
                                     // Skip self and already-checked pairs
@@ -734,6 +738,7 @@ impl ClusterSimulation3D {
                     let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
                         sdf.sdf,
                         pos,
+                        sdf.grid_offset,
                         sdf.grid_width,
                         sdf.grid_height,
                         sdf.grid_depth,
@@ -833,6 +838,7 @@ impl ClusterSimulation3D {
                     let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
                         sdf.sdf,
                         pos,
+                        sdf.grid_offset,
                         sdf.grid_width,
                         sdf.grid_height,
                         sdf.grid_depth,
@@ -1314,18 +1320,29 @@ fn random_sharp(rng: &mut StdRng) -> Vec3 {
 }
 
 /// Sample SDF at a world position and compute gradient (normal pointing away from solid)
+///
+/// # Arguments
+/// * `sdf` - The signed distance field array
+/// * `world_pos` - Position in world coordinates
+/// * `grid_offset` - World position of grid origin (subtracted from world_pos to get grid-local pos)
+/// * `width/height/depth` - Grid dimensions in cells
+/// * `cell_size` - Size of each grid cell in world units
 fn sample_sdf_with_gradient(
     sdf: &[f32],
-    pos: Vec3,
+    world_pos: Vec3,
+    grid_offset: Vec3,
     width: usize,
     height: usize,
     depth: usize,
     cell_size: f32,
 ) -> (f32, Vec3) {
-    // Convert world position to grid coordinates
-    let fx = pos.x / cell_size;
-    let fy = pos.y / cell_size;
-    let fz = pos.z / cell_size;
+    // Convert world position to grid-local position
+    let local_pos = world_pos - grid_offset;
+
+    // Convert grid-local position to grid coordinates (cell indices)
+    let fx = local_pos.x / cell_size;
+    let fy = local_pos.y / cell_size;
+    let fz = local_pos.z / cell_size;
 
     // Clamp to valid range
     let fx = fx.clamp(0.5, width as f32 - 1.5);
