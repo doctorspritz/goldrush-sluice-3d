@@ -61,6 +61,8 @@ pub struct GpuHeightfield {
     pub erosion_pipeline: wgpu::ComputePipeline,
     pub sediment_transport_pipeline: wgpu::ComputePipeline,
     pub collapse_pipeline: wgpu::ComputePipeline,
+    pub collapse_red_pipeline: wgpu::ComputePipeline,
+    pub collapse_black_pipeline: wgpu::ComputePipeline,
 
     // Emitter Pipeline
     pub emitter_pipeline: wgpu::ComputePipeline,
@@ -496,6 +498,27 @@ impl GpuHeightfield {
             compilation_options: Default::default(),
             cache: None,
         });
+
+        // Red-black collapse pipelines for race-free updates
+        let collapse_red_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Collapse Red Pipeline"),
+                layout: Some(&collapse_pipeline_layout),
+                module: &collapse_shader,
+                entry_point: Some("update_collapse_red"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+        let collapse_black_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Collapse Black Pipeline"),
+                layout: Some(&collapse_pipeline_layout),
+                module: &collapse_shader,
+                entry_point: Some("update_collapse_black"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         // Emitter Shader & Pipelines
         let emitter_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1102,6 +1125,8 @@ impl GpuHeightfield {
             erosion_pipeline,
             sediment_transport_pipeline,
             collapse_pipeline,
+            collapse_red_pipeline,
+            collapse_black_pipeline,
 
             emitter_pipeline,
             emitter_params_buffer,
@@ -1171,7 +1196,9 @@ impl GpuHeightfield {
         );
 
         // 5. Collapse (angle of repose / slope stability) - Writes Terrain
-        dispatch_step("Update Collapse", &self.collapse_pipeline);
+        // Use red-black pattern for race-free updates: red cells don't neighbor other red cells
+        dispatch_step("Update Collapse Red", &self.collapse_red_pipeline);
+        dispatch_step("Update Collapse Black", &self.collapse_black_pipeline);
 
         // 6. Update Surface - Reads Ground/Depth, writes Surface
         // Move to end so rendering sees the LATEST surface reflecting erosion/depth changes

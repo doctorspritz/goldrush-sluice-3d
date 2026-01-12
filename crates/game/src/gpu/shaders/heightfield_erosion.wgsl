@@ -58,6 +58,47 @@ fn get_idx(x: u32, z: u32) -> u32 {
     return z * params.world_width + x;
 }
 
+// Get total ground height at an index
+fn get_ground_height(idx: u32) -> f32 {
+    return bedrock[idx] + paydirt[idx] + gravel[idx] + overburden[idx] + sediment[idx];
+}
+
+// Calculate terrain slope at a cell (gradient magnitude)
+fn get_terrain_slope(x: u32, z: u32) -> f32 {
+    let idx = get_idx(x, z);
+    let h = get_ground_height(idx);
+
+    // Central difference for gradient where possible
+    var dh_dx = 0.0;
+    var dh_dz = 0.0;
+
+    if (x > 0u && x < params.world_width - 1u) {
+        let h_left = get_ground_height(get_idx(x - 1u, z));
+        let h_right = get_ground_height(get_idx(x + 1u, z));
+        dh_dx = (h_right - h_left) / (2.0 * params.cell_size);
+    } else if (x > 0u) {
+        let h_left = get_ground_height(get_idx(x - 1u, z));
+        dh_dx = (h - h_left) / params.cell_size;
+    } else if (x < params.world_width - 1u) {
+        let h_right = get_ground_height(get_idx(x + 1u, z));
+        dh_dx = (h_right - h) / params.cell_size;
+    }
+
+    if (z > 0u && z < params.world_depth - 1u) {
+        let h_back = get_ground_height(get_idx(x, z - 1u));
+        let h_front = get_ground_height(get_idx(x, z + 1u));
+        dh_dz = (h_front - h_back) / (2.0 * params.cell_size);
+    } else if (z > 0u) {
+        let h_back = get_ground_height(get_idx(x, z - 1u));
+        dh_dz = (h - h_back) / params.cell_size;
+    } else if (z < params.world_depth - 1u) {
+        let h_front = get_ground_height(get_idx(x, z + 1u));
+        dh_dz = (h_front - h) / params.cell_size;
+    }
+
+    return sqrt(dh_dx * dh_dx + dh_dz * dh_dz);
+}
+
 // 1. Erosion & Deposition
 @compute @workgroup_size(16, 16)
 fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -83,9 +124,12 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (depth < 0.001 || speed < 0.0001) {
         return;
     }
-    
-    // Transport Capacity with hard cap
-    let slope_factor = 1.0;
+
+    // Transport Capacity with slope-based enhancement
+    // Steeper slopes = faster water = higher erosion capacity
+    // slope_factor = 1 + slope (slope is tan(angle), typical terrain is 0-45° so 0-1)
+    let terrain_slope = get_terrain_slope(x, z);
+    let slope_factor = 1.0 + clamp(terrain_slope, 0.0, 1.0);
     let raw_capacity = CAPACITY_FACTOR * speed * min(depth, 1.0) * slope_factor;
     let capacity = min(raw_capacity, MAX_CAPACITY);
     
