@@ -382,6 +382,9 @@ impl MultiGridSim {
         let i_start = (center_i - half_len_cells).max(0) as usize;
         let i_end = ((center_i + half_len_cells) as usize).min(width);
 
+        // Outlet width (at end of channel)
+        let outlet_half_wid_cells = ((gutter.width_at(1.0) / 2.0) / cell_size).ceil() as i32;
+
         for i in 0..width {
             // Calculate position along gutter (0.0 = inlet, 1.0 = outlet)
             let i_i = i as i32;
@@ -406,25 +409,48 @@ impl MultiGridSim {
                 floor_j_left + ((floor_j_right - floor_j_left) as f32 * t).round() as i32;
             let wall_top_j = floor_j + wall_height_cells;
 
+            // Is this position past the channel outlet? (in the margin zone leading to grid edge)
+            let past_outlet = i >= i_end;
+
             for k in 0..depth {
                 let k_i = k as i32;
                 let in_channel_width = k >= k_start && k < k_end;
                 let in_channel_length = i >= i_start && i < i_end;
 
+                // For the margin zone past the outlet, use outlet dimensions
+                let in_outlet_chute = past_outlet
+                    && k_i >= (center_k - outlet_half_wid_cells)
+                    && k_i < (center_k + outlet_half_wid_cells);
+
                 for j in 0..height {
                     let j_i = j as i32;
 
                     // Floor - fill ALL cells at and below floor_j within channel
-                    let is_floor = j_i <= floor_j && in_channel_length && in_channel_width;
+                    // Use interpolated floor_j for channel, constant floor_j_right for outlet chute
+                    let is_channel_floor =
+                        in_channel_length && in_channel_width && j_i <= floor_j;
+                    let is_outlet_chute_floor = in_outlet_chute && j_i <= floor_j_right;
+                    let is_floor = is_channel_floor || is_outlet_chute_floor;
 
                     // Side walls - mark ALL cells outside channel as solid (not just thin strip)
                     // This prevents particles from escaping through gaps at grid edges
+                    // Also extend walls into margin zone past outlet
                     let at_left_wall = k_i < (center_k - half_wid_cells);
                     let at_right_wall = k_i >= (center_k + half_wid_cells);
-                    let is_side_wall = (at_left_wall || at_right_wall)
+                    let is_side_wall_channel = (at_left_wall || at_right_wall)
                         && in_channel_length
                         && j_i <= wall_top_j
                         && j_i >= 0;
+
+                    // Walls in the margin zone past outlet (using outlet width)
+                    let at_left_wall_outlet = k_i < (center_k - outlet_half_wid_cells);
+                    let at_right_wall_outlet = k_i >= (center_k + outlet_half_wid_cells);
+                    let is_side_wall_outlet = (at_left_wall_outlet || at_right_wall_outlet)
+                        && past_outlet
+                        && j_i <= floor_j_right + wall_height_cells
+                        && j_i >= 0;
+
+                    let is_side_wall = is_side_wall_channel || is_side_wall_outlet;
 
                     // Back wall at inlet (left end, outside channel)
                     // Use inlet width for back wall
@@ -675,8 +701,20 @@ impl MultiGridSim {
         for (tidx, transfer) in self.transfers.iter().enumerate() {
             let from_piece = &self.pieces[transfer.from_piece];
 
+            // Debug: track max X position of particles in this piece
+            let mut max_x = f32::NEG_INFINITY;
+            let mut count_near_outlet = 0;
+
             for i in 0..from_piece.positions.len() {
                 let pos = from_piece.positions[i];
+                if pos.x > max_x {
+                    max_x = pos.x;
+                }
+                // Count particles near the capture X range
+                if pos.x >= transfer.capture_min.x - 0.1 {
+                    count_near_outlet += 1;
+                }
+
                 if pos.x >= transfer.capture_min.x
                     && pos.x <= transfer.capture_max.x
                     && pos.y >= transfer.capture_min.y
@@ -691,6 +729,36 @@ impl MultiGridSim {
                         density: from_piece.densities[i],
                     });
                 }
+            }
+
+            // Print debug info every 60 frames (more frequent)
+            if self.frame % 60 == 0 && !from_piece.positions.is_empty() {
+                // Also track Y range and particle distribution
+                let mut min_y = f32::INFINITY;
+                let mut avg_x = 0.0;
+                let mut min_x = f32::INFINITY;
+                for pos in &from_piece.positions {
+                    if pos.y < min_y {
+                        min_y = pos.y;
+                    }
+                    if pos.x < min_x {
+                        min_x = pos.x;
+                    }
+                    avg_x += pos.x;
+                }
+                avg_x /= from_piece.positions.len() as f32;
+
+                println!(
+                    "  Gutter: x=[{:.3},{:.3}], avg={:.3}, min_y={:.3}, cap_x=[{:.3},{:.3}], near={}, cap={}",
+                    min_x,
+                    max_x,
+                    avg_x,
+                    min_y,
+                    transfer.capture_min.x,
+                    transfer.capture_max.x,
+                    count_near_outlet,
+                    transfer_data[tidx].len()
+                );
             }
         }
 
@@ -4033,5 +4101,81 @@ mod tests {
         println!("  Min Y in channel: {:.4}", min_y_in_channel);
         println!("  Floor Y at center: {:.4}", floor_y);
         println!("Test passed: {} particles remain, none fell through their local floor", final_count);
+    }
+
+    #[test]
+    fn test_gutter_outlet_chute_visualization() {
+        // Create a gutter matching the real simulation setup
+        let cell_size = 0.025;
+        let margin_cells = 4;
+        let margin = margin_cells as f32 * cell_size;
+
+        let gutter = GutterPiece {
+            id: 0,
+            position: Vec3::new(margin + 0.5, margin, margin + 0.15), // Similar to real setup
+            rotation: Rotation::R0,
+            angle_deg: 10.0,
+            length: 1.0,
+            width: 0.3,
+            end_width: 0.3,
+            wall_height: 0.1,
+        };
+
+        let width = ((gutter.length + margin * 2.0) / cell_size).ceil() as usize;
+        let height = ((0.4 + margin * 2.0) / cell_size).ceil() as usize;
+        let depth = ((gutter.max_width() + margin * 2.0) / cell_size).ceil() as usize;
+
+        println!("Grid dimensions: {}x{}x{}", width, height, depth);
+        println!("Gutter length: {}m = {} cells", gutter.length, gutter.length / cell_size);
+        println!("Margin: {}m = {} cells", margin, margin_cells);
+
+        let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
+        MultiGridSim::mark_gutter_solid_cells(&mut sim, &gutter, cell_size);
+
+        let center_i = (gutter.position.x / cell_size).round() as i32;
+        let half_len_cells = ((gutter.length / 2.0) / cell_size).ceil() as i32;
+        let i_end = (center_i + half_len_cells) as usize;
+
+        println!("\nGutter center_i: {}, i_end (channel end): {}", center_i, i_end);
+        println!("Grid width: {} cells", width);
+        println!("Outlet chute should extend from i={} to i={}", i_end, width);
+
+        // Print the center k slice to see floor profile
+        let center_k = (gutter.position.z / cell_size).round() as usize;
+        println!("\nCenter K slice (k={}):", center_k);
+        print_k_slice(&sim, center_k);
+
+        // Also print a J slice at floor level to see side wall extent
+        let floor_j = 2; // Near outlet floor level
+        println!("\nFloor-level J slice (j={}):", floor_j);
+        print_j_slice(&sim, floor_j);
+
+        // Specifically check the outlet region (last 10 columns)
+        println!("\n=== Outlet region check ===");
+        let outlet_check_start = (width - 10).max(0);
+        for i in outlet_check_start..width {
+            let mut floor_j = None;
+            for j in (0..height).rev() {
+                if sim.grid.is_solid(i, j, center_k) {
+                    floor_j = Some(j);
+                    break;
+                }
+            }
+            let marker = if i >= i_end { "*CHUTE*" } else { "channel" };
+            println!("  i={}: floor_j={:?} {}", i, floor_j, marker);
+        }
+
+        // Verify that floor extends to the end of the grid
+        let last_i = width - 1;
+        let mut has_floor_at_end = false;
+        for j in 0..height {
+            if sim.grid.is_solid(last_i, j, center_k) {
+                has_floor_at_end = true;
+                println!("\nFloor found at grid edge (i={}, j={}, k={})", last_i, j, center_k);
+                break;
+            }
+        }
+
+        assert!(has_floor_at_end, "Outlet chute floor should extend to grid edge (i={})", last_i);
     }
 }
