@@ -1,0 +1,31 @@
+{
+  "name": "Sediment Settling Test",
+  "description": "Sediment sinks to floor - verifies gravity settling",
+  "gutters": [
+    {
+      "id": 1,
+      "position": { "x": 0.0, "y": 0.9, "z": 0.0 },
+      "rotation": "R0",
+      "angle_deg": 0.0,
+      "length": 0.8,
+      "width": 0.6,
+      "end_width": 0.25,
+      "wall_height": 0.2
+    }
+  ],
+  "sluices": [],
+  "emitters": [
+    {
+      "id": 2,
+      "position": { "x": 0.0, "y": 1.25, "z": 0.0 },
+      "rotation": "R0",
+      "rate": 5.0,
+      "spread_deg": 5.0,
+      "velocity": 0.0,
+      "radius": 0.02,
+      "width": 0.05
+    }
+  ],
+  "shaker_decks": [],
+  "next_id": 3
+}

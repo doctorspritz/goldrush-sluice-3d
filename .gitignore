@@ -5,3 +5,4 @@ target/
 # Build/debug output
 *.log
 profile.trace/
+test_output/

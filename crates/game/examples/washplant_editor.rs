@@ -1360,9 +1360,30 @@ struct GpuState {
 
 impl App {
     fn new() -> Self {
-        // Always start with pre-connected layout (press L to load saved layout)
-        let layout = EditorLayout::new_connected();
-        println!("Starting with pre-connected gutter+sluice layout");
+        Self::new_with_scenario(None)
+    }
+
+    fn new_with_scenario(scenario_path: Option<String>) -> Self {
+        // Load scenario from file if provided, otherwise use default connected layout
+        let layout = if let Some(ref path) = scenario_path {
+            match EditorLayout::load_json(Path::new(path)) {
+                Ok(loaded) => {
+                    println!("Loaded scenario: {}", path);
+                    loaded
+                }
+                Err(e) => {
+                    eprintln!("Failed to load scenario '{}': {}", path, e);
+                    eprintln!("Falling back to default layout");
+                    EditorLayout::new_connected()
+                }
+            }
+        } else {
+            EditorLayout::new_connected()
+        };
+
+        if scenario_path.is_none() {
+            println!("Starting with pre-connected gutter+sluice layout");
+        }
 
         println!("=== Washplant Editor ===");
         println!();
@@ -4167,9 +4188,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 fn main() {
     env_logger::init();
 
+    // Parse command-line arguments for scenario loading
+    let args: Vec<String> = std::env::args().collect();
+    let scenario_path = if args.len() > 1 {
+        Some(args[1].clone())
+    } else {
+        None
+    };
+
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = App::new();
+    let mut app = App::new_with_scenario(scenario_path);
     event_loop.run_app(&mut app).unwrap();
 }
 

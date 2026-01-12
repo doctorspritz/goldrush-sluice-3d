@@ -49,6 +49,7 @@ fn step_with_sdf_collision(sim: &mut ClusterSimulation3D, sdf: &[f32], dt: f32, 
         grid_height: GRID_HEIGHT,
         grid_depth: GRID_DEPTH,
         cell_size: CELL_SIZE,
+        grid_offset: Vec3::ZERO,
     };
 
     sim.collision_response_only(dt, &sdf_params, wet);
