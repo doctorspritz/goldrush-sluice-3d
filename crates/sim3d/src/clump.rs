@@ -251,7 +251,7 @@ impl ClusterSimulation3D {
 
     pub fn step(&mut self, dt: f32) {
         // Use substeps for stability. With stiffness k=6000 and mass m=0.025kg,
-        // critical timestep is ~0.004s. Using 8 substeps gives sub_dt ~0.002s.
+        // critical timestep is ~0.004s. Using 4 substeps gives sub_dt ~0.004s.
         let substeps = 8;
         let sub_dt = dt / substeps as f32;
 
@@ -275,7 +275,7 @@ impl ClusterSimulation3D {
     /// Step with SDF collision - particles collide with solid geometry defined by SDF
     pub fn step_with_sdf(&mut self, dt: f32, sdf_params: &SdfParams) {
         // Use substeps for stability. With stiffness k=6000 and mass m=0.025kg,
-        // critical timestep is ~0.004s. Using 8 substeps gives sub_dt ~0.002s.
+        // critical timestep is ~0.004s. Using 4 substeps gives sub_dt ~0.004s.
         let substeps = 8;
         let sub_dt = dt / substeps as f32;
 
@@ -877,10 +877,10 @@ impl ClusterSimulation3D {
             }
         }
 
-        self.resolve_dem_penetrations(6);
-        self.resolve_bounds_positions();
-        // Position corrections are NOT converted to velocity - this was causing explosions
-        // when clumps overlapped. Pure position-based dynamics for penetration resolution.
+        // Disabled position corrections - spring-damper forces handle collision response.
+        // Having both causes jitter from the two systems fighting each other.
+        // self.resolve_dem_penetrations(6);
+        // self.resolve_bounds_positions();
 
         self.sphere_contacts = new_sphere_contacts;
         self.plane_contacts = new_plane_contacts;

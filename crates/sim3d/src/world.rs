@@ -20,7 +20,7 @@ pub struct WorldParams {
     pub water_damping: f32,
     /// Manning roughness coefficient (typical: 0.03 for smooth, 0.05 for rough).
     pub manning_n: f32,
-    /// Sediment settling velocity (m/s).
+    /// Sediment settling velocity (m/s). Deprecated: use settling_velocity() method with d50.
     pub settling_velocity: f32,
     /// Bed porosity (0-1, fraction that is void space).
     pub bed_porosity: f32,
@@ -34,6 +34,26 @@ pub struct WorldParams {
     pub hardness_gravel: f32,
     /// Open boundaries - if true, water drains at edges. If false, closed system.
     pub open_boundaries: bool,
+
+    // ===== Particle Size Parameters (Shields-stress physics) =====
+    /// Median particle diameter for sediment (meters). Default: 0.0001 (0.1mm fine silt)
+    pub d50_sediment: f32,
+    /// Median particle diameter for overburden (meters). Default: 0.001 (1mm coarse sand)
+    pub d50_overburden: f32,
+    /// Median particle diameter for gravel (meters). Default: 0.01 (10mm gravel)
+    pub d50_gravel: f32,
+    /// Median particle diameter for paydirt (meters). Default: 0.002 (2mm compacted sand)
+    pub d50_paydirt: f32,
+
+    // ===== Physical Constants =====
+    /// Sediment particle density (kg/m³). Default: 2650 (quartz sand/gravel)
+    pub rho_sediment: f32,
+    /// Water density (kg/m³). Default: 1000
+    pub rho_water: f32,
+    /// Dynamic viscosity of water (Pa·s). Default: 0.001
+    pub water_viscosity: f32,
+    /// Critical Shields stress for transport initiation. Default: 0.045
+    pub critical_shields: f32,
 }
 
 impl Default for WorldParams {
@@ -45,13 +65,25 @@ impl Default for WorldParams {
             gravity: 9.81,
             water_damping: 0.0, // Deprecated, use manning_n
             manning_n: 0.03, // Smooth channel roughness
-            settling_velocity: 0.01,
+            settling_velocity: 0.01, // Deprecated
             bed_porosity: 0.4,
             hardness_overburden: 1.0,
             hardness_paydirt: 5.0,
             hardness_sediment: 0.5, // Loose sediment easier than overburden
             hardness_gravel: 2.0,   // Between overburden (1.0) and paydirt (5.0)
             open_boundaries: true, // Default to open for simulation
+
+            // Particle sizes (meters)
+            d50_sediment: 0.0001,    // 0.1mm fine silt
+            d50_overburden: 0.001,   // 1mm coarse sand
+            d50_gravel: 0.01,        // 10mm gravel
+            d50_paydirt: 0.002,      // 2mm compacted sand
+
+            // Physical constants
+            rho_sediment: 2650.0,    // kg/m³ (quartz)
+            rho_water: 1000.0,       // kg/m³
+            water_viscosity: 0.001,  // Pa·s (water at 20°C)
+            critical_shields: 0.045, // Typical value for most sediments
         }
     }
 }
@@ -615,6 +647,149 @@ impl World {
     pub fn water_depth(&self, x: usize, z: usize) -> f32 {
         let idx = self.idx(x, z);
         (self.water_surface[idx] - self.ground_height(x, z)).max(0.0)
+    }
+
+    // =========================================================================
+    // SHIELDS-STRESS EROSION PHYSICS
+    // =========================================================================
+
+    /// Calculate local bed slope from neighboring cell heights.
+    /// Returns the slope magnitude (always positive).
+    /// Slope S = rise/run, dimensionless (e.g., 0.01 = 1%).
+    /// Returns 0 for truly flat terrain.
+    pub fn bed_slope(&self, x: usize, z: usize) -> f32 {
+        let h_here = self.ground_height(x, z);
+
+        // Calculate slope in X direction (central difference if possible)
+        let slope_x = if x > 0 && x < self.width - 1 {
+            let h_left = self.ground_height(x - 1, z);
+            let h_right = self.ground_height(x + 1, z);
+            (h_left - h_right) / (2.0 * self.cell_size)
+        } else if x == 0 && self.width > 1 {
+            (h_here - self.ground_height(x + 1, z)) / self.cell_size
+        } else if x == self.width - 1 && self.width > 1 {
+            (self.ground_height(x - 1, z) - h_here) / self.cell_size
+        } else {
+            0.0
+        };
+
+        // Calculate slope in Z direction (central difference if possible)
+        let slope_z = if z > 0 && z < self.depth - 1 {
+            let h_up = self.ground_height(x, z - 1);
+            let h_down = self.ground_height(x, z + 1);
+            (h_up - h_down) / (2.0 * self.cell_size)
+        } else if z == 0 && self.depth > 1 {
+            (h_here - self.ground_height(x, z + 1)) / self.cell_size
+        } else if z == self.depth - 1 && self.depth > 1 {
+            (self.ground_height(x, z - 1) - h_here) / self.cell_size
+        } else {
+            0.0
+        };
+
+        // Return slope magnitude (always positive)
+        // No minimum - returns 0 for truly flat terrain
+        (slope_x * slope_x + slope_z * slope_z).sqrt()
+    }
+
+    /// Calculate shear velocity at a cell.
+    /// Combines gravitational (slope-based) and turbulent (velocity-based) contributions.
+    /// u* = sqrt(g × h × S + Cf × v²)
+    /// where Cf ≈ 0.003 is a friction coefficient.
+    pub fn shear_velocity(&self, x: usize, z: usize) -> f32 {
+        let g = self.params.gravity;
+        let h = self.water_depth(x, z);
+        let s = self.bed_slope(x, z);
+
+        // Gravitational contribution from slope
+        let grav_term = g * h * s;
+
+        // Turbulent contribution from flow velocity
+        // τ_velocity = Cf × ρ × v² where Cf ≈ 0.003 is friction coefficient
+        // u*² = τ/ρ = Cf × v²
+        let cf = 0.003; // Friction coefficient for turbulent flow
+        let flow_x_left = self.water_flow_x[self.flow_x_idx(x, z)];
+        let flow_x_right = self.water_flow_x[self.flow_x_idx(x + 1, z)];
+        let flow_z_up = self.water_flow_z[self.flow_z_idx(x, z)];
+        let flow_z_down = self.water_flow_z[self.flow_z_idx(x, z + 1)];
+        let vel_x = (flow_x_left + flow_x_right) * 0.5;
+        let vel_z = (flow_z_up + flow_z_down) * 0.5;
+        let v_sq = vel_x * vel_x + vel_z * vel_z;
+        let velocity_term = cf * v_sq;
+
+        // Combined shear velocity
+        (grav_term + velocity_term).sqrt()
+    }
+
+    /// Calculate bed shear stress at a cell.
+    /// τ = ρf × u*²
+    pub fn shear_stress(&self, x: usize, z: usize) -> f32 {
+        let u_star = self.shear_velocity(x, z);
+        self.params.rho_water * u_star * u_star
+    }
+
+    /// Calculate Shields stress for a given particle size.
+    /// τ* = τ / (g × (ρp - ρf) × d50)
+    /// Returns dimensionless Shields parameter.
+    pub fn shields_stress(&self, x: usize, z: usize, d50: f32) -> f32 {
+        let tau = self.shear_stress(x, z);
+        let g = self.params.gravity;
+        let rho_diff = self.params.rho_sediment - self.params.rho_water;
+
+        // Avoid division by zero for very fine particles
+        let d50_safe = d50.max(1e-6);
+
+        tau / (g * rho_diff * d50_safe)
+    }
+
+    /// Calculate settling velocity for a given particle diameter using Stokes law.
+    /// vs = (g × (ρp - ρf) × d²) / (18 × μ)
+    ///
+    /// For larger particles (d > 1mm), uses turbulent settling formula.
+    /// Blends between Stokes and turbulent regimes for intermediate sizes.
+    pub fn settling_velocity(&self, d50: f32) -> f32 {
+        let g = self.params.gravity;
+        let rho_p = self.params.rho_sediment;
+        let rho_f = self.params.rho_water;
+        let mu = self.params.water_viscosity;
+
+        // Stokes settling (valid for small particles, Re < 1)
+        let vs_stokes = g * (rho_p - rho_f) * d50 * d50 / (18.0 * mu);
+
+        // Turbulent settling (valid for larger particles, Re > 1000)
+        // Using drag coefficient Cd ≈ 0.44 for spheres
+        let vs_turbulent = (4.0 * g * d50 * (rho_p - rho_f) / (3.0 * rho_f * 0.44)).sqrt();
+
+        // Blend based on particle size
+        // d < 0.1mm: pure Stokes
+        // d > 1mm: pure turbulent
+        // intermediate: linear blend
+        if d50 < 0.0001 {
+            vs_stokes
+        } else if d50 > 0.001 {
+            vs_turbulent
+        } else {
+            // Linear interpolation
+            let t = (d50 - 0.0001) / (0.001 - 0.0001);
+            vs_stokes * (1.0 - t) + vs_turbulent * t
+        }
+    }
+
+    /// Get the particle size (d50) for the top material layer at a cell.
+    pub fn top_material_d50(&self, x: usize, z: usize) -> f32 {
+        let idx = self.idx(x, z);
+
+        if self.terrain_sediment[idx] > 0.001 {
+            self.params.d50_sediment
+        } else if self.gravel_thickness[idx] > 0.001 {
+            self.params.d50_gravel
+        } else if self.overburden_thickness[idx] > 0.001 {
+            self.params.d50_overburden
+        } else if self.paydirt_thickness[idx] > 0.001 {
+            self.params.d50_paydirt
+        } else {
+            // Bedrock - use large value (won't erode anyway)
+            0.1
+        }
     }
 
     /// World bounds.
@@ -1689,139 +1864,176 @@ impl World {
         self.advection_outflow_buffer = outflow_buffer;
     }
 
-    /// Update erosion and sediment transport.
+    /// Update erosion and sediment transport using Shields stress physics.
+    ///
+    /// Key physics:
+    /// - Shear velocity: u* = sqrt(g × h × S) depends on water depth AND bed slope
+    /// - Shields stress: τ* = τ / (g × (ρp - ρf) × d50) determines transport initiation
+    /// - Transport only occurs when τ* > τ*_critical (~0.045)
+    /// - Transport capacity follows van Rijn: qb ∝ d50^1.5 × T*^1.5
     pub fn update_erosion(&mut self, dt: f32) {
         let width = self.width;
         let depth = self.depth;
         let cell_size = self.cell_size;
         let cell_area = cell_size * cell_size;
+        let g = self.params.gravity;
 
-        let k_entrain = 2.0; // Entrainment coefficient (Increased for visibility with dt scaling)
-        let k_deposit = 0.5; // Deposition coefficient
+        // Coefficients
+        let k_entrain = 1.0;  // Entrainment rate coefficient
+        let k_deposit = 0.5;  // Deposition rate coefficient
 
         for z in 0..depth {
             for x in 0..width {
                 let idx = self.idx(x, z);
-
-                // 1. Calculate Water Velocity Magnitude
-                let flow_x_left = self.water_flow_x[self.flow_x_idx(x, z)];
-                let flow_x_right = self.water_flow_x[self.flow_x_idx(x + 1, z)];
-                let flow_z_up = self.water_flow_z[self.flow_z_idx(x, z)];
-                let flow_z_down = self.water_flow_z[self.flow_z_idx(x, z + 1)];
-
-                let vel_x = (flow_x_left + flow_x_right) * 0.5;
-                let vel_z = (flow_z_up + flow_z_down) * 0.5;
-                let speed = (vel_x * vel_x + vel_z * vel_z).sqrt();
 
                 let water_depth = self.water_depth(x, z);
                 if water_depth < 0.01 {
                     continue;
                 }
 
-                // 2. Transport Capacity vs Load
-                // Capacity = k * v^2 * d (Simple stream power approx)
-                let transport_capacity = speed * speed * water_depth * 0.5;
+                // 1. CALCULATE SHEAR STRESS (using combined slope + velocity formula)
+                let shear_stress = self.shear_stress(x, z);
+
+                // 2. GET TOP MATERIAL PROPERTIES
+                let d50 = self.top_material_d50(x, z);
+                let rho_diff = self.params.rho_sediment - self.params.rho_water;
+
+                // 3. CALCULATE SHIELDS STRESS
+                let shields = shear_stress / (g * rho_diff * d50.max(1e-6));
+                let critical_shields = self.params.critical_shields;
+
+                // 4. TRANSPORT CAPACITY (van Rijn simplified)
+                // qb ∝ d50^1.5 × T*^1.5 where T* = (τ* - τ*_crit) / τ*_crit
+                let transport_capacity = if shields > critical_shields {
+                    let transport_stage = (shields - critical_shields) / critical_shields;
+                    let s = self.params.rho_sediment / self.params.rho_water;
+                    // Simplified van Rijn bedload transport (m²/s per unit width)
+                    let qb = 0.05 * ((s - 1.0) * g).sqrt()
+                           * d50.powf(1.5)
+                           * transport_stage.powf(1.5);
+                    // Convert to volume capacity per cell
+                    qb * cell_size * water_depth * 10.0 // Scale factor for reasonable rates
+                } else {
+                    0.0 // No transport below critical Shields
+                };
 
                 let suspended_conc = self.suspended_sediment[idx];
                 let suspended_vol = suspended_conc * water_depth * cell_area;
 
-                if suspended_vol > transport_capacity {
-                    // Deposition (Too much mud!)
-                    let deposit_vol = (suspended_vol - transport_capacity) * k_deposit * dt; // per step
-                                                                                             // Clamp to what we have
-                    let deposit_vol = deposit_vol.min(suspended_vol);
-                    let deposit_height = (deposit_vol / cell_area).min(1.0 * dt);
-                    let actual_deposit_vol = deposit_height * cell_area;
+                if shields <= critical_shields || suspended_vol >= transport_capacity {
+                    // DEPOSITION: Below critical Shields or at/above capacity
+                    if suspended_vol > 0.0 {
+                        // Deposit excess sediment
+                        let excess = if transport_capacity > 0.0 {
+                            (suspended_vol - transport_capacity).max(0.0)
+                        } else {
+                            suspended_vol // Deposit all if no transport capacity
+                        };
 
-                    self.terrain_sediment[idx] += deposit_height;
+                        let deposit_vol = excess * k_deposit * dt;
+                        let deposit_vol = deposit_vol.min(suspended_vol);
+                        let deposit_height = (deposit_vol / cell_area).min(1.0 * dt);
+                        let actual_deposit_vol = deposit_height * cell_area;
 
-                    let new_suspended_vol = suspended_vol - actual_deposit_vol;
-                    if water_depth > 1e-4 {
-                        self.suspended_sediment[idx] =
-                            new_suspended_vol / (water_depth * cell_area);
-                    } else {
-                        self.suspended_sediment[idx] = 0.0;
-                    }
-                } else {
-                    // Erosion (Hungry water!)
-                    // Calculate critical velocity for erosion based on next material to erode
-                    let critical_velocity = if self.terrain_sediment[idx] > 0.001 {
-                        0.3 // Soft sediment
-                    } else if self.gravel_thickness[idx] > 0.001 {
-                        0.8 // Gravel
-                    } else if self.overburden_thickness[idx] > 0.001 {
-                        0.5 // Overburden
-                    } else {
-                        1.2 // Paydirt (very hard)
-                    };
+                        self.terrain_sediment[idx] += deposit_height;
 
-                    // CRITICAL: Only erode if speed > material-specific threshold
-                    if speed > critical_velocity {
-                        let deficit_vol = transport_capacity - suspended_vol;
-                        // How much do we WANT to erode
-                        let entrain_target_vol = deficit_vol * k_entrain * dt;
-                        let entrain_target_height = entrain_target_vol / cell_area;
-
-                        // Limit erosion to e.g. 0.1m/s
-                        let entrain_target_height = entrain_target_height.min(0.5 * dt);
-
-                        let mut remaining_demand = entrain_target_height;
-                        let mut total_eroded_vol = 0.0;
-
-                        // Erode Sediment
-                        if remaining_demand > 0.0 {
-                            let available = self.terrain_sediment[idx];
-                            let resistance = self.params.hardness_sediment;
-                            let take = (remaining_demand / resistance.max(0.1)).min(available);
-                            self.terrain_sediment[idx] -= take;
-                            total_eroded_vol += take * cell_area;
-                            remaining_demand -= take * resistance;
-                        }
-
-                        // Erode Gravel
-                        if remaining_demand > 0.0 {
-                            let available = self.gravel_thickness[idx];
-                            let resistance = self.params.hardness_gravel;
-                            let take = (remaining_demand / resistance.max(1.0)).min(available);
-                            self.gravel_thickness[idx] -= take;
-                            total_eroded_vol += take * cell_area;
-                            remaining_demand -= take * resistance;
-                        }
-
-                        // Erode Overburden (Harder)
-                        if remaining_demand > 0.0 {
-                            let available = self.overburden_thickness[idx];
-                            // Scale demand by hardness? No, scale TAKE by hardness.
-                            // Effectively: We try to take X.
-                            // If material is hard, we only succeed in taking X / Hardness?
-                            // Or: capacity is used up faster?
-                            // Simple: resistance factor.
-                            let resistance = self.params.hardness_overburden; // e.g. 1.0
-                            let take = (remaining_demand / resistance.max(1.0)).min(available);
-
-                            self.overburden_thickness[idx] -= take;
-                            total_eroded_vol += take * cell_area;
-                            // Does digging harder material use up more transport capacity?
-                            // Physically yes. We used up `demand` of energy to get `take` result.
-                            remaining_demand -= take * resistance; // Consumed demand
-                        }
-
-                        // Erode Paydirt (Very Hard)
-                        if remaining_demand > 0.0 {
-                            let available = self.paydirt_thickness[idx];
-                            let resistance = self.params.hardness_paydirt; // e.g. 5.0
-                            let take = (remaining_demand / resistance.max(1.0)).min(available);
-
-                            self.paydirt_thickness[idx] -= take;
-                            total_eroded_vol += take * cell_area;
-                        }
-
-                        // Add to suspended
-                        let new_suspended_vol = suspended_vol + total_eroded_vol;
+                        let new_suspended_vol = suspended_vol - actual_deposit_vol;
                         if water_depth > 1e-4 {
                             self.suspended_sediment[idx] =
                                 new_suspended_vol / (water_depth * cell_area);
+                        } else {
+                            self.suspended_sediment[idx] = 0.0;
                         }
+                    }
+                } else {
+                    // EROSION: Above critical Shields and below capacity
+                    let deficit_vol = transport_capacity - suspended_vol;
+
+                    // Transport stage scales erosion rate
+                    let transport_stage = (shields - critical_shields) / critical_shields;
+                    let erosion_intensity = transport_stage.min(10.0); // Cap at 10x
+
+                    // How much we want to erode
+                    let entrain_target_vol = deficit_vol * k_entrain * erosion_intensity * dt;
+                    let entrain_target_height = entrain_target_vol / cell_area;
+
+                    // Limit erosion rate (0.1 m/s max)
+                    let entrain_target_height = entrain_target_height.min(0.1 * dt);
+
+                    let mut remaining_demand = entrain_target_height;
+                    let mut total_eroded_vol = 0.0;
+
+                    // Erode layers in order: Sediment → Gravel → Overburden → Paydirt
+                    // Each layer has its own Shields threshold based on d50
+
+                    // Erode Sediment (softest)
+                    if remaining_demand > 0.0 {
+                        let available = self.terrain_sediment[idx];
+                        if available > 0.001 {
+                            let d50_layer = self.params.d50_sediment;
+                            let shields_layer = shear_stress / (g * rho_diff * d50_layer.max(1e-6));
+                            if shields_layer > critical_shields {
+                                let resistance = self.params.hardness_sediment;
+                                let take = (remaining_demand / resistance.max(0.1)).min(available);
+                                self.terrain_sediment[idx] -= take;
+                                total_eroded_vol += take * cell_area;
+                                remaining_demand -= take * resistance;
+                            }
+                        }
+                    }
+
+                    // Erode Gravel (hard, large particles)
+                    if remaining_demand > 0.0 {
+                        let available = self.gravel_thickness[idx];
+                        if available > 0.001 {
+                            let d50_layer = self.params.d50_gravel;
+                            let shields_layer = shear_stress / (g * rho_diff * d50_layer.max(1e-6));
+                            if shields_layer > critical_shields {
+                                let resistance = self.params.hardness_gravel;
+                                let take = (remaining_demand / resistance.max(1.0)).min(available);
+                                self.gravel_thickness[idx] -= take;
+                                total_eroded_vol += take * cell_area;
+                                remaining_demand -= take * resistance;
+                            }
+                        }
+                    }
+
+                    // Erode Overburden
+                    if remaining_demand > 0.0 {
+                        let available = self.overburden_thickness[idx];
+                        if available > 0.001 {
+                            let d50_layer = self.params.d50_overburden;
+                            let shields_layer = shear_stress / (g * rho_diff * d50_layer.max(1e-6));
+                            if shields_layer > critical_shields {
+                                let resistance = self.params.hardness_overburden;
+                                let take = (remaining_demand / resistance.max(1.0)).min(available);
+                                self.overburden_thickness[idx] -= take;
+                                total_eroded_vol += take * cell_area;
+                                remaining_demand -= take * resistance;
+                            }
+                        }
+                    }
+
+                    // Erode Paydirt (hardest)
+                    if remaining_demand > 0.0 {
+                        let available = self.paydirt_thickness[idx];
+                        if available > 0.001 {
+                            let d50_layer = self.params.d50_paydirt;
+                            let shields_layer = shear_stress / (g * rho_diff * d50_layer.max(1e-6));
+                            if shields_layer > critical_shields {
+                                let resistance = self.params.hardness_paydirt;
+                                let take = (remaining_demand / resistance.max(1.0)).min(available);
+                                self.paydirt_thickness[idx] -= take;
+                                total_eroded_vol += take * cell_area;
+                            }
+                        }
+                    }
+
+                    // Add eroded material to suspended sediment
+                    let new_suspended_vol = suspended_vol + total_eroded_vol;
+                    if water_depth > 1e-4 {
+                        self.suspended_sediment[idx] =
+                            new_suspended_vol / (water_depth * cell_area);
                     }
                 }
             }
