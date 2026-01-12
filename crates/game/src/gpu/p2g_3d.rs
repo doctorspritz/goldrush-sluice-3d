@@ -95,6 +95,10 @@ pub struct GpuP2g3D {
 
 impl GpuP2g3D {
     /// Create a new GPU P2G 3D solver
+    ///
+    /// If `use_tiled_scatter` is true, uses shared memory aggregation for better
+    /// performance with sorted particles. This reduces atomic contention by
+    /// accumulating contributions locally before flushing to global memory.
     pub fn new(
         device: &wgpu::Device,
         width: u32,
@@ -102,6 +106,7 @@ impl GpuP2g3D {
         depth: u32,
         max_particles: usize,
         include_sediment: bool,
+        use_tiled_scatter: bool,
         positions_buffer: Arc<wgpu::Buffer>,
         velocities_buffer: Arc<wgpu::Buffer>,
         densities_buffer: Arc<wgpu::Buffer>,
@@ -114,10 +119,17 @@ impl GpuP2g3D {
         let w_size = (width * height * (depth + 1)) as usize;
 
         // Create shader modules
-        let scatter_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("P2G 3D Scatter Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/p2g_scatter_3d.wgsl").into()),
-        });
+        let scatter_shader = if use_tiled_scatter {
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("P2G 3D Tiled Scatter Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/p2g_scatter_tiled_3d.wgsl").into()),
+            })
+        } else {
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("P2G 3D Scatter Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/p2g_scatter_3d.wgsl").into()),
+            })
+        };
 
         let divide_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("P2G 3D Divide Shader"),

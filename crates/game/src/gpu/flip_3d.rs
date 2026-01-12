@@ -9,6 +9,7 @@
 
 use super::g2p_3d::{GpuG2p3D, SedimentParams3D};
 use super::p2g_3d::GpuP2g3D;
+use super::p2g_cell_centric_3d::GpuP2gCellCentric3D;
 use super::particle_sort::GpuParticleSort;
 use super::pressure_3d::GpuPressure3D;
 
@@ -591,8 +592,12 @@ pub struct GpuFlip3D {
     // Particle sorting for cache coherence
     sorter: GpuParticleSort,
     sorted_p2g: GpuP2g3D,
+    /// Cell-centric P2G (zero atomics, requires sorted particles)
+    cell_centric_p2g: GpuP2gCellCentric3D,
     /// Enable particle sorting before P2G (for benchmarking)
     pub use_sorted_p2g: bool,
+    /// Use cell-centric P2G (requires use_sorted_p2g = true)
+    pub use_cell_centric_p2g: bool,
 
     // Maximum particles supported
     max_particles: usize,
@@ -668,7 +673,8 @@ impl GpuFlip3D {
             height,
             depth,
             max_particles,
-            true,
+            true,   // include_sediment
+            false,  // use_tiled_scatter (unsorted particles)
             Arc::clone(&positions_buffer),
             Arc::clone(&velocities_buffer),
             Arc::clone(&densities_buffer),
@@ -683,7 +689,8 @@ impl GpuFlip3D {
             height,
             depth,
             max_particles,
-            false,
+            false,  // include_sediment
+            false,  // use_tiled_scatter (unsorted particles)
             Arc::clone(&positions_buffer),
             Arc::clone(&velocities_buffer),
             Arc::clone(&densities_buffer),
@@ -708,19 +715,38 @@ impl GpuFlip3D {
         );
 
         // Create P2G that reads from sorted particle buffers
+        // NOTE: Tiled scatter with shared memory atomics didn't help - contention just moves
+        // from global to shared memory. Using non-tiled shader for now.
         let sorted_p2g = GpuP2g3D::new(
             device,
             width,
             height,
             depth,
             max_particles,
-            true,
+            true,  // include_sediment
+            false, // use_tiled_scatter - disabled, shared memory atomics don't help
             Arc::clone(&sorter.out_positions_buffer),
             Arc::clone(&sorter.out_velocities_buffer),
             Arc::clone(&sorter.out_densities_buffer),
             Arc::clone(&sorter.out_c_col0_buffer),
             Arc::clone(&sorter.out_c_col1_buffer),
             Arc::clone(&sorter.out_c_col2_buffer),
+        );
+
+        // Create cell-centric P2G (zero atomics, requires sorted particles + cell_offsets)
+        let cell_centric_p2g = GpuP2gCellCentric3D::new(
+            device,
+            width,
+            height,
+            depth,
+            true,  // include_sediment
+            Arc::clone(&sorter.out_positions_buffer),
+            Arc::clone(&sorter.out_velocities_buffer),
+            Arc::clone(&sorter.out_c_col0_buffer),
+            Arc::clone(&sorter.out_c_col1_buffer),
+            Arc::clone(&sorter.out_c_col2_buffer),
+            Arc::clone(&sorter.out_densities_buffer),
+            Arc::clone(&sorter.cell_offsets_buffer),
         );
 
         // Create grid velocity backup buffers for FLIP delta
@@ -2822,7 +2848,9 @@ impl GpuFlip3D {
             gravel_porosity_bind_group,
             sorter,
             sorted_p2g,
-            use_sorted_p2g: true,  // Start with sorting enabled to test
+            cell_centric_p2g,
+            use_sorted_p2g: true,   // Start with sorting enabled to test
+            use_cell_centric_p2g: false,  // TEMP: Disabled for baseline comparison
             gravel_obstacle_params_buffer,
             gravel_obstacle_buffer,
             gravel_obstacle_count: 0,
@@ -3245,15 +3273,28 @@ impl GpuFlip3D {
             // Sort particles by cell index for cache coherence
             self.sorter.prepare(queue, count, self.cell_size);
             self.sorter.encode(&mut encoder, queue, count);
-            // Use sorted P2G that reads from sorted particle buffers
-            self.sorted_p2g.prepare(queue, count, self.cell_size);
-            self.sorted_p2g.encode(&mut encoder, count);
-            // Copy results from sorted_p2g to p2g buffers (rest of pipeline uses p2g buffers)
-            encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_u_buffer, 0, &self.p2g.grid_u_buffer, 0, (u_size * 4) as u64);
-            encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_v_buffer, 0, &self.p2g.grid_v_buffer, 0, (v_size * 4) as u64);
-            encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_w_buffer, 0, &self.p2g.grid_w_buffer, 0, (w_size * 4) as u64);
-            encoder.copy_buffer_to_buffer(&self.sorted_p2g.particle_count_buffer, 0, &self.p2g.particle_count_buffer, 0, (cell_count * 4) as u64);
-            encoder.copy_buffer_to_buffer(&self.sorted_p2g.sediment_count_buffer, 0, &self.p2g.sediment_count_buffer, 0, (cell_count * 4) as u64);
+
+            if self.use_cell_centric_p2g {
+                // Use cell-centric P2G (zero atomics, one thread per grid node)
+                self.cell_centric_p2g.prepare(queue, count, self.cell_size);
+                self.cell_centric_p2g.encode(&mut encoder, count);
+                // Copy results from cell_centric_p2g to p2g buffers (rest of pipeline uses p2g buffers)
+                encoder.copy_buffer_to_buffer(&self.cell_centric_p2g.grid_u_buffer, 0, &self.p2g.grid_u_buffer, 0, (u_size * 4) as u64);
+                encoder.copy_buffer_to_buffer(&self.cell_centric_p2g.grid_v_buffer, 0, &self.p2g.grid_v_buffer, 0, (v_size * 4) as u64);
+                encoder.copy_buffer_to_buffer(&self.cell_centric_p2g.grid_w_buffer, 0, &self.p2g.grid_w_buffer, 0, (w_size * 4) as u64);
+                encoder.copy_buffer_to_buffer(&self.cell_centric_p2g.particle_count_buffer, 0, &self.p2g.particle_count_buffer, 0, (cell_count * 4) as u64);
+                encoder.copy_buffer_to_buffer(&self.cell_centric_p2g.sediment_count_buffer, 0, &self.p2g.sediment_count_buffer, 0, (cell_count * 4) as u64);
+            } else {
+                // Use sorted P2G that reads from sorted particle buffers
+                self.sorted_p2g.prepare(queue, count, self.cell_size);
+                self.sorted_p2g.encode(&mut encoder, count);
+                // Copy results from sorted_p2g to p2g buffers (rest of pipeline uses p2g buffers)
+                encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_u_buffer, 0, &self.p2g.grid_u_buffer, 0, (u_size * 4) as u64);
+                encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_v_buffer, 0, &self.p2g.grid_v_buffer, 0, (v_size * 4) as u64);
+                encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_w_buffer, 0, &self.p2g.grid_w_buffer, 0, (w_size * 4) as u64);
+                encoder.copy_buffer_to_buffer(&self.sorted_p2g.particle_count_buffer, 0, &self.p2g.particle_count_buffer, 0, (cell_count * 4) as u64);
+                encoder.copy_buffer_to_buffer(&self.sorted_p2g.sediment_count_buffer, 0, &self.p2g.sediment_count_buffer, 0, (cell_count * 4) as u64);
+            }
         } else {
             self.p2g.encode(&mut encoder, count);
         }
