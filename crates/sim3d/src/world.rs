@@ -996,10 +996,11 @@ impl World {
         }
     }
 
-    /// Update water flow using simplified shallow water equations.
+    /// Update water flow using simplified shallow water equations with Manning friction.
     pub fn update_water_flow(&mut self, dt: f32) {
         let g = self.params.gravity;
-        let damping = 1.0 - self.params.water_damping;
+        let n = self.params.manning_n;
+        let n2 = n * n;
         let width = self.width;
         let depth = self.depth;
         let cell_size = self.cell_size;
@@ -1035,11 +1036,18 @@ impl World {
                 }
 
                 let gradient = (h_l - h_r) / cell_size;
-                self.water_flow_x[flow_idx] += g * gradient * dt;
-                self.water_flow_x[flow_idx] *= damping;
+                let avg_depth = 0.5 * (depth_l + depth_r).max(0.01); // Avoid division by zero
 
-                self.water_flow_x[flow_idx] =
-                    self.water_flow_x[flow_idx].clamp(-max_velocity, max_velocity);
+                // Apply gravity
+                let mut vel = self.water_flow_x[flow_idx] + g * gradient * dt;
+
+                // Apply Manning friction (implicit method for stability)
+                // Friction coefficient: g * n² / R^(4/3) where R ≈ depth for wide channel
+                let friction_coeff = g * n2 / avg_depth.powf(4.0 / 3.0);
+                let friction_factor = 1.0 + friction_coeff * vel.abs() * dt;
+                vel /= friction_factor;
+
+                self.water_flow_x[flow_idx] = vel.clamp(-max_velocity, max_velocity);
             }
 
             let left_idx = self.flow_x_idx(0, z);
@@ -1066,11 +1074,17 @@ impl World {
                 }
 
                 let gradient = (h_b - h_f) / cell_size;
-                self.water_flow_z[flow_idx] += g * gradient * dt;
-                self.water_flow_z[flow_idx] *= damping;
+                let avg_depth = 0.5 * (depth_b + depth_f).max(0.01);
 
-                self.water_flow_z[flow_idx] =
-                    self.water_flow_z[flow_idx].clamp(-max_velocity, max_velocity);
+                // Apply gravity
+                let mut vel = self.water_flow_z[flow_idx] + g * gradient * dt;
+
+                // Apply Manning friction
+                let friction_coeff = g * n2 / avg_depth.powf(4.0 / 3.0);
+                let friction_factor = 1.0 + friction_coeff * vel.abs() * dt;
+                vel /= friction_factor;
+
+                self.water_flow_z[flow_idx] = vel.clamp(-max_velocity, max_velocity);
             }
         }
 
@@ -2409,6 +2423,7 @@ mod tests {
     #[test]
     fn test_water_leveling() {
         let mut world = World::new(10, 10, 1.0, 0.0);
+        world.params.open_boundaries = false; // Closed system for conservation test
 
         world.add_water(Vec3::new(1.0, 0.0, 1.0), 100.0);
 
@@ -2515,13 +2530,14 @@ mod tests {
         let mut world = World::new(10, 10, 1.0, 10.0);  // Ground at 10m
         let idx = world.idx(5, 5);
         world.terrain_sediment[idx] = 1.0;
-        world.water_surface[idx] = 11.0;  // 1m deep water
+        // Ground = 10.0 + 1.0 sediment = 11.0, so water_surface must be higher for depth
+        world.water_surface[idx] = 12.0;  // 1m deep water (12 - 11 = 1)
         // Erosion calculates speed from averaged flows: vel_x = (flow_x_left + flow_x_right) * 0.5
-        // To get 0.2 m/s, set both flows to 0.4 m/s (below 0.3 threshold)
+        // To get 0.2 m/s, set both flows to 0.2 m/s → (0.2 + 0.2) * 0.5 = 0.2 (below 0.3 threshold)
         let flow_left = world.flow_x_idx(5, 5);
         let flow_right = world.flow_x_idx(6, 5);
-        world.water_flow_x[flow_left] = 0.4;
-        world.water_flow_x[flow_right] = 0.4;
+        world.water_flow_x[flow_left] = 0.2;
+        world.water_flow_x[flow_right] = 0.2;
 
         let initial_sediment = world.terrain_sediment[idx];
         world.update_erosion(0.1);
@@ -2533,12 +2549,13 @@ mod tests {
         let mut world2 = World::new(10, 10, 1.0, 10.0);  // Ground at 10m
         let idx2 = world2.idx(5, 5);
         world2.terrain_sediment[idx2] = 1.0;
-        world2.water_surface[idx2] = 11.0;  // 1m deep water
-        // To get 0.4 m/s average (above 0.3 threshold), set both flows to 0.8 m/s
+        // Ground = 10.0 + 1.0 sediment = 11.0, so water_surface must be higher for depth
+        world2.water_surface[idx2] = 12.0;  // 1m deep water (12 - 11 = 1)
+        // To get 0.4 m/s average (above 0.3 threshold), set both flows to 0.4 m/s → (0.4 + 0.4) * 0.5 = 0.4
         let flow_left2 = world2.flow_x_idx(5, 5);
         let flow_right2 = world2.flow_x_idx(6, 5);
-        world2.water_flow_x[flow_left2] = 0.8;
-        world2.water_flow_x[flow_right2] = 0.8;
+        world2.water_flow_x[flow_left2] = 0.4;
+        world2.water_flow_x[flow_right2] = 0.4;
 
         let initial_sediment2 = world2.terrain_sediment[idx2];
         world2.update_erosion(0.1);
