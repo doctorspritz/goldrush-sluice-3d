@@ -228,14 +228,17 @@ impl MultiGridSim {
 
         sim.grid.compute_sdf();
 
-        let gpu_flip = Some(GpuFlip3D::new(
+        let mut gpu_flip = GpuFlip3D::new(
             device,
             width as u32,
             height as u32,
             depth as u32,
             cell_size,
             20000, // Max particles per piece
-        ));
+        );
+        // Gutter: +X boundary is open (outlet) - particles exit here for transfer
+        // Bit 1 (value 2) = +X open
+        gpu_flip.open_boundaries = 2;
 
         let idx = self.pieces.len();
         self.pieces.push(PieceSimulation {
@@ -244,7 +247,7 @@ impl MultiGridSim {
             grid_dims: (width, height, depth),
             cell_size,
             sim,
-            gpu_flip,
+            gpu_flip: Some(gpu_flip),
             positions: Vec::new(),
             velocities: Vec::new(),
             affine_vels: Vec::new(),
@@ -316,14 +319,17 @@ impl MultiGridSim {
 
         sim.grid.compute_sdf();
 
-        let gpu_flip = Some(GpuFlip3D::new(
+        let mut gpu_flip = GpuFlip3D::new(
             device,
             width as u32,
             height as u32,
             depth as u32,
             cell_size,
             30000,
-        ));
+        );
+        // Sluice: -X (inlet) and +X (outlet) boundaries are open
+        // Bit 0 (1) = -X open, Bit 1 (2) = +X open -> combined = 3
+        gpu_flip.open_boundaries = 3;
 
         let idx = self.pieces.len();
         self.pieces.push(PieceSimulation {
@@ -332,7 +338,7 @@ impl MultiGridSim {
             grid_dims: (width, height, depth),
             cell_size,
             sim,
-            gpu_flip,
+            gpu_flip: Some(gpu_flip),
             positions: Vec::new(),
             velocities: Vec::new(),
             affine_vels: Vec::new(),
@@ -774,6 +780,37 @@ impl MultiGridSim {
                         transfer.from_piece,
                         transfer.to_piece
                     );
+                }
+            }
+        }
+
+        // Pass 4: Remove particles that have exited far past grid boundaries
+        // These are particles that flowed out of open boundaries and weren't captured by any transfer
+        let exit_margin = SIM_CELL_SIZE * 20.0; // Allow some distance before removal
+        for piece in &mut self.pieces {
+            let (gw, gh, gd) = piece.grid_dims;
+            let max_x = (gw as f32) * piece.cell_size + exit_margin;
+            let max_y = (gh as f32) * piece.cell_size + exit_margin;
+            let max_z = (gd as f32) * piece.cell_size + exit_margin;
+            let min_bound = -exit_margin;
+
+            let mut i = 0;
+            while i < piece.positions.len() {
+                let pos = piece.positions[i];
+                let out_of_bounds = pos.x < min_bound
+                    || pos.x > max_x
+                    || pos.y < min_bound
+                    || pos.y > max_y
+                    || pos.z < min_bound
+                    || pos.z > max_z;
+
+                if out_of_bounds {
+                    piece.positions.swap_remove(i);
+                    piece.velocities.swap_remove(i);
+                    piece.affine_vels.swap_remove(i);
+                    piece.densities.swap_remove(i);
+                } else {
+                    i += 1;
                 }
             }
         }

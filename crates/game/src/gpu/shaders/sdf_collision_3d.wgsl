@@ -10,8 +10,12 @@ struct Params {
     particle_count: u32,
     cell_size: f32,
     dt: f32,
+    // Bitmask for open boundaries (particles can exit without clamping):
+    // Bit 0 (1): -X open, Bit 1 (2): +X open
+    // Bit 2 (4): -Y open, Bit 3 (8): +Y open
+    // Bit 4 (16): -Z open, Bit 5 (32): +Z open
+    open_boundaries: u32,
     _pad0: u32,
-    _pad1: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -31,9 +35,24 @@ fn cell_index(i: u32, j: u32, k: u32) -> u32 {
 }
 
 fn is_cell_solid(i: i32, j: i32, k: i32) -> bool {
-    if (i < 0 || i >= i32(params.width)) { return true; }
-    if (j < 0 || j >= i32(params.height)) { return false; }
-    if (k < 0 || k >= i32(params.depth)) { return true; }
+    // Check open boundary flags for out-of-bounds cells
+    let open_neg_x = (params.open_boundaries & 1u) != 0u;
+    let open_pos_x = (params.open_boundaries & 2u) != 0u;
+    let open_neg_y = (params.open_boundaries & 4u) != 0u;
+    let open_pos_y = (params.open_boundaries & 8u) != 0u;
+    let open_neg_z = (params.open_boundaries & 16u) != 0u;
+    let open_pos_z = (params.open_boundaries & 32u) != 0u;
+
+    // X bounds - return false (not solid) if boundary is open
+    if (i < 0) { return !open_neg_x; }
+    if (i >= i32(params.width)) { return !open_pos_x; }
+    // Y bounds - ceiling/floor
+    if (j < 0) { return !open_neg_y; }
+    if (j >= i32(params.height)) { return !open_pos_y; }
+    // Z bounds
+    if (k < 0) { return !open_neg_z; }
+    if (k >= i32(params.depth)) { return !open_pos_z; }
+
     return cell_type[cell_index(u32(i), u32(j), u32(k))] == CELL_SOLID;
 }
 
@@ -201,25 +220,51 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    // Strict boundary clamping
+    // Boundary clamping - respects open_boundaries bitmask
+    // Open boundaries allow particles to exit (for transfer to adjacent grids)
     let margin = params.cell_size * 0.1;
     let max_x = f32(params.width) * params.cell_size - margin;
     let max_y = f32(params.height) * params.cell_size - margin;
     let max_z = f32(params.depth) * params.cell_size - margin;
 
-    // Catch-all floor at y=0.1
-    if (pos.y < margin) {
+    // Check open boundary flags
+    let open_neg_x = (params.open_boundaries & 1u) != 0u;
+    let open_pos_x = (params.open_boundaries & 2u) != 0u;
+    let open_neg_y = (params.open_boundaries & 4u) != 0u;
+    let open_pos_y = (params.open_boundaries & 8u) != 0u;
+    let open_neg_z = (params.open_boundaries & 16u) != 0u;
+    let open_pos_z = (params.open_boundaries & 32u) != 0u;
+
+    // Floor (Y min) - usually closed
+    if (pos.y < margin && !open_neg_y) {
         pos.y = margin;
         if (vel.y < 0.0) { vel.y = 0.0; }
     }
 
-    // Ceiling and walls
-    pos.x = clamp(pos.x, margin, max_x);
-    pos.y = clamp(pos.y, margin, max_y);
-    pos.z = clamp(pos.z, margin, max_z);
+    // X boundaries
+    if (pos.x < margin && !open_neg_x) {
+        pos.x = margin;
+        if (vel.x < 0.0) { vel.x = 0.0; }
+    }
+    if (pos.x > max_x && !open_pos_x) {
+        pos.x = max_x;
+        if (vel.x > 0.0) { vel.x = 0.0; }
+    }
 
-    if (pos.y >= max_y - 0.01 && vel.y > 1e-3) {
-        vel.y = 0.0; // Dampen upward momentum at ceiling
+    // Y ceiling
+    if (pos.y > max_y && !open_pos_y) {
+        pos.y = max_y;
+        if (vel.y > 0.0) { vel.y = 0.0; }
+    }
+
+    // Z boundaries
+    if (pos.z < margin && !open_neg_z) {
+        pos.z = margin;
+        if (vel.z < 0.0) { vel.z = 0.0; }
+    }
+    if (pos.z > max_z && !open_pos_z) {
+        pos.z = max_z;
+        if (vel.z > 0.0) { vel.z = 0.0; }
     }
 
     // Sediment bed collision disabled - let sediment flow freely like water

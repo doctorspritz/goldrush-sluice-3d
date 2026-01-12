@@ -185,8 +185,12 @@ struct SdfCollisionParams3D {
     particle_count: u32,
     cell_size: f32,
     dt: f32,
+    /// Bitmask for open boundaries (particles can exit without clamping):
+    /// Bit 0 (1): -X open, Bit 1 (2): +X open
+    /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
+    /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
+    open_boundaries: u32,
     _pad0: u32,
-    _pad1: u32,
 }
 
 #[derive(Copy, Clone)]
@@ -451,6 +455,11 @@ pub struct GpuFlip3D {
     pub height: u32,
     pub depth: u32,
     pub cell_size: f32,
+    /// Bitmask for open boundaries (particles can exit without clamping):
+    /// Bit 0 (1): -X open, Bit 1 (2): +X open
+    /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
+    /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
+    pub open_boundaries: u32,
     /// Vorticity confinement strength (default 0.05, range 0.0-0.25)
     pub vorticity_epsilon: f32,
     /// Target sediment particles per cell for porosity fraction.
@@ -2762,6 +2771,7 @@ impl GpuFlip3D {
             height,
             depth,
             cell_size,
+            open_boundaries: 0, // All boundaries closed by default
             vorticity_epsilon: 0.05,
             sediment_rest_particles: 8.0,
             sediment_friction_threshold: 0.1,
@@ -4040,8 +4050,8 @@ impl GpuFlip3D {
             particle_count,
             cell_size: self.cell_size,
             dt,
+            open_boundaries: self.open_boundaries,
             _pad0: 0,
-            _pad1: 0,
         };
         queue.write_buffer(
             &self.sdf_collision_params_buffer,
