@@ -16,6 +16,7 @@ struct Uniforms {
 
 @group(0) @binding(6) var<storage, read> water_surface_buf: array<f32>;
 @group(0) @binding(7) var<storage, read> water_depth_buf: array<f32>;
+@group(0) @binding(8) var<storage, read> surface_material_buf: array<u32>; // 0=bed,1=pay,2=gravel,3=over,4=sed
 
 struct VertexInput {
     @location(0) grid_pos: vec2<f32>,
@@ -338,22 +339,63 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let t_overburden = mix(mix(overburden[i00], overburden[i10], fx), mix(overburden[i01], overburden[i11], fx), fz);
     let t_sediment = mix(mix(sediment[i00], sediment[i10], fx), mix(sediment[i01], sediment[i11], fx), fz);
 
-    // Base colors for each material
-    let c_bedrock = vec3<f32>(0.28, 0.28, 0.32);
-    let c_paydirt = vec3<f32>(0.55, 0.45, 0.22);
-    let c_gravel = vec3<f32>(0.5, 0.48, 0.45);
-    let c_overburden = vec3<f32>(0.4, 0.32, 0.22);
-    let c_sediment = vec3<f32>(0.65, 0.55, 0.38);
+    // Base colors for each material - VERY DISTINCT for visual clarity
+    let c_bedrock = vec3<f32>(0.25, 0.25, 0.30);    // Dark grey rock
+    let c_paydirt = vec3<f32>(0.70, 0.55, 0.20);    // Gold-brown (bright)
+    let c_gravel = vec3<f32>(0.50, 0.50, 0.55);     // Blue-grey stone
+    let c_overburden = vec3<f32>(0.40, 0.28, 0.15); // Rich brown dirt
+    let c_sediment = vec3<f32>(0.90, 0.80, 0.55);   // Bright tan/sand
 
-    // Simple top-layer-wins blending with smooth transitions
-    // Start with bedrock, then blend each layer on top based on thickness
-    let blend_threshold = 0.02; // thickness at which layer fully covers
+    // SURFACE MATERIAL tells us what was deposited on top
+    // Sample from the nearest grid cell (no interpolation for discrete material type)
+    let gxi = u32(clamp(gx + 0.5, 0.0, f32(uniforms.grid_width - 1u)));
+    let gzi = u32(clamp(gz + 0.5, 0.0, f32(uniforms.grid_depth - 1u)));
+    let surf_idx = gzi * uniforms.grid_width + gxi;
+    let surf_mat = surface_material_buf[surf_idx];
 
-    var base_color = c_bedrock;
-    base_color = mix(base_color, c_paydirt, smoothstep(0.0, blend_threshold, t_paydirt));
-    base_color = mix(base_color, c_gravel, smoothstep(0.0, blend_threshold, t_gravel));
-    base_color = mix(base_color, c_overburden, smoothstep(0.0, blend_threshold, t_overburden));
-    base_color = mix(base_color, c_sediment, smoothstep(0.0, blend_threshold, t_sediment));
+    // Get the thickness of the surface material
+    var surface_thickness = 0.0;
+    var surface_color = c_bedrock;
+    if (surf_mat == 1u) {
+        surface_thickness = t_paydirt;
+        surface_color = c_paydirt;
+    } else if (surf_mat == 2u) {
+        surface_thickness = t_gravel;
+        surface_color = c_gravel;
+    } else if (surf_mat == 3u) {
+        surface_thickness = t_overburden;
+        surface_color = c_overburden;
+    } else if (surf_mat == 4u) {
+        surface_thickness = t_sediment;
+        surface_color = c_sediment;
+    }
+
+    // Compute weighted blend of ALL materials based on thickness
+    // This gives us the "underlying mixture" color
+    let total_loose = t_paydirt + t_gravel + t_overburden + t_sediment + 0.001;
+    let w_paydirt = t_paydirt / total_loose;
+    let w_gravel = t_gravel / total_loose;
+    let w_overburden = t_overburden / total_loose;
+    let w_sediment = t_sediment / total_loose;
+
+    let mixture_color = c_paydirt * w_paydirt
+                      + c_gravel * w_gravel
+                      + c_overburden * w_overburden
+                      + c_sediment * w_sediment;
+
+    // Blend surface material with underlying mixture based on surface layer thickness
+    // Thin surface layer = more mixture showing through
+    // coverage_depth: how thick before fully opaque (in meters)
+    let coverage_depth = 0.08;
+    let surface_opacity = clamp(surface_thickness / coverage_depth, 0.0, 1.0);
+
+    // If almost no loose material, show bedrock
+    let loose_total = t_paydirt + t_gravel + t_overburden + t_sediment;
+    let bedrock_blend = smoothstep(0.01, 0.05, loose_total);
+
+    // Final color: surface material on top of mixture, with bedrock underneath
+    var base_color = mix(c_bedrock, mixture_color, bedrock_blend);
+    base_color = mix(base_color, surface_color, surface_opacity * bedrock_blend);
 
     // Apply ONE unified procedural detail pattern to the blended color
     let noise_large = fbm(in.world_pos * 5.0, 3) - 0.5;

@@ -35,6 +35,7 @@ pub struct GpuHeightfield {
     pub gravel_buffer: wgpu::Buffer, // Gravel layer (erosion resistant)
     pub overburden_buffer: wgpu::Buffer,
     pub sediment_buffer: wgpu::Buffer, // Deposited sediment
+    pub surface_material_buffer: wgpu::Buffer, // What material is on TOP (0=bed,1=pay,2=gravel,3=over,4=sed)
 
     // Water State Buffers
     pub water_depth_buffer: wgpu::Buffer,
@@ -121,6 +122,17 @@ impl GpuHeightfield {
         let gravel = create_storage("Gravel Buffer", initial_height * 0.05);
         let overburden = create_storage("Overburden Buffer", initial_height * 0.2);
         let sediment = create_storage("Sediment Buffer", 0.0);
+
+        // Surface material tracker: what material is on TOP (0=bed,1=pay,2=gravel,3=over,4=sed)
+        // Start with sediment (4) as default since most terrain has some sediment on top
+        let surface_material_data = vec![4u32; (width * depth) as usize];
+        let surface_material = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Surface Material Buffer"),
+            contents: bytemuck::cast_slice(&surface_material_data),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+        });
 
         // 2. Initialize Water
         let water_depth = create_storage("Water Depth Buffer", 0.0);
@@ -340,6 +352,16 @@ impl GpuHeightfield {
                     },
                     count: None,
                 }, // sediment
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }, // surface_material
             ],
         });
 
@@ -366,6 +388,10 @@ impl GpuHeightfield {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: sediment.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: surface_material.as_entire_binding(),
                 },
             ],
         });
@@ -631,6 +657,16 @@ impl GpuHeightfield {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -667,6 +703,10 @@ impl GpuHeightfield {
                     wgpu::BindGroupEntry {
                         binding: 4,
                         resource: sediment.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: surface_material.as_entire_binding(),
                     },
                 ],
             });
@@ -829,6 +869,16 @@ impl GpuHeightfield {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -867,6 +917,10 @@ impl GpuHeightfield {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: water_depth.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: surface_material.as_entire_binding(),
                 },
             ],
         });
@@ -1027,6 +1081,7 @@ impl GpuHeightfield {
             gravel_buffer: gravel,
             overburden_buffer: overburden,
             sediment_buffer: sediment,
+            surface_material_buffer: surface_material,
 
             water_depth_buffer: water_depth,
             water_velocity_x_buffer: water_vel_x,

@@ -27,6 +27,7 @@ struct ToolParams {
 @group(1) @binding(2) var<storage, read_write> gravel: array<f32>;
 @group(1) @binding(3) var<storage, read_write> overburden: array<f32>;
 @group(1) @binding(4) var<storage, read_write> sediment: array<f32>;
+@group(1) @binding(5) var<storage, read_write> surface_material: array<u32>; // 0=bed,1=pay,2=gravel,3=over,4=sed
 
 fn get_idx(x: u32, z: u32) -> u32 {
     return z * tool.world_width + x;
@@ -61,10 +62,14 @@ fn apply_material_tool(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let delta = tool.amount * tool.dt * falloff;
     
     // Apply to appropriate material layer
+    // When ADDING material, it goes ON TOP - set surface_material to track what's visible
+    // material_type: 0=sediment, 1=overburden, 2=gravel
+    // surface_material: 0=bed, 1=pay, 2=gravel, 3=over, 4=sed
     if (tool.material_type == 0u) {
         // Sediment
         if (delta > 0.0) {
             sediment[idx] += delta;
+            surface_material[idx] = 4u; // Sediment on top
         } else {
             sediment[idx] = max(0.0, sediment[idx] + delta);
         }
@@ -72,6 +77,7 @@ fn apply_material_tool(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Overburden
         if (delta > 0.0) {
             overburden[idx] += delta;
+            surface_material[idx] = 3u; // Overburden on top
         } else {
             overburden[idx] = max(0.0, overburden[idx] + delta);
         }
@@ -79,6 +85,7 @@ fn apply_material_tool(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Gravel
         if (delta > 0.0) {
             gravel[idx] += delta;
+            surface_material[idx] = 2u; // Gravel on top
         } else {
             gravel[idx] = max(0.0, gravel[idx] + delta);
         }
