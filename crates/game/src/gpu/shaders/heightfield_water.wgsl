@@ -23,6 +23,8 @@ struct Params {
 @group(1) @binding(3) var<storage, read_write> water_surface: array<f32>;
 @group(1) @binding(4) var<storage, read_write> flux_x: array<f32>;
 @group(1) @binding(5) var<storage, read_write> flux_z: array<f32>;
+@group(1) @binding(6) var<storage, read_write> suspended_sediment: array<f32>; // For bind group compatibility
+@group(1) @binding(7) var<storage, read_write> suspended_sediment_next: array<f32>; // For bind group compatibility
 
 // Terrain Bind Group (Read Write for Layout Compatibility)
 @group(2) @binding(0) var<storage, read_write> bedrock: array<f32>;

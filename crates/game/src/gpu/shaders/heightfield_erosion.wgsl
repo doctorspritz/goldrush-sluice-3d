@@ -33,9 +33,10 @@ const MAX_CAPACITY: f32 = 1.0;        // Allow more sediment per cell
 @group(1) @binding(1) var<storage, read_write> water_velocity_x: array<f32>;
 @group(1) @binding(2) var<storage, read_write> water_velocity_z: array<f32>;
 @group(1) @binding(3) var<storage, read_write> water_surface: array<f32>; // Not used directly but present in layout
-@group(1) @binding(4) var<storage, read_write> flux_x: array<f32>; // Not used
-@group(1) @binding(5) var<storage, read_write> flux_z: array<f32>; // Not used
-@group(1) @binding(6) var<storage, read_write> suspended_sediment: array<f32>; // NEW binding for suspended
+@group(1) @binding(4) var<storage, read_write> flux_x: array<f32>;
+@group(1) @binding(5) var<storage, read_write> flux_z: array<f32>;
+@group(1) @binding(6) var<storage, read_write> suspended_sediment: array<f32>;
+@group(1) @binding(7) var<storage, read_write> suspended_sediment_next: array<f32>; // Double buffer for race-free transport
 
 @group(2) @binding(0) var<storage, read_write> bedrock: array<f32>;
 @group(2) @binding(1) var<storage, read_write> paydirt: array<f32>;
@@ -325,7 +326,8 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
     // Apply transport (scaled by cell area)
     let cell_area = params.cell_size * params.cell_size;
     let new_sed = current_sed + net_sediment / cell_area;
-    
-    // Clamp to non-negative and reasonable max
-    suspended_sediment[idx] = clamp(new_sed, 0.0, 10.0);
+
+    // Write to NEXT buffer (double-buffering eliminates race conditions)
+    // All reads are from suspended_sediment, write to suspended_sediment_next
+    suspended_sediment_next[idx] = clamp(new_sed, 0.0, 10.0);
 }

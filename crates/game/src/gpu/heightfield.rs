@@ -42,6 +42,7 @@ pub struct GpuHeightfield {
     pub water_velocity_x_buffer: wgpu::Buffer,
     pub water_velocity_z_buffer: wgpu::Buffer,
     pub suspended_sediment_buffer: wgpu::Buffer,
+    pub suspended_sediment_next_buffer: wgpu::Buffer, // Double buffer for race-free transport
 
     // Derived/Intermediate Buffers
     pub water_surface_buffer: wgpu::Buffer, // Calculated as Ground + Water Depth
@@ -141,6 +142,7 @@ impl GpuHeightfield {
         let water_vel_x = create_storage("Water Vel X Buffer", 0.0);
         let water_vel_z = create_storage("Water Vel Z Buffer", 0.0);
         let suspended = create_storage("Suspended Sediment Buffer", 0.0);
+        let suspended_next = create_storage("Suspended Sediment Next Buffer", 0.0);
 
         // 3. Initialize Intermediate
         let water_surface = create_storage("Water Surface Buffer", 0.0);
@@ -262,6 +264,16 @@ impl GpuHeightfield {
                     },
                     count: None,
                 }, // suspended_sediment
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }, // suspended_sediment_next (double buffer)
             ],
         });
 
@@ -296,6 +308,10 @@ impl GpuHeightfield {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: suspended.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: suspended_next.as_entire_binding(),
                 },
             ],
         });
@@ -1110,6 +1126,7 @@ impl GpuHeightfield {
             water_velocity_x_buffer: water_vel_x,
             water_velocity_z_buffer: water_vel_z,
             suspended_sediment_buffer: suspended,
+            suspended_sediment_next_buffer: suspended_next,
 
             water_surface_buffer: water_surface,
             flux_x_buffer: flux_x,
@@ -1167,42 +1184,54 @@ impl GpuHeightfield {
         let x_groups = tile_width.div_ceil(16);
         let z_groups = tile_depth.div_ceil(16);
 
-        // Helper to create a new compute pass for each step to enforce memory visibility
-        let mut dispatch_step = |label: &str, pipeline: &wgpu::ComputePipeline| {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(label),
-                timestamp_writes: None,
-            });
-            pass.set_bind_group(0, &self.params_bind_group, &[]);
-            pass.set_bind_group(1, &self.water_bind_group, &[]);
-            pass.set_bind_group(2, &self.terrain_bind_group, &[]);
-            pass.set_pipeline(pipeline);
-            pass.dispatch_workgroups(x_groups, z_groups, 1);
-        };
+        // Helper macro to dispatch a compute pass
+        macro_rules! dispatch_step {
+            ($label:expr, $pipeline:expr) => {{
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some($label),
+                    timestamp_writes: None,
+                });
+                pass.set_bind_group(0, &self.params_bind_group, &[]);
+                pass.set_bind_group(1, &self.water_bind_group, &[]);
+                pass.set_bind_group(2, &self.terrain_bind_group, &[]);
+                pass.set_pipeline($pipeline);
+                pass.dispatch_workgroups(x_groups, z_groups, 1);
+            }};
+        }
 
         // 1. Update Flux (Updates Velocity + Flux) - Reads Surface
-        dispatch_step("Update Flux", &self.flux_pipeline);
+        dispatch_step!("Update Flux", &self.flux_pipeline);
 
         // 2. Update Depth (Volume) - Reads Flux
-        dispatch_step("Update Depth", &self.depth_pipeline);
+        dispatch_step!("Update Depth", &self.depth_pipeline);
 
         // 3. Erosion (post-flux velocity) - Reads Depth/Vel, writes Terrain
-        dispatch_step("Update Erosion", &self.erosion_pipeline);
+        dispatch_step!("Update Erosion", &self.erosion_pipeline);
 
-        // 4. Sediment Transport (flux-based advection) - Reads Flux, writes Sediment
-        dispatch_step(
+        // 4. Sediment Transport (flux-based advection) - Reads from current, writes to next buffer
+        dispatch_step!(
             "Update Sediment Transport",
-            &self.sediment_transport_pipeline,
+            &self.sediment_transport_pipeline
+        );
+
+        // 4b. Copy suspended_sediment_next -> suspended_sediment (swap double buffers)
+        let buffer_size = (self.width * self.depth) as u64 * std::mem::size_of::<f32>() as u64;
+        encoder.copy_buffer_to_buffer(
+            &self.suspended_sediment_next_buffer,
+            0,
+            &self.suspended_sediment_buffer,
+            0,
+            buffer_size,
         );
 
         // 5. Collapse (angle of repose / slope stability) - Writes Terrain
         // Use red-black pattern for race-free updates: red cells don't neighbor other red cells
-        dispatch_step("Update Collapse Red", &self.collapse_red_pipeline);
-        dispatch_step("Update Collapse Black", &self.collapse_black_pipeline);
+        dispatch_step!("Update Collapse Red", &self.collapse_red_pipeline);
+        dispatch_step!("Update Collapse Black", &self.collapse_black_pipeline);
 
         // 6. Update Surface - Reads Ground/Depth, writes Surface
         // Move to end so rendering sees the LATEST surface reflecting erosion/depth changes
-        dispatch_step("Update Surface", &self.surface_pipeline);
+        dispatch_step!("Update Surface", &self.surface_pipeline);
     }
 
     pub fn update_params(&self, queue: &wgpu::Queue, dt: f32) {
