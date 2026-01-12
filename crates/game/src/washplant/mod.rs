@@ -2,8 +2,10 @@
 
 mod config;
 mod metrics;
+mod stage;
 mod transfer;
 
 pub use config::*;
 pub use metrics::*;
+pub use stage::*;
 pub use transfer::*;
