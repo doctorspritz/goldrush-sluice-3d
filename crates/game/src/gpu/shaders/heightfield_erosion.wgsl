@@ -124,7 +124,36 @@ fn get_terrain_slope(x: u32, z: u32) -> f32 {
     return sqrt(dh_dx * dh_dx + dh_dz * dh_dz);
 }
 
-// 1. Erosion & Deposition
+// =============================================================================
+// CRITICAL SHEAR STRESS EROSION MODEL
+// =============================================================================
+// Erosion rate is proportional to (v² - v_crit²) when v > v_crit
+// This creates positive feedback: erosion deepens channel → faster water → more erosion
+// Result: small trickles can create runaway breaches and floods
+
+// Get the critical velocity for the exposed surface material
+fn get_critical_velocity(mat: u32) -> f32 {
+    switch (mat) {
+        case 4u: { return V_CRIT_SEDIMENT; }     // Fresh silt
+        case 3u: { return V_CRIT_OVERBURDEN; }   // Soil/dirt
+        case 2u: { return V_CRIT_GRAVEL; }       // Gravel
+        case 1u: { return V_CRIT_PAYDIRT; }      // Paydirt
+        default: { return 999.0; }               // Bedrock - effectively infinite
+    }
+}
+
+// Get erosion rate constant for surface material
+fn get_erosion_rate(mat: u32) -> f32 {
+    switch (mat) {
+        case 4u: { return K_EROSION_SEDIMENT; }
+        case 3u: { return K_EROSION_OVERBURDEN; }
+        case 2u: { return K_EROSION_GRAVEL; }
+        case 1u: { return K_EROSION_PAYDIRT; }
+        default: { return 0.0; }                 // Bedrock doesn't erode
+    }
+}
+
+// 1. Erosion & Deposition with Critical Shear Stress
 @compute @workgroup_size(16, 16)
 fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let tile_x = global_id.x;
@@ -133,94 +162,133 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let x = tile_x + params.origin_x;
     let z = tile_z + params.origin_z;
     if (x >= params.world_width || z >= params.world_depth) { return; }
-    
+
     let idx = get_idx(x, z);
-    
-    // Calculate Velocity Magnitude
-    let vel_x = water_velocity_x[idx]; // Center velocity (approx from edges)
-    let vel_z = water_velocity_z[idx];
-    // Correct center velocity logic would average edges.
-    // For x: avg(vel_x[x], vel_x[x+1]) but our grid is staggered?
-    // Let's assume collocated for simplicity in this V1 port.
-    
-    let speed = sqrt(vel_x * vel_x + vel_z * vel_z);
     let depth = water_depth[idx];
-    
-    if (depth < 0.001 || speed < 0.0001) {
+
+    // Need some water to do anything
+    if (depth < 0.001) {
         return;
     }
 
-    // Transport Capacity with slope-based enhancement
-    // Steeper slopes = faster water = higher erosion capacity
-    // slope_factor = 1 + slope (slope is tan(angle), typical terrain is 0-45° so 0-1)
-    let terrain_slope = get_terrain_slope(x, z);
-    let slope_factor = 1.0 + clamp(terrain_slope, 0.0, 1.0);
-    let raw_capacity = CAPACITY_FACTOR * speed * min(depth, 1.0) * slope_factor;
-    let capacity = min(raw_capacity, MAX_CAPACITY);
-    
-    let current_suspended = suspended_sediment[idx];
-    
-    if (current_suspended > capacity) {
-        // Deposition - sediment settles on top
-        let deposit_amount = (current_suspended - capacity) * K_DEPOSIT * params.dt;
-        suspended_sediment[idx] -= deposit_amount;
-        sediment[idx] += deposit_amount;
+    // Calculate velocity magnitude
+    let vel_x = water_velocity_x[idx];
+    let vel_z = water_velocity_z[idx];
+    let speed = sqrt(vel_x * vel_x + vel_z * vel_z);
+    let speed_sq = speed * speed;
 
-        // Deposited sediment is now on top
-        if (deposit_amount > 0.001) {
-            surface_material[idx] = 4u; // sediment
+    let current_suspended = suspended_sediment[idx];
+    let surface_mat = surface_material[idx];
+
+    // ==========================================================================
+    // DEPOSITION: Fast settling in slow/pooled water (Stokes settling)
+    // ==========================================================================
+    // Sediment settles when water is calm. In a settling pond, silt drops out fast.
+
+    if (speed < SETTLING_VELOCITY) {
+        // Water is essentially still - fast deposition
+        let deposit_rate = K_DEPOSIT_FAST * (1.0 - speed / SETTLING_VELOCITY);
+        let deposit_amount = current_suspended * deposit_rate * params.dt;
+
+        if (deposit_amount > 0.0001) {
+            suspended_sediment[idx] -= deposit_amount;
+            sediment[idx] += deposit_amount;
+            surface_material[idx] = 4u; // Fresh sediment on top
+        }
+        return; // No erosion in still water
+    }
+
+    // ==========================================================================
+    // EROSION: Critical shear stress model
+    // ==========================================================================
+    // Shear stress τ ∝ v². Erosion occurs when τ > τ_critical
+    // Erosion rate ∝ (τ - τ_crit) = k * (v² - v_crit²)
+
+    let v_crit = get_critical_velocity(surface_mat);
+    let v_crit_sq = v_crit * v_crit;
+
+    // Only erode if velocity exceeds critical threshold
+    if (speed_sq > v_crit_sq) {
+        // Shear excess: how much above the threshold we are
+        let shear_excess = speed_sq - v_crit_sq;
+
+        // Erosion rate increases with shear excess (positive feedback!)
+        let k_erosion = get_erosion_rate(surface_mat);
+
+        // Slope factor: steeper terrain erodes faster (concentrated flow)
+        let terrain_slope = get_terrain_slope(x, z);
+        let slope_factor = 1.0 + clamp(terrain_slope * 2.0, 0.0, 2.0);
+
+        // Depth factor: deeper water has more erosive power
+        let depth_factor = min(depth, 0.5) / 0.5; // Linear up to 0.5m
+
+        // Total erosion potential this timestep
+        let erosion_potential = k_erosion * shear_excess * slope_factor * depth_factor * params.dt;
+
+        // Erode through layers from top to bottom
+        var total_eroded = 0.0;
+        var remaining = erosion_potential;
+
+        // Layer 1: Sediment (freshly deposited silt - very easy)
+        let sed_avail = sediment[idx];
+        if (remaining > 0.0 && sed_avail > 0.0) {
+            let erode = min(remaining, sed_avail);
+            sediment[idx] -= erode;
+            total_eroded += erode;
+            remaining -= erode;
+        }
+
+        // Layer 2: Overburden (soil/dirt)
+        let ob_avail = overburden[idx];
+        if (remaining > 0.0 && ob_avail > 0.0) {
+            // Overburden is a bit harder than fresh sediment
+            let effective = remaining * K_HARDNESS_OVERBURDEN;
+            let erode = min(effective, ob_avail);
+            overburden[idx] -= erode;
+            total_eroded += erode;
+            remaining -= erode / K_HARDNESS_OVERBURDEN;
+        }
+
+        // Layer 3: Gravel (resistant)
+        let gr_avail = gravel[idx];
+        if (remaining > 0.0 && gr_avail > 0.0) {
+            let effective = remaining * K_HARDNESS_GRAVEL;
+            let erode = min(effective, gr_avail);
+            gravel[idx] -= erode;
+            total_eroded += erode;
+            remaining -= erode / K_HARDNESS_GRAVEL;
+        }
+
+        // Layer 4: Paydirt (consolidated, gold-bearing)
+        let pd_avail = paydirt[idx];
+        if (remaining > 0.0 && pd_avail > 0.0) {
+            let effective = remaining * K_HARDNESS_PAYDIRT;
+            let erode = min(effective, pd_avail);
+            paydirt[idx] -= erode;
+            total_eroded += erode;
+        }
+
+        // Bedrock doesn't erode
+
+        // Add eroded material to suspension
+        if (total_eroded > 0.0) {
+            suspended_sediment[idx] += total_eroded;
+            surface_material[idx] = compute_surface_material(idx);
         }
     } else {
-        // Erosion - dig down through layers
-        let deficit = capacity - current_suspended;
-        let entrain_target = deficit * K_ENTRAIN * params.dt;
+        // Below critical velocity but above settling - gradual deposition
+        // Transport capacity decreases as velocity drops
+        let capacity = CAPACITY_FACTOR * speed * min(depth, 1.0);
 
-        // Erode from layers (Sediment -> Overburden -> Gravel -> Paydirt)
-        // Track actual eroded mass separately
-        var total_eroded = 0.0;
-        var remaining_target = entrain_target;
+        if (current_suspended > capacity) {
+            let excess = current_suspended - capacity;
+            let deposit_amount = excess * K_DEPOSIT_SLOW * params.dt;
 
-        // 1. Sediment (easiest to erode)
-        let sed_avail = sediment[idx];
-        let sed_eroded = min(remaining_target, sed_avail);
-        sediment[idx] -= sed_eroded;
-        total_eroded += sed_eroded;
-        remaining_target -= sed_eroded;
-
-        // 2. Overburden (soil/dirt - easy to erode)
-        if (remaining_target > 0.0) {
-            let ob_avail = overburden[idx];
-            let can_erode = min(remaining_target * K_HARDNESS_OVERBURDEN, ob_avail);
-            overburden[idx] -= can_erode;
-            total_eroded += can_erode;
-            remaining_target -= can_erode / K_HARDNESS_OVERBURDEN;
-        }
-
-        // 3. Gravel (resistant layer)
-        if (remaining_target > 0.0) {
-            let gr_avail = gravel[idx];
-            let can_erode = min(remaining_target * K_HARDNESS_GRAVEL, gr_avail);
-            gravel[idx] -= can_erode;
-            total_eroded += can_erode;
-            remaining_target -= can_erode / K_HARDNESS_GRAVEL;
-        }
-
-        // 4. Paydirt (gold-bearing layer)
-        if (remaining_target > 0.0) {
-            let pd_avail = paydirt[idx];
-            let can_erode = min(remaining_target * K_HARDNESS_PAYDIRT, pd_avail);
-            paydirt[idx] -= can_erode;
-            total_eroded += can_erode;
-        }
-
-        // 5. Bedrock (Don't erode, it's the stable base)
-
-        // Add ONLY what was actually eroded to suspended sediment
-        suspended_sediment[idx] += total_eroded;
-
-        // Update surface material to reflect what's now exposed
-        if (total_eroded > 0.001) {
-            surface_material[idx] = compute_surface_material(idx);
+            if (deposit_amount > 0.0001) {
+                suspended_sediment[idx] -= deposit_amount;
+                sediment[idx] += deposit_amount;
+                surface_material[idx] = 4u;
+            }
         }
     }
 }

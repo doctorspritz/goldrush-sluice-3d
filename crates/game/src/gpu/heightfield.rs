@@ -1199,10 +1199,15 @@ impl GpuHeightfield {
             }};
         }
 
-        // 1. Update Flux (Updates Velocity + Flux) - Reads Surface
+        // CRITICAL: Update Surface FIRST - flux needs water_surface to compute gradients!
+        // water_surface = ground_height + water_depth
+        // Without this, flux sees stale/zero surface heights and water won't flow.
+        dispatch_step!("Update Surface", &self.surface_pipeline);
+
+        // 1. Update Flux (Updates Velocity + Flux) - Reads Surface gradients
         dispatch_step!("Update Flux", &self.flux_pipeline);
 
-        // 2. Update Depth (Volume) - Reads Flux
+        // 2. Update Depth (Volume Conservation) - Reads Flux, updates water_depth
         dispatch_step!("Update Depth", &self.depth_pipeline);
 
         // 3. Erosion (post-flux velocity) - Reads Depth/Vel, writes Terrain
@@ -1228,10 +1233,6 @@ impl GpuHeightfield {
         // Use red-black pattern for race-free updates: red cells don't neighbor other red cells
         dispatch_step!("Update Collapse Red", &self.collapse_red_pipeline);
         dispatch_step!("Update Collapse Black", &self.collapse_black_pipeline);
-
-        // 6. Update Surface - Reads Ground/Depth, writes Surface
-        // Move to end so rendering sees the LATEST surface reflecting erosion/depth changes
-        dispatch_step!("Update Surface", &self.surface_pipeline);
     }
 
     pub fn update_params(&self, queue: &wgpu::Queue, dt: f32) {

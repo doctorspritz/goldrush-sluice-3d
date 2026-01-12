@@ -116,9 +116,9 @@ struct App {
     affine_vels: Vec<Mat3>,
     densities: Vec<f32>,
 
-    // Track which particles are sediment
-    sediment_indices: Vec<usize>,
-    sediment_is_gold: Vec<bool>,
+    // Track which particles are sediment (per-particle, same length as positions)
+    is_sediment: Vec<bool>,
+    is_gold: Vec<bool>, // Only meaningful if is_sediment[i] is true
 
     // State
     paused: bool,
@@ -200,8 +200,8 @@ impl App {
             velocities: Vec::new(),
             affine_vels: Vec::new(),
             densities: Vec::new(),
-            sediment_indices: Vec::new(),
-            sediment_is_gold: Vec::new(),
+            is_sediment: Vec::new(),
+            is_gold: Vec::new(),
             paused: false,
             frame: 0,
             camera_angle: 0.3,
@@ -340,6 +340,8 @@ impl App {
             self.velocities.push(init_vel);
             self.affine_vels.push(Mat3::ZERO);
             self.densities.push(WATER_DENSITY);
+            self.is_sediment.push(false);
+            self.is_gold.push(false);
         }
     }
 
@@ -368,14 +370,12 @@ impl App {
                 center_z + z_offset,
             );
 
-            let idx = self.positions.len();
             self.positions.push(pos);
             self.velocities.push(init_vel);
             self.affine_vels.push(Mat3::ZERO);
             self.densities.push(GOLD_DENSITY);
-
-            self.sediment_indices.push(idx);
-            self.sediment_is_gold.push(true);
+            self.is_sediment.push(true);
+            self.is_gold.push(true);
         }
 
         // Spawn sand particles
@@ -387,14 +387,12 @@ impl App {
                 center_z + z_offset,
             );
 
-            let idx = self.positions.len();
             self.positions.push(pos);
             self.velocities.push(init_vel);
             self.affine_vels.push(Mat3::ZERO);
             self.densities.push(SAND_DENSITY);
-
-            self.sediment_indices.push(idx);
-            self.sediment_is_gold.push(false);
+            self.is_sediment.push(true);
+            self.is_gold.push(false);
         }
 
         self.sediment_spawned = true;
@@ -414,10 +412,10 @@ impl App {
         let mut sand_x_sum = 0.0f32;
         let mut sand_count = 0;
 
-        for (i, &idx) in self.sediment_indices.iter().enumerate() {
-            if idx < self.positions.len() {
-                let x = self.positions[idx].x;
-                if self.sediment_is_gold[i] {
+        for i in 0..self.positions.len() {
+            if self.is_sediment[i] {
+                let x = self.positions[i].x;
+                if self.is_gold[i] {
                     gold_x_sum += x;
                     gold_count += 1;
                 } else {
@@ -442,9 +440,11 @@ impl App {
         let separation = (sand_mean_x - gold_mean_x) / sluice_length * 100.0;
 
         println!(
-            "Frame {}: particles={}, gold_x={:.3}m, sand_x={:.3}m, separation={:.1}%",
+            "Frame {}: particles={}, gold={}/{}, sand={}/{}, gold_x={:.3}m, sand_x={:.3}m, sep={:.1}%",
             self.frame,
             self.positions.len(),
+            gold_count, NUM_GOLD,
+            sand_count, NUM_SAND,
             gold_mean_x,
             sand_mean_x,
             separation
@@ -535,6 +535,8 @@ impl App {
                 self.velocities.swap_remove(i);
                 self.affine_vels.swap_remove(i);
                 self.densities.swap_remove(i);
+                self.is_sediment.swap_remove(i);
+                self.is_gold.swap_remove(i);
             } else {
                 i += 1;
             }
@@ -1007,10 +1009,10 @@ impl App {
 
         // Build sediment instances
         let mut instances: Vec<SedimentInstance> = Vec::new();
-        for (i, &idx) in self.sediment_indices.iter().enumerate() {
-            if idx < self.positions.len() {
-                let pos = self.positions[idx];
-                let (color, radius) = if self.sediment_is_gold[i] {
+        for i in 0..self.positions.len() {
+            if self.is_sediment[i] {
+                let pos = self.positions[i];
+                let (color, radius) = if self.is_gold[i] {
                     (GOLD_COLOR, 0.008) // 8mm gold
                 } else {
                     (SAND_COLOR, 0.006) // 6mm sand

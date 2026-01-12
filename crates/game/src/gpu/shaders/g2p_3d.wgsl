@@ -318,23 +318,41 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         let particle_vel = old_particle_vel;
 
         // Drag force: accelerate toward water velocity
-        // drag_blend = how much to blend toward water velocity per frame
-        // Scaled by 1/density so heavier particles feel less drag
-        var drag_rate = sediment_params.drag_coefficient / density;  // 1/s, scaled by mass
+        // Heavy particles feel the SAME drag force, but their higher mass means
+        // less acceleration (F=ma). However, in our model we don't track forces,
+        // we track velocity blending rate. The correct physics is:
+        // - Drag force F_d = 0.5 * C_d * rho_water * A * v_rel^2 (same for all particles)
+        // - Acceleration a = F_d / m = F_d / (rho_particle * V)
+        // - So acceleration scales as 1/density
+        // This is correct: heavier particles respond slower to drag.
+        var drag_rate = sediment_params.drag_coefficient / density;
         if (is_gold) {
             drag_rate *= sediment_params.gold_drag_multiplier;
         }
-        let drag_blend = min(drag_rate * params.dt, 0.9);  // Clamp to prevent overshoot
+        let drag_blend = min(drag_rate * params.dt, 0.9);
 
-        // Blend particle velocity toward water velocity
-        final_velocity = mix(particle_vel, water_vel, drag_blend);
+        // Blend particle velocity toward water velocity (drag entrainment)
+        var vel_after_drag = mix(particle_vel, water_vel, drag_blend);
 
-        // Buoyancy-reduced gravity: effective_g = g * (density - 1) / density
-        // For density 2.5: effective_g = 9.8 * 1.5/2.5 = 5.88 m/s²
-        // This accounts for buoyant force reducing apparent weight
-        let buoyancy_factor = (density - 1.0) / density;
-        let effective_gravity = -9.8 * buoyancy_factor;
-        final_velocity.y += effective_gravity * params.dt;
+        // Settling: gravity pulls particles DOWN through the water.
+        // Net downward force = (particle_weight - buoyancy) = V * g * (rho_p - rho_w)
+        // Acceleration = force/mass = g * (rho_p - rho_w) / rho_p = g * (1 - 1/density)
+        // For gold (19.3): settling_accel = 9.8 * (1 - 1/19.3) = 9.3 m/s² (fast settling)
+        // For sand (2.65): settling_accel = 9.8 * (1 - 1/2.65) = 6.1 m/s² (slower settling)
+        let settling_accel = 9.8 * (1.0 - 1.0 / density);
+        vel_after_drag.y -= settling_accel * params.dt;
+
+        // But wait - we also need to model terminal velocity! Settling velocity
+        // is limited by drag. At terminal velocity: drag_up = weight_down
+        // For now, use a simple clamp based on Stokes law approximation:
+        // Terminal velocity ~ (density - 1) * g * r^2 / (18 * viscosity)
+        // Simplified: v_terminal ~ 0.1 * (density - 1) m/s for ~1cm particles
+        let v_terminal = 0.1 * (density - 1.0);
+        if (vel_after_drag.y < -v_terminal) {
+            vel_after_drag.y = -v_terminal;
+        }
+
+        final_velocity = vel_after_drag;
     } else {
         // Water: full FLIP/PIC blend
         final_velocity = params.flip_ratio * flip_velocity + (1.0 - params.flip_ratio) * pic_velocity;
