@@ -405,9 +405,39 @@ impl MultiGridSim {
             let k_start = (center_k - half_wid_cells).max(0) as usize;
             let k_end = ((center_k + half_wid_cells) as usize).min(depth);
 
-            let floor_j =
-                floor_j_left + ((floor_j_right - floor_j_left) as f32 * t).round() as i32;
-            let wall_top_j = floor_j + wall_height_cells;
+            // Compute floor_j directly from mesh floor position to align with visual
+            // Mesh floor Y at this position = gutter.position.y + half_drop - t * total_drop
+            // Solid top should be at mesh floor, so floor_j = floor(mesh_floor_Y / cell_size)
+            let mesh_floor_y = gutter.position.y + (total_drop / 2.0) - t * total_drop;
+            let floor_j = (mesh_floor_y / cell_size).floor() as i32;
+
+            // Look BOTH forward AND backward to cover staircase transitions
+            // At floor drops, both adjacent cells need the higher floor_j to prevent diagonal gaps
+            let t_next = if i_i + 1 >= center_i + half_len_cells {
+                1.0
+            } else if i_i + 1 <= center_i - half_len_cells {
+                0.0
+            } else {
+                ((i_i + 1 - (center_i - half_len_cells)) as f32)
+                    / ((half_len_cells * 2) as f32).max(1.0)
+            };
+            let mesh_floor_y_next = gutter.position.y + (total_drop / 2.0) - t_next * total_drop;
+            let floor_j_next = (mesh_floor_y_next / cell_size).floor() as i32;
+
+            let t_prev = if i_i - 1 <= center_i - half_len_cells {
+                0.0
+            } else if i_i - 1 >= center_i + half_len_cells {
+                1.0
+            } else {
+                ((i_i - 1 - (center_i - half_len_cells)) as f32)
+                    / ((half_len_cells * 2) as f32).max(1.0)
+            };
+            let mesh_floor_y_prev = gutter.position.y + (total_drop / 2.0) - t_prev * total_drop;
+            let floor_j_prev = (mesh_floor_y_prev / cell_size).floor() as i32;
+
+            // Use the HIGHEST of prev, current, and next floor_j to prevent staircase gaps
+            let effective_floor_j = floor_j.max(floor_j_next).max(floor_j_prev);
+            let wall_top_j = effective_floor_j + wall_height_cells;
 
             // Is this position past the channel outlet? (in the margin zone leading to grid edge)
             let past_outlet = i >= i_end;
@@ -422,14 +452,17 @@ impl MultiGridSim {
                     && k_i >= (center_k - outlet_half_wid_cells)
                     && k_i < (center_k + outlet_half_wid_cells);
 
+                // Outlet floor_j computed from mesh position at t=1.0
+                let outlet_floor_j = ((gutter.position.y - total_drop / 2.0) / cell_size).floor() as i32;
+
                 for j in 0..height {
                     let j_i = j as i32;
 
-                    // Floor - fill ALL cells at and below floor_j within channel
-                    // Use interpolated floor_j for channel, constant floor_j_right for outlet chute
+                    // Floor - fill ALL cells at and below effective_floor_j within channel
+                    // Use effective_floor_j for channel, outlet_floor_j for outlet chute
                     let is_channel_floor =
-                        in_channel_length && in_channel_width && j_i <= floor_j;
-                    let is_outlet_chute_floor = in_outlet_chute && j_i <= floor_j_right;
+                        in_channel_length && in_channel_width && j_i <= effective_floor_j;
+                    let is_outlet_chute_floor = in_outlet_chute && j_i <= outlet_floor_j;
                     let is_floor = is_channel_floor || is_outlet_chute_floor;
 
                     // Side walls - mark ALL cells outside channel as solid (not just thin strip)
@@ -447,7 +480,7 @@ impl MultiGridSim {
                     let at_right_wall_outlet = k_i >= (center_k + outlet_half_wid_cells);
                     let is_side_wall_outlet = (at_left_wall_outlet || at_right_wall_outlet)
                         && past_outlet
-                        && j_i <= floor_j_right + wall_height_cells
+                        && j_i <= outlet_floor_j + wall_height_cells
                         && j_i >= 0;
 
                     let is_side_wall = is_side_wall_channel || is_side_wall_outlet;
@@ -478,21 +511,15 @@ impl MultiGridSim {
 
         // Sluice position gives center in X/Z and base floor height in Y
         let center_i = (sluice.position.x / cell_size).round() as i32;
-        let base_j = (sluice.position.y / cell_size).round() as i32;
         let center_k = (sluice.position.z / cell_size).round() as i32;
 
         // Channel dimensions in cells
         let half_len_cells = ((sluice.length / 2.0) / cell_size).ceil() as i32;
         let half_wid_cells = ((sluice.width / 2.0) / cell_size).ceil() as i32;
 
-        // Floor height drop due to slope (in cells)
+        // Floor height drop due to slope
         let slope_rad = sluice.slope_deg.to_radians();
         let total_drop = sluice.length * slope_rad.tan();
-        let half_drop_cells = ((total_drop / 2.0) / cell_size).round() as i32;
-
-        // Floor heights at inlet (left) and outlet (right)
-        let floor_j_left = base_j + half_drop_cells; // Inlet is higher
-        let floor_j_right = base_j - half_drop_cells; // Outlet is lower
 
         // Riffle parameters in cells
         let riffle_spacing_cells = (sluice.riffle_spacing / cell_size).round() as i32;
@@ -501,7 +528,6 @@ impl MultiGridSim {
 
         // Wall parameters
         let wall_height_cells = 12_i32; // Enough wall height
-        let wall_thick_cells = 2_i32;
 
         // Channel bounds
         let i_start = (center_i - half_len_cells).max(0) as usize;
@@ -509,10 +535,13 @@ impl MultiGridSim {
         let k_start = (center_k - half_wid_cells).max(0) as usize;
         let k_end = ((center_k + half_wid_cells) as usize).min(depth);
 
+        // Inlet floor_j computed from mesh position at t=0
+        let inlet_floor_j = ((sluice.position.y + total_drop / 2.0) / cell_size).floor() as i32;
+
         for i in 0..width {
             let i_i = i as i32;
 
-            // Calculate floor height at this i position (linear interpolation)
+            // Calculate t along sluice (0 = inlet, 1 = outlet)
             let t = if i_i <= center_i - half_len_cells {
                 0.0
             } else if i_i >= center_i + half_len_cells {
@@ -521,9 +550,37 @@ impl MultiGridSim {
                 ((i_i - (center_i - half_len_cells)) as f32)
                     / ((half_len_cells * 2) as f32).max(1.0)
             };
-            let floor_j =
-                floor_j_left + ((floor_j_right - floor_j_left) as f32 * t).round() as i32;
-            let wall_top_j = floor_j + riffle_height_cells + wall_height_cells;
+
+            // Compute floor_j from mesh floor position to align with visual
+            let mesh_floor_y = sluice.position.y + (total_drop / 2.0) - t * total_drop;
+            let floor_j = (mesh_floor_y / cell_size).floor() as i32;
+
+            // Look BOTH forward AND backward to cover staircase transitions
+            let t_next = if i_i + 1 >= center_i + half_len_cells {
+                1.0
+            } else if i_i + 1 <= center_i - half_len_cells {
+                0.0
+            } else {
+                ((i_i + 1 - (center_i - half_len_cells)) as f32)
+                    / ((half_len_cells * 2) as f32).max(1.0)
+            };
+            let mesh_floor_y_next = sluice.position.y + (total_drop / 2.0) - t_next * total_drop;
+            let floor_j_next = (mesh_floor_y_next / cell_size).floor() as i32;
+
+            let t_prev = if i_i - 1 <= center_i - half_len_cells {
+                0.0
+            } else if i_i - 1 >= center_i + half_len_cells {
+                1.0
+            } else {
+                ((i_i - 1 - (center_i - half_len_cells)) as f32)
+                    / ((half_len_cells * 2) as f32).max(1.0)
+            };
+            let mesh_floor_y_prev = sluice.position.y + (total_drop / 2.0) - t_prev * total_drop;
+            let floor_j_prev = (mesh_floor_y_prev / cell_size).floor() as i32;
+
+            // Use HIGHEST of prev, current, and next to prevent staircase gaps
+            let effective_floor_j = floor_j.max(floor_j_next).max(floor_j_prev);
+            let wall_top_j = effective_floor_j + riffle_height_cells + wall_height_cells;
 
             // Check if this i position is on a riffle
             let dist_from_start = i_i - (center_i - half_len_cells);
@@ -533,43 +590,56 @@ impl MultiGridSim {
                 false
             };
 
+            // Is this position before the channel inlet? (inlet chute zone)
+            let before_inlet = (i as i32) < (center_i - half_len_cells);
+
             for k in 0..depth {
                 let k_i = k as i32;
                 let in_channel_width = k >= k_start && k < k_end;
                 let in_channel_length = i >= i_start && i < i_end;
 
+                // Inlet chute: extend floor from grid edge to channel inlet
+                let in_inlet_chute = before_inlet
+                    && k_i >= (center_k - half_wid_cells)
+                    && k_i < (center_k + half_wid_cells);
+
                 for j in 0..height {
                     let j_i = j as i32;
 
-                    // Floor - fill ALL cells at and below floor_j within channel
-                    let is_floor = j_i <= floor_j && in_channel_length && in_channel_width;
+                    // Floor - fill ALL cells at and below effective_floor_j within channel
+                    let is_channel_floor = j_i <= effective_floor_j && in_channel_length && in_channel_width;
+
+                    // Inlet chute floor - use inlet floor height
+                    let is_inlet_chute_floor = in_inlet_chute && j_i <= inlet_floor_j;
+
+                    let is_floor = is_channel_floor || is_inlet_chute_floor;
 
                     // Riffles - extend above floor at regular intervals
                     let is_riffle = is_riffle_x
                         && in_channel_width
                         && in_channel_length
-                        && j_i > floor_j
-                        && j_i <= floor_j + riffle_height_cells;
+                        && j_i > effective_floor_j
+                        && j_i <= effective_floor_j + riffle_height_cells;
 
                     // Side walls - mark ALL cells outside channel as solid (not just thin strip)
                     // This prevents particles from escaping through gaps at grid edges
+                    // Also extend walls into inlet chute zone
                     let at_left_wall = k_i < (center_k - half_wid_cells);
                     let at_right_wall = k_i >= (center_k + half_wid_cells);
-                    let is_side_wall = (at_left_wall || at_right_wall)
+                    let is_side_wall_channel = (at_left_wall || at_right_wall)
                         && in_channel_length
                         && j_i <= wall_top_j
                         && j_i >= 0;
+                    let is_side_wall_inlet = (at_left_wall || at_right_wall)
+                        && before_inlet
+                        && j_i <= inlet_floor_j + wall_height_cells
+                        && j_i >= 0;
+                    let is_side_wall = is_side_wall_channel || is_side_wall_inlet;
 
-                    // Back wall at inlet (left end, outside channel)
-                    let at_back = i_i >= (center_i - half_len_cells - wall_thick_cells)
-                        && i_i < (center_i - half_len_cells);
-                    let is_back_wall = at_back
-                        && j_i <= wall_top_j
-                        && j_i >= 0
-                        && k_i >= (center_k - half_wid_cells - wall_thick_cells)
-                        && k_i < (center_k + half_wid_cells + wall_thick_cells);
+                    // Back wall at inlet - NO back wall since we have inlet chute now
+                    // Particles enter from the inlet side
 
-                    if is_floor || is_riffle || is_side_wall || is_back_wall {
+                    if is_floor || is_riffle || is_side_wall {
                         sim.grid.set_solid(i, j, k);
                     }
                 }
@@ -4177,5 +4247,130 @@ mod tests {
         }
 
         assert!(has_floor_at_end, "Outlet chute floor should extend to grid edge (i={})", last_i);
+    }
+
+    #[test]
+    fn test_angled_gutter_sdf_profile() {
+        // Test SDF values along the length of an angled gutter
+        // to verify the floor collision will work correctly
+        let cell_size = 0.025;
+        let width = 60;
+        let height = 30;
+        let depth = 20;
+
+        let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
+
+        // Angled gutter (10 degrees, like the real simulation)
+        let margin = cell_size * 4.0;
+        let gutter = GutterPiece {
+            id: 0,
+            position: Vec3::new(
+                margin + 0.5,  // 1m gutter centered
+                margin + 0.15, // Base height with margin
+                margin + 0.15, // Center in Z
+            ),
+            rotation: Rotation::R0,
+            angle_deg: 10.0,
+            length: 1.0,
+            width: 0.3,
+            end_width: 0.3,
+            wall_height: 0.15,
+        };
+
+        MultiGridSim::mark_gutter_solid_cells(&mut sim, &gutter, cell_size);
+        sim.grid.compute_sdf();
+
+        let center_k = (gutter.position.z / cell_size).round() as usize;
+        let center_i = (gutter.position.x / cell_size).round() as usize;
+        let half_len_cells = ((gutter.length / 2.0) / cell_size).ceil() as usize;
+
+        // Calculate expected floor heights
+        let angle_rad = gutter.angle_deg.to_radians();
+        let total_drop = gutter.length * angle_rad.tan();
+        let half_drop = total_drop / 2.0;
+
+        println!("=== Angled Gutter SDF Profile ===");
+        println!("Gutter: angle={}°, length={}m, total_drop={:.3}m", gutter.angle_deg, gutter.length, total_drop);
+        println!("Center: i={}, k={}", center_i, center_k);
+        println!("Half length cells: {}", half_len_cells);
+        println!("");
+
+        // Sample at inlet, 1/4, 1/2, 3/4, outlet positions
+        let sample_positions = [
+            ("inlet", center_i as i32 - half_len_cells as i32),
+            ("1/4", center_i as i32 - half_len_cells as i32 / 2),
+            ("center", center_i as i32),
+            ("3/4", center_i as i32 + half_len_cells as i32 / 2),
+            ("outlet", center_i as i32 + half_len_cells as i32),
+        ];
+
+        for (name, i) in sample_positions.iter() {
+            if *i < 0 || *i >= width as i32 {
+                println!("{}: out of bounds (i={})", name, i);
+                continue;
+            }
+
+            let i_u = *i as usize;
+
+            // Calculate expected mesh floor height at this position
+            let dx = (*i as f32 - center_i as f32) * cell_size;
+            let t = (dx / gutter.length + 0.5).clamp(0.0, 1.0); // 0 at inlet, 1 at outlet
+            let mesh_floor_y = gutter.position.y + half_drop - t * total_drop;
+
+            // Find actual solid floor
+            let mut solid_floor_j = None;
+            for j in (0..height).rev() {
+                if sim.grid.is_solid(i_u, j, center_k) {
+                    solid_floor_j = Some(j);
+                    break;
+                }
+            }
+
+            println!("{} (i={}, t={:.2}):", name, i, t);
+            println!("  Mesh floor Y: {:.4}m", mesh_floor_y);
+            if let Some(floor_j) = solid_floor_j {
+                let solid_top_y = (floor_j + 1) as f32 * cell_size;
+                println!("  Solid top (j={}) Y: {:.4}m", floor_j, solid_top_y);
+                println!("  Gap (solid_top - mesh): {:.4}m ({:.1} cells)", solid_top_y - mesh_floor_y, (solid_top_y - mesh_floor_y) / cell_size);
+            } else {
+                println!("  NO SOLID FLOOR FOUND!");
+            }
+
+            // Sample SDF at mesh floor level
+            let test_y = mesh_floor_y + cell_size * 0.5; // Just above mesh surface
+            let test_pos = Vec3::new(*i as f32 * cell_size + cell_size * 0.5, test_y, center_k as f32 * cell_size + cell_size * 0.5);
+            let sdf = sim.grid.sample_sdf(test_pos);
+            println!("  SDF at Y={:.4}m: {:.4}", test_y, sdf);
+
+            if sdf >= 0.0 {
+                println!("  ⚠️  WARNING: Positive SDF above mesh floor - particles will fall through!");
+            }
+            println!("");
+        }
+
+        // Now verify particles don't fall through by checking SDF just above mesh floor
+        println!("\n=== Particle Fall-Through Test ===");
+        let mut any_fallthrough = false;
+        for i in (center_i - half_len_cells)..=(center_i + half_len_cells) {
+            let dx = (i as f32 - center_i as f32) * cell_size;
+            let t = (dx / gutter.length + 0.5).clamp(0.0, 1.0);
+            let mesh_floor_y = gutter.position.y + half_drop - t * total_drop;
+
+            // Test at 0.5 cells above mesh floor
+            let test_y = mesh_floor_y + cell_size * 0.5;
+            let test_pos = Vec3::new(i as f32 * cell_size + cell_size * 0.5, test_y, center_k as f32 * cell_size + cell_size * 0.5);
+            let sdf = sim.grid.sample_sdf(test_pos);
+
+            if sdf > cell_size * 0.1 { // More than 0.1 cells positive = in air
+                println!("FALLTHROUGH at i={}: SDF={:.4} at y={:.4} (mesh floor={:.4})", i, sdf, test_y, mesh_floor_y);
+                any_fallthrough = true;
+            }
+        }
+
+        if !any_fallthrough {
+            println!("✓ No fall-through detected - all positions above mesh have negative or near-zero SDF");
+        }
+
+        assert!(!any_fallthrough, "Found fall-through positions!");
     }
 }

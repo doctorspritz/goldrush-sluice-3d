@@ -1311,6 +1311,13 @@ pub struct ChuteConfig {
     /// Wall thickness in cells
     pub wall_thickness: usize,
 
+    /// Riffle spacing in cells (distance between riffles). 0 = no riffles
+    pub riffle_spacing: usize,
+    /// Riffle height in cells (above floor)
+    pub riffle_height: usize,
+    /// Riffle thickness in cells (along flow direction X)
+    pub riffle_thickness: usize,
+
     pub color_top: [f32; 4],
     pub color_side: [f32; 4],
     pub color_bottom: [f32; 4],
@@ -1327,6 +1334,9 @@ impl Default for ChuteConfig {
             floor_height_end: 2,
             side_wall_height: 3,
             wall_thickness: 1,
+            riffle_spacing: 0, // No riffles by default
+            riffle_height: 0,
+            riffle_thickness: 1,
             color_top: [0.55, 0.50, 0.45, 1.0],
             color_side: [0.45, 0.40, 0.35, 1.0],
             color_bottom: [0.35, 0.30, 0.25, 1.0],
@@ -1339,6 +1349,22 @@ impl ChuteConfig {
         let t = x as f32 / (self.grid_width - 1).max(1) as f32;
         let height = self.floor_height_start as f32 * (1.0 - t) + self.floor_height_end as f32 * t;
         height as usize
+    }
+
+    /// Check if position (i, x) is at a riffle location
+    fn is_at_riffle(&self, i: usize) -> bool {
+        if self.riffle_spacing == 0 || self.riffle_height == 0 {
+            return false;
+        }
+        // Riffles are placed at regular intervals along X
+        // Start a bit downstream to allow water entry
+        let riffle_start = self.riffle_spacing;
+        if i < riffle_start {
+            return false;
+        }
+        let pos = i - riffle_start;
+        let period = self.riffle_spacing + self.riffle_thickness;
+        pos % period < self.riffle_thickness
     }
 
     pub fn is_solid(&self, i: usize, j: usize, k: usize) -> bool {
@@ -1354,6 +1380,16 @@ impl ChuteConfig {
         let wt = self.wall_thickness;
         if (k < wt || k >= self.grid_depth - wt) && j <= wall_top {
             return true;
+        }
+
+        // Riffles - raised bars across the channel
+        if self.is_at_riffle(i) {
+            // Riffle spans between walls
+            let in_channel = k >= wt && k < self.grid_depth - wt;
+            let riffle_top = floor_j + self.riffle_height;
+            if in_channel && j > floor_j && j <= riffle_top {
+                return true;
+            }
         }
 
         false
