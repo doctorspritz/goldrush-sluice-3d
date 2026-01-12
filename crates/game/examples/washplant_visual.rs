@@ -1,9 +1,16 @@
 //! Washplant Visual - Multi-Stage Processing Plant
 //!
-//! Renders the full 4-stage washplant (Hopper → Grizzly → Shaker → Sluice)
+//! Renders the full 3-stage washplant (Hopper → Shaker → Sluice)
 //! with particle transfers between stages.
 //!
 //! Run with: cargo run --example washplant_visual --release
+//!
+//! Load custom config:
+//!   cargo run --example washplant_visual --release -- --config my_plant.json
+//!   cargo run --example washplant_visual --release -- --config my_plant.yaml
+//!
+//! Save current config:
+//!   cargo run --example washplant_visual --release -- --save my_plant.json
 //!
 //! Controls:
 //!   Mouse drag     - Rotate camera
@@ -17,8 +24,9 @@
 
 use bytemuck::{Pod, Zeroable};
 use game::sluice_geometry::SluiceVertex;
-use game::washplant::{PlantConfig, Washplant};
+use game::washplant::{PlantBuilder, PlantConfig, Washplant};
 use glam::{Mat4, Vec3};
+use std::path::Path;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::{
@@ -65,6 +73,7 @@ struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
     plant: Washplant,
+    config: PlantConfig, // Store config for reset
 
     // Camera state
     camera_yaw: f32,
@@ -116,8 +125,8 @@ struct GpuState {
 }
 
 impl App {
-    fn new() -> Self {
-        let plant = Washplant::new(PlantConfig::default());
+    fn with_config(config: PlantConfig) -> Self {
+        let plant = Washplant::new(config.clone());
 
         // Calculate initial camera position to see all stages
         let (eye, center) = plant.camera_params();
@@ -155,6 +164,7 @@ impl App {
             window: None,
             gpu: None,
             plant,
+            config,
             camera_yaw: yaw,
             camera_pitch: pitch.clamp(-1.4, 1.4),
             camera_distance: distance,
@@ -167,16 +177,17 @@ impl App {
     }
 
     fn reset_plant(&mut self) {
-        self.plant = Washplant::new(PlantConfig::default());
+        self.plant = Washplant::new(self.config.clone());
         println!("Plant reset");
     }
 
     fn update_camera_from_keys(&mut self, dt: f32) {
         let speed = 5.0 * dt;
 
-        // Calculate forward/right vectors on XZ plane
-        let forward = Vec3::new(-self.camera_yaw.sin(), 0.0, -self.camera_yaw.cos()).normalize();
-        let right = Vec3::new(forward.z, 0.0, -forward.x);
+        // Forward = direction camera is looking (from camera towards target)
+        // Camera is at target + offset, so forward is -offset direction on XZ plane
+        let forward = Vec3::new(-self.camera_yaw.cos(), 0.0, -self.camera_yaw.sin());
+        let right = Vec3::new(-forward.z, 0.0, forward.x); // perpendicular, pointing right
 
         let mut movement = Vec3::ZERO;
 
@@ -885,10 +896,162 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// Create a plant configuration using the builder API.
+/// This demonstrates how to programmatically build a washplant.
+fn build_custom_plant() -> PlantConfig {
+    PlantBuilder::new()
+        // Feed hopper - receives raw material
+        .add_hopper("Feed Hopper")
+        .grid(20, 30, 20)
+        .cell_size(0.03)
+        .max_particles(30_000)
+        .top_size(0.5, 0.5)
+        .bottom_size(0.25, 0.25)
+        .position(0.15, 0.75, 0.15)
+        .done()
+        // Shaker deck - separates fines from coarse
+        .add_shaker("Shaker Deck")
+        .grid(120, 60, 40)
+        .cell_size(0.02)
+        .max_particles(100_000)
+        .angle(12.0)
+        .hole_spacing(0.06)
+        .hole_radius(0.012)
+        .deck_thickness(0.03)
+        .wall_height(12)
+        .position(0.0, 0.0, 0.0)
+        .done()
+        // Recovery sluice - captures gold
+        .add_sluice("Recovery Sluice")
+        .grid(150, 40, 40)
+        .cell_size(0.015)
+        .max_particles(200_000)
+        .floor_heights(20, 4)
+        .riffle_spacing(20)
+        .riffle_height(3)
+        .position(-0.3, -0.5, 0.0)
+        .done()
+        // Connect stages
+        .connect(0, 1)  // Hopper -> Shaker
+        .capture_depth(3)
+        .inject_offset(0.05, 0.5, 0.5)
+        .inject_velocity(0.5, 0.0, 0.0)
+        .done()
+        .connect(1, 2)  // Shaker -> Sluice
+        .capture_depth(3)
+        .inject_offset(0.05, 0.5, 0.5)
+        .inject_velocity(0.5, 0.0, 0.0)
+        .done()
+        .build()
+}
+
+/// Load plant configuration from file or use default.
+fn load_plant_config(config_path: Option<&str>) -> PlantConfig {
+    match config_path {
+        Some(path) => {
+            let path = Path::new(path);
+            let result = if path.extension().map_or(false, |e| e == "yaml" || e == "yml") {
+                PlantConfig::load_yaml(path)
+            } else {
+                PlantConfig::load_json(path)
+            };
+            match result {
+                Ok(config) => {
+                    println!("Loaded config from: {}", path.display());
+                    config
+                }
+                Err(e) => {
+                    eprintln!("Failed to load config: {}", e);
+                    eprintln!("Using default configuration");
+                    PlantConfig::default()
+                }
+            }
+        }
+        None => PlantConfig::default(),
+    }
+}
+
+/// Parse command-line arguments.
+fn parse_args() -> (Option<String>, Option<String>) {
+    let args: Vec<String> = std::env::args().collect();
+    let mut config_path = None;
+    let mut save_path = None;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--config" | "-c" => {
+                if i + 1 < args.len() {
+                    config_path = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("--config requires a path argument");
+                    i += 1;
+                }
+            }
+            "--save" | "-s" => {
+                if i + 1 < args.len() {
+                    save_path = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("--save requires a path argument");
+                    i += 1;
+                }
+            }
+            "--builder" | "-b" => {
+                // Use the builder-created config instead of default
+                println!("Using builder-created configuration");
+                return (Some("__builder__".to_string()), save_path);
+            }
+            "--help" | "-h" => {
+                println!("Washplant Visual - Multi-Stage Processing Plant");
+                println!();
+                println!("Usage: washplant_visual [OPTIONS]");
+                println!();
+                println!("Options:");
+                println!("  -c, --config <FILE>  Load plant configuration from JSON/YAML file");
+                println!("  -s, --save <FILE>    Save current configuration to JSON/YAML file");
+                println!("  -b, --builder        Use builder-created configuration (demo)");
+                println!("  -h, --help           Show this help message");
+                std::process::exit(0);
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    (config_path, save_path)
+}
+
 fn main() {
     env_logger::init();
+
+    let (config_path, save_path) = parse_args();
+
+    // Load or create configuration
+    let config = if config_path.as_deref() == Some("__builder__") {
+        build_custom_plant()
+    } else {
+        load_plant_config(config_path.as_deref())
+    };
+
+    // Save configuration if requested
+    if let Some(path) = &save_path {
+        let path = Path::new(path);
+        let result = if path.extension().map_or(false, |e| e == "yaml" || e == "yml") {
+            config.save_yaml(path)
+        } else {
+            config.save_json(path)
+        };
+        match result {
+            Ok(_) => println!("Saved config to: {}", path.display()),
+            Err(e) => eprintln!("Failed to save config: {}", e),
+        }
+    }
+
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = App::new();
+    let mut app = App::with_config(config);
     event_loop.run_app(&mut app).unwrap();
 }

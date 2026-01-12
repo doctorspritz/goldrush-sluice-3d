@@ -1,4 +1,4 @@
-use crate::washplant::config::PlantConfig;
+use crate::washplant::config::{PlantConfig, TransferConfig};
 use crate::washplant::metrics::PlantMetrics;
 use crate::washplant::stage::WashplantStage;
 use crate::washplant::transfer::{AABB, TransferZone};
@@ -42,7 +42,7 @@ impl Washplant {
     pub fn new(config: PlantConfig) -> Self {
         let PlantConfig {
             stages: stage_configs,
-            connections,
+            transfers: transfer_configs,
         } = config;
 
         let stages: Vec<WashplantStage> = stage_configs
@@ -50,9 +50,9 @@ impl Washplant {
             .map(WashplantStage::new)
             .collect();
 
-        let transfers = Self::create_transfer_zones(&stages, &connections);
+        let transfers = Self::create_transfer_zones(&stages, &transfer_configs);
 
-        let stage_names: Vec<&'static str> = stages.iter().map(|s| s.config.name).collect();
+        let stage_names: Vec<String> = stages.iter().map(|s| s.config.name.clone()).collect();
         let metrics = PlantMetrics::new(&stage_names);
 
         Self {
@@ -71,38 +71,46 @@ impl Washplant {
         Self::new(PlantConfig::default())
     }
 
-    /// Create transfer zones from connection indices.
+    /// Create transfer zones from transfer configs.
     fn create_transfer_zones(
         stages: &[WashplantStage],
-        connections: &[(usize, usize)],
+        transfer_configs: &[TransferConfig],
     ) -> Vec<TransferZone> {
-        connections
+        transfer_configs
             .iter()
-            .filter_map(|&(from_idx, to_idx)| {
-                let from_stage = stages.get(from_idx)?;
-                let to_stage = stages.get(to_idx)?;
+            .filter_map(|tc| {
+                let from_stage = stages.get(tc.from_stage)?;
+                let to_stage = stages.get(tc.to_stage)?;
 
                 let (gw, gh, gd) = from_stage.grid_size();
                 let cs = from_stage.cell_size();
 
-                let capture_start_x = gw.saturating_sub(3) as f32 * cs;
+                // Use capture_depth_cells from config
+                let capture_start_x = gw.saturating_sub(tc.capture_depth_cells) as f32 * cs;
                 let capture_aabb = AABB::new(
                     Vec3::new(capture_start_x, 0.0, 0.0),
                     Vec3::new(gw as f32 * cs, gh as f32 * cs, gd as f32 * cs),
                 );
 
+                // Use inject_offset from config (normalized 0-1 coordinates)
+                let (tw, th, td) = to_stage.grid_size();
+                let tcs = to_stage.cell_size();
                 let inject_pos = Vec3::new(
-                    2.0 * to_stage.cell_size(),
-                    to_stage.grid_size().1 as f32 * to_stage.cell_size() * 0.5,
-                    to_stage.grid_size().2 as f32 * to_stage.cell_size() * 0.5,
+                    tc.inject_offset[0] * tw as f32 * tcs,
+                    tc.inject_offset[1] * th as f32 * tcs,
+                    tc.inject_offset[2] * td as f32 * tcs,
                 );
 
-                let exit_dir = Vec3::X;
+                // Use exit_direction from config
+                let exit_dir = Vec3::from_array(tc.exit_direction).normalize_or_zero();
+
+                // Use inject_velocity from config
+                let inject_vel = Vec3::from_array(tc.inject_velocity);
 
                 Some(
-                    TransferZone::new(from_idx, to_idx, capture_aabb, exit_dir, inject_pos)
-                        .with_inject_velocity(Vec3::new(0.5, 0.0, 0.0))
-                        .with_transit_time(0.05),
+                    TransferZone::new(tc.from_stage, tc.to_stage, capture_aabb, exit_dir, inject_pos)
+                        .with_inject_velocity(inject_vel)
+                        .with_transit_time(tc.transit_time),
                 )
             })
             .collect()

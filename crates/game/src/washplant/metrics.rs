@@ -5,7 +5,7 @@ use std::time::Instant;
 #[derive(Clone, Debug, Default)]
 pub struct StageMetrics {
     /// Stage name for display
-    pub name: &'static str,
+    pub name: String,
 
     /// Current particle counts
     pub total_particles: usize,
@@ -26,9 +26,9 @@ pub struct StageMetrics {
 }
 
 impl StageMetrics {
-    pub fn new(name: &'static str) -> Self {
+    pub fn new(name: impl Into<String>) -> Self {
         Self {
-            name,
+            name: name.into(),
             ..Default::default()
         }
     }
@@ -134,11 +134,11 @@ impl Default for PlantMetrics {
 }
 
 impl PlantMetrics {
-    pub fn new(stage_names: &[&'static str]) -> Self {
+    pub fn new(stage_names: &[String]) -> Self {
         Self {
             stages: stage_names
                 .iter()
-                .map(|&name| StageMetrics::new(name))
+                .map(|name| StageMetrics::new(name.clone()))
                 .collect(),
             start_time: Some(Instant::now()),
             last_fps_update: Some(Instant::now()),

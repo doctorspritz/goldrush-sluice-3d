@@ -1,5 +1,6 @@
 use crate::equipment_geometry::{
-    GrateConfig, GrateGeometryBuilder, HopperConfig, HopperGeometryBuilder, SluiceVertex,
+    GrateConfig, GrateGeometryBuilder, HopperConfig, HopperGeometryBuilder,
+    ShakerConfig, ShakerGeometryBuilder, SluiceVertex,
 };
 use crate::gpu::flip_3d::GpuFlip3D;
 use crate::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder};
@@ -63,7 +64,7 @@ impl WashplantStage {
 
         Self {
             world_offset: config.world_offset,
-            metrics: StageMetrics::new(config.name),
+            metrics: StageMetrics::new(config.name.clone()),
             config,
             sim,
             gpu_flip: None,
@@ -161,31 +162,60 @@ impl WashplantStage {
         shaker_cfg: &ShakerStageConfig,
         grid: &mut Grid3D,
     ) -> (Vec<SluiceVertex>, Vec<u32>) {
-        // Shaker uses GrateConfig with holes.
-        let mut grate_config = GrateConfig::default();
-        grate_config.grid_width = config.grid_width;
-        grate_config.grid_height = config.grid_height;
-        grate_config.grid_depth = config.grid_depth;
-        grate_config.cell_size = config.cell_size;
-        grate_config.bar_spacing = Self::cells_from_meters(
+        // Calculate floor heights based on angle
+        // Deck should be in upper portion, angled gutter below draining to upstream
+        let angle_rad = shaker_cfg.angle_deg.to_radians();
+        let grid_length = config.grid_width as f32 * config.cell_size;
+        let height_drop = grid_length * angle_rad.sin();
+        let height_drop_cells = (height_drop / config.cell_size) as usize;
+
+        // Deck in upper portion (around 65% height)
+        let deck_base = config.grid_height * 65 / 100;
+
+        // Deck slopes down from upstream (start) to downstream (end)
+        let floor_start = deck_base + height_drop_cells / 2;
+        let floor_end = deck_base.saturating_sub(height_drop_cells / 2);
+
+        // Gutter slopes opposite direction: low at upstream (drains there), high at downstream
+        let gutter_low = 3;  // Near bottom at upstream end
+        let gutter_high = gutter_low + height_drop_cells / 3;  // Slopes up toward downstream
+
+        let mut shaker_config = ShakerConfig::default();
+        shaker_config.grid_width = config.grid_width;
+        shaker_config.grid_height = config.grid_height;
+        shaker_config.grid_depth = config.grid_depth;
+        shaker_config.cell_size = config.cell_size;
+        shaker_config.hole_spacing = Self::cells_from_meters(
             shaker_cfg.hole_spacing,
             config.cell_size,
             config.grid_depth,
-        );
-        grate_config.bar_thickness = Self::cells_from_meters(
-            shaker_cfg.deck_thickness,
+        ).max(3);
+        shaker_config.hole_radius = Self::cells_from_meters(
+            shaker_cfg.hole_radius,
             config.cell_size,
             config.grid_depth,
-        );
-        grate_config.orientation = 0;
+        ).max(1);
+        shaker_config.deck_thickness = Self::cells_from_meters(
+            shaker_cfg.deck_thickness,
+            config.cell_size,
+            config.grid_height,
+        ).max(2);
+        shaker_config.floor_height_start = floor_start.min(config.grid_height - shaker_cfg.wall_height - 5);
+        shaker_config.floor_height_end = floor_end.max(gutter_high + 8);
+        shaker_config.wall_height = shaker_cfg.wall_height;
+        shaker_config.wall_thickness = shaker_cfg.wall_thickness;
+        shaker_config.gutter_floor_start = gutter_low;   // Low at upstream (x=0), drains here
+        shaker_config.gutter_floor_end = gutter_high;    // Higher at downstream
+        shaker_config.chute_length = 10;        // Chute at downstream end for deck overs
+        shaker_config.gutter_chute_length = 8;  // Gutter exit at upstream
 
-        let mut builder = GrateGeometryBuilder::new(grate_config.clone());
+        let mut builder = ShakerGeometryBuilder::new(shaker_config.clone());
 
         for (i, j, k) in builder.solid_cells() {
             grid.set_solid(i, j, k);
         }
 
-        builder.build_mesh(|i, j, k| grate_config.is_solid(i, j, k));
+        builder.build_mesh(|i, j, k| shaker_config.is_solid(i, j, k));
 
         (builder.vertices().to_vec(), builder.indices().to_vec())
     }
