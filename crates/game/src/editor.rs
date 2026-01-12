@@ -395,12 +395,136 @@ impl EmitterPiece {
     }
 }
 
+/// A shaker deck - horizontal screen/grid for particle size separation
+/// Small particles (≤ hole_size) pass through, larger ones slide off
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ShakerDeckPiece {
+    /// Unique ID for selection
+    pub id: u32,
+    /// Position in world space (meters) - center of deck
+    #[serde(with = "vec3_serde")]
+    pub position: Vec3,
+    /// Rotation around Y axis
+    pub rotation: Rotation,
+    /// Deck length along flow direction (meters)
+    pub length: f32,
+    /// Deck width perpendicular to flow (meters)
+    pub width: f32,
+    /// Slight tilt angle for material to slide off (degrees, typically 5-15)
+    pub tilt_deg: f32,
+    /// Grid hole size (meters) - particles smaller than this pass through
+    pub hole_size: f32,
+    /// Side wall height (meters)
+    pub wall_height: f32,
+    /// Bar/wire thickness (meters) - the solid parts of the grid
+    pub bar_thickness: f32,
+}
+
+impl Default for ShakerDeckPiece {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            position: Vec3::new(0.0, 1.2, 0.0),
+            rotation: Rotation::R0,
+            length: 0.8,
+            width: 0.5,
+            tilt_deg: 8.0,       // Slight tilt for material flow
+            hole_size: 0.005,   // 5mm holes
+            wall_height: 0.08,
+            bar_thickness: 0.003, // 3mm bars
+        }
+    }
+}
+
+impl ShakerDeckPiece {
+    pub fn new(id: u32) -> Self {
+        Self {
+            id,
+            ..Default::default()
+        }
+    }
+
+    /// Height drop from inlet to outlet based on tilt
+    pub fn height_drop(&self) -> f32 {
+        self.length * self.tilt_deg.to_radians().tan()
+    }
+
+    /// Get inlet position (high end where material enters)
+    pub fn inlet_position(&self) -> Vec3 {
+        let half_drop = self.height_drop() / 2.0;
+        let offset = match self.rotation {
+            Rotation::R0 => Vec3::new(-self.length / 2.0, half_drop, 0.0),
+            Rotation::R90 => Vec3::new(0.0, half_drop, -self.length / 2.0),
+            Rotation::R180 => Vec3::new(self.length / 2.0, half_drop, 0.0),
+            Rotation::R270 => Vec3::new(0.0, half_drop, self.length / 2.0),
+        };
+        self.position + offset
+    }
+
+    /// Get outlet position (low end where oversize exits)
+    pub fn outlet_position(&self) -> Vec3 {
+        let half_drop = self.height_drop() / 2.0;
+        let offset = match self.rotation {
+            Rotation::R0 => Vec3::new(self.length / 2.0, -half_drop, 0.0),
+            Rotation::R90 => Vec3::new(0.0, -half_drop, self.length / 2.0),
+            Rotation::R180 => Vec3::new(-self.length / 2.0, -half_drop, 0.0),
+            Rotation::R270 => Vec3::new(0.0, -half_drop, -self.length / 2.0),
+        };
+        self.position + offset
+    }
+
+    /// Get underside position (where fines fall to) - below deck center
+    pub fn underside_position(&self) -> Vec3 {
+        Vec3::new(self.position.x, self.position.y - 0.05, self.position.z)
+    }
+
+    /// Move position by delta
+    pub fn translate(&mut self, delta: Vec3) {
+        self.position += delta;
+    }
+
+    /// Rotate 90 degrees clockwise
+    pub fn rotate_cw(&mut self) {
+        self.rotation = self.rotation.next();
+    }
+
+    /// Rotate 90 degrees counter-clockwise
+    pub fn rotate_ccw(&mut self) {
+        self.rotation = self.rotation.prev();
+    }
+
+    /// Adjust tilt angle within bounds
+    pub fn adjust_angle(&mut self, delta: f32) {
+        self.tilt_deg = (self.tilt_deg + delta).clamp(0.0, 30.0);
+    }
+
+    /// Adjust length within bounds
+    pub fn adjust_length(&mut self, delta: f32) {
+        let raw = self.length + delta;
+        self.length = (raw * 10.0).round() / 10.0;
+        self.length = self.length.clamp(0.3, 2.0);
+    }
+
+    /// Adjust width within bounds
+    pub fn adjust_width(&mut self, delta: f32) {
+        let raw = self.width + delta;
+        self.width = (raw * 20.0).round() / 20.0;
+        self.width = self.width.clamp(0.2, 1.5);
+    }
+
+    /// Adjust hole size within bounds (1mm to 20mm)
+    pub fn adjust_hole_size(&mut self, delta: f32) {
+        self.hole_size = (self.hole_size + delta).clamp(0.001, 0.020);
+    }
+}
+
 /// Piece type enum for selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceType {
     Gutter,
     Sluice,
     Emitter,
+    ShakerDeck,
 }
 
 /// Selection state
@@ -411,6 +535,7 @@ pub enum Selection {
     Gutter(usize),
     Sluice(usize),
     Emitter(usize),
+    ShakerDeck(usize),
 }
 
 impl Selection {
@@ -427,6 +552,7 @@ pub enum EditorMode {
     PlaceGutter,
     PlaceSluice,
     PlaceEmitter,
+    PlaceShakerDeck,
 }
 
 /// Editor layout containing all pieces
@@ -435,6 +561,8 @@ pub struct EditorLayout {
     pub gutters: Vec<GutterPiece>,
     pub sluices: Vec<SluicePiece>,
     pub emitters: Vec<EmitterPiece>,
+    #[serde(default)]
+    pub shaker_decks: Vec<ShakerDeckPiece>,
     next_id: u32,
 }
 
@@ -541,9 +669,25 @@ impl EditorLayout {
         }
     }
 
+    /// Add a new shaker deck at position
+    pub fn add_shaker_deck(&mut self, position: Vec3) -> usize {
+        let id = self.next_id();
+        let mut deck = ShakerDeckPiece::new(id);
+        deck.position = position;
+        self.shaker_decks.push(deck);
+        self.shaker_decks.len() - 1
+    }
+
+    /// Remove a shaker deck by index
+    pub fn remove_shaker_deck(&mut self, index: usize) {
+        if index < self.shaker_decks.len() {
+            self.shaker_decks.remove(index);
+        }
+    }
+
     /// Get total piece count
     pub fn piece_count(&self) -> usize {
-        self.gutters.len() + self.sluices.len() + self.emitters.len()
+        self.gutters.len() + self.sluices.len() + self.emitters.len() + self.shaker_decks.len()
     }
 
     /// Save layout to JSON file
