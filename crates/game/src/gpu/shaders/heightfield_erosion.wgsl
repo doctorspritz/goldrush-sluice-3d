@@ -17,15 +17,39 @@ struct Params {
                   // For simplicity, let's hardcode constants for now or extend Params.
 }
 
-// Extended Params for Erosion
-const K_ENTRAIN: f32 = 0.1;           // 10x faster erosion for visible effect
-const K_DEPOSIT: f32 = 0.5;           // Moderate deposition
-const K_HARDNESS_BEDROCK: f32 = 0.0;  // Bedrock doesn't erode
-const K_HARDNESS_PAYDIRT: f32 = 0.2;  // Slightly harder
-const K_HARDNESS_GRAVEL: f32 = 0.15;  // Gravel is more resistant than overburden
-const K_HARDNESS_OVERBURDEN: f32 = 0.8; // Easy to erode
-const CAPACITY_FACTOR: f32 = 0.5;     // Higher carrying capacity
-const MAX_CAPACITY: f32 = 1.0;        // Allow more sediment per cell
+// =============================================================================
+// EROSION PHYSICS CONSTANTS
+// =============================================================================
+// These constants control the dramatic breach/flood dynamics.
+// The model uses critical shear stress: erosion explodes when v > v_critical
+
+// Critical velocities (m/s) - erosion rate explodes above these thresholds
+const V_CRIT_SEDIMENT: f32 = 0.05;      // Fresh silt/sediment - very easy to erode
+const V_CRIT_OVERBURDEN: f32 = 0.15;    // Soil/dirt - moderate resistance
+const V_CRIT_GRAVEL: f32 = 0.4;         // Gravel - needs fast water
+const V_CRIT_PAYDIRT: f32 = 0.3;        // Compacted pay layer
+
+// Erosion rate multiplier when v > v_critical (m/s per unit shear excess)
+const K_EROSION_SEDIMENT: f32 = 2.0;    // Silt erodes FAST once threshold exceeded
+const K_EROSION_OVERBURDEN: f32 = 0.8;  // Dirt erodes moderately fast
+const K_EROSION_GRAVEL: f32 = 0.3;      // Gravel erodes slower
+const K_EROSION_PAYDIRT: f32 = 0.4;     // Paydirt is somewhat consolidated
+
+// Settling/Deposition
+const SETTLING_VELOCITY: f32 = 0.02;    // m/s - Stokes settling for fine silt
+const K_DEPOSIT_FAST: f32 = 3.0;        // Deposition rate in still water
+const K_DEPOSIT_SLOW: f32 = 0.3;        // Deposition rate in moving water
+
+// Transport capacity
+const CAPACITY_FACTOR: f32 = 0.8;       // kg sediment per m³ water per m/s velocity
+const MAX_CAPACITY: f32 = 5.0;          // Maximum sediment load (kg/m³)
+
+// Hardness multipliers (0 = impossible to erode, 1 = full erosion rate)
+const K_HARDNESS_BEDROCK: f32 = 0.0;    // Bedrock doesn't erode
+const K_HARDNESS_PAYDIRT: f32 = 0.5;
+const K_HARDNESS_GRAVEL: f32 = 0.4;
+const K_HARDNESS_OVERBURDEN: f32 = 1.0;
+const K_HARDNESS_SEDIMENT: f32 = 1.0;   // Fresh sediment is soft
 
 @group(0) @binding(0) var<uniform> params: Params;
 
