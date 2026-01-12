@@ -30,6 +30,7 @@ struct Params {
 @group(2) @binding(2) var<storage, read_write> gravel: array<f32>;
 @group(2) @binding(3) var<storage, read_write> overburden: array<f32>;
 @group(2) @binding(4) var<storage, read_write> sediment: array<f32>;
+@group(2) @binding(5) var<storage, read_write> surface_material: array<u32>; // For bind group compatibility
 
 fn get_idx(x: u32, z: u32) -> u32 {
     return z * params.world_width + x;

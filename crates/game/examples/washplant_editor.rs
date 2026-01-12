@@ -1022,13 +1022,16 @@ struct GpuState {
 
 impl App {
     fn new() -> Self {
-        // Try to auto-load layout from file, fall back to empty layout
+        // Try to auto-load layout from file, fall back to pre-connected layout
         let layout = match EditorLayout::load_json(Path::new("editor_layout.json")) {
             Ok(loaded) => {
                 println!("Loaded from editor_layout.json");
                 loaded
             }
-            Err(_) => EditorLayout::new(),
+            Err(_) => {
+                println!("No saved layout - using pre-connected gutter+sluice");
+                EditorLayout::new_connected()
+            }
         };
 
         println!("=== Washplant Editor ===");

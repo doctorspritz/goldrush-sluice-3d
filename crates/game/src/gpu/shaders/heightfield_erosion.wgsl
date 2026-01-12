@@ -42,6 +42,17 @@ const MAX_CAPACITY: f32 = 1.0;        // Allow more sediment per cell
 @group(2) @binding(2) var<storage, read_write> gravel: array<f32>;
 @group(2) @binding(3) var<storage, read_write> overburden: array<f32>;
 @group(2) @binding(4) var<storage, read_write> sediment: array<f32>;
+@group(2) @binding(5) var<storage, read_write> surface_material: array<u32>; // 0=bed,1=pay,2=gravel,3=over,4=sed
+
+// Determine what material is exposed on the surface based on layer thicknesses
+fn compute_surface_material(idx: u32) -> u32 {
+    let min_thick = 0.001;
+    if (sediment[idx] > min_thick) { return 4u; }
+    if (overburden[idx] > min_thick) { return 3u; }
+    if (gravel[idx] > min_thick) { return 2u; }
+    if (paydirt[idx] > min_thick) { return 1u; }
+    return 0u; // bedrock
+}
 
 fn get_idx(x: u32, z: u32) -> u32 {
     return z * params.world_width + x;
@@ -81,27 +92,32 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let current_suspended = suspended_sediment[idx];
     
     if (current_suspended > capacity) {
-        // Deposition
+        // Deposition - sediment settles on top
         let deposit_amount = (current_suspended - capacity) * K_DEPOSIT * params.dt;
         suspended_sediment[idx] -= deposit_amount;
         sediment[idx] += deposit_amount;
+
+        // Deposited sediment is now on top
+        if (deposit_amount > 0.001) {
+            surface_material[idx] = 4u; // sediment
+        }
     } else {
-        // Erosion
+        // Erosion - dig down through layers
         let deficit = capacity - current_suspended;
         let entrain_target = deficit * K_ENTRAIN * params.dt;
-        
-        // Erode from layers (Sediment -> Overburden -> Paydirt -> Bedrock)
+
+        // Erode from layers (Sediment -> Overburden -> Gravel -> Paydirt)
         // Track actual eroded mass separately
         var total_eroded = 0.0;
         var remaining_target = entrain_target;
-        
+
         // 1. Sediment (easiest to erode)
         let sed_avail = sediment[idx];
         let sed_eroded = min(remaining_target, sed_avail);
         sediment[idx] -= sed_eroded;
         total_eroded += sed_eroded;
         remaining_target -= sed_eroded;
-        
+
         // 2. Overburden (soil/dirt - easy to erode)
         if (remaining_target > 0.0) {
             let ob_avail = overburden[idx];
@@ -110,7 +126,7 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
             total_eroded += can_erode;
             remaining_target -= can_erode / K_HARDNESS_OVERBURDEN;
         }
-        
+
         // 3. Gravel (resistant layer)
         if (remaining_target > 0.0) {
             let gr_avail = gravel[idx];
@@ -119,7 +135,7 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
             total_eroded += can_erode;
             remaining_target -= can_erode / K_HARDNESS_GRAVEL;
         }
-        
+
         // 4. Paydirt (gold-bearing layer)
         if (remaining_target > 0.0) {
             let pd_avail = paydirt[idx];
@@ -127,11 +143,16 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
             paydirt[idx] -= can_erode;
             total_eroded += can_erode;
         }
-        
+
         // 5. Bedrock (Don't erode, it's the stable base)
-        
+
         // Add ONLY what was actually eroded to suspended sediment
         suspended_sediment[idx] += total_eroded;
+
+        // Update surface material to reflect what's now exposed
+        if (total_eroded > 0.001) {
+            surface_material[idx] = compute_surface_material(idx);
+        }
     }
 }
 

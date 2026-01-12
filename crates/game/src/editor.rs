@@ -443,6 +443,50 @@ impl EditorLayout {
         Self::default()
     }
 
+    /// Create a pre-connected gutter + sluice layout
+    /// The gutter outlet connects directly to the sluice inlet (Y and Z aligned)
+    pub fn new_connected() -> Self {
+        let mut layout = Self::default();
+
+        // Create gutter at a reasonable starting position
+        let gutter_id = layout.next_id();
+        let mut gutter = GutterPiece::new(gutter_id);
+        gutter.position = Vec3::new(0.0, 0.9, 0.0);
+        gutter.rotation = Rotation::R0;
+
+        // Create sluice - position it so inlet matches gutter outlet
+        let sluice_id = layout.next_id();
+        let mut sluice = SluicePiece::new(sluice_id);
+        sluice.rotation = Rotation::R0;
+
+        // Calculate connection point:
+        // Gutter outlet = gutter.position + (length/2, -half_drop, 0) for R0
+        // Sluice inlet = sluice.position + (-length/2, +half_drop, 0) for R0
+        // So: sluice.position = gutter.outlet - (-length/2, +half_drop, 0)
+        //                     = gutter.outlet + (length/2, -half_drop, 0)
+        let gutter_outlet = gutter.outlet_position();
+        let sluice_half_drop = sluice.height_drop() / 2.0;
+
+        sluice.position = Vec3::new(
+            gutter_outlet.x + sluice.length / 2.0, // X: outlet + half sluice length
+            gutter_outlet.y - sluice_half_drop,    // Y: outlet Y - sluice half_drop
+            gutter_outlet.z,                        // Z: same as gutter
+        );
+
+        // Add emitter above gutter inlet
+        let emitter_id = layout.next_id();
+        let mut emitter = EmitterPiece::new(emitter_id);
+        let gutter_inlet = gutter.inlet_position();
+        emitter.position = Vec3::new(gutter_inlet.x, gutter_inlet.y + 0.15, gutter_inlet.z);
+        emitter.rotation = Rotation::R0;
+
+        layout.gutters.push(gutter);
+        layout.sluices.push(sluice);
+        layout.emitters.push(emitter);
+
+        layout
+    }
+
     pub fn next_id(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
