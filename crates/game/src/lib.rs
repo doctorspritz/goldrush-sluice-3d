@@ -4,6 +4,7 @@ pub mod app;
 pub mod gpu;
 pub mod sluice_geometry;
 pub mod equipment_geometry;
+pub mod washplant;
 pub mod test_harness;
 pub mod tools;
 pub mod water_heightfield;
