@@ -845,7 +845,8 @@ impl ClusterSimulation3D {
             let max_speed = 50.0;
             for clump in &mut self.clumps {
                 let template = &self.templates[clump.template_idx];
-                let max_penetration = template.particle_radius * 0.5;
+                // Allow tiny numerical penetration (1% of radius) but no more
+                let max_penetration = template.particle_radius * 0.01;
                 for offset in &template.local_offsets {
                     let r = clump.rotation * *offset;
                     let pos = clump.position + r;
@@ -1336,7 +1337,7 @@ fn random_sharp(rng: &mut StdRng) -> Vec3 {
 /// * `grid_offset` - World position of grid origin (subtracted from world_pos to get grid-local pos)
 /// * `width/height/depth` - Grid dimensions in cells
 /// * `cell_size` - Size of each grid cell in world units
-fn sample_sdf_with_gradient(
+pub fn sample_sdf_with_gradient(
     sdf: &[f32],
     world_pos: Vec3,
     grid_offset: Vec3,

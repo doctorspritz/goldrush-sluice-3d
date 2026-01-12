@@ -1,0 +1,42 @@
+{
+  "name": "Sluice Riffle Capture Test",
+  "description": "Gold captured more than sand behind riffles - verifies separation",
+  "gutters": [
+    {
+      "id": 1,
+      "position": { "x": 0.0, "y": 0.95, "z": 0.0 },
+      "rotation": "R0",
+      "angle_deg": 10.0,
+      "length": 0.8,
+      "width": 0.6,
+      "end_width": 0.3,
+      "wall_height": 0.12
+    }
+  ],
+  "sluices": [
+    {
+      "id": 2,
+      "position": { "x": 0.9, "y": 0.55, "z": 0.0 },
+      "rotation": "R0",
+      "length": 1.5,
+      "width": 0.3,
+      "slope_deg": 8.0,
+      "riffle_spacing": 0.12,
+      "riffle_height": 0.015
+    }
+  ],
+  "emitters": [
+    {
+      "id": 3,
+      "position": { "x": -0.25, "y": 1.2, "z": 0.0 },
+      "rotation": "R0",
+      "rate": 40.0,
+      "spread_deg": 8.0,
+      "velocity": 0.2,
+      "radius": 0.05,
+      "width": 0.15
+    }
+  ],
+  "shaker_decks": [],
+  "next_id": 4
+}
