@@ -693,6 +693,7 @@ impl App {
                 grid_height: GRID_HEIGHT,
                 grid_depth: GRID_DEPTH,
                 cell_size: CELL_SIZE,
+                grid_offset: Vec3::ZERO, // Grid is at world origin
             };
             self.dem.collision_response_only(dt, &sdf_params, true); // wet=true
 
