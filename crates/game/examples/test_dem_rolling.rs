@@ -9,8 +9,8 @@ use glam::{Mat3, Vec3};
 use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D};
 
 const GRAVITY: f32 = -9.81; // m/s²
-// DEM stability: dt < 2*sqrt(m/k) = 2*sqrt(0.001/6000) = 0.82ms
-// Use 0.5ms for safety margin (10× smaller than naive 1/120)
+                            // DEM stability: dt < 2*sqrt(m/k) = 2*sqrt(0.001/6000) = 0.82ms
+                            // Use 0.5ms for safety margin (10× smaller than naive 1/120)
 const DT: f32 = 0.0005; // 2000 Hz for DEM stability
 
 fn main() {
@@ -48,7 +48,11 @@ fn main() {
 
     println!("{}", "=".repeat(70));
     if failed == 0 {
-        println!(" ALL DEM ROLLING TESTS PASSED ({}/{})", passed, passed + failed);
+        println!(
+            " ALL DEM ROLLING TESTS PASSED ({}/{})",
+            passed,
+            passed + failed
+        );
         println!(" Rotation mechanisms verified.");
     } else {
         println!(" DEM ROLLING TESTS: {}/{} passed", passed, passed + failed);
@@ -80,7 +84,7 @@ fn test_dem_rolling_friction() -> (bool, f32) {
 
     // Create simulation with bounds floor at y=0 (not y=-1)
     let mut sim = ClusterSimulation3D::new(
-        Vec3::new(-10.0, 0.0, -10.0),  // Floor at y=0
+        Vec3::new(-10.0, 0.0, -10.0), // Floor at y=0
         Vec3::new(10.0, 10.0, 10.0),
     );
     sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
@@ -96,7 +100,11 @@ fn test_dem_rolling_friction() -> (bool, f32) {
     // Position at y = particle_radius so bottom sphere touches floor
     let particle_radius = template.particle_radius;
     let initial_omega = Vec3::new(10.0, 0.0, 0.0); // 10 rad/s initial spin
-    sim.spawn(template_idx, Vec3::new(0.0, particle_radius * 1.01, 0.0), Vec3::ZERO);
+    sim.spawn(
+        template_idx,
+        Vec3::new(0.0, particle_radius * 1.01, 0.0),
+        Vec3::ZERO,
+    );
 
     // Let it settle for 0.5 seconds before applying spin
     for _ in 0..(0.5 / DT) as usize {
@@ -108,7 +116,10 @@ fn test_dem_rolling_friction() -> (bool, f32) {
 
     println!("Setup: Cube2 clump on bounds floor");
     println!("  Position: y={:.4} m (settled on floor)", particle_radius);
-    println!("  Initial ω₀ = {:.1} rad/s (spinning around x-axis)", initial_omega.length());
+    println!(
+        "  Initial ω₀ = {:.1} rad/s (spinning around x-axis)",
+        initial_omega.length()
+    );
     println!("  Rolling friction μ_roll = {:.3}", sim.rolling_friction);
     println!("  Expected: Angular velocity should decay over time from friction");
 
@@ -140,8 +151,12 @@ fn test_dem_rolling_friction() -> (bool, f32) {
     println!("\nAngular velocity decay:");
     for (t, omega) in &omega_samples {
         let decay_fraction = omega / omega_0;
-        println!("  t={:.2}s: ω={:.4} rad/s ({:.1}% of initial)",
-                 t, omega, decay_fraction * 100.0);
+        println!(
+            "  t={:.2}s: ω={:.4} rad/s ({:.1}% of initial)",
+            t,
+            omega,
+            decay_fraction * 100.0
+        );
     }
 
     println!("\nDecay analysis:");
@@ -169,9 +184,17 @@ fn test_dem_rolling_friction() -> (bool, f32) {
     let expected_decay_rate = sim.rolling_friction * GRAVITY.abs() / r;
 
     println!("\nDecay rate comparison:");
-    println!("  Measured: {:.4} rad/s² (from exponential fit)", measured_decay_rate);
-    println!("  Expected: {:.4} rad/s² (μ*g/r = {:.3}*{:.2}/{:.4})",
-             expected_decay_rate, sim.rolling_friction, GRAVITY.abs(), r);
+    println!(
+        "  Measured: {:.4} rad/s² (from exponential fit)",
+        measured_decay_rate
+    );
+    println!(
+        "  Expected: {:.4} rad/s² (μ*g/r = {:.3}*{:.2}/{:.4})",
+        expected_decay_rate,
+        sim.rolling_friction,
+        GRAVITY.abs(),
+        r
+    );
 
     // PASS if measured decay rate within 30% of expected
     let error_percent = if expected_decay_rate > 0.0 && measured_decay_rate.is_finite() {
@@ -189,7 +212,10 @@ fn test_dem_rolling_friction() -> (bool, f32) {
         println!("PASS: Decay rate within 30% of analytical model");
         println!("      (error = {:.1}%)", error_percent);
     } else {
-        println!("FAIL: Decay rate differs from theory by {:.1}% (> 30%)", error_percent);
+        println!(
+            "FAIL: Decay rate differs from theory by {:.1}% (> 30%)",
+            error_percent
+        );
     }
 
     (pass, error_percent)
@@ -232,7 +258,10 @@ fn test_dem_spin_conservation() -> (bool, f32) {
     let l_initial = compute_angular_momentum(&sim.clumps[0], &template);
     let l_initial_mag = l_initial.length();
 
-    println!("Initial angular momentum: |L₀| = {:.6} kg·m²/s", l_initial_mag);
+    println!(
+        "Initial angular momentum: |L₀| = {:.6} kg·m²/s",
+        l_initial_mag
+    );
 
     let mut max_drift_percent: f32 = 0.0;
 
@@ -269,7 +298,10 @@ fn test_dem_spin_conservation() -> (bool, f32) {
     if pass {
         println!("PASS: Angular momentum conserved (drift < 0.1%)");
     } else {
-        println!("FAIL: Angular momentum drift {:.4}% exceeds 0.1% tolerance", max_drift_percent);
+        println!(
+            "FAIL: Angular momentum drift {:.4}% exceeds 0.1% tolerance",
+            max_drift_percent
+        );
     }
 
     (pass, max_drift_percent)
@@ -289,10 +321,8 @@ fn test_dem_rotation_from_contact() -> (bool, f32) {
     println!("Physics: τ = r × F (contact offset creates torque)");
 
     // Large bounds, no walls
-    let mut sim = ClusterSimulation3D::new(
-        Vec3::new(-10.0, -10.0, -10.0),
-        Vec3::new(10.0, 10.0, 10.0),
-    );
+    let mut sim =
+        ClusterSimulation3D::new(Vec3::new(-10.0, -10.0, -10.0), Vec3::new(10.0, 10.0, 10.0));
     sim.gravity = Vec3::ZERO; // No gravity - isolate contact torque
     sim.use_dem = true;
     // Reduce stiffness for stability with small timestep
@@ -309,7 +339,11 @@ fn test_dem_rotation_from_contact() -> (bool, f32) {
     // Moving clump approaches from side at offset Y position (off-center collision)
     let offset_y = 0.015; // Offset so impact is NOT through center of mass
     let initial_velocity = 1.0; // Slower collision for stability (was 5.0)
-    sim.spawn(template_idx, Vec3::new(-0.1, offset_y, 0.0), Vec3::new(initial_velocity, 0.0, 0.0));
+    sim.spawn(
+        template_idx,
+        Vec3::new(-0.1, offset_y, 0.0),
+        Vec3::new(initial_velocity, 0.0, 0.0),
+    );
 
     // Both start with zero angular velocity
     sim.clumps[0].angular_velocity = Vec3::ZERO;
@@ -319,7 +353,10 @@ fn test_dem_rotation_from_contact() -> (bool, f32) {
 
     println!("Two Tetra clumps:");
     println!("  Clump 0: stationary at origin");
-    println!("  Clump 1: moving right at {:.1} m/s with y-offset = {:.4} m", initial_velocity, offset_y);
+    println!(
+        "  Clump 1: moving right at {:.1} m/s with y-offset = {:.4} m",
+        initial_velocity, offset_y
+    );
     println!("  Initial separation: {:.3} m", initial_separation);
     println!("Expected: Off-center collision → both clumps gain angular velocity");
 
@@ -336,10 +373,10 @@ fn test_dem_rotation_from_contact() -> (bool, f32) {
             let omega_0 = sim.clumps[0].angular_velocity;
             let omega_1 = sim.clumps[1].angular_velocity;
             let dist = (sim.clumps[1].position - sim.clumps[0].position).length();
-            println!("  t={:.2}s: dist={:.3} m, ω0=({:.2}, {:.2}, {:.2}), ω1=({:.2}, {:.2}, {:.2})",
-                     t, dist,
-                     omega_0.x, omega_0.y, omega_0.z,
-                     omega_1.x, omega_1.y, omega_1.z);
+            println!(
+                "  t={:.2}s: dist={:.3} m, ω0=({:.2}, {:.2}, {:.2}), ω1=({:.2}, {:.2}, {:.2})",
+                t, dist, omega_0.x, omega_0.y, omega_0.z, omega_1.x, omega_1.y, omega_1.z
+            );
         }
     }
 
@@ -349,9 +386,18 @@ fn test_dem_rotation_from_contact() -> (bool, f32) {
     let final_separation = (sim.clumps[1].position - sim.clumps[0].position).length();
 
     println!("\nFinal state:");
-    println!("  Clump 0: ω={:.2} rad/s (initially {:.2})", final_omega_0, initial_omega_0);
-    println!("  Clump 1: ω={:.2} rad/s (initially {:.2})", final_omega_1, initial_omega_1);
-    println!("  Separation: {:.3} m (initially {:.3} m)", final_separation, initial_separation);
+    println!(
+        "  Clump 0: ω={:.2} rad/s (initially {:.2})",
+        final_omega_0, initial_omega_0
+    );
+    println!(
+        "  Clump 1: ω={:.2} rad/s (initially {:.2})",
+        final_omega_1, initial_omega_1
+    );
+    println!(
+        "  Separation: {:.3} m (initially {:.3} m)",
+        final_separation, initial_separation
+    );
 
     // Check for NaN
     if sim.clumps[0].angular_velocity.is_nan() || sim.clumps[1].angular_velocity.is_nan() {
@@ -365,12 +411,18 @@ fn test_dem_rotation_from_contact() -> (bool, f32) {
     let unrealistic_spin = max_omega > 50.0; // Angular velocity shouldn't be explosive
 
     if unrealistic_separation {
-        println!("FAIL: Clumps separated by {:.1}× initial distance (physics unstable)", separation_growth);
+        println!(
+            "FAIL: Clumps separated by {:.1}× initial distance (physics unstable)",
+            separation_growth
+        );
         return (false, 100.0);
     }
 
     if unrealistic_spin {
-        println!("FAIL: Angular velocity {:.1} rad/s is unrealistically high (> 50 rad/s)", max_omega);
+        println!(
+            "FAIL: Angular velocity {:.1} rad/s is unrealistically high (> 50 rad/s)",
+            max_omega
+        );
         return (false, 100.0);
     }
 
@@ -385,10 +437,16 @@ fn test_dem_rotation_from_contact() -> (bool, f32) {
 
     if pass {
         println!("PASS: Off-center collision generated torque");
-        println!("      (max ω = {:.2} rad/s, separation growth = {:.2}×)", max_omega, separation_growth);
+        println!(
+            "      (max ω = {:.2} rad/s, separation growth = {:.2}×)",
+            max_omega, separation_growth
+        );
     } else {
         println!("FAIL: Insufficient torque from off-center contacts");
-        println!("      (max ω = {:.2} rad/s < 1.0 rad/s threshold)", max_omega);
+        println!(
+            "      (max ω = {:.2} rad/s < 1.0 rad/s threshold)",
+            max_omega
+        );
     }
 
     (pass, error_metric)

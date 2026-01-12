@@ -6,7 +6,7 @@ use winit::{
     window::Window,
 };
 
-use super::{camera::InputState, context::GpuContext, uniforms::ViewUniforms, camera::FlyCamera};
+use super::{camera::FlyCamera, camera::InputState, context::GpuContext, uniforms::ViewUniforms};
 
 pub trait App: 'static {
     fn init(ctx: &GpuContext) -> Self;
@@ -133,10 +133,14 @@ impl<A: App> ApplicationHandler for AppRunner<A> {
                         _ => {}
                     }
 
-                    if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space) = event.logical_key.clone() {
+                    if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space) =
+                        event.logical_key.clone()
+                    {
                         self.input_state.up = pressed;
                     }
-                    if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Shift) = event.logical_key.clone() {
+                    if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Shift) =
+                        event.logical_key.clone()
+                    {
                         self.input_state.down = pressed;
                     }
                 }
@@ -164,13 +168,15 @@ impl<A: App> ApplicationHandler for AppRunner<A> {
     ) {
         if let Some(app) = &mut self.app {
             if let DeviceEvent::MouseMotion { delta } = event {
-                app.camera_mut().on_mouse_move(delta.0 as f32, delta.1 as f32);
+                app.camera_mut()
+                    .on_mouse_move(delta.0 as f32, delta.1 as f32);
             }
         }
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let (Some(ctx), Some(app), Some(last_time)) = (&self.ctx, &mut self.app, self.last_time) {
+        if let (Some(ctx), Some(app), Some(last_time)) = (&self.ctx, &mut self.app, self.last_time)
+        {
             let now = std::time::Instant::now();
             let dt = (now - last_time).as_secs_f32().min(0.1);
             self.last_time = Some(now);

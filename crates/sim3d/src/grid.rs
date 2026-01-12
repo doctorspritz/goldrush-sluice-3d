@@ -532,7 +532,9 @@ impl Grid3D {
         } else if i >= self.width as i32 || j >= self.height as i32 {
             self.cell_size // Open outlet/top = air
         } else {
-            -self.cell_size // Out of bounds = inside solid
+            // Out of bounds on inlet/bottom/sides = deep inside solid
+            // Use large negative value so gradient always points away from boundary
+            -1.0
         }
     }
 

@@ -1,6 +1,6 @@
 use crate::equipment_geometry::{
-    GrateConfig, GrateGeometryBuilder, HopperConfig, HopperGeometryBuilder,
-    ShakerConfig, ShakerGeometryBuilder, SluiceVertex,
+    GrateConfig, GrateGeometryBuilder, HopperConfig, HopperGeometryBuilder, ShakerConfig,
+    ShakerGeometryBuilder, SluiceVertex,
 };
 use crate::gpu::flip_3d::GpuFlip3D;
 use crate::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder};
@@ -107,16 +107,10 @@ impl WashplantStage {
             Self::cells_from_meters(hopper_cfg.top_width, config.cell_size, config.grid_width);
         hopper_config.top_depth =
             Self::cells_from_meters(hopper_cfg.top_depth, config.cell_size, config.grid_depth);
-        hopper_config.bottom_width = Self::cells_from_meters(
-            hopper_cfg.bottom_width,
-            config.cell_size,
-            config.grid_width,
-        );
-        hopper_config.bottom_depth = Self::cells_from_meters(
-            hopper_cfg.bottom_depth,
-            config.cell_size,
-            config.grid_depth,
-        );
+        hopper_config.bottom_width =
+            Self::cells_from_meters(hopper_cfg.bottom_width, config.cell_size, config.grid_width);
+        hopper_config.bottom_depth =
+            Self::cells_from_meters(hopper_cfg.bottom_depth, config.cell_size, config.grid_depth);
         hopper_config.wall_thickness = hopper_cfg.wall_thickness.max(1);
 
         let mut builder = HopperGeometryBuilder::new(hopper_config.clone());
@@ -177,37 +171,35 @@ impl WashplantStage {
         let floor_end = deck_base.saturating_sub(height_drop_cells / 2);
 
         // Gutter slopes opposite direction: low at upstream (drains there), high at downstream
-        let gutter_low = 3;  // Near bottom at upstream end
-        let gutter_high = gutter_low + height_drop_cells / 3;  // Slopes up toward downstream
+        let gutter_low = 3; // Near bottom at upstream end
+        let gutter_high = gutter_low + height_drop_cells / 3; // Slopes up toward downstream
 
         let mut shaker_config = ShakerConfig::default();
         shaker_config.grid_width = config.grid_width;
         shaker_config.grid_height = config.grid_height;
         shaker_config.grid_depth = config.grid_depth;
         shaker_config.cell_size = config.cell_size;
-        shaker_config.hole_spacing = Self::cells_from_meters(
-            shaker_cfg.hole_spacing,
-            config.cell_size,
-            config.grid_depth,
-        ).max(3);
-        shaker_config.hole_radius = Self::cells_from_meters(
-            shaker_cfg.hole_radius,
-            config.cell_size,
-            config.grid_depth,
-        ).max(1);
+        shaker_config.hole_spacing =
+            Self::cells_from_meters(shaker_cfg.hole_spacing, config.cell_size, config.grid_depth)
+                .max(3);
+        shaker_config.hole_radius =
+            Self::cells_from_meters(shaker_cfg.hole_radius, config.cell_size, config.grid_depth)
+                .max(1);
         shaker_config.deck_thickness = Self::cells_from_meters(
             shaker_cfg.deck_thickness,
             config.cell_size,
             config.grid_height,
-        ).max(2);
-        shaker_config.floor_height_start = floor_start.min(config.grid_height - shaker_cfg.wall_height - 5);
+        )
+        .max(2);
+        shaker_config.floor_height_start =
+            floor_start.min(config.grid_height - shaker_cfg.wall_height - 5);
         shaker_config.floor_height_end = floor_end.max(gutter_high + 8);
         shaker_config.wall_height = shaker_cfg.wall_height;
         shaker_config.wall_thickness = shaker_cfg.wall_thickness;
-        shaker_config.gutter_floor_start = gutter_low;   // Low at upstream (x=0), drains here
-        shaker_config.gutter_floor_end = gutter_high;    // Higher at downstream
-        shaker_config.chute_length = 10;        // Chute at downstream end for deck overs
-        shaker_config.gutter_chute_length = 8;  // Gutter exit at upstream
+        shaker_config.gutter_floor_start = gutter_low; // Low at upstream (x=0), drains here
+        shaker_config.gutter_floor_end = gutter_high; // Higher at downstream
+        shaker_config.chute_length = 10; // Chute at downstream end for deck overs
+        shaker_config.gutter_chute_length = 8; // Gutter exit at upstream
 
         let mut builder = ShakerGeometryBuilder::new(shaker_config.clone());
 
@@ -270,30 +262,29 @@ impl WashplantStage {
 
         // Create vertex buffer.
         if !self.vertices.is_empty() {
-            self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("{} vertex buffer", self.config.name)),
-                contents: bytemuck::cast_slice(&self.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            }));
+            self.vertex_buffer = Some(device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("{} vertex buffer", self.config.name)),
+                    contents: bytemuck::cast_slice(&self.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                },
+            ));
         }
 
         // Create index buffer.
         if !self.indices.is_empty() {
-            self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("{} index buffer", self.config.name)),
-                contents: bytemuck::cast_slice(&self.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            }));
+            self.index_buffer = Some(device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("{} index buffer", self.config.name)),
+                    contents: bytemuck::cast_slice(&self.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                },
+            ));
         }
     }
 
     /// Simulation tick (CPU or GPU).
-    pub fn tick(
-        &mut self,
-        dt: f32,
-        device: Option<&wgpu::Device>,
-        queue: Option<&wgpu::Queue>,
-    ) {
+    pub fn tick(&mut self, dt: f32, device: Option<&wgpu::Device>, queue: Option<&wgpu::Queue>) {
         let start = std::time::Instant::now();
 
         if self.gpu_flip.is_some() && device.is_some() && queue.is_some() {
@@ -437,7 +428,8 @@ impl WashplantStage {
                 && k >= 0
                 && k < grid.depth as i32
             {
-                let idx = k as usize * grid.width * grid.height + j as usize * grid.width + i as usize;
+                let idx =
+                    k as usize * grid.width * grid.height + j as usize * grid.width + i as usize;
                 if self.cell_types_cache[idx] != 2 {
                     self.cell_types_cache[idx] = 1; // Fluid
                 }

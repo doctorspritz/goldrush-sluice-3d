@@ -937,8 +937,8 @@ impl ClusterSimulation3D {
 
         // Rolling friction torque (same pattern as SDF and clump-clump contacts)
         if self.rolling_friction > 0.0 && angular_velocity.length_squared() > 1.0e-8 {
-            let roll_torque = -angular_velocity.normalize()
-                * (self.rolling_friction * fn_mag * particle_radius);
+            let roll_torque =
+                -angular_velocity.normalize() * (self.rolling_friction * fn_mag * particle_radius);
             torques[clump_idx] += roll_torque;
         }
     }

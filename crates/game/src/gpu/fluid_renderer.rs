@@ -312,7 +312,7 @@ impl ScreenSpaceFluidRenderer {
                 module: &shader_compose,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format,                                // Output to screen
+                    format,                                        // Output to screen
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING), // Blend with scene
                     write_mask: wgpu::ColorWrites::ALL,
                 })],

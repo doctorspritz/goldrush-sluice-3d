@@ -1,7 +1,7 @@
 use crate::washplant::config::{PlantConfig, TransferConfig};
 use crate::washplant::metrics::PlantMetrics;
 use crate::washplant::stage::WashplantStage;
-use crate::washplant::transfer::{AABB, TransferZone};
+use crate::washplant::transfer::{TransferZone, AABB};
 use glam::Vec3;
 
 /// Camera target for viewing the plant.
@@ -45,10 +45,8 @@ impl Washplant {
             transfers: transfer_configs,
         } = config;
 
-        let stages: Vec<WashplantStage> = stage_configs
-            .into_iter()
-            .map(WashplantStage::new)
-            .collect();
+        let stages: Vec<WashplantStage> =
+            stage_configs.into_iter().map(WashplantStage::new).collect();
 
         let transfers = Self::create_transfer_zones(&stages, &transfer_configs);
 
@@ -108,9 +106,15 @@ impl Washplant {
                 let inject_vel = Vec3::from_array(tc.inject_velocity);
 
                 Some(
-                    TransferZone::new(tc.from_stage, tc.to_stage, capture_aabb, exit_dir, inject_pos)
-                        .with_inject_velocity(inject_vel)
-                        .with_transit_time(tc.transit_time),
+                    TransferZone::new(
+                        tc.from_stage,
+                        tc.to_stage,
+                        capture_aabb,
+                        exit_dir,
+                        inject_pos,
+                    )
+                    .with_inject_velocity(inject_vel)
+                    .with_transit_time(tc.transit_time),
                 )
             })
             .collect()
@@ -173,8 +177,7 @@ impl Washplant {
                 for (_, pos, vel, density, is_sediment) in &captured {
                     transfer.enqueue(*pos, *vel, *density, *is_sediment);
                 }
-                removals[transfer.from_stage]
-                    .extend(captured.iter().map(|(idx, _, _, _, _)| *idx));
+                removals[transfer.from_stage].extend(captured.iter().map(|(idx, _, _, _, _)| *idx));
             }
 
             let ready = transfer.tick(dt);
@@ -247,10 +250,8 @@ impl Washplant {
                     let cs = stage.cell_size();
 
                     min = min.min(offset);
-                    max = max.max(
-                        offset
-                            + Vec3::new(gw as f32 * cs, gh as f32 * cs, gd as f32 * cs),
-                    );
+                    max =
+                        max.max(offset + Vec3::new(gw as f32 * cs, gh as f32 * cs, gd as f32 * cs));
                 }
 
                 let center = (min + max) * 0.5;

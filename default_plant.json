@@ -1,0 +1,92 @@
+{
+  "stages": [
+    {
+      "name": "Hopper",
+      "grid_width": 20,
+      "grid_height": 30,
+      "grid_depth": 20,
+      "cell_size": 0.03,
+      "max_particles": 30000,
+      "equipment": {
+        "Hopper": {
+          "top_width": 0.5,
+          "top_depth": 0.5,
+          "bottom_width": 0.25,
+          "bottom_depth": 0.25,
+          "wall_thickness": 2
+        }
+      },
+      "world_offset": {
+        "x": 0.15,
+        "y": 0.75,
+        "z": 0.15
+      }
+    },
+    {
+      "name": "Shaker",
+      "grid_width": 120,
+      "grid_height": 60,
+      "grid_depth": 40,
+      "cell_size": 0.02,
+      "max_particles": 100000,
+      "equipment": {
+        "Shaker": {
+          "hole_spacing": 0.06,
+          "hole_radius": 0.012,
+          "angle_deg": 12.0,
+          "deck_thickness": 0.03,
+          "wall_height": 12,
+          "wall_thickness": 2
+        }
+      },
+      "world_offset": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      }
+    },
+    {
+      "name": "Sluice",
+      "grid_width": 150,
+      "grid_height": 40,
+      "grid_depth": 40,
+      "cell_size": 0.015,
+      "max_particles": 200000,
+      "equipment": {
+        "Sluice": {
+          "floor_height_left": 20,
+          "floor_height_right": 4,
+          "riffle_spacing": 20,
+          "riffle_height": 3,
+          "riffle_thickness": 2,
+          "wall_margin": 6
+        }
+      },
+      "world_offset": {
+        "x": -0.3,
+        "y": -0.5,
+        "z": 0.0
+      }
+    }
+  ],
+  "transfers": [
+    {
+      "from_stage": 0,
+      "to_stage": 1,
+      "capture_depth_cells": 3,
+      "exit_direction": [1.0, 0.0, 0.0],
+      "inject_offset": [0.05, 0.5, 0.5],
+      "inject_velocity": [0.5, 0.0, 0.0],
+      "transit_time": 0.05
+    },
+    {
+      "from_stage": 1,
+      "to_stage": 2,
+      "capture_depth_cells": 3,
+      "exit_direction": [1.0, 0.0, 0.0],
+      "inject_offset": [0.05, 0.5, 0.5],
+      "inject_velocity": [0.5, 0.0, 0.0],
+      "transit_time": 0.05
+    }
+  ]
+}

@@ -2220,7 +2220,6 @@ pub struct MgpcgMemoryStats {
 
 #[cfg(test)]
 mod tests {
-    
 
     // Note: These tests require a GPU context which isn't available in unit tests
     // Integration tests should be run with the game binary

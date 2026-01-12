@@ -294,12 +294,24 @@ impl App {
 
         // Vertex buffer (quad for particles)
         let vertices = [
-            Vertex { position: [-1.0, -1.0] },
-            Vertex { position: [1.0, -1.0] },
-            Vertex { position: [1.0, 1.0] },
-            Vertex { position: [-1.0, -1.0] },
-            Vertex { position: [1.0, 1.0] },
-            Vertex { position: [-1.0, 1.0] },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+            },
+            Vertex {
+                position: [-1.0, -1.0],
+            },
+            Vertex {
+                position: [1.0, 1.0],
+            },
+            Vertex {
+                position: [-1.0, 1.0],
+            },
         ];
         let particle_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Particle Vertex Buffer"),
@@ -536,7 +548,10 @@ impl App {
         let mut instances = Vec::with_capacity(MAX_PARTICLES);
 
         for (stage_idx, stage) in self.plant.stages.iter().enumerate() {
-            let base_color = STAGE_COLORS.get(stage_idx).copied().unwrap_or([0.5, 0.5, 0.5]);
+            let base_color = STAGE_COLORS
+                .get(stage_idx)
+                .copied()
+                .unwrap_or([0.5, 0.5, 0.5]);
             let world_offset = stage.world_offset;
 
             for particle in &stage.sim.particles.list {
@@ -547,7 +562,12 @@ impl App {
                 let world_pos = particle.position + world_offset;
 
                 let color = if particle.is_sediment() {
-                    [base_color[0] * 0.6, base_color[1] * 0.4, base_color[2] * 0.3, 0.95]
+                    [
+                        base_color[0] * 0.6,
+                        base_color[1] * 0.4,
+                        base_color[2] * 0.3,
+                        0.95,
+                    ]
                 } else {
                     let speed = particle.velocity.length();
                     let t = (speed / 3.0).min(1.0);
@@ -617,7 +637,8 @@ impl App {
             camera_pos: camera_pos.to_array(),
             _pad: 0.0,
         };
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Upload particle instances
         if !instances.is_empty() {
@@ -718,7 +739,8 @@ impl ApplicationHandler for App {
                         let dx = position.x - lx;
                         let dy = position.y - ly;
                         self.camera_yaw += dx as f32 * 0.005;
-                        self.camera_pitch = (self.camera_pitch + dy as f32 * 0.005).clamp(-1.4, 1.4);
+                        self.camera_pitch =
+                            (self.camera_pitch + dy as f32 * 0.005).clamp(-1.4, 1.4);
                     }
                 }
                 self.last_mouse_pos = Some((position.x, position.y));
@@ -932,12 +954,12 @@ fn build_custom_plant() -> PlantConfig {
         .position(-0.3, -0.5, 0.0)
         .done()
         // Connect stages
-        .connect(0, 1)  // Hopper -> Shaker
+        .connect(0, 1) // Hopper -> Shaker
         .capture_depth(3)
         .inject_offset(0.05, 0.5, 0.5)
         .inject_velocity(0.5, 0.0, 0.0)
         .done()
-        .connect(1, 2)  // Shaker -> Sluice
+        .connect(1, 2) // Shaker -> Sluice
         .capture_depth(3)
         .inject_offset(0.05, 0.5, 0.5)
         .inject_velocity(0.5, 0.0, 0.0)
@@ -950,7 +972,10 @@ fn load_plant_config(config_path: Option<&str>) -> PlantConfig {
     match config_path {
         Some(path) => {
             let path = Path::new(path);
-            let result = if path.extension().map_or(false, |e| e == "yaml" || e == "yml") {
+            let result = if path
+                .extension()
+                .map_or(false, |e| e == "yaml" || e == "yml")
+            {
                 PlantConfig::load_yaml(path)
             } else {
                 PlantConfig::load_json(path)
@@ -1039,7 +1064,10 @@ fn main() {
     // Save configuration if requested
     if let Some(path) = &save_path {
         let path = Path::new(path);
-        let result = if path.extension().map_or(false, |e| e == "yaml" || e == "yml") {
+        let result = if path
+            .extension()
+            .map_or(false, |e| e == "yaml" || e == "yml")
+        {
             config.save_yaml(path)
         } else {
             config.save_json(path)

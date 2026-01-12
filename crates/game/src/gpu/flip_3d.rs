@@ -673,8 +673,8 @@ impl GpuFlip3D {
             height,
             depth,
             max_particles,
-            true,   // include_sediment
-            false,  // use_tiled_scatter (unsorted particles)
+            true,  // include_sediment
+            false, // use_tiled_scatter (unsorted particles)
             Arc::clone(&positions_buffer),
             Arc::clone(&velocities_buffer),
             Arc::clone(&densities_buffer),
@@ -689,8 +689,8 @@ impl GpuFlip3D {
             height,
             depth,
             max_particles,
-            false,  // include_sediment
-            false,  // use_tiled_scatter (unsorted particles)
+            false, // include_sediment
+            false, // use_tiled_scatter (unsorted particles)
             Arc::clone(&positions_buffer),
             Arc::clone(&velocities_buffer),
             Arc::clone(&densities_buffer),
@@ -739,7 +739,7 @@ impl GpuFlip3D {
             width,
             height,
             depth,
-            true,  // include_sediment
+            true, // include_sediment
             Arc::clone(&sorter.out_positions_buffer),
             Arc::clone(&sorter.out_velocities_buffer),
             Arc::clone(&sorter.out_c_col0_buffer),
@@ -2849,8 +2849,8 @@ impl GpuFlip3D {
             sorter,
             sorted_p2g,
             cell_centric_p2g,
-            use_sorted_p2g: true,   // Start with sorting enabled to test
-            use_cell_centric_p2g: false,  // TEMP: Disabled for baseline comparison
+            use_sorted_p2g: true,        // Start with sorting enabled to test
+            use_cell_centric_p2g: false, // TEMP: Disabled for baseline comparison
             gravel_obstacle_params_buffer,
             gravel_obstacle_buffer,
             gravel_obstacle_count: 0,
@@ -3279,21 +3279,81 @@ impl GpuFlip3D {
                 self.cell_centric_p2g.prepare(queue, count, self.cell_size);
                 self.cell_centric_p2g.encode(&mut encoder, count);
                 // Copy results from cell_centric_p2g to p2g buffers (rest of pipeline uses p2g buffers)
-                encoder.copy_buffer_to_buffer(&self.cell_centric_p2g.grid_u_buffer, 0, &self.p2g.grid_u_buffer, 0, (u_size * 4) as u64);
-                encoder.copy_buffer_to_buffer(&self.cell_centric_p2g.grid_v_buffer, 0, &self.p2g.grid_v_buffer, 0, (v_size * 4) as u64);
-                encoder.copy_buffer_to_buffer(&self.cell_centric_p2g.grid_w_buffer, 0, &self.p2g.grid_w_buffer, 0, (w_size * 4) as u64);
-                encoder.copy_buffer_to_buffer(&self.cell_centric_p2g.particle_count_buffer, 0, &self.p2g.particle_count_buffer, 0, (cell_count * 4) as u64);
-                encoder.copy_buffer_to_buffer(&self.cell_centric_p2g.sediment_count_buffer, 0, &self.p2g.sediment_count_buffer, 0, (cell_count * 4) as u64);
+                encoder.copy_buffer_to_buffer(
+                    &self.cell_centric_p2g.grid_u_buffer,
+                    0,
+                    &self.p2g.grid_u_buffer,
+                    0,
+                    (u_size * 4) as u64,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &self.cell_centric_p2g.grid_v_buffer,
+                    0,
+                    &self.p2g.grid_v_buffer,
+                    0,
+                    (v_size * 4) as u64,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &self.cell_centric_p2g.grid_w_buffer,
+                    0,
+                    &self.p2g.grid_w_buffer,
+                    0,
+                    (w_size * 4) as u64,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &self.cell_centric_p2g.particle_count_buffer,
+                    0,
+                    &self.p2g.particle_count_buffer,
+                    0,
+                    (cell_count * 4) as u64,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &self.cell_centric_p2g.sediment_count_buffer,
+                    0,
+                    &self.p2g.sediment_count_buffer,
+                    0,
+                    (cell_count * 4) as u64,
+                );
             } else {
                 // Use sorted P2G that reads from sorted particle buffers
                 self.sorted_p2g.prepare(queue, count, self.cell_size);
                 self.sorted_p2g.encode(&mut encoder, count);
                 // Copy results from sorted_p2g to p2g buffers (rest of pipeline uses p2g buffers)
-                encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_u_buffer, 0, &self.p2g.grid_u_buffer, 0, (u_size * 4) as u64);
-                encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_v_buffer, 0, &self.p2g.grid_v_buffer, 0, (v_size * 4) as u64);
-                encoder.copy_buffer_to_buffer(&self.sorted_p2g.grid_w_buffer, 0, &self.p2g.grid_w_buffer, 0, (w_size * 4) as u64);
-                encoder.copy_buffer_to_buffer(&self.sorted_p2g.particle_count_buffer, 0, &self.p2g.particle_count_buffer, 0, (cell_count * 4) as u64);
-                encoder.copy_buffer_to_buffer(&self.sorted_p2g.sediment_count_buffer, 0, &self.p2g.sediment_count_buffer, 0, (cell_count * 4) as u64);
+                encoder.copy_buffer_to_buffer(
+                    &self.sorted_p2g.grid_u_buffer,
+                    0,
+                    &self.p2g.grid_u_buffer,
+                    0,
+                    (u_size * 4) as u64,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &self.sorted_p2g.grid_v_buffer,
+                    0,
+                    &self.p2g.grid_v_buffer,
+                    0,
+                    (v_size * 4) as u64,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &self.sorted_p2g.grid_w_buffer,
+                    0,
+                    &self.p2g.grid_w_buffer,
+                    0,
+                    (w_size * 4) as u64,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &self.sorted_p2g.particle_count_buffer,
+                    0,
+                    &self.p2g.particle_count_buffer,
+                    0,
+                    (cell_count * 4) as u64,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &self.sorted_p2g.sediment_count_buffer,
+                    0,
+                    &self.p2g.sediment_count_buffer,
+                    0,
+                    (cell_count * 4) as u64,
+                );
             }
         } else {
             self.p2g.encode(&mut encoder, count);

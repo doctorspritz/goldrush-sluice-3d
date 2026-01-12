@@ -99,11 +99,21 @@ pub struct TransferConfig {
     pub transit_time: f32,
 }
 
-fn default_capture_depth() -> usize { 3 }
-fn default_exit_direction() -> [f32; 3] { [1.0, 0.0, 0.0] }
-fn default_inject_offset() -> [f32; 3] { [0.05, 0.5, 0.5] }
-fn default_inject_velocity() -> [f32; 3] { [0.5, 0.0, 0.0] }
-fn default_transit_time() -> f32 { 0.05 }
+fn default_capture_depth() -> usize {
+    3
+}
+fn default_exit_direction() -> [f32; 3] {
+    [1.0, 0.0, 0.0]
+}
+fn default_inject_offset() -> [f32; 3] {
+    [0.05, 0.5, 0.5]
+}
+fn default_inject_velocity() -> [f32; 3] {
+    [0.5, 0.0, 0.0]
+}
+fn default_transit_time() -> f32 {
+    0.05
+}
 
 impl Default for TransferConfig {
     fn default() -> Self {
@@ -202,10 +212,7 @@ impl PlantConfig {
                     world_offset: Vec3::new(-0.3, -0.5, 0.0),
                 },
             ],
-            transfers: vec![
-                TransferConfig::new(0, 1),
-                TransferConfig::new(1, 2),
-            ],
+            transfers: vec![TransferConfig::new(0, 1), TransferConfig::new(1, 2)],
         }
     }
 

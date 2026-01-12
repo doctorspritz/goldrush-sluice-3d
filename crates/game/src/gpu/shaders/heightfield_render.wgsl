@@ -25,7 +25,6 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) base_color: vec3<f32>,
 }
 
 struct WaterVertexOutput {
@@ -77,42 +76,334 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.clip_position = uniforms.view_proj * vec4<f32>(world_pos, 1.0);
     out.world_pos = world_pos;
     out.normal = normal;
-    
-    // Determine base color based on geology layers
-    let c_bedrock = vec3<f32>(0.3, 0.3, 0.35);    // Dark Grey
-    let c_paydirt = vec3<f32>(0.6, 0.5, 0.2);     // Gold/Brown
-    let c_gravel = vec3<f32>(0.5, 0.5, 0.5);      // Grey
-    let c_overburden = vec3<f32>(0.4, 0.3, 0.2);  // Brown
-    let c_sediment = vec3<f32>(0.7, 0.6, 0.4);    // Light Brown/Sand
-    
-    // Smoothly blend colors based on layer thicknesses
-    // Threshold (0.005 to 0.03) ensures colors don't pop instantly
-    var color = c_bedrock;
-    color = mix(color, c_paydirt, smoothstep(0.005, 0.03, p));
-    color = mix(color, c_gravel, smoothstep(0.005, 0.03, g));
-    color = mix(color, c_overburden, smoothstep(0.005, 0.03, o));
-    color = mix(color, c_sediment, smoothstep(0.005, 0.03, s));
-    
-    out.base_color = color;
-    
+
     return out;
+}
+
+// Simple hash function for procedural noise
+fn hash(p: vec3<f32>) -> f32 {
+    let p3 = fract(p * 0.1031);
+    let p3d = p3 + vec3<f32>(dot(p3, p3.yzx + 33.33));
+    return fract((p3d.x + p3d.y) * p3d.z);
+}
+
+// Value noise with smooth interpolation
+fn noise3d(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+
+    // Smooth interpolation
+    let u = f * f * (3.0 - 2.0 * f);
+
+    // 8 corners of the cube
+    let n000 = hash(i + vec3<f32>(0.0, 0.0, 0.0));
+    let n100 = hash(i + vec3<f32>(1.0, 0.0, 0.0));
+    let n010 = hash(i + vec3<f32>(0.0, 1.0, 0.0));
+    let n110 = hash(i + vec3<f32>(1.0, 1.0, 0.0));
+    let n001 = hash(i + vec3<f32>(0.0, 0.0, 1.0));
+    let n101 = hash(i + vec3<f32>(1.0, 0.0, 1.0));
+    let n011 = hash(i + vec3<f32>(0.0, 1.0, 1.0));
+    let n111 = hash(i + vec3<f32>(1.0, 1.0, 1.0));
+
+    // Trilinear interpolation
+    return mix(
+        mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
+        mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y),
+        u.z
+    );
+}
+
+// Fractal Brownian Motion for multi-scale detail
+fn fbm(p: vec3<f32>, octaves: i32) -> f32 {
+    var value = 0.0;
+    var amplitude = 0.5;
+    var frequency = 1.0;
+
+    for (var i = 0; i < octaves; i++) {
+        value += amplitude * noise3d(p * frequency);
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+
+    return value;
+}
+
+// Voronoi noise for rocky/cracked patterns
+fn voronoi(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+
+    var min_dist = 1.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let neighbor = vec2<f32>(f32(x), f32(y));
+            let point = hash(vec3<f32>(i + neighbor, 0.0));
+            let diff = neighbor + point - f;
+            let dist = length(diff);
+            min_dist = min(min_dist, dist);
+        }
+    }
+    return min_dist;
+}
+
+// ============ PROCEDURAL MATERIAL TEXTURES ============
+
+// BEDROCK: Hard, cracked rock with dark veins
+fn texture_bedrock(p: vec3<f32>, detail: f32) -> vec3<f32> {
+    let base_color = vec3<f32>(0.28, 0.28, 0.32);
+    let vein_color = vec3<f32>(0.15, 0.15, 0.18);
+    let highlight_color = vec3<f32>(0.38, 0.38, 0.42);
+
+    // Large-scale rock structure
+    let rock_noise = fbm(p * 3.0, 3);
+
+    // Crack pattern using voronoi
+    let cracks = voronoi(p.xz * 8.0);
+    let crack_lines = smoothstep(0.0, 0.08, cracks);
+
+    // Fine grain detail
+    let fine_detail = noise3d(p * 40.0) * 0.15 * detail;
+
+    // Combine
+    var color = mix(vein_color, base_color, crack_lines);
+    color = mix(color, highlight_color, rock_noise * 0.3);
+    color = color + fine_detail;
+
+    return color;
+}
+
+// PAYDIRT: Gold-bearing gravel with visible stones and gold flecks
+fn texture_paydirt(p: vec3<f32>, detail: f32) -> vec3<f32> {
+    let base_color = vec3<f32>(0.55, 0.45, 0.22);
+    let stone_color = vec3<f32>(0.45, 0.4, 0.3);
+    let gold_color = vec3<f32>(0.85, 0.7, 0.2);
+
+    // Gravel/stone pattern
+    let stones = voronoi(p.xz * 15.0);
+    let stone_mask = smoothstep(0.1, 0.25, stones);
+
+    // Variation in color
+    let color_var = fbm(p * 5.0, 2) * 0.2;
+
+    // Gold flecks (rare, bright spots)
+    let gold_noise = noise3d(p * 50.0);
+    let gold_flecks = smoothstep(0.85, 0.9, gold_noise) * detail;
+
+    // Fine sandy detail
+    let fine_detail = noise3d(p * 30.0) * 0.1 * detail;
+
+    var color = mix(stone_color, base_color, stone_mask);
+    color = color + color_var;
+    color = mix(color, gold_color, gold_flecks * 0.8);
+    color = color + fine_detail;
+
+    return color;
+}
+
+// GRAVEL: Grey stones and pebbles
+fn texture_gravel(p: vec3<f32>, detail: f32) -> vec3<f32> {
+    let base_color = vec3<f32>(0.5, 0.48, 0.45);
+    let dark_stone = vec3<f32>(0.35, 0.33, 0.3);
+    let light_stone = vec3<f32>(0.6, 0.58, 0.55);
+
+    // Pebble pattern (smaller voronoi cells)
+    let pebbles = voronoi(p.xz * 20.0);
+    let pebble_shade = smoothstep(0.0, 0.3, pebbles);
+
+    // Color variation between stones
+    let stone_id = floor(p.xz * 20.0);
+    let stone_color_var = hash(vec3<f32>(stone_id, 0.0));
+
+    // Fine grain
+    let fine = noise3d(p * 35.0) * 0.08 * detail;
+
+    var color = mix(dark_stone, light_stone, stone_color_var);
+    color = color * (0.7 + pebble_shade * 0.3);
+    color = color + fine;
+
+    return color;
+}
+
+// OVERBURDEN: Earthy dirt with organic matter
+fn texture_overburden(p: vec3<f32>, detail: f32) -> vec3<f32> {
+    let base_color = vec3<f32>(0.4, 0.32, 0.22);
+    let dark_dirt = vec3<f32>(0.3, 0.22, 0.15);
+    let light_dirt = vec3<f32>(0.5, 0.4, 0.28);
+
+    // Chunky dirt pattern
+    let chunks = fbm(p * 8.0, 3);
+
+    // Organic matter streaks
+    let organic = noise3d(p * 12.0 + vec3<f32>(0.0, 100.0, 0.0));
+    let organic_mask = smoothstep(0.4, 0.6, organic) * 0.15;
+
+    // Fine grain detail
+    let fine = noise3d(p * 25.0) * 0.1 * detail;
+
+    var color = mix(dark_dirt, light_dirt, chunks);
+    color = color - organic_mask; // Darker organic spots
+    color = color + fine;
+
+    return color;
+}
+
+// SEDIMENT: Fine sandy deposits
+fn texture_sediment(p: vec3<f32>, detail: f32) -> vec3<f32> {
+    let base_color = vec3<f32>(0.7, 0.6, 0.4);
+    let wet_color = vec3<f32>(0.55, 0.45, 0.3);
+    let dry_color = vec3<f32>(0.8, 0.72, 0.5);
+
+    // Ripple patterns (from water flow)
+    let ripple_x = sin(p.x * 30.0 + p.z * 5.0) * 0.5 + 0.5;
+    let ripple_z = sin(p.z * 25.0 + p.x * 3.0) * 0.5 + 0.5;
+    let ripples = (ripple_x * ripple_z) * 0.15 * detail;
+
+    // Moisture variation
+    let moisture = fbm(p * 4.0, 2);
+
+    // Very fine grain
+    let fine = noise3d(p * 60.0) * 0.05 * detail;
+
+    var color = mix(wet_color, dry_color, moisture * 0.5 + 0.3);
+    color = color + ripples;
+    color = color + fine;
+
+    return color;
+}
+
+// MIXED/TRANSITION: Muddy mix for material boundaries
+// Uses a unified noise pattern that doesn't oscillate
+fn texture_mixed(p: vec3<f32>, detail: f32, base_colors: array<vec3<f32>, 5>, weights: array<f32, 5>) -> vec3<f32> {
+    // Compute weighted average base color (no texture patterns)
+    var avg_color = vec3<f32>(0.0);
+    for (var i = 0; i < 5; i++) {
+        avg_color = avg_color + base_colors[i] * weights[i];
+    }
+
+    // Single unified noise pattern for mixed areas
+    let mix_noise = fbm(p * 6.0, 3);
+    let fine_noise = noise3d(p * 20.0) * 0.08 * detail;
+
+    // Muddy/disturbed appearance
+    let dark_mud = avg_color * 0.7;
+    let light_mud = avg_color * 1.1;
+
+    var color = mix(dark_mud, light_mud, mix_noise);
+
+    // Add some clumpy variation
+    let clumps = voronoi(p.xz * 12.0);
+    let clump_shade = smoothstep(0.0, 0.2, clumps) * 0.15;
+    color = color + clump_shade;
+
+    color = color + fine_noise;
+
+    return clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let color = in.base_color;
-    
-    // Lighting
-    let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
-    let diffuse = max(dot(in.normal, light_dir), 0.0);
-    let ambient = 0.3;
-    let lighting = ambient + diffuse * 0.7;
-    
-    // Side darkening
-    let slope = 1.0 - in.normal.y;
-    let slope_darken = 1.0 - slope * 0.5;
-    
-    return vec4<f32>(color * lighting * slope_darken, 1.0);
+    // Distance from camera for LOD
+    let dist_to_camera = length(uniforms.camera_pos - in.world_pos);
+
+    // Detail level fades with distance (1.0 close, 0.0 far)
+    let detail_level = smoothstep(40.0, 8.0, dist_to_camera);
+
+    // Sample layer thicknesses directly from buffers using world position
+    // This gives stable per-pixel values without vertex interpolation artifacts
+    let wx = in.world_pos.x;
+    let wz = in.world_pos.z;
+
+    // Convert world pos to grid coordinates
+    let gx = wx / uniforms.cell_size;
+    let gz = wz / uniforms.cell_size;
+
+    // Get integer grid coords and fractions for bilinear interpolation
+    let x0 = u32(max(floor(gx), 0.0));
+    let z0 = u32(max(floor(gz), 0.0));
+    let x1 = min(x0 + 1u, uniforms.grid_width - 1u);
+    let z1 = min(z0 + 1u, uniforms.grid_depth - 1u);
+
+    let fx = fract(gx);
+    let fz = fract(gz);
+
+    // Compute indices for 4 corners
+    let i00 = z0 * uniforms.grid_width + x0;
+    let i10 = z0 * uniforms.grid_width + x1;
+    let i01 = z1 * uniforms.grid_width + x0;
+    let i11 = z1 * uniforms.grid_width + x1;
+
+    // Sample and interpolate each layer
+    let t_paydirt = mix(mix(paydirt[i00], paydirt[i10], fx), mix(paydirt[i01], paydirt[i11], fx), fz);
+    let t_gravel = mix(mix(gravel[i00], gravel[i10], fx), mix(gravel[i01], gravel[i11], fx), fz);
+    let t_overburden = mix(mix(overburden[i00], overburden[i10], fx), mix(overburden[i01], overburden[i11], fx), fz);
+    let t_sediment = mix(mix(sediment[i00], sediment[i10], fx), mix(sediment[i01], sediment[i11], fx), fz);
+
+    // Base colors for each material
+    let c_bedrock = vec3<f32>(0.28, 0.28, 0.32);
+    let c_paydirt = vec3<f32>(0.55, 0.45, 0.22);
+    let c_gravel = vec3<f32>(0.5, 0.48, 0.45);
+    let c_overburden = vec3<f32>(0.4, 0.32, 0.22);
+    let c_sediment = vec3<f32>(0.65, 0.55, 0.38);
+
+    // Simple top-layer-wins blending with smooth transitions
+    // Start with bedrock, then blend each layer on top based on thickness
+    let blend_threshold = 0.02; // thickness at which layer fully covers
+
+    var base_color = c_bedrock;
+    base_color = mix(base_color, c_paydirt, smoothstep(0.0, blend_threshold, t_paydirt));
+    base_color = mix(base_color, c_gravel, smoothstep(0.0, blend_threshold, t_gravel));
+    base_color = mix(base_color, c_overburden, smoothstep(0.0, blend_threshold, t_overburden));
+    base_color = mix(base_color, c_sediment, smoothstep(0.0, blend_threshold, t_sediment));
+
+    // Apply ONE unified procedural detail pattern to the blended color
+    let noise_large = fbm(in.world_pos * 5.0, 3) - 0.5;
+    let noise_fine = noise3d(in.world_pos * 25.0) - 0.5;
+
+    // Voronoi for subtle stone/grain pattern
+    let stones = voronoi(in.world_pos.xz * 12.0);
+    let stone_detail = (smoothstep(0.0, 0.15, stones) - 0.5) * 0.1;
+
+    // Combine detail (fades with distance)
+    let detail = (noise_large * 0.15 + noise_fine * 0.08 * detail_level + stone_detail * detail_level);
+
+    var color = base_color + detail;
+
+    // ============ LIGHTING ============
+
+    let light_dir = normalize(vec3<f32>(0.4, 0.9, 0.25));
+    let n = normalize(in.normal);
+    let diffuse = max(dot(n, light_dir), 0.0);
+    let ambient = 0.35;
+    let lighting = ambient + diffuse * 0.65;
+
+    // Slope-based darkening (steeper = darker)
+    let slope = 1.0 - n.y;
+    let slope_darken = 1.0 - slope * 0.35;
+
+    // Crevice/cavity darkening
+    let crevice = clamp(slope * slope * 0.25, 0.0, 0.12);
+
+    // Apply lighting
+    var lit_color = color * lighting * slope_darken;
+    lit_color = lit_color - vec3<f32>(crevice);
+
+    // Specular highlight (wet surfaces - more sediment = shinier)
+    let view_dir = normalize(uniforms.camera_pos - in.world_pos);
+    let half_dir = normalize(light_dir + view_dir);
+    let wetness = smoothstep(0.0, 0.02, t_sediment);
+    let spec_power = mix(16.0, 64.0, wetness);
+    let spec_strength = mix(0.1, 0.25, wetness);
+    let spec = pow(max(dot(n, half_dir), 0.0), spec_power) * spec_strength;
+    lit_color = lit_color + vec3<f32>(spec);
+
+    // Distance fog
+    let fog_color = vec3<f32>(0.7, 0.75, 0.85);
+    let fog_start = 25.0;
+    let fog_end = 120.0;
+    let fog_factor = smoothstep(fog_start, fog_end, dist_to_camera);
+    lit_color = mix(lit_color, fog_color, fog_factor * 0.55);
+
+    return vec4<f32>(lit_color, 1.0);
 }
 
 fn get_water_surface(x: u32, z: u32) -> f32 {

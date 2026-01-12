@@ -154,7 +154,14 @@ impl GrateGeometryBuilder {
                             SluiceVertex::new([x0, y1, z1], color_side),
                             SluiceVertex::new([x0, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     // +X face
@@ -166,7 +173,14 @@ impl GrateGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x1, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // -Y face
@@ -178,7 +192,14 @@ impl GrateGeometryBuilder {
                             SluiceVertex::new([x1, y0, z1], color_bottom),
                             SluiceVertex::new([x0, y0, z1], color_bottom),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // +Y face
@@ -190,7 +211,14 @@ impl GrateGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_top),
                             SluiceVertex::new([x0, y1, z1], color_top),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     // -Z face
@@ -202,7 +230,14 @@ impl GrateGeometryBuilder {
                             SluiceVertex::new([x1, y1, z0], color_side),
                             SluiceVertex::new([x0, y1, z0], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // +Z face
@@ -214,7 +249,14 @@ impl GrateGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x0, y1, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
                 }
             }
@@ -238,17 +280,21 @@ impl GrateGeometryBuilder {
             return;
         }
 
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Grate Vertex Buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.vertex_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Grate Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
 
-        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Grate Index Buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.index_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Grate Index Buffer"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
@@ -420,7 +466,14 @@ impl BoxGeometryBuilder {
                             SluiceVertex::new([x0, y1, z1], color_side),
                             SluiceVertex::new([x0, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if i == width - 1 || !is_solid(i + 1, j, k) {
@@ -431,7 +484,14 @@ impl BoxGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x1, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == 0 || !is_solid(i, j - 1, k) {
@@ -442,7 +502,14 @@ impl BoxGeometryBuilder {
                             SluiceVertex::new([x1, y0, z1], color_bottom),
                             SluiceVertex::new([x0, y0, z1], color_bottom),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == height - 1 || !is_solid(i, j + 1, k) {
@@ -453,7 +520,14 @@ impl BoxGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_top),
                             SluiceVertex::new([x0, y1, z1], color_top),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if k == 0 || !is_solid(i, j, k - 1) {
@@ -464,7 +538,14 @@ impl BoxGeometryBuilder {
                             SluiceVertex::new([x1, y1, z0], color_side),
                             SluiceVertex::new([x0, y1, z0], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if k == depth - 1 || !is_solid(i, j, k + 1) {
@@ -475,7 +556,14 @@ impl BoxGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x0, y1, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
                 }
             }
@@ -499,17 +587,21 @@ impl BoxGeometryBuilder {
             return;
         }
 
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Box Vertex Buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.vertex_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Box Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
 
-        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Box Index Buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.index_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Box Index Buffer"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
@@ -690,7 +782,14 @@ impl GutterGeometryBuilder {
                             SluiceVertex::new([x0, y1, z1], color_side),
                             SluiceVertex::new([x0, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if i == width - 1 || !is_solid(i + 1, j, k) {
@@ -701,7 +800,14 @@ impl GutterGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x1, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == 0 || !is_solid(i, j - 1, k) {
@@ -712,7 +818,14 @@ impl GutterGeometryBuilder {
                             SluiceVertex::new([x1, y0, z1], color_bottom),
                             SluiceVertex::new([x0, y0, z1], color_bottom),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == height - 1 || !is_solid(i, j + 1, k) {
@@ -723,7 +836,14 @@ impl GutterGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_top),
                             SluiceVertex::new([x0, y1, z1], color_top),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if k == 0 || !is_solid(i, j, k - 1) {
@@ -734,7 +854,14 @@ impl GutterGeometryBuilder {
                             SluiceVertex::new([x1, y1, z0], color_side),
                             SluiceVertex::new([x0, y1, z0], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if k == depth - 1 || !is_solid(i, j, k + 1) {
@@ -745,7 +872,14 @@ impl GutterGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x0, y1, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
                 }
             }
@@ -769,17 +903,21 @@ impl GutterGeometryBuilder {
             return;
         }
 
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Gutter Vertex Buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.vertex_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Gutter Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
 
-        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Gutter Index Buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.index_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Gutter Index Buffer"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
@@ -875,8 +1013,10 @@ impl HopperConfig {
         // Linear interpolation for tapered walls
         let t = j as f32 / (self.grid_height - 1).max(1) as f32;
 
-        let width_at_j = (self.bottom_width as f32 * (1.0 - t) + self.top_width as f32 * t) as usize;
-        let depth_at_j = (self.bottom_depth as f32 * (1.0 - t) + self.top_depth as f32 * t) as usize;
+        let width_at_j =
+            (self.bottom_width as f32 * (1.0 - t) + self.top_width as f32 * t) as usize;
+        let depth_at_j =
+            (self.bottom_depth as f32 * (1.0 - t) + self.top_depth as f32 * t) as usize;
 
         let x_min = (self.grid_width - width_at_j) / 2;
         let x_max = x_min + width_at_j;
@@ -975,7 +1115,14 @@ impl HopperGeometryBuilder {
                             SluiceVertex::new([x0, y1, z1], color_side),
                             SluiceVertex::new([x0, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if i == width - 1 || !is_solid(i + 1, j, k) {
@@ -986,7 +1133,14 @@ impl HopperGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x1, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == 0 || !is_solid(i, j - 1, k) {
@@ -997,7 +1151,14 @@ impl HopperGeometryBuilder {
                             SluiceVertex::new([x1, y0, z1], color_bottom),
                             SluiceVertex::new([x0, y0, z1], color_bottom),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == height - 1 || !is_solid(i, j + 1, k) {
@@ -1008,7 +1169,14 @@ impl HopperGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_top),
                             SluiceVertex::new([x0, y1, z1], color_top),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if k == 0 || !is_solid(i, j, k - 1) {
@@ -1019,7 +1187,14 @@ impl HopperGeometryBuilder {
                             SluiceVertex::new([x1, y1, z0], color_side),
                             SluiceVertex::new([x0, y1, z0], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if k == depth - 1 || !is_solid(i, j, k + 1) {
@@ -1030,7 +1205,14 @@ impl HopperGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x0, y1, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
                 }
             }
@@ -1054,17 +1236,21 @@ impl HopperGeometryBuilder {
             return;
         }
 
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Hopper Vertex Buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.vertex_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Hopper Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
 
-        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Hopper Index Buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.index_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Hopper Index Buffer"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
@@ -1253,7 +1439,14 @@ impl ChuteGeometryBuilder {
                             SluiceVertex::new([x0, y1, z1], color_side),
                             SluiceVertex::new([x0, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if i == width - 1 || !is_solid(i + 1, j, k) {
@@ -1264,7 +1457,14 @@ impl ChuteGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x1, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == 0 || !is_solid(i, j - 1, k) {
@@ -1275,7 +1475,14 @@ impl ChuteGeometryBuilder {
                             SluiceVertex::new([x1, y0, z1], color_bottom),
                             SluiceVertex::new([x0, y0, z1], color_bottom),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == height - 1 || !is_solid(i, j + 1, k) {
@@ -1286,7 +1493,14 @@ impl ChuteGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_top),
                             SluiceVertex::new([x0, y1, z1], color_top),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if k == 0 || !is_solid(i, j, k - 1) {
@@ -1297,7 +1511,14 @@ impl ChuteGeometryBuilder {
                             SluiceVertex::new([x1, y1, z0], color_side),
                             SluiceVertex::new([x0, y1, z0], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if k == depth - 1 || !is_solid(i, j, k + 1) {
@@ -1308,7 +1529,14 @@ impl ChuteGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x0, y1, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
                 }
             }
@@ -1332,17 +1560,21 @@ impl ChuteGeometryBuilder {
             return;
         }
 
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Chute Vertex Buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.vertex_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Chute Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
 
-        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Chute Index Buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.index_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Chute Index Buffer"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
@@ -1528,7 +1760,14 @@ impl FrameGeometryBuilder {
                             SluiceVertex::new([x0, y1, z1], color_side),
                             SluiceVertex::new([x0, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if i == width - 1 || !is_solid(i + 1, j, k) {
@@ -1539,7 +1778,14 @@ impl FrameGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x1, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == 0 || !is_solid(i, j - 1, k) {
@@ -1550,7 +1796,14 @@ impl FrameGeometryBuilder {
                             SluiceVertex::new([x1, y0, z1], color_bottom),
                             SluiceVertex::new([x0, y0, z1], color_bottom),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == height - 1 || !is_solid(i, j + 1, k) {
@@ -1561,7 +1814,14 @@ impl FrameGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_top),
                             SluiceVertex::new([x0, y1, z1], color_top),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if k == 0 || !is_solid(i, j, k - 1) {
@@ -1572,7 +1832,14 @@ impl FrameGeometryBuilder {
                             SluiceVertex::new([x1, y1, z0], color_side),
                             SluiceVertex::new([x0, y1, z0], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if k == depth - 1 || !is_solid(i, j, k + 1) {
@@ -1583,7 +1850,14 @@ impl FrameGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x0, y1, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
                 }
             }
@@ -1607,17 +1881,21 @@ impl FrameGeometryBuilder {
             return;
         }
 
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Frame Vertex Buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.vertex_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Frame Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
 
-        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Frame Index Buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.index_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Frame Index Buffer"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
@@ -1700,11 +1978,13 @@ impl BaffleConfig {
         if self.orientation == 0 {
             // XY plane (perpendicular to Z) - baffle in middle of Z dimension
             let z_center = self.grid_depth / 2;
-            k >= z_center.saturating_sub(self.thickness / 2) && k < z_center + (self.thickness + 1) / 2
+            k >= z_center.saturating_sub(self.thickness / 2)
+                && k < z_center + (self.thickness + 1) / 2
         } else {
             // ZY plane (perpendicular to X) - baffle in middle of X dimension
             let x_center = self.grid_width / 2;
-            i >= x_center.saturating_sub(self.thickness / 2) && i < x_center + (self.thickness + 1) / 2
+            i >= x_center.saturating_sub(self.thickness / 2)
+                && i < x_center + (self.thickness + 1) / 2
         }
     }
 }
@@ -1788,7 +2068,14 @@ impl BaffleGeometryBuilder {
                             SluiceVertex::new([x0, y1, z1], color_side),
                             SluiceVertex::new([x0, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if i == width - 1 || !is_solid(i + 1, j, k) {
@@ -1799,7 +2086,14 @@ impl BaffleGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x1, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == 0 || !is_solid(i, j - 1, k) {
@@ -1810,7 +2104,14 @@ impl BaffleGeometryBuilder {
                             SluiceVertex::new([x1, y0, z1], color_bottom),
                             SluiceVertex::new([x0, y0, z1], color_bottom),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if j == height - 1 || !is_solid(i, j + 1, k) {
@@ -1821,7 +2122,14 @@ impl BaffleGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_top),
                             SluiceVertex::new([x0, y1, z1], color_top),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     if k == 0 || !is_solid(i, j, k - 1) {
@@ -1832,7 +2140,14 @@ impl BaffleGeometryBuilder {
                             SluiceVertex::new([x1, y1, z0], color_side),
                             SluiceVertex::new([x0, y1, z0], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     if k == depth - 1 || !is_solid(i, j, k + 1) {
@@ -1843,7 +2158,14 @@ impl BaffleGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x0, y1, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
                 }
             }
@@ -1867,17 +2189,21 @@ impl BaffleGeometryBuilder {
             return;
         }
 
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Baffle Vertex Buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.vertex_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Baffle Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
 
-        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Baffle Index Buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.index_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Baffle Index Buffer"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
@@ -1968,15 +2294,15 @@ impl Default for ShakerConfig {
             hole_spacing: 4,
             hole_radius: 1,
             deck_thickness: 2,
-            floor_height_start: 35,  // Deck in upper portion
+            floor_height_start: 35, // Deck in upper portion
             floor_height_end: 25,
             wall_height: 10,
             wall_thickness: 2,
-            gutter_floor_start: 3,   // Low at upstream (drains here)
-            gutter_floor_end: 10,    // Higher at downstream (slopes back)
-            chute_length: 8,         // Chute at downstream end for deck overs
-            gutter_chute_length: 6,  // Chute at upstream for gutter water
-            color_top: [0.5, 0.5, 0.55, 1.0],    // Metallic grey-blue
+            gutter_floor_start: 3,            // Low at upstream (drains here)
+            gutter_floor_end: 10,             // Higher at downstream (slopes back)
+            chute_length: 8,                  // Chute at downstream end for deck overs
+            gutter_chute_length: 6,           // Chute at upstream for gutter water
+            color_top: [0.5, 0.5, 0.55, 1.0], // Metallic grey-blue
             color_side: [0.4, 0.4, 0.45, 1.0],
             color_bottom: [0.3, 0.3, 0.35, 1.0],
             color_gutter: [0.35, 0.35, 0.4, 1.0], // Darker for gutter
@@ -2161,7 +2487,14 @@ impl ShakerGeometryBuilder {
                             SluiceVertex::new([x0, y1, z1], color_side),
                             SluiceVertex::new([x0, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     // +X face
@@ -2173,7 +2506,14 @@ impl ShakerGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x1, y0, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // -Y face
@@ -2185,7 +2525,14 @@ impl ShakerGeometryBuilder {
                             SluiceVertex::new([x1, y0, z1], color_bottom),
                             SluiceVertex::new([x0, y0, z1], color_bottom),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // +Y face
@@ -2197,7 +2544,14 @@ impl ShakerGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_top),
                             SluiceVertex::new([x0, y1, z1], color_top),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
 
                     // -Z face
@@ -2209,7 +2563,14 @@ impl ShakerGeometryBuilder {
                             SluiceVertex::new([x1, y1, z0], color_side),
                             SluiceVertex::new([x0, y1, z0], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 1,
+                            base + 2,
+                            base,
+                            base + 2,
+                            base + 3,
+                        ]);
                     }
 
                     // +Z face
@@ -2221,7 +2582,14 @@ impl ShakerGeometryBuilder {
                             SluiceVertex::new([x1, y1, z1], color_side),
                             SluiceVertex::new([x0, y1, z1], color_side),
                         ]);
-                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                        self.indices.extend_from_slice(&[
+                            base,
+                            base + 2,
+                            base + 1,
+                            base,
+                            base + 3,
+                            base + 2,
+                        ]);
                     }
                 }
             }
@@ -2245,17 +2613,21 @@ impl ShakerGeometryBuilder {
             return;
         }
 
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Shaker Vertex Buffer"),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.vertex_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Shaker Vertex Buffer"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
 
-        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Shaker Index Buffer"),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        }));
+        self.index_buffer = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Shaker Index Buffer"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
@@ -2456,7 +2828,9 @@ mod tests {
     fn test_baffle_orientation() {
         let mut config = BaffleConfig::default();
         config.orientation = 0;
-        let count_z = BaffleGeometryBuilder::new(config.clone()).solid_cells().count();
+        let count_z = BaffleGeometryBuilder::new(config.clone())
+            .solid_cells()
+            .count();
 
         config.orientation = 1;
         let count_x = BaffleGeometryBuilder::new(config).solid_cells().count();

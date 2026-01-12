@@ -693,4 +693,69 @@ mod tests {
 
         assert_eq!(builder.stage_count(), 2);
     }
+
+    #[test]
+    fn test_json_serialization() {
+        let original = PlantBuilder::new()
+            .add_hopper("Test Hopper")
+            .grid(10, 20, 10)
+            .cell_size(0.05)
+            .done()
+            .add_sluice("Test Sluice")
+            .riffle_spacing(15)
+            .done()
+            .connect(0, 1)
+            .capture_depth(4)
+            .done()
+            .build();
+
+        // Serialize to JSON string
+        let json = serde_json::to_string_pretty(&original).expect("Failed to serialize to JSON");
+
+        // Deserialize back
+        let loaded: PlantConfig =
+            serde_json::from_str(&json).expect("Failed to deserialize from JSON");
+
+        // Verify
+        assert_eq!(loaded.stages.len(), original.stages.len());
+        assert_eq!(loaded.transfers.len(), original.transfers.len());
+        assert_eq!(loaded.stages[0].name, "Test Hopper");
+        assert_eq!(loaded.stages[1].name, "Test Sluice");
+        assert_eq!(loaded.transfers[0].capture_depth_cells, 4);
+    }
+
+    #[test]
+    fn test_yaml_serialization() {
+        let original = PlantBuilder::new()
+            .add_shaker("YAML Shaker")
+            .angle(15.0)
+            .hole_spacing(0.08)
+            .done()
+            .build();
+
+        // Serialize to YAML string
+        let yaml = serde_yaml::to_string(&original).expect("Failed to serialize to YAML");
+
+        // Deserialize back
+        let loaded: PlantConfig =
+            serde_yaml::from_str(&yaml).expect("Failed to deserialize from YAML");
+
+        // Verify
+        assert_eq!(loaded.stages.len(), 1);
+        assert_eq!(loaded.stages[0].name, "YAML Shaker");
+    }
+
+    #[test]
+    fn test_default_config_serialization() {
+        // Test that the default config serializes/deserializes correctly
+        let original = PlantConfig::default();
+
+        let json =
+            serde_json::to_string_pretty(&original).expect("Failed to serialize default config");
+        let loaded: PlantConfig =
+            serde_json::from_str(&json).expect("Failed to deserialize default config");
+
+        assert_eq!(loaded.stages.len(), original.stages.len());
+        assert_eq!(loaded.transfers.len(), original.transfers.len());
+    }
 }

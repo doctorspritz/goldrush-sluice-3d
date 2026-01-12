@@ -79,39 +79,40 @@ impl crate::app::context::GpuContext {
             bias: DepthBiasState::default(),
         });
 
-        self.device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("render_pipeline"),
-            layout: Some(&pipeline_layout),
-            cache: None,
-            vertex: VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: vertex_layouts,
-            },
-            primitive: PrimitiveState {
-                topology: preset.topology(),
-                strip_index_format: None,
-                front_face: FrontFace::Ccw,
-                cull_mode: preset.cull_mode(),
-                unclipped_depth: false,
-                polygon_mode: PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil,
-            multisample: MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[target],
-            }),
-            multiview: None,
-        })
+        self.device
+            .create_render_pipeline(&RenderPipelineDescriptor {
+                label: Some("render_pipeline"),
+                layout: Some(&pipeline_layout),
+                cache: None,
+                vertex: VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: vertex_layouts,
+                },
+                primitive: PrimitiveState {
+                    topology: preset.topology(),
+                    strip_index_format: None,
+                    front_face: FrontFace::Ccw,
+                    cull_mode: preset.cull_mode(),
+                    unclipped_depth: false,
+                    polygon_mode: PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil,
+                multisample: MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                fragment: Some(FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[target],
+                }),
+                multiview: None,
+            })
     }
 }
 
@@ -121,16 +122,31 @@ mod tests {
 
     #[test]
     fn test_pipeline_preset_topology() {
-        assert_eq!(PipelinePreset::OpaqueMesh.topology(), PrimitiveTopology::TriangleList);
-        assert_eq!(PipelinePreset::OpaqueInstanced.topology(), PrimitiveTopology::TriangleList);
-        assert_eq!(PipelinePreset::Transparent.topology(), PrimitiveTopology::TriangleList);
-        assert_eq!(PipelinePreset::Lines.topology(), PrimitiveTopology::LineList);
+        assert_eq!(
+            PipelinePreset::OpaqueMesh.topology(),
+            PrimitiveTopology::TriangleList
+        );
+        assert_eq!(
+            PipelinePreset::OpaqueInstanced.topology(),
+            PrimitiveTopology::TriangleList
+        );
+        assert_eq!(
+            PipelinePreset::Transparent.topology(),
+            PrimitiveTopology::TriangleList
+        );
+        assert_eq!(
+            PipelinePreset::Lines.topology(),
+            PrimitiveTopology::LineList
+        );
     }
 
     #[test]
     fn test_pipeline_preset_cull() {
         assert_eq!(PipelinePreset::OpaqueMesh.cull_mode(), Some(Face::Back));
-        assert_eq!(PipelinePreset::OpaqueInstanced.cull_mode(), Some(Face::Back));
+        assert_eq!(
+            PipelinePreset::OpaqueInstanced.cull_mode(),
+            Some(Face::Back)
+        );
         assert_eq!(PipelinePreset::Transparent.cull_mode(), None);
         assert_eq!(PipelinePreset::Lines.cull_mode(), None);
     }

@@ -122,12 +122,16 @@ impl GpuP2g3D {
         let scatter_shader = if use_tiled_scatter {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("P2G 3D Tiled Scatter Shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/p2g_scatter_tiled_3d.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("shaders/p2g_scatter_tiled_3d.wgsl").into(),
+                ),
             })
         } else {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("P2G 3D Scatter Shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/p2g_scatter_3d.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("shaders/p2g_scatter_3d.wgsl").into(),
+                ),
             })
         };
 
@@ -861,8 +865,7 @@ impl GpuP2g3D {
             });
             pass.set_pipeline(&self.scatter_pipeline);
             pass.set_bind_group(0, &self.scatter_bind_group, &[]);
-            let workgroups =
-                particle_count.div_ceil(self.scatter_workgroup_size);
+            let workgroups = particle_count.div_ceil(self.scatter_workgroup_size);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 

@@ -38,7 +38,7 @@ const TRACER_INTERVAL_FRAMES: u32 = 300; // 5s at 60 FPS
 const TRACER_COUNT: u32 = 3;
 
 // Emission rates (10-20% solids by mass)
-const WATER_EMIT_RATE: usize = 500;  // Normal rate
+const WATER_EMIT_RATE: usize = 500; // Normal rate
 const SEDIMENT_EMIT_RATE: usize = 2;
 const GPU_SYNC_STRIDE: u32 = 4; // GPU readback cadence (frames)
 
@@ -962,10 +962,25 @@ impl App {
                 .filter(|p| p.density <= 1.0)
                 .count();
             let sediment_count = self.sim.particles.list.len() - water_count;
-            let sort_mode = self.gpu_flip.as_ref().map(|f| if f.use_sorted_p2g { "SORTED" } else { "unsorted" }).unwrap_or("N/A");
+            let sort_mode = self
+                .gpu_flip
+                .as_ref()
+                .map(|f| {
+                    if f.use_sorted_p2g {
+                        "SORTED"
+                    } else {
+                        "unsorted"
+                    }
+                })
+                .unwrap_or("N/A");
             println!(
                 "Frame {} | FPS: {:.1} | Particles: {} (water: {}, sediment: {}) [P2G: {}]",
-                self.frame, self.current_fps, self.sim.particles.list.len(), water_count, sediment_count, sort_mode
+                self.frame,
+                self.current_fps,
+                self.sim.particles.list.len(),
+                water_count,
+                sediment_count,
+                sort_mode
             );
             let flow = self.compute_flow_metrics();
             if flow.sample_count == 0 {
@@ -1598,7 +1613,10 @@ impl ApplicationHandler for App {
                         PhysicalKey::Code(KeyCode::Digit5) => {
                             if let Some(flip) = self.gpu_flip.as_mut() {
                                 flip.use_sorted_p2g = !flip.use_sorted_p2g;
-                                println!("Sorted P2G: {}", if flip.use_sorted_p2g { "ON" } else { "OFF" });
+                                println!(
+                                    "Sorted P2G: {}",
+                                    if flip.use_sorted_p2g { "ON" } else { "OFF" }
+                                );
                             }
                         }
                         _ => {}

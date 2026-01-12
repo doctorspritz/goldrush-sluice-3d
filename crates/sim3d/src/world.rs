@@ -79,12 +79,390 @@ impl TerrainMaterial {
     }
 }
 
+/// A higher-resolution region for adaptive LOD simulation.
+/// Covers a rectangular area of the coarse grid at finer resolution.
+#[derive(Clone, Debug)]
+pub struct FineRegion {
+    /// Bounds in coarse cell coordinates (inclusive).
+    pub coarse_x_min: usize,
+    pub coarse_z_min: usize,
+    pub coarse_x_max: usize,
+    pub coarse_z_max: usize,
+
+    /// Subdivision factor (e.g., 4 = 4x4 fine cells per coarse cell).
+    pub scale: usize,
+
+    /// Fine grid dimensions.
+    pub width: usize,
+    pub depth: usize,
+    pub cell_size: f32,
+
+    // Terrain layers (interpolated from coarse, then simulated)
+    pub bedrock_elevation: Vec<f32>,
+    pub paydirt_thickness: Vec<f32>,
+    pub gravel_thickness: Vec<f32>,
+    pub overburden_thickness: Vec<f32>,
+    pub terrain_sediment: Vec<f32>,
+
+    // Water state
+    pub water_surface: Vec<f32>,
+    pub water_flow_x: Vec<f32>,
+    pub water_flow_z: Vec<f32>,
+    pub suspended_sediment: Vec<f32>,
+
+    // Working buffers
+    collapse_deltas: Vec<f32>,
+    advection_mass_buffer: Vec<f32>,
+    advection_delta_buffer: Vec<f32>,
+    advection_outflow_buffer: Vec<f32>,
+}
+
+impl FineRegion {
+    /// Create a new fine region covering the specified coarse cells.
+    pub fn new(
+        coarse_x_min: usize,
+        coarse_z_min: usize,
+        coarse_x_max: usize,
+        coarse_z_max: usize,
+        scale: usize,
+        coarse_cell_size: f32,
+    ) -> Self {
+        let coarse_width = coarse_x_max - coarse_x_min + 1;
+        let coarse_depth = coarse_z_max - coarse_z_min + 1;
+
+        let width = coarse_width * scale;
+        let depth = coarse_depth * scale;
+        let cell_size = coarse_cell_size / scale as f32;
+
+        let cell_count = width * depth;
+        let flow_x_count = (width + 1) * depth;
+        let flow_z_count = width * (depth + 1);
+
+        Self {
+            coarse_x_min,
+            coarse_z_min,
+            coarse_x_max,
+            coarse_z_max,
+            scale,
+            width,
+            depth,
+            cell_size,
+
+            bedrock_elevation: vec![0.0; cell_count],
+            paydirt_thickness: vec![0.0; cell_count],
+            gravel_thickness: vec![0.0; cell_count],
+            overburden_thickness: vec![0.0; cell_count],
+            terrain_sediment: vec![0.0; cell_count],
+
+            water_surface: vec![0.0; cell_count],
+            water_flow_x: vec![0.0; flow_x_count],
+            water_flow_z: vec![0.0; flow_z_count],
+            suspended_sediment: vec![0.0; cell_count],
+
+            collapse_deltas: vec![0.0; cell_count],
+            advection_mass_buffer: vec![0.0; cell_count],
+            advection_delta_buffer: vec![0.0; cell_count],
+            advection_outflow_buffer: vec![0.0; cell_count],
+        }
+    }
+
+    /// Cell index from local (x, z) coordinates.
+    #[inline]
+    pub fn idx(&self, x: usize, z: usize) -> usize {
+        z * self.width + x
+    }
+
+    /// Flow X index.
+    #[inline]
+    fn flow_x_idx(&self, x: usize, z: usize) -> usize {
+        z * (self.width + 1) + x
+    }
+
+    /// Flow Z index.
+    #[inline]
+    fn flow_z_idx(&self, x: usize, z: usize) -> usize {
+        z * self.width + x
+    }
+
+    /// Total ground height at local coordinates.
+    #[inline]
+    pub fn ground_height(&self, x: usize, z: usize) -> f32 {
+        let idx = self.idx(x, z);
+        self.bedrock_elevation[idx]
+            + self.paydirt_thickness[idx]
+            + self.gravel_thickness[idx]
+            + self.overburden_thickness[idx]
+            + self.terrain_sediment[idx]
+    }
+
+    /// Water depth at local coordinates.
+    #[inline]
+    pub fn water_depth(&self, x: usize, z: usize) -> f32 {
+        let idx = self.idx(x, z);
+        (self.water_surface[idx] - self.ground_height(x, z)).max(0.0)
+    }
+
+    /// World position of fine cell origin.
+    pub fn world_origin(&self, coarse_cell_size: f32) -> Vec3 {
+        Vec3::new(
+            self.coarse_x_min as f32 * coarse_cell_size,
+            0.0,
+            self.coarse_z_min as f32 * coarse_cell_size,
+        )
+    }
+
+    /// Convert world position to local fine cell coordinates.
+    pub fn world_to_local(&self, pos: Vec3, coarse_cell_size: f32) -> Option<(usize, usize)> {
+        let origin = self.world_origin(coarse_cell_size);
+        let local_x = (pos.x - origin.x) / self.cell_size;
+        let local_z = (pos.z - origin.z) / self.cell_size;
+
+        if local_x >= 0.0
+            && local_x < self.width as f32
+            && local_z >= 0.0
+            && local_z < self.depth as f32
+        {
+            Some((local_x as usize, local_z as usize))
+        } else {
+            None
+        }
+    }
+
+    /// Check if world position is within this fine region.
+    pub fn contains_world_pos(&self, pos: Vec3, coarse_cell_size: f32) -> bool {
+        self.world_to_local(pos, coarse_cell_size).is_some()
+    }
+
+    /// Get the surface material at local coordinates.
+    pub fn surface_material(&self, x: usize, z: usize) -> TerrainMaterial {
+        let idx = self.idx(x, z);
+        if self.terrain_sediment[idx] > 0.001 {
+            TerrainMaterial::Sand
+        } else if self.overburden_thickness[idx] > 0.001 {
+            TerrainMaterial::Dirt
+        } else if self.gravel_thickness[idx] > 0.001 {
+            TerrainMaterial::Gravel
+        } else if self.paydirt_thickness[idx] > 0.001 {
+            TerrainMaterial::Clay
+        } else {
+            TerrainMaterial::Bedrock
+        }
+    }
+
+    /// Update terrain collapse (angle of repose) for fine region.
+    pub fn update_collapse(&mut self, transfer_rate: f32, max_outflow: f32) -> bool {
+        let width = self.width;
+        let depth = self.depth;
+        let cell_size = self.cell_size;
+
+        self.collapse_deltas.fill(0.0);
+
+        let neighbors: [(i32, i32, f32); 8] = [
+            (1, 0, cell_size),
+            (-1, 0, cell_size),
+            (0, 1, cell_size),
+            (0, -1, cell_size),
+            (1, 1, cell_size * std::f32::consts::SQRT_2),
+            (1, -1, cell_size * std::f32::consts::SQRT_2),
+            (-1, 1, cell_size * std::f32::consts::SQRT_2),
+            (-1, -1, cell_size * std::f32::consts::SQRT_2),
+        ];
+
+        for z in 1..depth - 1 {
+            for x in 1..width - 1 {
+                let idx = self.idx(x, z);
+                let h = self.ground_height(x, z);
+
+                let material = self.surface_material(x, z);
+                if material == TerrainMaterial::Bedrock {
+                    continue;
+                }
+                let angle_tan = material.angle_of_repose().tan();
+
+                let mut neighbor_transfers: [(usize, f32); 8] = [(0, 0.0); 8];
+                let mut transfer_count = 0;
+                let mut total_out = 0.0_f32;
+
+                for &(dx, dz, dist) in neighbors.iter() {
+                    let nx = (x as i32 + dx) as usize;
+                    let nz = (z as i32 + dz) as usize;
+
+                    if nx >= width || nz >= depth {
+                        continue;
+                    }
+
+                    let nidx = self.idx(nx, nz);
+                    let nh = self.ground_height(nx, nz);
+                    let diff = h - nh;
+                    let max_diff = angle_tan * dist;
+
+                    if diff > max_diff {
+                        let transfer = transfer_rate * (diff - max_diff);
+                        neighbor_transfers[transfer_count] = (nidx, transfer);
+                        transfer_count += 1;
+                        total_out += transfer;
+                    }
+                }
+
+                if total_out <= 0.0 {
+                    continue;
+                }
+
+                let sediment_available = self.terrain_sediment[idx];
+                let max_out = sediment_available * max_outflow;
+                let scale = if total_out > max_out && total_out > 0.0 {
+                    max_out / total_out
+                } else {
+                    1.0
+                };
+
+                for i in 0..transfer_count {
+                    let (nidx, transfer) = neighbor_transfers[i];
+                    let scaled_transfer = transfer * scale;
+                    self.collapse_deltas[idx] -= scaled_transfer;
+                    self.collapse_deltas[nidx] += scaled_transfer;
+                }
+            }
+        }
+
+        // Apply deltas
+        let mut changed = false;
+        for z in 1..depth - 1 {
+            for x in 1..width - 1 {
+                let idx = self.idx(x, z);
+                let delta = self.collapse_deltas[idx];
+                if delta.abs() <= 1e-6 {
+                    continue;
+                }
+
+                let old_sediment = self.terrain_sediment[idx];
+                let current_ground = self.ground_height(x, z);
+                let ground_base = current_ground - old_sediment;
+
+                let had_water = self.water_surface[idx] > current_ground + 1e-4;
+
+                let new_sediment = (old_sediment + delta).max(0.0);
+                self.terrain_sediment[idx] = new_sediment;
+                changed = true;
+
+                let new_ground = ground_base + new_sediment;
+                if had_water {
+                    let delta_ground = new_ground - current_ground;
+                    self.water_surface[idx] += delta_ground;
+                } else {
+                    self.water_surface[idx] = new_ground;
+                }
+            }
+        }
+
+        changed
+    }
+
+    /// Update erosion and sediment transport for fine region.
+    pub fn update_erosion(&mut self, dt: f32, hardness_overburden: f32, hardness_paydirt: f32) {
+        let width = self.width;
+        let depth = self.depth;
+        let cell_size = self.cell_size;
+        let cell_area = cell_size * cell_size;
+
+        let k_entrain = 2.0;
+        let k_deposit = 0.5;
+
+        for z in 1..depth - 1 {
+            for x in 1..width - 1 {
+                let idx = self.idx(x, z);
+
+                // Calculate water velocity magnitude
+                let flow_x_left = self.water_flow_x[self.flow_x_idx(x, z)];
+                let flow_x_right = self.water_flow_x[self.flow_x_idx(x + 1, z)];
+                let flow_z_up = self.water_flow_z[self.flow_z_idx(x, z)];
+                let flow_z_down = self.water_flow_z[self.flow_z_idx(x, z + 1)];
+
+                let vel_x = (flow_x_left + flow_x_right) * 0.5;
+                let vel_z = (flow_z_up + flow_z_down) * 0.5;
+                let speed = (vel_x * vel_x + vel_z * vel_z).sqrt();
+
+                let water_depth = self.water_depth(x, z);
+                if water_depth < 0.01 {
+                    continue;
+                }
+
+                // Transport capacity
+                let transport_capacity = speed * speed * water_depth * 0.5;
+
+                let suspended_conc = self.suspended_sediment[idx];
+                let suspended_vol = suspended_conc * water_depth * cell_area;
+
+                if suspended_vol > transport_capacity {
+                    // Deposition
+                    let deposit_vol = (suspended_vol - transport_capacity) * k_deposit * dt;
+                    let deposit_vol = deposit_vol.min(suspended_vol);
+                    let deposit_height = (deposit_vol / cell_area).min(1.0 * dt);
+                    let actual_deposit_vol = deposit_height * cell_area;
+
+                    self.terrain_sediment[idx] += deposit_height;
+
+                    let new_suspended_vol = suspended_vol - actual_deposit_vol;
+                    if water_depth > 1e-4 {
+                        self.suspended_sediment[idx] = new_suspended_vol / (water_depth * cell_area);
+                    } else {
+                        self.suspended_sediment[idx] = 0.0;
+                    }
+                } else if speed > 0.5 {
+                    // Erosion (only if fast enough)
+                    let deficit_vol = transport_capacity - suspended_vol;
+                    let entrain_target_vol = deficit_vol * k_entrain * dt;
+                    let entrain_target_height = (entrain_target_vol / cell_area).min(0.5 * dt);
+
+                    let mut remaining_demand = entrain_target_height;
+                    let mut total_eroded_vol = 0.0;
+
+                    // Erode sediment first
+                    if remaining_demand > 0.0 {
+                        let available = self.terrain_sediment[idx];
+                        let take = remaining_demand.min(available);
+                        self.terrain_sediment[idx] -= take;
+                        total_eroded_vol += take * cell_area;
+                        remaining_demand -= take;
+                    }
+
+                    // Erode overburden
+                    if remaining_demand > 0.0 {
+                        let available = self.overburden_thickness[idx];
+                        let take = (remaining_demand / hardness_overburden.max(1.0)).min(available);
+                        self.overburden_thickness[idx] -= take;
+                        total_eroded_vol += take * cell_area;
+                        remaining_demand -= take * hardness_overburden;
+                    }
+
+                    // Erode paydirt
+                    if remaining_demand > 0.0 {
+                        let available = self.paydirt_thickness[idx];
+                        let take = (remaining_demand / hardness_paydirt.max(1.0)).min(available);
+                        self.paydirt_thickness[idx] -= take;
+                        total_eroded_vol += take * cell_area;
+                    }
+
+                    // Add to suspended
+                    let new_suspended_vol = suspended_vol + total_eroded_vol;
+                    if water_depth > 1e-4 {
+                        self.suspended_sediment[idx] = new_suspended_vol / (water_depth * cell_area);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Unified world state.
 #[derive(Clone, Debug)]
 pub struct World {
     pub width: usize,
     pub depth: usize,
     pub cell_size: f32,
+
+    /// Optional fine-resolution region for adaptive LOD.
+    pub fine_region: Option<FineRegion>,
 
     // Geological Layers
     pub bedrock_elevation: Vec<f32>, // The hard floor (Base height)
@@ -126,6 +504,7 @@ impl World {
             width,
             depth,
             cell_size,
+            fine_region: None,
 
             // Default Geology:
             // 50% Bedrock (Deep base)
@@ -225,11 +604,14 @@ impl World {
 
     /// Main update step.
     pub fn update(&mut self, dt: f32) {
+        // Coarse grid simulation
         self.update_terrain_collapse();
         self.update_water_flow(dt);
         self.update_sediment_advection(dt);
         self.update_erosion(dt);
-        // self.update_sediment_settling(dt); // Replaced by update_erosion capacity model
+
+        // Fine region simulation (if active)
+        self.update_fine_region(dt);
     }
 
     /// Update terrain collapse based on angle of repose.
@@ -1463,6 +1845,459 @@ impl World {
         }
 
         (positions, colors)
+    }
+
+    // =========================================================================
+    // Fine Region (Adaptive LOD) Methods
+    // =========================================================================
+
+    /// Create a fine region centered on world position with given radius in cells.
+    /// Scale determines subdivision (e.g., 4 = 4x4 fine cells per coarse cell).
+    pub fn create_fine_region(&mut self, center: Vec3, radius_cells: usize, scale: usize) {
+        let (cx, cz) = match self.world_to_cell(center) {
+            Some(c) => c,
+            None => return,
+        };
+
+        let x_min = cx.saturating_sub(radius_cells);
+        let z_min = cz.saturating_sub(radius_cells);
+        let x_max = (cx + radius_cells).min(self.width - 1);
+        let z_max = (cz + radius_cells).min(self.depth - 1);
+
+        let mut fine = FineRegion::new(x_min, z_min, x_max, z_max, scale, self.cell_size);
+        self.interpolate_to_fine_region(&mut fine);
+        self.fine_region = Some(fine);
+    }
+
+    /// Remove the fine region (return to coarse-only simulation).
+    pub fn remove_fine_region(&mut self) {
+        self.fine_region = None;
+    }
+
+    /// Check if a fine region exists and covers the given world position.
+    pub fn has_fine_region_at(&self, pos: Vec3) -> bool {
+        self.fine_region
+            .as_ref()
+            .map(|f| f.contains_world_pos(pos, self.cell_size))
+            .unwrap_or(false)
+    }
+
+    /// Interpolate coarse grid data to fine region using bilinear interpolation.
+    fn interpolate_to_fine_region(&self, fine: &mut FineRegion) {
+        let scale = fine.scale as f32;
+
+        for fz in 0..fine.depth {
+            for fx in 0..fine.width {
+                // Map fine cell center to coarse coordinates
+                let fine_center_x = (fx as f32 + 0.5) / scale;
+                let fine_center_z = (fz as f32 + 0.5) / scale;
+
+                // Coarse cell containing this point
+                let cx = fine.coarse_x_min + fine_center_x.floor() as usize;
+                let cz = fine.coarse_z_min + fine_center_z.floor() as usize;
+
+                // For simplicity, use nearest-neighbor for terrain layers
+                // (bilinear can cause issues at boundaries)
+                let cx = cx.min(self.width - 1);
+                let cz = cz.min(self.depth - 1);
+                let cidx = self.idx(cx, cz);
+                let fidx = fine.idx(fx, fz);
+
+                fine.bedrock_elevation[fidx] = self.bedrock_elevation[cidx];
+                fine.paydirt_thickness[fidx] = self.paydirt_thickness[cidx];
+                fine.gravel_thickness[fidx] = self.gravel_thickness[cidx];
+                fine.overburden_thickness[fidx] = self.overburden_thickness[cidx];
+                fine.terrain_sediment[fidx] = self.terrain_sediment[cidx];
+
+                // Water state - use bilinear for smoother results
+                let (h, conc) = self.bilinear_sample_water(
+                    fine.coarse_x_min as f32 + fine_center_x,
+                    fine.coarse_z_min as f32 + fine_center_z,
+                );
+                fine.water_surface[fidx] = h;
+                fine.suspended_sediment[fidx] = conc;
+            }
+        }
+
+        // Initialize velocities to zero (will be driven by boundary conditions)
+        fine.water_flow_x.fill(0.0);
+        fine.water_flow_z.fill(0.0);
+    }
+
+    /// Bilinear sample water surface and sediment concentration at fractional coarse coordinates.
+    fn bilinear_sample_water(&self, cx: f32, cz: f32) -> (f32, f32) {
+        let x0 = (cx.floor() as usize).min(self.width - 1);
+        let z0 = (cz.floor() as usize).min(self.depth - 1);
+        let x1 = (x0 + 1).min(self.width - 1);
+        let z1 = (z0 + 1).min(self.depth - 1);
+
+        let tx = cx - cx.floor();
+        let tz = cz - cz.floor();
+
+        let h00 = self.water_surface[self.idx(x0, z0)];
+        let h10 = self.water_surface[self.idx(x1, z0)];
+        let h01 = self.water_surface[self.idx(x0, z1)];
+        let h11 = self.water_surface[self.idx(x1, z1)];
+
+        let h = h00 * (1.0 - tx) * (1.0 - tz)
+            + h10 * tx * (1.0 - tz)
+            + h01 * (1.0 - tx) * tz
+            + h11 * tx * tz;
+
+        let c00 = self.suspended_sediment[self.idx(x0, z0)];
+        let c10 = self.suspended_sediment[self.idx(x1, z0)];
+        let c01 = self.suspended_sediment[self.idx(x0, z1)];
+        let c11 = self.suspended_sediment[self.idx(x1, z1)];
+
+        let c = c00 * (1.0 - tx) * (1.0 - tz)
+            + c10 * tx * (1.0 - tz)
+            + c01 * (1.0 - tx) * tz
+            + c11 * tx * tz;
+
+        (h, c)
+    }
+
+    /// Update fine region simulation with boundary conditions from coarse grid.
+    pub fn update_fine_region(&mut self, dt: f32) {
+        if self.fine_region.is_none() {
+            return;
+        }
+
+        // Apply boundary conditions from coarse grid
+        self.apply_fine_boundary_conditions();
+
+        // Step the fine region simulation
+        let fine = self.fine_region.as_mut().unwrap();
+
+        // Water flow (shallow water equations)
+        Self::update_fine_water_flow(fine, dt, self.params.gravity, self.params.water_damping);
+
+        // Terrain collapse (angle of repose)
+        fine.update_collapse(
+            self.params.collapse_transfer_rate,
+            self.params.collapse_max_outflow,
+        );
+
+        // Erosion and sediment transport
+        fine.update_erosion(
+            dt,
+            self.params.hardness_overburden,
+            self.params.hardness_paydirt,
+        );
+    }
+
+    /// Apply coarse grid water state to fine region boundaries.
+    fn apply_fine_boundary_conditions(&mut self) {
+        // Extract needed values from fine region first
+        let (scale, fine_depth, fine_width, coarse_x_min, coarse_z_min, coarse_x_max, coarse_z_max) = {
+            let fine = match self.fine_region.as_ref() {
+                Some(f) => f,
+                None => return,
+            };
+            (
+                fine.scale,
+                fine.depth,
+                fine.width,
+                fine.coarse_x_min,
+                fine.coarse_z_min,
+                fine.coarse_x_max,
+                fine.coarse_z_max,
+            )
+        };
+
+        let coarse_width = self.width;
+        let coarse_depth = self.depth;
+
+        // Collect boundary values from coarse grid
+        let mut left_values = Vec::with_capacity(fine_depth);
+        let mut right_values = Vec::with_capacity(fine_depth);
+        let mut back_values = Vec::with_capacity(fine_width);
+        let mut front_values = Vec::with_capacity(fine_width);
+
+        // Left boundary (x = 0)
+        for fz in 0..fine_depth {
+            let cz = (coarse_z_min + fz / scale).min(coarse_depth - 1);
+            let cx = coarse_x_min.saturating_sub(1);
+            let cidx = cz * coarse_width + cx;
+            left_values.push(self.water_surface[cidx]);
+        }
+
+        // Right boundary (x = width - 1)
+        for fz in 0..fine_depth {
+            let cz = (coarse_z_min + fz / scale).min(coarse_depth - 1);
+            let cx = (coarse_x_max + 1).min(coarse_width - 1);
+            let cidx = cz * coarse_width + cx;
+            right_values.push(self.water_surface[cidx]);
+        }
+
+        // Back boundary (z = 0)
+        for fx in 0..fine_width {
+            let cx = (coarse_x_min + fx / scale).min(coarse_width - 1);
+            let cz = coarse_z_min.saturating_sub(1);
+            let cidx = cz * coarse_width + cx;
+            back_values.push(self.water_surface[cidx]);
+        }
+
+        // Front boundary (z = depth - 1)
+        for fx in 0..fine_width {
+            let cx = (coarse_x_min + fx / scale).min(coarse_width - 1);
+            let cz = (coarse_z_max + 1).min(coarse_depth - 1);
+            let cidx = cz * coarse_width + cx;
+            front_values.push(self.water_surface[cidx]);
+        }
+
+        // Now apply to fine region
+        let fine = self.fine_region.as_mut().unwrap();
+
+        for (fz, &val) in left_values.iter().enumerate() {
+            let fidx = fz * fine.width;
+            fine.water_surface[fidx] = val;
+        }
+
+        for (fz, &val) in right_values.iter().enumerate() {
+            let fidx = fz * fine.width + (fine.width - 1);
+            fine.water_surface[fidx] = val;
+        }
+
+        for (fx, &val) in back_values.iter().enumerate() {
+            fine.water_surface[fx] = val;
+        }
+
+        for (fx, &val) in front_values.iter().enumerate() {
+            let fidx = (fine.depth - 1) * fine.width + fx;
+            fine.water_surface[fidx] = val;
+        }
+    }
+
+    /// Simplified water flow update for fine region.
+    fn update_fine_water_flow(fine: &mut FineRegion, dt: f32, gravity: f32, damping_param: f32) {
+        let g = gravity;
+        let damping = 1.0 - damping_param;
+        let width = fine.width;
+        let depth = fine.depth;
+        let cell_size = fine.cell_size;
+        let cell_area = cell_size * cell_size;
+
+        // Ensure water surface >= ground
+        for z in 0..depth {
+            for x in 0..width {
+                let idx = fine.idx(x, z);
+                let ground = fine.ground_height(x, z);
+                if fine.water_surface[idx] < ground {
+                    fine.water_surface[idx] = ground;
+                }
+            }
+        }
+
+        let max_velocity = cell_size / dt * 0.5;
+
+        // Update X velocities
+        for z in 0..depth {
+            for x in 1..width {
+                let flow_idx = fine.flow_x_idx(x, z);
+                let idx_l = fine.idx(x - 1, z);
+                let idx_r = fine.idx(x, z);
+
+                let h_l = fine.water_surface[idx_l];
+                let h_r = fine.water_surface[idx_r];
+
+                let depth_l = fine.water_depth(x - 1, z);
+                let depth_r = fine.water_depth(x, z);
+
+                if depth_l < 0.001 && depth_r < 0.001 {
+                    fine.water_flow_x[flow_idx] = 0.0;
+                    continue;
+                }
+
+                let gradient = (h_l - h_r) / cell_size;
+                fine.water_flow_x[flow_idx] += g * gradient * dt;
+                fine.water_flow_x[flow_idx] *= damping;
+                fine.water_flow_x[flow_idx] =
+                    fine.water_flow_x[flow_idx].clamp(-max_velocity, max_velocity);
+            }
+
+            // Boundary velocities
+            let idx0 = fine.flow_x_idx(0, z);
+            let idx_width = fine.flow_x_idx(width, z);
+            fine.water_flow_x[idx0] = 0.0;
+            fine.water_flow_x[idx_width] = 0.0;
+        }
+
+        // Update Z velocities
+        for z in 1..depth {
+            for x in 0..width {
+                let flow_idx = fine.flow_z_idx(x, z);
+                let idx_b = fine.idx(x, z - 1);
+                let idx_f = fine.idx(x, z);
+
+                let h_b = fine.water_surface[idx_b];
+                let h_f = fine.water_surface[idx_f];
+
+                let depth_b = fine.water_depth(x, z - 1);
+                let depth_f = fine.water_depth(x, z);
+
+                if depth_b < 0.001 && depth_f < 0.001 {
+                    fine.water_flow_z[flow_idx] = 0.0;
+                    continue;
+                }
+
+                let gradient = (h_b - h_f) / cell_size;
+                fine.water_flow_z[flow_idx] += g * gradient * dt;
+                fine.water_flow_z[flow_idx] *= damping;
+                fine.water_flow_z[flow_idx] =
+                    fine.water_flow_z[flow_idx].clamp(-max_velocity, max_velocity);
+            }
+        }
+
+        // Boundary Z velocities
+        for x in 0..width {
+            let idx0 = fine.flow_z_idx(x, 0);
+            let idx_depth = fine.flow_z_idx(x, depth);
+            fine.water_flow_z[idx0] = 0.0;
+            fine.water_flow_z[idx_depth] = 0.0;
+        }
+
+        // Volume update (simplified - no flux limiting for now)
+        fine.collapse_deltas.fill(0.0);
+
+        for z in 0..depth {
+            for x in 0..width {
+                let idx = z * width + x;
+
+                let depth_here = fine.water_depth(x, z);
+                let depth_left = if x > 0 { fine.water_depth(x - 1, z) } else { depth_here };
+                let depth_right = if x + 1 < width { fine.water_depth(x + 1, z) } else { depth_here };
+                let depth_back = if z > 0 { fine.water_depth(x, z - 1) } else { depth_here };
+                let depth_front = if z + 1 < depth { fine.water_depth(x, z + 1) } else { depth_here };
+
+                // Pre-compute flow indices to avoid borrow checker issues
+                let flow_x_left = z * (width + 1) + x;
+                let flow_x_right = z * (width + 1) + x + 1;
+                let flow_z_back = z * width + x;
+                let flow_z_front = (z + 1) * width + x;
+
+                let flux_left = fine.water_flow_x[flow_x_left] * 0.5 * (depth_left + depth_here);
+                let flux_right = fine.water_flow_x[flow_x_right] * 0.5 * (depth_right + depth_here);
+                let flux_back = fine.water_flow_z[flow_z_back] * 0.5 * (depth_back + depth_here);
+                let flux_front = fine.water_flow_z[flow_z_front] * 0.5 * (depth_front + depth_here);
+
+                let volume_change = (flux_left - flux_right + flux_back - flux_front) * cell_size * dt;
+                let height_change = volume_change / cell_area;
+                fine.collapse_deltas[idx] = height_change;
+            }
+        }
+
+        // Apply height changes
+        for z in 0..depth {
+            for x in 0..width {
+                let idx = z * width + x;
+                fine.water_surface[idx] += fine.collapse_deltas[idx];
+                let ground = fine.ground_height(x, z);
+                fine.water_surface[idx] = fine.water_surface[idx].max(ground);
+            }
+        }
+    }
+
+    /// Get ground height at world position, using fine region if available.
+    pub fn ground_height_at(&self, pos: Vec3) -> f32 {
+        if let Some(ref fine) = self.fine_region {
+            if let Some((fx, fz)) = fine.world_to_local(pos, self.cell_size) {
+                return fine.ground_height(fx, fz);
+            }
+        }
+
+        // Fall back to coarse
+        if let Some((cx, cz)) = self.world_to_cell(pos) {
+            self.ground_height(cx, cz)
+        } else {
+            0.0
+        }
+    }
+
+    /// Get water depth at world position, using fine region if available.
+    pub fn water_depth_at(&self, pos: Vec3) -> f32 {
+        if let Some(ref fine) = self.fine_region {
+            if let Some((fx, fz)) = fine.world_to_local(pos, self.cell_size) {
+                return fine.water_depth(fx, fz);
+            }
+        }
+
+        // Fall back to coarse
+        if let Some((cx, cz)) = self.world_to_cell(pos) {
+            self.water_depth(cx, cz)
+        } else {
+            0.0
+        }
+    }
+
+    /// Get terrain and water vertices for the fine region (for rendering).
+    pub fn fine_region_terrain_vertices(&self) -> Option<(Vec<[f32; 3]>, Vec<[f32; 3]>)> {
+        let fine = self.fine_region.as_ref()?;
+
+        let origin_x = fine.coarse_x_min as f32 * self.cell_size;
+        let origin_z = fine.coarse_z_min as f32 * self.cell_size;
+
+        let mut positions = Vec::with_capacity(fine.width * fine.depth);
+        let mut colors = Vec::with_capacity(fine.width * fine.depth);
+
+        for z in 0..fine.depth {
+            for x in 0..fine.width {
+                let height = fine.ground_height(x, z);
+
+                positions.push([
+                    origin_x + (x as f32 + 0.5) * fine.cell_size,
+                    height,
+                    origin_z + (z as f32 + 0.5) * fine.cell_size,
+                ]);
+
+                // Simple brown color for terrain
+                colors.push([0.45, 0.35, 0.25]);
+            }
+        }
+
+        Some((positions, colors))
+    }
+
+    /// Get water vertices for the fine region.
+    pub fn fine_region_water_vertices(&self) -> Option<(Vec<[f32; 3]>, Vec<[f32; 4]>)> {
+        let fine = self.fine_region.as_ref()?;
+
+        let origin_x = fine.coarse_x_min as f32 * self.cell_size;
+        let origin_z = fine.coarse_z_min as f32 * self.cell_size;
+
+        let mut positions = Vec::new();
+        let mut colors = Vec::new();
+
+        for z in 0..fine.depth {
+            for x in 0..fine.width {
+                let depth = fine.water_depth(x, z);
+                if depth < 0.01 {
+                    continue;
+                }
+
+                let idx = fine.idx(x, z);
+                let height = fine.water_surface[idx];
+                let turbidity = fine.suspended_sediment[idx];
+
+                positions.push([
+                    origin_x + (x as f32 + 0.5) * fine.cell_size,
+                    height,
+                    origin_z + (z as f32 + 0.5) * fine.cell_size,
+                ]);
+
+                let alpha = (depth / 2.0).min(0.8);
+                let brown = turbidity.min(0.5) * 2.0;
+
+                colors.push([
+                    0.2 + brown * 0.4,
+                    0.4 + brown * 0.2,
+                    0.8 - brown * 0.4,
+                    alpha,
+                ]);
+            }
+        }
+
+        Some((positions, colors))
     }
 }
 
