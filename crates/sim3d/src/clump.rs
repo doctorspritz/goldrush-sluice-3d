@@ -267,18 +267,25 @@ impl ClusterSimulation3D {
 
     /// Step with SDF collision - particles collide with solid geometry defined by SDF
     pub fn step_with_sdf(&mut self, dt: f32, sdf_params: &SdfParams) {
-        if self.use_dem {
-            self.step_dem_internal(dt, Some(sdf_params));
-        } else {
-            for clump in &mut self.clumps {
-                clump.velocity += self.gravity * dt;
-                clump.position += clump.velocity * dt;
-                let delta = Quat::from_scaled_axis(clump.angular_velocity * dt);
-                clump.rotation = (delta * clump.rotation).normalize();
-            }
+        // Use substeps for stability. With stiffness k=6000 and mass m=0.025kg,
+        // critical timestep is ~0.004s. Using 8 substeps gives sub_dt ~0.002s.
+        let substeps = 8;
+        let sub_dt = dt / substeps as f32;
 
-            self.resolve_bounds();
-            self.resolve_clump_contacts();
+        for _ in 0..substeps {
+            if self.use_dem {
+                self.step_dem_internal(sub_dt, Some(sdf_params));
+            } else {
+                for clump in &mut self.clumps {
+                    clump.velocity += self.gravity * sub_dt;
+                    clump.position += clump.velocity * sub_dt;
+                    let delta = Quat::from_scaled_axis(clump.angular_velocity * sub_dt);
+                    clump.rotation = (delta * clump.rotation).normalize();
+                }
+
+                self.resolve_bounds();
+                self.resolve_clump_contacts();
+            }
         }
     }
 
@@ -862,15 +869,10 @@ impl ClusterSimulation3D {
             }
         }
 
-        let pre_correction: Vec<Vec3> = self.clumps.iter().map(|clump| clump.position).collect();
         self.resolve_dem_penetrations(6);
         self.resolve_bounds_positions();
-        if dt > 0.0 {
-            for (clump, prev) in self.clumps.iter_mut().zip(pre_correction) {
-                let correction = clump.position - prev;
-                clump.velocity += correction / dt;
-            }
-        }
+        // Position corrections are NOT converted to velocity - this was causing explosions
+        // when clumps overlapped. Pure position-based dynamics for penetration resolution.
 
         self.sphere_contacts = new_sphere_contacts;
         self.plane_contacts = new_plane_contacts;
