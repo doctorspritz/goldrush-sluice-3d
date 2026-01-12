@@ -317,15 +317,20 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         let water_vel = water_velocity;  // Water-only velocity from grid
         let particle_vel = old_particle_vel;
 
-        // Drag force: accelerate toward water velocity
-        // Heavy particles feel the SAME drag force, but their higher mass means
-        // less acceleration (F=ma). However, in our model we don't track forces,
-        // we track velocity blending rate. The correct physics is:
-        // - Drag force F_d = 0.5 * C_d * rho_water * A * v_rel^2 (same for all particles)
-        // - Acceleration a = F_d / m = F_d / (rho_particle * V)
-        // - So acceleration scales as 1/density
-        // This is correct: heavier particles respond slower to drag.
-        var drag_rate = sediment_params.drag_coefficient / density;
+        // CORRECTED DRAG MODEL FOR SETTLING
+        // The goal: heavy particles settle upstream, light particles wash downstream.
+        //
+        // Key insight: in a sluice, SETTLING happens while particles are in the water
+        // column, not after they hit the floor. Heavy particles sink fast and land
+        // upstream; light particles drift downstream as they slowly sink.
+        //
+        // Problem with 1/density drag scaling: once particles hit the floor, heavy
+        // particles slide (low drag) while light particles stick (high drag). WRONG!
+        //
+        // Fix: use UNIFORM drag for all particles. The separation happens during
+        // settling through the water column, not during floor sliding.
+
+        var drag_rate = sediment_params.drag_coefficient;  // Same drag for all!
         if (is_gold) {
             drag_rate *= sediment_params.gold_drag_multiplier;
         }
@@ -334,22 +339,21 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         // Blend particle velocity toward water velocity (drag entrainment)
         var vel_after_drag = mix(particle_vel, water_vel, drag_blend);
 
-        // Settling: gravity pulls particles DOWN through the water.
-        // Net downward force = (particle_weight - buoyancy) = V * g * (rho_p - rho_w)
-        // Acceleration = force/mass = g * (rho_p - rho_w) / rho_p = g * (1 - 1/density)
-        // For gold (19.3): settling_accel = 9.8 * (1 - 1/19.3) = 9.3 m/s² (fast settling)
-        // For sand (2.65): settling_accel = 9.8 * (1 - 1/2.65) = 6.1 m/s² (slower settling)
-        let settling_accel = 9.8 * (1.0 - 1.0 / density);
-        vel_after_drag.y -= settling_accel * params.dt;
+        // SETTLING: This is where density matters!
+        // Heavy particles sink faster, landing upstream before the flow carries them.
+        // Light particles sink slowly, drifting downstream as they fall.
+        //
+        // Terminal velocity in water ~ sqrt((rho_p - rho_w) * g * d / (C_d * rho_w))
+        // For settling, use (density - 1) as the driving factor.
+        // Gold (19.3): effective weight = 18.3 units → sinks FAST
+        // Sand (2.65): effective weight = 1.65 units → sinks slower (~11x slower)
 
-        // But wait - we also need to model terminal velocity! Settling velocity
-        // is limited by drag. At terminal velocity: drag_up = weight_down
-        // For now, use a simple clamp based on Stokes law approximation:
-        // Terminal velocity ~ (density - 1) * g * r^2 / (18 * viscosity)
-        // Simplified: v_terminal ~ 0.1 * (density - 1) m/s for ~1cm particles
-        let v_terminal = 0.1 * (density - 1.0);
-        if (vel_after_drag.y < -v_terminal) {
-            vel_after_drag.y = -v_terminal;
+        let settling_velocity = sediment_params.settling_velocity * (density - 1.0);
+        if (is_gold) {
+            // Gold sinks even faster (it's dense and compact)
+            vel_after_drag.y -= settling_velocity * 2.0;
+        } else {
+            vel_after_drag.y -= settling_velocity;
         }
 
         final_velocity = vel_after_drag;

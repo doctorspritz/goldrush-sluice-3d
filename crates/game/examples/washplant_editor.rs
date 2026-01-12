@@ -27,7 +27,8 @@
 
 use bytemuck::{Pod, Zeroable};
 use game::editor::{
-    EditorLayout, EditorMode, EmitterPiece, GutterPiece, Rotation, Selection, SluicePiece,
+    EditorLayout, EditorMode, EmitterPiece, GutterPiece, Rotation, Selection, ShakerDeckPiece,
+    SluicePiece,
 };
 use game::gpu::flip_3d::GpuFlip3D;
 use game::gpu::fluid_renderer::ScreenSpaceFluidRenderer;
@@ -92,6 +93,8 @@ const SLUICE_COLOR: [f32; 4] = [0.3, 0.5, 0.7, 1.0];
 const SLUICE_SELECTED: [f32; 4] = [0.4, 0.7, 0.9, 1.0];
 const EMITTER_COLOR: [f32; 4] = [0.2, 0.6, 0.9, 1.0];
 const EMITTER_SELECTED: [f32; 4] = [0.4, 0.8, 1.0, 1.0];
+const SHAKER_COLOR: [f32; 4] = [0.6, 0.5, 0.3, 1.0];
+const SHAKER_SELECTED: [f32; 4] = [0.8, 0.7, 0.4, 1.0];
 const PREVIEW_COLOR: [f32; 4] = [0.5, 0.8, 0.5, 0.7];
 const GRID_COLOR: [f32; 4] = [0.3, 0.3, 0.3, 0.5];
 
@@ -669,8 +672,8 @@ impl MultiGridSim {
         });
     }
 
-    /// Emit particles into a specific piece
-    fn emit_into_piece(&mut self, piece_idx: usize, world_pos: Vec3, velocity: Vec3, count: usize) {
+    /// Emit particles with specific density into a piece
+    fn emit_into_piece_with_density(&mut self, piece_idx: usize, world_pos: Vec3, velocity: Vec3, density: f32, count: usize) {
         if piece_idx >= self.pieces.len() {
             return;
         }
@@ -679,7 +682,6 @@ impl MultiGridSim {
         let sim_pos = world_pos - piece.grid_offset;
 
         for _ in 0..count {
-            // Small random spread
             let spread = 0.01;
             let offset = Vec3::new(
                 (rand_float() - 0.5) * spread,
@@ -690,11 +692,15 @@ impl MultiGridSim {
             piece.positions.push(sim_pos + offset);
             piece.velocities.push(velocity);
             piece.affine_vels.push(Mat3::ZERO);
-            piece.densities.push(1.0);
+            piece.densities.push(density);
 
-            // Also add to CPU sim
             piece.sim.particles.spawn(sim_pos + offset, velocity);
         }
+    }
+
+    /// Emit water particles (density = 1.0)
+    fn emit_into_piece(&mut self, piece_idx: usize, world_pos: Vec3, velocity: Vec3, count: usize) {
+        self.emit_into_piece_with_density(piece_idx, world_pos, velocity, 1.0, count);
     }
 
     /// Step all piece simulations
@@ -973,6 +979,7 @@ struct App {
     preview_gutter: GutterPiece,
     preview_sluice: SluicePiece,
     preview_emitter: EmitterPiece,
+    preview_shaker_deck: ShakerDeckPiece,
 
     // Camera state
     camera_yaw: f32,
@@ -1067,6 +1074,7 @@ impl App {
             preview_gutter: GutterPiece::default(),
             preview_sluice: SluicePiece::default(),
             preview_emitter: EmitterPiece::default(),
+            preview_shaker_deck: ShakerDeckPiece::default(),
             camera_yaw: 0.5,
             camera_pitch: 0.6,
             camera_distance: 5.0,
@@ -1107,11 +1115,13 @@ impl App {
             EditorMode::PlaceGutter => "PLACE GUTTER",
             EditorMode::PlaceSluice => "PLACE SLUICE",
             EditorMode::PlaceEmitter => "PLACE EMITTER",
+            EditorMode::PlaceShakerDeck => "PLACE SHAKER DECK",
         };
         let sel_str = match self.selection {
             Selection::None => "none".to_string(),
             Selection::Gutter(i) => format!("Gutter #{}", i),
             Selection::Sluice(i) => format!("Sluice #{}", i),
+            Selection::ShakerDeck(i) => format!("ShakerDeck #{}", i),
             Selection::Emitter(i) => format!("Emitter #{}", i),
         };
         println!(
@@ -1664,6 +1674,11 @@ impl App {
                 self.selection = Selection::None;
                 println!("Mode: PLACE EMITTER (arrows to position, R to rotate, Enter to place)");
             }
+            KeyCode::Digit4 => {
+                self.mode = EditorMode::PlaceShakerDeck;
+                self.selection = Selection::None;
+                println!("Mode: PLACE SHAKER DECK (arrows to position, R to rotate, Enter to place)");
+            }
             KeyCode::Escape => {
                 if self.mode != EditorMode::Select {
                     self.mode = EditorMode::Select;
@@ -1711,6 +1726,18 @@ impl App {
                         // Reset preview for next placement
                         self.preview_emitter = EmitterPiece::default();
                     }
+                    EditorMode::PlaceShakerDeck => {
+                        let mut deck = self.preview_shaker_deck.clone();
+                        deck.id = self.layout.next_id();
+                        let pos = deck.position;
+                        self.layout.shaker_decks.push(deck);
+                        let idx = self.layout.shaker_decks.len() - 1;
+                        self.selection = Selection::ShakerDeck(idx);
+                        self.mode = EditorMode::Select;
+                        println!("Placed ShakerDeck #{} at {:?}", idx, pos);
+                        // Reset preview for next placement
+                        self.preview_shaker_deck = ShakerDeckPiece::default();
+                    }
                     EditorMode::Select => {}
                 }
                 self.print_status();
@@ -1731,6 +1758,11 @@ impl App {
                         self.layout.remove_emitter(idx);
                         self.selection = Selection::None;
                         println!("Removed emitter");
+                    }
+                    Selection::ShakerDeck(idx) => {
+                        self.layout.remove_shaker_deck(idx);
+                        self.selection = Selection::None;
+                        println!("Removed shaker deck");
                     }
                     Selection::None => {}
                 }
@@ -1889,6 +1921,10 @@ impl App {
                 self.preview_emitter.translate(delta);
                 // Emitters don't snap (they emit into gutters from above)
             }
+            EditorMode::PlaceShakerDeck => {
+                self.preview_shaker_deck.translate(delta);
+                // Shaker decks don't snap for now
+            }
             EditorMode::Select => match self.selection {
                 Selection::Gutter(idx) => {
                     if let Some(g) = self.layout.gutters.get_mut(idx) {
@@ -1911,6 +1947,12 @@ impl App {
                         e.translate(delta);
                     }
                     // Emitters don't snap
+                }
+                Selection::ShakerDeck(idx) => {
+                    if let Some(d) = self.layout.shaker_decks.get_mut(idx) {
+                        d.translate(delta);
+                    }
+                    // Shaker decks don't snap for now
                 }
                 Selection::None => {}
             },
@@ -2073,6 +2115,13 @@ impl App {
                     self.preview_emitter.rotation.degrees()
                 );
             }
+            EditorMode::PlaceShakerDeck => {
+                self.preview_shaker_deck.rotate_cw();
+                println!(
+                    "Preview rotation: {}°",
+                    self.preview_shaker_deck.rotation.degrees()
+                );
+            }
             EditorMode::Select => match self.selection {
                 Selection::Gutter(idx) => {
                     if let Some(g) = self.layout.gutters.get_mut(idx) {
@@ -2090,6 +2139,12 @@ impl App {
                     if let Some(e) = self.layout.emitters.get_mut(idx) {
                         e.rotate_cw();
                         println!("Emitter rotation: {}°", e.rotation.degrees());
+                    }
+                }
+                Selection::ShakerDeck(idx) => {
+                    if let Some(d) = self.layout.shaker_decks.get_mut(idx) {
+                        d.rotate_cw();
+                        println!("ShakerDeck rotation: {}°", d.rotation.degrees());
                     }
                 }
                 Selection::None => {}
@@ -2120,6 +2175,13 @@ impl App {
                     self.preview_emitter.rotation.degrees()
                 );
             }
+            EditorMode::PlaceShakerDeck => {
+                self.preview_shaker_deck.rotate_ccw();
+                println!(
+                    "Preview rotation: {}°",
+                    self.preview_shaker_deck.rotation.degrees()
+                );
+            }
             EditorMode::Select => match self.selection {
                 Selection::Gutter(idx) => {
                     if let Some(g) = self.layout.gutters.get_mut(idx) {
@@ -2137,6 +2199,12 @@ impl App {
                     if let Some(e) = self.layout.emitters.get_mut(idx) {
                         e.rotate_ccw();
                         println!("Emitter rotation: {}°", e.rotation.degrees());
+                    }
+                }
+                Selection::ShakerDeck(idx) => {
+                    if let Some(d) = self.layout.shaker_decks.get_mut(idx) {
+                        d.rotate_ccw();
+                        println!("ShakerDeck rotation: {}°", d.rotation.degrees());
                     }
                 }
                 Selection::None => {}
@@ -2158,6 +2226,10 @@ impl App {
                 self.preview_emitter.adjust_spread(delta);
                 println!("Preview spread: {:.1}°", self.preview_emitter.spread_deg);
             }
+            EditorMode::PlaceShakerDeck => {
+                self.preview_shaker_deck.adjust_angle(delta);
+                println!("Preview tilt: {:.1}°", self.preview_shaker_deck.tilt_deg);
+            }
             EditorMode::Select => match self.selection {
                 Selection::Gutter(idx) => {
                     if let Some(g) = self.layout.gutters.get_mut(idx) {
@@ -2175,6 +2247,12 @@ impl App {
                     if let Some(e) = self.layout.emitters.get_mut(idx) {
                         e.adjust_spread(delta);
                         println!("Emitter spread: {:.1}°", e.spread_deg);
+                    }
+                }
+                Selection::ShakerDeck(idx) => {
+                    if let Some(d) = self.layout.shaker_decks.get_mut(idx) {
+                        d.adjust_angle(delta);
+                        println!("ShakerDeck tilt: {:.1}°", d.tilt_deg);
                     }
                 }
                 Selection::None => {}
@@ -2196,6 +2274,10 @@ impl App {
                 self.preview_emitter.adjust_velocity(delta);
                 println!("Preview velocity: {:.2}m/s", self.preview_emitter.velocity);
             }
+            EditorMode::PlaceShakerDeck => {
+                self.preview_shaker_deck.adjust_length(delta);
+                println!("Preview length: {:.2}m", self.preview_shaker_deck.length);
+            }
             EditorMode::Select => match self.selection {
                 Selection::Gutter(idx) => {
                     if let Some(g) = self.layout.gutters.get_mut(idx) {
@@ -2213,6 +2295,12 @@ impl App {
                     if let Some(e) = self.layout.emitters.get_mut(idx) {
                         e.adjust_velocity(delta);
                         println!("Emitter velocity: {:.2}m/s", e.velocity);
+                    }
+                }
+                Selection::ShakerDeck(idx) => {
+                    if let Some(d) = self.layout.shaker_decks.get_mut(idx) {
+                        d.adjust_length(delta);
+                        println!("ShakerDeck length: {:.2}m", d.length);
                     }
                 }
                 Selection::None => {}
@@ -2234,6 +2322,10 @@ impl App {
                 self.preview_emitter.adjust_width(delta);
                 println!("Preview width: {:.2}m", self.preview_emitter.width);
             }
+            EditorMode::PlaceShakerDeck => {
+                self.preview_shaker_deck.adjust_width(delta);
+                println!("Preview width: {:.2}m", self.preview_shaker_deck.width);
+            }
             EditorMode::Select => match self.selection {
                 Selection::Gutter(idx) => {
                     if let Some(g) = self.layout.gutters.get_mut(idx) {
@@ -2253,6 +2345,12 @@ impl App {
                         println!("Emitter width: {:.2}m", e.width);
                     }
                 }
+                Selection::ShakerDeck(idx) => {
+                    if let Some(d) = self.layout.shaker_decks.get_mut(idx) {
+                        d.adjust_width(delta);
+                        println!("ShakerDeck width: {:.2}m", d.width);
+                    }
+                }
                 Selection::None => {}
             },
         }
@@ -2268,7 +2366,7 @@ impl App {
                     self.preview_gutter.width, self.preview_gutter.end_width
                 );
             }
-            EditorMode::PlaceSluice | EditorMode::PlaceEmitter => {
+            EditorMode::PlaceSluice | EditorMode::PlaceEmitter | EditorMode::PlaceShakerDeck => {
                 println!("End width only applies to gutters");
             }
             EditorMode::Select => match self.selection {
@@ -2278,7 +2376,7 @@ impl App {
                         println!("Gutter: width {:.2}m -> {:.2}m", g.width, g.end_width);
                     }
                 }
-                Selection::Sluice(_) | Selection::Emitter(_) => {
+                Selection::Sluice(_) | Selection::Emitter(_) | Selection::ShakerDeck(_) => {
                     println!("End width only applies to gutters");
                 }
                 Selection::None => {}
@@ -2295,12 +2393,14 @@ impl App {
 
         let num_gutters = self.layout.gutters.len();
         let num_sluices = self.layout.sluices.len();
+        let num_emitters = self.layout.emitters.len();
 
         let current_idx = match self.selection {
             Selection::None => 0,
             Selection::Gutter(i) => i + 1,
             Selection::Sluice(i) => num_gutters + i + 1,
             Selection::Emitter(i) => num_gutters + num_sluices + i + 1,
+            Selection::ShakerDeck(i) => num_gutters + num_sluices + num_emitters + i + 1,
         };
 
         let next_idx = current_idx % total;
@@ -2312,10 +2412,14 @@ impl App {
             let sluice_idx = next_idx - num_gutters;
             self.selection = Selection::Sluice(sluice_idx);
             println!("Selected Sluice #{}", sluice_idx);
-        } else {
+        } else if next_idx < num_gutters + num_sluices + num_emitters {
             let emitter_idx = next_idx - num_gutters - num_sluices;
             self.selection = Selection::Emitter(emitter_idx);
             println!("Selected Emitter #{}", emitter_idx);
+        } else {
+            let deck_idx = next_idx - num_gutters - num_sluices - num_emitters;
+            self.selection = Selection::ShakerDeck(deck_idx);
+            println!("Selected ShakerDeck #{}", deck_idx);
         }
     }
 
@@ -2717,6 +2821,136 @@ impl App {
         (vertices, indices)
     }
 
+    fn build_shaker_deck_mesh(
+        &self,
+        deck: &ShakerDeckPiece,
+        color: [f32; 4],
+    ) -> (Vec<SluiceVertex>, Vec<u32>) {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        let pos = deck.position;
+        let rot = deck.rotation.radians();
+        let half_len = deck.length / 2.0;
+        let half_wid = deck.width / 2.0;
+        let wall_h = deck.wall_height;
+        let half_drop = deck.height_drop() / 2.0;
+
+        let transform = |x: f32, y: f32, z: f32| -> [f32; 3] {
+            let rx = x * rot.cos() - z * rot.sin();
+            let rz = x * rot.sin() + z * rot.cos();
+            [pos.x + rx, pos.y + y, pos.z + rz]
+        };
+
+        // Frame/rim color
+        let frame_color = [color[0] * 0.7, color[1] * 0.7, color[2] * 0.7, color[3]];
+
+        // Draw the grid surface as bars (representing the screen mesh)
+        let grid_color = [color[0] * 0.9, color[1] * 0.9, color[2] * 0.9, color[3]];
+        let bar_spacing = deck.hole_size + deck.bar_thickness;
+        let num_bars_x = (deck.length / bar_spacing).ceil() as i32;
+        let num_bars_z = (deck.width / bar_spacing).ceil() as i32;
+        let bar_height = 0.005_f32; // Thin bars
+
+        // Longitudinal bars (along length)
+        for i in 0..=num_bars_z {
+            let z = -half_wid + (i as f32) * bar_spacing;
+            if z > half_wid {
+                break;
+            }
+            let base = vertices.len() as u32;
+
+            // Bar as a thin quad
+            vertices.push(SluiceVertex::new(
+                transform(-half_len, half_drop, z),
+                grid_color,
+            ));
+            vertices.push(SluiceVertex::new(
+                transform(-half_len, half_drop + bar_height, z),
+                grid_color,
+            ));
+            vertices.push(SluiceVertex::new(
+                transform(half_len, -half_drop + bar_height, z),
+                grid_color,
+            ));
+            vertices.push(SluiceVertex::new(
+                transform(half_len, -half_drop, z),
+                grid_color,
+            ));
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+
+        // Cross bars (along width) - fewer for visual clarity
+        let cross_spacing = bar_spacing * 3.0;
+        let num_cross = (deck.length / cross_spacing).ceil() as i32;
+        for i in 0..=num_cross {
+            let x = -half_len + (i as f32) * cross_spacing;
+            if x > half_len {
+                break;
+            }
+            let y_at_x = half_drop - (x + half_len) / deck.length * deck.height_drop();
+            let base = vertices.len() as u32;
+
+            vertices.push(SluiceVertex::new(
+                transform(x, y_at_x, -half_wid),
+                grid_color,
+            ));
+            vertices.push(SluiceVertex::new(
+                transform(x, y_at_x + bar_height, -half_wid),
+                grid_color,
+            ));
+            vertices.push(SluiceVertex::new(
+                transform(x, y_at_x + bar_height, half_wid),
+                grid_color,
+            ));
+            vertices.push(SluiceVertex::new(
+                transform(x, y_at_x, half_wid),
+                grid_color,
+            ));
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+
+        // Side walls (left and right)
+        let left_verts = [
+            transform(-half_len, half_drop, -half_wid),
+            transform(-half_len, half_drop + wall_h, -half_wid),
+            transform(half_len, -half_drop + wall_h, -half_wid),
+            transform(half_len, -half_drop, -half_wid),
+        ];
+        let base = vertices.len() as u32;
+        for v in &left_verts {
+            vertices.push(SluiceVertex::new(*v, frame_color));
+        }
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+
+        let right_verts = [
+            transform(-half_len, half_drop, half_wid),
+            transform(-half_len, half_drop + wall_h, half_wid),
+            transform(half_len, -half_drop + wall_h, half_wid),
+            transform(half_len, -half_drop, half_wid),
+        ];
+        let base = vertices.len() as u32;
+        for v in &right_verts {
+            vertices.push(SluiceVertex::new(*v, frame_color));
+        }
+        indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+
+        // Back wall (inlet end)
+        let back_verts = [
+            transform(-half_len, half_drop, -half_wid),
+            transform(-half_len, half_drop + wall_h, -half_wid),
+            transform(-half_len, half_drop + wall_h, half_wid),
+            transform(-half_len, half_drop, half_wid),
+        ];
+        let base = vertices.len() as u32;
+        for v in &back_verts {
+            vertices.push(SluiceVertex::new(*v, frame_color));
+        }
+        indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+
+        (vertices, indices)
+    }
+
     fn build_grid_mesh(&self) -> (Vec<SluiceVertex>, Vec<u32>) {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
@@ -2925,6 +3159,19 @@ impl App {
             all_indices.extend(inds.iter().map(|i| i + base));
         }
 
+        // Shaker Decks
+        for (idx, deck) in self.layout.shaker_decks.iter().enumerate() {
+            let color = if matches!(self.selection, Selection::ShakerDeck(i) if i == idx) {
+                SHAKER_SELECTED
+            } else {
+                SHAKER_COLOR
+            };
+            let (verts, inds) = self.build_shaker_deck_mesh(deck, color);
+            let base = all_vertices.len() as u32;
+            all_vertices.extend(verts);
+            all_indices.extend(inds.iter().map(|i| i + base));
+        }
+
         // Preview piece
         match self.mode {
             EditorMode::PlaceGutter => {
@@ -2941,6 +3188,13 @@ impl App {
             }
             EditorMode::PlaceEmitter => {
                 let (verts, inds) = self.build_emitter_mesh(&self.preview_emitter, PREVIEW_COLOR);
+                let base = all_vertices.len() as u32;
+                all_vertices.extend(verts);
+                all_indices.extend(inds.iter().map(|i| i + base));
+            }
+            EditorMode::PlaceShakerDeck => {
+                let (verts, inds) =
+                    self.build_shaker_deck_mesh(&self.preview_shaker_deck, PREVIEW_COLOR);
                 let base = all_vertices.len() as u32;
                 all_vertices.extend(verts);
                 all_indices.extend(inds.iter().map(|i| i + base));

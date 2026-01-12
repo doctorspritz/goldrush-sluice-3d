@@ -203,37 +203,6 @@ impl App {
         }
     }
 
-    fn inject_silty_water(&mut self, dt: f32) {
-        // Add water and suspended sediment at the inflow point
-        let (ix, iz) = self.inflow_position;
-        let cell_area = CELL_SIZE * CELL_SIZE;
-
-        // Volume of water this frame
-        let water_volume = self.inflow_rate * dt;
-        let water_depth_add = water_volume / cell_area;
-
-        // Sediment concentration (kg/m³ typical for wash plant effluent)
-        let sediment_concentration = 2.0; // 2 kg/m³ of suspended silt
-        let sediment_mass = water_volume * sediment_concentration;
-
-        // Spread inflow over a small area (3x3 cells)
-        for dz in -1i32..=1 {
-            for dx in -1i32..=1 {
-                let x = (ix as i32 + dx) as usize;
-                let z = (iz as i32 + dz) as usize;
-                if x < WORLD_WIDTH && z < WORLD_DEPTH {
-                    let idx = z * WORLD_WIDTH + x;
-                    // Weight by distance from center
-                    let weight = if dx == 0 && dz == 0 { 0.4 } else { 0.075 };
-                    // water_surface is absolute, so add to current surface
-                    self.world.water_surface[idx] += water_depth_add * weight;
-                    self.world.suspended_sediment[idx] += sediment_mass * weight / cell_area;
-                }
-            }
-        }
-
-        self.total_inflow += water_volume;
-    }
 }
 
 impl ApplicationHandler for App {
@@ -360,24 +329,35 @@ impl ApplicationHandler for App {
 
                 let sim_dt = 0.016;
 
-                // Inject silty water from wash plant (before borrowing heightfield)
-                self.inject_silty_water(sim_dt);
-
                 let device = self.device.as_ref().unwrap();
                 let queue = self.queue.as_ref().unwrap();
                 let surface = self.surface.as_ref().unwrap();
                 let hf = self.heightfield.as_mut().unwrap();
 
-                // Upload water/sediment changes
-                hf.upload_from_world(queue, &self.world);
-
                 // CRITICAL: Update simulation parameters (dt, cell_size, gravity, damping)
-                // Without this, the simulation has garbage values and won't work!
                 hf.update_params(queue, sim_dt);
+
+                // Use emitter to inject water at inflow point instead of overwriting all buffers!
+                // Position in world coordinates
+                let (ix, iz) = self.inflow_position;
+                let pos_x = ix as f32 * CELL_SIZE;
+                let pos_z = iz as f32 * CELL_SIZE;
+                hf.update_emitter(
+                    queue,
+                    pos_x,
+                    pos_z,
+                    2.0 * CELL_SIZE,       // radius
+                    self.inflow_rate,      // rate (m³/s -> converted to depth/s in shader)
+                    sim_dt,
+                    self.inflow_rate > 0.0, // enabled
+                );
 
                 // Create encoder for simulation
                 let mut encoder =
                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+                // Inject water via emitter
+                hf.dispatch_emitter(&mut encoder);
 
                 // Step heightfield simulation (SWE + erosion + collapse)
                 hf.dispatch_tile(&mut encoder, WORLD_WIDTH as u32, WORLD_DEPTH as u32);
