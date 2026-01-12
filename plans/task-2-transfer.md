@@ -1,3 +1,13 @@
+# Task 2: Transfer Zone Types
+
+**File to create:** `crates/game/src/washplant/transfer.rs`
+
+## Goal
+Define the TransferZone system for moving particles between stages.
+
+## Types to Implement
+
+```rust
 use glam::{Mat3, Vec3};
 
 /// Axis-aligned bounding box for capture region
@@ -13,12 +23,9 @@ impl AABB {
     }
 
     pub fn contains(&self, point: Vec3) -> bool {
-        point.x >= self.min.x
-            && point.x <= self.max.x
-            && point.y >= self.min.y
-            && point.y <= self.max.y
-            && point.z >= self.min.z
-            && point.z <= self.max.z
+        point.x >= self.min.x && point.x <= self.max.x &&
+        point.y >= self.min.y && point.y <= self.max.y &&
+        point.z >= self.min.z && point.z <= self.max.z
     }
 
     pub fn center(&self) -> Vec3 {
@@ -167,3 +174,15 @@ pub struct TransferStats {
     pub water_transferred: u64,
     pub sediment_transferred: u64,
 }
+```
+
+## Update mod.rs
+
+Add to `crates/game/src/washplant/mod.rs`:
+```rust
+mod transfer;
+pub use transfer::*;
+```
+
+## Testing
+Run `cargo check -p game` to verify compilation.

@@ -1919,6 +1919,384 @@ impl BaffleGeometryBuilder {
 }
 
 // ============================================================================
+// SHAKER DECK - Angled deck with grid of holes and side walls
+// ============================================================================
+
+#[derive(Clone, Debug)]
+pub struct ShakerConfig {
+    pub grid_width: usize,
+    pub grid_height: usize,
+    pub grid_depth: usize,
+    pub cell_size: f32,
+
+    /// Hole spacing in cells (center to center)
+    pub hole_spacing: usize,
+    /// Hole radius in cells
+    pub hole_radius: usize,
+    /// Deck thickness in cells
+    pub deck_thickness: usize,
+    /// Floor height at start (upstream, x=0)
+    pub floor_height_start: usize,
+    /// Floor height at end (downstream, x=max)
+    pub floor_height_end: usize,
+    /// Side wall height above deck in cells
+    pub wall_height: usize,
+    /// Side wall thickness in cells
+    pub wall_thickness: usize,
+    /// Gutter floor height at upstream end (lower, where it drains)
+    pub gutter_floor_start: usize,
+    /// Gutter floor height at downstream end (higher)
+    pub gutter_floor_end: usize,
+    /// Chute length at downstream end in cells (for deck overs)
+    pub chute_length: usize,
+    /// Gutter exit chute length at upstream end
+    pub gutter_chute_length: usize,
+
+    pub color_top: [f32; 4],
+    pub color_side: [f32; 4],
+    pub color_bottom: [f32; 4],
+    pub color_gutter: [f32; 4],
+}
+
+impl Default for ShakerConfig {
+    fn default() -> Self {
+        Self {
+            grid_width: 60,
+            grid_height: 50,
+            grid_depth: 30,
+            cell_size: 0.02,
+            hole_spacing: 4,
+            hole_radius: 1,
+            deck_thickness: 2,
+            floor_height_start: 35,  // Deck in upper portion
+            floor_height_end: 25,
+            wall_height: 10,
+            wall_thickness: 2,
+            gutter_floor_start: 3,   // Low at upstream (drains here)
+            gutter_floor_end: 10,    // Higher at downstream (slopes back)
+            chute_length: 8,         // Chute at downstream end for deck overs
+            gutter_chute_length: 6,  // Chute at upstream for gutter water
+            color_top: [0.5, 0.5, 0.55, 1.0],    // Metallic grey-blue
+            color_side: [0.4, 0.4, 0.45, 1.0],
+            color_bottom: [0.3, 0.3, 0.35, 1.0],
+            color_gutter: [0.35, 0.35, 0.4, 1.0], // Darker for gutter
+        }
+    }
+}
+
+impl ShakerConfig {
+    /// Get the deck floor height at a given x position (angled deck - high at start, low at end)
+    pub fn floor_height_at(&self, x: usize) -> usize {
+        let t = x as f32 / (self.grid_width - 1).max(1) as f32;
+        let height = self.floor_height_start as f32 * (1.0 - t) + self.floor_height_end as f32 * t;
+        height as usize
+    }
+
+    /// Get the gutter floor height at a given x position (angled - low at start, high at end)
+    /// This creates a slope that drains water back toward the upstream end (x=0)
+    pub fn gutter_floor_at(&self, x: usize) -> usize {
+        let t = x as f32 / (self.grid_width - 1).max(1) as f32;
+        let height = self.gutter_floor_start as f32 * (1.0 - t) + self.gutter_floor_end as f32 * t;
+        height as usize
+    }
+
+    /// Check if a cell is a hole in the deck
+    pub fn is_hole(&self, i: usize, k: usize) -> bool {
+        if self.hole_spacing == 0 || self.hole_radius == 0 {
+            return false;
+        }
+
+        // Find the center of the nearest hole in a grid pattern
+        let spacing = self.hole_spacing;
+        let offset_z = self.wall_thickness + self.hole_spacing / 2;
+
+        // Grid of holes with spacing
+        let hole_i = ((i + spacing / 2) / spacing) * spacing;
+        let hole_k = ((k.saturating_sub(offset_z) + spacing / 2) / spacing) * spacing + offset_z;
+
+        // Check if within radius (squared distance)
+        let di = (i as i32 - hole_i as i32).abs() as usize;
+        let dk = (k as i32 - hole_k as i32).abs() as usize;
+        let dist_sq = di * di + dk * dk;
+        let radius_sq = self.hole_radius * self.hole_radius;
+
+        dist_sq <= radius_sq
+    }
+
+    pub fn is_solid(&self, i: usize, j: usize, k: usize) -> bool {
+        let deck_floor_j = self.floor_height_at(i);
+        let deck_top = deck_floor_j + self.deck_thickness;
+        let wall_top = deck_top + self.wall_height;
+        let gutter_floor_j = self.gutter_floor_at(i);
+
+        // Side walls (full height from gutter to above deck)
+        let in_left_wall = k < self.wall_thickness;
+        let in_right_wall = k >= self.grid_depth - self.wall_thickness;
+
+        // Side walls extend from gutter floor to wall top
+        if (in_left_wall || in_right_wall) && j >= gutter_floor_j && j < wall_top {
+            return true;
+        }
+
+        // Angled gutter floor (solid floor below deck to catch water, slopes toward x=0)
+        if j == gutter_floor_j {
+            return true;
+        }
+
+        // Deck floor (with holes)
+        if j >= deck_floor_j && j < deck_top {
+            // Check if in interior deck area (not walls)
+            if k >= self.wall_thickness && k < self.grid_depth - self.wall_thickness {
+                // Check if NOT a hole
+                return !self.is_hole(i, k);
+            }
+            return true; // Wall regions are solid
+        }
+
+        // Downstream chute - back wall that directs deck overs down
+        if i >= self.grid_width - self.chute_length {
+            // Back wall of chute (closes off the downstream end)
+            if i == self.grid_width - 1 && j >= gutter_floor_j && j < wall_top {
+                return true;
+            }
+        }
+
+        // Upstream gutter exit chute - directs gutter water down to sluice
+        if i < self.gutter_chute_length {
+            // Front wall above gutter (blocks deck entry except at top)
+            if i == 0 {
+                // Solid wall from gutter floor up to deck floor (gutter exit below)
+                // Opening at bottom for gutter water to exit
+                if j >= gutter_floor_j + 2 && j < deck_floor_j {
+                    return true;
+                }
+                // Wall above deck for material containment
+                if j >= deck_top && j < wall_top {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+}
+
+pub struct ShakerGeometryBuilder {
+    config: ShakerConfig,
+    vertices: Vec<SluiceVertex>,
+    indices: Vec<u32>,
+    vertex_buffer: Option<wgpu::Buffer>,
+    index_buffer: Option<wgpu::Buffer>,
+}
+
+impl ShakerGeometryBuilder {
+    pub fn new(config: ShakerConfig) -> Self {
+        Self {
+            config,
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            vertex_buffer: None,
+            index_buffer: None,
+        }
+    }
+
+    pub fn config(&self) -> &ShakerConfig {
+        &self.config
+    }
+
+    pub fn solid_cells(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
+        let width = self.config.grid_width;
+        let height = self.config.grid_height;
+        let depth = self.config.grid_depth;
+
+        (0..depth).flat_map(move |k| {
+            (0..height).flat_map(move |j| {
+                (0..width).filter_map(move |i| {
+                    if self.config.is_solid(i, j, k) {
+                        Some((i, j, k))
+                    } else {
+                        None
+                    }
+                })
+            })
+        })
+    }
+
+    pub fn build_mesh<F>(&mut self, is_solid: F)
+    where
+        F: Fn(usize, usize, usize) -> bool,
+    {
+        self.vertices.clear();
+        self.indices.clear();
+
+        let width = self.config.grid_width;
+        let height = self.config.grid_height;
+        let depth = self.config.grid_depth;
+        let cs = self.config.cell_size;
+
+        let color_top = self.config.color_top;
+        let color_side = self.config.color_side;
+        let color_bottom = self.config.color_bottom;
+
+        for k in 0..depth {
+            for j in 0..height {
+                for i in 0..width {
+                    if !is_solid(i, j, k) {
+                        continue;
+                    }
+
+                    let x0 = i as f32 * cs;
+                    let x1 = (i + 1) as f32 * cs;
+                    let y0 = j as f32 * cs;
+                    let y1 = (j + 1) as f32 * cs;
+                    let z0 = k as f32 * cs;
+                    let z1 = (k + 1) as f32 * cs;
+
+                    // -X face
+                    if i == 0 || !is_solid(i - 1, j, k) {
+                        let base = self.vertices.len() as u32;
+                        self.vertices.extend_from_slice(&[
+                            SluiceVertex::new([x0, y0, z0], color_side),
+                            SluiceVertex::new([x0, y1, z0], color_side),
+                            SluiceVertex::new([x0, y1, z1], color_side),
+                            SluiceVertex::new([x0, y0, z1], color_side),
+                        ]);
+                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                    }
+
+                    // +X face
+                    if i == width - 1 || !is_solid(i + 1, j, k) {
+                        let base = self.vertices.len() as u32;
+                        self.vertices.extend_from_slice(&[
+                            SluiceVertex::new([x1, y0, z0], color_side),
+                            SluiceVertex::new([x1, y1, z0], color_side),
+                            SluiceVertex::new([x1, y1, z1], color_side),
+                            SluiceVertex::new([x1, y0, z1], color_side),
+                        ]);
+                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    }
+
+                    // -Y face
+                    if j == 0 || !is_solid(i, j - 1, k) {
+                        let base = self.vertices.len() as u32;
+                        self.vertices.extend_from_slice(&[
+                            SluiceVertex::new([x0, y0, z0], color_bottom),
+                            SluiceVertex::new([x1, y0, z0], color_bottom),
+                            SluiceVertex::new([x1, y0, z1], color_bottom),
+                            SluiceVertex::new([x0, y0, z1], color_bottom),
+                        ]);
+                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    }
+
+                    // +Y face
+                    if j == height - 1 || !is_solid(i, j + 1, k) {
+                        let base = self.vertices.len() as u32;
+                        self.vertices.extend_from_slice(&[
+                            SluiceVertex::new([x0, y1, z0], color_top),
+                            SluiceVertex::new([x1, y1, z0], color_top),
+                            SluiceVertex::new([x1, y1, z1], color_top),
+                            SluiceVertex::new([x0, y1, z1], color_top),
+                        ]);
+                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                    }
+
+                    // -Z face
+                    if k == 0 || !is_solid(i, j, k - 1) {
+                        let base = self.vertices.len() as u32;
+                        self.vertices.extend_from_slice(&[
+                            SluiceVertex::new([x0, y0, z0], color_side),
+                            SluiceVertex::new([x1, y0, z0], color_side),
+                            SluiceVertex::new([x1, y1, z0], color_side),
+                            SluiceVertex::new([x0, y1, z0], color_side),
+                        ]);
+                        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                    }
+
+                    // +Z face
+                    if k == depth - 1 || !is_solid(i, j, k + 1) {
+                        let base = self.vertices.len() as u32;
+                        self.vertices.extend_from_slice(&[
+                            SluiceVertex::new([x0, y0, z1], color_side),
+                            SluiceVertex::new([x1, y0, z1], color_side),
+                            SluiceVertex::new([x1, y1, z1], color_side),
+                            SluiceVertex::new([x0, y1, z1], color_side),
+                        ]);
+                        self.indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn vertices(&self) -> &[SluiceVertex] {
+        &self.vertices
+    }
+
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
+    pub fn num_indices(&self) -> u32 {
+        self.indices.len() as u32
+    }
+
+    pub fn upload(&mut self, device: &wgpu::Device) {
+        if self.vertices.is_empty() {
+            return;
+        }
+
+        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Shaker Vertex Buffer"),
+            contents: bytemuck::cast_slice(&self.vertices),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        }));
+
+        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Shaker Index Buffer"),
+            contents: bytemuck::cast_slice(&self.indices),
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+        }));
+    }
+
+    pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
+        if self.vertices.is_empty() {
+            return;
+        }
+
+        if self.vertex_buffer.is_none() {
+            self.upload(device);
+            return;
+        }
+
+        let vb = self.vertex_buffer.as_ref().unwrap();
+        let ib = self.index_buffer.as_ref().unwrap();
+
+        let vertex_bytes = bytemuck::cast_slice(&self.vertices);
+        let index_bytes = bytemuck::cast_slice(&self.indices);
+
+        if vb.size() >= vertex_bytes.len() as u64 && ib.size() >= index_bytes.len() as u64 {
+            queue.write_buffer(vb, 0, vertex_bytes);
+            queue.write_buffer(ib, 0, index_bytes);
+        } else {
+            self.upload(device);
+        }
+    }
+
+    pub fn vertex_buffer(&self) -> Option<&wgpu::Buffer> {
+        self.vertex_buffer.as_ref()
+    }
+
+    pub fn index_buffer(&self) -> Option<&wgpu::Buffer> {
+        self.index_buffer.as_ref()
+    }
+
+    pub fn clear(&mut self) {
+        self.vertices.clear();
+        self.indices.clear();
+    }
+}
+
+// ============================================================================
 // TESTS
 // ============================================================================
 

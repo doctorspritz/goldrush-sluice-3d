@@ -1,3 +1,13 @@
+# Task 3: Metrics Types
+
+**File to create:** `crates/game/src/washplant/metrics.rs`
+
+## Goal
+Define metrics tracking for washplant performance monitoring.
+
+## Types to Implement
+
+```rust
 use std::collections::VecDeque;
 use std::time::Instant;
 
@@ -5,7 +15,7 @@ use std::time::Instant;
 #[derive(Clone, Debug, Default)]
 pub struct StageMetrics {
     /// Stage name for display
-    pub name: String,
+    pub name: &'static str,
 
     /// Current particle counts
     pub total_particles: usize,
@@ -26,9 +36,9 @@ pub struct StageMetrics {
 }
 
 impl StageMetrics {
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(name: &'static str) -> Self {
         Self {
-            name: name.into(),
+            name,
             ..Default::default()
         }
     }
@@ -134,12 +144,9 @@ impl Default for PlantMetrics {
 }
 
 impl PlantMetrics {
-    pub fn new(stage_names: &[String]) -> Self {
+    pub fn new(stage_names: &[&'static str]) -> Self {
         Self {
-            stages: stage_names
-                .iter()
-                .map(|name| StageMetrics::new(name.clone()))
-                .collect(),
+            stages: stage_names.iter().map(|&name| StageMetrics::new(name)).collect(),
             start_time: Some(Instant::now()),
             last_fps_update: Some(Instant::now()),
             ..Default::default()
@@ -202,13 +209,21 @@ impl PlantMetrics {
     pub fn format_stages(&self) -> String {
         self.stages
             .iter()
-            .map(|s| {
-                format!(
-                    "{}: {} (W:{} S:{})",
-                    s.name, s.total_particles, s.water_particles, s.sediment_particles
-                )
-            })
+            .map(|s| format!("{}: {} (W:{} S:{})",
+                s.name, s.total_particles, s.water_particles, s.sediment_particles))
             .collect::<Vec<_>>()
             .join(" | ")
     }
 }
+```
+
+## Update mod.rs
+
+Add to `crates/game/src/washplant/mod.rs`:
+```rust
+mod metrics;
+pub use metrics::*;
+```
+
+## Testing
+Run `cargo check -p game` to verify compilation.

@@ -1,11 +1,11 @@
-//! Washplant module - multi-stage processing plant configuration and management
-
+mod builder;
 mod config;
 mod metrics;
 mod plant;
 mod stage;
 mod transfer;
 
+pub use builder::*;
 pub use config::*;
 pub use metrics::*;
 pub use plant::*;
