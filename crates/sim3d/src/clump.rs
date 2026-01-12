@@ -250,18 +250,25 @@ impl ClusterSimulation3D {
     }
 
     pub fn step(&mut self, dt: f32) {
-        if self.use_dem {
-            self.step_dem_internal(dt, None);
-        } else {
-            for clump in &mut self.clumps {
-                clump.velocity += self.gravity * dt;
-                clump.position += clump.velocity * dt;
-                let delta = Quat::from_scaled_axis(clump.angular_velocity * dt);
-                clump.rotation = (delta * clump.rotation).normalize();
-            }
+        // Use substeps for stability. With stiffness k=6000 and mass m=0.025kg,
+        // critical timestep is ~0.004s. Using 8 substeps gives sub_dt ~0.002s.
+        let substeps = 8;
+        let sub_dt = dt / substeps as f32;
 
-            self.resolve_bounds();
-            self.resolve_clump_contacts();
+        for _ in 0..substeps {
+            if self.use_dem {
+                self.step_dem_internal(sub_dt, None);
+            } else {
+                for clump in &mut self.clumps {
+                    clump.velocity += self.gravity * sub_dt;
+                    clump.position += clump.velocity * sub_dt;
+                    let delta = Quat::from_scaled_axis(clump.angular_velocity * sub_dt);
+                    clump.rotation = (delta * clump.rotation).normalize();
+                }
+
+                self.resolve_bounds();
+                self.resolve_clump_contacts();
+            }
         }
     }
 
