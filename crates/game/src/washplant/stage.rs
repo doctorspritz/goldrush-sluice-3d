@@ -334,4 +334,9 @@ impl WashplantStage {
     pub fn cell_size(&self) -> f32 {
         self.sim.grid.cell_size
     }
+
+    /// Get particle position at index
+    pub fn particle_position(&self, idx: usize) -> Option<Vec3> {
+        self.sim.particles.list.get(idx).map(|p| p.position)
+    }
 }
