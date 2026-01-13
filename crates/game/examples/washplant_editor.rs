@@ -268,8 +268,8 @@ struct App {
 
 struct GpuState {
     surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
     config: wgpu::SurfaceConfiguration,
 
     // Mesh rendering
@@ -376,7 +376,7 @@ impl App {
             multi_sim: None,
             fluid_renderer: None,
             // Visual test mode
-            test_mode: false,
+            test_mode: true,
             test_idx: 0,
             test_frame: 0,
             // Legacy single-grid fields
@@ -672,6 +672,11 @@ impl App {
         println!("Watch: {}", test.watch);
         println!("\nColor key: Yellow=gold(heavy), Gray=sand(light)");
 
+        // Initialize GPU DEM if we have GPU state
+        if let Some(gpu) = &self.gpu {
+            multi_sim.init_gpu_dem(gpu.device.clone(), gpu.queue.clone());
+        }
+
         // Store simulation and mark as running
         self.multi_sim = Some(multi_sim);
         self.is_simulating = true;
@@ -726,7 +731,7 @@ impl App {
         if let Some(piece) = multi_sim.pieces.get_mut(piece_idx) {
             if let Some(gpu_flip) = piece.gpu_flip.as_mut() {
                 gpu_flip.water_rest_particles = particles_per_cell as f32;
-                gpu_flip.density_surface_clamp = false;
+                gpu_flip.density_surface_clamp = true;
             }
         }
         let mut count = 0usize;
@@ -744,7 +749,10 @@ impl App {
             }
         }
 
-        println!("  Box grid: {}x{}x{} @ cell_size={:.3}", grid_width, grid_height, grid_depth, cell_size);
+        println!(
+            "  Box grid: {}x{}x{} @ cell_size={:.3}",
+            grid_width, grid_height, grid_depth, cell_size
+        );
         println!(
             "  Fill region: i=[{}..{}], j=[{}..{}], k=[{}..{}]",
             i_min, i_max, j_min, j_max, k_min, k_max
@@ -986,6 +994,9 @@ impl App {
         let mut fluid_renderer = ScreenSpaceFluidRenderer::new(&gpu.device, gpu.config.format);
         fluid_renderer.particle_radius = SIM_CELL_SIZE * 0.5;
         fluid_renderer.resize(&gpu.device, gpu.config.width, gpu.config.height);
+
+        // Initialize GPU DEM
+        multi_sim.init_gpu_dem(gpu.device.clone(), gpu.queue.clone());
 
         self.multi_sim = Some(multi_sim);
         self.fluid_renderer = Some(fluid_renderer);
@@ -2537,6 +2548,9 @@ impl App {
             .await
             .unwrap();
 
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats[0];
 
@@ -3080,6 +3094,11 @@ impl App {
             return;
         }
 
+        // Auto-start test if in test mode and not running
+        if self.test_mode && !self.is_simulating {
+            self.run_test(self.test_idx);
+        }
+
         let camera_pos = self.camera_position();
         let view_matrix = Mat4::look_at_rh(camera_pos, self.camera_target, Vec3::Y);
 
@@ -3126,9 +3145,20 @@ impl App {
 
                     self.sim_frame += 1;
 
-                    // Debug output periodically
-                    if self.sim_frame % 60 == 0 {
+                    // Debug output every frame for diagnosing falling
+                    if self.sim_frame % 1 == 0 {
                         let total = multi_sim.total_particles();
+                        if total > 0 {
+                            // Print first particle pos
+                            if !multi_sim.dem_sim.clumps.is_empty() {
+                                println!(
+                                    "Frame {}: P0 pos: {:?}",
+                                    self.sim_frame, multi_sim.dem_sim.clumps[0].position
+                                );
+                            }
+                        } else {
+                            println!("Frame {}: 0 particles", self.sim_frame);
+                        }
                         println!(
                             "Frame {}: {} particles ({} pieces)",
                             self.sim_frame,
@@ -3136,31 +3166,31 @@ impl App {
                             multi_sim.pieces.len()
                         );
                         let occupied_volume = multi_sim.total_occupied_volume();
-                        let piece = &multi_sim.pieces[0];
-                        let cell_volume = piece.cell_size.powi(3);
-                        let occupied_cells = multi_sim.occupied_cell_count(0);
-                        let particles = piece.positions.len().max(1);
-                        let ppc = particles as f32 / occupied_cells.max(1) as f32;
-                        let expected_volume = (26.0 * 9.0 * 26.0) * cell_volume;
-                        let ratio = if expected_volume > 0.0 {
-                            occupied_volume / expected_volume
-                        } else {
-                            0.0
-                        };
-                        println!(
-                            "  Occupied volume ~ {:.6} m^3 (ratio {:.3}, ppc {:.2})",
-                            occupied_volume, ratio, ppc
-                        );
-                        if let (Some(gpu), Some(piece)) =
-                            (&self.gpu, multi_sim.pieces.get(0))
-                        {
-                            if let Some(gpu_flip) = piece.gpu_flip.as_ref() {
-                                gpu_flip.print_density_projection_diagnostics(
-                                    &gpu.device,
-                                    &gpu.queue,
-                                    dt,
-                                    gpu_flip.water_rest_particles,
-                                );
+                        if !multi_sim.pieces.is_empty() {
+                            let piece = &multi_sim.pieces[0];
+                            let cell_volume = piece.cell_size.powi(3);
+                            let occupied_cells = multi_sim.occupied_cell_count(0);
+                            let particles = piece.positions.len().max(1);
+                            let ppc = particles as f32 / occupied_cells.max(1) as f32;
+                            let expected_volume = (26.0 * 9.0 * 26.0) * cell_volume;
+                            let ratio = if expected_volume > 0.0 {
+                                occupied_volume / expected_volume
+                            } else {
+                                0.0
+                            };
+                            println!(
+                                "  Occupied volume ~ {:.6} m^3 (ratio {:.3}, ppc {:.2})",
+                                occupied_volume, ratio, ppc
+                            );
+                            if let Some(gpu) = &self.gpu {
+                                if let Some(gpu_flip) = piece.gpu_flip.as_ref() {
+                                    gpu_flip.print_density_projection_diagnostics(
+                                        &gpu.device,
+                                        &gpu.queue,
+                                        dt,
+                                        gpu_flip.water_rest_particles,
+                                    );
+                                }
                             }
                         }
                         if !world_positions.is_empty() {

@@ -16,8 +16,8 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use game::gpu::dem_render::DemRenderer;
 use game::gpu::dem_3d::GpuDem3D;
+use game::gpu::dem_render::DemRenderer;
 use game::gpu::GpuContext;
 
 const PARTICLE_COUNT: u32 = 1000;
@@ -72,10 +72,14 @@ impl ApplicationHandler for DemTestApp {
                 TEMPLATES,
                 MAX_CONTACTS,
             );
-            
+
             // Create Renderer
             let renderer = DemRenderer::new(&gpu_ctx.device, gpu_ctx.config.format);
-            let depth_view = Self::create_depth_texture(&gpu_ctx.device, gpu_ctx.config.width, gpu_ctx.config.height);
+            let depth_view = Self::create_depth_texture(
+                &gpu_ctx.device,
+                gpu_ctx.config.width,
+                gpu_ctx.config.height,
+            );
 
             // Create test templates
             let template_small = sim3d::ClumpTemplate3D::generate(
@@ -126,7 +130,12 @@ impl ApplicationHandler for DemTestApp {
         }
     }
 
-    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
         match event {
             WindowEvent::CloseRequested => {
                 println!("GPU DEM Test completed");
@@ -136,16 +145,20 @@ impl ApplicationHandler for DemTestApp {
                 if let Some(gpu_ctx) = &mut self.gpu_ctx {
                     gpu_ctx.resize(physical_size.width, physical_size.height);
                     // Recreate depth texture
-                    self.depth_view = Some(Self::create_depth_texture(&gpu_ctx.device, physical_size.width, physical_size.height));
+                    self.depth_view = Some(Self::create_depth_texture(
+                        &gpu_ctx.device,
+                        physical_size.width,
+                        physical_size.height,
+                    ));
                 }
             }
             WindowEvent::RedrawRequested => {
                 // Update DEM simulation
                 if let (Some(gpu_ctx), Some(gpu_dem), Some(renderer), Some(depth_view)) = (
-                    &self.gpu_ctx, 
-                    &mut self.gpu_dem, 
+                    &self.gpu_ctx,
+                    &mut self.gpu_dem,
                     &self.renderer,
-                    &self.depth_view
+                    &self.depth_view,
                 ) {
                     let mut encoder =
                         gpu_ctx
@@ -156,7 +169,7 @@ impl ApplicationHandler for DemTestApp {
 
                     // Update physics (60 FPS target)
                     gpu_dem.update(&mut encoder, 1.0 / 60.0);
-                    
+
                     // Render
                     let frame = match gpu_ctx.surface.get_current_texture() {
                         Ok(frame) => frame,
@@ -166,8 +179,10 @@ impl ApplicationHandler for DemTestApp {
                             return;
                         }
                     };
-                    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                    
+                    let view = frame
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default());
+
                     // Clear pass
                     {
                         let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -176,23 +191,30 @@ impl ApplicationHandler for DemTestApp {
                                 view: &view,
                                 resolve_target: None,
                                 ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.1, b: 0.15, a: 1.0 }),
+                                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                                        r: 0.1,
+                                        g: 0.1,
+                                        b: 0.15,
+                                        a: 1.0,
+                                    }),
                                     store: wgpu::StoreOp::Store,
                                 },
                             })],
-                            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                                view: depth_view,
-                                depth_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(1.0),
-                                    store: wgpu::StoreOp::Store,
-                                }),
-                                stencil_ops: None,
-                            }),
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: depth_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
                             timestamp_writes: None,
                             occlusion_query_set: None,
                         });
                     }
-                    
+
                     // Setup Camera
                     let aspect = gpu_ctx.config.width as f32 / gpu_ctx.config.height as f32;
                     let proj = glam::Mat4::perspective_rh(45.0f32.to_radians(), aspect, 0.1, 100.0);
@@ -215,7 +237,7 @@ impl ApplicationHandler for DemTestApp {
                     // Submit commands
                     gpu_ctx.queue.submit(Some(encoder.finish()));
                     frame.present();
-                    
+
                     // Request next frame
                     if let Some(window) = &self.window {
                         window.request_redraw();

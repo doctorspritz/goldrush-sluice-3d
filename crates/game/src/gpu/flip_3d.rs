@@ -18,7 +18,7 @@ use std::sync::{mpsc, Arc};
 use wgpu::util::DeviceExt;
 
 const GRAVEL_OBSTACLE_MAX: u32 = 2048;
-const DENSITY_PRESSURE_ITERS: u32 = 40;
+const DENSITY_PRESSURE_ITERS: u32 = 80;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -4384,6 +4384,19 @@ impl GpuFlip3D {
         println!(
             "    pressure: avg={:.6} min={:.6} max={:.6}",
             pressure_avg, pressure_min, pressure_max
+        );
+        let cell_volume = self.cell_size.powi(3);
+        let rest_density = rest_density.max(1e-6);
+        let estimated_water_volume = (total_particles as f32 / rest_density) * cell_volume;
+        let fluid_volume = fluid_cells as f32 * cell_volume;
+        let volume_ratio = if fluid_volume > 0.0 {
+            estimated_water_volume / fluid_volume
+        } else {
+            0.0
+        };
+        println!(
+            "    water volume: est={:.6} m^3 fluid_cells_vol={:.6} ratio={:.3}",
+            estimated_water_volume, fluid_volume, volume_ratio
         );
 
         drop(ct_data);
