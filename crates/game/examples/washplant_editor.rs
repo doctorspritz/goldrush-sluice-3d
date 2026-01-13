@@ -36,7 +36,8 @@ use game::gpu::flip_3d::GpuFlip3D;
 use game::gpu::fluid_renderer::ScreenSpaceFluidRenderer;
 use game::sluice_geometry::SluiceVertex;
 use glam::{Mat3, Mat4, Vec3};
-use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D};
+use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, SdfParams};
+use sim3d::test_geometry::{TestBox, TestFloor, TestSdfGenerator};
 use sim3d::FlipSimulation3D;
 use std::path::Path;
 use std::sync::Arc;
@@ -275,6 +276,12 @@ struct MultiGridSim {
     dem_sim: ClusterSimulation3D,
     gold_template_idx: usize,
     sand_template_idx: usize,
+
+    // Test SDF for isolated physics tests (used instead of piece SDFs when set)
+    test_sdf: Option<Vec<f32>>,
+    test_sdf_dims: (usize, usize, usize),
+    test_sdf_cell_size: f32,
+    test_sdf_offset: Vec3,
 }
 
 impl MultiGridSim {
@@ -284,6 +291,12 @@ impl MultiGridSim {
             Vec3::new(-10.0, -2.0, -10.0),
             Vec3::new(20.0, 10.0, 20.0),
         );
+
+        // Reduce stiffness for stability with small particles
+        // Default 6000 N/m causes particles to explode on collision
+        dem_sim.normal_stiffness = 1000.0;
+        dem_sim.tangential_stiffness = 500.0;
+        dem_sim.restitution = 0.1; // Lower bounce
 
         // Create gold template (heavy, ~8mm clumps)
         // Gold: 19300 kg/m³, water: 1000 kg/m³
@@ -320,7 +333,67 @@ impl MultiGridSim {
             dem_sim,
             gold_template_idx,
             sand_template_idx,
+            test_sdf: None,
+            test_sdf_dims: (0, 0, 0),
+            test_sdf_cell_size: SIM_CELL_SIZE,
+            test_sdf_offset: Vec3::ZERO,
         }
+    }
+
+    /// Set up test SDF using TestFloor geometry for isolated floor collision tests
+    fn setup_test_floor(&mut self, floor_y: f32) {
+        let cell_size = SIM_CELL_SIZE;
+        let width = 40usize;   // 1m
+        let height = 60usize;  // 1.5m
+        let depth = 40usize;   // 1m
+        let offset = Vec3::new(-0.5, -0.5, -0.5); // Grid origin in world space
+
+        // TestFloor works in WORLD coordinates (cell_center returns world pos)
+        let floor = TestFloor::with_thickness(floor_y, cell_size * 4.0);
+        let mut gen = TestSdfGenerator::new(width, height, depth, cell_size, offset);
+        gen.add_floor(&floor);
+
+        self.test_sdf = Some(gen.sdf);
+        self.test_sdf_dims = (width, height, depth);
+        self.test_sdf_cell_size = cell_size;
+        self.test_sdf_offset = offset;
+
+        println!("Test SDF: floor at world y={} with {}x{}x{} grid, offset {:?}",
+            floor_y, width, height, depth, offset);
+    }
+
+    /// Set up test SDF using TestBox geometry for isolated box collision tests
+    fn setup_test_box(&mut self, center: Vec3, width: f32, depth: f32, wall_height: f32) {
+        let cell_size = SIM_CELL_SIZE;
+        let grid_width = 60usize;   // 1.5m
+        let grid_height = 60usize;  // 1.5m
+        let grid_depth = 60usize;   // 1.5m
+        let offset = center - Vec3::splat(cell_size * grid_width as f32 / 2.0);
+
+        // TestBox works in WORLD coordinates (cell_center returns world pos)
+        let test_box = TestBox::with_thickness(
+            center,
+            width,
+            depth,
+            wall_height,
+            cell_size * 4.0, // wall thickness
+            cell_size * 4.0, // floor thickness
+        );
+        let mut gen = TestSdfGenerator::new(grid_width, grid_height, grid_depth, cell_size, offset);
+        gen.add_box(&test_box);
+
+        self.test_sdf = Some(gen.sdf);
+        self.test_sdf_dims = (grid_width, grid_height, grid_depth);
+        self.test_sdf_cell_size = cell_size;
+        self.test_sdf_offset = offset;
+
+        println!("Test SDF: box at world {:?}, size {}x{}x{}, offset {:?}",
+            center, width, depth, wall_height, offset);
+    }
+
+    /// Clear the test SDF (return to using piece SDFs)
+    fn clear_test_sdf(&mut self) {
+        self.test_sdf = None;
     }
 
     /// Add a gutter piece simulation
@@ -1338,8 +1411,10 @@ impl MultiGridSim {
             }
         }
 
-        // Step DEM with water coupling
-        if !self.dem_sim.clumps.is_empty() {
+        // Apply water-DEM coupling forces (only if fluid pieces exist)
+        // For dry DEM tests (no pieces), skip water forces
+        let has_fluid = !self.pieces.is_empty();
+        if has_fluid && !self.dem_sim.clumps.is_empty() {
             // Apply water-DEM coupling forces to each clump
             for clump in &mut self.dem_sim.clumps {
                 let template = &self.dem_sim.templates[clump.template_idx];
@@ -1374,10 +1449,51 @@ impl MultiGridSim {
                     clump.velocity += drag_dir * drag_dv.min(max_drag);
                 }
             }
+        }
 
-            // Step DEM with SDF collision against ALL pieces
-            // Each piece has its own SDF - clumps can collide with any of them
-            if !self.pieces.is_empty() {
+        // Step DEM simulation (always, regardless of water)
+        if !self.dem_sim.clumps.is_empty() {
+            // If test_sdf is set, use it for isolated physics testing
+            // Otherwise, use piece SDFs for normal operation
+            if let Some(ref test_sdf) = self.test_sdf {
+                // Use test SDF for isolated physics testing
+                let (gw, gh, gd) = self.test_sdf_dims;
+                let sdf_params = SdfParams {
+                    sdf: test_sdf,
+                    grid_width: gw,
+                    grid_height: gh,
+                    grid_depth: gd,
+                    cell_size: self.test_sdf_cell_size,
+                    grid_offset: self.test_sdf_offset,
+                };
+
+                // Debug: print particle state every 30 frames
+                if self.frame % 30 == 0 && !self.dem_sim.clumps.is_empty() {
+                    let clump = &self.dem_sim.clumps[0];
+                    let max_vel = self.dem_sim.clumps.iter().map(|c| c.velocity.length()).fold(0.0f32, f32::max);
+                    let avg_y = self.dem_sim.clumps.iter().map(|c| c.position.y).sum::<f32>() / self.dem_sim.clumps.len() as f32;
+                    let min_y = self.dem_sim.clumps.iter().map(|c| c.position.y).fold(f32::MAX, f32::min);
+                    let max_y = self.dem_sim.clumps.iter().map(|c| c.position.y).fold(f32::MIN, f32::max);
+
+                    // Sample SDF at first particle position
+                    use sim3d::clump::sample_sdf_with_gradient;
+                    let (sdf_val, _normal) = sample_sdf_with_gradient(
+                        test_sdf,
+                        clump.position,
+                        self.test_sdf_offset,
+                        gw, gh, gd,
+                        self.test_sdf_cell_size,
+                    );
+
+                    println!("[Frame {}] N={}, Y: avg={:.3} min={:.3} max={:.3}, MaxVel={:.3}, Particle0: pos={:.3},{:.3},{:.3} vel={:.3},{:.3},{:.3} sdf={:.4}",
+                        self.frame, self.dem_sim.clumps.len(), avg_y, min_y, max_y, max_vel,
+                        clump.position.x, clump.position.y, clump.position.z,
+                        clump.velocity.x, clump.velocity.y, clump.velocity.z, sdf_val);
+                }
+
+                self.dem_sim.step_with_sdf(dt, &sdf_params);
+            } else if !self.pieces.is_empty() {
+                // Normal operation: use piece SDFs
                 // First, do DEM integration step (forces, velocity, position)
                 self.dem_sim.step(dt);
 
@@ -1385,7 +1501,7 @@ impl MultiGridSim {
                 for piece in &self.pieces {
                     let (gw, gh, gd) = piece.grid_dims;
 
-                    let sdf_params = sim3d::clump::SdfParams {
+                    let sdf_params = SdfParams {
                         sdf: &piece.sim.grid.sdf,
                         grid_width: gw,
                         grid_height: gh,
@@ -1662,30 +1778,19 @@ impl App {
     fn setup_test_scenario(&mut self, test_idx: usize) {
         let test = &VISUAL_TESTS[test_idx];
 
-        // Use the pre-built connected layout - this is PROVEN TO WORK
-        // Don't create random broken geometry
-        self.layout = EditorLayout::new_connected();
-
-        // Configure emitter rate based on test
-        if !self.layout.emitters.is_empty() {
-            // Slow down emission for DEM visibility tests
-            if matches!(test.category, TestCategory::Dem) {
-                self.layout.emitters[0].rate = 30.0;  // Slower for visibility
-            }
+        // DEM tests (0-3) use simplified test geometry for isolated physics testing
+        // Other tests use the full washplant layout
+        if matches!(test.category, TestCategory::Dem) {
+            self.setup_dem_test(test_idx);
+            return;
         }
+
+        // Non-DEM tests use the pre-built connected layout
+        self.layout = EditorLayout::new_connected();
 
         // Position camera based on what we're testing
         match test.category {
-            TestCategory::Dem => {
-                // View the funnel gutter where sediment settles
-                if !self.layout.gutters.is_empty() {
-                    let gutter = &self.layout.gutters[0];
-                    self.camera_target = gutter.position;
-                }
-                self.camera_distance = 1.5;
-                self.camera_yaw = 0.3;
-                self.camera_pitch = 0.4;
-            }
+            TestCategory::Dem => unreachable!(), // Handled above
             TestCategory::Swe => {
                 // View the shaker deck and gutter flow
                 if !self.layout.shaker_decks.is_empty() {
@@ -1715,7 +1820,7 @@ impl App {
             }
         }
 
-        // Start the simulation - uses the SAME code path as pressing P
+        // Start the simulation
         self.start_simulation();
 
         println!("Test scenario {} setup complete.", test_idx + 1);
@@ -1726,6 +1831,133 @@ impl App {
             self.layout.shaker_decks.len());
         println!("Watch: {}", test.watch);
         println!("\nColor key: Blue=water, Yellow=gold(heavy), Gray=sand(light)");
+    }
+
+    /// Start an isolated DEM test with simple test geometry
+    fn setup_dem_test(&mut self, test_idx: usize) {
+        let test = &VISUAL_TESTS[test_idx];
+
+        // Clear the layout - we're using test geometry, not washplant pieces
+        self.layout = EditorLayout::default();
+
+        // Create MultiGridSim for DEM-only simulation
+        let mut multi_sim = MultiGridSim::new();
+
+        println!("=== Starting Isolated DEM Test: {} ===", test.name);
+
+        // Set up test geometry and spawn particles based on test index
+        match test_idx {
+            0 => {
+                // Test 1: DEM Floor Collision
+                // Drop particles from height onto a floor
+                multi_sim.setup_test_floor(0.0); // Floor at y=0
+
+                // Spawn particles above the floor
+                for i in 0..5 {
+                    for j in 0..5 {
+                        let pos = Vec3::new(
+                            (i as f32 - 2.0) * 0.05,
+                            0.5 + (j as f32) * 0.03, // Drop from 0.5m height
+                            0.0,
+                        );
+                        multi_sim.dem_sim.spawn(multi_sim.sand_template_idx, pos, Vec3::ZERO);
+                    }
+                }
+                println!("  Spawned 25 particles at y=0.5, floor at y=0");
+
+                // Camera setup
+                self.camera_target = Vec3::new(0.0, 0.3, 0.0);
+                self.camera_distance = 1.5;
+                self.camera_yaw = 0.3;
+                self.camera_pitch = 0.5;
+            }
+            1 => {
+                // Test 2: DEM Wall Collision
+                // Particles thrown sideways hit walls and bounce back
+                multi_sim.setup_test_box(Vec3::new(0.0, 0.0, 0.0), 0.4, 0.4, 0.3);
+
+                // Spawn particles with sideways velocity
+                for i in 0..10 {
+                    let pos = Vec3::new(
+                        -0.1 + (i % 2) as f32 * 0.05,
+                        0.15,
+                        -0.05 + (i / 2) as f32 * 0.03,
+                    );
+                    // Throw toward +X wall
+                    let vel = Vec3::new(1.0, 0.0, 0.0);
+                    multi_sim.dem_sim.spawn(multi_sim.sand_template_idx, pos, vel);
+                }
+                println!("  Spawned 10 particles with sideways velocity in box");
+
+                // Camera setup
+                self.camera_target = Vec3::new(0.0, 0.15, 0.0);
+                self.camera_distance = 1.0;
+                self.camera_yaw = 0.0;
+                self.camera_pitch = 0.6;
+            }
+            2 => {
+                // Test 3: DEM Density Separation
+                // Mix of gold (heavy) and sand (light) - gold should sink
+                multi_sim.setup_test_box(Vec3::new(0.0, 0.0, 0.0), 0.3, 0.3, 0.4);
+
+                // Spawn mixed gold and sand from the same height
+                for i in 0..5 {
+                    for j in 0..5 {
+                        let pos = Vec3::new(
+                            (i as f32 - 2.0) * 0.04,
+                            0.25 + (j as f32) * 0.02,
+                            (j as f32 - 2.0) * 0.02,
+                        );
+                        // Alternate between gold and sand
+                        if (i + j) % 2 == 0 {
+                            multi_sim.dem_sim.spawn(multi_sim.gold_template_idx, pos, Vec3::ZERO);
+                        } else {
+                            multi_sim.dem_sim.spawn(multi_sim.sand_template_idx, pos, Vec3::ZERO);
+                        }
+                    }
+                }
+                println!("  Spawned 25 mixed gold/sand particles");
+
+                // Camera setup
+                self.camera_target = Vec3::new(0.0, 0.2, 0.0);
+                self.camera_distance = 1.0;
+                self.camera_yaw = 0.3;
+                self.camera_pitch = 0.5;
+            }
+            3 => {
+                // Test 4: DEM Settling Time
+                // 50 particles should come to rest within 5 seconds
+                multi_sim.setup_test_box(Vec3::new(0.0, 0.0, 0.0), 0.5, 0.5, 0.3);
+
+                // Spawn 50 particles in a random-ish pattern
+                for i in 0..50 {
+                    let x = ((i * 7) % 10) as f32 * 0.04 - 0.2;
+                    let y = 0.3 + (i as f32 * 0.005);
+                    let z = ((i * 13) % 10) as f32 * 0.04 - 0.2;
+                    let pos = Vec3::new(x, y, z);
+                    multi_sim.dem_sim.spawn(multi_sim.sand_template_idx, pos, Vec3::ZERO);
+                }
+                println!("  Spawned 50 particles, should settle within 5s");
+
+                // Camera setup
+                self.camera_target = Vec3::new(0.0, 0.15, 0.0);
+                self.camera_distance = 1.2;
+                self.camera_yaw = 0.4;
+                self.camera_pitch = 0.6;
+            }
+            _ => {
+                println!("  Unknown DEM test index: {}", test_idx);
+                return;
+            }
+        }
+
+        println!("  DEM particles: {}", multi_sim.dem_sim.clumps.len());
+        println!("Watch: {}", test.watch);
+        println!("\nColor key: Yellow=gold(heavy), Gray=sand(light)");
+
+        // Store simulation and mark as running
+        self.multi_sim = Some(multi_sim);
+        self.is_simulating = true;
     }
 
     fn print_status(&self) {

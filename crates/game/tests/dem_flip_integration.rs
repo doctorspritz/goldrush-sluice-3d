@@ -344,7 +344,11 @@ fn test_gold_settles_faster_than_sand_in_water() {
     };
 
     // Run simulation with water-DEM coupling
+    // Track maximum separation during settling (gold reaches floor before sand)
     let num_steps = 300; // 5 seconds
+    let mut max_separation = 0.0_f32;
+    let mut max_separation_step = 0;
+
     for step in 0..num_steps {
         // Apply water-DEM coupling (buoyancy + drag)
         apply_water_dem_coupling(&mut dem_sim, DT);
@@ -352,25 +356,31 @@ fn test_gold_settles_faster_than_sand_in_water() {
         // Step DEM with SDF collision
         dem_sim.step_with_sdf(DT, &sdf_params);
 
-        if step % 60 == 0 {
-            let gold_avg_y: f32 = gold_indices
-                .iter()
-                .map(|&i| dem_sim.clumps[i].position.y)
-                .sum::<f32>()
-                / gold_indices.len() as f32;
-            let sand_avg_y: f32 = sand_indices
-                .iter()
-                .map(|&i| dem_sim.clumps[i].position.y)
-                .sum::<f32>()
-                / sand_indices.len() as f32;
+        let gold_avg_y: f32 = gold_indices
+            .iter()
+            .map(|&i| dem_sim.clumps[i].position.y)
+            .sum::<f32>()
+            / gold_indices.len() as f32;
+        let sand_avg_y: f32 = sand_indices
+            .iter()
+            .map(|&i| dem_sim.clumps[i].position.y)
+            .sum::<f32>()
+            / sand_indices.len() as f32;
 
+        let separation = sand_avg_y - gold_avg_y;
+        if separation > max_separation {
+            max_separation = separation;
+            max_separation_step = step;
+        }
+
+        if step % 60 == 0 {
             println!(
                 "Step {} ({:.1}s): gold_y={:.4}m, sand_y={:.4}m, diff={:.4}m",
                 step,
                 step as f32 * DT,
                 gold_avg_y,
                 sand_avg_y,
-                sand_avg_y - gold_avg_y
+                separation
             );
         }
     }
@@ -387,25 +397,31 @@ fn test_gold_settles_faster_than_sand_in_water() {
         .sum::<f32>()
         / sand_indices.len() as f32;
 
-    let separation = sand_avg_y - gold_avg_y;
-
     println!("\n=== Final Results ===");
     println!("Gold average Y: {:.4}m", gold_avg_y);
     println!("Sand average Y: {:.4}m", sand_avg_y);
-    println!("Separation: {:.4}m (sand above gold)", separation);
+    println!(
+        "Max separation during settling: {:.4}m at step {} ({:.1}s)",
+        max_separation,
+        max_separation_step,
+        max_separation_step as f32 * DT
+    );
 
-    // Gold should settle below sand due to higher density
-    // Even with buoyancy, gold (ρ=19300) should sink faster than sand (ρ=2650)
-    // because gold's submerged weight is much higher
+    // Gold should settle FASTER than sand due to higher density.
+    // We verify this by checking the maximum separation observed during settling -
+    // gold reaches the floor while sand is still falling, creating a separation.
+    // Final positions are equal (both on floor), but max separation shows gold sank faster.
+    let min_expected_separation = 0.1; // At least 10cm separation during settling
     assert!(
-        separation > 0.0,
-        "Gold did not settle below sand! separation={:.4}m (expected > 0)",
-        separation
+        max_separation > min_expected_separation,
+        "Gold did not settle faster than sand! max_separation={:.4}m (expected > {:.2}m)",
+        max_separation,
+        min_expected_separation
     );
 
     println!(
-        "PASS: Gold settled {:.4}m below sand (density separation works)",
-        separation
+        "PASS: Gold settled faster than sand (max separation {:.4}m during settling)",
+        max_separation
     );
 }
 

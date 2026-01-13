@@ -13,6 +13,36 @@
 
 ---
 
+## Current State (What Already Exists)
+
+### Headless Unit Tests
+| File | Tests | Status |
+|------|-------|--------|
+| `dem_collision_response.rs` | Floor collision, wall collision, clump-clump, no penetration | ✓ Exists |
+| `dem_friction.rs` | Static/kinetic friction, wet vs dry | ✓ Exists |
+| `dem_settling_separation.rs` | Settling time, density separation, angle of repose | ✓ Exists |
+| `swe_physics.rs` | Flat pool, flow downhill, Manning's equation, mass conservation, wave speed, no energy creation | ✓ Exists |
+| `water_flow.rs` | CPU water flow, mass conservation, spreading | ✓ Exists |
+| `terrain_physics.rs` | Collapse, angle of repose | ✓ Exists |
+
+### Visual Tests in washplant_editor
+Test mode (T key) with 10 tests defined:
+- `1-4`: DEM (floor collision, wall collision, density separation, settling time)
+- `5-7`: Fluid (flow downhill, pool equilibrium, wall containment)
+- `8-9`: Sediment (settle in still water, transport by flow)
+- `0`: Integration (sluice riffle capture)
+
+### What's Missing
+- [ ] Test equipment geometry (TestFloor, TestBox, etc.)
+- [ ] Saved JSON layouts
+- [ ] DiagnosticsOverlay with measurements
+- [ ] Particle tracking / journey system
+- [ ] Volume measurement per region
+- [ ] Checkpoint system for flow measurement
+- [ ] Automated pass/fail criteria (visual tests are human-observed)
+
+---
+
 ## 1. Test Equipment Geometry
 
 Add new equipment pieces specifically for physics testing:
@@ -328,37 +358,75 @@ Each test has specific criteria:
 
 ## 6. Implementation Order
 
-### Phase 1: Core Diagnostics
+### Phase 0: Verify Existing Tests Pass
+**Before adding new infrastructure, ensure current physics works correctly**
+```bash
+cargo test -p sim3d
+cargo test -p game --test dem_collision_response
+cargo test -p game --test dem_friction
+cargo test -p game --test dem_settling_separation
+```
+- [ ] Run all existing tests and confirm they pass
+- [ ] Fix any failures from recent DEM substep changes
+
+### Phase 1: Core Diagnostics (washplant_editor)
 1. [ ] Add TestMeasurements struct to washplant_editor
-2. [ ] Add RegionVolume tracking per piece
-3. [ ] Implement basic measurement collection (counts, positions, velocities)
-4. [ ] Add on-screen diagnostics display (text overlay)
+   - Count particles by type (water, gold, sand)
+   - Track min/max/avg Y positions
+   - Track velocities
+2. [ ] Add on-screen diagnostics display (text overlay)
+   - Simple egui or wgpu text rendering
+   - Show particle counts, positions, velocities
+3. [ ] Add D key toggle for diagnostics visibility
 
-### Phase 2: Particle Tracking
-5. [ ] Add ParticleTracker struct
-6. [ ] Implement particle ID assignment at spawn
-7. [ ] Track particle positions each frame (sampled, not every frame)
-8. [ ] Add Checkpoint system for flow measurement
-9. [ ] Implement journey visualization (path lines)
+### Phase 2: Test Equipment Geometry
+4. [ ] Add `PieceKind::TestBox` - 4 walls + floor, open top
+   - Add to EditorLayout alongside Gutter/Sluice
+   - Implement SDF generation
+5. [ ] Add `PieceKind::TestRamp` - angled surface
+6. [ ] Add `PieceKind::TestPool` - TestBox with initial water level
+7. [ ] Update piece placement UI (keys 4, 5, 6 for test pieces)
 
-### Phase 3: Test Infrastructure
-10. [ ] Create test layout JSON format
-11. [ ] Create saved layouts for all 10 tests
-12. [ ] Add test equipment pieces (TestFloor, TestWall, etc.)
-13. [ ] Define pass/fail criteria per test
+### Phase 3: Saved Layouts
+8. [ ] Extend EditorLayout JSON to include test pieces
+9. [ ] Create test layouts for each visual test (1-0)
+10. [ ] Auto-load layout when test selected
+11. [ ] Save current layout as test fixture
 
-### Phase 4: Test Runner
-14. [ ] Implement --run-tests CLI mode (headless)
-15. [ ] Implement visual test mode (T key, diagnostics overlay)
-16. [ ] Add N=next, R=restart, P=pause controls
-17. [ ] Generate test report output
+### Phase 4: Volume & Flow Measurement
+12. [ ] Add RegionVolume tracking per piece
+   - Bounding box per piece
+   - Count particles inside
+   - Calculate volume
+13. [ ] Add Checkpoint system for flow measurement
+   - Define checkpoint planes
+   - Count particles crossing
+   - Calculate flow rate
+
+### Phase 5: Automated Pass/Fail
+14. [ ] Define TestCriteria per visual test
+   - Max time, min/max Y, velocity thresholds
+15. [ ] Implement criterion checking in test loop
+16. [ ] Display PASS/FAIL status on screen
+17. [ ] Add --run-tests CLI mode for CI
 
 ---
 
 ## 7. Files to Modify
 
-- `crates/game/examples/washplant_editor.rs` - Main changes
+- `crates/game/examples/washplant_editor.rs` - Main changes (diagnostics, test equipment)
+- `crates/game/src/editor.rs` - Add TestBox, TestRamp, TestPool piece kinds
+- `crates/game/src/sluice_geometry.rs` - Generate SDF for test pieces
 - `assets/test_layouts/*.json` - New test layout files
-- `crates/sim3d/src/clump.rs` - Add measurement helpers
+- `crates/sim3d/src/clump.rs` - Add measurement helpers (particle counts, avg velocity)
 - `crates/sim3d/src/lib.rs` - Add measurement helpers for fluid
+
+---
+
+## 8. Next Steps
+
+1. **Immediate**: Run existing tests to verify they pass
+2. **Short-term**: Add basic diagnostics overlay (Phase 1)
+3. **Medium-term**: Add TestBox equipment for static water tests (Phase 2)
+4. **Later**: Full pass/fail automation (Phase 5)
 

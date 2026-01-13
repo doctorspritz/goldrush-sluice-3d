@@ -917,14 +917,21 @@ fn test_sediment_advection() {
     let gutter = &harness.layout.gutters[0];
     let floor_y = harness.get_floor_y();
 
-    // Spawn sediment at inlet with initial velocity
+    // Spawn sediment particles along the gutter with initial velocity
+    // Spread them out to avoid overlap collisions
     let start_x = gutter.position.x - 0.3;
-    harness.spawn_dem_particles(
-        10,
-        Vec3::new(start_x, floor_y + 0.05, gutter.position.z),
-        Vec3::new(0.2, 0.0, 0.0),
-        false,
-    );
+    let spawn_y = floor_y + 0.05;
+
+    // Spawn 5 particles spaced 4cm apart along X
+    for i in 0..5 {
+        let x = start_x + (i as f32) * 0.04;
+        let template_idx = harness.sand_template_idx;
+        harness.dem_sim.spawn(
+            template_idx,
+            Vec3::new(x, spawn_y, gutter.position.z),
+            Vec3::new(0.2, 0.0, 0.0),
+        );
+    }
 
     let mut final_x = start_x;
 

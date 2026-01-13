@@ -16,11 +16,25 @@ fn init_device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
         force_fallback_adapter: false,
     }))?;
 
+    // GpuFlip3D requires at least 16 storage buffers per shader stage
+    let limits = adapter.limits();
+    if limits.max_storage_buffers_per_shader_stage < 16 {
+        eprintln!(
+            "GPU adapter only supports {} storage buffers (need 16+); skipping test.",
+            limits.max_storage_buffers_per_shader_stage
+        );
+        return None;
+    }
+
+    // Request device with sufficient limits
+    let mut required_limits = wgpu::Limits::default();
+    required_limits.max_storage_buffers_per_shader_stage = 16;
+
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("Sediment Flow Test Device"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
+            required_limits,
             memory_hints: wgpu::MemoryHints::Performance,
         },
         None,
