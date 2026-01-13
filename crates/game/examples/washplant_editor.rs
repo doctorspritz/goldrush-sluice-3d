@@ -248,6 +248,7 @@ struct App {
     is_simulating: bool,
     multi_sim: Option<MultiGridSim>,
     fluid_renderer: Option<ScreenSpaceFluidRenderer>,
+    particle_stream_cap: Option<usize>,
 
     // Visual Test mode
     test_mode: bool,
@@ -375,6 +376,7 @@ impl App {
             is_simulating: false,
             multi_sim: None,
             fluid_renderer: None,
+            particle_stream_cap: None,
             // Visual test mode
             test_mode: true,
             test_idx: 0,
@@ -546,6 +548,7 @@ impl App {
 
         // Clear the layout - we're using test geometry, not washplant pieces
         self.layout = EditorLayout::default();
+        self.layout.emitters.clear();
 
         // Create MultiGridSim for DEM-only simulation
         let mut multi_sim = MultiGridSim::new();
@@ -647,7 +650,7 @@ impl App {
                 // Spawn 50 particles in a random-ish pattern
                 for i in 0..50 {
                     let x = ((i * 7) % 10) as f32 * 0.04 - 0.2;
-                    let y = 0.3 + (i as f32 * 0.005);
+                    let y = 0.3 + (i as f32 * 0.025);
                     let z = ((i * 13) % 10) as f32 * 0.04 - 0.2;
                     let pos = Vec3::new(x, y, z);
                     multi_sim
@@ -717,49 +720,29 @@ impl App {
             wall_thickness,
         );
 
-        let i_min = wall_thickness + 1;
-        let k_min = wall_thickness + 1;
-        let i_max = grid_width.saturating_sub(wall_thickness + 2);
-        let k_max = grid_depth.saturating_sub(wall_thickness + 2);
-
-        let j_min = wall_thickness + 1;
-        let j_top = grid_height.saturating_sub(1);
-        let j_span = j_top.saturating_sub(j_min) + 1;
-        let j_max = j_min + ((j_span as f32) * 0.5).floor() as usize;
-
-        let particles_per_cell = 5usize;
-        if let Some(piece) = multi_sim.pieces.get_mut(piece_idx) {
-            if let Some(gpu_flip) = piece.gpu_flip.as_mut() {
-                gpu_flip.water_rest_particles = particles_per_cell as f32;
-                gpu_flip.density_surface_clamp = true;
-            }
-        }
-        let mut count = 0usize;
-        for k in k_min..=k_max {
-            for j in j_min..=j_max {
-                for i in i_min..=i_max {
-                    let x = grid_offset.x + (i as f32 + 0.5) * cell_size;
-                    let y = grid_offset.y + (j as f32 + 0.5) * cell_size;
-                    let z = grid_offset.z + (k as f32 + 0.5) * cell_size;
-                    for _ in 0..particles_per_cell {
-                        multi_sim.emit_into_piece(piece_idx, Vec3::new(x, y, z), Vec3::ZERO, 1);
-                        count += 1;
-                    }
-                }
-            }
-        }
+        // Configure a streaming emitter above the left wall
+        let emitter_id = self.layout.next_id();
+        let mut emitter = EmitterPiece::new(emitter_id);
+        emitter.position = Vec3::new(
+            grid_offset.x - cell_size * 0.5,
+            grid_offset.y + (grid_height as f32) * cell_size * 0.75,
+            grid_offset.z + (grid_depth as f32 * cell_size) * 0.5,
+        );
+        emitter.rotation = Rotation::R0;
+        emitter.rate = 6000.0;
+        emitter.velocity = 2.5;
+        emitter.spread_deg = 5.0;
+        emitter.radius = cell_size * 0.5;
+        emitter.width = grid_depth as f32 * cell_size * 0.8;
+        self.layout.emitters.push(emitter);
 
         println!(
             "  Box grid: {}x{}x{} @ cell_size={:.3}",
             grid_width, grid_height, grid_depth, cell_size
         );
         println!(
-            "  Fill region: i=[{}..{}], j=[{}..{}], k=[{}..{}]",
-            i_min, i_max, j_min, j_max, k_min, k_max
-        );
-        println!(
-            "  Spawned ~{} water particles ({} per cell)",
-            count, particles_per_cell
+            "  Streaming emitter rate: {:.0} particles/s (cap 100_000)",
+            6000.0
         );
 
         // Camera setup
@@ -768,6 +751,7 @@ impl App {
         self.camera_yaw = 0.4;
         self.camera_pitch = 0.5;
 
+        self.particle_stream_cap = Some(100_000);
         // Store simulation and mark as running
         self.multi_sim = Some(multi_sim);
         self.is_simulating = true;
@@ -1017,6 +1001,7 @@ impl App {
         self.affine_vels.clear();
         self.densities.clear();
         println!("Simulation stopped.");
+        self.particle_stream_cap = None;
     }
 
     /// Mark solid cells in the simulation grid from editor geometry
@@ -1342,7 +1327,14 @@ impl App {
             return;
         }
 
+        let mut cap_remaining = self
+            .particle_stream_cap
+            .map(|limit| limit.saturating_sub(multi_sim.total_particles()));
+
         for emitter in &self.layout.emitters {
+            if let Some(0) = cap_remaining {
+                break;
+            }
             // Find the best target piece for this emitter
             let target_piece = Self::find_piece_for_emitter(multi_sim, emitter.position);
             // Calculate emit count based on rate (particles per second at 60 FPS)
@@ -1358,7 +1350,16 @@ impl App {
 
             let spread_rad = emitter.spread_deg.to_radians();
 
-            for _ in 0..emit_count {
+            let actual_emit = if let Some(rem) = cap_remaining {
+                emit_count.min(rem)
+            } else {
+                emit_count
+            };
+            if actual_emit == 0 {
+                continue;
+            }
+
+            for _ in 0..actual_emit {
                 // Spray bar: spread along perpendicular axis based on width
                 let perp = Vec3::new(-base_dir.z, 0.0, base_dir.x);
                 let width_offset = (rand_float() - 0.5) * emitter.width;
@@ -1403,6 +1404,9 @@ impl App {
                     // Spawn at same position as water (IN the water flow)
                     multi_sim.dem_sim.spawn(template_idx, world_pos, velocity);
                 }
+            }
+            if let Some(rem) = cap_remaining.as_mut() {
+                *rem -= actual_emit;
             }
         }
 

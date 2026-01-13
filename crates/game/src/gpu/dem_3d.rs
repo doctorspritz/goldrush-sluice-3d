@@ -128,6 +128,8 @@ pub struct GpuDem3D {
     max_particles: u32,
     current_template_count: u32,
     num_active_particles: u32,
+    pub stiffness: f32,
+    pub damping: f32,
 
     // Particle data (SoA layout)
     pub(crate) position_buffer: Buffer,
@@ -753,6 +755,8 @@ impl GpuDem3D {
             sdf_params_buffer,
             sdf_collision_pipeline,
             sdf_collision_bind_group_layout,
+            stiffness: 1000.0, // Default safer stiffness
+            damping: 10.0,     // Default safer damping
         };
 
         // Initialize hash table
@@ -813,8 +817,8 @@ impl GpuDem3D {
         // Update parameters with current dt
         let dem_params = DemParams {
             dt,
-            stiffness: 50000.0,
-            damping: 50.0,
+            stiffness: self.stiffness,
+            damping: self.damping,
             friction: 0.5,
             gravity: [0.0, -9.81, 0.0, 0.0],
             cell_size: 0.1,

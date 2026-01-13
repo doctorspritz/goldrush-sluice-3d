@@ -65,6 +65,7 @@ pub struct PieceSimulation {
     pub velocities: Vec<Vec3>,
     pub affine_vels: Vec<Mat3>,
     pub densities: Vec<f32>,
+    pub auto_density_rest: bool,
 }
 
 /// Defines particle transfer between two pieces
@@ -115,8 +116,8 @@ impl MultiGridSim {
 
         // Reduce stiffness for stability with small particles
         // Default 6000 N/m causes particles to explode on collision
-        dem_sim.normal_stiffness = 1000.0;
-        dem_sim.tangential_stiffness = 500.0;
+        dem_sim.normal_stiffness = 100.0;
+        dem_sim.tangential_stiffness = 50.0;
         dem_sim.restitution = 0.1; // Lower bounce
 
         // Create gold template (heavy, ~8mm clumps)
@@ -196,7 +197,11 @@ impl MultiGridSim {
         }
 
         if let Some(test_sdf) = &self.test_sdf {
-            println!("Init GPU DEM: Test SDF len={}, sample[0]={}", test_sdf.len(), test_sdf[0]);
+            println!(
+                "Init GPU DEM: Test SDF len={}, sample[0]={}",
+                test_sdf.len(),
+                test_sdf[0]
+            );
             let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Test SDF Buffer"),
                 contents: bytemuck::cast_slice(test_sdf),
@@ -204,6 +209,10 @@ impl MultiGridSim {
             });
             self.gpu_test_sdf_buffer = Some(buffer);
         }
+
+        // Initialize params
+        gpu_dem.stiffness = self.dem_sim.normal_stiffness;
+        gpu_dem.damping = 4.0; // Critical damping ~4.5 for sand mass 0.005kg
 
         self.gpu_dem = Some(gpu_dem);
     }
@@ -524,6 +533,7 @@ impl MultiGridSim {
             velocities: Vec::new(),
             affine_vels: Vec::new(),
             densities: Vec::new(),
+            auto_density_rest: false,
         });
 
         idx
@@ -641,6 +651,7 @@ impl MultiGridSim {
             velocities: Vec::new(),
             affine_vels: Vec::new(),
             densities: Vec::new(),
+            auto_density_rest: false,
         });
 
         idx
@@ -762,6 +773,7 @@ impl MultiGridSim {
             velocities: Vec::new(),
             affine_vels: Vec::new(),
             densities: Vec::new(),
+            auto_density_rest: false,
         });
 
         idx
@@ -854,7 +866,7 @@ impl MultiGridSim {
                 grid_height as u32,
                 grid_depth as u32,
                 cell_size,
-                30000,
+                200_000,
             );
             gpu_flip.open_boundaries = 0; // closed box
             gpu_flip
@@ -881,6 +893,7 @@ impl MultiGridSim {
             velocities: Vec::new(),
             affine_vels: Vec::new(),
             densities: Vec::new(),
+            auto_density_rest: true,
         });
 
         idx
@@ -1438,6 +1451,13 @@ impl MultiGridSim {
                             }
                         }
                     }
+                    let fluid_cell_count = cell_types.iter().filter(|&&ct| ct == 1).count();
+                    if piece.auto_density_rest && fluid_cell_count > 0 {
+                        let total_particles = piece.positions.len().max(1) as f32;
+                        let rest_density =
+                            (total_particles / fluid_cell_count as f32).clamp(1.0, 256.0);
+                        gpu_flip.water_rest_particles = rest_density;
+                    }
 
                     let sdf = Some(piece.sim.grid.sdf.clone());
 
@@ -1687,8 +1707,8 @@ impl MultiGridSim {
                 label: Some("DEM Step"),
             });
 
-            // Sub-stepping for stability (e.g., 5 sub-steps per frame)
-            let sub_steps = 5;
+            // Sub-stepping for stability (e.g., 10 sub-steps per frame)
+            let sub_steps = 10;
             let sub_dt = dt / sub_steps as f32;
 
             for _ in 0..sub_steps {
@@ -1760,13 +1780,6 @@ impl MultiGridSim {
                         p.orientation[2],
                         p.orientation[3],
                     );
-
-                    if i == 0 {
-                        println!(
-                            "Readback P0: pos={:?} vel={:?}",
-                            self.dem_sim.clumps[i].position, self.dem_sim.clumps[i].velocity
-                        );
-                    }
                 }
             }
         } else if !self.dem_sim.clumps.is_empty() {
@@ -1820,10 +1833,8 @@ impl MultiGridSim {
                 self.dem_sim.collision_response_only(dt, &sdf_params, true);
             }
 
-            println!("Pre-Retain: {}", self.dem_sim.clumps.len());
             // Remove clumps that fall too far below
             self.dem_sim.clumps.retain(|c| c.position.y > -2.0);
-            println!("Post-Retain: {}", self.dem_sim.clumps.len());
         }
 
         self.frame += 1;
