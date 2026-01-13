@@ -14,6 +14,7 @@
 @group(0) @binding(9) var<uniform> params: DemParams;
 @group(0) @binding(10) var<storage, read_write> torques: array<vec4<f32>>;
 @group(0) @binding(11) var<storage, read> sphere_radii: array<f32>;
+@group(0) @binding(12) var<storage, read> particle_orientations: array<vec4<f32>>;
 
 struct GpuClumpTemplate {
     sphere_count: u32,
@@ -62,6 +63,12 @@ fn hash_3d(coord: vec3<i32>) -> u32 {
     return ((x * p1) ^ (y * p2) ^ (z * p3)) % HASH_TABLE_SIZE;
 }
 
+// Quaternion multiplication
+fn quat_mul_vec3(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+    let t = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
+
 // Sphere-sphere collision response
 fn collide_spheres(
     pos_a: vec3<f32>,
@@ -106,6 +113,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let pos = particle_positions[particle_idx].xyz;
     let vel = particle_velocities[particle_idx].xyz;
     let template_id = particle_template_ids[particle_idx];
+    let orient = particle_orientations[particle_idx];
     
     // Safety check for template ID
     if template_id >= MAX_TEMPLATES { return; }
@@ -118,8 +126,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var sphere_start = template_id * MAX_SPHERES_PER_CLUMP;
     for (var sphere_i = 0u; sphere_i < sphere_count; sphere_i++) {
         let local_offset = sphere_offsets[sphere_start + sphere_i].xyz;
+        let world_local_offset = quat_mul_vec3(orient, local_offset);
+        let world_pos = pos + world_local_offset;
         let sphere_radius = sphere_radii[sphere_start + sphere_i];
-        let world_pos = pos + sphere_offsets[sphere_start + sphere_i].xyz; // Simplified: no rotation for now
         
         // Find which cell this sphere is in
         let cell_coord = vec3<i32>(
@@ -135,7 +144,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Traverse linked list with safety limit
         // Max iterations = reasonable max particles that could be in one cell
         var iterations = 0u;
-        let MAX_ITERATIONS = 1000u;
+        let MAX_ITERATIONS = 64u;
         
         loop {
             if entry_idx == EMPTY_SLOT {
@@ -167,23 +176,27 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             
             // Quick bounding sphere check
             let other_template_id = particle_template_ids[other_particle_idx];
-            if (other_template_id >= 100u) {
+            if (other_template_id >= MAX_TEMPLATES) {
                 entry_idx = hash_entries[entry_idx].next_idx;
                 continue;
             }
             
             let other_bounding_radius = templates[other_template_id].radius;
-            let min_dist = bounding_radius + other_bounding_radius;
+            // Prune based on current sphere radius vs other clump bounding radius
+            let min_dist = sphere_radius + other_bounding_radius;
             
             if dist_sq < min_dist * min_dist {
                 // Potential collision - check each sphere in other clump
                 let other_sphere_count = min(templates[other_template_id].sphere_count, MAX_SPHERES_PER_CLUMP);
                 let other_sphere_start = other_template_id * MAX_SPHERES_PER_CLUMP;
+                let other_orient = particle_orientations[other_particle_idx];
                 
                 for (var other_sphere_i = 0u; other_sphere_i < other_sphere_count; other_sphere_i++) {
                     let other_local_offset = sphere_offsets[other_sphere_start + other_sphere_i].xyz;
                     let other_sphere_radius = sphere_radii[other_sphere_start + other_sphere_i];
-                    let other_world_pos = other_pos + other_local_offset;
+                    // Correctly rotate other sphere's local offset
+                    let other_world_local_offset = quat_mul_vec3(other_orient, other_local_offset);
+                    let other_world_pos = other_pos + other_world_local_offset;
                     
                     // Calculate collision force
                     let force = collide_spheres(
@@ -192,23 +205,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     );
                     
                     if length(force) > 0.001 {
-                        // Record contact (simplified - using particle level)
-                        // In a full implementation, we'd track sphere-sphere contacts
-                        let total_force = force; // Accumulate all sphere forces
-                        
                         // Apply to this particle
-                        forces[particle_idx] += vec4<f32>(total_force, 0.0);
+                        forces[particle_idx] += vec4<f32>(force, 0.0);
                         
                         // Calculate torque: r x F
-                        let delta_contact = other_world_pos - world_pos;
-                        let dist_contact = length(delta_contact);
-                        if (dist_contact > 1e-6) {
-                            let dir = delta_contact / dist_contact; // A->B
-                            let r = dir * sphere_radius;   // vector to surface
-                            
-                            let torque = cross(r, total_force);
-                            torques[particle_idx] += vec4<f32>(torque, 0.0);
-                        }
+                        // r is the vector from particle center to contact point
+                        let torque = cross(world_local_offset, force);
+                        torques[particle_idx] += vec4<f32>(torque, 0.0);
                     }
                 }
             }

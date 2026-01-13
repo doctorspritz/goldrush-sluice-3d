@@ -17,6 +17,10 @@ struct Params {
     height: u32,
     depth: u32,
     dt: f32,
+    strength: f32,  // Amplification factor for position corrections (default 5.0)
+    _pad1: u32,
+    _pad2: u32,
+    _pad3: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -62,9 +66,10 @@ fn compute_position_change(center_type: u32, center_pressure: f32,
     let neighbor_type = get_cell_type(neighbor_i, neighbor_j, neighbor_k);
     let neighbor_pressure = sample_pressure(neighbor_i, neighbor_j, neighbor_k);
 
-    // Position change = (neighbor_pressure - center_pressure) * dt
+    // Position change = (neighbor_pressure - center_pressure) * dt * strength
     // This pushes particles from high pressure (crowded) to low pressure (sparse)
-    var pos_change = (neighbor_pressure - center_pressure) * params.dt;
+    // The strength parameter amplifies corrections for better volume preservation
+    var pos_change = (neighbor_pressure - center_pressure) * params.dt * params.strength;
 
     // Neumann boundary conditions (from blub):
     // - Solid-solid: no flow

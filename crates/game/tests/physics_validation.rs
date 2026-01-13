@@ -943,10 +943,7 @@ fn test_fluid_flow_direction() {
         .test
         .as_ref()
         .expect("Scenario missing test config");
-    let spawn = test
-        .spawn
-        .as_ref()
-        .expect("Scenario missing spawn config");
+    let spawn = test.spawn.as_ref().expect("Scenario missing spawn config");
     let checks = test
         .checks
         .flow_direction
@@ -999,10 +996,7 @@ fn test_fluid_flow_direction() {
     assert!(
         passed,
         "Flow direction check failed: avg_{}={:.6}, expected_sign={}, min_avg={:.4}",
-        axis,
-        avg_axis,
-        expected_sign,
-        min_avg
+        axis, avg_axis, expected_sign, min_avg
     );
 
     println!("✓ TEST 5: Fluid Flow Direction - PASSED (scenario)");
@@ -1015,10 +1009,7 @@ fn test_fluid_pool_equilibrium() {
         .test
         .as_ref()
         .expect("Scenario missing test config");
-    let spawn = test
-        .spawn
-        .as_ref()
-        .expect("Scenario missing spawn config");
+    let spawn = test.spawn.as_ref().expect("Scenario missing spawn config");
     let checks = test
         .checks
         .pool_equilibrium
@@ -1060,10 +1051,7 @@ fn test_fluid_wall_containment() {
         .test
         .as_ref()
         .expect("Scenario missing test config");
-    let spawn = test
-        .spawn
-        .as_ref()
-        .expect("Scenario missing spawn config");
+    let spawn = test.spawn.as_ref().expect("Scenario missing spawn config");
     let checks = test
         .checks
         .wall_containment

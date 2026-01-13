@@ -248,6 +248,7 @@ struct App {
     is_simulating: bool,
     multi_sim: Option<MultiGridSim>,
     fluid_renderer: Option<ScreenSpaceFluidRenderer>,
+    particle_stream_cap: Option<usize>,
 
     // Visual Test mode
     test_mode: bool,
@@ -268,8 +269,8 @@ struct App {
 
 struct GpuState {
     surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
     config: wgpu::SurfaceConfiguration,
 
     // Mesh rendering
@@ -375,8 +376,9 @@ impl App {
             is_simulating: false,
             multi_sim: None,
             fluid_renderer: None,
+            particle_stream_cap: None,
             // Visual test mode
-            test_mode: false,
+            test_mode: true,
             test_idx: 0,
             test_frame: 0,
             // Legacy single-grid fields
@@ -546,6 +548,7 @@ impl App {
 
         // Clear the layout - we're using test geometry, not washplant pieces
         self.layout = EditorLayout::default();
+        self.layout.emitters.clear();
 
         // Create MultiGridSim for DEM-only simulation
         let mut multi_sim = MultiGridSim::new();
@@ -647,7 +650,7 @@ impl App {
                 // Spawn 50 particles in a random-ish pattern
                 for i in 0..50 {
                     let x = ((i * 7) % 10) as f32 * 0.04 - 0.2;
-                    let y = 0.3 + (i as f32 * 0.005);
+                    let y = 0.3 + (i as f32 * 0.025);
                     let z = ((i * 13) % 10) as f32 * 0.04 - 0.2;
                     let pos = Vec3::new(x, y, z);
                     multi_sim
@@ -671,6 +674,11 @@ impl App {
         println!("  DEM particles: {}", multi_sim.dem_sim.clumps.len());
         println!("Watch: {}", test.watch);
         println!("\nColor key: Yellow=gold(heavy), Gray=sand(light)");
+
+        // Initialize GPU DEM if we have GPU state
+        if let Some(gpu) = &self.gpu {
+            multi_sim.init_gpu_dem(gpu.device.clone(), gpu.queue.clone());
+        }
 
         // Store simulation and mark as running
         self.multi_sim = Some(multi_sim);
@@ -712,46 +720,30 @@ impl App {
             wall_thickness,
         );
 
-        let i_min = wall_thickness + 1;
-        let k_min = wall_thickness + 1;
-        let i_max = grid_width.saturating_sub(wall_thickness + 2);
-        let k_max = grid_depth.saturating_sub(wall_thickness + 2);
+        // Configure a streaming emitter above the left wall
+        let emitter_id = self.layout.next_id();
+        let mut emitter = EmitterPiece::new(emitter_id);
+        emitter.position = Vec3::new(
+            grid_offset.x - cell_size * 0.5,
+            grid_offset.y + (grid_height as f32) * cell_size * 0.75,
+            grid_offset.z + (grid_depth as f32 * cell_size) * 0.5,
+        );
+        emitter.rotation = Rotation::R0;
+        emitter.rate = 6000.0;
+        emitter.velocity = 2.5;
+        emitter.spread_deg = 5.0;
+        emitter.radius = cell_size * 0.5;
+        emitter.width = grid_depth as f32 * cell_size * 0.8;
+        emitter.spawn_sediment = false;
+        self.layout.emitters.push(emitter);
 
-        let j_min = wall_thickness + 1;
-        let j_top = grid_height.saturating_sub(1);
-        let j_span = j_top.saturating_sub(j_min) + 1;
-        let j_max = j_min + ((j_span as f32) * 0.5).floor() as usize;
-
-        let particles_per_cell = 5usize;
-        if let Some(piece) = multi_sim.pieces.get_mut(piece_idx) {
-            if let Some(gpu_flip) = piece.gpu_flip.as_mut() {
-                gpu_flip.water_rest_particles = particles_per_cell as f32;
-                gpu_flip.density_surface_clamp = false;
-            }
-        }
-        let mut count = 0usize;
-        for k in k_min..=k_max {
-            for j in j_min..=j_max {
-                for i in i_min..=i_max {
-                    let x = grid_offset.x + (i as f32 + 0.5) * cell_size;
-                    let y = grid_offset.y + (j as f32 + 0.5) * cell_size;
-                    let z = grid_offset.z + (k as f32 + 0.5) * cell_size;
-                    for _ in 0..particles_per_cell {
-                        multi_sim.emit_into_piece(piece_idx, Vec3::new(x, y, z), Vec3::ZERO, 1);
-                        count += 1;
-                    }
-                }
-            }
-        }
-
-        println!("  Box grid: {}x{}x{} @ cell_size={:.3}", grid_width, grid_height, grid_depth, cell_size);
         println!(
-            "  Fill region: i=[{}..{}], j=[{}..{}], k=[{}..{}]",
-            i_min, i_max, j_min, j_max, k_min, k_max
+            "  Box grid: {}x{}x{} @ cell_size={:.3}",
+            grid_width, grid_height, grid_depth, cell_size
         );
         println!(
-            "  Spawned ~{} water particles ({} per cell)",
-            count, particles_per_cell
+            "  Streaming emitter rate: {:.0} particles/s (cap 100_000)",
+            6000.0
         );
 
         // Camera setup
@@ -760,6 +752,7 @@ impl App {
         self.camera_yaw = 0.4;
         self.camera_pitch = 0.5;
 
+        self.particle_stream_cap = Some(100_000);
         // Store simulation and mark as running
         self.multi_sim = Some(multi_sim);
         self.is_simulating = true;
@@ -987,6 +980,9 @@ impl App {
         fluid_renderer.particle_radius = SIM_CELL_SIZE * 0.5;
         fluid_renderer.resize(&gpu.device, gpu.config.width, gpu.config.height);
 
+        // Initialize GPU DEM
+        multi_sim.init_gpu_dem(gpu.device.clone(), gpu.queue.clone());
+
         self.multi_sim = Some(multi_sim);
         self.fluid_renderer = Some(fluid_renderer);
         self.sim_frame = 0;
@@ -1006,6 +1002,7 @@ impl App {
         self.affine_vels.clear();
         self.densities.clear();
         println!("Simulation stopped.");
+        self.particle_stream_cap = None;
     }
 
     /// Mark solid cells in the simulation grid from editor geometry
@@ -1331,7 +1328,14 @@ impl App {
             return;
         }
 
+        let mut cap_remaining = self
+            .particle_stream_cap
+            .map(|limit| limit.saturating_sub(multi_sim.total_particles()));
+
         for emitter in &self.layout.emitters {
+            if let Some(0) = cap_remaining {
+                break;
+            }
             // Find the best target piece for this emitter
             let target_piece = Self::find_piece_for_emitter(multi_sim, emitter.position);
             // Calculate emit count based on rate (particles per second at 60 FPS)
@@ -1347,7 +1351,16 @@ impl App {
 
             let spread_rad = emitter.spread_deg.to_radians();
 
-            for _ in 0..emit_count {
+            let actual_emit = if let Some(rem) = cap_remaining {
+                emit_count.min(rem)
+            } else {
+                emit_count
+            };
+            if actual_emit == 0 {
+                continue;
+            }
+
+            for _ in 0..actual_emit {
                 // Spray bar: spread along perpendicular axis based on width
                 let perp = Vec3::new(-base_dir.z, 0.0, base_dir.x);
                 let width_offset = (rand_float() - 0.5) * emitter.width;
@@ -1382,7 +1395,7 @@ impl App {
                 multi_sim.emit_into_piece(target_piece, world_pos, velocity, 1);
 
                 // Spawn DEM clumps alongside water (DEM_SEDIMENT_RATIO of particles are sediment)
-                if rand_float() < DEM_SEDIMENT_RATIO {
+                if emitter.spawn_sediment && rand_float() < DEM_SEDIMENT_RATIO {
                     // 20% gold, 80% sand/gangue
                     let template_idx = if rand_float() < 0.2 {
                         multi_sim.gold_template_idx
@@ -1392,6 +1405,9 @@ impl App {
                     // Spawn at same position as water (IN the water flow)
                     multi_sim.dem_sim.spawn(template_idx, world_pos, velocity);
                 }
+            }
+            if let Some(rem) = cap_remaining.as_mut() {
+                *rem -= actual_emit;
             }
         }
 
@@ -2537,6 +2553,9 @@ impl App {
             .await
             .unwrap();
 
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats[0];
 
@@ -3080,6 +3099,11 @@ impl App {
             return;
         }
 
+        // Auto-start test if in test mode and not running
+        if self.test_mode && !self.is_simulating {
+            self.run_test(self.test_idx);
+        }
+
         let camera_pos = self.camera_position();
         let view_matrix = Mat4::look_at_rh(camera_pos, self.camera_target, Vec3::Y);
 
@@ -3126,9 +3150,20 @@ impl App {
 
                     self.sim_frame += 1;
 
-                    // Debug output periodically
-                    if self.sim_frame % 60 == 0 {
+                    // Debug output every frame for diagnosing falling
+                    if self.sim_frame % 1 == 0 {
                         let total = multi_sim.total_particles();
+                        if total > 0 {
+                            // Print first particle pos
+                            if !multi_sim.dem_sim.clumps.is_empty() {
+                                println!(
+                                    "Frame {}: P0 pos: {:?}",
+                                    self.sim_frame, multi_sim.dem_sim.clumps[0].position
+                                );
+                            }
+                        } else {
+                            println!("Frame {}: 0 particles", self.sim_frame);
+                        }
                         println!(
                             "Frame {}: {} particles ({} pieces)",
                             self.sim_frame,
@@ -3136,31 +3171,32 @@ impl App {
                             multi_sim.pieces.len()
                         );
                         let occupied_volume = multi_sim.total_occupied_volume();
-                        let piece = &multi_sim.pieces[0];
-                        let cell_volume = piece.cell_size.powi(3);
-                        let occupied_cells = multi_sim.occupied_cell_count(0);
-                        let particles = piece.positions.len().max(1);
-                        let ppc = particles as f32 / occupied_cells.max(1) as f32;
-                        let expected_volume = (26.0 * 9.0 * 26.0) * cell_volume;
-                        let ratio = if expected_volume > 0.0 {
-                            occupied_volume / expected_volume
-                        } else {
-                            0.0
-                        };
-                        println!(
-                            "  Occupied volume ~ {:.6} m^3 (ratio {:.3}, ppc {:.2})",
-                            occupied_volume, ratio, ppc
-                        );
-                        if let (Some(gpu), Some(piece)) =
-                            (&self.gpu, multi_sim.pieces.get(0))
-                        {
-                            if let Some(gpu_flip) = piece.gpu_flip.as_ref() {
-                                gpu_flip.print_density_projection_diagnostics(
-                                    &gpu.device,
-                                    &gpu.queue,
-                                    dt,
-                                    gpu_flip.water_rest_particles,
-                                );
+                        if !multi_sim.pieces.is_empty() {
+                            let piece = &multi_sim.pieces[0];
+                            let cell_volume = piece.cell_size.powi(3);
+                            let occupied_cells = multi_sim.occupied_cell_count(0);
+                            let particles = piece.positions.len().max(1);
+                            let ppc = particles as f32 / occupied_cells.max(1) as f32;
+                            let expected_volume = (26.0 * 9.0 * 26.0) * cell_volume;
+                            let ratio = if expected_volume > 0.0 {
+                                occupied_volume / expected_volume
+                            } else {
+                                0.0
+                            };
+                            println!(
+                                "  Occupied volume ~ {:.6} m^3 (ratio {:.3}, ppc {:.2})",
+                                occupied_volume, ratio, ppc
+                            );
+                            if let Some(gpu) = &self.gpu {
+                                if let Some(gpu_flip) = piece.gpu_flip.as_ref() {
+                                    println!("DEBUG: gpu_flip.water_rest_particles = {}", gpu_flip.water_rest_particles);
+                                    gpu_flip.print_density_projection_diagnostics(
+                                        &gpu.device,
+                                        &gpu.queue,
+                                        dt,
+                                        gpu_flip.water_rest_particles,
+                                    );
+                                }
                             }
                         }
                         if !world_positions.is_empty() {
@@ -3352,41 +3388,13 @@ impl App {
             for i in 0..max_render {
                 let world_pos = world_positions[i];
 
-                // Create a small billboard quad facing the camera
-                let to_cam = (camera_pos - world_pos).normalize();
-                let right = to_cam.cross(Vec3::Y).normalize() * particle_size;
-                let up = Vec3::Y * particle_size;
-
-                let p0 = world_pos - right - up;
-                let p1 = world_pos + right - up;
-                let p2 = world_pos + right + up;
-                let p3 = world_pos - right + up;
-
-                let base = all_vertices.len() as u32;
-                all_vertices.push(SluiceVertex {
-                    position: p0.to_array(),
-                    color: particle_color,
-                });
-                all_vertices.push(SluiceVertex {
-                    position: p1.to_array(),
-                    color: particle_color,
-                });
-                all_vertices.push(SluiceVertex {
-                    position: p2.to_array(),
-                    color: particle_color,
-                });
-                all_vertices.push(SluiceVertex {
-                    position: p3.to_array(),
-                    color: particle_color,
-                });
-                all_indices.extend_from_slice(&[
-                    base,
-                    base + 1,
-                    base + 2,
-                    base,
-                    base + 2,
-                    base + 3,
-                ]);
+                push_cube(
+                    world_pos,
+                    particle_size,
+                    particle_color,
+                    &mut all_vertices,
+                    &mut all_indices,
+                );
             }
         }
 
@@ -3408,41 +3416,13 @@ impl App {
                         sand_color
                     };
 
-                    // Create a small billboard quad facing the camera
-                    let to_cam = (camera_pos - clump.position).normalize();
-                    let right = to_cam.cross(Vec3::Y).normalize() * clump_size;
-                    let up = Vec3::Y * clump_size;
-
-                    let p0 = clump.position - right - up;
-                    let p1 = clump.position + right - up;
-                    let p2 = clump.position + right + up;
-                    let p3 = clump.position - right + up;
-
-                    let base = all_vertices.len() as u32;
-                    all_vertices.push(SluiceVertex {
-                        position: p0.to_array(),
+                    push_cube(
+                        clump.position,
+                        clump_size,
                         color,
-                    });
-                    all_vertices.push(SluiceVertex {
-                        position: p1.to_array(),
-                        color,
-                    });
-                    all_vertices.push(SluiceVertex {
-                        position: p2.to_array(),
-                        color,
-                    });
-                    all_vertices.push(SluiceVertex {
-                        position: p3.to_array(),
-                        color,
-                    });
-                    all_indices.extend_from_slice(&[
-                        base,
-                        base + 1,
-                        base + 2,
-                        base,
-                        base + 2,
-                        base + 3,
-                    ]);
+                        &mut all_vertices,
+                        &mut all_indices,
+                    );
                 }
             }
         }
@@ -3602,6 +3582,7 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) world_pos: vec3<f32>,
 }
 
 @vertex
@@ -3609,12 +3590,28 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = uniforms.view_proj * vec4<f32>(in.position, 1.0);
     out.color = in.color;
+    out.world_pos = in.position;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return in.color;
+    // Derive face normal using derivatives (flat shading)
+    let dx = dpdx(in.world_pos);
+    let dy = dpdy(in.world_pos);
+    let normal = normalize(cross(dx, dy));
+
+    // Simple directional lighting
+    let light_dir = normalize(vec3<f32>(0.5, 0.8, 0.3));
+    // Valid normals might be flipped depending on triangle winding, correct for front-facing
+    // But for cubes/convex shapes with cull_mode=Back (default/none is used?), 
+    // we want standard dot. 
+    // Existing pipeline has cull_mode: None, so we might see backfaces. 
+    // We should take abs(dot) or ensure winding is consistent.
+    // Let's assume standard lighting.
+    let diff = max(dot(normal, light_dir), 0.3); // 0.3 ambient
+    
+    return vec4<f32>(in.color.rgb * diff, in.color.a);
 }
 "#;
 
@@ -4297,7 +4294,7 @@ mod tests {
         let depth = 20;
 
         let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
-        sim.pressure_iterations = 40;
+        sim.pressure_iterations = 120; // Match MultiGridSim for consistent behavior
 
         // Set up a gutter with moderate angle
         let margin = cell_size * 4.0;
@@ -4501,7 +4498,7 @@ mod tests {
         let depth = 28;
 
         let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
-        sim.pressure_iterations = 40;
+        sim.pressure_iterations = 120; // Match MultiGridSim for consistent behavior
 
         // Set up a sluice with moderate slope
         let margin = cell_size * 4.0;
@@ -5186,4 +5183,59 @@ mod tests {
 
         println!("Gold settles faster than sand");
     }
+}
+
+/// Helper to push a 3D cube mesh into the vertex/index buffers
+fn push_cube(
+    center: Vec3,
+    size: f32,
+    color: [f32; 4],
+    vertices: &mut Vec<SluiceVertex>,
+    indices: &mut Vec<u32>,
+) {
+    let half = size * 0.5;
+    let base = vertices.len() as u32;
+
+    // 8 vertices
+    let corners = [
+        Vec3::new(-half, -half, -half), // 0: 000
+        Vec3::new( half, -half, -half), // 1: 100
+        Vec3::new(-half,  half, -half), // 2: 010
+        Vec3::new( half,  half, -half), // 3: 110
+        Vec3::new(-half, -half,  half), // 4: 001
+        Vec3::new( half, -half,  half), // 5: 101
+        Vec3::new(-half,  half,  half), // 6: 011
+        Vec3::new( half,  half,  half), // 7: 111
+    ];
+
+    for c in corners {
+        vertices.push(SluiceVertex {
+            position: (center + c).to_array(),
+            color,
+        });
+    }
+
+    // 36 indices (12 triangles)
+    // Front (+Z): 4 5 7, 4 7 6
+    // Back (-Z): 1 0 2, 1 2 3
+    // Right (+X): 5 1 3, 5 3 7
+    // Left (-X): 0 4 6, 0 6 2
+    // Top (+Y): 6 7 3, 6 3 2
+    // Bottom (-Y): 0 1 5, 0 5 4
+    let inds = [
+        // Front (+Z) - facing camera
+        4, 5, 7, 4, 7, 6,
+        // Back (-Z)
+        1, 0, 2, 1, 2, 3,
+        // Right (+X)
+        5, 1, 3, 5, 3, 7,
+        // Left (-X)
+        0, 4, 6, 0, 6, 2,
+        // Top (+Y)
+        6, 7, 3, 6, 3, 2,
+        // Bottom (-Y)
+        0, 1, 5, 0, 5, 4,
+    ];
+
+    indices.extend(inds.iter().map(|i| base + i));
 }

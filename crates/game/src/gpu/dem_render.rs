@@ -1,6 +1,6 @@
+use crate::gpu::dem_3d::GpuDem3D;
 use bytemuck::{Pod, Zeroable};
 use std::mem;
-use crate::gpu::dem_3d::GpuDem3D;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -213,12 +213,30 @@ impl DemRenderer {
             label: Some("DEM Render BG"),
             layout: &self.dem_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: dem.position_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: dem.orientation_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: dem.template_id_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: dem.template_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: dem.sphere_offsets_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: dem.sphere_radii_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: dem.position_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: dem.orientation_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: dem.template_id_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: dem.template_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: dem.sphere_offsets_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: dem.sphere_radii_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -248,12 +266,12 @@ impl DemRenderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             pass.set_bind_group(1, &dem_bg, &[]);
-            
+
             // Draw MAX_SPHERES * num_particles instances
             // 4 vertices per instance (quad)
-            pass.draw(0..4, 0..(dem.particle_count() * 100)); // MAX_SPHERES_PER_CLUMP check? 
-            // We need to import MAX_SPHERES const or pass it. 
-            // Hardcoded 100 for now matching dem_3d.rs
+            pass.draw(0..4, 0..(dem.particle_count() * 100)); // MAX_SPHERES_PER_CLUMP check?
+                                                              // We need to import MAX_SPHERES const or pass it.
+                                                              // Hardcoded 100 for now matching dem_3d.rs
         }
     }
 }

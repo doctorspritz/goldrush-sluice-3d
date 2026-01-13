@@ -28,10 +28,10 @@ png = "0.17"
 
 [[example]]
 name = "gpu_dem_test"
-path = "examples/gpu_dem_test"
+path = "examples/gpu_dem_test.rs"
 required-features = ["gpu-dem"]
 
 [[example]]
 name = "gpu_dem_flip_test"
-path = "examples/gpu_dem_flip_test"
+path = "examples/gpu_dem_flip_test.rs"
 required-features = ["gpu-dem"]

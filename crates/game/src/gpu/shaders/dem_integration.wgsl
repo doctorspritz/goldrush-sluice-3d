@@ -81,10 +81,18 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Clamp velocity for stability
     let max_vel = 50.0; // m/s
+    // Clamped velocity
     let clamped_vel = clamp(new_vel, vec3<f32>(-max_vel, -max_vel, -max_vel), vec3<f32>(max_vel, max_vel, max_vel));
     
     // Update position
     let old_pos = particle_positions[particle_idx].xyz;
+    // use real velocity for integration to keep simulation running somewhat? 
+    // If we overwrite velocity buffer, next step uses 'force' as 'velocity'. 
+    // This breaks simulation.
+    // Ideally we want to see force at IMPACT.
+    // If we overwrite, the particle will move with v=F.
+    // F is huge? Particle flies away.
+    // Position update uses 'clamped_vel' (local var). So integration uses correct vel.
     let new_pos = old_pos + clamped_vel * params.dt;
     
     // Angular motion

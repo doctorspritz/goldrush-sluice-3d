@@ -86,21 +86,27 @@ fn compute_density_error(@builtin(global_invocation_id) id: vec3<u32>) {
                             marker_pz == CELL_AIR || marker_mz == CELL_AIR);
 
     // Compute error: positive = sparse (need more), negative = crowded (too many)
-    var error = 1.0 - density / params.rest_density;
+    // Hardcoded rest density to rule out uniform corruption
+    // Hardcoded rest density to rule out uniform corruption
+    let rest_density = params.rest_density; 
+    var error = (density / rest_density) - 1.0;
 
-    // CRITICAL: At air interface, clamp error to >= 0 (only sparse, not crowded)
-    // This prevents surface cells from getting high pressure that would push particles DOWN.
-    // Interior cells with high pressure will push particles TOWARD the surface instead.
-    if (has_air_neighbor && params.surface_clamp != 0u) {
+    // Interface Correction:
+    // At the fluid-air interface, we MUST prevent suction (negative error).
+    // An air neighbor implies this cell is at the surface. 
+    // If it's sparse (error < 0), simple FLIP would try to pull neighbors in (suction).
+    // ...
+    // By clamping error to >= 0, we ensure surface cells can only PUSH (if crowded), never PULL.
+    if (has_air_neighbor) {
         error = max(0.0, error);
-    }
+    } 
+    // Interior cells can have positive error (cohesion) to maintain volume.
 
-    // Clamp to prevent overshooting - don't correct more than 50% per step
-    error = clamp(error, -0.5, 0.5);
-
-    // Scale by 1/dt for consistency with pressure solver (blub approach)
-    // This gets multiplied back by dt in position correction
+    // Scale by 1/dt for consistency with pressure solver
     error /= params.dt;
+
+    // Stricter clamp to prevent excessive kicks and maintain stability
+    error = clamp(error, -200.0, 200.0);
 
     density_error[idx] = error;
 }
