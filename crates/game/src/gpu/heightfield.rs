@@ -64,8 +64,6 @@ pub struct GpuHeightfield {
     pub surface_pipeline: wgpu::ComputePipeline,
     pub flux_pipeline: wgpu::ComputePipeline,
     pub depth_pipeline: wgpu::ComputePipeline,
-    pub reconcile_depth_pipeline: wgpu::ComputePipeline,
-
     pub settling_pipeline: wgpu::ComputePipeline,
     pub erosion_pipeline: wgpu::ComputePipeline,
     pub sediment_transport_pipeline: wgpu::ComputePipeline,
@@ -545,16 +543,6 @@ impl GpuHeightfield {
             compilation_options: Default::default(),
             cache: None,
         });
-
-        let reconcile_depth_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("Reconcile Depth Pipeline"),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some("reconcile_depth"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
 
         // Erosion Shader & Pipelines
         let erosion_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1374,7 +1362,6 @@ impl GpuHeightfield {
             surface_pipeline,
             flux_pipeline,
             depth_pipeline,
-            reconcile_depth_pipeline,
             settling_pipeline,
             erosion_pipeline,
             sediment_transport_pipeline,
@@ -1495,8 +1482,6 @@ impl GpuHeightfield {
         dispatch_step!("Update Collapse Red", &self.collapse_red_pipeline);
         dispatch_step!("Update Collapse Black", &self.collapse_black_pipeline);
 
-        // 6. Reconcile depth after terrain changes to keep surface stable
-        dispatch_step!("Reconcile Depth", &self.reconcile_depth_pipeline);
     }
 
     pub fn update_params(&self, queue: &wgpu::Queue, dt: f32) {
