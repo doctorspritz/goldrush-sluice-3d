@@ -684,6 +684,7 @@ impl App {
                 grid_height: GRID_HEIGHT,
                 grid_depth: GRID_DEPTH,
                 cell_size: CELL_SIZE,
+                grid_offset: Vec3::ZERO,
             };
             self.dem.collision_response_only(dt, &sdf_params, true); // wet=true
 
@@ -929,6 +930,17 @@ impl App {
                     );
                 }
                 self.apply_gpu_results(self.positions.len());
+            }
+
+            if self.frame % 50 == 0 {
+                if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                    gpu_flip.print_density_projection_diagnostics(
+                        &gpu.device,
+                        &gpu.queue,
+                        dt,
+                        8.0, // water_rest
+                    );
+                }
             }
 
             self.run_dem_and_cleanup(dt);

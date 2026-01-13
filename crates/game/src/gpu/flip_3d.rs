@@ -18,7 +18,7 @@ use std::sync::{mpsc, Arc};
 use wgpu::util::DeviceExt;
 
 const GRAVEL_OBSTACLE_MAX: u32 = 2048;
-const DENSITY_PRESSURE_ITERS: u32 = 80;
+
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -128,43 +128,7 @@ struct BcParams3D {
     _pad: u32,
 }
 
-/// Density error computation parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct DensityErrorParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    rest_density: f32, // Target particles per cell (~8 for typical FLIP)
-    dt: f32,           // Timestep for scaling
-    surface_clamp: u32,
-    _pad2: u32,
-    _pad3: u32,
-}
 
-/// Density position grid parameters (first pass - grid-based position changes)
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct DensityPositionGridParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    dt: f32,
-}
-
-/// Density position correction parameters (blub grid-based trilinear sampling)
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct DensityCorrectionParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    particle_count: u32,
-    cell_size: f32,
-    dt: f32,
-    _pad1: u32,
-    _pad2: u32,
-}
 
 /// Sediment cell type builder parameters
 #[repr(C)]
@@ -175,6 +139,49 @@ struct SedimentCellTypeParams3D {
     depth: u32,
     _pad0: u32,
 }
+
+/// Density error parameters
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct DensityErrorParams3D {
+    width: u32,
+    height: u32,
+    depth: u32,
+    rest_density: f32,
+    dt: f32,
+    surface_clamp: u32,
+    _pad2: u32,
+    _pad3: u32,
+}
+
+/// Density position grid parameters
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct DensityPositionGridParams3D {
+    width: u32,
+    height: u32,
+    depth: u32,
+    dt: f32,
+    strength: f32,  // Amplification factor for position corrections
+    _pad1: u32,
+    _pad2: u32,
+    _pad3: u32,
+}
+
+/// Density correct parameters
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct DensityCorrectParams3D {
+    width: u32,
+    height: u32,
+    depth: u32,
+    particle_count: u32,
+    cell_size: f32,
+    damping: f32, // Damp velocities during position correction to kill jitter energy
+    _pad2: u32,
+    _pad3: u32,
+}
+
 
 /// SDF collision parameters
 #[repr(C)]
@@ -467,6 +474,9 @@ pub struct GpuFlip3D {
     pub water_rest_particles: f32,
     /// Clamp crowded surface cells (air neighbors) during density projection.
     pub density_surface_clamp: bool,
+    pub density_projection_strength: f32,
+    /// Separate iterations for density projection pressure solve (default 40).
+    pub volume_iterations: u32,
     /// Target sediment particles per cell for porosity fraction.
     pub sediment_rest_particles: f32,
     /// Speed below which friction kicks in (m/s).
@@ -562,29 +572,27 @@ pub struct GpuFlip3D {
     grid_v_old_buffer: wgpu::Buffer,
     grid_w_old_buffer: wgpu::Buffer,
 
-    // Density projection (Implicit Density Projection for volume conservation)
-    // Phase 1: Compute density error
-    density_error_pipeline: wgpu::ComputePipeline,
-    density_error_bind_group: wgpu::BindGroup,
-    density_error_params_buffer: wgpu::Buffer,
-    // Phase 2: Compute position changes on grid (blub approach)
-    density_position_grid_pipeline: wgpu::ComputePipeline,
-    density_position_grid_bind_group: wgpu::BindGroup,
-    density_position_grid_params_buffer: wgpu::Buffer,
-    position_delta_x_buffer: wgpu::Buffer, // Grid-based delta X
-    position_delta_y_buffer: wgpu::Buffer, // Grid-based delta Y
-    position_delta_z_buffer: wgpu::Buffer, // Grid-based delta Z
-    // Phase 3: Particles sample from grid with trilinear interpolation
-    density_correct_pipeline: wgpu::ComputePipeline,
-    density_correct_bind_group: wgpu::BindGroup,
-    density_correct_params_buffer: wgpu::Buffer,
+
     // Sediment density projection (granular packing)
     sediment_cell_type_pipeline: wgpu::ComputePipeline,
     sediment_cell_type_bind_group: wgpu::BindGroup,
     sediment_cell_type_params_buffer: wgpu::Buffer,
-    sediment_density_error_pipeline: wgpu::ComputePipeline,
-    sediment_density_error_bind_group: wgpu::BindGroup,
-    sediment_density_correct_pipeline: wgpu::ComputePipeline,
+
+    // Density projection (volume preservation)
+    density_error_buffer: wgpu::Buffer,
+    position_delta_x_buffer: wgpu::Buffer,
+    position_delta_y_buffer: wgpu::Buffer,
+    position_delta_z_buffer: wgpu::Buffer,
+    density_error_pipeline: wgpu::ComputePipeline,
+    density_error_bind_group: wgpu::BindGroup,
+    density_error_params_buffer: wgpu::Buffer,
+    density_position_grid_pipeline: wgpu::ComputePipeline,
+    density_position_grid_bind_group: wgpu::BindGroup,
+    density_position_grid_params_buffer: wgpu::Buffer,
+    density_correct_pipeline: wgpu::ComputePipeline,
+    density_correct_bind_group: wgpu::BindGroup,
+    density_correct_params_buffer: wgpu::Buffer,
+
 
     // SDF collision (advection + solid collision)
     sdf_collision_pipeline: wgpu::ComputePipeline,
@@ -1872,423 +1880,7 @@ impl GpuFlip3D {
         // ========== Density Projection (Implicit Density Projection) ==========
         // Creates pipelines for density error computation and position correction
 
-        let cell_count = (width * height * depth) as usize;
 
-        // Create density error shader
-        let density_error_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Density Error 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/density_error_3d.wgsl").into()),
-        });
-
-        let density_error_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Density Error Params 3D"),
-            size: std::mem::size_of::<DensityErrorParams3D>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Density error bindings: params, particle_count, cell_type, density_error (uses divergence_buffer)
-        let density_error_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Density Error 3D Bind Group Layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
-        let density_error_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Density Error 3D Bind Group"),
-            layout: &density_error_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: density_error_params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: p2g.particle_count_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: pressure.cell_type_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: pressure.divergence_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
-        let density_error_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Density Error 3D Pipeline Layout"),
-                bind_group_layouts: &[&density_error_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let density_error_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("Density Error 3D Pipeline"),
-                layout: Some(&density_error_pipeline_layout),
-                module: &density_error_shader,
-                entry_point: Some("compute_density_error"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
-
-        // ========== Phase 2: Density Position Grid (blub approach) ==========
-        // Compute position changes on grid, then particles sample with trilinear
-
-        // Create grid-based position delta buffers
-        let position_delta_x_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Position Delta X Grid"),
-            size: (cell_count * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let position_delta_y_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Position Delta Y Grid"),
-            size: (cell_count * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let position_delta_z_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Position Delta Z Grid"),
-            size: (cell_count * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-
-        // Create density position grid shader
-        let density_position_grid_shader =
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Density Position Grid 3D Shader"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("shaders/density_position_grid_3d.wgsl").into(),
-                ),
-            });
-
-        let density_position_grid_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Density Position Grid Params 3D"),
-            size: std::mem::size_of::<DensityPositionGridParams3D>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Bindings: params, pressure, cell_type, delta_x, delta_y, delta_z
-        let density_position_grid_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Density Position Grid 3D Bind Group Layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
-        let density_position_grid_bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Density Position Grid 3D Bind Group"),
-                layout: &density_position_grid_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: density_position_grid_params_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: pressure.pressure_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: pressure.cell_type_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: position_delta_x_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: position_delta_y_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: position_delta_z_buffer.as_entire_binding(),
-                    },
-                ],
-            });
-
-        let density_position_grid_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Density Position Grid 3D Pipeline Layout"),
-                bind_group_layouts: &[&density_position_grid_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let density_position_grid_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("Density Position Grid 3D Pipeline"),
-                layout: Some(&density_position_grid_pipeline_layout),
-                module: &density_position_grid_shader,
-                entry_point: Some("compute_position_grid"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
-
-        // ========== Phase 3: Particle Position Correction (trilinear sampling) ==========
-        let density_correct_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Density Correct 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/density_correct_3d.wgsl").into(),
-            ),
-        });
-
-        let density_correct_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Density Correct Params 3D"),
-            size: std::mem::size_of::<DensityCorrectionParams3D>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Bindings: params, delta_x, delta_y, delta_z, cell_type, positions, densities, velocities
-        let density_correct_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Density Correct 3D Bind Group Layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 6,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 7,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
-        let density_correct_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Density Correct 3D Bind Group"),
-            layout: &density_correct_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: density_correct_params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: position_delta_x_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: position_delta_y_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: position_delta_z_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: pressure.cell_type_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: g2p.positions_buffer.as_ref().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: densities_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: velocities_buffer.as_ref().as_entire_binding(),
-                },
-            ],
-        });
-
-        let density_correct_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Density Correct 3D Pipeline Layout"),
-                bind_group_layouts: &[&density_correct_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let density_correct_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("Density Correct 3D Pipeline"),
-                layout: Some(&density_correct_pipeline_layout),
-                module: &density_correct_shader,
-                entry_point: Some("correct_positions"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
 
         // ========== Sediment Density Projection (Granular Packing) ==========
         let sediment_cell_type_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2554,65 +2146,193 @@ impl GpuFlip3D {
                 cache: None,
             });
 
-        let sediment_density_error_shader =
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Sediment Density Error 3D Shader"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("shaders/sediment_density_error_3d.wgsl").into(),
-                ),
-            });
 
-        let sediment_density_error_bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Sediment Density Error 3D Bind Group"),
-                layout: &density_error_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: density_error_params_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: p2g.sediment_count_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: pressure.cell_type_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: pressure.divergence_buffer.as_entire_binding(),
-                    },
-                ],
-            });
+        // ========== Density Projection (Volume Preservation) ==========
+        let density_error_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Density Error 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/density_error_3d.wgsl").into()),
+        });
+        let density_position_grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Density Position Grid 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/density_position_grid_3d.wgsl").into()),
+        });
+        let density_correct_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Density Correct 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/density_correct_3d.wgsl").into()),
+        });
 
-        let sediment_density_error_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("Sediment Density Error 3D Pipeline"),
-                layout: Some(&density_error_pipeline_layout),
-                module: &sediment_density_error_shader,
-                entry_point: Some("compute_sediment_density_error"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
+        // Density error buffer (per-cell)
+        let density_error_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Density Error Buffer 3D"),
+            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
 
-        let sediment_density_correct_shader =
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Sediment Density Correct 3D Shader"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("shaders/sediment_density_correct_3d.wgsl").into(),
-                ),
-            });
+        // Position delta buffers (per-cell, 3D)
+        let position_delta_x_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Position Delta X Buffer 3D"),
+            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let position_delta_y_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Position Delta Y Buffer 3D"),
+            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let position_delta_z_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Position Delta Z Buffer 3D"),
+            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
-        let sediment_density_correct_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("Sediment Density Correct 3D Pipeline"),
-                layout: Some(&density_correct_pipeline_layout),
-                module: &sediment_density_correct_shader,
-                entry_point: Some("correct_positions"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
+        // Density Error pass
+        let density_error_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Density Error Params 3D"),
+            size: std::mem::size_of::<DensityErrorParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let density_error_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Density Error 3D Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            ],
+        });
+
+        let density_error_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Density Error 3D Bind Group"),
+            layout: &density_error_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: density_error_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: p2g.particle_count_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: pressure.cell_type_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: density_error_buffer.as_entire_binding() },
+            ],
+        });
+
+        let density_error_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Density Error 3D Pipeline Layout"),
+            bind_group_layouts: &[&density_error_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let density_error_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Density Error 3D Pipeline"),
+            layout: Some(&density_error_pipeline_layout),
+            module: &density_error_shader,
+            entry_point: Some("compute_density_error"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        // Density Position Grid pass
+        let density_position_grid_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Density Position Grid Params 3D"),
+            size: std::mem::size_of::<DensityPositionGridParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let density_position_grid_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Density Position Grid 3D Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            ],
+        });
+
+        let density_position_grid_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Density Position Grid 3D Bind Group"),
+            layout: &density_position_grid_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: density_position_grid_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: pressure.pressure_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: pressure.cell_type_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: position_delta_x_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: position_delta_y_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: position_delta_z_buffer.as_entire_binding() },
+            ],
+        });
+
+        let density_position_grid_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Density Position Grid 3D Pipeline Layout"),
+            bind_group_layouts: &[&density_position_grid_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let density_position_grid_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Density Position Grid 3D Pipeline"),
+            layout: Some(&density_position_grid_pipeline_layout),
+            module: &density_position_grid_shader,
+            entry_point: Some("compute_position_grid"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        // Density Correct pass
+        let density_correct_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Density Correct Params 3D"),
+            size: std::mem::size_of::<DensityCorrectParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let density_correct_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Density Correct 3D Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 7, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            ],
+        });
+
+        let density_correct_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Density Correct 3D Bind Group"),
+            layout: &density_correct_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: density_correct_params_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: position_delta_x_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: position_delta_y_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: position_delta_z_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: pressure.cell_type_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: positions_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: velocities_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: densities_buffer.as_entire_binding() },
+            ],
+        });
+
+        let density_correct_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Density Correct 3D Pipeline Layout"),
+            bind_group_layouts: &[&density_correct_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let density_correct_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Density Correct 3D Pipeline"),
+            layout: Some(&density_correct_pipeline_layout),
+            module: &density_correct_shader,
+            entry_point: Some("correct_positions"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
 
         // ========== SDF Collision (Advection + Solid Collision) ==========
         let sdf_collision_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2780,6 +2500,8 @@ impl GpuFlip3D {
             vorticity_epsilon: 0.05,
             water_rest_particles: 8.0,
             density_surface_clamp: true,
+            density_projection_strength: 1.0,  // Restore default strength
+            volume_iterations: 40,
             sediment_rest_particles: 8.0,
             sediment_friction_threshold: 0.1,
             sediment_friction_strength: 0.5,
@@ -2841,24 +2563,24 @@ impl GpuFlip3D {
             grid_u_old_buffer,
             grid_v_old_buffer,
             grid_w_old_buffer,
+            sediment_cell_type_pipeline,
+            sediment_cell_type_bind_group,
+            sediment_cell_type_params_buffer,
+
+            density_error_buffer,
+            position_delta_x_buffer,
+            position_delta_y_buffer,
+            position_delta_z_buffer,
             density_error_pipeline,
             density_error_bind_group,
             density_error_params_buffer,
             density_position_grid_pipeline,
             density_position_grid_bind_group,
             density_position_grid_params_buffer,
-            position_delta_x_buffer,
-            position_delta_y_buffer,
-            position_delta_z_buffer,
             density_correct_pipeline,
             density_correct_bind_group,
             density_correct_params_buffer,
-            sediment_cell_type_pipeline,
-            sediment_cell_type_bind_group,
-            sediment_cell_type_params_buffer,
-            sediment_density_error_pipeline,
-            sediment_density_error_bind_group,
-            sediment_density_correct_pipeline,
+
             gravel_obstacle_pipeline,
             gravel_obstacle_bind_group,
             gravel_porosity_pipeline,
@@ -3179,13 +2901,17 @@ impl GpuFlip3D {
     }
 
     pub fn bed_height_buffer(&self) -> Arc<wgpu::Buffer> {
-        self.bed_height_buffer.clone()
+        Arc::clone(&self.bed_height_buffer)
+    }
+
+    pub fn p2g_particle_count_buffer(&self) -> &wgpu::Buffer {
+        &self.p2g.particle_count_buffer
     }
 
     fn upload_bc_and_cell_types(&self, queue: &wgpu::Queue, cell_types: &[u32]) {
         // Upload cell types FIRST (needed for BC enforcement)
         self.pressure
-            .upload_cell_types(queue, cell_types, self.cell_size);
+            .upload_cell_types(queue, cell_types, self.cell_size, self.open_boundaries);
 
         // Upload BC params
         let bc_params = BcParams3D {
@@ -3277,6 +3003,7 @@ impl GpuFlip3D {
     ) -> u32 {
         let count = particle_count;
 
+        self.p2g.prepare(queue, count, self.cell_size);
         self.water_p2g.prepare(queue, count, self.cell_size);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -3379,6 +3106,133 @@ impl GpuFlip3D {
 
         queue.submit(std::iter::once(encoder.finish()));
 
+        // ========== Density Projection (Volume Preservation) ==========
+        // After P2G, before G2P: correct particle positions based on density error
+        if self.water_rest_particles > 0.0 {
+            // 1. Compute density error from particle count
+            let density_error_params = DensityErrorParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                rest_density: self.water_rest_particles,
+                dt,
+                surface_clamp: if self.density_surface_clamp { 1 } else { 0 },
+                _pad2: 0,
+                _pad3: 0,
+            };
+            queue.write_buffer(
+                &self.density_error_params_buffer,
+                0,
+                bytemuck::bytes_of(&density_error_params),
+            );
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Density Error 3D Encoder"),
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Density Error 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.density_error_pipeline);
+                pass.set_bind_group(0, &self.density_error_bind_group, &[]);
+                let workgroups_x = self.width.div_ceil(8);
+                let workgroups_y = self.height.div_ceil(8);
+                let workgroups_z = self.depth.div_ceil(4);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+
+            // 2. Copy density error to divergence buffer (pressure solver reads from divergence)
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Density Error Copy Encoder"),
+            });
+            encoder.copy_buffer_to_buffer(
+                &self.density_error_buffer,
+                0,
+                &self.pressure.divergence_buffer,
+                0,
+                (self.width * self.height * self.depth * std::mem::size_of::<f32>() as u32) as u64,
+            );
+            queue.submit(std::iter::once(encoder.finish()));
+
+            // Clear pressure before solving
+            self.pressure.clear_pressure(queue);
+
+            // 3. Solve pressure with density error as RHS
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Density Pressure 3D Encoder"),
+            });
+            self.pressure.encode_iterations_only(&mut encoder, self.volume_iterations);
+            queue.submit(std::iter::once(encoder.finish()));
+
+            // 4. Convert pressure to position deltas on grid
+            let density_position_grid_params = DensityPositionGridParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                dt,
+                strength: self.density_projection_strength,
+                _pad1: 0,
+                _pad2: 0,
+                _pad3: 0,
+            };
+            queue.write_buffer(
+                &self.density_position_grid_params_buffer,
+                0,
+                bytemuck::bytes_of(&density_position_grid_params),
+            );
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Density Position Grid 3D Encoder"),
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Density Position Grid 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.density_position_grid_pipeline);
+                pass.set_bind_group(0, &self.density_position_grid_bind_group, &[]);
+                let workgroups_x = self.width.div_ceil(8);
+                let workgroups_y = self.height.div_ceil(8);
+                let workgroups_z = self.depth.div_ceil(4);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+
+            // 4. Apply position corrections to particles
+            let density_correct_params = DensityCorrectParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                particle_count: count,
+                cell_size: self.cell_size,
+                damping: 0.95, // Damp velocities during position correction to bleed off jitter energy
+                _pad2: 0,
+                _pad3: 0,
+            };
+            queue.write_buffer(
+                &self.density_correct_params_buffer,
+                0,
+                bytemuck::bytes_of(&density_correct_params),
+            );
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Density Correct 3D Encoder"),
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Density Correct 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.density_correct_pipeline);
+                pass.set_bind_group(0, &self.density_correct_bind_group, &[]);
+                let workgroups = count.div_ceil(256);
+                pass.dispatch_workgroups(workgroups, 1, 1);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+        }
+
         let sediment_fraction_params = SedimentFractionParams3D {
             width: self.width,
             height: self.height,
@@ -3454,55 +3308,9 @@ impl GpuFlip3D {
 
         queue.submit(std::iter::once(encoder.finish()));
 
-        // 2. Enforce boundary conditions BEFORE storing old velocities
-        // This is critical for correct FLIP delta computation!
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D BC Encoder"),
-        });
 
-        // Enforce BC on U
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("BC U 3D Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.bc_u_pipeline);
-            pass.set_bind_group(0, &self.bc_bind_group, &[]);
-            let workgroups_x = (self.width + 1).div_ceil(8);
-            let workgroups_y = self.height.div_ceil(8);
-            let workgroups_z = self.depth.div_ceil(4);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-        }
 
-        // Enforce BC on V
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("BC V 3D Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.bc_v_pipeline);
-            pass.set_bind_group(0, &self.bc_bind_group, &[]);
-            let workgroups_x = self.width.div_ceil(8);
-            let workgroups_y = (self.height + 1).div_ceil(8);
-            let workgroups_z = self.depth.div_ceil(4);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-        }
 
-        // Enforce BC on W
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("BC W 3D Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.bc_w_pipeline);
-            pass.set_bind_group(0, &self.bc_bind_group, &[]);
-            let workgroups_x = self.width.div_ceil(8);
-            let workgroups_y = self.height.div_ceil(8);
-            let workgroups_z = (self.depth + 1).div_ceil(4);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-        }
-
-        queue.submit(std::iter::once(encoder.finish()));
 
         // 3. Save grid velocity for FLIP delta (now with proper BCs!)
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -3677,10 +3485,73 @@ impl GpuFlip3D {
             }
         }
 
-        // 7. Pressure solve (divergence → iterations → gradient)
-        self.pressure.encode(&mut encoder, pressure_iterations);
-
+        // Submit gravity/flow/vorticity passes
         queue.submit(std::iter::once(encoder.finish()));
+
+        // 7. Enforce Boundary Conditions
+        // CRITICAL FIX: Must run AFTER Gravity and BEFORE Pressure Solve.
+        // Gravity adds -9.8 to V at the floor. If we don't clamp it to 0 here,
+        // the pressure solver sees outflow at the floor and fails to build up pressure,
+        // causing the fluid to leak/compress through the bottom.
+        //
+        // IMPORTANT: Separate encoder + submit ensures BC writes are committed
+        // before pressure solver reads velocity buffers.
+        let mut bc_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("FLIP 3D BC Encoder"),
+        });
+
+        // Enforce BC on U
+        {
+            let mut pass = bc_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("BC U 3D Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.bc_u_pipeline);
+            pass.set_bind_group(0, &self.bc_bind_group, &[]);
+            let workgroups_x = (self.width + 1).div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+
+        // Enforce BC on V
+        {
+            let mut pass = bc_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("BC V 3D Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.bc_v_pipeline);
+            pass.set_bind_group(0, &self.bc_bind_group, &[]);
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = (self.height + 1).div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+
+        // Enforce BC on W
+        {
+            let mut pass = bc_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("BC W 3D Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.bc_w_pipeline);
+            pass.set_bind_group(0, &self.bc_bind_group, &[]);
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = (self.depth + 1).div_ceil(8);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+
+        // CRITICAL: Submit BC before pressure solve to ensure velocity writes are visible
+        queue.submit(std::iter::once(bc_encoder.finish()));
+
+        // 8. Pressure solve (divergence → iterations → gradient)
+        let mut pressure_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("FLIP 3D Pressure Encoder"),
+        });
+        self.pressure.encode(&mut pressure_encoder, pressure_iterations);
+
+        queue.submit(std::iter::once(pressure_encoder.finish()));
 
         if self.sediment_porosity_drag > 0.0 {
             let drag_params = PorosityDragParams3D {
@@ -3760,131 +3631,6 @@ impl GpuFlip3D {
             label: Some("FLIP 3D G2P Encoder"),
         });
         self.g2p.encode(&mut encoder, g2p_count);
-        queue.submit(std::iter::once(encoder.finish()));
-
-        // ========== Density Projection (Implicit Density Projection) ==========
-        // Push particles from crowded regions to empty regions
-        // This causes water level to "rise" when particles accumulate behind riffles
-
-        // 1. Compute density error from particle counts (populated during P2G)
-        let density_error_params = DensityErrorParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            rest_density: self.water_rest_particles, // Target particles per cell
-            dt,
-            surface_clamp: self.density_surface_clamp as u32,
-            _pad2: 0,
-            _pad3: 0,
-        };
-        queue.write_buffer(
-            &self.density_error_params_buffer,
-            0,
-            bytemuck::bytes_of(&density_error_params),
-        );
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Density Projection Encoder"),
-        });
-
-        // Dispatch density error shader - writes to divergence_buffer
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Density Error 3D Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.density_error_pipeline);
-            pass.set_bind_group(0, &self.density_error_bind_group, &[]);
-            let workgroups_x = self.width.div_ceil(8);
-            let workgroups_y = self.height.div_ceil(8);
-            let workgroups_z = self.depth.div_ceil(4);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-        }
-
-        queue.submit(std::iter::once(encoder.finish()));
-
-        // 2. Clear pressure and run density pressure iterations
-        self.pressure.clear_pressure(queue);
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Density Pressure Encoder"),
-        });
-
-        // Run pressure solver iterations with density error as RHS
-        // Uses same Jacobi solver, just different input
-        let density_iterations = DENSITY_PRESSURE_ITERS; // More iterations for volume conservation
-        self.pressure
-            .encode_iterations_only(&mut encoder, density_iterations);
-
-        queue.submit(std::iter::once(encoder.finish()));
-
-        // 3. Compute position deltas on grid (blub approach)
-        // Update grid shader params with dt
-        let grid_params = DensityPositionGridParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            dt,
-        };
-        queue.write_buffer(
-            &self.density_position_grid_params_buffer,
-            0,
-            bytemuck::bytes_of(&grid_params),
-        );
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Position Grid Encoder"),
-        });
-
-        // Dispatch grid position delta shader
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Density Position Grid 3D Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.density_position_grid_pipeline);
-            pass.set_bind_group(0, &self.density_position_grid_bind_group, &[]);
-            let workgroups_x = self.width.div_ceil(8);
-            let workgroups_y = self.height.div_ceil(8);
-            let workgroups_z = self.depth.div_ceil(4);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-        }
-
-        queue.submit(std::iter::once(encoder.finish()));
-
-        // 4. Apply position correction to particles (trilinear sampling from grid)
-        let density_correct_params = DensityCorrectionParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            particle_count,
-            cell_size: self.cell_size,
-            dt,
-            _pad1: 0,
-            _pad2: 0,
-        };
-        queue.write_buffer(
-            &self.density_correct_params_buffer,
-            0,
-            bytemuck::bytes_of(&density_correct_params),
-        );
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Position Correction Encoder"),
-        });
-
-        // Dispatch particle position correction shader
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Density Correct 3D Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.density_correct_pipeline);
-            pass.set_bind_group(0, &self.density_correct_bind_group, &[]);
-            let workgroups = particle_count.div_ceil(256);
-            pass.dispatch_workgroups(workgroups, 1, 1);
-        }
-
         queue.submit(std::iter::once(encoder.finish()));
 
         // ========== Sediment Density Projection (Granular Packing) ==========
@@ -3975,6 +3721,10 @@ impl GpuFlip3D {
                 height: self.height,
                 depth: self.depth,
                 dt,
+                strength: self.density_projection_strength,
+                _pad1: 0,
+                _pad2: 0,
+                _pad3: 0,
             };
             queue.write_buffer(
                 &self.density_position_grid_params_buffer,
@@ -4251,7 +4001,7 @@ impl GpuFlip3D {
             byte_size,
         );
         encoder.copy_buffer_to_buffer(
-            &self.pressure.divergence_buffer,
+            &self.density_error_buffer,
             0,
             &divergence_staging,
             0,

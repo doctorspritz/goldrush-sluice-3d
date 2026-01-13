@@ -1,5 +1,6 @@
 // 3D Particle Emitter Shader
 // Spawns new particles into the FLIP simulation.
+// DENSITY-AWARE: Checks existing particle density to avoid over-packing cells.
 
 struct EmitterParams {
     pos: vec3<f32>,
@@ -10,6 +11,13 @@ struct EmitterParams {
     density: f32,
     time: f32,
     max_particles: u32,
+    // Grid params for density checking
+    grid_width: u32,
+    grid_height: u32,
+    grid_depth: u32,
+    cell_size: f32,
+    max_ppc: f32,  // Maximum particles per cell (typically 8)
+    _pad: [u32; 3],
 }
 
 @group(0) @binding(0) var<uniform> params: EmitterParams;
@@ -17,6 +25,7 @@ struct EmitterParams {
 @group(0) @binding(2) var<storage, read_write> positions: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read_write> velocities: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read_write> densities: array<f32>;
+@group(0) @binding(5) var<storage, read> particle_count_grid: array<f32>;  // From P2G
 
 fn hash(u: u32) -> u32 {
     var x = u;
@@ -39,10 +48,30 @@ fn rand_vec3(u: u32) -> vec3<f32> {
     );
 }
 
+fn cell_index(i: u32, j: u32, k: u32) -> u32 {
+    return k * params.grid_width * params.grid_height + j * params.grid_width + i;
+}
+
 @compute @workgroup_size(64)
 fn spawn_particles(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = id.x;
     if (i >= params.count) { return; }
+
+    let seed = u32(params.time * 60.0) + i;
+    let offset = rand_vec3(seed) * params.radius;
+    let spawn_pos = params.pos + offset;
+
+    // DENSITY CHECK: Don't spawn if target cell is already at or above max_ppc
+    let cell_i = u32(clamp(spawn_pos.x / params.cell_size, 0.0, f32(params.grid_width - 1u)));
+    let cell_j = u32(clamp(spawn_pos.y / params.cell_size, 0.0, f32(params.grid_height - 1u)));
+    let cell_k = u32(clamp(spawn_pos.z / params.cell_size, 0.0, f32(params.grid_depth - 1u)));
+    let idx = cell_index(cell_i, cell_j, cell_k);
+    let existing_ppc = particle_count_grid[idx];
+
+    if (existing_ppc >= params.max_ppc) {
+        // Cell is full, skip this particle
+        return;
+    }
 
     // Atomic increment to find a slot
     // Note: This relies on the system having some "live" particles and adding to the end.
@@ -55,11 +84,9 @@ fn spawn_particles(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    let seed = u32(params.time * 60.0) + i;
-    let offset = rand_vec3(seed) * params.radius;
     let jitter = rand_vec3(seed + 777u) * params.spread;
 
-    positions[pid] = vec4<f32>(params.pos + offset, 1.0); // W=1.0 for "active"
+    positions[pid] = vec4<f32>(spawn_pos, 1.0); // W=1.0 for "active"
     velocities[pid] = vec4<f32>(params.vel + jitter, 0.0);
     densities[pid] = params.density;
 }

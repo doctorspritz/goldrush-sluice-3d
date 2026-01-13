@@ -11,7 +11,7 @@ use sim3d::FlipSimulation3D;
 use wgpu::util::DeviceExt;
 
 const SIM_CELL_SIZE: f32 = 0.025; // 2.5cm cells
-const SIM_PRESSURE_ITERS: usize = 40;
+const SIM_PRESSURE_ITERS: usize = 120; // Increased for better density projection convergence
 const SIM_GRAVITY: f32 = -9.8;
 
 const DEM_CLUMP_RADIUS: f32 = 0.008; // 8mm clumps
@@ -65,7 +65,6 @@ pub struct PieceSimulation {
     pub velocities: Vec<Vec3>,
     pub affine_vels: Vec<Mat3>,
     pub densities: Vec<f32>,
-    pub auto_density_rest: bool,
 }
 
 /// Defines particle transfer between two pieces
@@ -533,7 +532,6 @@ impl MultiGridSim {
             velocities: Vec::new(),
             affine_vels: Vec::new(),
             densities: Vec::new(),
-            auto_density_rest: false,
         });
 
         idx
@@ -651,7 +649,6 @@ impl MultiGridSim {
             velocities: Vec::new(),
             affine_vels: Vec::new(),
             densities: Vec::new(),
-            auto_density_rest: false,
         });
 
         idx
@@ -773,7 +770,6 @@ impl MultiGridSim {
             velocities: Vec::new(),
             affine_vels: Vec::new(),
             densities: Vec::new(),
-            auto_density_rest: false,
         });
 
         idx
@@ -893,7 +889,6 @@ impl MultiGridSim {
             velocities: Vec::new(),
             affine_vels: Vec::new(),
             densities: Vec::new(),
-            auto_density_rest: true,
         });
 
         idx
@@ -1451,14 +1446,6 @@ impl MultiGridSim {
                             }
                         }
                     }
-                    let fluid_cell_count = cell_types.iter().filter(|&&ct| ct == 1).count();
-                    if piece.auto_density_rest && fluid_cell_count > 0 {
-                        let total_particles = piece.positions.len().max(1) as f32;
-                        let rest_density =
-                            (total_particles / fluid_cell_count as f32).clamp(1.0, 256.0);
-                        gpu_flip.water_rest_particles = rest_density;
-                    }
-
                     let sdf = Some(piece.sim.grid.sdf.clone());
 
                     gpu_flip.step(

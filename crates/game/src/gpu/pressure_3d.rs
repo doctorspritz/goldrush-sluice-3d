@@ -29,6 +29,7 @@ struct PressureParams3D {
     depth: u32,
     omega: f32, // SOR relaxation factor (1.5-1.9)
     h_sq: f32,  // cell_size^2, for Poisson equation scaling
+    open_boundaries: u32, // Bitmask: 1=-X, 2=+X, 4=-Y, 8=+Y, 16=-Z, 32=+Z
 }
 
 /// GPU-based pressure solver for 3D FLIP
@@ -523,7 +524,13 @@ impl GpuPressure3D {
     }
 
     /// Upload cell types and initialize pressure to zero
-    pub fn upload_cell_types(&self, queue: &wgpu::Queue, cell_types: &[u32], cell_size: f32) {
+    pub fn upload_cell_types(
+        &self,
+        queue: &wgpu::Queue,
+        cell_types: &[u32],
+        cell_size: f32,
+        open_boundaries: u32,
+    ) {
         queue.write_buffer(&self.cell_type_buffer, 0, bytemuck::cast_slice(cell_types));
 
         // Clear pressure
@@ -551,8 +558,9 @@ impl GpuPressure3D {
             width: self.width,
             height: self.height,
             depth: self.depth,
-            omega: 1.85, // SOR over-relaxation for faster convergence (was 1.0)
+            omega: 1.5, // More stable relaxation factor (was 1.85)
             h_sq: cell_size * cell_size, // Poisson equation needs dx²
+            open_boundaries,
         };
         queue.write_buffer(
             &self.pressure_params_buffer,

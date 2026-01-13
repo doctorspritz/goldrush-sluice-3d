@@ -69,9 +69,11 @@ fn apply_gravity(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     // Skip if both sides are air (no fluid to accelerate)
-    if (bottom_type == CELL_AIR && top_type == CELL_AIR) {
-        return;
-    }
+    // DISABLED: This prevents ballistic particles from accelerating!
+    // Since we clear the grid every frame, applying gravity to air is safe and necessary.
+    // if (bottom_type == CELL_AIR && top_type == CELL_AIR) {
+    //    return;
+    // }
 
     // Apply gravity to V faces adjacent to at least one fluid cell
     let idx = v_index(i, j, k);

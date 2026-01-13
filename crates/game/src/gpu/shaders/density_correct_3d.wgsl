@@ -15,7 +15,7 @@ struct Params {
     depth: u32,
     particle_count: u32,
     cell_size: f32,
-    _pad1: u32,
+    damping: f32,
     _pad2: u32,
     _pad3: u32,
 }
@@ -27,7 +27,8 @@ struct Params {
 @group(0) @binding(4) var<storage, read> cell_type: array<u32>;
 // Positions stored as vec4 (padded from vec3) - must match G2P buffer layout
 @group(0) @binding(5) var<storage, read_write> positions: array<vec4<f32>>;
-@group(0) @binding(6) var<storage, read> densities: array<f32>;
+@group(0) @binding(6) var<storage, read_write> velocities: array<vec4<f32>>; // Changed to read_write
+@group(0) @binding(7) var<storage, read> densities: array<f32>;
 
 const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
@@ -191,12 +192,19 @@ fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
     let delta_z = trilinear_delta_z(grid_pos);
 
     // Grid position deltas point from center cell toward neighbor
-    // With forward difference: delta = (p_neighbor - p_center) * dt
-    // Crowded center has high p, so delta is NEGATIVE toward sparse neighbor
-    // We want particles to move TOWARD lower pressure (sparse), so we NEGATE the delta
-    let correction_scale: f32 = 15.0;  // Empirical scaling factor (increased for stronger volume conservation)
-    let delta = vec3<f32>(-delta_x, -delta_y, -delta_z) * correction_scale;
+    // With forward difference: grad = (p_neighbor - p_center) / h
+    // High density (compression) results in LOW (negative) pressure.
+    // Low density (expansion) results in HIGH (towards zero) pressure.
+    // To move particles AWAY from clusters, we move them in the direction
+    // of the pressure gradient (from low to high pressure).
+    let correction_scale: f32 = 1.0 / params.cell_size;  
+    let delta = vec3<f32>(delta_x, delta_y, delta_z) * correction_scale;
 
     let corrected = pos + delta;
-    positions[pid] = vec4<f32>(corrected, 0.0);
+    positions[pid] = vec4<f32>(corrected, 1.0);
+
+    // Damp velocities slightly during position correction to bleed off jitter energy
+    // and help the simulation reach a stable rest state.
+    let vel = velocities[pid].xyz;
+    velocities[pid] = vec4<f32>(vel * params.damping, 0.0);
 }

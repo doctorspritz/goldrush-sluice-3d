@@ -322,10 +322,16 @@ pub struct EmitterPiece {
     /// Spray bar width (meters) - particles spread across this width
     #[serde(default = "default_emitter_width")]
     pub width: f32,
+    #[serde(default = "default_spawn_sediment")]
+    pub spawn_sediment: bool,
 }
 
 fn default_emitter_width() -> f32 {
     0.3
+}
+
+fn default_spawn_sediment() -> bool {
+    true
 }
 
 impl Default for EmitterPiece {
@@ -341,6 +347,7 @@ impl Default for EmitterPiece {
             velocity: 1.0,
             radius: 0.1,
             width: 0.3,
+            spawn_sediment: true,
         }
     }
 }

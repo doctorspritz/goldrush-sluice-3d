@@ -853,6 +853,7 @@ impl App {
             grid_height: self.flip_sim.grid.height,
             grid_depth: self.flip_sim.grid.depth,
             cell_size: self.flip_sim.grid.cell_size,
+            grid_offset: self.flip_origin,
         };
 
         // Sync FLIP -> DEM (positions + velocities)
