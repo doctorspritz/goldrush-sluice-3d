@@ -11,11 +11,11 @@
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::*;
-use wgpu::*;
 use std::sync::Arc;
 
 /// Maximum number of spheres per clump template
 pub const MAX_SPHERES_PER_CLUMP: u32 = 100;
+
 
 /// Maximum number of hash table entries
 pub const HASH_TABLE_SIZE: u32 = 1 << 20; // ~1M entries
@@ -34,9 +34,9 @@ pub const PARTICLE_STATIC: u32 = 1u32 << 1u32;
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct GpuDemParticle {
-    pub position: [f32; 3],         // World position (m)
-    pub velocity: [f32; 3],         // Linear velocity (m/s)
-    pub angular_velocity: [f32; 3], // Angular velocity (rad/s)
+    pub position: [f32; 4],         // World position (m) + padding
+    pub velocity: [f32; 4],         // Linear velocity (m/s) + padding
+    pub angular_velocity: [f32; 4], // Angular velocity (rad/s) + padding
     pub orientation: [f32; 4],      // Rotation quaternion (xyzw)
     pub radius: f32,                // Bounding radius (m)
     pub mass: f32,                  // Total mass (kg)
@@ -51,8 +51,8 @@ pub struct GpuClumpTemplate {
     pub sphere_count: u32,          // Number of spheres in this clump
     pub mass: f32,                  // Total mass of clump
     pub radius: f32,                // Bounding sphere radius
-    pub inertia_inv: [[f32; 3]; 3], // Inverse inertia tensor
-    pub _pad: [f32; 1],
+    pub _pad0: f32,
+    pub inertia_inv: [[f32; 4]; 3], // Inverse inertia tensor (16-byte aligned columns)
 }
 
 /// DEM simulation parameters
@@ -63,7 +63,7 @@ pub struct DemParams {
     pub stiffness: f32,     // Contact stiffness (N/m)
     pub damping: f32,       // Contact damping (N·s/m)
     pub friction: f32,      // Friction coefficient
-    pub gravity: [f32; 3],  // Gravity vector (m/s²)
+    pub gravity: [f32; 4],  // Gravity vector (m/s²) + padding
     pub cell_size: f32,     // Spatial hash cell size (m)
     pub max_particles: u32, // Maximum particle count
     pub _pad: [f32; 2],
@@ -76,7 +76,15 @@ pub struct HashParams {
     pub table_size: u32,
     pub cell_size: f32,
     pub max_particles: u32,
-    pub _pad: [u32; 1],
+    pub max_hash_entries: u32,
+}
+
+/// Clear hash parameters
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct ClearParams {
+    pub table_size: u32,
+    pub _pad: [u32; 3],
 }
 
 /// Hash entry for collision linked lists
@@ -95,10 +103,10 @@ pub struct GpuContact {
     pub sphere_a: u32,    // Sphere index in particle A
     pub particle_b: u32,  // Second particle index
     pub sphere_b: u32,    // Sphere index in particle B
-    pub normal: [f32; 3], // Contact normal (from A to B)
+    pub normal: [f32; 4], // Contact normal (from A to B) + padding
     pub penetration: f32, // Penetration depth (m)
     pub normal_vel: f32,  // Relative velocity along normal
-    pub _pad: [f32; 1],
+    pub _pad: [f32; 2],
 }
 
 /// GPU DEM simulator
@@ -109,20 +117,21 @@ pub struct GpuDem3D {
     current_template_count: u32,
     num_active_particles: u32,
     
+    
     // Particle data (SoA layout)
-    position_buffer: Buffer,
+    pub(crate) position_buffer: Buffer,
     velocity_buffer: Buffer,
     angular_velocity_buffer: Buffer,
-    orientation_buffer: Buffer,
+    pub(crate) orientation_buffer: Buffer,
     radius_buffer: Buffer,
     mass_buffer: Buffer,
-    template_id_buffer: Buffer,
+    pub(crate) template_id_buffer: Buffer,
     flags_buffer: Buffer,
 
     // Template storage
-    template_buffer: Buffer,
-    sphere_offsets_buffer: Buffer, // Local offsets for each sphere
-    sphere_radii_buffer: Buffer,   // Local radii for each sphere
+    pub(crate) template_buffer: Buffer,
+    pub(crate) sphere_offsets_buffer: Buffer, // Local offsets for each sphere
+    pub(crate) sphere_radii_buffer: Buffer,   // Local radii for each sphere
 
     // Spatial hashing
     hash_table_buffer: Buffer,
@@ -142,14 +151,19 @@ pub struct GpuDem3D {
     dem_params_buffer: Buffer,
 
     // Compute pipelines
+    clear_hash_pipeline: ComputePipeline,
     broadphase_pipeline: ComputePipeline,
     collision_pipeline: ComputePipeline,
     integration_pipeline: ComputePipeline,
 
     // Bind groups
+    clear_hash_bind_group: BindGroup,
     broadphase_bind_group: BindGroup,
     collision_bind_group: BindGroup,
     integration_bind_group: BindGroup,
+
+    // Clear params buffer
+    clear_params_buffer: Buffer,
 }
 
 impl GpuDem3D {    
@@ -162,24 +176,24 @@ impl GpuDem3D {
         max_contacts: u32,
     ) -> Self {
         
-        // Create particle buffers
+        // Create particle buffers (using 16-byte alignment for 3D vectors)
         let position_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Position Buffer"),
-            size: (max_particles as u64) * 12,
+            size: (max_particles as u64) * 16,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let velocity_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Velocity Buffer"),
-            size: (max_particles as u64) * 12,
+            size: (max_particles as u64) * 16,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let angular_velocity_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Angular Velocity Buffer"),
-            size: (max_particles as u64) * 12,
+            size: (max_particles as u64) * 16,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -230,7 +244,7 @@ impl GpuDem3D {
         let max_total_spheres = max_templates * MAX_SPHERES_PER_CLUMP;
         let sphere_offsets_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Sphere Offsets Buffer"),
-            size: (max_total_spheres as u64) * 12,
+            size: (max_total_spheres as u64) * 16,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -268,14 +282,14 @@ impl GpuDem3D {
 
         let force_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Force Buffer"),
-            size: (max_particles as u64) * 12, // 3D force per particle
+            size: (max_particles as u64) * 16, // 3D force per particle
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let torque_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Torque Buffer"),
-            size: (max_particles as u64) * 12, // 3D torque per particle
+            size: (max_particles as u64) * 16, // 3D torque per particle
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -309,7 +323,17 @@ impl GpuDem3D {
             mapped_at_creation: false,
         });
 
+        // Clear params buffer for hash table clearing
+        let clear_params_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("DEM Clear Params Buffer"),
+            size: 16, // ClearParams struct (table_size: u32 + padding)
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Load shaders
+        let clear_hash_shader =
+            device.create_shader_module(include_wgsl!("shaders/dem_clear_hash.wgsl"));
         let broadphase_shader =
             device.create_shader_module(include_wgsl!("shaders/dem_broadphase.wgsl"));
         let collision_shader =
@@ -318,6 +342,15 @@ impl GpuDem3D {
             device.create_shader_module(include_wgsl!("shaders/dem_integration.wgsl"));
 
         // Create pipelines
+        let clear_hash_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: Some("DEM Clear Hash Pipeline"),
+            layout: None,
+            module: &clear_hash_shader,
+            entry_point: Some("main"),
+            compilation_options: PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
         let broadphase_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
             label: Some("DEM Broadphase Pipeline"),
             layout: None,
@@ -345,18 +378,28 @@ impl GpuDem3D {
             cache: None,
         });
 
+        // 0. Clear hash bind group
+        let clear_hash_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("DEM Clear Hash Bind Group"),
+            layout: &clear_hash_pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry { binding: 0, resource: hash_table_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 1, resource: particle_counter_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 2, resource: clear_params_buffer.as_entire_binding() },
+            ],
+        });
+
         // 1. Broadphase bind group
         let broadphase_bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: Some("DEM Broadphase Bind Group"),
             layout: &broadphase_pipeline.get_bind_group_layout(0),
             entries: &[
                 BindGroupEntry { binding: 0, resource: position_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 1, resource: radius_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: flags_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 3, resource: hash_table_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 4, resource: hash_entry_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 5, resource: particle_counter_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 6, resource: hash_params_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 1, resource: flags_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 2, resource: hash_table_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 3, resource: hash_entry_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 4, resource: particle_counter_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 5, resource: hash_params_buffer.as_entire_binding() },
             ],
         });
 
@@ -367,17 +410,15 @@ impl GpuDem3D {
             entries: &[
                 BindGroupEntry { binding: 0, resource: position_buffer.as_entire_binding() },
                 BindGroupEntry { binding: 1, resource: velocity_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: radius_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 3, resource: mass_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 4, resource: template_id_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 5, resource: sphere_offsets_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 6, resource: template_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 7, resource: hash_table_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 8, resource: hash_entry_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 9, resource: contact_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 10, resource: force_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 11, resource: dem_params_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 12, resource: torque_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 2, resource: template_id_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 3, resource: sphere_offsets_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 4, resource: template_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 5, resource: hash_table_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 6, resource: hash_entry_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 8, resource: force_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 9, resource: dem_params_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 10, resource: torque_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 11, resource: sphere_radii_buffer.as_entire_binding() },
             ],
         });
 
@@ -389,13 +430,13 @@ impl GpuDem3D {
                 BindGroupEntry { binding: 0, resource: position_buffer.as_entire_binding() },
                 BindGroupEntry { binding: 1, resource: velocity_buffer.as_entire_binding() },
                 BindGroupEntry { binding: 2, resource: angular_velocity_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 3, resource: mass_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 4, resource: radius_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 5, resource: flags_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 6, resource: force_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 7, resource: dem_params_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 8, resource: orientation_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 9, resource: torque_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 3, resource: flags_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 4, resource: force_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 5, resource: dem_params_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 6, resource: orientation_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 7, resource: torque_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 8, resource: template_id_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 9, resource: template_buffer.as_entire_binding() },
             ],
         });
 
@@ -425,12 +466,15 @@ impl GpuDem3D {
             particle_counter_buffer,
             contact_counter_buffer,
             dem_params_buffer,
+            clear_hash_pipeline,
             broadphase_pipeline,
             collision_pipeline,
             integration_pipeline,
+            clear_hash_bind_group,
             broadphase_bind_group,
             collision_bind_group,
             integration_bind_group,
+            clear_params_buffer,
         };
 
         // Initialize hash table
@@ -449,12 +493,23 @@ impl GpuDem3D {
             table_size: HASH_TABLE_SIZE,
             cell_size: 0.1,
             max_particles,
-            _pad: [0u32; 1],
+            max_hash_entries: max_particles * 27,
         };
         dem.queue.write_buffer(
             &dem.hash_params_buffer,
             0,
             bytemuck::cast_slice(&[hash_params]),
+        );
+
+        // Initialize clear params
+        let clear_params = ClearParams {
+            table_size: HASH_TABLE_SIZE,
+            _pad: [0u32; 3],
+        };
+        dem.queue.write_buffer(
+            &dem.clear_params_buffer,
+            0,
+            bytemuck::cast_slice(&[clear_params]),
         );
 
         dem
@@ -475,7 +530,7 @@ impl GpuDem3D {
             stiffness: 50000.0,
             damping: 50.0,
             friction: 0.5,
-            gravity: [0.0, -9.81, 0.0],
+            gravity: [0.0, -9.81, 0.0, 0.0],
             cell_size: 0.1,
             max_particles: self.particle_count(),
             _pad: [0.0, 0.0],
@@ -484,10 +539,25 @@ impl GpuDem3D {
         self.queue.write_buffer(
             &self.dem_params_buffer,
             0,
-            bytemuck::cast_slice(&[dem_params]),
+            bytemuck::bytes_of(&dem_params),
         );
 
         let workgroup_count_x = (self.particle_count() + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+
+        // 0. Clear hash table (CRITICAL: prevents infinite loops from stale data)
+        {
+            // Calculate workgroups needed to clear entire hash table
+            // Using 256 threads per workgroup (as defined in dem_clear_hash.wgsl)
+            let clear_workgroups = (HASH_TABLE_SIZE + 255) / 256;
+            
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("DEM Clear Hash"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.clear_hash_pipeline);
+            pass.set_bind_group(0, &self.clear_hash_bind_group, &[]);
+            pass.dispatch_workgroups(clear_workgroups, 1, 1);
+        }
 
         // 1. Broadphase (spatial hashing)
         {
@@ -540,44 +610,43 @@ impl GpuDem3D {
             sphere_count: template.local_offsets.len() as u32,
             mass: template.mass,
             radius: template.bounding_radius,
+            _pad0: 0.0,
             inertia_inv: [
-                [template.inertia_inv_local.x_axis.x, template.inertia_inv_local.x_axis.y, template.inertia_inv_local.x_axis.z],
-                [template.inertia_inv_local.y_axis.x, template.inertia_inv_local.y_axis.y, template.inertia_inv_local.y_axis.z],
-                [template.inertia_inv_local.z_axis.x, template.inertia_inv_local.z_axis.y, template.inertia_inv_local.z_axis.z],
+                [template.inertia_inv_local.x_axis.x, template.inertia_inv_local.x_axis.y, template.inertia_inv_local.x_axis.z, 0.0],
+                [template.inertia_inv_local.y_axis.x, template.inertia_inv_local.y_axis.y, template.inertia_inv_local.y_axis.z, 0.0],
+                [template.inertia_inv_local.z_axis.x, template.inertia_inv_local.z_axis.y, template.inertia_inv_local.z_axis.z, 0.0],
             ],
-            _pad: [0.0],
         };
         
-        // Calculate starting offset for sphere offsets
-        let template_offset = self.current_template_count * MAX_SPHERES_PER_CLUMP;
+        let template_id = self.current_template_count;
         
-        // Upload template data
+        // Upload template data (each template is 64 bytes)
         self.queue.write_buffer(&self.template_buffer, 
-            (template_offset as u64) * 64, 
-            bytemuck::cast_slice(&[gpu_template]));
+            (template_id as u64) * 64, 
+            bytemuck::bytes_of(&gpu_template));
+        
+        // Calculate starting offset for sphere offsets/radii
+        let sphere_base_offset = template_id * MAX_SPHERES_PER_CLUMP;
         
         // Upload sphere offsets
         for (i, offset) in template.local_offsets.iter().enumerate() {
-            let idx = template_offset + i as u32;
-            if idx < template.local_offsets.len() as u32 * MAX_SPHERES_PER_CLUMP {
-                self.queue.write_buffer(&self.sphere_offsets_buffer,
-                    (idx as u64) * 12,
-                    bytemuck::cast_slice(&[offset.x, offset.y, offset.z]));
-            }
+            if i >= MAX_SPHERES_PER_CLUMP as usize { break; }
+            let idx = sphere_base_offset + i as u32;
+            self.queue.write_buffer(&self.sphere_offsets_buffer,
+                (idx as u64) * 16,
+                bytemuck::cast_slice(&[offset.x, offset.y, offset.z, 0.0]));
         }
         
-        // For now, assume uniform radii
+        // Upload sphere radii (uniform for now)
         for i in 0..template.local_offsets.len() {
-            let idx = template_offset + i as u32;
-            if idx < template.local_offsets.len() as u32 * MAX_SPHERES_PER_CLUMP {
-                self.queue.write_buffer(&self.sphere_radii_buffer,
-                    (idx as u64) * 4,
-                    bytemuck::cast_slice(&[template.particle_radius]));
-            }
+            let idx = sphere_base_offset + i as u32;
+            self.queue.write_buffer(&self.sphere_radii_buffer,
+                (idx as u64) * 4,
+                bytemuck::cast_slice(&[template.particle_radius]));
         }
         
-        let template_id = self.current_template_count;
         self.current_template_count += 1;
+        
         template_id
     }
     
@@ -592,9 +661,9 @@ impl GpuDem3D {
         
         // Initialize particle data
         let particle = GpuDemParticle {
-            position: [position.x, position.y, position.z],
-            velocity: [velocity.x, velocity.y, velocity.z],
-            angular_velocity: [0.0, 0.0, 0.0],
+            position: [position.x, position.y, position.z, 0.0],
+            velocity: [velocity.x, velocity.y, velocity.z, 0.0],
+            angular_velocity: [0.0, 0.0, 0.0, 0.0],
             orientation: [0.0, 0.0, 0.0, 1.0],
             radius: 0.0, // Will be set from template
             mass: 0.0, // Will be set from template
@@ -604,9 +673,9 @@ impl GpuDem3D {
         
         // Upload particle data
         let idx = current_count;
-        self.queue.write_buffer(&self.position_buffer, (idx as u64) * 12, bytemuck::cast_slice(&[particle.position]));
-        self.queue.write_buffer(&self.velocity_buffer, (idx as u64) * 12, bytemuck::cast_slice(&[particle.velocity]));
-        self.queue.write_buffer(&self.angular_velocity_buffer, (idx as u64) * 12, bytemuck::cast_slice(&[particle.angular_velocity]));
+        self.queue.write_buffer(&self.position_buffer, (idx as u64) * 16, bytemuck::cast_slice(&[particle.position]));
+        self.queue.write_buffer(&self.velocity_buffer, (idx as u64) * 16, bytemuck::cast_slice(&[particle.velocity]));
+        self.queue.write_buffer(&self.angular_velocity_buffer, (idx as u64) * 16, bytemuck::cast_slice(&[particle.angular_velocity]));
         self.queue.write_buffer(&self.orientation_buffer, (idx as u64) * 16, bytemuck::cast_slice(&[particle.orientation]));
         self.queue.write_buffer(&self.template_id_buffer, (idx as u64) * 4, bytemuck::cast_slice(&[template_id]));
         self.queue.write_buffer(&self.flags_buffer, (idx as u64) * 4, bytemuck::cast_slice(&[particle.flags]));
@@ -623,14 +692,9 @@ impl GpuDem3D {
     
     /// Update particle properties from template (radius, mass)
     fn update_particle_from_template(&mut self, particle_idx: u32, template_id: u32) {
-        // Read template data on CPU and upload relevant properties
-        // In a full implementation, templates would be pre-uploaded
-        // For now, use placeholder values
-        let radius = 0.01; // 1cm default
-        let mass = 0.001; // 1kg default
-        
-        self.queue.write_buffer(&self.radius_buffer, (particle_idx as u64) * 4, bytemuck::cast_slice(&[radius]));
-        self.queue.write_buffer(&self.mass_buffer, (particle_idx as u64) * 4, bytemuck::cast_slice(&[mass]));
+        // No-op: Template data is read directly on GPU now.
+        // We leave mass/radius buffers as zero/placeholder for now
+        // or potentially unused.
     }
     
 }

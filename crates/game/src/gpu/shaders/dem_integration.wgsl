@@ -3,29 +3,40 @@
 //! Integrates forces and updates particle positions.
 //! Handles both linear and angular motion for clumps.
 
-@group(0) @binding(0) var<storage, read_write> particle_positions: array<vec3<f32>>;
-@group(0) @binding(1) var<storage, read_write> particle_velocities: array<vec3<f32>>;
-@group(0) @binding(2) var<storage, read_write> particle_angular_velocities: array<vec3<f32>>;
-@group(0) @binding(3) var<storage, read> particle_masses: array<f32>>;
-@group(0) @binding(4) var<storage, read> particle_radii: array<f32>>;
-@group(0) @binding(5) var<storage, read> particle_flags: array<u32>>;
-@group(0) @binding(6) var<storage, read> forces: array<vec3<f32>>;
-@group(0) @binding(7) var<uniform> params: DemParams;
-@group(0) @binding(8) var<storage, read_write> particle_orientations: array<vec4<f32>>;
-@group(0) @binding(9) var<storage, read> torques: array<vec3<f32>>;
+@group(0) @binding(0) var<storage, read_write> particle_positions: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read_write> particle_velocities: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read_write> particle_angular_velocities: array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read_write> particle_flags: array<u32>;
+@group(0) @binding(4) var<storage, read> forces: array<vec4<f32>>;
+@group(0) @binding(5) var<uniform> params: DemParams;
+@group(0) @binding(6) var<storage, read_write> particle_orientations: array<vec4<f32>>;
+@group(0) @binding(7) var<storage, read> torques: array<vec4<f32>>;
+@group(0) @binding(8) var<storage, read> particle_template_ids: array<u32>;
+@group(0) @binding(9) var<storage, read> templates: array<GpuClumpTemplate>;
+
+struct GpuClumpTemplate {
+    sphere_count: u32,
+    mass: f32,
+    radius: f32,
+    pad0: f32,
+    inertia_inv: mat3x3<f32>,
+}
 
 struct DemParams {
     dt: f32,
     stiffness: f32,
     damping: f32,
     friction: f32,
-    gravity: vec3<f32>,
+    gravity: vec4<f32>,
     cell_size: f32,
     max_particles: u32,
+    pad0: f32,
+    pad1: f32,
 }
 
 const WORKGROUP_SIZE = 64u;
 const PARTICLE_ACTIVE = 1u;
+const MAX_TEMPLATES = 100u;
 
 // Quaternion multiplication (simplified)
 fn quat_mul(q1: vec4<f32>, q2: vec4<f32>) -> vec4<f32> {
@@ -51,29 +62,34 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let flags = particle_flags[particle_idx];
     if (flags & PARTICLE_ACTIVE) == 0u { return; } // Skip inactive particles
     
-    let mass = particle_masses[particle_idx];
+    let template_idx = particle_template_ids[particle_idx];
+    if template_idx >= MAX_TEMPLATES { return; }
+    
+    let mass = templates[template_idx].mass;
     if mass <= 0.0 { return; } // Skip invalid particles
     
     // Get accumulated forces
-    let force = forces[particle_idx];
+    let force = forces[particle_idx].xyz;
     
     // Apply gravity (buoyancy-corrected if needed)
-    let total_force = force + params.gravity * mass;
+    let total_force = force + params.gravity.xyz * mass;
     
     // Linear motion (Euler integration)
     let accel = total_force / mass;
-    let new_vel = particle_velocities[particle_idx] + accel * params.dt;
+    let old_vel = particle_velocities[particle_idx].xyz;
+    let new_vel = old_vel + accel * params.dt;
     
     // Clamp velocity for stability
     let max_vel = 50.0; // m/s
     let clamped_vel = clamp(new_vel, vec3<f32>(-max_vel, -max_vel, -max_vel), vec3<f32>(max_vel, max_vel, max_vel));
     
     // Update position
-    let new_pos = particle_positions[particle_idx] + clamped_vel * params.dt;
+    let old_pos = particle_positions[particle_idx].xyz;
+    let new_pos = old_pos + clamped_vel * params.dt;
     
     // Angular motion
-    let torque = torques[particle_idx];
-    let radius = particle_radii[particle_idx];
+    let torque = torques[particle_idx].xyz;
+    let radius = templates[template_idx].radius;
     
     // Moment of inertia for solid sphere: 2/5 * M * R^2
     let inertia = 0.4 * mass * radius * radius;
@@ -83,10 +99,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Update angular velocity with damping
     let damping = 0.99; // Simple rotational drag
-    let new_angular_vel = (particle_angular_velocities[particle_idx] + ang_accel * params.dt) * damping;
+    let old_angular_vel = particle_angular_velocities[particle_idx].xyz;
+    let new_angular_vel = (old_angular_vel + ang_accel * params.dt) * damping;
     
     // Update angular velocity buffer
-    particle_angular_velocities[particle_idx] = new_angular_vel;
+    particle_angular_velocities[particle_idx] = vec4<f32>(new_angular_vel, 0.0);
     
     let angular_delta = new_angular_vel * params.dt * 0.5; // Half angle for quaternion
     
@@ -102,7 +119,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             cos(half_angle)
         );
         
-        // Update orientation (simplified - no full quaternion integration)
         // Update orientation
         let current_orient = particle_orientations[particle_idx];
         let new_orient = quat_mul(rot_quat, current_orient);
@@ -111,8 +127,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     
     // Write back updated values
-    particle_velocities[particle_idx] = clamped_vel;
-    particle_positions[particle_idx] = new_pos;
+    particle_velocities[particle_idx] = vec4<f32>(clamped_vel, 0.0);
+    particle_positions[particle_idx] = vec4<f32>(new_pos, 0.0);
     
     // Simple boundary checking (remove particles that fall too far)
     if new_pos.y < -100.0 || length(new_pos) > 1000.0 {

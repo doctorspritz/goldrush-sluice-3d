@@ -2,6 +2,7 @@
 // pub mod bed_3d;
 pub mod bridge_3d;
 pub mod dem_3d;
+pub mod dem_render;
 pub mod flip_3d;
 pub mod fluid_renderer;
 pub mod g2p_3d;
