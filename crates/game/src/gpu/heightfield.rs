@@ -1279,8 +1279,8 @@ impl GpuHeightfield {
             bytemuck::cast(2650.0f32), // rho_sediment
             bytemuck::cast(0.001f32), // water_viscosity
             bytemuck::cast(0.045f32), // critical_shields
-            bytemuck::cast(0.0001f32), // k_erosion
-            bytemuck::cast(0.005f32), // max_erosion_per_step
+            bytemuck::cast(0.01f32), // k_erosion (100x faster for visual testing)
+            bytemuck::cast(0.5f32), // max_erosion_per_step (100x faster for visual testing)
             0,
             0,
         ];
