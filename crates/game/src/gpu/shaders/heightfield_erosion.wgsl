@@ -207,7 +207,9 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var updated_surface = false;
 
     // 1) SETTLING (independent of erosion)
-    if (suspended > 0.0) {
+    // NOTE: suspended_sediment is stored as HEIGHT (m), not concentration,
+    // to match the flux-based transport shader expectations
+    if (suspended > 0.0 && depth > 1e-4) {
         let v_settle = settling_velocity(
             D50_SEDIMENT,
             params.gravity,
@@ -217,13 +219,11 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
         );
         let settling_rate = v_settle / depth;
         let settled_frac = min(settling_rate * params.dt, 1.0);
-        let settled_conc = suspended * settled_frac;
+        let settled_amount = suspended * settled_frac;
 
-        if (settled_conc > 0.0) {
-            // Convert concentration to height: deposit_height = concentration × depth
-            let deposit_height = settled_conc * depth;
-            suspended -= settled_conc;
-            sediment[idx] += deposit_height;
+        if (settled_amount > 0.0001) {
+            suspended -= settled_amount;
+            sediment[idx] += settled_amount;
             updated_surface = true;
         }
     }
@@ -331,10 +331,9 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
-    if (total_eroded > 0.0 && depth > 1e-4) {
-        // Convert height to concentration: concentration = eroded_height / depth
-        let eroded_conc = total_eroded / depth;
-        suspended += eroded_conc;
+    // Add eroded material to suspension (stored as HEIGHT, not concentration)
+    if (total_eroded > 0.0) {
+        suspended += total_eroded;
         updated_surface = true;
     }
 
