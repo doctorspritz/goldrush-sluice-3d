@@ -345,8 +345,12 @@ impl ApplicationHandler for App {
                     queue,
                     pos_x,
                     pos_z,
-                    2.0 * CELL_SIZE,  // radius
-                    self.inflow_rate, // rate (m³/s -> converted to depth/s in shader)
+                    2.0 * CELL_SIZE,       // radius
+                    self.inflow_rate,      // rate (m³/s -> converted to depth/s in shader)
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
                     sim_dt,
                     self.inflow_rate > 0.0, // enabled
                 );
@@ -406,6 +410,7 @@ impl ApplicationHandler for App {
                     view_proj.to_cols_array_2d(),
                     self.camera.position.into(),
                     self.start_time.elapsed().as_secs_f32(),
+                    true,
                 );
 
                 queue.submit(std::iter::once(encoder.finish()));

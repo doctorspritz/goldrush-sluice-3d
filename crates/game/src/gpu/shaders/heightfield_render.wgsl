@@ -18,6 +18,9 @@ struct Uniforms {
 @group(0) @binding(7) var<storage, read> water_depth_buf: array<f32>;
 @group(0) @binding(8) var<storage, read> surface_material_buf: array<u32>; // 0=bed,1=pay,2=gravel,3=over,4=sed
 @group(0) @binding(9) var<storage, read> suspended_sediment_buf: array<f32>; // kg/m² suspended in water
+@group(0) @binding(10) var<storage, read> suspended_overburden_buf: array<f32>;
+@group(0) @binding(11) var<storage, read> suspended_gravel_buf: array<f32>;
+@group(0) @binding(12) var<storage, read> suspended_paydirt_buf: array<f32>;
 
 struct VertexInput {
     @location(0) grid_pos: vec2<f32>,
@@ -460,9 +463,41 @@ fn get_water_depth(x: u32, z: u32) -> f32 {
     return water_depth_buf[idx];
 }
 
+fn clamp_i32(v: i32, lo: i32, hi: i32) -> i32 {
+    return max(lo, min(v, hi));
+}
+
+fn get_water_surface_smooth(x: u32, z: u32) -> f32 {
+    let max_x = i32(uniforms.grid_width) - 1;
+    let max_z = i32(uniforms.grid_depth) - 1;
+    let cx = i32(x);
+    let cz = i32(z);
+    var sum = 0.0;
+    var count = 0.0;
+    for (var dz = -1i; dz <= 1i; dz = dz + 1i) {
+        for (var dx = -1i; dx <= 1i; dx = dx + 1i) {
+            let sx = clamp_i32(cx + dx, 0, max_x);
+            let sz = clamp_i32(cz + dz, 0, max_z);
+            let idx = u32(sz) * uniforms.grid_width + u32(sx);
+            let d = water_depth_buf[idx];
+            if (d > 0.001) {
+                sum += water_surface_buf[idx];
+                count += 1.0;
+            }
+        }
+    }
+    if (count > 0.0) {
+        return sum / count;
+    }
+    return get_water_surface(x, z);
+}
+
 fn get_suspended_sediment(x: u32, z: u32) -> f32 {
     let idx = z * uniforms.grid_width + x;
-    return suspended_sediment_buf[idx];
+    return suspended_sediment_buf[idx]
+        + suspended_overburden_buf[idx]
+        + suspended_gravel_buf[idx]
+        + suspended_paydirt_buf[idx];
 }
 
 @vertex
@@ -474,12 +509,13 @@ fn vs_water(in: VertexInput) -> WaterVertexOutput {
     let idx = gz * uniforms.grid_width + gx;
     
     let ground = get_height(gx, gz);
-    let surface = get_water_surface(gx, gz);
-    let depth = surface - ground;
+    let surface_raw = get_water_surface(gx, gz);
+    let surface = get_water_surface_smooth(gx, gz);
+    let depth = surface_raw - ground;
     
     // Determine render height
     var h = surface;
-    var render_depth = depth;
+    var render_depth = surface - ground;
     
     // Step 1: Stability Snapping (Shelf Logic)
     // We snap the current vertex to neighbor water levels if we are shallow or dry.
@@ -492,19 +528,31 @@ fn vs_water(in: VertexInput) -> WaterVertexOutput {
         // Find highest wet neighbor
         if (gx > 0u) {
             let dL = get_water_depth(gx - 1u, gz);
-            if (dL > 0.001) { snap_h = max(snap_h, get_water_surface(gx - 1u, gz)); found_neighbor = true; }
+            if (dL > 0.001) {
+                snap_h = max(snap_h, get_water_surface_smooth(gx - 1u, gz));
+                found_neighbor = true;
+            }
         }
         if (gx < uniforms.grid_width - 1u) {
             let dR = get_water_depth(gx + 1u, gz);
-            if (dR > 0.001) { snap_h = max(snap_h, get_water_surface(gx + 1u, gz)); found_neighbor = true; }
+            if (dR > 0.001) {
+                snap_h = max(snap_h, get_water_surface_smooth(gx + 1u, gz));
+                found_neighbor = true;
+            }
         }
         if (gz > 0u) {
             let dD = get_water_depth(gx, gz - 1u);
-            if (dD > 0.001) { snap_h = max(snap_h, get_water_surface(gx, gz - 1u)); found_neighbor = true; }
+            if (dD > 0.001) {
+                snap_h = max(snap_h, get_water_surface_smooth(gx, gz - 1u));
+                found_neighbor = true;
+            }
         }
         if (gz < uniforms.grid_depth - 1u) {
             let dU = get_water_depth(gx, gz + 1u);
-            if (dU > 0.001) { snap_h = max(snap_h, get_water_surface(gx, gz + 1u)); found_neighbor = true; }
+            if (dU > 0.001) {
+                snap_h = max(snap_h, get_water_surface_smooth(gx, gz + 1u));
+                found_neighbor = true;
+            }
         }
         
         // If neighbor is significantly higher, snap to its surface
@@ -521,19 +569,19 @@ fn vs_water(in: VertexInput) -> WaterVertexOutput {
     let hU_g = get_height(gx, gz + 1u);
     
     // Treat dry neighbor surface as CURRENT height to maintain flat surface normal at edges
-    var hL = get_water_surface(gx - 1u, gz);
+    var hL = get_water_surface_smooth(gx - 1u, gz);
     if (hL < hL_g + 0.001) { hL = h; }
     if (gx == 0u) { hL = h; }
 
-    var hR = get_water_surface(gx + 1u, gz);
+    var hR = get_water_surface_smooth(gx + 1u, gz);
     if (hR < hR_g + 0.001) { hR = h; }
     if (gx == uniforms.grid_width - 1u) { hR = h; }
 
-    var hD = get_water_surface(gx, gz - 1u);
+    var hD = get_water_surface_smooth(gx, gz - 1u);
     if (hD < hD_g + 0.001) { hD = h; }
     if (gz == 0u) { hD = h; }
 
-    var hU = get_water_surface(gx, gz + 1u);
+    var hU = get_water_surface_smooth(gx, gz + 1u);
     if (hU < hU_g + 0.001) { hU = h; }
     if (gz == uniforms.grid_depth - 1u) { hU = h; }
 
@@ -643,5 +691,11 @@ fn fs_water(in: WaterVertexOutput) -> @location(0) vec4<f32> {
     let effective_fresnel = fresnel * (1.0 - sediment_factor * 0.7); // Muddy water less reflective
     let final_color = mix(water_color, sky_color, effective_fresnel * 0.4) + specular * (1.0 - sediment_factor * 0.5);
 
-    return vec4<f32>(final_color, alpha + effective_fresnel * 0.2 + specular * 0.3);
+    // If camera is underwater, reduce opacity so terrain remains visible.
+    if (uniforms.camera_pos.y < in.world_pos.y) {
+        alpha *= 0.25;
+    }
+
+    let final_alpha = clamp(alpha + effective_fresnel * 0.2 + specular * 0.3, 0.0, 0.85);
+    return vec4<f32>(final_color, final_alpha);
 }

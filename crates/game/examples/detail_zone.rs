@@ -261,6 +261,10 @@ struct WaterEmitter {
     position: Vec3,
     rate: f32, // Volume per second
     radius: f32,
+    sediment_conc: f32,
+    overburden_conc: f32,
+    gravel_conc: f32,
+    paydirt_conc: f32,
     enabled: bool,
 }
 
@@ -302,6 +306,7 @@ struct App {
     window_size: (u32, u32),
     selected_material: u32,
     terrain_dirty: bool,
+    show_water: bool,
 
     // FLIP simulation
     flip_sim: FlipSimulation3D,
@@ -407,9 +412,13 @@ impl App {
             world,
             emitter: WaterEmitter {
                 position: Vec3::new(center_x as f32, terrain_y + 10.0, center_z as f32),
-                rate: 50.0,
-                radius: 5.0,
-                enabled: false,
+                rate: 750.0,
+                radius: 15.0,
+                sediment_conc: 0.15,
+                overburden_conc: 0.05,
+                gravel_conc: 0.03,
+                paydirt_conc: 0.02,
+                enabled: true,
             },
             sluice_config: sluice_config.clone(),
             pending_water_emits: 0,
@@ -435,6 +444,7 @@ impl App {
             window_size: (1280, 720),
             selected_material: 2,
             terrain_dirty: true,
+            show_water: true,
 
             // FLIP
             flip_sim,
@@ -518,6 +528,10 @@ impl App {
                     self.emitter.position.z,
                     self.emitter.radius,
                     self.emitter.rate,
+                    self.emitter.sediment_conc,
+                    self.emitter.overburden_conc,
+                    self.emitter.gravel_conc,
+                    self.emitter.paydirt_conc,
                     sim_dt,
                     self.emitter.enabled,
                 );
@@ -539,7 +553,8 @@ impl App {
 
             // Update fine region (if active) with boundary conditions from coarse grid
             for _ in 0..steps {
-                self.world.update_fine_region(DT);
+                let do_erosion = self.world.next_erosion_step();
+                self.world.update_fine_region(DT, do_erosion);
             }
         } else {
             // Fallback if no GPU? (Shouldn't happen in this example)
@@ -853,6 +868,7 @@ impl App {
             grid_height: self.flip_sim.grid.height,
             grid_depth: self.flip_sim.grid.depth,
             cell_size: self.flip_sim.grid.cell_size,
+            grid_offset: self.flip_origin,
         };
 
         // Sync FLIP -> DEM (positions + velocities)
@@ -1390,6 +1406,7 @@ impl App {
             view_proj.to_cols_array_2d(),
             self.camera.position.to_array(),
             self.start_time.elapsed().as_secs_f32(),
+            self.show_water,
         );
 
         // ===== Render equipment geometry (sluice) =====
@@ -1574,6 +1591,10 @@ impl ApplicationHandler for App {
                                 }
                                 KeyCode::KeyF => {
                                     self.toggle_focus_from_cursor();
+                                }
+                                KeyCode::KeyH => {
+                                    self.show_water = !self.show_water;
+                                    println!("Show water: {}", self.show_water);
                                 }
                                 KeyCode::KeyP => {
                                     self.interaction_mode = match self.interaction_mode {

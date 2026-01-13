@@ -43,6 +43,12 @@ pub struct GpuHeightfield {
     pub water_velocity_z_buffer: wgpu::Buffer,
     pub suspended_sediment_buffer: wgpu::Buffer,
     pub suspended_sediment_next_buffer: wgpu::Buffer, // Double buffer for race-free transport
+    pub suspended_overburden_buffer: wgpu::Buffer,
+    pub suspended_overburden_next_buffer: wgpu::Buffer,
+    pub suspended_gravel_buffer: wgpu::Buffer,
+    pub suspended_gravel_next_buffer: wgpu::Buffer,
+    pub suspended_paydirt_buffer: wgpu::Buffer,
+    pub suspended_paydirt_next_buffer: wgpu::Buffer,
 
     // Derived/Intermediate Buffers
     pub water_surface_buffer: wgpu::Buffer, // Calculated as Ground + Water Depth
@@ -60,6 +66,7 @@ pub struct GpuHeightfield {
     pub depth_pipeline: wgpu::ComputePipeline,
     pub reconcile_depth_pipeline: wgpu::ComputePipeline,
 
+    pub settling_pipeline: wgpu::ComputePipeline,
     pub erosion_pipeline: wgpu::ComputePipeline,
     pub sediment_transport_pipeline: wgpu::ComputePipeline,
     pub collapse_pipeline: wgpu::ComputePipeline,
@@ -144,6 +151,12 @@ impl GpuHeightfield {
         let water_vel_z = create_storage("Water Vel Z Buffer", 0.0);
         let suspended = create_storage("Suspended Sediment Buffer", 0.0);
         let suspended_next = create_storage("Suspended Sediment Next Buffer", 0.0);
+        let suspended_overburden = create_storage("Suspended Overburden Buffer", 0.0);
+        let suspended_overburden_next = create_storage("Suspended Overburden Next Buffer", 0.0);
+        let suspended_gravel = create_storage("Suspended Gravel Buffer", 0.0);
+        let suspended_gravel_next = create_storage("Suspended Gravel Next Buffer", 0.0);
+        let suspended_paydirt = create_storage("Suspended Paydirt Buffer", 0.0);
+        let suspended_paydirt_next = create_storage("Suspended Paydirt Next Buffer", 0.0);
 
         // 3. Initialize Intermediate
         let water_surface = create_storage("Water Surface Buffer", 0.0);
@@ -154,7 +167,7 @@ impl GpuHeightfield {
         // For now constructing the struct fields. simpler to create layout and bindgroups here.
 
         // 4. Uniforms
-        let params_size = std::mem::size_of::<[u32; 12]>(); // Alignment padding safe size
+        let params_size = std::mem::size_of::<[u32; 20]>(); // Alignment padding safe size
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Heightfield Params"),
             size: params_size as u64,
@@ -275,6 +288,66 @@ impl GpuHeightfield {
                     },
                     count: None,
                 }, // suspended_sediment_next (double buffer)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }, // suspended_overburden
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }, // suspended_overburden_next
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }, // suspended_gravel
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }, // suspended_gravel_next
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }, // suspended_paydirt
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }, // suspended_paydirt_next
             ],
         });
 
@@ -313,6 +386,30 @@ impl GpuHeightfield {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: suspended_next.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: suspended_overburden.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: suspended_overburden_next.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: suspended_gravel.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: suspended_gravel_next.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: suspended_paydirt.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: suspended_paydirt_next.as_entire_binding(),
                 },
             ],
         });
@@ -467,6 +564,15 @@ impl GpuHeightfield {
             ),
         });
 
+        let settling_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Update Settling Pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &erosion_shader,
+            entry_point: Some("update_settling"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         let erosion_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Update Erosion Pipeline"),
             layout: Some(&pipeline_layout), // Reusing same layout
@@ -555,10 +661,10 @@ impl GpuHeightfield {
             ),
         });
 
-        // Emitter params buffer (pos/radius/rate + world/tile dims + origin + cell_size)
+        // Emitter params buffer (pos/radius/rate + world/tile dims + origin + cell_size + concs)
         let emitter_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Emitter Params Buffer"),
-            size: 64, // 16 x f32/u32
+            size: 80, // 20 x f32/u32
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -586,6 +692,46 @@ impl GpuHeightfield {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -600,6 +746,22 @@ impl GpuHeightfield {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: water_depth.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: suspended.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: suspended_overburden.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: suspended_gravel.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: suspended_paydirt.as_entire_binding(),
                 },
             ],
         });
@@ -939,6 +1101,36 @@ impl GpuHeightfield {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -985,6 +1177,18 @@ impl GpuHeightfield {
                 wgpu::BindGroupEntry {
                     binding: 9,
                     resource: suspended.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: suspended_overburden.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: suspended_gravel.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: suspended_paydirt.as_entire_binding(),
                 },
             ],
         });
@@ -1152,6 +1356,12 @@ impl GpuHeightfield {
             water_velocity_z_buffer: water_vel_z,
             suspended_sediment_buffer: suspended,
             suspended_sediment_next_buffer: suspended_next,
+            suspended_overburden_buffer: suspended_overburden,
+            suspended_overburden_next_buffer: suspended_overburden_next,
+            suspended_gravel_buffer: suspended_gravel,
+            suspended_gravel_next_buffer: suspended_gravel_next,
+            suspended_paydirt_buffer: suspended_paydirt,
+            suspended_paydirt_next_buffer: suspended_paydirt_next,
 
             water_surface_buffer: water_surface,
             flux_x_buffer: flux_x,
@@ -1165,6 +1375,7 @@ impl GpuHeightfield {
             flux_pipeline,
             depth_pipeline,
             reconcile_depth_pipeline,
+            settling_pipeline,
             erosion_pipeline,
             sediment_transport_pipeline,
             collapse_pipeline,
@@ -1236,7 +1447,10 @@ impl GpuHeightfield {
         // 2. Update Depth (Volume Conservation) - Reads Flux, updates water_depth
         dispatch_step!("Update Depth", &self.depth_pipeline);
 
-        // 3. Erosion (post-flux velocity) - Reads Depth/Vel, writes Terrain
+        // 3a. Settling (post-flux) - Reads Depth/Vel, writes Terrain/Suspended
+        dispatch_step!("Update Settling", &self.settling_pipeline);
+
+        // 3b. Erosion (post-settling) - Reads Depth/Vel/Terrain, writes Terrain/Suspended
         dispatch_step!("Update Erosion", &self.erosion_pipeline);
 
         // 4. Sediment Transport (flux-based advection) - Reads from current, writes to next buffer
@@ -1251,6 +1465,27 @@ impl GpuHeightfield {
             &self.suspended_sediment_next_buffer,
             0,
             &self.suspended_sediment_buffer,
+            0,
+            buffer_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.suspended_overburden_next_buffer,
+            0,
+            &self.suspended_overburden_buffer,
+            0,
+            buffer_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.suspended_gravel_next_buffer,
+            0,
+            &self.suspended_gravel_buffer,
+            0,
+            buffer_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.suspended_paydirt_next_buffer,
+            0,
+            &self.suspended_paydirt_buffer,
             0,
             buffer_size,
         );
@@ -1277,7 +1512,7 @@ impl GpuHeightfield {
         tile_width: u32,
         tile_depth: u32,
     ) {
-        let params: [u32; 12] = [
+        let params: [u32; 20] = [
             self.width,
             self.depth,
             tile_width,
@@ -1289,7 +1524,15 @@ impl GpuHeightfield {
             bytemuck::cast(self.cell_size),
             bytemuck::cast(dt),
             bytemuck::cast(9.81f32),
-            bytemuck::cast(0.03f32), // Manning's n coefficient (smooth channel)
+            bytemuck::cast(0.02f32), // Manning's n coefficient (smooth channel)
+            bytemuck::cast(1000.0f32), // rho_water
+            bytemuck::cast(2650.0f32), // rho_sediment
+            bytemuck::cast(0.001f32), // water_viscosity
+            bytemuck::cast(0.045f32), // critical_shields
+            bytemuck::cast(0.01f32), // k_erosion (100x CPU rate for visibility)
+            bytemuck::cast(0.05f32), // max_erosion_per_step (10x CPU, dt=0.02 → 1mm/step max)
+            0,
+            0,
         ];
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&params));
     }
@@ -1302,11 +1545,29 @@ impl GpuHeightfield {
         pos_z: f32,
         radius: f32,
         rate: f32,
+        sediment_conc: f32,
+        overburden_conc: f32,
+        gravel_conc: f32,
+        paydirt_conc: f32,
         dt: f32,
         enabled: bool,
     ) {
         self.update_emitter_tile(
-            queue, pos_x, pos_z, radius, rate, dt, enabled, 0, 0, self.width, self.depth,
+            queue,
+            pos_x,
+            pos_z,
+            radius,
+            rate,
+            sediment_conc,
+            overburden_conc,
+            gravel_conc,
+            paydirt_conc,
+            dt,
+            enabled,
+            0,
+            0,
+            self.width,
+            self.depth,
         );
     }
 
@@ -1317,6 +1578,10 @@ impl GpuHeightfield {
         pos_z: f32,
         radius: f32,
         rate: f32,
+        sediment_conc: f32,
+        overburden_conc: f32,
+        gravel_conc: f32,
+        paydirt_conc: f32,
         dt: f32,
         enabled: bool,
         origin_x: u32,
@@ -1324,8 +1589,9 @@ impl GpuHeightfield {
         tile_width: u32,
         tile_depth: u32,
     ) {
-        // EmitterParams struct: pos_x, pos_z, radius, rate, dt, enabled, world/tile dims, origin, cell_size
-        let params: [u32; 16] = [
+        // EmitterParams struct: pos_x, pos_z, radius, rate, dt, enabled, world/tile dims,
+        // origin, cell_size, concs, plus padding to 80 bytes.
+        let params: [u32; 20] = [
             bytemuck::cast(pos_x),
             bytemuck::cast(pos_z),
             bytemuck::cast(radius),
@@ -1339,6 +1605,10 @@ impl GpuHeightfield {
             origin_x,
             origin_z,
             bytemuck::cast(self.cell_size),
+            bytemuck::cast(sediment_conc),
+            bytemuck::cast(overburden_conc),
+            bytemuck::cast(gravel_conc),
+            bytemuck::cast(paydirt_conc),
             0,
             0,
             0,
@@ -1566,6 +1836,22 @@ impl GpuHeightfield {
             0,
             bytemuck::cast_slice(&world.suspended_sediment),
         );
+        let zero_suspended = vec![0.0f32; count];
+        queue.write_buffer(
+            &self.suspended_overburden_buffer,
+            0,
+            bytemuck::cast_slice(&zero_suspended),
+        );
+        queue.write_buffer(
+            &self.suspended_gravel_buffer,
+            0,
+            bytemuck::cast_slice(&zero_suspended),
+        );
+        queue.write_buffer(
+            &self.suspended_paydirt_buffer,
+            0,
+            bytemuck::cast_slice(&zero_suspended),
+        );
     }
 
     /// Upload only terrain buffers (for excavation) - does NOT touch water state
@@ -1649,7 +1935,10 @@ impl GpuHeightfield {
         let sediment = read_buffer(&self.sediment_buffer);
 
         let water_depth = read_buffer(&self.water_depth_buffer);
-        let suspended = read_buffer(&self.suspended_sediment_buffer);
+        let suspended_sediment = read_buffer(&self.suspended_sediment_buffer);
+        let suspended_overburden = read_buffer(&self.suspended_overburden_buffer);
+        let suspended_gravel = read_buffer(&self.suspended_gravel_buffer);
+        let suspended_paydirt = read_buffer(&self.suspended_paydirt_buffer);
 
         // Update World
         world.bedrock_elevation = bedrock;
@@ -1657,7 +1946,13 @@ impl GpuHeightfield {
         world.gravel_thickness = gravel;
         world.overburden_thickness = overburden;
         world.terrain_sediment = sediment;
-        world.suspended_sediment = suspended;
+        let mut suspended_total = suspended_sediment;
+        for i in 0..suspended_total.len() {
+            suspended_total[i] += suspended_overburden[i];
+            suspended_total[i] += suspended_gravel[i];
+            suspended_total[i] += suspended_paydirt[i];
+        }
+        world.suspended_sediment = suspended_total;
 
         // Calculate Surface
         for i in 0..water_depth.len() {
@@ -1678,6 +1973,7 @@ impl GpuHeightfield {
         view_proj: [[f32; 4]; 4],
         camera_pos: [f32; 3],
         time: f32,
+        draw_water: bool,
     ) {
         // Update Uniforms
         let uniforms = RenderUniforms {
@@ -1729,9 +2025,11 @@ impl GpuHeightfield {
         rpass.set_index_buffer(self.grid_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         rpass.draw_indexed(0..self.num_indices, 0, 0..1);
 
-        // Water
-        rpass.set_pipeline(&self.water_pipeline);
-        rpass.draw_indexed(0..self.num_indices, 0, 0..1);
+        if draw_water {
+            // Water
+            rpass.set_pipeline(&self.water_pipeline);
+            rpass.draw_indexed(0..self.num_indices, 0, 0..1);
+        }
     }
 
     pub fn set_bridge_buffers(

@@ -302,6 +302,10 @@ impl App {
                     self.emitter.position.z,
                     self.emitter.radius,
                     self.emitter.rate,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
                     sim_dt,
                     self.emitter.enabled,
                 );
