@@ -1,6 +1,7 @@
 // Disabled: bed_3d was the Drucker-Prager + heightfield system that had threshold tuning issues
 // pub mod bed_3d;
 pub mod bridge_3d;
+pub mod dem_3d;
 pub mod flip_3d;
 pub mod fluid_renderer;
 pub mod g2p_3d;
@@ -17,8 +18,8 @@ use winit::window::Window;
 
 /// Central GPU context holding device, queue, and surface
 pub struct GpuContext {
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    pub device: Arc<wgpu::Device>,
+    pub queue: Arc<wgpu::Queue>,
     pub surface: wgpu::Surface<'static>,
     pub config: wgpu::SurfaceConfiguration,
     pub size: (u32, u32),
@@ -93,8 +94,8 @@ impl GpuContext {
         surface.configure(&device, &config);
 
         Self {
-            device,
-            queue,
+            device: Arc::new(device),
+            queue: Arc::new(queue),
             surface,
             config,
             size: (width, height),
