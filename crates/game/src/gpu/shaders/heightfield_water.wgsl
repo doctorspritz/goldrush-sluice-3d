@@ -83,35 +83,49 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         // Only calculate flow if water exists
         if (d_l > 0.001 || d_r > 0.001) {
+             // Detect wet-dry front
+             let is_wet_dry_front = (d_l > 0.01 && d_r < 0.01) || (d_r > 0.01 && d_l < 0.01);
+
+             // Use harmonic mean of depths (better for wet-dry) unless truly zero
+             let min_depth = min(d_l, d_r);
+             let max_depth = max(d_l, d_r);
+             let avg_depth = select(
+                 0.5 * (d_l + d_r),  // Normal: arithmetic mean
+                 max_depth * 0.5,    // Wet-dry: half of wet cell's depth
+                 is_wet_dry_front
+             );
+             let effective_depth = max(avg_depth, 0.01);
+
+             // Compute gradient from water surface heights
              let gradient = (h_l - h_r) / params.cell_size;
-             let avg_depth = max(0.5 * (d_l + d_r), 0.01);
 
              // Apply gravity
              var vel = water_velocity_x[idx];
              vel += params.gravity * gradient * params.dt;
 
              // Apply Manning friction (implicit method for stability)
-             // Friction: g * n² * |V| * V / R^(4/3) where R ≈ depth for wide channel
              let n2 = params.manning_n * params.manning_n;
-             let friction_coeff = params.gravity * n2 / pow(avg_depth, 4.0/3.0);
+             let friction_coeff = params.gravity * n2 / pow(effective_depth, 4.0/3.0);
              let friction_factor = 1.0 + friction_coeff * abs(vel) * params.dt;
              vel = vel / friction_factor;
 
-             // Clamp velocity
+             // Standard velocity clamp (CFL condition)
              let max_v = params.cell_size / params.dt * 0.25;
              vel = clamp(vel, -max_v, max_v);
 
              water_velocity_x[idx] = vel;
 
-             // Compute Flux (volume per timestep) - reuse avg_depth from above
-             var flux = vel * avg_depth * params.cell_size * params.dt;
+             // Compute Flux - key is limiting flux at wet-dry front
+             var flux = vel * effective_depth * params.cell_size * params.dt;
 
              // Limit flux to available water in source cell
+             // At wet-dry front, use much stricter limit to prevent pile-up
+             let flux_limit_factor = select(0.25, 0.1, is_wet_dry_front);
              if (flux > 0.0) {
-                 let max_flux = d_l * cell_area * 0.25;
+                 let max_flux = d_l * cell_area * flux_limit_factor;
                  flux = min(flux, max_flux);
              } else {
-                 let max_flux = d_r * cell_area * 0.25;
+                 let max_flux = d_r * cell_area * flux_limit_factor;
                  flux = max(flux, -max_flux);
              }
 
@@ -159,8 +173,20 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let d_f = water_depth[idx_f];
         
         if (d_b > 0.001 || d_f > 0.001) {
+             // Detect wet-dry front
+             let is_wet_dry_front_z = (d_b > 0.01 && d_f < 0.01) || (d_f > 0.01 && d_b < 0.01);
+
+             // Use half of wet cell depth at wet-dry front
+             let max_depth_z = max(d_b, d_f);
+             let avg_depth_z = select(
+                 0.5 * (d_b + d_f),  // Normal: arithmetic mean
+                 max_depth_z * 0.5,  // Wet-dry: half of wet cell's depth
+                 is_wet_dry_front_z
+             );
+             let effective_depth_z = max(avg_depth_z, 0.01);
+
+             // Compute gradient from water surface heights
              let gradient = (h_b - h_f) / params.cell_size;
-             let avg_depth_z = max(0.5 * (d_b + d_f), 0.01);
 
              // Apply gravity
              var vel = water_velocity_z[idx];
@@ -168,26 +194,30 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
              // Apply Manning friction (implicit method for stability)
              let n2_z = params.manning_n * params.manning_n;
-             let friction_coeff_z = params.gravity * n2_z / pow(avg_depth_z, 4.0/3.0);
+             let friction_coeff_z = params.gravity * n2_z / pow(effective_depth_z, 4.0/3.0);
              let friction_factor_z = 1.0 + friction_coeff_z * abs(vel) * params.dt;
              vel = vel / friction_factor_z;
 
-             let max_v = params.cell_size / params.dt * 0.25;
-             vel = clamp(vel, -max_v, max_v);
+             // Standard velocity clamp (CFL condition)
+             let max_v_z = params.cell_size / params.dt * 0.25;
+             vel = clamp(vel, -max_v_z, max_v_z);
 
              water_velocity_z[idx] = vel;
 
-             var flux = vel * avg_depth_z * params.cell_size * params.dt;
-             
-             // Limit flux to available water
+             // Compute Flux - key is limiting flux at wet-dry front
+             var flux = vel * effective_depth_z * params.cell_size * params.dt;
+
+             // Limit flux to available water in source cell
+             // At wet-dry front, use stricter limit
+             let flux_limit_z = select(0.25, 0.1, is_wet_dry_front_z);
              if (flux > 0.0) {
-                 let max_flux = d_b * cell_area * 0.25;
+                 let max_flux = d_b * cell_area * flux_limit_z;
                  flux = min(flux, max_flux);
              } else {
-                 let max_flux = d_f * cell_area * 0.25;
+                 let max_flux = d_f * cell_area * flux_limit_z;
                  flux = max(flux, -max_flux);
              }
-             
+
              flux_z[idx] = flux;
         } else {
              water_velocity_z[idx] = 0.0;

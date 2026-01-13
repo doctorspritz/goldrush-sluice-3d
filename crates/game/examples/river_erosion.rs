@@ -1,14 +1,16 @@
-//! River Erosion Demo - Dynamic Substrate Physics
+//! River Erosion Demo - Erosion & Deposition
 //!
-//! Demonstrates physics-accurate erosion of layered substrates by flowing water.
-//! Watch as water carves through soft materials to expose underlying harder layers.
+//! Demonstrates both erosion and deposition in a slope → pool system.
+//! Water flows down a steep slope, then enters a flat pool where it slows.
 //!
 //! Physics demonstrated:
-//! - Selective erosion (soft materials erode before hard)
+//! - EROSION on slope: Fast water erodes material (muddy brown water)
+//! - DEPOSITION in pool: Slow water drops sediment (clear water, building sediment layer)
+//! - Velocity-dependent erosion (faster water erodes more)
 //! - Layer exposure (sediment → overburden → gravel → paydirt → bedrock)
-//! - Material-specific erosion rates
-//! - Sediment transport and deposition
-//! - Channel formation feedback loop
+//! - Material-specific critical velocities
+//! - Sediment transport visualization via water color
+//! - Settling velocity threshold for deposition
 //!
 //! Controls:
 //! - WASD: Move camera
@@ -46,11 +48,11 @@ struct Camera {
 
 impl Camera {
     fn new() -> Self {
-        // Position camera to view the valley from upstream-side
+        // Position camera to view both slope and pool
         Self {
-            position: Vec3::new(-5.0, 15.0, 16.0),
-            yaw: 0.0,
-            pitch: -0.5,
+            position: Vec3::new(24.0, 22.0, -12.0),
+            yaw: 1.9,    // Looking toward slope and pool
+            pitch: -0.5, // Looking down to see deposition
         }
     }
 
@@ -137,60 +139,61 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        // Create world with layered valley terrain
+        // Create world with slope → pool terrain for erosion/deposition demo
         let mut world = World::new(WORLD_WIDTH, WORLD_DEPTH, CELL_SIZE, 10.0);
 
-        // Valley parameters
-        let valley_center_z = WORLD_DEPTH as f32 / 2.0;
-        let valley_half_width = 10.0; // Wider valley for visible erosion
-        let valley_max_depth = 2.0;   // How deep the valley cuts
+        // Terrain: steep slope (left 60%) → flat pool (right 40%)
+        let slope_grade = 0.25; // 25% grade - steep for fast erosion
+        let top_elevation = 14.0; // Height at top (left edge)
+        let slope_end_x = (WORLD_WIDTH as f32 * 0.6) as usize; // Slope ends at 60% width
+        let pool_elevation = top_elevation - (slope_end_x as f32 * CELL_SIZE * slope_grade);
 
-        // Layer thicknesses (meters)
-        let paydirt_thickness = 0.5;
-        let gravel_thickness = 0.3;
-        let overburden_base = 1.0;
-        let sediment_thickness = 0.2;
+        // Layer thicknesses (meters) - generous layers to see erosion
+        let paydirt_thickness = 0.3;
+        let gravel_thickness = 0.2;
+        let overburden_thickness = 0.8;
+        let sediment_thickness = 0.4; // Thick sediment to see erosion progress
 
-        // Create layered valley terrain
+        // Create slope → pool terrain
         for z in 0..WORLD_DEPTH {
             for x in 0..WORLD_WIDTH {
                 let idx = world.idx(x, z);
 
-                // Base slope: 8m drop from left to right (steeper for faster flow)
-                let base_slope = 8.0 - (x as f32 / WORLD_WIDTH as f32) * 7.0;
-
-                // Valley profile: parabolic depression
-                let dist_from_center = (z as f32 - valley_center_z).abs();
-                let valley_factor = if dist_from_center < valley_half_width {
-                    let normalized = dist_from_center / valley_half_width;
-                    1.0 - normalized * normalized // 1.0 at center, 0.0 at edges
+                // Bedrock height: slope → flat pool
+                let bedrock_height = if x < slope_end_x {
+                    // Slope region: descends from left to slope_end
+                    let x_dist = x as f32 * CELL_SIZE;
+                    top_elevation - x_dist * slope_grade
                 } else {
-                    0.0
+                    // Pool region: flat at low elevation
+                    pool_elevation
                 };
 
-                // Bedrock follows valley shape but less pronounced
-                let bedrock_height = base_slope - valley_factor * valley_max_depth * 0.3;
-
-                // Overburden is thicker in valley (accumulated deposits)
-                let overburden = overburden_base + valley_factor * 1.5;
+                // Slight channel depression in center (z) to concentrate flow on slope
+                let center_z = WORLD_DEPTH as f32 * 0.5;
+                let z_offset = ((z as f32 - center_z).abs() / center_z).min(1.0);
+                let channel_depth = if x < slope_end_x {
+                    0.4 * (1.0 - z_offset * z_offset) // Channel on slope
+                } else {
+                    0.0 // Flat pool - no channel
+                };
 
                 // Set all layers
-                world.bedrock_elevation[idx] = bedrock_height;
+                world.bedrock_elevation[idx] = bedrock_height - channel_depth;
                 world.paydirt_thickness[idx] = paydirt_thickness;
                 world.gravel_thickness[idx] = gravel_thickness;
-                world.overburden_thickness[idx] = overburden;
-                world.terrain_sediment[idx] = sediment_thickness;
+                world.overburden_thickness[idx] = overburden_thickness;
+
+                // Less initial sediment in pool to see deposition clearly
+                world.terrain_sediment[idx] = if x < slope_end_x {
+                    sediment_thickness
+                } else {
+                    0.05 // Minimal sediment in pool - watch it build up!
+                };
             }
         }
 
-        // Pre-fill the upstream valley with initial water
-        for z in (WORLD_DEPTH / 2 - 8)..(WORLD_DEPTH / 2 + 8) {
-            for x in 2..20 {
-                let idx = world.idx(x, z);
-                let ground = world.ground_height(x, z);
-                world.water_surface[idx] = ground + 0.4;
-            }
-        }
+        // No pre-fill - let water flow down naturally from emitter
 
         let metrics = ErosionMetrics::new(&world);
 
@@ -300,7 +303,7 @@ impl App {
             // Emit water at the upstream end of the valley
             let emit_x = 5.0 * CELL_SIZE;
             let emit_z = (WORLD_DEPTH as f32 / 2.0) * CELL_SIZE;
-            let emit_rate = 2.0; // m³/s - moderate flow
+            let emit_rate = 8.0; // m³/s - high flow for visible erosion
             let emit_radius = 5.0 * CELL_SIZE;
 
             for _ in 0..num_substeps {
@@ -496,17 +499,22 @@ impl ApplicationHandler for App {
 }
 
 fn main() {
-    println!("River Erosion Demo - Dynamic Substrate Physics");
-    println!("==============================================");
+    println!("River Erosion Demo - Erosion & Deposition");
+    println!("==========================================");
     println!();
-    println!("Terrain layers (top to bottom):");
-    println!("  - Sediment (tan)      - erodes at 0.05 m/s");
-    println!("  - Overburden (brown)  - erodes at 0.15 m/s");
-    println!("  - Gravel (grey)       - erodes at 0.40 m/s");
-    println!("  - Paydirt (gold)      - erodes at 0.30 m/s");
+    println!("Terrain: SLOPE (left 60%) → FLAT POOL (right 40%)");
+    println!("  - Water emitted at TOP LEFT, flows down slope");
+    println!("  - SLOPE: Fast water erodes material (muddy brown water)");
+    println!("  - POOL: Slow water deposits sediment (clear water, growing sediment layer)");
+    println!();
+    println!("Material layers (top to bottom, critical velocity):");
+    println!("  - Sediment (tan)      - v_crit = 0.10 m/s (easiest)");
+    println!("  - Overburden (brown)  - v_crit = 0.20 m/s");
+    println!("  - Gravel (grey)       - v_crit = 0.50 m/s");
+    println!("  - Paydirt (gold)      - v_crit = 0.40 m/s");
     println!("  - Bedrock (dark grey) - does not erode");
     println!();
-    println!("Watch the valley floor colors change as water erodes through layers!");
+    println!("Watch: Muddy water from slope becomes clear as sediment settles in pool");
     println!();
     println!("Controls:");
     println!("  WASD        - Move camera");

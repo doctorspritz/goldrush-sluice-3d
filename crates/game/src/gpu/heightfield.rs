@@ -910,7 +910,17 @@ impl GpuHeightfield {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 8,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::FRAGMENT, // Only used in terrain fragment shader
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::VERTEX, // Only vertex needs it - sediment_load passed via interpolation
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
@@ -960,6 +970,10 @@ impl GpuHeightfield {
                 wgpu::BindGroupEntry {
                     binding: 8,
                     resource: surface_material.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: suspended.as_entire_binding(),
                 },
             ],
         });

@@ -17,6 +17,7 @@ struct Uniforms {
 @group(0) @binding(6) var<storage, read> water_surface_buf: array<f32>;
 @group(0) @binding(7) var<storage, read> water_depth_buf: array<f32>;
 @group(0) @binding(8) var<storage, read> surface_material_buf: array<u32>; // 0=bed,1=pay,2=gravel,3=over,4=sed
+@group(0) @binding(9) var<storage, read> suspended_sediment_buf: array<f32>; // kg/m² suspended in water
 
 struct VertexInput {
     @location(0) grid_pos: vec2<f32>,
@@ -33,6 +34,7 @@ struct WaterVertexOutput {
     @location(0) world_pos: vec3<f32>,
     @location(1) depth: f32, // water depth
     @location(2) normal: vec3<f32>,
+    @location(3) sediment_load: f32, // suspended sediment concentration
 }
 
 fn get_height(x: u32, z: u32) -> f32 {
@@ -458,6 +460,11 @@ fn get_water_depth(x: u32, z: u32) -> f32 {
     return water_depth_buf[idx];
 }
 
+fn get_suspended_sediment(x: u32, z: u32) -> f32 {
+    let idx = z * uniforms.grid_width + x;
+    return suspended_sediment_buf[idx];
+}
+
 @vertex
 fn vs_water(in: VertexInput) -> WaterVertexOutput {
     var out: WaterVertexOutput;
@@ -542,7 +549,13 @@ fn vs_water(in: VertexInput) -> WaterVertexOutput {
     out.world_pos = world_pos;
     out.depth = render_depth;
     out.normal = normal;
-    
+
+    // Sample suspended sediment - compute sediment concentration (kg/m³)
+    // suspended_sediment is in kg/m², divide by depth to get concentration
+    let suspended = get_suspended_sediment(gx, gz);
+    let safe_depth = max(depth, 0.01);
+    out.sediment_load = suspended / safe_depth; // kg/m³ concentration
+
     return out;
 }
 
@@ -584,12 +597,27 @@ fn fs_water(in: WaterVertexOutput) -> @location(0) vec4<f32> {
     let NdotH = max(dot(normal, half_dir), 0.0);
     let specular = pow(NdotH, 60.0) * 0.8; 
     
-    // Base color
+    // Base color - clean water
     let deep_color = vec3<f32>(0.1, 0.2, 0.5);
     let shallow_color = vec3<f32>(0.3, 0.5, 0.8);
     let foam_color = vec3<f32>(0.9, 0.95, 1.0);
-    
-    let water_base = mix(shallow_color, deep_color, clamp(in.depth * 0.5, 0.0, 1.0));
+
+    // Muddy sediment colors
+    let light_mud = vec3<f32>(0.6, 0.45, 0.25);  // Light muddy brown
+    let heavy_mud = vec3<f32>(0.35, 0.25, 0.15); // Dark muddy brown
+
+    // Compute sediment factor (0=clean, 1=fully muddy)
+    // sediment_load is kg/m³. More sensitive: visible tint at 0.05 kg/m³, fully muddy at 0.2 kg/m³
+    let sediment_factor = clamp(in.sediment_load * 5.0, 0.0, 1.0);
+
+    // Clean water base (depth-based)
+    let clean_base = mix(shallow_color, deep_color, clamp(in.depth * 0.5, 0.0, 1.0));
+
+    // Muddy water base (also depth-based: lighter when shallow)
+    let muddy_base = mix(light_mud, heavy_mud, clamp(in.depth * 0.5, 0.0, 1.0));
+
+    // Blend clean to muddy based on sediment
+    let water_base = mix(clean_base, muddy_base, sediment_factor);
     
     // Foam at edges (depth < 0.05)
     let p_noise = in.world_pos.xz * 10.0;
@@ -605,11 +633,15 @@ fn fs_water(in: WaterVertexOutput) -> @location(0) vec4<f32> {
     // alpha_fade goes from 0.0 at depth 0.0 to 1.0 at depth 0.1
     let alpha_fade = smoothstep(0.0, 0.1, in.depth);
     let alpha_base = alpha_fade * clamp(in.depth * 0.5 + 0.3, 0.0, 0.85);
-    let alpha = max(alpha_base, foam_factor * 0.4); // Foam is less opaque
-    
-    // Combine
+    var alpha = max(alpha_base, foam_factor * 0.4); // Foam is less opaque
+
+    // Muddy water is more opaque
+    alpha = mix(alpha, min(alpha + 0.3, 0.95), sediment_factor);
+
+    // Combine - reduce fresnel/sky reflection for muddy water
     let sky_color = vec3<f32>(0.8, 0.9, 1.0);
-    let final_color = mix(water_color, sky_color, fresnel * 0.4) + specular;
-    
-    return vec4<f32>(final_color, alpha + fresnel * 0.2 + specular * 0.5);
+    let effective_fresnel = fresnel * (1.0 - sediment_factor * 0.7); // Muddy water less reflective
+    let final_color = mix(water_color, sky_color, effective_fresnel * 0.4) + specular * (1.0 - sediment_factor * 0.5);
+
+    return vec4<f32>(final_color, alpha + effective_fresnel * 0.2 + specular * 0.3);
 }
