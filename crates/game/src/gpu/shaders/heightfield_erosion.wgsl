@@ -12,45 +12,38 @@ struct Params {
     cell_size: f32,
     dt: f32,
     gravity: f32,
-    damping: f32, // Reusing water params struct for now, need specific erosion params?
-                  // Let's assume we pass a larger struct or a second uniform buffer.
-                  // For simplicity, let's hardcode constants for now or extend Params.
+    manning_n: f32,
+    rho_water: f32,
+    rho_sediment: f32,
+    water_viscosity: f32,
+    critical_shields: f32,
+    k_erosion: f32,
+    max_erosion_per_step: f32,
+    _pad1: vec2<u32>,
 }
 
 // =============================================================================
 // EROSION PHYSICS CONSTANTS
 // =============================================================================
-// These constants control the dramatic breach/flood dynamics.
-// The model uses critical shear stress: erosion explodes when v > v_critical
+// Particle sizes (median diameter, meters)
+const D50_SEDIMENT: f32 = 0.0001;    // 0.1mm fine silt
+const D50_OVERBURDEN: f32 = 0.001;   // 1mm coarse sand
+const D50_GRAVEL: f32 = 0.01;        // 10mm gravel
+const D50_PAYDIRT: f32 = 0.002;      // 2mm compacted sand
 
-// Critical velocities (m/s) - erosion rate increases above these thresholds
-const V_CRIT_SEDIMENT: f32 = 0.1;       // Fresh silt/sediment - easy to erode
-const V_CRIT_OVERBURDEN: f32 = 0.2;     // Soil/dirt - moderate resistance
-const V_CRIT_GRAVEL: f32 = 0.5;         // Gravel - needs fast water
-const V_CRIT_PAYDIRT: f32 = 0.4;        // Compacted pay layer
+// Hardness multipliers (resistance to erosion)
+const HARDNESS_SEDIMENT: f32 = 0.5;
+const HARDNESS_OVERBURDEN: f32 = 1.0;
+const HARDNESS_GRAVEL: f32 = 2.0;
+const HARDNESS_PAYDIRT: f32 = 5.0;
 
-// Erosion rate multiplier when v > v_critical (m/s per unit shear excess)
-// Tuned for visible erosion while avoiding instant terrain destruction
-const K_EROSION_SEDIMENT: f32 = 0.02;     // Silt erodes readily
-const K_EROSION_OVERBURDEN: f32 = 0.01;   // Dirt erodes moderately
-const K_EROSION_GRAVEL: f32 = 0.003;      // Gravel resists erosion
-const K_EROSION_PAYDIRT: f32 = 0.005;     // Paydirt is consolidated
+// Turbulent flow friction coefficient
+const CF: f32 = 0.003;
 
-// Settling/Deposition
-const SETTLING_VELOCITY: f32 = 0.08;    // m/s - threshold for "slow" water (increased for more settling)
-const K_DEPOSIT_FAST: f32 = 5.0;        // Deposition rate in still water (increased)
-const K_DEPOSIT_SLOW: f32 = 2.0;        // Deposition rate in moving water (increased from 0.3)
-
-// Transport capacity
-const CAPACITY_FACTOR: f32 = 0.3;       // kg sediment per m³ water per m/s velocity (reduced for more deposition)
-const MAX_CAPACITY: f32 = 3.0;          // Maximum sediment load (kg/m³) (reduced)
-
-// Hardness multipliers (0 = impossible to erode, 1 = full erosion rate)
-const K_HARDNESS_BEDROCK: f32 = 0.0;    // Bedrock doesn't erode
-const K_HARDNESS_PAYDIRT: f32 = 0.5;
-const K_HARDNESS_GRAVEL: f32 = 0.4;
-const K_HARDNESS_OVERBURDEN: f32 = 1.0;
-const K_HARDNESS_SEDIMENT: f32 = 1.0;   // Fresh sediment is soft
+// Settling transitions
+const D50_STOKES_MAX: f32 = 0.0001;    // < 0.1mm: pure Stokes
+const D50_TURBULENT_MIN: f32 = 0.001;  // > 1mm: pure turbulent
+const CD_SPHERE: f32 = 0.44;           // Drag coefficient
 
 @group(0) @binding(0) var<uniform> params: Params;
 
@@ -125,36 +118,68 @@ fn get_terrain_slope(x: u32, z: u32) -> f32 {
     return sqrt(dh_dx * dh_dx + dh_dz * dh_dz);
 }
 
-// =============================================================================
-// CRITICAL SHEAR STRESS EROSION MODEL
-// =============================================================================
-// Erosion rate is proportional to (v² - v_crit²) when v > v_crit
-// This creates positive feedback: erosion deepens channel → faster water → more erosion
-// Result: small trickles can create runaway breaches and floods
+// Settling velocity (Stokes/turbulent blend)
+fn settling_velocity(d50: f32, g: f32, rho_p: f32, rho_f: f32, mu: f32) -> f32 {
+    let vs_stokes = g * (rho_p - rho_f) * d50 * d50 / (18.0 * mu);
+    let vs_turbulent = sqrt(4.0 * g * d50 * (rho_p - rho_f) / (3.0 * rho_f * CD_SPHERE));
 
-// Get the critical velocity for the exposed surface material
-fn get_critical_velocity(mat: u32) -> f32 {
+    if (d50 < D50_STOKES_MAX) {
+        return vs_stokes;
+    } else if (d50 > D50_TURBULENT_MIN) {
+        return vs_turbulent;
+    }
+
+    let t = (d50 - D50_STOKES_MAX) / (D50_TURBULENT_MIN - D50_STOKES_MAX);
+    return vs_stokes * (1.0 - t) + vs_turbulent * t;
+}
+
+// Shear velocity: u* = sqrt(g×h×S + Cf×v²)
+fn shear_velocity(depth: f32, slope: f32, vel_x: f32, vel_z: f32, g: f32) -> f32 {
+    let grav_term = g * depth * slope;
+    let v_sq = vel_x * vel_x + vel_z * vel_z;
+    let velocity_term = CF * v_sq;
+    return sqrt(grav_term + velocity_term);
+}
+
+// Bed shear stress: τ = ρf × u*²
+fn shear_stress(u_star: f32, rho_f: f32) -> f32 {
+    return rho_f * u_star * u_star;
+}
+
+// Shields stress: τ* = τ / (g × (ρp - ρf) × d50)
+fn shields_stress(tau: f32, d50: f32, g: f32, rho_p: f32, rho_f: f32) -> f32 {
+    let rho_diff = rho_p - rho_f;
+    let d50_safe = max(d50, 1e-6);
+    return tau / (g * rho_diff * d50_safe);
+}
+
+// Get d50 for material type
+fn get_d50(mat: u32) -> f32 {
     switch (mat) {
-        case 4u: { return V_CRIT_SEDIMENT; }     // Fresh silt
-        case 3u: { return V_CRIT_OVERBURDEN; }   // Soil/dirt
-        case 2u: { return V_CRIT_GRAVEL; }       // Gravel
-        case 1u: { return V_CRIT_PAYDIRT; }      // Paydirt
-        default: { return 999.0; }               // Bedrock - effectively infinite
+        case 4u: { return D50_SEDIMENT; }
+        case 3u: { return D50_OVERBURDEN; }
+        case 2u: { return D50_GRAVEL; }
+        case 1u: { return D50_PAYDIRT; }
+        default: { return 0.0; }
     }
 }
 
-// Get erosion rate constant for surface material
-fn get_erosion_rate(mat: u32) -> f32 {
+// Get hardness for material type
+fn get_hardness(mat: u32) -> f32 {
     switch (mat) {
-        case 4u: { return K_EROSION_SEDIMENT; }
-        case 3u: { return K_EROSION_OVERBURDEN; }
-        case 2u: { return K_EROSION_GRAVEL; }
-        case 1u: { return K_EROSION_PAYDIRT; }
-        default: { return 0.0; }                 // Bedrock doesn't erode
+        case 4u: { return HARDNESS_SEDIMENT; }
+        case 3u: { return HARDNESS_OVERBURDEN; }
+        case 2u: { return HARDNESS_GRAVEL; }
+        case 1u: { return HARDNESS_PAYDIRT; }
+        default: { return 0.0; }
     }
 }
 
-// 1. Erosion & Deposition with Critical Shear Stress
+// =============================================================================
+// SHIELDS STRESS EROSION MODEL
+// =============================================================================
+
+// 1. Erosion & Deposition with Shields Stress
 @compute @workgroup_size(16, 16)
 fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let tile_x = global_id.x;
@@ -167,130 +192,151 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = get_idx(x, z);
     let depth = water_depth[idx];
 
-    // Need some water to do anything
     if (depth < 0.001) {
         return;
     }
 
-    // Calculate velocity magnitude
     let vel_x = water_velocity_x[idx];
     let vel_z = water_velocity_z[idx];
-    let speed = sqrt(vel_x * vel_x + vel_z * vel_z);
-    let speed_sq = speed * speed;
+    let slope = get_terrain_slope(x, z);
 
-    let current_suspended = suspended_sediment[idx];
-    let surface_mat = surface_material[idx];
+    let u_star = shear_velocity(depth, slope, vel_x, vel_z, params.gravity);
+    let tau = shear_stress(u_star, params.rho_water);
 
-    // ==========================================================================
-    // DEPOSITION: Fast settling in slow/pooled water (Stokes settling)
-    // ==========================================================================
-    // Sediment settles when water is calm. In a settling pond, silt drops out fast.
+    var suspended = suspended_sediment[idx];
+    var updated_surface = false;
 
-    if (speed < SETTLING_VELOCITY) {
-        // Water is essentially still - fast deposition
-        let deposit_rate = K_DEPOSIT_FAST * (1.0 - speed / SETTLING_VELOCITY);
-        let deposit_amount = current_suspended * deposit_rate * params.dt;
+    // 1) SETTLING (independent of erosion)
+    if (suspended > 0.0) {
+        let v_settle = settling_velocity(
+            D50_SEDIMENT,
+            params.gravity,
+            params.rho_sediment,
+            params.rho_water,
+            params.water_viscosity,
+        );
+        let settling_rate = v_settle / depth;
+        let settled_frac = min(settling_rate * params.dt, 1.0);
+        let settled_amount = suspended * settled_frac;
 
-        if (deposit_amount > 0.0001) {
-            suspended_sediment[idx] -= deposit_amount;
-            sediment[idx] += deposit_amount;
-            surface_material[idx] = 4u; // Fresh sediment on top
+        if (settled_amount > 0.0) {
+            suspended -= settled_amount;
+            sediment[idx] += settled_amount;
+            updated_surface = true;
         }
-        return; // No erosion in still water
     }
 
-    // ==========================================================================
-    // EROSION: Critical shear stress model
-    // ==========================================================================
-    // Shear stress τ ∝ v². Erosion occurs when τ > τ_critical
-    // Erosion rate ∝ (τ - τ_crit) = k * (v² - v_crit²)
+    // 2) EROSION (sequential layers)
+    let critical = params.critical_shields;
+    let max_erosion = params.max_erosion_per_step * params.dt;
+    var total_eroded = 0.0;
 
-    let v_crit = get_critical_velocity(surface_mat);
-    let v_crit_sq = v_crit * v_crit;
-
-    // Only erode if velocity exceeds critical threshold
-    if (speed_sq > v_crit_sq) {
-        // Shear excess: how much above the threshold we are
-        let shear_excess = speed_sq - v_crit_sq;
-
-        // Erosion rate increases with shear excess (positive feedback!)
-        let k_erosion = get_erosion_rate(surface_mat);
-
-        // Slope factor: steeper terrain erodes faster (concentrated flow)
-        let terrain_slope = get_terrain_slope(x, z);
-        let slope_factor = 1.0 + clamp(terrain_slope * 2.0, 0.0, 2.0);
-
-        // Depth factor: deeper water has more erosive power
-        let depth_factor = min(depth, 0.5) / 0.5; // Linear up to 0.5m
-
-        // Total erosion potential this timestep
-        let erosion_potential = k_erosion * shear_excess * slope_factor * depth_factor * params.dt;
-
-        // Erode through layers from top to bottom
-        var total_eroded = 0.0;
-        var remaining = erosion_potential;
-
-        // Layer 1: Sediment (freshly deposited silt - very easy)
-        let sed_avail = sediment[idx];
-        if (remaining > 0.0 && sed_avail > 0.0) {
-            let erode = min(remaining, sed_avail);
-            sediment[idx] -= erode;
-            total_eroded += erode;
-            remaining -= erode;
-        }
-
-        // Layer 2: Overburden (soil/dirt)
-        let ob_avail = overburden[idx];
-        if (remaining > 0.0 && ob_avail > 0.0) {
-            // Overburden is a bit harder than fresh sediment
-            let effective = remaining * K_HARDNESS_OVERBURDEN;
-            let erode = min(effective, ob_avail);
-            overburden[idx] -= erode;
-            total_eroded += erode;
-            remaining -= erode / K_HARDNESS_OVERBURDEN;
-        }
-
-        // Layer 3: Gravel (resistant)
-        let gr_avail = gravel[idx];
-        if (remaining > 0.0 && gr_avail > 0.0) {
-            let effective = remaining * K_HARDNESS_GRAVEL;
-            let erode = min(effective, gr_avail);
-            gravel[idx] -= erode;
-            total_eroded += erode;
-            remaining -= erode / K_HARDNESS_GRAVEL;
-        }
-
-        // Layer 4: Paydirt (consolidated, gold-bearing)
-        let pd_avail = paydirt[idx];
-        if (remaining > 0.0 && pd_avail > 0.0) {
-            let effective = remaining * K_HARDNESS_PAYDIRT;
-            let erode = min(effective, pd_avail);
-            paydirt[idx] -= erode;
-            total_eroded += erode;
-        }
-
-        // Bedrock doesn't erode
-
-        // Add eroded material to suspension
-        if (total_eroded > 0.0) {
-            suspended_sediment[idx] += total_eroded;
-            surface_material[idx] = compute_surface_material(idx);
-        }
-    } else {
-        // Below critical velocity but above settling - gradual deposition
-        // Transport capacity decreases as velocity drops
-        let capacity = CAPACITY_FACTOR * speed * min(depth, 1.0);
-
-        if (current_suspended > capacity) {
-            let excess = current_suspended - capacity;
-            let deposit_amount = excess * K_DEPOSIT_SLOW * params.dt;
-
-            if (deposit_amount > 0.0001) {
-                suspended_sediment[idx] -= deposit_amount;
-                sediment[idx] += deposit_amount;
-                surface_material[idx] = 4u;
+    if (critical > 0.0 && max_erosion > 0.0) {
+        // Layer 1: Sediment
+        if (total_eroded < max_erosion) {
+            let available = sediment[idx];
+            if (available > 0.001) {
+                let d50_layer = get_d50(4u);
+                let shields_layer = shields_stress(
+                    tau,
+                    d50_layer,
+                    params.gravity,
+                    params.rho_sediment,
+                    params.rho_water,
+                );
+                if (shields_layer > critical) {
+                    let excess = (shields_layer - critical) / critical;
+                    let erosion_rate = params.k_erosion * excess / get_hardness(4u);
+                    let erode_height = min(erosion_rate * params.dt, available);
+                    let budget = max_erosion - total_eroded;
+                    let erode = min(erode_height, budget);
+                    sediment[idx] -= erode;
+                    total_eroded += erode;
+                }
             }
         }
+
+        // Layer 2: Gravel
+        if (total_eroded < max_erosion) {
+            let available = gravel[idx];
+            if (available > 0.001) {
+                let d50_layer = get_d50(2u);
+                let shields_layer = shields_stress(
+                    tau,
+                    d50_layer,
+                    params.gravity,
+                    params.rho_sediment,
+                    params.rho_water,
+                );
+                if (shields_layer > critical) {
+                    let excess = (shields_layer - critical) / critical;
+                    let erosion_rate = params.k_erosion * excess / get_hardness(2u);
+                    let erode_height = min(erosion_rate * params.dt, available);
+                    let budget = max_erosion - total_eroded;
+                    let erode = min(erode_height, budget);
+                    gravel[idx] -= erode;
+                    total_eroded += erode;
+                }
+            }
+        }
+
+        // Layer 3: Overburden
+        if (total_eroded < max_erosion) {
+            let available = overburden[idx];
+            if (available > 0.001) {
+                let d50_layer = get_d50(3u);
+                let shields_layer = shields_stress(
+                    tau,
+                    d50_layer,
+                    params.gravity,
+                    params.rho_sediment,
+                    params.rho_water,
+                );
+                if (shields_layer > critical) {
+                    let excess = (shields_layer - critical) / critical;
+                    let erosion_rate = params.k_erosion * excess / get_hardness(3u);
+                    let erode_height = min(erosion_rate * params.dt, available);
+                    let budget = max_erosion - total_eroded;
+                    let erode = min(erode_height, budget);
+                    overburden[idx] -= erode;
+                    total_eroded += erode;
+                }
+            }
+        }
+
+        // Layer 4: Paydirt
+        if (total_eroded < max_erosion) {
+            let available = paydirt[idx];
+            if (available > 0.001) {
+                let d50_layer = get_d50(1u);
+                let shields_layer = shields_stress(
+                    tau,
+                    d50_layer,
+                    params.gravity,
+                    params.rho_sediment,
+                    params.rho_water,
+                );
+                if (shields_layer > critical) {
+                    let excess = (shields_layer - critical) / critical;
+                    let erosion_rate = params.k_erosion * excess / get_hardness(1u);
+                    let erode_height = min(erosion_rate * params.dt, available);
+                    let budget = max_erosion - total_eroded;
+                    let erode = min(erode_height, budget);
+                    paydirt[idx] -= erode;
+                    total_eroded += erode;
+                }
+            }
+        }
+    }
+
+    if (total_eroded > 0.0 && depth > 1e-4) {
+        suspended += total_eroded;
+        updated_surface = true;
+    }
+
+    if (updated_surface) {
+        suspended_sediment[idx] = max(suspended, 0.0);
+        surface_material[idx] = compute_surface_material(idx);
     }
 }
 

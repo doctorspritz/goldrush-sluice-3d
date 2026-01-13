@@ -153,7 +153,7 @@ impl GpuHeightfield {
         // For now constructing the struct fields. simpler to create layout and bindgroups here.
 
         // 4. Uniforms
-        let params_size = std::mem::size_of::<[u32; 12]>(); // Alignment padding safe size
+        let params_size = std::mem::size_of::<[u32; 20]>(); // Alignment padding safe size
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Heightfield Params"),
             size: params_size as u64,
@@ -1262,7 +1262,7 @@ impl GpuHeightfield {
         tile_width: u32,
         tile_depth: u32,
     ) {
-        let params: [u32; 12] = [
+        let params: [u32; 20] = [
             self.width,
             self.depth,
             tile_width,
@@ -1275,6 +1275,14 @@ impl GpuHeightfield {
             bytemuck::cast(dt),
             bytemuck::cast(9.81f32),
             bytemuck::cast(0.03f32), // Manning's n coefficient (smooth channel)
+            bytemuck::cast(1000.0f32), // rho_water
+            bytemuck::cast(2650.0f32), // rho_sediment
+            bytemuck::cast(0.001f32), // water_viscosity
+            bytemuck::cast(0.045f32), // critical_shields
+            bytemuck::cast(0.0001f32), // k_erosion
+            bytemuck::cast(0.005f32), // max_erosion_per_step
+            0,
+            0,
         ];
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&params));
     }
