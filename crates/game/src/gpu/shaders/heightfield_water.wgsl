@@ -26,6 +26,12 @@ struct Params {
 @group(1) @binding(5) var<storage, read_write> flux_z: array<f32>;
 @group(1) @binding(6) var<storage, read_write> suspended_sediment: array<f32>; // For bind group compatibility
 @group(1) @binding(7) var<storage, read_write> suspended_sediment_next: array<f32>; // For bind group compatibility
+@group(1) @binding(8) var<storage, read_write> suspended_overburden: array<f32>;
+@group(1) @binding(9) var<storage, read_write> suspended_overburden_next: array<f32>;
+@group(1) @binding(10) var<storage, read_write> suspended_gravel: array<f32>;
+@group(1) @binding(11) var<storage, read_write> suspended_gravel_next: array<f32>;
+@group(1) @binding(12) var<storage, read_write> suspended_paydirt: array<f32>;
+@group(1) @binding(13) var<storage, read_write> suspended_paydirt_next: array<f32>;
 
 // Terrain Bind Group (Read Write for Layout Compatibility)
 @group(2) @binding(0) var<storage, read_write> bedrock: array<f32>;
@@ -109,23 +115,26 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
              let friction_factor = 1.0 + friction_coeff * abs(vel) * params.dt;
              vel = vel / friction_factor;
 
-             // Standard velocity clamp (CFL condition)
-             let max_v = params.cell_size / params.dt * 0.25;
-             vel = clamp(vel, -max_v, max_v);
+             // Conditional damping to avoid spikes
+             let v_abs = abs(vel);
+             let damp = select(1.0, 0.98, v_abs > 2.0);
+             vel = vel * damp;
+
+             // Soft velocity cap (smooth tanh instead of hard clamp)
+             let max_v = params.cell_size / params.dt * 1.0;
+             vel = max_v * tanh(vel / max_v);
 
              water_velocity_x[idx] = vel;
 
-             // Compute Flux - key is limiting flux at wet-dry front
+             // Compute Flux
              var flux = vel * effective_depth * params.cell_size * params.dt;
 
-             // Limit flux to available water in source cell
-             // At wet-dry front, use much stricter limit to prevent pile-up
-             let flux_limit_factor = select(0.25, 0.1, is_wet_dry_front);
+             // Clamp by available donor volume (CFL-style)
              if (flux > 0.0) {
-                 let max_flux = d_l * cell_area * flux_limit_factor;
+                 let max_flux = d_l * cell_area;
                  flux = min(flux, max_flux);
              } else {
-                 let max_flux = d_r * cell_area * flux_limit_factor;
+                 let max_flux = d_r * cell_area;
                  flux = max(flux, -max_flux);
              }
 
@@ -198,23 +207,26 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
              let friction_factor_z = 1.0 + friction_coeff_z * abs(vel) * params.dt;
              vel = vel / friction_factor_z;
 
-             // Standard velocity clamp (CFL condition)
-             let max_v_z = params.cell_size / params.dt * 0.25;
-             vel = clamp(vel, -max_v_z, max_v_z);
+             // Conditional damping to avoid spikes
+             let v_abs_z = abs(vel);
+             let damp_z = select(1.0, 0.98, v_abs_z > 2.0);
+             vel = vel * damp_z;
+
+             // Soft velocity cap (smooth tanh instead of hard clamp)
+             let max_v_z = params.cell_size / params.dt * 1.0;
+             vel = max_v_z * tanh(vel / max_v_z);
 
              water_velocity_z[idx] = vel;
 
-             // Compute Flux - key is limiting flux at wet-dry front
+             // Compute Flux
              var flux = vel * effective_depth_z * params.cell_size * params.dt;
 
-             // Limit flux to available water in source cell
-             // At wet-dry front, use stricter limit
-             let flux_limit_z = select(0.25, 0.1, is_wet_dry_front_z);
+             // Clamp by available donor volume (CFL-style)
              if (flux > 0.0) {
-                 let max_flux = d_b * cell_area * flux_limit_z;
+                 let max_flux = d_b * cell_area;
                  flux = min(flux, max_flux);
              } else {
-                 let max_flux = d_f * cell_area * flux_limit_z;
+                 let max_flux = d_f * cell_area;
                  flux = max(flux, -max_flux);
              }
 
@@ -271,7 +283,10 @@ fn update_depth(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Update Depth
     let cell_area = params.cell_size * params.cell_size;
-    let depth_change = net_flux / cell_area;
+    var depth_change = net_flux / cell_area;
+    // Limit per-step depth changes to reduce height spikes.
+    let max_depth_change = params.cell_size * 0.25;
+    depth_change = clamp(depth_change, -max_depth_change, max_depth_change);
 
     var new_depth = water_depth[idx] + depth_change;
 

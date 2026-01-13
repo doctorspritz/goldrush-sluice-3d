@@ -271,7 +271,13 @@ fn no_erosion_below_critical_velocity() {
     // Run for 10 seconds
     let dt = 0.01;
     for _ in 0..1000 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let final_sediment: f32 = world.terrain_sediment.iter().sum();
@@ -309,7 +315,13 @@ fn erosion_above_velocity_threshold() {
     // Run for 5 seconds
     let dt = 0.01;
     for _ in 0..500 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let final_sediment: f32 = world.terrain_sediment.iter().sum();
@@ -362,7 +374,13 @@ fn material_specific_erosion_rates() {
     // Run for 10 seconds (slower erosion requires longer simulation)
     let dt = 0.01;
     for _ in 0..1000 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     // Measure final amounts (not erosion delta, which depends on indexing)
@@ -413,7 +431,13 @@ fn bedrock_immune_to_erosion() {
     // Run until sediment eroded
     let dt = 0.01;
     for _ in 0..1000 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let final_bedrock: f32 = world.bedrock_elevation.iter().sum();
@@ -535,7 +559,13 @@ fn soft_layers_erode_first() {
     // Run for 20 seconds (slower erosion)
     let dt = 0.01;
     for _ in 0..2000 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let final_sediment: f32 = world.terrain_sediment.iter().sum();
@@ -576,7 +606,13 @@ fn hard_layers_protect_beneath() {
     // Run for shorter time
     let dt = 0.01;
     for _ in 0..250 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let final_overburden: f32 = world.overburden_thickness.iter().sum();
@@ -612,7 +648,13 @@ fn layer_erosion_sequence() {
     // Run for 60 seconds (slower erosion requires longer simulation)
     let dt = 0.01;
     for step in 0..6000 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
 
         if step % 100 == 0 {
             sediment_history.push(world.terrain_sediment.iter().sum::<f32>());
@@ -731,7 +773,13 @@ fn mass_conservation_through_erosion_deposition_cycle() {
     // Erosion phase - transfer sediment from terrain to suspended
     let dt = 0.01;
     for i in 0..300 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
         if i % 100 == 99 {
             let step_total = total_sediment(&world);
             let step_terrain: f32 = world.terrain_sediment.iter().sum::<f32>() * cell_area;
@@ -800,7 +848,13 @@ fn suspended_sediment_advects_with_flow() {
     // Run erosion and advection together
     let dt = 0.01;
     for _ in 0..50 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
         world.update_sediment_advection(dt);
     }
 
@@ -857,8 +911,20 @@ fn sediment_transport_capacity_velocity_dependent() {
     // Run erosion for same duration
     let dt = 0.01;
     for _ in 0..100 {
-        world_low.update_erosion(dt);
-        world_high.update_erosion(dt);
+        world_low.update_erosion(
+            dt,
+            world_low.params.hardness_overburden,
+            world_low.params.hardness_paydirt,
+            world_low.params.hardness_sediment,
+            world_low.params.hardness_gravel,
+        );
+        world_high.update_erosion(
+            dt,
+            world_high.params.hardness_overburden,
+            world_high.params.hardness_paydirt,
+            world_high.params.hardness_sediment,
+            world_high.params.hardness_gravel,
+        );
     }
 
     let eroded_low = initial_terrain_low - world_low.terrain_sediment.iter().sum::<f32>();
@@ -898,7 +964,13 @@ fn sediment_advection_conserves_mass() {
     // Erode
     let dt = 0.01;
     for _ in 0..50 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let mid_terrain: f32 = world.terrain_sediment.iter().sum();
@@ -1033,7 +1105,13 @@ fn test_flat_water_no_erosion() {
     // Run erosion
     let dt = 0.01;
     for _ in 0..500 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let final_sediment: f32 = world.terrain_sediment.iter().sum();
@@ -1073,7 +1151,13 @@ fn test_steep_slope_shallow_water_erodes() {
     // Run erosion for 20 seconds (slower erosion requires longer simulation)
     let dt = 0.01;
     for _ in 0..2000 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let final_sediment: f32 = world.terrain_sediment.iter().sum();
@@ -1139,7 +1223,13 @@ fn test_shields_stress_below_critical_no_erosion() {
 
     let dt = 0.01;
     for _ in 0..500 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let final_sediment: f32 = world.terrain_sediment.iter().sum();
@@ -1181,7 +1271,13 @@ fn test_shields_stress_above_critical_erodes() {
     // Run for 20 seconds (slower erosion requires longer simulation)
     let dt = 0.01;
     for _ in 0..2000 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let final_sediment: f32 = world.terrain_sediment.iter().sum();
@@ -1287,7 +1383,13 @@ fn test_equilibrium_channel_formation() {
 
     let dt = 0.01;
     for _ in 0..100 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let mid_sediment: f32 = world.terrain_sediment.iter().sum();
@@ -1295,7 +1397,13 @@ fn test_equilibrium_channel_formation() {
 
     // Run more erosion
     for _ in 0..400 {
-        world.update_erosion(dt);
+        world.update_erosion(
+            dt,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
     }
 
     let final_sediment: f32 = world.terrain_sediment.iter().sum();
@@ -1350,8 +1458,20 @@ fn test_particle_size_erosion_resistance() {
 
     let dt = 0.01;
     for _ in 0..200 {
-        world_fine.update_erosion(dt);
-        world_gravel.update_erosion(dt);
+        world_fine.update_erosion(
+            dt,
+            world_fine.params.hardness_overburden,
+            world_fine.params.hardness_paydirt,
+            world_fine.params.hardness_sediment,
+            world_fine.params.hardness_gravel,
+        );
+        world_gravel.update_erosion(
+            dt,
+            world_gravel.params.hardness_overburden,
+            world_gravel.params.hardness_paydirt,
+            world_gravel.params.hardness_sediment,
+            world_gravel.params.hardness_gravel,
+        );
     }
 
     let eroded_fine = initial_fine - world_fine.terrain_sediment.iter().sum::<f32>();

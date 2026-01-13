@@ -15,11 +15,21 @@ struct EmitterParams {
     origin_x: u32,
     origin_z: u32,
     cell_size: f32,
-    _pad0: f32,
+    sediment_conc: f32, // volume fraction 0-1
+    overburden_conc: f32,
+    gravel_conc: f32,
+    paydirt_conc: f32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: EmitterParams;
 @group(0) @binding(1) var<storage, read_write> water_depth: array<f32>;
+@group(0) @binding(2) var<storage, read_write> suspended_sediment: array<f32>;
+@group(0) @binding(3) var<storage, read_write> suspended_overburden: array<f32>;
+@group(0) @binding(4) var<storage, read_write> suspended_gravel: array<f32>;
+@group(0) @binding(5) var<storage, read_write> suspended_paydirt: array<f32>;
 
 fn get_idx(x: u32, z: u32) -> u32 {
     return z * params.world_width + x;
@@ -54,6 +64,26 @@ fn add_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let area = 3.14159 * params.radius * params.radius;
         let depth_per_cell = (params.rate * params.dt * falloff) / area;
         
-        water_depth[idx] += depth_per_cell;
+        let d0 = water_depth[idx];
+        let c0 = suspended_sediment[idx];
+        let dw = depth_per_cell;
+        let new_depth = d0 + dw;
+        if (new_depth > 1e-6) {
+            let c_sed = clamp(params.sediment_conc, 0.0, 1.0);
+            let c_over = clamp(params.overburden_conc, 0.0, 1.0);
+            let c_grav = clamp(params.gravel_conc, 0.0, 1.0);
+            let c_pay = clamp(params.paydirt_conc, 0.0, 1.0);
+
+            let new_sed = (suspended_sediment[idx] * d0 + c_sed * dw) / new_depth;
+            let new_over = (suspended_overburden[idx] * d0 + c_over * dw) / new_depth;
+            let new_grav = (suspended_gravel[idx] * d0 + c_grav * dw) / new_depth;
+            let new_pay = (suspended_paydirt[idx] * d0 + c_pay * dw) / new_depth;
+
+            suspended_sediment[idx] = clamp(new_sed, 0.0, 1.0);
+            suspended_overburden[idx] = clamp(new_over, 0.0, 1.0);
+            suspended_gravel[idx] = clamp(new_grav, 0.0, 1.0);
+            suspended_paydirt[idx] = clamp(new_pay, 0.0, 1.0);
+        }
+        water_depth[idx] = new_depth;
     }
 }

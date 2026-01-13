@@ -44,6 +44,7 @@ const CF: f32 = 0.003;
 const D50_STOKES_MAX: f32 = 0.0001;    // < 0.1mm: pure Stokes
 const D50_TURBULENT_MIN: f32 = 0.001;  // > 1mm: pure turbulent
 const CD_SPHERE: f32 = 0.44;           // Drag coefficient
+const MAX_SUSPENDED: f32 = 0.3;        // Max concentration (0-1)
 
 @group(0) @binding(0) var<uniform> params: Params;
 
@@ -55,6 +56,12 @@ const CD_SPHERE: f32 = 0.44;           // Drag coefficient
 @group(1) @binding(5) var<storage, read_write> flux_z: array<f32>;
 @group(1) @binding(6) var<storage, read_write> suspended_sediment: array<f32>;
 @group(1) @binding(7) var<storage, read_write> suspended_sediment_next: array<f32>; // Double buffer for race-free transport
+@group(1) @binding(8) var<storage, read_write> suspended_overburden: array<f32>;
+@group(1) @binding(9) var<storage, read_write> suspended_overburden_next: array<f32>;
+@group(1) @binding(10) var<storage, read_write> suspended_gravel: array<f32>;
+@group(1) @binding(11) var<storage, read_write> suspended_gravel_next: array<f32>;
+@group(1) @binding(12) var<storage, read_write> suspended_paydirt: array<f32>;
+@group(1) @binding(13) var<storage, read_write> suspended_paydirt_next: array<f32>;
 
 @group(2) @binding(0) var<storage, read_write> bedrock: array<f32>;
 @group(2) @binding(1) var<storage, read_write> paydirt: array<f32>;
@@ -179,7 +186,177 @@ fn get_hardness(mat: u32) -> f32 {
 // SHIELDS STRESS EROSION MODEL
 // =============================================================================
 
-// 1. Erosion & Deposition with Shields Stress
+// 1a. Settling only (prevents oscillation with erosion)
+@compute @workgroup_size(16, 16)
+fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
+    let x = tile_x + params.origin_x;
+    let z = tile_z + params.origin_z;
+    if (x >= params.world_width || z >= params.world_depth) { return; }
+
+    let idx = get_idx(x, z);
+    let depth = water_depth[idx];
+
+    if (depth < 0.001) {
+        return;
+    }
+
+    let vel_x = water_velocity_x[idx];
+    let vel_z = water_velocity_z[idx];
+    let slope = get_terrain_slope(x, z);
+    let u_star = shear_velocity(depth, slope, vel_x, vel_z, params.gravity);
+    let tau = shear_stress(u_star, params.rho_water);
+
+    // Only settle when Shields stress is below deposition threshold (hysteresis vs erosion)
+    // Use a smooth calm-water factor to avoid hard transitions.
+    let speed = sqrt(vel_x * vel_x + vel_z * vel_z);
+    let calm_factor = clamp(1.0 - speed / 0.2, 0.0, 1.0);
+    var updated_surface = false;
+
+    // Sediment settling (layer-specific)
+    var suspended = suspended_sediment[idx];
+    if (suspended > 0.0 && depth > 1e-4) {
+        let shields = shields_stress(
+            tau,
+            D50_SEDIMENT,
+            params.gravity,
+            params.rho_sediment,
+            params.rho_water,
+        );
+        let deposition_threshold = params.critical_shields * 0.4;
+        if (shields < deposition_threshold || calm_factor > 0.0) {
+            let v_settle = settling_velocity(
+                D50_SEDIMENT,
+                params.gravity,
+                params.rho_sediment,
+                params.rho_water,
+                params.water_viscosity,
+            );
+            let settling_rate = v_settle / depth;
+            var settled_frac = min(settling_rate * params.dt, 0.25);
+            let settle_boost = 0.04 * calm_factor;
+            settled_frac = max(settled_frac, settle_boost);
+            let settled_conc = suspended * settled_frac;
+            if (settled_conc > 1e-6) {
+                let deposit_height = settled_conc * depth;
+                suspended -= settled_conc;
+                sediment[idx] += deposit_height;
+                suspended_sediment[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                updated_surface = true;
+            }
+        }
+    }
+
+    // Overburden settling
+    suspended = suspended_overburden[idx];
+    if (suspended > 0.0 && depth > 1e-4) {
+        let shields = shields_stress(
+            tau,
+            D50_OVERBURDEN,
+            params.gravity,
+            params.rho_sediment,
+            params.rho_water,
+        );
+        let deposition_threshold = params.critical_shields * 0.5;
+        if (shields < deposition_threshold || calm_factor > 0.0) {
+            let v_settle = settling_velocity(
+                D50_OVERBURDEN,
+                params.gravity,
+                params.rho_sediment,
+                params.rho_water,
+                params.water_viscosity,
+            );
+            let settling_rate = v_settle / depth;
+            var settled_frac = min(settling_rate * params.dt, 0.25);
+            let settle_boost = 0.05 * calm_factor;
+            settled_frac = max(settled_frac, settle_boost);
+            let settled_conc = suspended * settled_frac;
+            if (settled_conc > 1e-6) {
+                let deposit_height = settled_conc * depth;
+                suspended -= settled_conc;
+                overburden[idx] += deposit_height;
+                suspended_overburden[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                updated_surface = true;
+            }
+        }
+    }
+
+    // Gravel settling
+    suspended = suspended_gravel[idx];
+    if (suspended > 0.0 && depth > 1e-4) {
+        let shields = shields_stress(
+            tau,
+            D50_GRAVEL,
+            params.gravity,
+            params.rho_sediment,
+            params.rho_water,
+        );
+        let deposition_threshold = params.critical_shields * 0.8;
+        if (shields < deposition_threshold || calm_factor > 0.0) {
+            let v_settle = settling_velocity(
+                D50_GRAVEL,
+                params.gravity,
+                params.rho_sediment,
+                params.rho_water,
+                params.water_viscosity,
+            );
+            let settling_rate = v_settle / depth;
+            var settled_frac = min(settling_rate * params.dt, 0.35);
+            let settle_boost = 0.08 * calm_factor;
+            settled_frac = max(settled_frac, settle_boost);
+            let settled_conc = suspended * settled_frac;
+            if (settled_conc > 1e-6) {
+                let deposit_height = settled_conc * depth;
+                suspended -= settled_conc;
+                gravel[idx] += deposit_height;
+                suspended_gravel[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                updated_surface = true;
+            }
+        }
+    }
+
+    // Paydirt settling
+    suspended = suspended_paydirt[idx];
+    if (suspended > 0.0 && depth > 1e-4) {
+        let shields = shields_stress(
+            tau,
+            D50_PAYDIRT,
+            params.gravity,
+            params.rho_sediment,
+            params.rho_water,
+        );
+        let deposition_threshold = params.critical_shields * 0.6;
+        if (shields < deposition_threshold || calm_factor > 0.0) {
+            let v_settle = settling_velocity(
+                D50_PAYDIRT,
+                params.gravity,
+                params.rho_sediment,
+                params.rho_water,
+                params.water_viscosity,
+            );
+            let settling_rate = v_settle / depth;
+            var settled_frac = min(settling_rate * params.dt, 0.25);
+            let settle_boost = 0.05 * calm_factor;
+            settled_frac = max(settled_frac, settle_boost);
+            let settled_conc = suspended * settled_frac;
+            if (settled_conc > 1e-6) {
+                let deposit_height = settled_conc * depth;
+                suspended -= settled_conc;
+                paydirt[idx] += deposit_height;
+                suspended_paydirt[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                updated_surface = true;
+            }
+        }
+    }
+
+    if (updated_surface) {
+        surface_material[idx] = compute_surface_material(idx);
+    }
+}
+
+// 1b. Erosion only (called after settling to prevent feedback)
 @compute @workgroup_size(16, 16)
 fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let tile_x = global_id.x;
@@ -203,146 +380,113 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let u_star = shear_velocity(depth, slope, vel_x, vel_z, params.gravity);
     let tau = shear_stress(u_star, params.rho_water);
 
-    var suspended = suspended_sediment[idx];
+    var eroded_sediment = 0.0;
+    var eroded_gravel = 0.0;
+    var eroded_overburden = 0.0;
+    var eroded_paydirt = 0.0;
     var updated_surface = false;
 
-    // 1) SETTLING (independent of erosion)
-    // suspended_sediment is stored as CONCENTRATION (0-1), matching CPU world.rs:562
-    if (suspended > 0.0 && depth > 1e-4) {
-        let v_settle = settling_velocity(
-            D50_SEDIMENT,
-            params.gravity,
-            params.rho_sediment,
-            params.rho_water,
-            params.water_viscosity,
-        );
-        let settling_rate = v_settle / depth;
-        let settled_frac = min(settling_rate * params.dt, 1.0);
-        let settled_conc = suspended * settled_frac;
-
-        if (settled_conc > 1e-6) {
-            // Convert concentration to height: deposit = concentration × depth
-            let deposit_height = settled_conc * depth;
-            suspended -= settled_conc;
-            sediment[idx] += deposit_height;
-            updated_surface = true;
-        }
-    }
-
-    // 2) EROSION (sequential layers)
+    // EROSION ONLY (settling happens in separate pass)
+    // Erode ONLY the exposed (top) layer.
     let critical = params.critical_shields;
     let max_erosion = params.max_erosion_per_step * params.dt;
-    var total_eroded = 0.0;
+    let surface = surface_material[idx];
 
     if (critical > 0.0 && max_erosion > 0.0) {
-        // Layer 1: Sediment
-        if (total_eroded < max_erosion) {
-            let available = sediment[idx];
-            if (available > 0.001) {
-                let d50_layer = get_d50(4u);
-                let shields_layer = shields_stress(
-                    tau,
-                    d50_layer,
-                    params.gravity,
-                    params.rho_sediment,
-                    params.rho_water,
-                );
-                if (shields_layer > critical) {
-                    let excess = (shields_layer - critical) / critical;
-                    let erosion_rate = params.k_erosion * excess / get_hardness(4u);
-                    let erode_height = min(erosion_rate * params.dt, available);
-                    let budget = max_erosion - total_eroded;
-                    let erode = min(erode_height, budget);
-                    sediment[idx] -= erode;
-                    total_eroded += erode;
-                }
+        var available = 0.0;
+        var d50_layer = 0.0;
+        var hardness = 1.0;
+
+        switch (surface) {
+            case 4u: { // sediment
+                available = sediment[idx];
+                d50_layer = get_d50(4u);
+                hardness = get_hardness(4u);
             }
+            case 3u: { // overburden
+                available = overburden[idx];
+                d50_layer = get_d50(3u);
+                hardness = get_hardness(3u);
+            }
+            case 2u: { // gravel
+                available = gravel[idx];
+                d50_layer = get_d50(2u);
+                hardness = get_hardness(2u);
+            }
+            case 1u: { // paydirt
+                available = paydirt[idx];
+                d50_layer = get_d50(1u);
+                hardness = get_hardness(1u);
+            }
+            default: { }
         }
 
-        // Layer 2: Gravel
-        if (total_eroded < max_erosion) {
-            let available = gravel[idx];
-            if (available > 0.001) {
-                let d50_layer = get_d50(2u);
-                let shields_layer = shields_stress(
-                    tau,
-                    d50_layer,
-                    params.gravity,
-                    params.rho_sediment,
-                    params.rho_water,
-                );
-                if (shields_layer > critical) {
-                    let excess = (shields_layer - critical) / critical;
-                    let erosion_rate = params.k_erosion * excess / get_hardness(2u);
-                    let erode_height = min(erosion_rate * params.dt, available);
-                    let budget = max_erosion - total_eroded;
-                    let erode = min(erode_height, budget);
-                    gravel[idx] -= erode;
-                    total_eroded += erode;
-                }
-            }
-        }
+        if (available > 0.001 && d50_layer > 0.0) {
+            let shields_layer = shields_stress(
+                tau,
+                d50_layer,
+                params.gravity,
+                params.rho_sediment,
+                params.rho_water,
+            );
+            if (shields_layer > critical) {
+                let excess = (shields_layer - critical) / critical;
+                let erosion_rate = params.k_erosion * excess / hardness;
+                let erode_height = min(erosion_rate * params.dt, available);
+                let erode = min(erode_height, max_erosion);
 
-        // Layer 3: Overburden
-        if (total_eroded < max_erosion) {
-            let available = overburden[idx];
-            if (available > 0.001) {
-                let d50_layer = get_d50(3u);
-                let shields_layer = shields_stress(
-                    tau,
-                    d50_layer,
-                    params.gravity,
-                    params.rho_sediment,
-                    params.rho_water,
-                );
-                if (shields_layer > critical) {
-                    let excess = (shields_layer - critical) / critical;
-                    let erosion_rate = params.k_erosion * excess / get_hardness(3u);
-                    let erode_height = min(erosion_rate * params.dt, available);
-                    let budget = max_erosion - total_eroded;
-                    let erode = min(erode_height, budget);
-                    overburden[idx] -= erode;
-                    total_eroded += erode;
-                }
-            }
-        }
-
-        // Layer 4: Paydirt
-        if (total_eroded < max_erosion) {
-            let available = paydirt[idx];
-            if (available > 0.001) {
-                let d50_layer = get_d50(1u);
-                let shields_layer = shields_stress(
-                    tau,
-                    d50_layer,
-                    params.gravity,
-                    params.rho_sediment,
-                    params.rho_water,
-                );
-                if (shields_layer > critical) {
-                    let excess = (shields_layer - critical) / critical;
-                    let erosion_rate = params.k_erosion * excess / get_hardness(1u);
-                    let erode_height = min(erosion_rate * params.dt, available);
-                    let budget = max_erosion - total_eroded;
-                    let erode = min(erode_height, budget);
-                    paydirt[idx] -= erode;
-                    total_eroded += erode;
+                switch (surface) {
+                    case 4u: {
+                        sediment[idx] -= erode;
+                        eroded_sediment += erode;
+                    }
+                    case 3u: {
+                        overburden[idx] -= erode;
+                        eroded_overburden += erode;
+                    }
+                    case 2u: {
+                        gravel[idx] -= erode;
+                        eroded_gravel += erode;
+                    }
+                    case 1u: {
+                        paydirt[idx] -= erode;
+                        eroded_paydirt += erode;
+                    }
+                    default: { }
                 }
             }
         }
     }
 
     // Add eroded material to suspension (stored as CONCENTRATION)
-    if (total_eroded > 0.0 && depth > 1e-4) {
-        // Convert height to concentration: concentration = height / depth
-        let eroded_conc = total_eroded / depth;
-        suspended += eroded_conc;
-        updated_surface = true;
+    if (depth > 1e-4) {
+        if (eroded_sediment > 0.0) {
+            let eroded_conc = eroded_sediment / depth;
+            let suspended = suspended_sediment[idx] + eroded_conc;
+            suspended_sediment[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+            updated_surface = true;
+        }
+        if (eroded_overburden > 0.0) {
+            let eroded_conc = eroded_overburden / depth;
+            let suspended = suspended_overburden[idx] + eroded_conc;
+            suspended_overburden[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+            updated_surface = true;
+        }
+        if (eroded_gravel > 0.0) {
+            let eroded_conc = eroded_gravel / depth;
+            let suspended = suspended_gravel[idx] + eroded_conc;
+            suspended_gravel[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+            updated_surface = true;
+        }
+        if (eroded_paydirt > 0.0) {
+            let eroded_conc = eroded_paydirt / depth;
+            let suspended = suspended_paydirt[idx] + eroded_conc;
+            suspended_paydirt[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+            updated_surface = true;
+        }
     }
 
     if (updated_surface) {
-        // Clamp concentration to [0, 1] (0-100%)
-        suspended_sediment[idx] = clamp(suspended, 0.0, 1.0);
         surface_material[idx] = compute_surface_material(idx);
     }
 }
@@ -396,7 +540,7 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
     // Flux-Based Sediment Advection
     // Transport = Water_Flux * Concentration_upwind
     // Use upwind scheme: concentration from cell that flux flows FROM
-    
+
     let tile_x = global_id.x;
     let tile_z = global_id.y;
     if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
@@ -404,45 +548,36 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
     let z = tile_z + params.origin_z;
     if (x >= params.world_width || z >= params.world_depth) { return; }
     let idx = get_idx(x, z);
-    
+
     let depth = water_depth[idx];
-    let current_sed = suspended_sediment[idx];
+    let cell_area = params.cell_size * params.cell_size;
 
-    // suspended_sediment is already CONCENTRATION (0-1), no need to divide by depth
-    let local_conc = current_sed;
-
+    // Sediment
     var net_sediment = 0.0;
+    let local_conc = suspended_sediment[idx];
 
-    // X-direction flux
-    // Inflow from left (flux_x[x-1] > 0 means flow from x-1 to x)
     if (x > 0) {
         let idx_left = get_idx(x - 1, z);
         let fx = flux_x[idx_left];
         if (fx > 0.0) {
-            // Inflow from left - use left cell concentration (already concentration!)
             let conc_left = suspended_sediment[idx_left];
             net_sediment += fx * conc_left;
         } else {
-            // Outflow to left - use local concentration
-            net_sediment += fx * local_conc; // fx is negative, so this subtracts
-        }
-    }
-    
-    // Outflow to right (flux_x[idx] > 0 means flow from x to x+1)
-    if (x < params.world_width - 1) {
-        let fx = flux_x[idx];
-        if (fx > 0.0) {
-            // Outflow to right - use local concentration
-            net_sediment -= fx * local_conc;
-        } else {
-            // Inflow from right - use right cell concentration (already concentration!)
-            let idx_right = get_idx(x + 1, z);
-            let conc_right = suspended_sediment[idx_right];
-            net_sediment -= fx * conc_right; // fx is negative, so this adds
+            net_sediment += fx * local_conc;
         }
     }
 
-    // Z-direction flux (same pattern)
+    if (x < params.world_width - 1) {
+        let fx = flux_x[idx];
+        if (fx > 0.0) {
+            net_sediment -= fx * local_conc;
+        } else {
+            let idx_right = get_idx(x + 1, z);
+            let conc_right = suspended_sediment[idx_right];
+            net_sediment -= fx * conc_right;
+        }
+    }
+
     if (z > 0) {
         let idx_back = get_idx(x, z - 1);
         let fz = flux_z[idx_back];
@@ -453,7 +588,7 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
             net_sediment += fz * local_conc;
         }
     }
-    
+
     if (z < params.world_depth - 1) {
         let fz = flux_z[idx];
         if (fz > 0.0) {
@@ -464,17 +599,180 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
             net_sediment -= fz * conc_front;
         }
     }
-    
-    // Apply transport (scaled by cell area and depth)
-    // net_sediment is in (m³/s × concentration), need to convert to concentration change
-    let cell_area = params.cell_size * params.cell_size;
+
     if (depth > 1e-4) {
         let delta_conc = net_sediment / (cell_area * depth);
-        let new_sed = current_sed + delta_conc;
-        // Write to NEXT buffer (double-buffering eliminates race conditions)
-        suspended_sediment_next[idx] = clamp(new_sed, 0.0, 1.0);
+        let new_sed = local_conc + delta_conc;
+        suspended_sediment_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
     } else {
-        // No water, no transport
-        suspended_sediment_next[idx] = current_sed;
+        suspended_sediment_next[idx] = local_conc;
+    }
+
+    // Overburden
+    net_sediment = 0.0;
+    let local_over = suspended_overburden[idx];
+
+    if (x > 0) {
+        let idx_left = get_idx(x - 1, z);
+        let fx = flux_x[idx_left];
+        if (fx > 0.0) {
+            let conc_left = suspended_overburden[idx_left];
+            net_sediment += fx * conc_left;
+        } else {
+            net_sediment += fx * local_over;
+        }
+    }
+
+    if (x < params.world_width - 1) {
+        let fx = flux_x[idx];
+        if (fx > 0.0) {
+            net_sediment -= fx * local_over;
+        } else {
+            let idx_right = get_idx(x + 1, z);
+            let conc_right = suspended_overburden[idx_right];
+            net_sediment -= fx * conc_right;
+        }
+    }
+
+    if (z > 0) {
+        let idx_back = get_idx(x, z - 1);
+        let fz = flux_z[idx_back];
+        if (fz > 0.0) {
+            let conc_back = suspended_overburden[idx_back];
+            net_sediment += fz * conc_back;
+        } else {
+            net_sediment += fz * local_over;
+        }
+    }
+
+    if (z < params.world_depth - 1) {
+        let fz = flux_z[idx];
+        if (fz > 0.0) {
+            net_sediment -= fz * local_over;
+        } else {
+            let idx_front = get_idx(x, z + 1);
+            let conc_front = suspended_overburden[idx_front];
+            net_sediment -= fz * conc_front;
+        }
+    }
+
+    if (depth > 1e-4) {
+        let delta_conc = net_sediment / (cell_area * depth);
+        let new_sed = local_over + delta_conc;
+        suspended_overburden_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
+    } else {
+        suspended_overburden_next[idx] = local_over;
+    }
+
+    // Gravel
+    net_sediment = 0.0;
+    let local_gravel = suspended_gravel[idx];
+
+    if (x > 0) {
+        let idx_left = get_idx(x - 1, z);
+        let fx = flux_x[idx_left];
+        if (fx > 0.0) {
+            let conc_left = suspended_gravel[idx_left];
+            net_sediment += fx * conc_left;
+        } else {
+            net_sediment += fx * local_gravel;
+        }
+    }
+
+    if (x < params.world_width - 1) {
+        let fx = flux_x[idx];
+        if (fx > 0.0) {
+            net_sediment -= fx * local_gravel;
+        } else {
+            let idx_right = get_idx(x + 1, z);
+            let conc_right = suspended_gravel[idx_right];
+            net_sediment -= fx * conc_right;
+        }
+    }
+
+    if (z > 0) {
+        let idx_back = get_idx(x, z - 1);
+        let fz = flux_z[idx_back];
+        if (fz > 0.0) {
+            let conc_back = suspended_gravel[idx_back];
+            net_sediment += fz * conc_back;
+        } else {
+            net_sediment += fz * local_gravel;
+        }
+    }
+
+    if (z < params.world_depth - 1) {
+        let fz = flux_z[idx];
+        if (fz > 0.0) {
+            net_sediment -= fz * local_gravel;
+        } else {
+            let idx_front = get_idx(x, z + 1);
+            let conc_front = suspended_gravel[idx_front];
+            net_sediment -= fz * conc_front;
+        }
+    }
+
+    if (depth > 1e-4) {
+        let delta_conc = net_sediment / (cell_area * depth);
+        let new_sed = local_gravel + delta_conc;
+        suspended_gravel_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
+    } else {
+        suspended_gravel_next[idx] = local_gravel;
+    }
+
+    // Paydirt
+    net_sediment = 0.0;
+    let local_paydirt = suspended_paydirt[idx];
+
+    if (x > 0) {
+        let idx_left = get_idx(x - 1, z);
+        let fx = flux_x[idx_left];
+        if (fx > 0.0) {
+            let conc_left = suspended_paydirt[idx_left];
+            net_sediment += fx * conc_left;
+        } else {
+            net_sediment += fx * local_paydirt;
+        }
+    }
+
+    if (x < params.world_width - 1) {
+        let fx = flux_x[idx];
+        if (fx > 0.0) {
+            net_sediment -= fx * local_paydirt;
+        } else {
+            let idx_right = get_idx(x + 1, z);
+            let conc_right = suspended_paydirt[idx_right];
+            net_sediment -= fx * conc_right;
+        }
+    }
+
+    if (z > 0) {
+        let idx_back = get_idx(x, z - 1);
+        let fz = flux_z[idx_back];
+        if (fz > 0.0) {
+            let conc_back = suspended_paydirt[idx_back];
+            net_sediment += fz * conc_back;
+        } else {
+            net_sediment += fz * local_paydirt;
+        }
+    }
+
+    if (z < params.world_depth - 1) {
+        let fz = flux_z[idx];
+        if (fz > 0.0) {
+            net_sediment -= fz * local_paydirt;
+        } else {
+            let idx_front = get_idx(x, z + 1);
+            let conc_front = suspended_paydirt[idx_front];
+            net_sediment -= fz * conc_front;
+        }
+    }
+
+    if (depth > 1e-4) {
+        let delta_conc = net_sediment / (cell_area * depth);
+        let new_sed = local_paydirt + delta_conc;
+        suspended_paydirt_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
+    } else {
+        suspended_paydirt_next[idx] = local_paydirt;
     }
 }

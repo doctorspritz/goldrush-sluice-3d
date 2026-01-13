@@ -655,6 +655,7 @@ impl ApplicationHandler for App {
                     view_proj.to_cols_array_2d(),
                     self.camera.position.into(),
                     self.start_time.elapsed().as_secs_f32(),
+                    true,
                 );
 
                 {

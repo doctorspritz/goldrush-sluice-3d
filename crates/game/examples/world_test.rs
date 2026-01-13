@@ -310,6 +310,10 @@ impl App {
                     self.emitter.position.z,
                     self.emitter.radius,
                     self.emitter.rate,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
                     sim_dt,
                     self.emitter.enabled,
                 );
@@ -710,6 +714,7 @@ impl App {
             view_proj.to_cols_array_2d(),
             self.camera.position.to_array(),
             self.start_time.elapsed().as_secs_f32(),
+            true,
         );
 
         gpu.queue.submit(std::iter::once(encoder.finish()));

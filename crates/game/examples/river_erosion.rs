@@ -311,7 +311,19 @@ impl App {
                 hf.update_params(queue, sub_dt);
 
                 // Emit water (rate is per-second, so use sub_dt)
-                hf.update_emitter(queue, emit_x, emit_z, emit_radius, emit_rate, sub_dt, true);
+                hf.update_emitter(
+                    queue,
+                    emit_x,
+                    emit_z,
+                    emit_radius,
+                    emit_rate,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    sub_dt,
+                    true,
+                );
 
                 // Run GPU simulation substep
                 let mut encoder =
@@ -357,6 +369,7 @@ impl App {
             view_proj.to_cols_array_2d(),
             self.camera.position.into(),
             self.start_time.elapsed().as_secs_f32(),
+            true,
         );
 
         queue.submit(Some(encoder.finish()));
