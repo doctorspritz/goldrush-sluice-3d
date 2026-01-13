@@ -9,7 +9,7 @@ struct Params {
     depth: u32,
     rest_density: f32,
     dt: f32,
-    _pad1: u32,
+    surface_clamp: u32,
     _pad2: u32,
     _pad3: u32,
 }

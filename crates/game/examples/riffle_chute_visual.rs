@@ -9,7 +9,9 @@ use bytemuck::{Pod, Zeroable};
 use game::equipment_geometry::{ChuteConfig, ChuteGeometryBuilder};
 use game::sluice_geometry::SluiceVertex;
 use glam::{Mat4, Vec3};
-use sim3d::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, IrregularStyle3D};
+use sim3d::{
+    ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, IrregularStyle3D,
+};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::{
@@ -28,7 +30,7 @@ const GRID_DEPTH: usize = 20;
 
 // Chute configuration
 const FLOOR_START: usize = 16; // Upstream height
-const FLOOR_END: usize = 4;    // Downstream height
+const FLOOR_END: usize = 4; // Downstream height
 const WALL_HEIGHT: usize = 6;
 const WALL_THICKNESS: usize = 1;
 const RIFFLE_SPACING: usize = 10;
@@ -149,7 +151,11 @@ impl App {
         // Gold template
         let gold_mass = GOLD_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * GOLD_RADIUS.powi(3);
         let gold_template = ClumpTemplate3D::generate(
-            ClumpShape3D::Irregular { count: 1, seed: 42, style: IrregularStyle3D::Round },
+            ClumpShape3D::Irregular {
+                count: 1,
+                seed: 42,
+                style: IrregularStyle3D::Round,
+            },
             GOLD_RADIUS,
             gold_mass,
         );
@@ -158,7 +164,11 @@ impl App {
         // Sand template
         let sand_mass = SAND_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * SAND_RADIUS.powi(3);
         let sand_template = ClumpTemplate3D::generate(
-            ClumpShape3D::Irregular { count: 1, seed: 123, style: IrregularStyle3D::Round },
+            ClumpShape3D::Irregular {
+                count: 1,
+                seed: 123,
+                style: IrregularStyle3D::Round,
+            },
             SAND_RADIUS,
             sand_mass,
         );
@@ -183,18 +193,30 @@ impl App {
         let num_riffles = (GRID_WIDTH - RIFFLE_SPACING) / (RIFFLE_SPACING + RIFFLE_THICKNESS);
         println!("=== Riffled Chute Density Separation Demo ===");
         println!();
-        println!("Chute: {}x{}x{} cells ({:.2}m x {:.2}m x {:.2}m)",
-            GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH,
+        println!(
+            "Chute: {}x{}x{} cells ({:.2}m x {:.2}m x {:.2}m)",
+            GRID_WIDTH,
+            GRID_HEIGHT,
+            GRID_DEPTH,
             GRID_WIDTH as f32 * CELL_SIZE,
             GRID_HEIGHT as f32 * CELL_SIZE,
             GRID_DEPTH as f32 * CELL_SIZE,
         );
         println!("Slope: {} -> {} cells", FLOOR_START, FLOOR_END);
-        println!("Riffles: {} (height={}, spacing={})", num_riffles, RIFFLE_HEIGHT, RIFFLE_SPACING);
+        println!(
+            "Riffles: {} (height={}, spacing={})",
+            num_riffles, RIFFLE_HEIGHT, RIFFLE_SPACING
+        );
         println!();
         println!("Particles:");
-        println!("  Gold: {} particles, density={} kg/m³ (YELLOW)", NUM_GOLD, GOLD_DENSITY);
-        println!("  Sand: {} particles, density={} kg/m³ (BROWN)", NUM_SAND, SAND_DENSITY);
+        println!(
+            "  Gold: {} particles, density={} kg/m³ (YELLOW)",
+            NUM_GOLD, GOLD_DENSITY
+        );
+        println!(
+            "  Sand: {} particles, density={} kg/m³ (BROWN)",
+            NUM_SAND, SAND_DENSITY
+        );
         println!();
         println!("Controls:");
         println!("  SPACE     - Pause/Resume");
@@ -256,7 +278,11 @@ impl App {
 
         let gold_mass = GOLD_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * GOLD_RADIUS.powi(3);
         let gold_template = ClumpTemplate3D::generate(
-            ClumpShape3D::Irregular { count: 1, seed: 42, style: IrregularStyle3D::Round },
+            ClumpShape3D::Irregular {
+                count: 1,
+                seed: 42,
+                style: IrregularStyle3D::Round,
+            },
             GOLD_RADIUS,
             gold_mass,
         );
@@ -264,7 +290,11 @@ impl App {
 
         let sand_mass = SAND_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * SAND_RADIUS.powi(3);
         let sand_template = ClumpTemplate3D::generate(
-            ClumpShape3D::Irregular { count: 1, seed: 123, style: IrregularStyle3D::Round },
+            ClumpShape3D::Irregular {
+                count: 1,
+                seed: 123,
+                style: IrregularStyle3D::Round,
+            },
             SAND_RADIUS,
             sand_mass,
         );
@@ -333,7 +363,10 @@ impl App {
         }
 
         self.sediment_spawned = true;
-        println!("Spawned {} gold + {} sand at frame {}", NUM_GOLD, NUM_SAND, self.frame);
+        println!(
+            "Spawned {} gold + {} sand at frame {}",
+            NUM_GOLD, NUM_SAND, self.frame
+        );
     }
 
     fn step(&mut self) {
@@ -378,7 +411,8 @@ impl App {
                 let water_vel = Vec3::new(WATER_VELOCITY * 0.5, 0.0, 0.0);
                 let rel_vel = water_vel - self.dem.clumps[i].velocity;
                 let area = std::f32::consts::PI * radius * radius;
-                let drag_force = 0.5 * water_density * drag_coeff * area * rel_vel.length() * rel_vel;
+                let drag_force =
+                    0.5 * water_density * drag_coeff * area * rel_vel.length() * rel_vel;
                 let drag_accel = drag_force / mass;
                 self.dem.clumps[i].velocity += drag_accel * dt;
             }
@@ -390,20 +424,36 @@ impl App {
 
         // Print stats periodically
         if self.frame % 120 == 0 {
-            let gold_mean_x: f32 = self.gold_indices.iter()
+            let gold_mean_x: f32 = self
+                .gold_indices
+                .iter()
                 .filter_map(|&idx| self.dem.clumps.get(idx).map(|c| c.position.x))
-                .sum::<f32>() / self.gold_indices.len().max(1) as f32;
-            let sand_mean_x: f32 = self.sand_indices.iter()
+                .sum::<f32>()
+                / self.gold_indices.len().max(1) as f32;
+            let sand_mean_x: f32 = self
+                .sand_indices
+                .iter()
                 .filter_map(|&idx| self.dem.clumps.get(idx).map(|c| c.position.x))
-                .sum::<f32>() / self.sand_indices.len().max(1) as f32;
+                .sum::<f32>()
+                / self.sand_indices.len().max(1) as f32;
 
             if self.sediment_spawned {
-                let separation = (sand_mean_x - gold_mean_x) / (GRID_WIDTH as f32 * CELL_SIZE) * 100.0;
-                println!("Frame {}: water={}, gold_x={:.3}m, sand_x={:.3}m, separation={:.1}%",
-                    self.frame, self.sim.particles.len(), gold_mean_x, sand_mean_x, separation);
+                let separation =
+                    (sand_mean_x - gold_mean_x) / (GRID_WIDTH as f32 * CELL_SIZE) * 100.0;
+                println!(
+                    "Frame {}: water={}, gold_x={:.3}m, sand_x={:.3}m, separation={:.1}%",
+                    self.frame,
+                    self.sim.particles.len(),
+                    gold_mean_x,
+                    sand_mean_x,
+                    separation
+                );
             } else {
-                println!("Frame {}: water={} (waiting for sediment spawn at frame 150)",
-                    self.frame, self.sim.particles.len());
+                println!(
+                    "Frame {}: water={} (waiting for sediment spawn at frame 150)",
+                    self.frame,
+                    self.sim.particles.len()
+                );
             }
         }
     }
@@ -465,19 +515,20 @@ impl App {
             mapped_at_creation: false,
         });
 
-        let uniform_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Uniform Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let uniform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Uniform Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Uniform Bind Group"),
@@ -511,11 +562,12 @@ impl App {
             source: wgpu::ShaderSource::Wgsl(GEOMETRY_SHADER.into()),
         });
 
-        let geometry_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Geometry Pipeline Layout"),
-            bind_group_layouts: &[&uniform_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let geometry_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Geometry Pipeline Layout"),
+                bind_group_layouts: &[&uniform_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let geometry_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Geometry Pipeline"),
@@ -559,11 +611,12 @@ impl App {
             source: wgpu::ShaderSource::Wgsl(PARTICLE_SHADER.into()),
         });
 
-        let particle_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Particle Pipeline Layout"),
-            bind_group_layouts: &[&uniform_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let particle_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Particle Pipeline Layout"),
+                bind_group_layouts: &[&uniform_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let particle_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Particle Pipeline"),
@@ -634,12 +687,7 @@ impl App {
         });
 
         // Create quad vertex buffer
-        let quad_vertices: [[f32; 2]; 4] = [
-            [-1.0, -1.0],
-            [1.0, -1.0],
-            [-1.0, 1.0],
-            [1.0, 1.0],
-        ];
+        let quad_vertices: [[f32; 2]; 4] = [[-1.0, -1.0], [1.0, -1.0], [-1.0, 1.0], [1.0, 1.0]];
         let quad_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Quad Vertex Buffer"),
             contents: bytemuck::cast_slice(&quad_vertices),
@@ -687,7 +735,9 @@ impl App {
             Ok(t) => t,
             Err(_) => return,
         };
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Update camera
         let center = Vec3::new(
@@ -695,11 +745,12 @@ impl App {
             GRID_HEIGHT as f32 * CELL_SIZE / 2.0,
             GRID_DEPTH as f32 * CELL_SIZE / 2.0,
         );
-        let camera_pos = center + Vec3::new(
-            self.camera_distance * self.camera_angle.cos(),
-            self.camera_height,
-            self.camera_distance * self.camera_angle.sin(),
-        );
+        let camera_pos = center
+            + Vec3::new(
+                self.camera_distance * self.camera_angle.cos(),
+                self.camera_height,
+                self.camera_distance * self.camera_angle.sin(),
+            );
 
         let aspect = gpu.config.width as f32 / gpu.config.height as f32;
         let view_matrix = Mat4::look_at_rh(camera_pos, center, Vec3::Y);
@@ -711,11 +762,15 @@ impl App {
             camera_pos: camera_pos.to_array(),
             _pad: 0.0,
         };
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Update water instances (sample every N particles for performance)
         let stride = (self.sim.particles.list.len() / 20000).max(1);
-        let water_instances: Vec<ParticleInstance> = self.sim.particles.list
+        let water_instances: Vec<ParticleInstance> = self
+            .sim
+            .particles
+            .list
             .iter()
             .step_by(stride)
             .take(MAX_WATER_PARTICLES)
@@ -765,9 +820,11 @@ impl App {
             );
         }
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -800,7 +857,10 @@ impl App {
             render_pass.set_pipeline(&gpu.geometry_pipeline);
             render_pass.set_bind_group(0, &gpu.uniform_bind_group, &[]);
             render_pass.set_vertex_buffer(0, gpu.geometry_vertex_buffer.slice(..));
-            render_pass.set_index_buffer(gpu.geometry_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.set_index_buffer(
+                gpu.geometry_index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
             render_pass.draw_indexed(0..gpu.geometry_index_count, 0, 0..1);
 
             // Draw water particles
@@ -856,7 +916,9 @@ impl ApplicationHandler for App {
                         }
                         PhysicalKey::Code(KeyCode::ArrowLeft) => self.camera_angle -= 0.1,
                         PhysicalKey::Code(KeyCode::ArrowRight) => self.camera_angle += 0.1,
-                        PhysicalKey::Code(KeyCode::ArrowUp) => self.camera_distance = (self.camera_distance - 0.1).max(0.5),
+                        PhysicalKey::Code(KeyCode::ArrowUp) => {
+                            self.camera_distance = (self.camera_distance - 0.1).max(0.5)
+                        }
                         PhysicalKey::Code(KeyCode::ArrowDown) => self.camera_distance += 0.1,
                         PhysicalKey::Code(KeyCode::KeyR) => self.reset(),
                         PhysicalKey::Code(KeyCode::KeyS) => self.spawn_sediment(),

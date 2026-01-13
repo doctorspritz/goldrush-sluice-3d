@@ -9,7 +9,7 @@
 //! - Dirt/soil: 30-45° depending on moisture
 //! - Clay: 40-50°
 
-use sim3d::{World, TerrainMaterial};
+use sim3d::{TerrainMaterial, World};
 
 /// Helper to create a flat world with just bedrock base
 fn create_flat_world(width: usize, depth: usize, cell_size: f32) -> World {
@@ -115,7 +115,8 @@ fn test_sediment_collapse_angle() {
     assert!(
         (angle - expected_angle).abs() < tolerance,
         "Sediment should collapse to ~{}° angle of repose, got {:.1}°",
-        expected_angle, angle
+        expected_angle,
+        angle
     );
 }
 
@@ -144,12 +145,16 @@ fn test_sediment_uses_sand_angle_regardless_of_substrate() {
     println!("Sediment on dirt substrate:");
     println!("  Iterations to stable: {}", iters);
     println!("  Measured angle: {:.1}°", angle);
-    println!("  Expected angle: {:.1}° (sand, ±{}°)", expected_angle, tolerance);
+    println!(
+        "  Expected angle: {:.1}° (sand, ±{}°)",
+        expected_angle, tolerance
+    );
 
     assert!(
         (angle - expected_angle).abs() < tolerance,
         "Sediment should collapse to ~{}° (sand), got {:.1}°",
-        expected_angle, angle
+        expected_angle,
+        angle
     );
 }
 
@@ -185,7 +190,10 @@ fn test_slope_threshold() {
     add_sediment_pile(&mut world, 5, 5, steep_height);
 
     let changed = world.update_terrain_collapse();
-    assert!(changed, "45° slope should collapse (steeper than 32° angle of repose)");
+    assert!(
+        changed,
+        "45° slope should collapse (steeper than 32° angle of repose)"
+    );
 
     // Reset and try gentle slope
     let mut world2 = create_flat_world(11, 11, 0.1);
@@ -195,7 +203,10 @@ fn test_slope_threshold() {
     add_sediment_pile(&mut world2, 5, 5, gentle_height);
 
     let changed2 = world2.update_terrain_collapse();
-    assert!(!changed2, "20° slope should NOT collapse (gentler than 32° angle of repose)");
+    assert!(
+        !changed2,
+        "20° slope should NOT collapse (gentler than 32° angle of repose)"
+    );
 }
 
 /// Test that multiple materials maintain their different angles

@@ -1007,7 +1007,8 @@ impl App {
             };
 
             if should_create {
-                self.world.create_fine_region(center, FINE_REGION_RADIUS, FINE_REGION_SCALE);
+                self.world
+                    .create_fine_region(center, FINE_REGION_RADIUS, FINE_REGION_SCALE);
                 if let Some(ref fine) = self.world.fine_region {
                     println!(
                         "Fine region created: {}x{} cells at {:.3}m resolution (coarse: {:.3}m)",

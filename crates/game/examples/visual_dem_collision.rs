@@ -39,11 +39,11 @@ const GRAVITY: f32 = -9.81;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TestScenario {
-    FloorCollision,    // Test 1: Drop clump onto floor
-    WallCollision,     // Test 2: Launch clump at wall
-    ClumpCollision,    // Test 3: Two clumps head-on
-    NoPenetration,     // Test 4: 100 clumps settle
-    GutterSdf,         // Test 5: Clumps in trough shape
+    FloorCollision, // Test 1: Drop clump onto floor
+    WallCollision,  // Test 2: Launch clump at wall
+    ClumpCollision, // Test 3: Two clumps head-on
+    NoPenetration,  // Test 4: 100 clumps settle
+    GutterSdf,      // Test 5: Clumps in trough shape
 }
 
 impl TestScenario {
@@ -170,8 +170,18 @@ impl App {
         if self.frame_count % 60 == 0 {
             let clump_count = self.sim.clumps.len();
             if clump_count > 0 {
-                let min_y = self.sim.clumps.iter().map(|c| c.position.y).fold(f32::INFINITY, f32::min);
-                let max_vel = self.sim.clumps.iter().map(|c| c.velocity.length()).fold(0.0f32, f32::max);
+                let min_y = self
+                    .sim
+                    .clumps
+                    .iter()
+                    .map(|c| c.position.y)
+                    .fold(f32::INFINITY, f32::min);
+                let max_vel = self
+                    .sim
+                    .clumps
+                    .iter()
+                    .map(|c| c.velocity.length())
+                    .fold(0.0f32, f32::max);
                 println!(
                     "Frame {}: {} clumps, min_y={:.4}, max_vel={:.3} m/s",
                     self.frame_count, clump_count, min_y, max_vel
@@ -183,10 +193,8 @@ impl App {
 
 fn create_scenario(scenario: TestScenario) -> (ClusterSimulation3D, usize) {
     let bounds = 2.0;
-    let mut sim = ClusterSimulation3D::new(
-        Vec3::new(0.0, 0.0, 0.0),
-        Vec3::new(bounds, bounds, bounds),
-    );
+    let mut sim =
+        ClusterSimulation3D::new(Vec3::new(0.0, 0.0, 0.0), Vec3::new(bounds, bounds, bounds));
     sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
 
     let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
@@ -262,7 +270,10 @@ fn create_scenario(scenario: TestScenario) -> (ClusterSimulation3D, usize) {
             }
             println!("TEST 4: No Penetration");
             println!("  Expected: 100 clumps settle, NONE go below floor");
-            println!("  Watch: min_y should stay >= {} (particle radius)", PARTICLE_RADIUS);
+            println!(
+                "  Watch: min_y should stay >= {} (particle radius)",
+                PARTICLE_RADIUS
+            );
         }
 
         TestScenario::GutterSdf => {
@@ -309,10 +320,26 @@ fn create_sphere_mesh(subdivisions: u32) -> Vec<Vertex> {
     ];
 
     let faces = [
-        (0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11),
-        (1, 5, 9), (5, 11, 4), (11, 10, 2), (10, 7, 6), (7, 1, 8),
-        (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9),
-        (4, 9, 5), (2, 4, 11), (6, 2, 10), (8, 6, 7), (9, 8, 1),
+        (0, 11, 5),
+        (0, 5, 1),
+        (0, 1, 7),
+        (0, 7, 10),
+        (0, 10, 11),
+        (1, 5, 9),
+        (5, 11, 4),
+        (11, 10, 2),
+        (10, 7, 6),
+        (7, 1, 8),
+        (3, 9, 4),
+        (3, 4, 2),
+        (3, 2, 6),
+        (3, 6, 8),
+        (3, 8, 9),
+        (4, 9, 5),
+        (2, 4, 11),
+        (6, 2, 10),
+        (8, 6, 7),
+        (9, 8, 1),
     ];
 
     fn subdivide(v1: Vec3, v2: Vec3, v3: Vec3, depth: u32, verts: &mut Vec<Vertex>) {
@@ -320,9 +347,18 @@ fn create_sphere_mesh(subdivisions: u32) -> Vec<Vertex> {
             let n1 = v1.normalize();
             let n2 = v2.normalize();
             let n3 = v3.normalize();
-            verts.push(Vertex { position: n1.to_array(), normal: n1.to_array() });
-            verts.push(Vertex { position: n2.to_array(), normal: n2.to_array() });
-            verts.push(Vertex { position: n3.to_array(), normal: n3.to_array() });
+            verts.push(Vertex {
+                position: n1.to_array(),
+                normal: n1.to_array(),
+            });
+            verts.push(Vertex {
+                position: n2.to_array(),
+                normal: n2.to_array(),
+            });
+            verts.push(Vertex {
+                position: n3.to_array(),
+                normal: n3.to_array(),
+            });
         } else {
             let m12 = ((v1 + v2) / 2.0).normalize();
             let m23 = ((v2 + v3) / 2.0).normalize();
@@ -335,7 +371,13 @@ fn create_sphere_mesh(subdivisions: u32) -> Vec<Vertex> {
     }
 
     for (i1, i2, i3) in faces {
-        subdivide(base_verts[i1], base_verts[i2], base_verts[i3], subdivisions, &mut vertices);
+        subdivide(
+            base_verts[i1],
+            base_verts[i2],
+            base_verts[i3],
+            subdivisions,
+            &mut vertices,
+        );
     }
 
     vertices
@@ -346,12 +388,30 @@ fn create_floor_mesh(size: f32) -> Vec<Vertex> {
     let normal = [0.0, 1.0, 0.0];
 
     vec![
-        Vertex { position: [-size, y, -size], normal },
-        Vertex { position: [size, y, -size], normal },
-        Vertex { position: [size, y, size], normal },
-        Vertex { position: [-size, y, -size], normal },
-        Vertex { position: [size, y, size], normal },
-        Vertex { position: [-size, y, size], normal },
+        Vertex {
+            position: [-size, y, -size],
+            normal,
+        },
+        Vertex {
+            position: [size, y, -size],
+            normal,
+        },
+        Vertex {
+            position: [size, y, size],
+            normal,
+        },
+        Vertex {
+            position: [-size, y, -size],
+            normal,
+        },
+        Vertex {
+            position: [size, y, size],
+            normal,
+        },
+        Vertex {
+            position: [-size, y, size],
+            normal,
+        },
     ]
 }
 
@@ -390,7 +450,9 @@ impl ApplicationHandler for App {
                         KeyCode::KeyR => self.reset(),
                         KeyCode::ArrowLeft => self.camera_angle -= 0.1,
                         KeyCode::ArrowRight => self.camera_angle += 0.1,
-                        KeyCode::ArrowUp => self.camera_distance = (self.camera_distance - 0.2).max(1.0),
+                        KeyCode::ArrowUp => {
+                            self.camera_distance = (self.camera_distance - 0.2).max(1.0)
+                        }
                         KeyCode::ArrowDown => self.camera_distance += 0.2,
                         KeyCode::Escape => event_loop.exit(),
                         _ => {}
@@ -693,7 +755,8 @@ impl App {
             camera_pos: camera_pos.to_array(),
             _pad: 0.0,
         };
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         self.build_instances();
         let instance_count = self.instances.len().min(MAX_INSTANCES);
@@ -735,7 +798,10 @@ impl App {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.05, g: 0.05, b: 0.08, a: 1.0,
+                            r: 0.05,
+                            g: 0.05,
+                            b: 0.08,
+                            a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -773,7 +839,10 @@ impl App {
     }
 }
 
-fn create_depth_texture(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> (wgpu::Texture, wgpu::TextureView) {
+fn create_depth_texture(
+    device: &wgpu::Device,
+    config: &wgpu::SurfaceConfiguration,
+) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Depth Texture"),
         size: wgpu::Extent3d {

@@ -4,7 +4,7 @@
 //! mass conservation, and sediment transport. All tests are CPU-only, deterministic,
 //! and headless for reliable CI/CD integration.
 
-use sim3d::{World, TerrainMaterial};
+use sim3d::{TerrainMaterial, World};
 
 // =============================================================================
 // HELPER FUNCTIONS
@@ -155,7 +155,7 @@ fn oversteep_slope_collapses_to_angle_of_repose() {
             let z = (center as i32 + dz) as usize;
             let idx = world.idx(x, z);
             // Central cell higher for initial steep slopes
-            let dist = ((dx*dx + dz*dz) as f32).sqrt();
+            let dist = ((dx * dx + dz * dz) as f32).sqrt();
             world.terrain_sediment[idx] = (0.8 - dist * 0.15).max(0.0);
         }
     }
@@ -380,7 +380,8 @@ fn material_specific_erosion_rates() {
     println!("Sediment eroded: {:.1}%", eroded_pct);
     assert!(
         eroded_pct > 50.0,
-        "Sediment should be significantly eroded (>50%), got {:.1}%", eroded_pct
+        "Sediment should be significantly eroded (>50%), got {:.1}%",
+        eroded_pct
     );
 
     // Overburden should have eroded more than paydirt (hardness 1.0 vs 5.0)
@@ -455,8 +456,14 @@ fn sediment_settles_in_still_water() {
     let final_suspended_total: f32 = world.suspended_sediment.iter().sum();
     let final_terrain: f32 = world.terrain_sediment.iter().sum();
 
-    println!("Initial suspended: {:.4}, Final: {:.4}", initial_suspended_total, final_suspended_total);
-    println!("Initial terrain: {:.4}, Final: {:.4}", initial_terrain, final_terrain);
+    println!(
+        "Initial suspended: {:.4}, Final: {:.4}",
+        initial_suspended_total, final_suspended_total
+    );
+    println!(
+        "Initial terrain: {:.4}, Final: {:.4}",
+        initial_terrain, final_terrain
+    );
 
     // Suspended sediment should decrease
     assert!(
@@ -582,7 +589,8 @@ fn hard_layers_protect_beneath() {
     let final_overburden: f32 = world.overburden_thickness.iter().sum();
     let final_paydirt: f32 = world.paydirt_thickness.iter().sum();
 
-    let overburden_eroded_pct = ((initial_overburden - final_overburden) / initial_overburden) * 100.0;
+    let overburden_eroded_pct =
+        ((initial_overburden - final_overburden) / initial_overburden) * 100.0;
     let paydirt_eroded_pct = ((initial_paydirt - final_paydirt) / initial_paydirt) * 100.0;
 
     println!("Overburden eroded: {:.2}%", overburden_eroded_pct);
@@ -694,7 +702,9 @@ fn mass_conservation_through_erosion_deposition_cycle() {
     // Helper to calculate total sediment volume
     let total_sediment = |world: &World| -> f32 {
         let terrain: f32 = world.terrain_sediment.iter().sum::<f32>() * cell_area;
-        let suspended: f32 = world.suspended_sediment.iter()
+        let suspended: f32 = world
+            .suspended_sediment
+            .iter()
             .enumerate()
             .map(|(i, &conc)| {
                 let x = i % world.width;
@@ -736,8 +746,13 @@ fn mass_conservation_through_erosion_deposition_cycle() {
             let step_total = total_sediment(&world);
             let step_terrain: f32 = world.terrain_sediment.iter().sum::<f32>() * cell_area;
             let step_water = total_water_volume(&world);
-            println!("Step {}: terrain={:.4}, water_vol={:.4}, total_sediment={:.4}",
-                     i+1, step_terrain, step_water, step_total);
+            println!(
+                "Step {}: terrain={:.4}, water_vol={:.4}, total_sediment={:.4}",
+                i + 1,
+                step_terrain,
+                step_water,
+                step_total
+            );
         }
     }
 
@@ -751,9 +766,11 @@ fn mass_conservation_through_erosion_deposition_cycle() {
 
     // Diagnose the mass loss: is it from water volume change?
     let water_vol_change = mid_water_vol - initial_water_vol;
-    println!("Water volume change: {:.4} ({:.2}%)",
-             water_vol_change,
-             (water_vol_change / initial_water_vol * 100.0));
+    println!(
+        "Water volume change: {:.4} ({:.2}%)",
+        water_vol_change,
+        (water_vol_change / initial_water_vol * 100.0)
+    );
 
     // AC7 requirement: mass conservation within 0.1% during erosion/deposition cycles
     //
@@ -826,7 +843,11 @@ fn suspended_sediment_advects_with_flow() {
     );
 
     // Verify sediment distribution (some cells should have suspended sediment)
-    let cells_with_suspended = world.suspended_sediment.iter().filter(|&&c| c > 0.001).count();
+    let cells_with_suspended = world
+        .suspended_sediment
+        .iter()
+        .filter(|&&c| c > 0.001)
+        .count();
     println!("Cells with suspended sediment: {}", cells_with_suspended);
 
     assert!(
@@ -865,11 +886,17 @@ fn sediment_transport_capacity_velocity_dependent() {
     let eroded_high = initial_terrain_high - world_high.terrain_sediment.iter().sum::<f32>();
 
     println!("Low velocity ({} m/s) eroded: {:.4}", low_speed, eroded_low);
-    println!("High velocity ({} m/s) eroded: {:.4}", high_speed, eroded_high);
+    println!(
+        "High velocity ({} m/s) eroded: {:.4}",
+        high_speed, eroded_high
+    );
 
     // Both should erode (above velocity threshold)
     assert!(eroded_low > 0.1, "Low velocity should erode some sediment");
-    assert!(eroded_high > 0.1, "High velocity should erode some sediment");
+    assert!(
+        eroded_high > 0.1,
+        "High velocity should erode some sediment"
+    );
 
     // Higher velocity should create at least as much suspended sediment
     let suspended_low: f32 = world_low.suspended_sediment.iter().sum();
@@ -919,9 +946,18 @@ fn sediment_advection_conserves_mass() {
     let final_terrain: f32 = world.terrain_sediment.iter().sum();
     let final_suspended: f32 = world.suspended_sediment.iter().sum();
 
-    println!("Initial: terrain={:.4}, suspended={:.4}", initial_terrain, initial_suspended);
-    println!("Mid: terrain={:.4}, suspended={:.4}", mid_terrain, mid_suspended);
-    println!("Final: terrain={:.4}, suspended={:.4}", final_terrain, final_suspended);
+    println!(
+        "Initial: terrain={:.4}, suspended={:.4}",
+        initial_terrain, initial_suspended
+    );
+    println!(
+        "Mid: terrain={:.4}, suspended={:.4}",
+        mid_terrain, mid_suspended
+    );
+    println!(
+        "Final: terrain={:.4}, suspended={:.4}",
+        final_terrain, final_suspended
+    );
 
     // Most sediment should have returned to terrain after settling
     assert!(
@@ -954,13 +990,17 @@ fn test_bed_slope_calculation() {
     let center_z = world.depth / 2;
     let measured_slope = world.bed_slope(center_x, center_z);
 
-    println!("Expected slope: {:.4}, Measured slope: {:.4}", slope, measured_slope);
+    println!(
+        "Expected slope: {:.4}, Measured slope: {:.4}",
+        slope, measured_slope
+    );
 
     // Allow 20% tolerance due to discrete grid
     assert!(
         (measured_slope - slope).abs() / slope < 0.2,
         "Bed slope should be approximately {:.3}, got {:.4}",
-        slope, measured_slope
+        slope,
+        measured_slope
     );
 
     // Test that flat terrain has near-zero slope
@@ -1007,7 +1047,8 @@ fn test_shear_velocity_calculation() {
     assert!(
         (measured_shear_vel - expected_shear_vel).abs() / expected_shear_vel < 0.3,
         "Shear velocity mismatch: expected {:.4}, got {:.4}",
-        expected_shear_vel, measured_shear_vel
+        expected_shear_vel,
+        measured_shear_vel
     );
 }
 
@@ -1039,7 +1080,10 @@ fn test_flat_water_no_erosion() {
     let final_sediment: f32 = world.terrain_sediment.iter().sum();
     let change_percent = ((initial_sediment - final_sediment) / initial_sediment).abs() * 100.0;
 
-    println!("Sediment change on flat bed with low velocity: {:.2}%", change_percent);
+    println!(
+        "Sediment change on flat bed with low velocity: {:.2}%",
+        change_percent
+    );
 
     // With sub-critical shear (τ* < 0.045), minimal erosion expected
     assert!(
@@ -1207,11 +1251,11 @@ fn test_settling_velocity_particle_size_dependent() {
     let g = 9.81;
     let rho_p = 2650.0; // kg/m³ (sand/gravel)
     let rho_f = 1000.0; // kg/m³ (water)
-    let mu = 0.001;     // Pa·s (water viscosity)
+    let mu = 0.001; // Pa·s (water viscosity)
 
     // Test settling velocity for different particle sizes
-    let d50_silt = 0.00002;  // 20 microns
-    let d50_sand = 0.0001;   // 100 microns
+    let d50_silt = 0.00002; // 20 microns
+    let d50_sand = 0.0001; // 100 microns
     let d50_coarse = 0.0005; // 500 microns
 
     // Expected Stokes settling velocities
@@ -1224,24 +1268,40 @@ fn test_settling_velocity_particle_size_dependent() {
     let vs_sand = world.settling_velocity(d50_sand);
     let vs_coarse = world.settling_velocity(d50_coarse);
 
-    println!("Silt (d50={:.0}μm): expected vs={:.6} m/s, actual={:.6} m/s",
-             d50_silt * 1e6, vs_silt_expected, vs_silt);
-    println!("Sand (d50={:.0}μm): expected vs={:.6} m/s, actual={:.6} m/s",
-             d50_sand * 1e6, vs_sand_expected, vs_sand);
-    println!("Coarse (d50={:.0}μm): expected vs={:.6} m/s, actual={:.6} m/s",
-             d50_coarse * 1e6, vs_coarse_expected, vs_coarse);
+    println!(
+        "Silt (d50={:.0}μm): expected vs={:.6} m/s, actual={:.6} m/s",
+        d50_silt * 1e6,
+        vs_silt_expected,
+        vs_silt
+    );
+    println!(
+        "Sand (d50={:.0}μm): expected vs={:.6} m/s, actual={:.6} m/s",
+        d50_sand * 1e6,
+        vs_sand_expected,
+        vs_sand
+    );
+    println!(
+        "Coarse (d50={:.0}μm): expected vs={:.6} m/s, actual={:.6} m/s",
+        d50_coarse * 1e6,
+        vs_coarse_expected,
+        vs_coarse
+    );
 
     // Verify Stokes law: vs ∝ d²
     // vs_sand / vs_silt should ≈ (d50_sand / d50_silt)² = 25
     let ratio_sand_silt = vs_sand / vs_silt;
     let expected_ratio = (d50_sand / d50_silt).powi(2);
 
-    println!("vs_sand/vs_silt ratio: {:.2} (expected {:.2})", ratio_sand_silt, expected_ratio);
+    println!(
+        "vs_sand/vs_silt ratio: {:.2} (expected {:.2})",
+        ratio_sand_silt, expected_ratio
+    );
 
     assert!(
         (ratio_sand_silt - expected_ratio).abs() / expected_ratio < 0.2,
         "Settling velocity should scale with d²: expected ratio {:.1}, got {:.1}",
-        expected_ratio, ratio_sand_silt
+        expected_ratio,
+        ratio_sand_silt
     );
 
     // Coarser particles settle faster
@@ -1268,12 +1328,14 @@ fn test_equilibrium_channel_formation() {
             let valley_depth = 0.5 * (1.0 - z_dist * z_dist); // 0.5m deep at center
 
             world.bedrock_elevation[idx] = 1.0;
-            world.terrain_sediment[idx] = 2.0 - (x as f32 * world.cell_size * initial_slope) + valley_depth;
+            world.terrain_sediment[idx] =
+                2.0 - (x as f32 * world.cell_size * initial_slope) + valley_depth;
         }
     }
 
     // Add water in valley center with flow
-    for z in 6..10 { // Center 4 cells
+    for z in 6..10 {
+        // Center 4 cells
         for x in 0..world.width {
             let idx = world.idx(x, z);
             let ground = world.ground_height(x, z);
@@ -1303,7 +1365,10 @@ fn test_equilibrium_channel_formation() {
 
     println!("Early erosion rate: {:.6} per step", early_erosion_rate);
     println!("Late erosion rate: {:.6} per step", late_erosion_rate);
-    println!("Rate ratio (late/early): {:.2}", late_erosion_rate / early_erosion_rate.max(1e-10));
+    println!(
+        "Rate ratio (late/early): {:.2}",
+        late_erosion_rate / early_erosion_rate.max(1e-10)
+    );
 
     // As channel forms, erosion should slow down (slope decreases)
     // Allow for the fact that current implementation might not show this
@@ -1359,7 +1424,10 @@ fn test_particle_size_erosion_resistance() {
 
     println!("Fine sediment eroded: {:.4}", eroded_fine);
     println!("Gravel eroded: {:.4}", eroded_gravel);
-    println!("Ratio (fine/gravel): {:.1}x", eroded_fine / eroded_gravel.max(1e-6));
+    println!(
+        "Ratio (fine/gravel): {:.1}x",
+        eroded_fine / eroded_gravel.max(1e-6)
+    );
 
     // Fine sediment should erode more than gravel under same conditions
     assert!(

@@ -48,8 +48,8 @@ impl Camera {
         // River flows along x-axis (left to right), channel is at z = 16m (world center)
         Self {
             position: Vec3::new(-5.0, 12.0, 16.0), // Behind and above the upstream end
-            yaw: 0.0,    // Looking along +X (downstream)
-            pitch: -0.4, // Slight downward angle
+            yaw: 0.0,                              // Looking along +X (downstream)
+            pitch: -0.4,                           // Slight downward angle
         }
     }
 
@@ -232,7 +232,11 @@ impl App {
     }
 
     fn redraw(&mut self) {
-        if self.device.is_none() || self.queue.is_none() || self.surface.is_none() || self.heightfield.is_none() {
+        if self.device.is_none()
+            || self.queue.is_none()
+            || self.surface.is_none()
+            || self.heightfield.is_none()
+        {
             return;
         }
 
@@ -287,16 +291,11 @@ impl App {
 
         let view_matrix = self.camera.view_matrix();
         let config = self.config.as_ref().unwrap();
-        let proj_matrix = Mat4::perspective_rh(
-            0.8,
-            config.width as f32 / config.height as f32,
-            0.1,
-            500.0,
-        );
+        let proj_matrix =
+            Mat4::perspective_rh(0.8, config.width as f32 / config.height as f32, 0.1, 500.0);
         let view_proj = proj_matrix * view_matrix;
 
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
         hf.render(
             &mut encoder,
@@ -316,7 +315,11 @@ impl App {
         unsafe {
             if LAST_PRINT.is_none() || LAST_PRINT.unwrap().elapsed().as_secs_f32() > 1.0 {
                 let elapsed = self.start_time.elapsed().as_secs_f32();
-                let flow_rate = if elapsed > 0.0 { self.total_water_added / elapsed } else { 0.0 };
+                let flow_rate = if elapsed > 0.0 {
+                    self.total_water_added / elapsed
+                } else {
+                    0.0
+                };
                 println!(
                     "t={:.1}s | Water added: {:.1}m³ | Flow rate: {:.2}m³/s | {}",
                     elapsed,

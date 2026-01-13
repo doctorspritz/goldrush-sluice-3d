@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 default = []
 panning = ["dep:rand"]
+gpu-dem = ["dep:rand"]
 macroquad-examples = ["dep:macroquad", "dep:rand"]
 
 [dependencies]
@@ -25,3 +26,12 @@ serde_yaml = "0.9"
 chrono = "0.4"
 png = "0.17"
 
+[[example]]
+name = "gpu_dem_test"
+path = "examples/gpu_dem_test"
+required-features = ["gpu-dem"]
+
+[[example]]
+name = "gpu_dem_flip_test"
+path = "examples/gpu_dem_flip_test"
+required-features = ["gpu-dem"]

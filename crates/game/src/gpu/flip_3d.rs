@@ -18,6 +18,7 @@ use std::sync::{mpsc, Arc};
 use wgpu::util::DeviceExt;
 
 const GRAVEL_OBSTACLE_MAX: u32 = 2048;
+const DENSITY_PRESSURE_ITERS: u32 = 40;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -136,7 +137,7 @@ struct DensityErrorParams3D {
     depth: u32,
     rest_density: f32, // Target particles per cell (~8 for typical FLIP)
     dt: f32,           // Timestep for scaling
-    _pad1: u32,
+    surface_clamp: u32,
     _pad2: u32,
     _pad3: u32,
 }
@@ -462,6 +463,10 @@ pub struct GpuFlip3D {
     pub open_boundaries: u32,
     /// Vorticity confinement strength (default 0.05, range 0.0-0.25)
     pub vorticity_epsilon: f32,
+    /// Target water particles per cell for density projection.
+    pub water_rest_particles: f32,
+    /// Clamp crowded surface cells (air neighbors) during density projection.
+    pub density_surface_clamp: bool,
     /// Target sediment particles per cell for porosity fraction.
     pub sediment_rest_particles: f32,
     /// Speed below which friction kicks in (m/s).
@@ -2773,6 +2778,8 @@ impl GpuFlip3D {
             cell_size,
             open_boundaries: 0, // All boundaries closed by default
             vorticity_epsilon: 0.05,
+            water_rest_particles: 8.0,
+            density_surface_clamp: true,
             sediment_rest_particles: 8.0,
             sediment_friction_threshold: 0.1,
             sediment_friction_strength: 0.5,
@@ -3764,9 +3771,9 @@ impl GpuFlip3D {
             width: self.width,
             height: self.height,
             depth: self.depth,
-            rest_density: 8.0, // Target ~8 particles per cell
+            rest_density: self.water_rest_particles, // Target particles per cell
             dt,
-            _pad1: 0,
+            surface_clamp: self.density_surface_clamp as u32,
             _pad2: 0,
             _pad3: 0,
         };
@@ -3805,7 +3812,7 @@ impl GpuFlip3D {
 
         // Run pressure solver iterations with density error as RHS
         // Uses same Jacobi solver, just different input
-        let density_iterations = 40; // More iterations for volume conservation
+        let density_iterations = DENSITY_PRESSURE_ITERS; // More iterations for volume conservation
         self.pressure
             .encode_iterations_only(&mut encoder, density_iterations);
 
@@ -4184,6 +4191,209 @@ impl GpuFlip3D {
             output[..count].copy_from_slice(&slice[..count]);
         }
         staging.unmap();
+    }
+
+    /// Print density projection diagnostics (volume preservation metrics).
+    pub fn print_density_projection_diagnostics(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        dt: f32,
+        rest_density: f32,
+    ) {
+        let cell_count = (self.width * self.height * self.depth) as usize;
+        if cell_count == 0 {
+            return;
+        }
+
+        let byte_size = (cell_count * 4) as u64;
+
+        let cell_type_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Cell Type Staging (Density Diagnostics)"),
+            size: byte_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let particle_count_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Particle Count Staging (Density Diagnostics)"),
+            size: byte_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let divergence_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Density Error Staging (Density Diagnostics)"),
+            size: byte_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let pressure_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pressure Staging (Density Diagnostics)"),
+            size: byte_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Density Diagnostics Readback"),
+        });
+        encoder.copy_buffer_to_buffer(
+            &self.pressure.cell_type_buffer,
+            0,
+            &cell_type_staging,
+            0,
+            byte_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.p2g.particle_count_buffer,
+            0,
+            &particle_count_staging,
+            0,
+            byte_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.pressure.divergence_buffer,
+            0,
+            &divergence_staging,
+            0,
+            byte_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.pressure.pressure_buffer,
+            0,
+            &pressure_staging,
+            0,
+            byte_size,
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let ct_slice = cell_type_staging.slice(..);
+        let part_slice = particle_count_staging.slice(..);
+        let div_slice = divergence_staging.slice(..);
+        let pressure_slice = pressure_staging.slice(..);
+
+        let (ct_tx, ct_rx) = std::sync::mpsc::channel();
+        let (part_tx, part_rx) = std::sync::mpsc::channel();
+        let (div_tx, div_rx) = std::sync::mpsc::channel();
+        let (pressure_tx, pressure_rx) = std::sync::mpsc::channel();
+
+        ct_slice.map_async(wgpu::MapMode::Read, move |r| {
+            ct_tx.send(r).unwrap();
+        });
+        part_slice.map_async(wgpu::MapMode::Read, move |r| {
+            part_tx.send(r).unwrap();
+        });
+        div_slice.map_async(wgpu::MapMode::Read, move |r| {
+            div_tx.send(r).unwrap();
+        });
+        pressure_slice.map_async(wgpu::MapMode::Read, move |r| {
+            pressure_tx.send(r).unwrap();
+        });
+
+        device.poll(wgpu::Maintain::Wait);
+        ct_rx.recv().unwrap().unwrap();
+        part_rx.recv().unwrap().unwrap();
+        div_rx.recv().unwrap().unwrap();
+        pressure_rx.recv().unwrap().unwrap();
+
+        let ct_data = ct_slice.get_mapped_range();
+        let part_data = part_slice.get_mapped_range();
+        let div_data = div_slice.get_mapped_range();
+        let pressure_data = pressure_slice.get_mapped_range();
+
+        let cell_types: &[u32] = bytemuck::cast_slice(&ct_data);
+        let particle_counts: &[i32] = bytemuck::cast_slice(&part_data);
+        let density_error: &[f32] = bytemuck::cast_slice(&div_data);
+        let pressure: &[f32] = bytemuck::cast_slice(&pressure_data);
+
+        let mut solid_count = 0usize;
+        let mut fluid_count = 0usize;
+        let mut air_count = 0usize;
+
+        let mut occupied_cells = 0usize;
+        let mut total_particles: i64 = 0;
+        let mut min_particles = i32::MAX;
+        let mut max_particles = 0i32;
+
+        let mut error_sum = 0.0f32;
+        let mut error_max = 0.0f32;
+
+        let mut pressure_sum = 0.0f32;
+        let mut pressure_min = f32::INFINITY;
+        let mut pressure_max = f32::NEG_INFINITY;
+
+        for idx in 0..cell_count {
+            match cell_types[idx] {
+                0 => air_count += 1,
+                1 => fluid_count += 1,
+                2 => solid_count += 1,
+                _ => {}
+            }
+
+            let count = particle_counts[idx];
+            if count > 0 {
+                occupied_cells += 1;
+                total_particles += count as i64;
+                min_particles = min_particles.min(count);
+                max_particles = max_particles.max(count);
+            }
+
+            if cell_types[idx] == 1 {
+                let err = density_error[idx].abs();
+                error_sum += err;
+                error_max = error_max.max(err);
+
+                let p = pressure[idx];
+                pressure_sum += p;
+                pressure_min = pressure_min.min(p);
+                pressure_max = pressure_max.max(p);
+            }
+        }
+
+        let fluid_cells = fluid_count.max(1);
+        let occupied = occupied_cells.max(1);
+        let avg_ppc_fluid = total_particles as f32 / fluid_cells as f32;
+        let avg_ppc_occupied = total_particles as f32 / occupied as f32;
+        let density_ratio = total_particles as f32 / (fluid_cells as f32 * rest_density.max(1e-6));
+        let error_avg = error_sum / fluid_cells as f32;
+        let error_avg_norm = error_avg * dt;
+        let error_max_norm = error_max * dt;
+        let pressure_avg = pressure_sum / fluid_cells as f32;
+        if fluid_count == 0 {
+            pressure_min = 0.0;
+            pressure_max = 0.0;
+        }
+
+        println!("  Density diagnostics:");
+        println!(
+            "    cell types: FLUID={} SOLID={} AIR={} (total={})",
+            fluid_count, solid_count, air_count, cell_count
+        );
+        println!(
+            "    particles: total={} occupied_cells={} avg_ppc_fluid={:.2} avg_ppc_occ={:.2} min={} max={}",
+            total_particles,
+            occupied_cells,
+            avg_ppc_fluid,
+            avg_ppc_occupied,
+            if min_particles == i32::MAX { 0 } else { min_particles },
+            max_particles
+        );
+        println!(
+            "    density error: avg|1-rho/rest|={:.3} max|1-rho/rest|={:.3} ratio={:.3}",
+            error_avg_norm, error_max_norm, density_ratio
+        );
+        println!(
+            "    pressure: avg={:.6} min={:.6} max={:.6}",
+            pressure_avg, pressure_min, pressure_max
+        );
+
+        drop(ct_data);
+        drop(part_data);
+        drop(div_data);
+        drop(pressure_data);
+        cell_type_staging.unmap();
+        particle_count_staging.unmap();
+        divergence_staging.unmap();
+        pressure_staging.unmap();
     }
 
     /// Print jamming diagnostics - call this every N frames from the example

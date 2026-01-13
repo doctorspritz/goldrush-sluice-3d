@@ -16,8 +16,8 @@ use glam::Vec3;
 /// The floor surface is at `y`, solid extends down to `y - thickness`
 #[derive(Debug, Clone)]
 pub struct TestFloor {
-    pub y: f32,           // Top surface Y coordinate
-    pub thickness: f32,   // How thick the floor is (extends downward)
+    pub y: f32,         // Top surface Y coordinate
+    pub thickness: f32, // How thick the floor is (extends downward)
 }
 
 impl TestFloor {
@@ -62,11 +62,11 @@ impl TestFloor {
 /// All walls and floor have configurable thickness for proper SDF collision
 #[derive(Debug, Clone)]
 pub struct TestBox {
-    pub center: Vec3,        // Center of the box interior floor surface
-    pub half_width: f32,     // Half inner width in X
-    pub half_depth: f32,     // Half inner depth in Z
-    pub wall_height: f32,    // Height of walls above floor
-    pub wall_thickness: f32, // Thickness of walls
+    pub center: Vec3,         // Center of the box interior floor surface
+    pub half_width: f32,      // Half inner width in X
+    pub half_depth: f32,      // Half inner depth in Z
+    pub wall_height: f32,     // Height of walls above floor
+    pub wall_thickness: f32,  // Thickness of walls
     pub floor_thickness: f32, // Thickness of floor
 }
 
@@ -187,11 +187,11 @@ impl TestBox {
 /// The ramp is a solid slab with configurable thickness
 #[derive(Debug, Clone)]
 pub struct TestRamp {
-    pub base: Vec3,       // Bottom corner of ramp (where it meets floor)
-    pub length: f32,      // Length along slope
-    pub width: f32,       // Width perpendicular to slope direction
-    pub angle_deg: f32,   // Angle from horizontal (0-90)
-    pub thickness: f32,   // Thickness of the ramp slab
+    pub base: Vec3,     // Bottom corner of ramp (where it meets floor)
+    pub length: f32,    // Length along slope
+    pub width: f32,     // Width perpendicular to slope direction
+    pub angle_deg: f32, // Angle from horizontal (0-90)
+    pub thickness: f32, // Thickness of the ramp slab
 }
 
 impl TestRamp {
@@ -205,7 +205,13 @@ impl TestRamp {
         }
     }
 
-    pub fn with_thickness(base: Vec3, length: f32, width: f32, angle_deg: f32, thickness: f32) -> Self {
+    pub fn with_thickness(
+        base: Vec3,
+        length: f32,
+        width: f32,
+        angle_deg: f32,
+        thickness: f32,
+    ) -> Self {
         Self {
             base,
             length,
@@ -266,12 +272,12 @@ impl TestRamp {
 /// The chute runs along the +X direction, tilted down by angle_deg
 #[derive(Debug, Clone)]
 pub struct TestChute {
-    pub inlet: Vec3,        // Top of chute (inlet position, center of channel floor)
-    pub length: f32,        // Length along slope
-    pub width: f32,         // Inner width between walls
-    pub wall_height: f32,   // Height of side walls above floor
-    pub angle_deg: f32,     // Angle from horizontal (positive = down slope in +X)
-    pub wall_thickness: f32, // Thickness of walls
+    pub inlet: Vec3,          // Top of chute (inlet position, center of channel floor)
+    pub length: f32,          // Length along slope
+    pub width: f32,           // Inner width between walls
+    pub wall_height: f32,     // Height of side walls above floor
+    pub angle_deg: f32,       // Angle from horizontal (positive = down slope in +X)
+    pub wall_thickness: f32,  // Thickness of walls
     pub floor_thickness: f32, // Thickness of floor
 }
 
@@ -340,7 +346,8 @@ impl TestChute {
         let in_outer_bounds = rel.z.abs() <= outer_half_width;
 
         // Inside open channel
-        if along >= 0.0 && along <= chute_end_x
+        if along >= 0.0
+            && along <= chute_end_x
             && wall_dist_inner > 0.0
             && height_above_floor > 0.0
             && height_above_floor < self.wall_height
@@ -357,7 +364,8 @@ impl TestChute {
         }
 
         // In walls
-        if along >= 0.0 && along <= chute_end_x
+        if along >= 0.0
+            && along <= chute_end_x
             && height_above_floor > 0.0
             && height_above_floor <= self.wall_height
         {
@@ -413,11 +421,12 @@ impl TestSdfGenerator {
 
     /// World position of grid cell center
     pub fn cell_center(&self, x: usize, y: usize, z: usize) -> Vec3 {
-        self.offset + Vec3::new(
-            (x as f32 + 0.5) * self.cell_size,
-            (y as f32 + 0.5) * self.cell_size,
-            (z as f32 + 0.5) * self.cell_size,
-        )
+        self.offset
+            + Vec3::new(
+                (x as f32 + 0.5) * self.cell_size,
+                (y as f32 + 0.5) * self.cell_size,
+                (z as f32 + 0.5) * self.cell_size,
+            )
     }
 
     /// Add a TestFloor to the SDF grid
@@ -498,20 +507,40 @@ mod tests {
         // Above floor (y=1.0 > floor_top=0.5)
         let above = floor.sdf(Vec3::new(0.0, 1.0, 0.0));
         assert!(above > 0.0, "Above floor should be positive: {}", above);
-        assert!((above - 0.5).abs() < 0.001, "Distance above should be 0.5: {}", above);
+        assert!(
+            (above - 0.5).abs() < 0.001,
+            "Distance above should be 0.5: {}",
+            above
+        );
 
         // On floor surface (y=0.5 = floor_top)
         let on_surface = floor.sdf(Vec3::new(0.0, 0.5, 0.0));
-        assert!(on_surface.abs() < 0.001, "On floor surface should be ~0: {}", on_surface);
+        assert!(
+            on_surface.abs() < 0.001,
+            "On floor surface should be ~0: {}",
+            on_surface
+        );
 
         // Inside floor slab (y=0.25 is midway between 0 and 0.5)
         let inside = floor.sdf(Vec3::new(0.0, 0.25, 0.0));
-        assert!(inside < 0.0, "Inside floor slab should be negative: {}", inside);
-        assert!((inside + 0.25).abs() < 0.001, "Distance inside should be -0.25: {}", inside);
+        assert!(
+            inside < 0.0,
+            "Inside floor slab should be negative: {}",
+            inside
+        );
+        assert!(
+            (inside + 0.25).abs() < 0.001,
+            "Distance inside should be -0.25: {}",
+            inside
+        );
 
         // Below floor bottom (y=-0.5 < floor_bottom=0.0)
         let below = floor.sdf(Vec3::new(0.0, -0.5, 0.0));
-        assert!(below > 0.0, "Below floor bottom should be positive: {}", below);
+        assert!(
+            below > 0.0,
+            "Below floor bottom should be positive: {}",
+            below
+        );
     }
 
     #[test]
@@ -523,11 +552,19 @@ mod tests {
 
         // Inside box center (open area) - should be positive
         let inside = test_box.sdf(Vec3::new(0.0, 0.5, 0.0));
-        assert!(inside > 0.0, "Inside box center should be positive: {}", inside);
+        assert!(
+            inside > 0.0,
+            "Inside box center should be positive: {}",
+            inside
+        );
 
         // Below floor surface (inside floor slab at y=-0.1) - should be negative
         let below = test_box.sdf(Vec3::new(0.0, -0.1, 0.0));
-        assert!(below < 0.0, "Inside floor slab should be negative: {}", below);
+        assert!(
+            below < 0.0,
+            "Inside floor slab should be negative: {}",
+            below
+        );
 
         // Inside wall (x=1.05 is between inner=1.0 and outer=1.1) - should be negative
         let in_wall = test_box.sdf(Vec3::new(1.05, 0.5, 0.0));
@@ -535,12 +572,24 @@ mod tests {
 
         // Outside box entirely (x=1.5 > outer=1.1) - should be positive
         let outside_box = test_box.sdf(Vec3::new(1.5, 0.5, 0.0));
-        assert!(outside_box > 0.0, "Outside box should be positive: {}", outside_box);
+        assert!(
+            outside_box > 0.0,
+            "Outside box should be positive: {}",
+            outside_box
+        );
 
         // Near wall but inside - should be positive but small
         let near_wall = test_box.sdf(Vec3::new(0.9, 0.5, 0.0));
-        assert!(near_wall > 0.0, "Near wall inside should be positive: {}", near_wall);
-        assert!(near_wall < 0.2, "Near wall should be close to wall: {}", near_wall);
+        assert!(
+            near_wall > 0.0,
+            "Near wall inside should be positive: {}",
+            near_wall
+        );
+        assert!(
+            near_wall < 0.2,
+            "Near wall should be close to wall: {}",
+            near_wall
+        );
     }
 
     #[test]
@@ -549,7 +598,11 @@ mod tests {
 
         // On ramp surface (midpoint)
         let on_ramp = ramp.sdf(Vec3::new(0.5, 0.5, 0.0));
-        assert!(on_ramp.abs() < 0.1, "On ramp should be near zero: {}", on_ramp);
+        assert!(
+            on_ramp.abs() < 0.1,
+            "On ramp should be near zero: {}",
+            on_ramp
+        );
 
         // Above ramp
         let above = ramp.sdf(Vec3::new(0.5, 1.0, 0.0));
@@ -565,13 +618,21 @@ mod tests {
 
         // At inlet, slightly above floor - should be positive
         let at_inlet = chute.sdf(Vec3::new(0.1, 1.05, 0.0));
-        assert!(at_inlet > 0.0, "At inlet above floor should be positive: {}", at_inlet);
+        assert!(
+            at_inlet > 0.0,
+            "At inlet above floor should be positive: {}",
+            at_inlet
+        );
 
         // Below inlet floor surface (inside floor slab) - should be negative
         // At x=0.1, floor surface is at y ≈ 1.0 - 0.1*tan(30°) ≈ 0.942
         // So y=0.9 is below the floor surface
         let below_inlet = chute.sdf(Vec3::new(0.1, 0.9, 0.0));
-        assert!(below_inlet < 0.0, "Below inlet floor should be negative: {}", below_inlet);
+        assert!(
+            below_inlet < 0.0,
+            "Below inlet floor should be negative: {}",
+            below_inlet
+        );
 
         // Inside wall (z=0.3 is between inner=0.25 and outer=0.35) - should be negative
         // At x=0.5, floor is at y ≈ 1.0 - 0.5*tan(30°) ≈ 0.71, so y=0.8 is above floor
@@ -582,8 +643,16 @@ mod tests {
         let outlet = chute.outlet();
         let expected_outlet_x = 2.0 * 30.0_f32.to_radians().cos();
         let expected_outlet_y = 1.0 - 2.0 * 30.0_f32.to_radians().sin();
-        assert!((outlet.x - expected_outlet_x).abs() < 0.01, "Outlet X: {}", outlet.x);
-        assert!((outlet.y - expected_outlet_y).abs() < 0.01, "Outlet Y: {}", outlet.y);
+        assert!(
+            (outlet.x - expected_outlet_x).abs() < 0.01,
+            "Outlet X: {}",
+            outlet.x
+        );
+        assert!(
+            (outlet.y - expected_outlet_y).abs() < 0.01,
+            "Outlet Y: {}",
+            outlet.y
+        );
     }
 
     #[test]

@@ -1,6 +1,23 @@
 {
   "name": "Wall Containment Test",
   "description": "Particle with lateral velocity stays within walls - verifies containment",
+  "test": {
+    "kind": "water",
+    "duration_s": 5.0,
+    "spawn": {
+      "count": 1,
+      "min": { "x": 0.0, "y": 1.0, "z": 0.0 },
+      "max": { "x": 0.0, "y": 1.0, "z": 0.0 },
+      "velocity": { "x": 0.0, "y": 0.0, "z": 0.3 },
+      "use_gold": false,
+      "seed": 0
+    },
+    "checks": {
+      "wall_containment": {
+        "max_escape": 0.02
+      }
+    }
+  },
   "gutters": [
     {
       "id": 1,

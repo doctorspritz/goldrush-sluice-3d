@@ -276,7 +276,9 @@ impl ClusterSimulation3D {
     pub fn step_with_sdf(&mut self, dt: f32, sdf_params: &SdfParams) {
         // Use substeps for stability. With stiffness k=6000 and mass m=0.025kg,
         // critical timestep is ~0.004s. Using 4 substeps gives sub_dt ~0.004s.
-        let substeps = 8;
+        // critical timestep is ~0.004s. Using 4 substeps gives sub_dt ~0.004s.
+        // INTEGRATION UPDATE: Increased to 20 substeps for stability with irregular clumps (sand)
+        let substeps = 20;
         let sub_dt = dt / substeps as f32;
 
         for _ in 0..substeps {
@@ -411,6 +413,49 @@ impl ClusterSimulation3D {
             return;
         }
 
+        // CRITICAL: Prevent deep SDF penetration BEFORE force calculation
+        // This stops particles from getting embedded deep in geometry, which causes
+        // force explosion even with clamped penetration depths.
+        if let Some(sdf) = sdf_params {
+            for clump in &mut self.clumps {
+                let template = &self.templates[clump.template_idx];
+                let max_allowed = template.particle_radius * 0.1; // Allow only 10% penetration
+
+                for offset in &template.local_offsets {
+                    let r = clump.rotation * *offset;
+                    let pos = clump.position + r;
+                    let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
+                        sdf.sdf,
+                        pos,
+                        sdf.grid_offset,
+                        sdf.grid_width,
+                        sdf.grid_height,
+                        sdf.grid_depth,
+                        sdf.cell_size,
+                    );
+
+                    let penetration = template.particle_radius - sdf_value;
+                    if penetration > max_allowed && sdf_normal.length_squared() > 1e-6 {
+                        let excess = penetration - max_allowed;
+                        let normal = sdf_normal.normalize();
+                        clump.position += normal * excess;
+
+                        // Zero velocity into surface
+                        let v_n = clump.velocity.dot(normal);
+                        if v_n < 0.0 {
+                            clump.velocity -= normal * v_n;
+                        }
+
+                        // CRITICAL FIX: Dampen angular velocity to prevent "drilling"
+                        // Rotation can drive particles deep into the floor. If we only fix position
+                        // but leave angular velocity, it just rotates back in, gaining energy from the
+                        // position correction (potential energy pump).
+                        clump.angular_velocity *= 0.5;
+                    }
+                }
+            }
+        }
+
         let mut forces = vec![Vec3::ZERO; self.clumps.len()];
         let mut torques = vec![Vec3::ZERO; self.clumps.len()];
 
@@ -452,7 +497,11 @@ impl ClusterSimulation3D {
                 for dx in -1..=1 {
                     for dy in -1..=1 {
                         for dz in -1..=1 {
-                            let neighbor_key = (cx.saturating_add(dx), cy.saturating_add(dy), cz.saturating_add(dz));
+                            let neighbor_key = (
+                                cx.saturating_add(dx),
+                                cy.saturating_add(dy),
+                                cz.saturating_add(dz),
+                            );
                             if let Some(neighbor_indices) = spatial_hash.get(&neighbor_key) {
                                 for &j in neighbor_indices {
                                     // Skip self and already-checked pairs
@@ -760,9 +809,15 @@ impl ClusterSimulation3D {
                     );
 
                     // Check for penetration: SDF < radius means sphere penetrates solid
-                    let penetration = radius - sdf_value;
+                    let mut penetration = radius - sdf_value;
                     if penetration > 0.0 && sdf_normal.length_squared() > 1e-6 {
                         let normal = sdf_normal.normalize();
+
+                        // CRITICAL: Clamp penetration depth to prevent force explosion
+                        // Deep penetrations cause astronomical forces that make particles explode
+                        // Limit to 50% of particle radius (for 8mm particles, max 2mm penetration)
+                        let max_penetration = radius * 0.5;
+                        penetration = penetration.min(max_penetration);
 
                         // Apply contact force using spring-damper model
                         let v_n = vel.dot(normal);
@@ -781,6 +836,11 @@ impl ClusterSimulation3D {
                         if fn_mag < 0.0 {
                             fn_mag = 0.0;
                         }
+
+                        // Clamp force to prevent numerical explosion from deep penetrations
+                        // Max force: particle weight * 1000 (reasonable for particle collisions)
+                        let max_force = template.particle_mass * self.gravity.length() * 1000.0;
+                        fn_mag = fn_mag.min(max_force);
 
                         // Tangential (friction) force
                         let vt = vel - normal * v_n;
@@ -868,6 +928,8 @@ impl ClusterSimulation3D {
                         if v_n < 0.0 {
                             clump.velocity -= normal * v_n;
                         }
+                        // CRITICAL FIX: Dampen angular velocity here too
+                        clump.angular_velocity *= 0.5;
                     }
                 }
                 let speed_sq = clump.velocity.length_squared();

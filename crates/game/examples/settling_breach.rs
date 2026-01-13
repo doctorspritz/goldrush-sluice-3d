@@ -104,7 +104,7 @@ struct App {
     start_time: Instant,
 
     // Simulation state
-    inflow_rate: f32,      // m³/s of silty water
+    inflow_rate: f32, // m³/s of silty water
     inflow_position: (usize, usize),
     total_inflow: f32,
     breach_detected: bool,
@@ -202,7 +202,6 @@ impl App {
             self.depth_texture = Some(depth_texture);
         }
     }
-
 }
 
 impl ApplicationHandler for App {
@@ -211,7 +210,7 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("Settling Pond Breach - Press 1/2 to adjust flow")
+                        .with_title("Settling Pond Breach - Press 1/2 to adjust flow"),
                 )
                 .unwrap(),
         );
@@ -346,17 +345,25 @@ impl ApplicationHandler for App {
                     queue,
                     pos_x,
                     pos_z,
-                    2.0 * CELL_SIZE,       // radius
-                    self.inflow_rate,      // rate (m³/s -> converted to depth/s in shader)
+                    2.0 * CELL_SIZE,  // radius
+                    self.inflow_rate, // rate (m³/s -> converted to depth/s in shader)
                     sim_dt,
                     self.inflow_rate > 0.0, // enabled
                 );
 
                 // Debug: print emitter params once
-                static PRINTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                static PRINTED: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
                 if !PRINTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    println!("Emitter: pos=({}, {}), radius={}, rate={}, dt={}, enabled={}",
-                        pos_x, pos_z, 2.0 * CELL_SIZE, self.inflow_rate, sim_dt, self.inflow_rate > 0.0);
+                    println!(
+                        "Emitter: pos=({}, {}), radius={}, rate={}, dt={}, enabled={}",
+                        pos_x,
+                        pos_z,
+                        2.0 * CELL_SIZE,
+                        self.inflow_rate,
+                        sim_dt,
+                        self.inflow_rate > 0.0
+                    );
                 }
 
                 // Create encoder for simulation
@@ -455,8 +462,8 @@ fn build_settling_pond_world() -> World {
     let pond_depth = 2.0; // 2m deep pond
 
     // Berm dimensions
-    let berm_height = 1.5;  // 1.5m tall berm
-    let berm_width = 6;     // 6 cells wide
+    let berm_height = 1.5; // 1.5m tall berm
+    let berm_width = 6; // 6 cells wide
 
     // Weak point location (center of south berm)
     let weak_width = 4; // 4 cells wide notch

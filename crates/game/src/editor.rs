@@ -443,8 +443,8 @@ impl Default for ShakerDeckPiece {
             length: 0.8,
             width: 0.5,
             end_width: 0.5,
-            tilt_deg: 8.0,       // Slight tilt for material flow
-            hole_size: 0.005,   // 5mm holes
+            tilt_deg: 8.0,    // Slight tilt for material flow
+            hole_size: 0.005, // 5mm holes
             wall_height: 0.08,
             bar_thickness: 0.003, // 3mm bars
         }
@@ -627,10 +627,10 @@ impl EditorLayout {
         shaker.length = 0.8;
         shaker.width = 0.5;
         shaker.end_width = 0.35; // Slight funnel toward outlet
-        // Use larger holes/bars that can be resolved at sim cell size (25mm)
-        // More bars than holes for better water interaction
-        shaker.hole_size = 0.025;     // 25mm holes (1 cell)
-        shaker.bar_thickness = 0.05;  // 50mm bars (2 cells) - 67% solid
+                                 // Use larger holes/bars that can be resolved at sim cell size (25mm)
+                                 // More bars than holes for better water interaction
+        shaker.hole_size = 0.025; // 25mm holes (1 cell)
+        shaker.bar_thickness = 0.05; // 50mm bars (2 cells) - 67% solid
 
         // === FUNNEL GUTTER (below shaker deck) ===
         // Catches fines falling through the shaker deck
@@ -639,7 +639,7 @@ impl EditorLayout {
         let mut gutter = GutterPiece::new(gutter_id);
         gutter.rotation = Rotation::R0;
         gutter.length = 0.7;
-        gutter.width = 0.6;      // Wide inlet to catch fines
+        gutter.width = 0.6; // Wide inlet to catch fines
         gutter.end_width = 0.25; // Narrow outlet for sluice
         gutter.angle_deg = 12.0; // Steep enough for good flow
 
@@ -776,6 +776,115 @@ impl EditorLayout {
         let json = std::fs::read_to_string(path)?;
         let layout = serde_json::from_str(&json)?;
         Ok(layout)
+    }
+}
+
+/// Scenario config for editor + headless tests (layout + optional sim/test metadata).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ScenarioSimConfig {
+    #[serde(default)]
+    pub cell_size: Option<f32>,
+    #[serde(default)]
+    pub pressure_iters: Option<usize>,
+    #[serde(default)]
+    pub substeps: Option<u32>,
+    #[serde(default)]
+    pub gravity: Option<f32>,
+    #[serde(default)]
+    pub max_particles: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct FlowDirectionCheck {
+    #[serde(default)]
+    pub axis: Option<String>,
+    #[serde(default)]
+    pub min_avg_vel: Option<f32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PoolEquilibriumCheck {
+    #[serde(default)]
+    pub max_rms_vel: Option<f32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct WallContainmentCheck {
+    #[serde(default)]
+    pub max_escape: Option<f32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ScenarioSpawnConfig {
+    pub count: usize,
+    #[serde(with = "vec3_serde")]
+    pub min: Vec3,
+    #[serde(with = "vec3_serde")]
+    pub max: Vec3,
+    #[serde(with = "vec3_serde")]
+    pub velocity: Vec3,
+    #[serde(default)]
+    pub use_gold: bool,
+    #[serde(default)]
+    pub seed: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ScenarioChecks {
+    #[serde(default)]
+    pub flow_direction: Option<FlowDirectionCheck>,
+    #[serde(default)]
+    pub pool_equilibrium: Option<PoolEquilibriumCheck>,
+    #[serde(default)]
+    pub wall_containment: Option<WallContainmentCheck>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ScenarioTestConfig {
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub duration_s: Option<f32>,
+    #[serde(default)]
+    pub emit_for_s: Option<f32>,
+    #[serde(default)]
+    pub spawn: Option<ScenarioSpawnConfig>,
+    #[serde(default)]
+    pub checks: ScenarioChecks,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ScenarioConfig {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub sim: Option<ScenarioSimConfig>,
+    #[serde(default)]
+    pub test: Option<ScenarioTestConfig>,
+    #[serde(flatten)]
+    pub layout: EditorLayout,
+}
+
+impl ScenarioConfig {
+    pub fn from_layout(layout: EditorLayout) -> Self {
+        Self {
+            layout,
+            ..Default::default()
+        }
+    }
+
+    pub fn save_json(&self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        let json = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    pub fn load_json(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let json = std::fs::read_to_string(path)?;
+        let config = serde_json::from_str(&json)?;
+        Ok(config)
     }
 }
 

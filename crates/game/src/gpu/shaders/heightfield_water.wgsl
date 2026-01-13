@@ -60,6 +60,30 @@ fn update_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
     water_surface[idx] = ground + depth;
 }
 
+// Reconcile depth to preserve surface height after terrain changes.
+@compute @workgroup_size(16, 16)
+fn reconcile_depth(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let tile_x = global_id.x;
+    let tile_z = global_id.y;
+    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
+    let x = tile_x + params.origin_x;
+    let z = tile_z + params.origin_z;
+    if (x >= params.world_width || z >= params.world_depth) { return; }
+
+    let idx = get_idx(x, z);
+    let ground = get_ground_height(idx);
+    let surface = water_surface[idx];
+    let new_depth = max(0.0, surface - ground);
+
+    water_depth[idx] = new_depth;
+
+    // Kill residual velocities in newly dry cells to avoid oscillation.
+    if (new_depth < 0.001) {
+        water_velocity_x[idx] = 0.0;
+        water_velocity_z[idx] = 0.0;
+    }
+}
+
 // 2. Calculate Flux (Velocity Update)
 @compute @workgroup_size(16, 16)
 fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {

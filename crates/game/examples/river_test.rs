@@ -414,11 +414,17 @@ fn build_river_world() -> World {
     }
 
     println!("=== River Flow Test ===");
-    println!("World: {}x{} cells ({:.1}m x {:.1}m)",
-             WORLD_WIDTH, WORLD_DEPTH,
-             WORLD_WIDTH as f32 * CELL_SIZE,
-             WORLD_DEPTH as f32 * CELL_SIZE);
-    println!("Channel: {}m wide, 10m slope", channel_half_width as f32 * 2.0 * CELL_SIZE);
+    println!(
+        "World: {}x{} cells ({:.1}m x {:.1}m)",
+        WORLD_WIDTH,
+        WORLD_DEPTH,
+        WORLD_WIDTH as f32 * CELL_SIZE,
+        WORLD_DEPTH as f32 * CELL_SIZE
+    );
+    println!(
+        "Channel: {}m wide, 10m slope",
+        channel_half_width as f32 * 2.0 * CELL_SIZE
+    );
     println!("Controls: WASD=move, Right-click=look, 3=toggle emitter, ESC=quit");
     println!();
 
@@ -571,7 +577,8 @@ impl ApplicationHandler for App {
                 cache: None,
             });
 
-            let (depth_texture, depth_view) = create_depth_texture(&device, size.width, size.height);
+            let (depth_texture, depth_view) =
+                create_depth_texture(&device, size.width, size.height);
 
             let heightfield = GpuHeightfield::new(
                 &device,
@@ -649,7 +656,8 @@ impl ApplicationHandler for App {
                                 }
                                 self.terrain_dirty = true;
                                 self.start_time = Instant::now();
-                                self.initial_terrain_height = self.world.ground_height(WORLD_WIDTH / 2, WORLD_DEPTH / 2);
+                                self.initial_terrain_height =
+                                    self.world.ground_height(WORLD_WIDTH / 2, WORLD_DEPTH / 2);
                                 println!("World reset!");
                             }
                             _ => {}
@@ -673,8 +681,8 @@ impl ApplicationHandler for App {
                         let dx = (position.x - last_x) as f32;
                         let dy = (position.y - last_y) as f32;
                         self.camera.yaw += dx * self.camera.sensitivity;
-                        self.camera.pitch = (self.camera.pitch - dy * self.camera.sensitivity)
-                            .clamp(-1.5, 1.5);
+                        self.camera.pitch =
+                            (self.camera.pitch - dy * self.camera.sensitivity).clamp(-1.5, 1.5);
                     }
                     self.input.last_mouse_pos = Some((position.x, position.y));
                 }
@@ -704,7 +712,8 @@ impl ApplicationHandler for App {
 
                     // Update uniforms
                     let aspect = gpu.config.width as f32 / gpu.config.height as f32;
-                    let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, aspect, 0.1, 1000.0);
+                    let proj =
+                        Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, aspect, 0.1, 1000.0);
                     let view_mat = self.camera.view_matrix();
                     let uniforms = Uniforms {
                         view_proj: (proj * view_mat).to_cols_array_2d(),
@@ -715,26 +724,34 @@ impl ApplicationHandler for App {
                         .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
                     // Create temporary buffers
-                    let terrain_vb = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Terrain VB"),
-                        contents: bytemuck::cast_slice(&terrain_verts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-                    let terrain_ib = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Terrain IB"),
-                        contents: bytemuck::cast_slice(&terrain_indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
-                    let water_vb = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Water VB"),
-                        contents: bytemuck::cast_slice(&water_verts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-                    let water_ib = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Water IB"),
-                        contents: bytemuck::cast_slice(&water_indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
+                    let terrain_vb =
+                        gpu.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Terrain VB"),
+                                contents: bytemuck::cast_slice(&terrain_verts),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            });
+                    let terrain_ib =
+                        gpu.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Terrain IB"),
+                                contents: bytemuck::cast_slice(&terrain_indices),
+                                usage: wgpu::BufferUsages::INDEX,
+                            });
+                    let water_vb =
+                        gpu.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Water VB"),
+                                contents: bytemuck::cast_slice(&water_verts),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            });
+                    let water_ib =
+                        gpu.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Water IB"),
+                                contents: bytemuck::cast_slice(&water_indices),
+                                usage: wgpu::BufferUsages::INDEX,
+                            });
 
                     let mut encoder =
                         gpu.device
@@ -758,14 +775,16 @@ impl ApplicationHandler for App {
                                     store: wgpu::StoreOp::Store,
                                 },
                             })],
-                            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                                view: &gpu.depth_view,
-                                depth_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(1.0),
-                                    store: wgpu::StoreOp::Store,
-                                }),
-                                stencil_ops: None,
-                            }),
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &gpu.depth_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
                             ..Default::default()
                         });
 

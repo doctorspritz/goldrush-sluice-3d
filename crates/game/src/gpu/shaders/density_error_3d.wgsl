@@ -13,7 +13,7 @@ struct Params {
     depth: u32,
     rest_density: f32,  // Target particles per cell (~8 for typical FLIP)
     dt: f32,  // Timestep for scaling (blub divides error by dt)
-    _pad1: u32,
+    surface_clamp: u32,
     _pad2: u32,
     _pad3: u32,
 }
@@ -91,7 +91,7 @@ fn compute_density_error(@builtin(global_invocation_id) id: vec3<u32>) {
     // CRITICAL: At air interface, clamp error to >= 0 (only sparse, not crowded)
     // This prevents surface cells from getting high pressure that would push particles DOWN.
     // Interior cells with high pressure will push particles TOWARD the surface instead.
-    if (has_air_neighbor) {
+    if (has_air_neighbor && params.surface_clamp != 0u) {
         error = max(0.0, error);
     }
 

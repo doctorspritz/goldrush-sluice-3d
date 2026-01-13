@@ -166,6 +166,8 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let idx = get_idx(x, z);
     let depth = water_depth[idx];
+    let had_water = depth > 0.001;
+    let ground_before = get_ground_height(idx);
 
     // Need some water to do anything
     if (depth < 0.001) {
@@ -178,7 +180,9 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let speed = sqrt(vel_x * vel_x + vel_z * vel_z);
     let speed_sq = speed * speed;
 
-    let current_suspended = suspended_sediment[idx];
+    let max_suspended = depth * 0.5;
+    var current_suspended = min(suspended_sediment[idx], max_suspended);
+    suspended_sediment[idx] = current_suspended;
     let surface_mat = surface_material[idx];
 
     // ==========================================================================
@@ -189,12 +193,22 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (speed < SETTLING_VELOCITY) {
         // Water is essentially still - fast deposition
         let deposit_rate = K_DEPOSIT_FAST * (1.0 - speed / SETTLING_VELOCITY);
-        let deposit_amount = current_suspended * deposit_rate * params.dt;
+        var deposit_amount = current_suspended * deposit_rate * params.dt;
+        deposit_amount = min(deposit_amount, current_suspended);
+        deposit_amount = min(deposit_amount, depth);
 
         if (deposit_amount > 0.0001) {
-            suspended_sediment[idx] -= deposit_amount;
+            current_suspended -= deposit_amount;
+            suspended_sediment[idx] = current_suspended;
             sediment[idx] += deposit_amount;
             surface_material[idx] = 4u; // Fresh sediment on top
+        }
+        if (had_water) {
+            let ground_after = get_ground_height(idx);
+            let delta_ground = ground_after - ground_before;
+            if (abs(delta_ground) > 1e-6) {
+                water_depth[idx] = max(0.0, depth - delta_ground);
+            }
         }
         return; // No erosion in still water
     }
@@ -273,7 +287,8 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         // Add eroded material to suspension
         if (total_eroded > 0.0) {
-            suspended_sediment[idx] += total_eroded;
+            current_suspended = min(current_suspended + total_eroded, max_suspended);
+            suspended_sediment[idx] = current_suspended;
             surface_material[idx] = compute_surface_material(idx);
         }
     } else {
@@ -283,13 +298,24 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         if (current_suspended > capacity) {
             let excess = current_suspended - capacity;
-            let deposit_amount = excess * K_DEPOSIT_SLOW * params.dt;
+            var deposit_amount = excess * K_DEPOSIT_SLOW * params.dt;
+            deposit_amount = min(deposit_amount, current_suspended);
+            deposit_amount = min(deposit_amount, depth);
 
             if (deposit_amount > 0.0001) {
-                suspended_sediment[idx] -= deposit_amount;
+                current_suspended -= deposit_amount;
+                suspended_sediment[idx] = current_suspended;
                 sediment[idx] += deposit_amount;
                 surface_material[idx] = 4u;
             }
+        }
+    }
+
+    if (had_water) {
+        let ground_after = get_ground_height(idx);
+        let delta_ground = ground_after - ground_before;
+        if (abs(delta_ground) > 1e-6) {
+            water_depth[idx] = max(0.0, depth - delta_ground);
         }
     }
 }
@@ -419,8 +445,9 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
     // Apply transport (scaled by cell area)
     let cell_area = params.cell_size * params.cell_size;
     let new_sed = current_sed + net_sediment / cell_area;
+    let max_suspended = select(0.0, depth * 0.5, depth > 0.001);
 
     // Write to NEXT buffer (double-buffering eliminates race conditions)
     // All reads are from suspended_sediment, write to suspended_sediment_next
-    suspended_sediment_next[idx] = clamp(new_sed, 0.0, 10.0);
+    suspended_sediment_next[idx] = clamp(new_sed, 0.0, max_suspended);
 }

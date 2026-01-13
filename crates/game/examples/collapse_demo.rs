@@ -248,7 +248,10 @@ impl App {
 
     fn print_stats(&self) {
         println!("\n=== Collapse Demo Stats ===");
-        println!("Collapse sim: {}", if self.collapse_enabled { "ON" } else { "OFF" });
+        println!(
+            "Collapse sim: {}",
+            if self.collapse_enabled { "ON" } else { "OFF" }
+        );
         println!("Piles added: {}", self.pile_count);
         println!(
             "Expected angles: Sand={:.1}°, Dirt={:.1}°, Gravel={:.1}°",
@@ -425,9 +428,18 @@ impl App {
 
         println!("=== TERRAIN COLLAPSE DEMO ===");
         println!("Controls:");
-        println!("  1 - Add Sand pile (expected: {:.1}°)", TerrainMaterial::Sand.angle_of_repose().to_degrees());
-        println!("  2 - Add Dirt pile (expected: {:.1}°)", TerrainMaterial::Dirt.angle_of_repose().to_degrees());
-        println!("  3 - Add Gravel pile (expected: {:.1}°)", TerrainMaterial::Gravel.angle_of_repose().to_degrees());
+        println!(
+            "  1 - Add Sand pile (expected: {:.1}°)",
+            TerrainMaterial::Sand.angle_of_repose().to_degrees()
+        );
+        println!(
+            "  2 - Add Dirt pile (expected: {:.1}°)",
+            TerrainMaterial::Dirt.angle_of_repose().to_degrees()
+        );
+        println!(
+            "  3 - Add Gravel pile (expected: {:.1}°)",
+            TerrainMaterial::Gravel.angle_of_repose().to_degrees()
+        );
         println!("  C - Toggle collapse simulation");
         println!("  R - Reset world");
         println!("  WASD/Space/Shift - Move camera");

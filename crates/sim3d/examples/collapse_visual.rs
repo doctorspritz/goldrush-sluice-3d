@@ -3,7 +3,7 @@
 //! Shows material piles collapsing to their angle of repose in ASCII art.
 //! Run: cargo run -p sim3d --example collapse_visual
 
-use sim3d::{World, TerrainMaterial};
+use sim3d::{TerrainMaterial, World};
 use std::{thread, time::Duration};
 
 const WIDTH: usize = 41;
@@ -14,9 +14,18 @@ const CENTER: usize = 20;
 fn main() {
     println!("=== ANGLE OF REPOSE COLLAPSE DEMO ===\n");
     println!("Material angles:");
-    println!("  Sand:   {:.1}°", TerrainMaterial::Sand.angle_of_repose().to_degrees());
-    println!("  Dirt:   {:.1}°", TerrainMaterial::Dirt.angle_of_repose().to_degrees());
-    println!("  Gravel: {:.1}°\n", TerrainMaterial::Gravel.angle_of_repose().to_degrees());
+    println!(
+        "  Sand:   {:.1}°",
+        TerrainMaterial::Sand.angle_of_repose().to_degrees()
+    );
+    println!(
+        "  Dirt:   {:.1}°",
+        TerrainMaterial::Dirt.angle_of_repose().to_degrees()
+    );
+    println!(
+        "  Gravel: {:.1}°\n",
+        TerrainMaterial::Gravel.angle_of_repose().to_degrees()
+    );
 
     // Create flat world
     let mut world = World::new(WIDTH, DEPTH, CELL_SIZE, 0.0);
@@ -39,7 +48,10 @@ fn main() {
     world.terrain_sediment[idx] = pile_height;
 
     println!("Initial pile: {:.2}m tall at center", pile_height);
-    println!("Expected final angle: {:.1}° (sand)\n", TerrainMaterial::Sand.angle_of_repose().to_degrees());
+    println!(
+        "Expected final angle: {:.1}° (sand)\n",
+        TerrainMaterial::Sand.angle_of_repose().to_degrees()
+    );
 
     print_cross_section(&world, CENTER);
 
@@ -57,8 +69,20 @@ fn main() {
         let max_diff = TerrainMaterial::Sand.angle_of_repose().tan() * CELL_SIZE;
 
         if iteration % 5 == 0 {
-            println!("  Debug: center_h={:.4}, neighbor_h={:.4}", center_h, neighbor_h);
-            println!("  Debug: diff={:.4}, max_diff={:.4} ({})", diff, max_diff, if diff > max_diff { "SHOULD COLLAPSE" } else { "stable" });
+            println!(
+                "  Debug: center_h={:.4}, neighbor_h={:.4}",
+                center_h, neighbor_h
+            );
+            println!(
+                "  Debug: diff={:.4}, max_diff={:.4} ({})",
+                diff,
+                max_diff,
+                if diff > max_diff {
+                    "SHOULD COLLAPSE"
+                } else {
+                    "stable"
+                }
+            );
         }
 
         let changed = world.update_terrain_collapse();
@@ -70,8 +94,11 @@ fn main() {
 
             let (max_h, spread, slope_angle) = measure_pile(&world, CENTER);
             println!("Peak height: {:.3}m, Spread: {} cells", max_h, spread);
-            println!("Slope angle (cell-to-cell): {:.1}° (target: {:.1}°)",
-                     slope_angle, TerrainMaterial::Sand.angle_of_repose().to_degrees());
+            println!(
+                "Slope angle (cell-to-cell): {:.1}° (target: {:.1}°)",
+                slope_angle,
+                TerrainMaterial::Sand.angle_of_repose().to_degrees()
+            );
         }
 
         if !changed {
@@ -108,8 +135,12 @@ fn main() {
 
     // Print total mass check
     let total_sediment: f32 = world.terrain_sediment.iter().sum();
-    println!("\nMass conservation: {:.4} / {:.4} ({:.1}%)",
-             total_sediment, pile_height, 100.0 * total_sediment / pile_height);
+    println!(
+        "\nMass conservation: {:.4} / {:.4} ({:.1}%)",
+        total_sediment,
+        pile_height,
+        100.0 * total_sediment / pile_height
+    );
 }
 
 fn print_cross_section(world: &World, z: usize) {
