@@ -217,11 +217,13 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
         );
         let settling_rate = v_settle / depth;
         let settled_frac = min(settling_rate * params.dt, 1.0);
-        let settled_amount = suspended * settled_frac;
+        let settled_conc = suspended * settled_frac;
 
-        if (settled_amount > 0.0) {
-            suspended -= settled_amount;
-            sediment[idx] += settled_amount;
+        if (settled_conc > 0.0) {
+            // Convert concentration to height: deposit_height = concentration × depth
+            let deposit_height = settled_conc * depth;
+            suspended -= settled_conc;
+            sediment[idx] += deposit_height;
             updated_surface = true;
         }
     }
@@ -330,7 +332,9 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     if (total_eroded > 0.0 && depth > 1e-4) {
-        suspended += total_eroded;
+        // Convert height to concentration: concentration = eroded_height / depth
+        let eroded_conc = total_eroded / depth;
+        suspended += eroded_conc;
         updated_surface = true;
     }
 
