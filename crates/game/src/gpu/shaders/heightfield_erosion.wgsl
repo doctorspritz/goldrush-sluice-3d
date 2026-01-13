@@ -207,8 +207,7 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var updated_surface = false;
 
     // 1) SETTLING (independent of erosion)
-    // NOTE: suspended_sediment is stored as HEIGHT (m), not concentration,
-    // to match the flux-based transport shader expectations
+    // suspended_sediment is stored as CONCENTRATION (0-1), matching CPU world.rs:562
     if (suspended > 0.0 && depth > 1e-4) {
         let v_settle = settling_velocity(
             D50_SEDIMENT,
@@ -219,11 +218,13 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
         );
         let settling_rate = v_settle / depth;
         let settled_frac = min(settling_rate * params.dt, 1.0);
-        let settled_amount = suspended * settled_frac;
+        let settled_conc = suspended * settled_frac;
 
-        if (settled_amount > 0.0001) {
-            suspended -= settled_amount;
-            sediment[idx] += settled_amount;
+        if (settled_conc > 1e-6) {
+            // Convert concentration to height: deposit = concentration × depth
+            let deposit_height = settled_conc * depth;
+            suspended -= settled_conc;
+            sediment[idx] += deposit_height;
             updated_surface = true;
         }
     }
@@ -331,14 +332,17 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
-    // Add eroded material to suspension (stored as HEIGHT, not concentration)
-    if (total_eroded > 0.0) {
-        suspended += total_eroded;
+    // Add eroded material to suspension (stored as CONCENTRATION)
+    if (total_eroded > 0.0 && depth > 1e-4) {
+        // Convert height to concentration: concentration = height / depth
+        let eroded_conc = total_eroded / depth;
+        suspended += eroded_conc;
         updated_surface = true;
     }
 
     if (updated_surface) {
-        suspended_sediment[idx] = max(suspended, 0.0);
+        // Clamp concentration to [0, 1] (0-100%)
+        suspended_sediment[idx] = clamp(suspended, 0.0, 1.0);
         surface_material[idx] = compute_surface_material(idx);
     }
 }
@@ -403,21 +407,20 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
     
     let depth = water_depth[idx];
     let current_sed = suspended_sediment[idx];
-    
-    // Calculate local concentration
-    let local_conc = select(0.0, current_sed / depth, depth > 0.001);
-    
+
+    // suspended_sediment is already CONCENTRATION (0-1), no need to divide by depth
+    let local_conc = current_sed;
+
     var net_sediment = 0.0;
-    
+
     // X-direction flux
     // Inflow from left (flux_x[x-1] > 0 means flow from x-1 to x)
     if (x > 0) {
         let idx_left = get_idx(x - 1, z);
         let fx = flux_x[idx_left];
         if (fx > 0.0) {
-            // Inflow from left - use left cell concentration
-            let depth_left = water_depth[idx_left];
-            let conc_left = select(0.0, suspended_sediment[idx_left] / depth_left, depth_left > 0.001);
+            // Inflow from left - use left cell concentration (already concentration!)
+            let conc_left = suspended_sediment[idx_left];
             net_sediment += fx * conc_left;
         } else {
             // Outflow to left - use local concentration
@@ -432,21 +435,19 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
             // Outflow to right - use local concentration
             net_sediment -= fx * local_conc;
         } else {
-            // Inflow from right - use right cell concentration
+            // Inflow from right - use right cell concentration (already concentration!)
             let idx_right = get_idx(x + 1, z);
-            let depth_right = water_depth[idx_right];
-            let conc_right = select(0.0, suspended_sediment[idx_right] / depth_right, depth_right > 0.001);
+            let conc_right = suspended_sediment[idx_right];
             net_sediment -= fx * conc_right; // fx is negative, so this adds
         }
     }
-    
+
     // Z-direction flux (same pattern)
     if (z > 0) {
         let idx_back = get_idx(x, z - 1);
         let fz = flux_z[idx_back];
         if (fz > 0.0) {
-            let depth_back = water_depth[idx_back];
-            let conc_back = select(0.0, suspended_sediment[idx_back] / depth_back, depth_back > 0.001);
+            let conc_back = suspended_sediment[idx_back];
             net_sediment += fz * conc_back;
         } else {
             net_sediment += fz * local_conc;
@@ -459,17 +460,21 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
             net_sediment -= fz * local_conc;
         } else {
             let idx_front = get_idx(x, z + 1);
-            let depth_front = water_depth[idx_front];
-            let conc_front = select(0.0, suspended_sediment[idx_front] / depth_front, depth_front > 0.001);
+            let conc_front = suspended_sediment[idx_front];
             net_sediment -= fz * conc_front;
         }
     }
     
-    // Apply transport (scaled by cell area)
+    // Apply transport (scaled by cell area and depth)
+    // net_sediment is in (m³/s × concentration), need to convert to concentration change
     let cell_area = params.cell_size * params.cell_size;
-    let new_sed = current_sed + net_sediment / cell_area;
-
-    // Write to NEXT buffer (double-buffering eliminates race conditions)
-    // All reads are from suspended_sediment, write to suspended_sediment_next
-    suspended_sediment_next[idx] = clamp(new_sed, 0.0, 10.0);
+    if (depth > 1e-4) {
+        let delta_conc = net_sediment / (cell_area * depth);
+        let new_sed = current_sed + delta_conc;
+        // Write to NEXT buffer (double-buffering eliminates race conditions)
+        suspended_sediment_next[idx] = clamp(new_sed, 0.0, 1.0);
+    } else {
+        // No water, no transport
+        suspended_sediment_next[idx] = current_sed;
+    }
 }
