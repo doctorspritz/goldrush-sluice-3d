@@ -258,16 +258,7 @@ struct InputState {
     scroll_delta: f32,
 }
 
-struct WaterEmitter {
-    position: Vec3,
-    rate: f32, // Volume per second
-    radius: f32,
-    sediment_conc: f32,
-    overburden_conc: f32,
-    gravel_conc: f32,
-    paydirt_conc: f32,
-    enabled: bool,
-}
+use game::water_emitter::WaterEmitter;
 
 use game::gpu::heightfield::GpuHeightfield;
 
@@ -328,7 +319,9 @@ struct App {
     focus_bounds_min: Vec3,
     focus_bounds_max: Vec3,
     interaction_mode: InteractionMode,
+
     sluice_hovered: bool,
+    emitter_mesh: Option<Mesh>,
 }
 
 impl App {
@@ -411,15 +404,18 @@ impl App {
             window: None,
             gpu: None,
             world,
-            emitter: WaterEmitter {
-                position: Vec3::new(center_x as f32, terrain_y + 10.0, center_z as f32),
-                rate: 750.0,
-                radius: 15.0,
-                sediment_conc: 0.15,
-                overburden_conc: 0.05,
-                gravel_conc: 0.03,
-                paydirt_conc: 0.02,
-                enabled: true,
+            emitter: {
+                let mut e = WaterEmitter::new(
+                    Vec3::new(center_x as f32, terrain_y + 10.0, center_z as f32),
+                    7500.0, // rate
+                    15.0,   // radius
+                );
+                e.sediment_conc = 0.15;
+                e.overburden_conc = 0.05;
+                e.gravel_conc = 0.03;
+                e.paydirt_conc = 0.02;
+                e.enabled = true;
+                e
             },
             sluice_config: sluice_config.clone(),
             pending_water_emits: 0,
@@ -466,7 +462,9 @@ impl App {
             focus_bounds_min,
             focus_bounds_max,
             interaction_mode: InteractionMode::Dig,
+
             sluice_hovered: false,
+            emitter_mesh: None,
         }
     }
 
@@ -523,18 +521,11 @@ impl App {
                         });
 
                 // Update GPU emitter and dispatch (before water sim)
-                gpu.heightfield.update_emitter(
+                // Update GPU emitter and dispatch (before water sim)
+                self.emitter.update_gpu(
+                    &gpu.heightfield,
                     &gpu.queue,
-                    self.emitter.position.x,
-                    self.emitter.position.z,
-                    self.emitter.radius,
-                    self.emitter.rate,
-                    self.emitter.sediment_conc,
-                    self.emitter.overburden_conc,
-                    self.emitter.gravel_conc,
-                    self.emitter.paydirt_conc,
                     sim_dt,
-                    self.emitter.enabled,
                 );
                 gpu.heightfield.dispatch_emitter(&mut encoder);
 
@@ -762,6 +753,33 @@ impl App {
                 }
             }
             self.last_stats = Instant::now();
+        }
+
+        // Update Emitter Mesh if enabled
+        if self.emitter.enabled {
+            if let Some(gpu) = self.gpu.as_ref() {
+                let (positions, indices) = self.emitter.visualize(16);
+                let vertices: Vec<WorldVertex> = positions
+                    .iter()
+                    .map(|p| WorldVertex {
+                        position: p.to_array(),
+                        color: [0.0, 1.0, 1.0, 1.0], // Cyan
+                    })
+                    .collect();
+
+                if let Some(mesh) = self.emitter_mesh.as_mut() {
+                    mesh.update(&gpu.device, &gpu.queue, &vertices, &indices, "Emitter Mesh");
+                } else {
+                    self.emitter_mesh = Some(Mesh::new(
+                        &gpu.device,
+                        &vertices,
+                        &indices,
+                        "Emitter Mesh",
+                    ));
+                }
+            }
+        } else {
+             self.emitter_mesh = None;
         }
     }
 
@@ -1436,6 +1454,37 @@ impl App {
             self.show_water,
         );
 
+        // Render Emitter
+        if let Some(mesh) = self.emitter_mesh.as_ref() {
+             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Emitter Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &frame_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &gpu.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None, 
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            
+            rpass.set_pipeline(&gpu.pipeline);
+            rpass.set_bind_group(0, &gpu.bind_group, &[]);
+            rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            rpass.draw_indexed(0..mesh.num_indices, 0, 0..1);
+        }
+
         // ===== Render equipment geometry (sluice) =====
         // Always render sluice so it's visible on the 2.5D map for clicking
         if gpu.sluice_index_count > 0 {
@@ -1595,14 +1644,13 @@ impl ApplicationHandler for App {
                                 KeyCode::Digit2 => self.add_muddy_water_at_cursor(),
                                 KeyCode::Digit3 => {
                                     if let Some(hit) = self.raycast_terrain() {
-                                        // Place emitter above terrain
-                                        self.emitter.position = hit;
-                                        self.emitter.position.y += 2.0; // 2m above ground
-                                        self.emitter.enabled = true;
-                                        println!("Emitter placed at {:?}", self.emitter.position);
+                                        let hf_height = self.world.ground_height(hit.x as usize, hit.z as usize);
+                                        self.emitter.place_at_cursor(hit, hf_height);
+                                        self.emitter.enabled = !self.emitter.enabled; // Toggle on/off
+                                        println!("Emitter toggle: {} at {:?}", self.emitter.enabled, self.emitter.position);
                                     } else {
-                                        self.emitter.enabled = !self.emitter.enabled;
-                                        println!("Emitter enabled: {}", self.emitter.enabled);
+                                        println!("Raycast missed terrain!");
+
                                     }
                                 }
                                 // Material selection keys

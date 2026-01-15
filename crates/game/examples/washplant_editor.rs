@@ -28,7 +28,7 @@
 //!   0-9            - In test mode: select test scenario
 
 use bytemuck::{Pod, Zeroable};
-use game::example_utils::{Camera, MeshVertex, Pos3Color4Vertex, WgpuContext, SEDIMENT_SHADER, BASIC_SHADER, build_rock_mesh, create_depth_view};
+use game::example_utils::{Camera, WgpuContext, create_depth_view};
 use game::editor::{
     EditorLayout, EditorMode, EmitterPiece, GutterPiece, Rotation, Selection, ShakerDeckPiece,
     SluicePiece,
@@ -37,7 +37,7 @@ use game::gpu::flip_3d::GpuFlip3D;
 use game::gpu::fluid_renderer::ScreenSpaceFluidRenderer;
 use game::scenario::{Scenario, SimulationState};
 use game::sluice_geometry::SluiceVertex;
-use glam::{Mat3, Mat4, Vec3};
+use glam::{Mat3, Vec3};
 use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, SdfParams};
 use sim3d::test_geometry::{TestBox, TestFloor, TestSdfGenerator};
 use sim3d::{constants, FlipSimulation3D};
@@ -78,18 +78,24 @@ const MAX_GRID_WIDTH: usize = 120;
 const MAX_GRID_HEIGHT: usize = 80;
 const MAX_GRID_DEPTH: usize = 60;
 
-/// Simple random float [0, 1) using atomic counter
-fn rand_float() -> f32 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
+/// Simple deterministic PRNG (PCG32-style)
+struct SimpleRng {
+    state: u64,
+}
 
-    let seed = COUNTER.fetch_add(1, Ordering::Relaxed);
-    // Simple xorshift-style hash
-    let mut x = seed.wrapping_add(0x9E3779B97F4A7C15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
-    x = x ^ (x >> 31);
-    (x as f32) / (u64::MAX as f32)
+impl SimpleRng {
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
+    fn next_float(&mut self) -> f32 {
+        self.state = self.state.wrapping_add(1);
+        let mut x = self.state.wrapping_add(0x9E3779B97F4A7C15);
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
+        x = x ^ (x >> 31);
+        (x as f32) / (u64::MAX as f32)
+    }
 }
 
 #[repr(C)]
@@ -179,6 +185,7 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Water released at top of tilted gutter flows downward",
         watch: "PASS: Blue particles flow from high end to low end. FAIL: Water stuck, flows uphill, or wrong direction.",
         category: TestCategory::Swe,
+        scenario: None,
     },
     VisualTest {
         key: '6',
@@ -186,6 +193,7 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Flat pool of water should stay still",
         watch: "PASS: Water surface is flat, no motion. FAIL: Ripples, sloshing, or energy appearing from nowhere.",
         category: TestCategory::Swe,
+        scenario: None,
     },
     VisualTest {
         key: '7',
@@ -193,6 +201,7 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Water poured into gutter stays inside walls",
         watch: "PASS: All water remains between gutter walls. FAIL: Water leaks through walls or floor.",
         category: TestCategory::Swe,
+        scenario: None,
     },
     // ═══════════════════════════════════════════════════════════════════════════
     // SEDIMENT TESTS (Particles in fluid)
@@ -203,6 +212,7 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Drop sediment into still pool, should sink to bottom",
         watch: "PASS: Particles descend through water, rest on floor. FAIL: Float, stuck, or instant teleport.",
         category: TestCategory::Sediment,
+        scenario: None,
     },
     VisualTest {
         key: '9',
@@ -210,6 +220,7 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Sediment dropped into flowing water gets carried downstream",
         watch: "PASS: Particles move with water flow direction. FAIL: Stuck in place or move against flow.",
         category: TestCategory::Sediment,
+        scenario: None,
     },
     // ═══════════════════════════════════════════════════════════════════════════
     // INTEGRATION TESTS (Full system)
@@ -220,6 +231,7 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Gold+sand in water flow over sluice riffles, gold gets trapped",
         watch: "PASS: Yellow (gold) particles accumulate behind riffles, gray washes over. FAIL: All wash through or all stuck.",
         category: TestCategory::Sediment,
+        scenario: None,
     },
 ];
 
@@ -284,11 +296,13 @@ struct MultiGridSim {
     gold_template_idx: usize,
     sand_template_idx: usize,
 
-    // Test SDF for isolated physics tests (used instead of piece SDFs when set)
     test_sdf: Option<Vec<f32>>,
     test_sdf_dims: (usize, usize, usize),
     test_sdf_cell_size: f32,
     test_sdf_offset: Vec3,
+
+    // Deterministic RNG
+    rng: SimpleRng,
 }
 
 impl MultiGridSim {
@@ -353,6 +367,7 @@ impl MultiGridSim {
             test_sdf_dims: (0, 0, 0),
             test_sdf_cell_size: SIM_CELL_SIZE,
             test_sdf_offset: Vec3::ZERO,
+            rng: SimpleRng::new(0xDEADBEEF), // Fixed seed for determinism
         }
     }
 
@@ -730,8 +745,8 @@ impl MultiGridSim {
         let half_drop_cells = ((total_drop / 2.0) / cell_size).round() as i32;
 
         // Floor heights at inlet (left) and outlet (right)
-        let floor_j_left = base_j + half_drop_cells; // Inlet is higher
-        let floor_j_right = base_j - half_drop_cells; // Outlet is lower
+        let _floor_j_left = base_j + half_drop_cells; // Inlet is higher
+        let _floor_j_right = base_j - half_drop_cells; // Outlet is lower
 
         // Wall parameters
         let wall_height_cells = ((gutter.wall_height / cell_size).ceil() as i32).max(8);
@@ -1164,9 +1179,9 @@ impl MultiGridSim {
         for _ in 0..count {
             let spread = 0.01;
             let offset = Vec3::new(
-                (rand_float() - 0.5) * spread,
-                (rand_float() - 0.5) * spread,
-                (rand_float() - 0.5) * spread,
+                (self.rng.next_float() - 0.5) * spread,
+                (self.rng.next_float() - 0.5) * spread,
+                (self.rng.next_float() - 0.5) * spread,
             );
 
             piece.positions.push(sim_pos + offset);
@@ -1563,6 +1578,7 @@ struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
     layout: EditorLayout,
+    rng: SimpleRng,
 
     // Editor state
     mode: EditorMode,
@@ -1682,6 +1698,7 @@ impl App {
             window: None,
             gpu: None,
             layout,
+            rng: SimpleRng::new(0xCAFEBABE),
             mode: EditorMode::Select,
             selection: Selection::None,
             preview_gutter: GutterPiece::default(),
@@ -2192,7 +2209,7 @@ impl App {
             let shaker_idx = num_gutters + num_sluices;
             let gutter_idx = 0; // Transfer to first gutter (funnel below)
 
-            let deck = &self.layout.shaker_decks[0];
+            let _deck = &self.layout.shaker_decks[0];
             let gutter = &self.layout.gutters[0];
 
             // Capture region: bottom of shaker deck grid
@@ -2488,15 +2505,15 @@ impl App {
             for _ in 0..emit_count {
                 // Spray bar: spread along perpendicular axis based on width
                 let perp = Vec3::new(-base_dir.z, 0.0, base_dir.x);
-                let width_offset = (rand_float() - 0.5) * emitter.width;
+                let width_offset = (self.rng.next_float() - 0.5) * emitter.width;
                 // Small random offset in emit direction and Y for natural spray
-                let depth_offset = rand_float() * emitter.radius;
-                let y_offset = (rand_float() - 0.5) * emitter.radius * 0.5;
+                let depth_offset = self.rng.next_float() * emitter.radius;
+                let y_offset = (self.rng.next_float() - 0.5) * emitter.radius * 0.5;
                 let pos_offset = perp * width_offset + base_dir * depth_offset + Vec3::Y * y_offset;
 
                 // Random spread angles (yaw and pitch)
-                let spread_yaw = (rand_float() - 0.5) * spread_rad;
-                let spread_pitch = (rand_float() - 0.5) * spread_rad * 0.5;
+                let spread_yaw = (self.rng.next_float() - 0.5) * spread_rad;
+                let spread_pitch = (self.rng.next_float() - 0.5) * spread_rad * 0.5;
 
                 // Apply spread to base direction
                 let cy = spread_yaw.cos();
@@ -2620,15 +2637,15 @@ impl App {
             for _ in 0..emit_count {
                 // Spray bar: spread along perpendicular axis based on width
                 let perp = Vec3::new(-base_dir.z, 0.0, base_dir.x);
-                let width_offset = (rand_float() - 0.5) * emitter.width;
+                let width_offset = (multi_sim.rng.next_float() - 0.5) * emitter.width;
                 // Small random offset in emit direction and Y for natural spray
-                let depth_offset = rand_float() * emitter.radius;
-                let y_offset = (rand_float() - 0.5) * emitter.radius * 0.5;
+                let depth_offset = multi_sim.rng.next_float() * emitter.radius;
+                let y_offset = (multi_sim.rng.next_float() - 0.5) * emitter.radius * 0.5;
                 let pos_offset = perp * width_offset + base_dir * depth_offset + Vec3::Y * y_offset;
 
                 // Random spread
-                let spread_yaw = (rand_float() - 0.5) * spread_rad;
-                let spread_pitch = (rand_float() - 0.5) * spread_rad * 0.5;
+                let spread_yaw = (multi_sim.rng.next_float() - 0.5) * spread_rad;
+                let spread_pitch = (multi_sim.rng.next_float() - 0.5) * spread_rad * 0.5;
                 let cy = spread_yaw.cos();
                 let sy = spread_yaw.sin();
                 let cp = spread_pitch.cos();
@@ -2652,9 +2669,9 @@ impl App {
                 multi_sim.emit_into_piece(target_piece, world_pos, velocity, 1);
 
                 // Spawn DEM clumps alongside water (DEM_SEDIMENT_RATIO of particles are sediment)
-                if rand_float() < DEM_SEDIMENT_RATIO {
+                if multi_sim.rng.next_float() < DEM_SEDIMENT_RATIO {
                     // 20% gold, 80% sand/gangue
-                    let template_idx = if rand_float() < 0.2 {
+                    let template_idx = if multi_sim.rng.next_float() < 0.2 {
                         multi_sim.gold_template_idx
                     } else {
                         multi_sim.sand_template_idx

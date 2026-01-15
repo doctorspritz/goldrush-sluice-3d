@@ -749,10 +749,10 @@ impl GpuHeightfield {
             ),
         });
 
-        // Emitter params buffer (pos/radius/rate + world/tile dims + origin + cell_size + concs)
+        // Emitter params buffer (pos/radius/rate + vel + concs + world/tile dims + origin + cell_size)
         let emitter_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Emitter Params Buffer"),
-            size: 80, // 20 x f32/u32
+            size: 96, // Increased size for velocity
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -820,6 +820,26 @@ impl GpuHeightfield {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -850,6 +870,14 @@ impl GpuHeightfield {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: suspended_paydirt.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: water_vel_x.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: water_vel_z.as_entire_binding(),
                 },
             ],
         });
@@ -1712,6 +1740,8 @@ impl GpuHeightfield {
         overburden_conc: f32,
         gravel_conc: f32,
         paydirt_conc: f32,
+        vel_x: f32,
+        vel_z: f32,
         dt: f32,
         enabled: bool,
     ) {
@@ -1725,6 +1755,8 @@ impl GpuHeightfield {
             overburden_conc,
             gravel_conc,
             paydirt_conc,
+            vel_x,
+            vel_z,
             dt,
             enabled,
             0,
@@ -1745,6 +1777,8 @@ impl GpuHeightfield {
         overburden_conc: f32,
         gravel_conc: f32,
         paydirt_conc: f32,
+        vel_x: f32,
+        vel_z: f32,
         dt: f32,
         enabled: bool,
         origin_x: u32,
@@ -1753,8 +1787,8 @@ impl GpuHeightfield {
         tile_depth: u32,
     ) {
         // EmitterParams struct: pos_x, pos_z, radius, rate, dt, enabled, world/tile dims,
-        // origin, cell_size, concs, plus padding to 80 bytes.
-        let params: [u32; 20] = [
+        // origin, cell_size, concs, velocity, padding -> 96 bytes (24 u32s)
+        let params: [u32; 24] = [
             bytemuck::cast(pos_x),
             bytemuck::cast(pos_z),
             bytemuck::cast(radius),
@@ -1772,6 +1806,10 @@ impl GpuHeightfield {
             bytemuck::cast(overburden_conc),
             bytemuck::cast(gravel_conc),
             bytemuck::cast(paydirt_conc),
+            bytemuck::cast(vel_x),
+            bytemuck::cast(vel_z),
+            0,
+            0,
             0,
             0,
             0,

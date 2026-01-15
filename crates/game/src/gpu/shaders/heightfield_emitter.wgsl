@@ -19,9 +19,9 @@ struct EmitterParams {
     overburden_conc: f32,
     gravel_conc: f32,
     paydirt_conc: f32,
+    vel_x: f32,
+    vel_z: f32,
     _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: EmitterParams;
@@ -30,6 +30,8 @@ struct EmitterParams {
 @group(0) @binding(3) var<storage, read_write> suspended_overburden: array<f32>;
 @group(0) @binding(4) var<storage, read_write> suspended_gravel: array<f32>;
 @group(0) @binding(5) var<storage, read_write> suspended_paydirt: array<f32>;
+@group(0) @binding(6) var<storage, read_write> water_velocity_x: array<f32>;
+@group(0) @binding(7) var<storage, read_write> water_velocity_z: array<f32>;
 
 fn get_idx(x: u32, z: u32) -> u32 {
     return z * params.world_width + x;
@@ -65,7 +67,6 @@ fn add_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let depth_per_cell = (params.rate * params.dt * falloff) / area;
         
         let d0 = water_depth[idx];
-        let c0 = suspended_sediment[idx];
         let dw = depth_per_cell;
         let new_depth = d0 + dw;
         if (new_depth > 1e-6) {
@@ -74,6 +75,7 @@ fn add_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let c_grav = clamp(params.gravel_conc, 0.0, 1.0);
             let c_pay = clamp(params.paydirt_conc, 0.0, 1.0);
 
+            // Blend suspended concentrations
             let new_sed = (suspended_sediment[idx] * d0 + c_sed * dw) / new_depth;
             let new_over = (suspended_overburden[idx] * d0 + c_over * dw) / new_depth;
             let new_grav = (suspended_gravel[idx] * d0 + c_grav * dw) / new_depth;
@@ -83,6 +85,20 @@ fn add_water(@builtin(global_invocation_id) global_id: vec3<u32>) {
             suspended_overburden[idx] = clamp(new_over, 0.0, 1.0);
             suspended_gravel[idx] = clamp(new_grav, 0.0, 1.0);
             suspended_paydirt[idx] = clamp(new_pay, 0.0, 1.0);
+
+            // Blend Velocity
+            let old_vx = water_velocity_x[idx];
+            let old_vz = water_velocity_z[idx];
+            let add_vx = params.vel_x;
+            let add_vz = params.vel_z;
+            
+            // Momentum conservation: (m1*v1 + m2*v2) / (m1+m2)
+            // Here mass is proportional to depth (assuming constant density)
+            let new_vx = (old_vx * d0 + add_vx * dw) / new_depth;
+            let new_vz = (old_vz * d0 + add_vz * dw) / new_depth;
+            
+            water_velocity_x[idx] = new_vx;
+            water_velocity_z[idx] = new_vz;
         }
         water_depth[idx] = new_depth;
     }
