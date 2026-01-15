@@ -28,6 +28,7 @@
 //!   0-9            - In test mode: select test scenario
 
 use bytemuck::{Pod, Zeroable};
+use game::example_utils::{Camera, MeshVertex, Pos3Color4Vertex, WgpuContext, SEDIMENT_SHADER, BASIC_SHADER, build_rock_mesh, create_depth_view};
 use game::editor::{
     EditorLayout, EditorMode, EmitterPiece, GutterPiece, Rotation, Selection, ShakerDeckPiece,
     SluicePiece,
@@ -1545,10 +1546,7 @@ struct App {
     preview_shaker_deck: ShakerDeckPiece,
 
     // Camera state
-    camera_yaw: f32,
-    camera_pitch: f32,
-    camera_distance: f32,
-    camera_target: Vec3,
+    camera: Camera,
 
     // Input state
     mouse_pressed: bool,
@@ -1579,10 +1577,7 @@ struct App {
 }
 
 struct GpuState {
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
+    ctx: WgpuContext,
 
     // Mesh rendering
     mesh_pipeline: wgpu::RenderPipeline,
@@ -1592,7 +1587,7 @@ struct GpuState {
     bind_group: wgpu::BindGroup,
 
     // Depth buffer
-    depth_texture: wgpu::TextureView,
+    depth_view: wgpu::TextureView,
 }
 
 impl App {
@@ -1666,10 +1661,7 @@ impl App {
             preview_sluice: SluicePiece::default(),
             preview_emitter: EmitterPiece::default(),
             preview_shaker_deck: ShakerDeckPiece::default(),
-            camera_yaw: 0.5,
-            camera_pitch: 0.6,
-            camera_distance: 5.0,
-            camera_target: Vec3::new(0.0, 0.5, 0.0),
+            camera: Camera::new(0.5, 0.6, 5.0, Vec3::new(0.0, 0.5, 0.0)),
             mouse_pressed: false,
             last_mouse_pos: None,
             shift_pressed: false,
@@ -1695,14 +1687,6 @@ impl App {
         }
     }
 
-    fn camera_position(&self) -> Vec3 {
-        self.camera_target
-            + Vec3::new(
-                self.camera_distance * self.camera_yaw.cos() * self.camera_pitch.cos(),
-                self.camera_distance * self.camera_pitch.sin(),
-                self.camera_distance * self.camera_yaw.sin() * self.camera_pitch.cos(),
-            )
-    }
 
     // =========================================================================
     // Visual Test Mode
@@ -1795,28 +1779,28 @@ impl App {
                 // View the shaker deck and gutter flow
                 if !self.layout.shaker_decks.is_empty() {
                     let deck = &self.layout.shaker_decks[0];
-                    self.camera_target = deck.position;
+                    self.camera.target = deck.position;
                 }
-                self.camera_distance = 2.0;
-                self.camera_yaw = 0.5;
-                self.camera_pitch = 0.5;
+                self.camera.distance = 2.0;
+                self.camera.yaw = 0.5;
+                self.camera.pitch = 0.5;
             }
             TestCategory::Sediment => {
                 // View the sluice for gold capture
                 if !self.layout.sluices.is_empty() {
                     let sluice = &self.layout.sluices[0];
-                    self.camera_target = sluice.position;
+                    self.camera.target = sluice.position;
                 }
-                self.camera_distance = 1.5;
-                self.camera_yaw = 0.2;
-                self.camera_pitch = 0.3;
+                self.camera.distance = 1.5;
+                self.camera.yaw = 0.2;
+                self.camera.pitch = 0.3;
             }
             TestCategory::Terrain => {
                 // View overall system
-                self.camera_target = Vec3::new(0.0, 0.8, 0.0);
-                self.camera_distance = 3.0;
-                self.camera_yaw = 0.5;
-                self.camera_pitch = 0.6;
+                self.camera.target = Vec3::new(0.0, 0.8, 0.0);
+                self.camera.distance = 3.0;
+                self.camera.yaw = 0.5;
+                self.camera.pitch = 0.6;
             }
         }
 
@@ -1866,10 +1850,10 @@ impl App {
                 println!("  Spawned 25 particles at y=0.5, floor at y=0");
 
                 // Camera setup
-                self.camera_target = Vec3::new(0.0, 0.3, 0.0);
-                self.camera_distance = 1.5;
-                self.camera_yaw = 0.3;
-                self.camera_pitch = 0.5;
+                self.camera.target = Vec3::new(0.0, 0.3, 0.0);
+                self.camera.distance = 1.5;
+                self.camera.yaw = 0.3;
+                self.camera.pitch = 0.5;
             }
             1 => {
                 // Test 2: DEM Wall Collision
@@ -1890,10 +1874,10 @@ impl App {
                 println!("  Spawned 10 particles with sideways velocity in box");
 
                 // Camera setup
-                self.camera_target = Vec3::new(0.0, 0.15, 0.0);
-                self.camera_distance = 1.0;
-                self.camera_yaw = 0.0;
-                self.camera_pitch = 0.6;
+                self.camera.target = Vec3::new(0.0, 0.15, 0.0);
+                self.camera.distance = 1.0;
+                self.camera.yaw = 0.0;
+                self.camera.pitch = 0.6;
             }
             2 => {
                 // Test 3: DEM Density Separation
@@ -1919,10 +1903,10 @@ impl App {
                 println!("  Spawned 25 mixed gold/sand particles");
 
                 // Camera setup
-                self.camera_target = Vec3::new(0.0, 0.2, 0.0);
-                self.camera_distance = 1.0;
-                self.camera_yaw = 0.3;
-                self.camera_pitch = 0.5;
+                self.camera.target = Vec3::new(0.0, 0.2, 0.0);
+                self.camera.distance = 1.0;
+                self.camera.yaw = 0.3;
+                self.camera.pitch = 0.5;
             }
             3 => {
                 // Test 4: DEM Settling Time
@@ -1940,10 +1924,10 @@ impl App {
                 println!("  Spawned 50 particles, should settle within 5s");
 
                 // Camera setup
-                self.camera_target = Vec3::new(0.0, 0.15, 0.0);
-                self.camera_distance = 1.2;
-                self.camera_yaw = 0.4;
-                self.camera_pitch = 0.6;
+                self.camera.target = Vec3::new(0.0, 0.15, 0.0);
+                self.camera.distance = 1.2;
+                self.camera.yaw = 0.4;
+                self.camera.pitch = 0.6;
             }
             _ => {
                 println!("  Unknown DEM test index: {}", test_idx);
@@ -2004,7 +1988,7 @@ impl App {
 
         // Add a piece simulation for each gutter
         for (idx, gutter) in self.layout.gutters.iter().enumerate() {
-            let piece_idx = multi_sim.add_gutter(&gpu.device, gutter, idx);
+            let piece_idx = multi_sim.add_gutter(&gpu.ctx.device, gutter, idx);
             let piece = &multi_sim.pieces[piece_idx];
             println!(
                 "  Gutter #{}: grid {}x{}x{} at {:?}",
@@ -2014,7 +1998,7 @@ impl App {
 
         // Add a piece simulation for each sluice
         for (idx, sluice) in self.layout.sluices.iter().enumerate() {
-            let piece_idx = multi_sim.add_sluice(&gpu.device, sluice, idx);
+            let piece_idx = multi_sim.add_sluice(&gpu.ctx.device, sluice, idx);
             let piece = &multi_sim.pieces[piece_idx];
             println!(
                 "  Sluice #{}: grid {}x{}x{} at {:?}",
@@ -2024,7 +2008,7 @@ impl App {
 
         // Add a piece simulation for each shaker deck
         for (idx, deck) in self.layout.shaker_decks.iter().enumerate() {
-            let piece_idx = multi_sim.add_shaker_deck(&gpu.device, deck, idx);
+            let piece_idx = multi_sim.add_shaker_deck(&gpu.ctx.device, deck, idx);
             let piece = &multi_sim.pieces[piece_idx];
             println!(
                 "  ShakerDeck #{}: grid {}x{}x{} at {:?}",
@@ -2175,9 +2159,9 @@ impl App {
         }
 
         // Create fluid renderer
-        let mut fluid_renderer = ScreenSpaceFluidRenderer::new(&gpu.device, gpu.config.format);
+        let mut fluid_renderer = ScreenSpaceFluidRenderer::new(&gpu.ctx.device, gpu.ctx.config.format);
         fluid_renderer.particle_radius = SIM_CELL_SIZE * 0.5;
-        fluid_renderer.resize(&gpu.device, gpu.config.width, gpu.config.height);
+        fluid_renderer.resize(&gpu.ctx.device, gpu.ctx.config.width, gpu.ctx.config.height);
 
         self.multi_sim = Some(multi_sim);
         self.fluid_renderer = Some(fluid_renderer);
@@ -2886,31 +2870,31 @@ impl App {
             // WASD camera movement
             KeyCode::KeyW => {
                 // Move camera target forward (in camera's look direction on XZ plane)
-                let forward = Vec3::new(-self.camera_yaw.sin(), 0.0, -self.camera_yaw.cos());
-                self.camera_target += forward * MOVE_STEP * 2.0;
+                let forward = Vec3::new(-self.camera.yaw.sin(), 0.0, -self.camera.yaw.cos());
+                self.camera.target += forward * MOVE_STEP * 2.0;
             }
             KeyCode::KeyS if !self.shift_pressed => {
                 // Move camera target backward (opposite of forward) - but not when shift is pressed (that's save)
-                let forward = Vec3::new(-self.camera_yaw.sin(), 0.0, -self.camera_yaw.cos());
-                self.camera_target -= forward * MOVE_STEP * 2.0;
+                let forward = Vec3::new(-self.camera.yaw.sin(), 0.0, -self.camera.yaw.cos());
+                self.camera.target -= forward * MOVE_STEP * 2.0;
             }
             KeyCode::KeyA => {
                 // Move camera target left
-                let right = Vec3::new(self.camera_yaw.cos(), 0.0, -self.camera_yaw.sin());
-                self.camera_target -= right * MOVE_STEP * 2.0;
+                let right = Vec3::new(self.camera.yaw.cos(), 0.0, -self.camera.yaw.sin());
+                self.camera.target -= right * MOVE_STEP * 2.0;
             }
             KeyCode::KeyD => {
                 // Move camera target right
-                let right = Vec3::new(self.camera_yaw.cos(), 0.0, -self.camera_yaw.sin());
-                self.camera_target += right * MOVE_STEP * 2.0;
+                let right = Vec3::new(self.camera.yaw.cos(), 0.0, -self.camera.yaw.sin());
+                self.camera.target += right * MOVE_STEP * 2.0;
             }
             KeyCode::KeyQ => {
                 // Move camera target down
-                self.camera_target.y -= MOVE_STEP * 2.0;
+                self.camera.target.y -= MOVE_STEP * 2.0;
             }
             KeyCode::KeyE => {
                 // Move camera target up
-                self.camera_target.y += MOVE_STEP * 2.0;
+                self.camera.target.y += MOVE_STEP * 2.0;
             }
 
             KeyCode::KeyN => {
@@ -3640,57 +3624,11 @@ impl App {
     }
 
     async fn init_gpu(&mut self, window: Arc<Window>) {
-        let size = window.inner_size();
+        let ctx = WgpuContext::init(window.clone()).await;
+        let device = &ctx.device;
+        let format = ctx.config.format;
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        });
-
-        let surface = instance.create_surface(window.clone()).unwrap();
-
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .unwrap();
-
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits {
-                        max_storage_buffers_per_shader_stage: 16,
-                        ..wgpu::Limits::default()
-                    }
-                    .using_resolution(adapter.limits()),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                },
-                None,
-            )
-            .await
-            .unwrap();
-
-        let caps = surface.get_capabilities(&adapter);
-        let format = caps.formats[0];
-
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &config);
-
-        let depth_texture = Self::create_depth_texture(&device, size.width, size.height);
+        let depth_view = create_depth_view(device, &ctx.config);
 
         let mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Mesh Shader"),
@@ -3739,11 +3677,7 @@ impl App {
             vertex: wgpu::VertexState {
                 module: &mesh_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<SluiceVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
-                }],
+                buffers: &[SluiceVertex::buffer_layout()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -3774,33 +3708,12 @@ impl App {
         });
 
         self.gpu = Some(GpuState {
-            surface,
-            device,
-            queue,
-            config,
+            ctx,
             mesh_pipeline,
             uniform_buffer,
             bind_group,
-            depth_texture,
+            depth_view,
         });
-    }
-
-    fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        texture.create_view(&Default::default())
     }
 
     fn build_gutter_mesh(
@@ -4218,13 +4131,12 @@ impl App {
             return;
         }
 
-        let camera_pos = self.camera_position();
-        let view_matrix = Mat4::look_at_rh(camera_pos, self.camera_target, Vec3::Y);
-
         let size = self.window.as_ref().unwrap().inner_size();
         let aspect = size.width as f32 / size.height.max(1) as f32;
-        let proj_matrix = Mat4::perspective_rh(45.0_f32.to_radians(), aspect, 0.01, 100.0);
+        let view_matrix = self.camera.view_matrix();
+        let proj_matrix = self.camera.proj_matrix(aspect);
         let view_proj = proj_matrix * view_matrix;
+        let camera_pos = self.camera.position();
 
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
@@ -4250,7 +4162,7 @@ impl App {
                     // Step all piece simulations
                     if let Some(gpu) = &self.gpu {
                         let dt = 1.0 / 60.0;
-                        multi_sim.step(&gpu.device, &gpu.queue, dt);
+                        multi_sim.step(&gpu.ctx.device, &gpu.ctx.queue, dt);
                     }
 
                     // Collect all particles from all pieces in world space
@@ -4307,8 +4219,8 @@ impl App {
                 if let (Some(gpu), Some(gpu_flip)) = (&self.gpu, &mut self.gpu_flip) {
                     let dt = 1.0 / 60.0;
                     gpu_flip.step(
-                        &gpu.device,
-                        &gpu.queue,
+                        &gpu.ctx.device,
+                        &gpu.ctx.queue,
                         &mut self.positions,
                         &mut self.velocities,
                         &mut self.affine_vels,
@@ -4342,7 +4254,7 @@ impl App {
 
         // Write uniforms
         let gpu = self.gpu.as_ref().unwrap();
-        gpu.queue
+        gpu.ctx.queue
             .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Collect all meshes
@@ -4545,7 +4457,7 @@ impl App {
 
         // Create buffers
         let vertex_buffer = gpu
-            .device
+            .ctx.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
                 contents: bytemuck::cast_slice(&all_vertices),
@@ -4553,7 +4465,7 @@ impl App {
             });
 
         let index_buffer = gpu
-            .device
+            .ctx.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Index Buffer"),
                 contents: bytemuck::cast_slice(&all_indices),
@@ -4561,13 +4473,13 @@ impl App {
             });
 
         // Render
-        let output = match gpu.surface.get_current_texture() {
+        let output = match gpu.ctx.surface.get_current_texture() {
             Ok(t) => t,
             Err(_) => return,
         };
         let view = output.texture.create_view(&Default::default());
 
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        let mut encoder = gpu.ctx.device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -4585,7 +4497,7 @@ impl App {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &gpu.depth_texture,
+                    view: &gpu.depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -4606,7 +4518,7 @@ impl App {
         // For now, we render particles as simple quads in the mesh pass above.
         // The particle geometry is added before this point.
 
-        gpu.queue.submit(std::iter::once(encoder.finish()));
+        gpu.ctx.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
         self.window.as_ref().unwrap().request_redraw();
@@ -4638,9 +4550,7 @@ impl ApplicationHandler for App {
                     if let Some((lx, ly)) = self.last_mouse_pos {
                         let dx = position.x - lx;
                         let dy = position.y - ly;
-                        self.camera_yaw += dx as f32 * 0.005;
-                        self.camera_pitch =
-                            (self.camera_pitch + dy as f32 * 0.005).clamp(-1.4, 1.4);
+                        self.camera.handle_mouse_move(dx as f32 * 0.5, dy as f32 * 0.5);
                     }
                 }
                 self.last_mouse_pos = Some((position.x, position.y));
@@ -4648,9 +4558,9 @@ impl ApplicationHandler for App {
             WindowEvent::MouseWheel { delta, .. } => {
                 let scroll = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.01,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.1,
                 };
-                self.camera_distance = (self.camera_distance - scroll * 0.5).clamp(1.0, 20.0);
+                self.camera.handle_zoom(scroll * 5.0);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 // Track shift state
@@ -4669,11 +4579,8 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
-                    gpu.config.width = size.width.max(1);
-                    gpu.config.height = size.height.max(1);
-                    gpu.surface.configure(&gpu.device, &gpu.config);
-                    gpu.depth_texture =
-                        Self::create_depth_texture(&gpu.device, size.width, size.height);
+                    gpu.ctx.resize(size.width, size.height);
+                    gpu.depth_view = create_depth_view(&gpu.ctx.device, &gpu.ctx.config);
                 }
             }
             WindowEvent::RedrawRequested => self.render(),

@@ -6,6 +6,7 @@
 //! Run with: cargo run --example friction_sluice --release
 
 use bytemuck::{Pod, Zeroable};
+use game::example_utils::{Camera, MeshVertex, Pos3Color4Vertex, WgpuContext, SEDIMENT_SHADER, BASIC_SHADER, build_rock_mesh, create_depth_view};
 use game::gpu::flip_3d::GpuFlip3D;
 use game::gpu::fluid_renderer::ScreenSpaceFluidRenderer;
 use game::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder, SluiceVertex};
@@ -64,12 +65,6 @@ struct Uniforms {
     _pad: f32,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct MeshVertex {
-    position: [f32; 3],
-    normal: [f32; 3],
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -81,10 +76,7 @@ struct SedimentInstance {
 }
 
 struct GpuState {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
+    ctx: WgpuContext,
 
     // Pipelines
     sluice_pipeline: wgpu::RenderPipeline,
@@ -100,7 +92,6 @@ struct GpuState {
     sediment_instance_buffer: wgpu::Buffer,
 
     // Depth
-    depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
 }
 
@@ -131,9 +122,7 @@ struct App {
     // State
     paused: bool,
     frame: u32,
-    camera_angle: f32,
-    camera_pitch: f32,
-    camera_distance: f32,
+    camera: Camera,
     mouse_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
     water_emit_rate: usize,
@@ -299,9 +288,11 @@ impl App {
             cell_types: Vec::new(),
             paused: false,
             frame: 0,
-            camera_angle: 0.5,
-            camera_pitch: 0.4,
-            camera_distance: 4.0,
+            camera: Camera::new(0.5, 0.4, 4.0, Vec3::new(
+                (GRID_WIDTH as f32 * 0.5) * CELL_SIZE,
+                (GRID_HEIGHT as f32 * 0.2) * CELL_SIZE,
+                (GRID_DEPTH as f32 * 0.5) * CELL_SIZE,
+            )),
             mouse_pressed: false,
             last_mouse_pos: None,
             water_emit_rate: WATER_EMIT_RATE,
@@ -684,6 +675,7 @@ impl App {
                 grid_height: GRID_HEIGHT,
                 grid_depth: GRID_DEPTH,
                 cell_size: CELL_SIZE,
+                grid_offset: Vec3::ZERO,
             };
             self.dem.collision_response_only(dt, &sdf_params, true); // wet=true
 
@@ -804,7 +796,7 @@ impl App {
                 let readback = if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu)
                 {
                     gpu_flip.try_readback(
-                        &gpu.device,
+                        &gpu.ctx.device,
                         &mut self.positions,
                         &mut self.velocities,
                         &mut self.affine_vels,
@@ -846,8 +838,8 @@ impl App {
 
                 if self.gpu_needs_upload {
                     gpu_flip.step_no_readback(
-                        &gpu.device,
-                        &gpu.queue,
+                        &gpu.ctx.device,
+                        &gpu.ctx.queue,
                         &mut self.positions,
                         &mut self.velocities,
                         &mut self.affine_vels,
@@ -863,8 +855,8 @@ impl App {
                     self.gpu_needs_upload = false;
                     for _ in 1..SUBSTEPS {
                         gpu_flip.step_in_place(
-                            &gpu.device,
-                            &gpu.queue,
+                            &gpu.ctx.device,
+                            &gpu.ctx.queue,
                             particle_count as u32,
                             &self.cell_types,
                             Some(sdf),
@@ -878,8 +870,8 @@ impl App {
                 } else {
                     for _ in 0..SUBSTEPS {
                         gpu_flip.step_in_place(
-                            &gpu.device,
-                            &gpu.queue,
+                            &gpu.ctx.device,
+                            &gpu.ctx.queue,
                             particle_count as u32,
                             &self.cell_types,
                             Some(sdf),
@@ -893,7 +885,7 @@ impl App {
                 }
 
                 if schedule_readback {
-                    if gpu_flip.request_readback(&gpu.device, &gpu.queue, particle_count) {
+                    if gpu_flip.request_readback(&gpu.ctx.device, &gpu.ctx.queue, particle_count) {
                         self.gpu_readback_pending = true;
                         self.gpu_sync_substep = 0;
                     } else {
@@ -913,8 +905,8 @@ impl App {
 
                 for _ in 0..SUBSTEPS {
                     gpu_flip.step(
-                        &gpu.device,
-                        &gpu.queue,
+                        &gpu.ctx.device,
+                        &gpu.ctx.queue,
                         &mut self.positions,
                         &mut self.velocities,
                         &mut self.affine_vels,
@@ -987,35 +979,25 @@ impl App {
     fn render(&mut self) {
         let Some(gpu) = &self.gpu else { return };
 
-        let output = match gpu.surface.get_current_texture() {
+        let output = match gpu.ctx.surface.get_current_texture() {
             Ok(t) => t,
             Err(_) => return,
         };
         let view = output.texture.create_view(&Default::default());
 
         // Update uniforms
-        let center = Vec3::new(
-            GRID_WIDTH as f32 * CELL_SIZE * 0.5,
-            GRID_HEIGHT as f32 * CELL_SIZE * 0.3,
-            GRID_DEPTH as f32 * CELL_SIZE * 0.5,
-        );
-        let eye = center
-            + Vec3::new(
-                self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
-                self.camera_distance * self.camera_pitch.sin(),
-                self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
-            );
-        let view_matrix = Mat4::look_at_rh(eye, center, Vec3::Y);
-        let aspect = gpu.config.width as f32 / gpu.config.height as f32;
-        let proj_matrix = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, aspect, 0.01, 100.0);
+        let aspect = gpu.ctx.config.width as f32 / gpu.ctx.config.height as f32;
+        let view_matrix = self.camera.view_matrix();
+        let proj_matrix = self.camera.proj_matrix(aspect);
         let view_proj = proj_matrix * view_matrix;
+        let eye = self.camera.position();
 
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             camera_pos: eye.to_array(),
             _pad: 0.0,
         };
-        gpu.queue
+        gpu.ctx.queue
             .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Build sediment instances from DEM clumps
@@ -1040,14 +1022,14 @@ impl App {
             .collect();
 
         if !sediment_instances.is_empty() {
-            gpu.queue.write_buffer(
+            gpu.ctx.queue.write_buffer(
                 &gpu.sediment_instance_buffer,
                 0,
                 bytemuck::cast_slice(&sediment_instances),
             );
         }
 
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        let mut encoder = gpu.ctx.device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -1099,8 +1081,8 @@ impl App {
             let active_count = self.sim.particles.list.len() as u32;
             if let Some(fluid_renderer) = &self.fluid_renderer {
                 fluid_renderer.render(
-                    &gpu.device,
-                    &gpu.queue,
+                    &gpu.ctx.device,
+                    &gpu.ctx.queue,
                     &mut encoder,
                     &view,
                     gpu_flip,
@@ -1108,84 +1090,31 @@ impl App {
                     view_matrix.to_cols_array_2d(),
                     proj_matrix.to_cols_array_2d(),
                     eye.to_array(),
-                    gpu.config.width,
-                    gpu.config.height,
+                    gpu.ctx.config.width,
+                    gpu.ctx.config.height,
                 );
             }
         }
 
-        gpu.queue.submit(std::iter::once(encoder.finish()));
+        gpu.ctx.queue.submit(std::iter::once(encoder.finish()));
         output.present();
     }
 
     fn init_gpu(&mut self, window: Arc<Window>) {
-        let size = window.inner_size();
-
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
-
-        let surface = instance.create_surface(window.clone()).unwrap();
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .unwrap();
-
-        let (device, queue) = pollster::block_on(
-            adapter.request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits {
-                        max_storage_buffers_per_shader_stage: 16,
-                        ..wgpu::Limits::default()
-                    }
-                    .using_resolution(adapter.limits()),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                },
-                None,
-            ),
-        )
-        .unwrap();
-
-        let caps = surface.get_capabilities(&adapter);
-        let format = caps
-            .formats
-            .iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(caps.formats[0]);
-
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &config);
-
-        let mut fluid_renderer = ScreenSpaceFluidRenderer::new(&device, config.format);
-        fluid_renderer.particle_radius = CELL_SIZE * 0.5;
-        fluid_renderer.resize(&device, config.width, config.height);
-        self.fluid_renderer = Some(fluid_renderer);
+        let ctx = pollster::block_on(WgpuContext::init(window.clone()));
+        let device = &ctx.device;
+        let queue = &ctx.queue;
+        let format = ctx.config.format;
 
         // Build sluice mesh
         self.sluice_builder
             .build_mesh(|i, j, k| self.sim.grid.is_solid(i, j, k));
-        self.sluice_builder.upload(&device);
+        self.sluice_builder.upload(device);
 
         // Create shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(BASIC_SHADER.into()),
         });
 
         // Uniform buffer
@@ -1379,11 +1308,17 @@ impl App {
         });
 
         // Depth texture
-        let (depth_texture, depth_view) = create_depth_texture(&device, &config);
+        let depth_view = create_depth_view(device, &ctx.config);
+
+        // Screen space fluid renderer
+        let mut fluid_renderer = ScreenSpaceFluidRenderer::new(device, format);
+        fluid_renderer.particle_radius = CELL_SIZE * 0.5;
+        fluid_renderer.resize(device, ctx.config.width, ctx.config.height);
+        self.fluid_renderer = Some(fluid_renderer);
 
         // GPU FLIP
         let mut gpu_flip = GpuFlip3D::new(
-            &device,
+            device,
             GRID_WIDTH as u32,
             GRID_HEIGHT as u32,
             GRID_DEPTH as u32,
@@ -1412,10 +1347,7 @@ impl App {
         gpu_flip.gold_flake_lift = 0.6;
 
         self.gpu = Some(GpuState {
-            device,
-            queue,
-            surface,
-            config,
+            ctx,
             sluice_pipeline,
             sediment_pipeline,
             uniform_buffer,
@@ -1425,7 +1357,6 @@ impl App {
             rock_mesh_vertex_buffer,
             rock_mesh_vertex_count,
             sediment_instance_buffer,
-            depth_texture,
             depth_view,
         });
         self.gpu_flip = Some(gpu_flip);
@@ -1449,16 +1380,10 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
-                    gpu.config.width = size.width.max(1);
-                    gpu.config.height = size.height.max(1);
-                    gpu.surface.configure(&gpu.device, &gpu.config);
-                    // Recreate depth texture for new size
-                    let (depth_texture, depth_view) =
-                        create_depth_texture(&gpu.device, &gpu.config);
-                    gpu.depth_texture = depth_texture;
-                    gpu.depth_view = depth_view;
+                    gpu.ctx.resize(size.width.max(1), size.height.max(1));
+                    gpu.depth_view = create_depth_view(&gpu.ctx.device, &gpu.ctx.config);
                     if let Some(fluid_renderer) = &mut self.fluid_renderer {
-                        fluid_renderer.resize(&gpu.device, gpu.config.width, gpu.config.height);
+                        fluid_renderer.resize(&gpu.ctx.device, gpu.ctx.config.width, gpu.ctx.config.height);
                     }
                 }
             }
@@ -1515,8 +1440,7 @@ impl ApplicationHandler for App {
                     if let Some((lx, ly)) = self.last_mouse_pos {
                         let dx = position.x - lx;
                         let dy = position.y - ly;
-                        self.camera_angle -= dx as f32 * 0.01;
-                        self.camera_pitch = (self.camera_pitch + dy as f32 * 0.01).clamp(-1.4, 1.4);
+                        self.camera.handle_mouse_move(dx as f32, dy as f32);
                     }
                 }
                 self.last_mouse_pos = Some((position.x, position.y));
@@ -1524,9 +1448,9 @@ impl ApplicationHandler for App {
             WindowEvent::MouseWheel { delta, .. } => {
                 let scroll = match delta {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => y,
-                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.01,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.1,
                 };
-                self.camera_distance = (self.camera_distance - scroll * 0.3).clamp(1.0, 15.0);
+                self.camera.handle_zoom(scroll);
             }
             WindowEvent::RedrawRequested => {
                 self.update();
@@ -1546,227 +1470,6 @@ fn rand_float() -> f32 {
         SEED = SEED.wrapping_mul(1103515245).wrapping_add(12345);
         (SEED as f32) / (u32::MAX as f32)
     }
-}
-
-const SHADER: &str = r#"
-struct Uniforms {
-    view_proj: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-}
-
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
-
-struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) color: vec4<f32>,
-}
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-}
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = uniforms.view_proj * vec4<f32>(in.position, 1.0);
-    out.color = in.color;
-    return out;
-}
-
-struct ParticleInput {
-    @location(0) quad_pos: vec2<f32>,
-    @location(2) position: vec3<f32>,
-    @location(3) color: vec4<f32>,
-}
-
-@vertex
-fn vs_particle(in: ParticleInput) -> VertexOutput {
-    var out: VertexOutput;
-    let size = 0.008;
-    let world_pos = in.position + vec3<f32>(in.quad_pos * size, 0.0);
-    out.clip_position = uniforms.view_proj * vec4<f32>(world_pos, 1.0);
-    out.color = in.color;
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return in.color;
-}
-"#;
-
-const SEDIMENT_SHADER: &str = r#"
-struct Uniforms {
-    view_proj: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-}
-
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
-
-struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) instance_pos: vec3<f32>,
-    @location(3) instance_scale: f32,
-    @location(4) instance_rot: vec4<f32>,
-    @location(5) color: vec4<f32>,
-}
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-}
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    let scaled = in.position * in.instance_scale;
-    let world_pos = in.instance_pos + quat_rotate(in.instance_rot, scaled);
-    let normal = normalize(quat_rotate(in.instance_rot, in.normal));
-    let light_dir = normalize(vec3<f32>(0.4, 1.0, 0.2));
-    let diffuse = max(dot(normal, light_dir), 0.0);
-    let view_dir = normalize(uniforms.camera_pos - world_pos);
-    let rim = pow(1.0 - max(dot(normal, view_dir), 0.0), 2.0);
-    let shade = 0.35 + 0.65 * diffuse;
-    let tint = in.color.rgb * shade + vec3<f32>(0.08) * rim;
-
-    var out: VertexOutput;
-    out.clip_position = uniforms.view_proj * vec4<f32>(world_pos, 1.0);
-    out.color = vec4<f32>(tint, in.color.a);
-    return out;
-}
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return in.color;
-}
-
-fn quat_rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
-    let qv = q.xyz;
-    let t = 2.0 * cross(qv, v);
-    return v + q.w * t + cross(qv, t);
-}
-"#;
-
-/// Build an icosahedron mesh with slight jitter for rock-like appearance
-fn build_rock_mesh() -> Vec<MeshVertex> {
-    let phi = (1.0 + 5.0_f32.sqrt()) * 0.5;
-    let inv_len = 1.0 / (1.0 + phi * phi).sqrt();
-    let a = inv_len;
-    let b = phi * inv_len;
-
-    // Icosahedron vertices with jitter
-    let mut verts = [
-        Vec3::new(-a, b, 0.0),
-        Vec3::new(a, b, 0.0),
-        Vec3::new(-a, -b, 0.0),
-        Vec3::new(a, -b, 0.0),
-        Vec3::new(0.0, -a, b),
-        Vec3::new(0.0, a, b),
-        Vec3::new(0.0, -a, -b),
-        Vec3::new(0.0, a, -b),
-        Vec3::new(b, 0.0, -a),
-        Vec3::new(b, 0.0, a),
-        Vec3::new(-b, 0.0, -a),
-        Vec3::new(-b, 0.0, a),
-    ];
-
-    // Apply slight jitter for rock-like appearance
-    let seed = 0xB2D4_09A7_u32;
-    for (idx, pos) in verts.iter_mut().enumerate() {
-        let idx_u = idx as u32;
-        let radial = 1.0 + 0.08 * hash_to_unit(seed ^ idx_u.wrapping_mul(11));
-        let lateral = Vec3::new(
-            hash_to_unit(seed ^ idx_u.wrapping_mul(13)),
-            hash_to_unit(seed ^ idx_u.wrapping_mul(17)),
-            hash_to_unit(seed ^ idx_u.wrapping_mul(19)),
-        ) * 0.04;
-        *pos = (*pos * radial) + lateral;
-    }
-
-    // Normalize to unit sphere
-    let mut max_len = 0.0_f32;
-    for pos in &verts {
-        max_len = max_len.max(pos.length());
-    }
-    if max_len > 0.0 {
-        for pos in &mut verts {
-            *pos /= max_len;
-        }
-    }
-
-    // Icosahedron faces
-    let indices: [[usize; 3]; 20] = [
-        [0, 11, 5],
-        [0, 5, 1],
-        [0, 1, 7],
-        [0, 7, 10],
-        [0, 10, 11],
-        [1, 5, 9],
-        [5, 11, 4],
-        [11, 10, 2],
-        [10, 7, 6],
-        [7, 1, 8],
-        [3, 9, 4],
-        [3, 4, 2],
-        [3, 2, 6],
-        [3, 6, 8],
-        [3, 8, 9],
-        [4, 9, 5],
-        [2, 4, 11],
-        [6, 2, 10],
-        [8, 6, 7],
-        [9, 8, 1],
-    ];
-
-    let mut vertices = Vec::with_capacity(indices.len() * 3);
-    for tri in indices {
-        let va = verts[tri[0]];
-        let vb = verts[tri[1]];
-        let vc = verts[tri[2]];
-        let normal = (vb - va).cross(vc - va).normalize();
-        for pos in [va, vb, vc] {
-            vertices.push(MeshVertex {
-                position: pos.to_array(),
-                normal: normal.to_array(),
-            });
-        }
-    }
-
-    vertices
-}
-
-fn hash_to_unit(mut x: u32) -> f32 {
-    x ^= x >> 16;
-    x = x.wrapping_mul(0x7FEB_352D);
-    x ^= x >> 15;
-    x = x.wrapping_mul(0x846C_A68B);
-    x ^= x >> 16;
-    let unit = x as f32 / u32::MAX as f32;
-    unit * 2.0 - 1.0
-}
-
-fn create_depth_texture(
-    device: &wgpu::Device,
-    config: &wgpu::SurfaceConfiguration,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let size = wgpu::Extent3d {
-        width: config.width,
-        height: config.height,
-        depth_or_array_layers: 1,
-    };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Depth Texture"),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    (texture, view)
 }
 
 fn main() {
