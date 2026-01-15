@@ -178,13 +178,15 @@ fn bf_update_pressure(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rho = densities[i];
     let rho_err = rho - params.rest_density;
 
-    // WCSPH-style state equation: p = k * max(0, relative_density_error)
-    // Stiffness k controls how strongly pressure resists compression.
-    // Higher k = stiffer fluid = more incompressible, but requires smaller dt.
-    // With Müller formula dividing by ρ², need high stiffness to resist compression.
-    let stiffness = 50000.0;
-
-    let p_new = stiffness * max(0.0, rho_err);
+    // Use Tait equation for pressure to get stronger nonlinear response near rest density.
+    // p = B * ((ρ/ρ₀)^γ - 1), γ=7 for water-like fluids, B = ρ₀ c₀² / γ.
+    let tait_gamma = 7.0;
+    let speed_of_sound = 60.0;
+    let rest = params.rest_density;
+    let B = rest * speed_of_sound * speed_of_sound / tait_gamma;
+    let rho_ratio = rho / rest;
+    let p_tait = B * (pow(rho_ratio, tait_gamma) - 1.0);
+    let p_new = max(p_tait, 0.0);
 
     pressures[i] = p_new;
 }

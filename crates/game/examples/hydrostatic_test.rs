@@ -29,6 +29,34 @@ const H: f32 = 0.04;          // Kernel radius = 2x cell size
 const DT: f32 = 1.0 / 120.0;  // 120 Hz physics (frame time)
 const SUB_STEPS: u32 = 10;    // Sub-steps per frame for stability
 const GRID_SIZE: [u32; 3] = [32, 64, 32];  // Must be big enough for SPH allocation
+const STREAM_PARTICLES: usize = 48;        // Extra stream to feed the bucket
+const STREAM_LENGTH: f32 = 0.3;
+const STREAM_HORIZONTAL_SPREAD: f32 = 0.02;
+const STREAM_VERTICAL_GAP: f32 = 0.01;
+
+struct SimpleRng {
+    state: u32,
+}
+
+impl SimpleRng {
+    fn new(seed: u32) -> Self {
+        Self { state: seed }
+    }
+
+    fn next_u32(&mut self) -> u32 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.state = x;
+        x
+    }
+
+    fn range(&mut self, lo: f32, hi: f32) -> f32 {
+        let frac = (self.next_u32() as f32) / (u32::MAX as f32);
+        lo + (hi - lo) * frac
+    }
+}
 
 // HARDCODED bucket bounds - MUST MATCH shader sph_bruteforce.wgsl
 const BUCKET_MIN: [f32; 3] = [0.1, 0.04, 0.1];
@@ -516,7 +544,7 @@ impl ApplicationHandler for App {
         });
 
         // Create SPH simulation
-        let max_particles = (PARTICLE_GRID * PARTICLE_GRID * PARTICLE_GRID) as u32;
+        let max_particles = (PARTICLE_GRID * PARTICLE_GRID * PARTICLE_GRID + STREAM_PARTICLES) as u32;
         let mut sph = GpuSph3D::new(&gpu.device, max_particles, H, DT, GRID_SIZE);
 
         // HARDCODE rest_density - calibration is broken
@@ -551,6 +579,21 @@ impl ApplicationHandler for App {
                     velocities.push(Vec3::ZERO);  // Start at rest
                 }
             }
+        }
+
+        let stream_center_x = (BUCKET_MIN[0] + BUCKET_MAX[0]) / 2.0;
+        let stream_center_z = (BUCKET_MIN[2] + BUCKET_MAX[2]) / 2.0;
+
+        let mut rng = SimpleRng::new(0xC0FFEE);
+        for i in 0..STREAM_PARTICLES {
+            let t = i as f32 / (STREAM_PARTICLES as f32 - 1.0);
+            let base_x = stream_center_x - (STREAM_LENGTH * 0.5) + t * STREAM_LENGTH;
+            let offset_x = base_x + rng.range(-STREAM_HORIZONTAL_SPREAD, STREAM_HORIZONTAL_SPREAD);
+            let offset_z = stream_center_z + rng.range(-STREAM_HORIZONTAL_SPREAD, STREAM_HORIZONTAL_SPREAD);
+            let offset_y = BUCKET_MAX[1] + 0.02 + i as f32 * STREAM_VERTICAL_GAP;
+
+            positions.push(Vec3::new(offset_x, offset_y, offset_z));
+            velocities.push(Vec3::new(rng.range(-0.01, 0.01), -0.35, rng.range(-0.01, 0.01)));
         }
 
         // Record initial Y bounds
