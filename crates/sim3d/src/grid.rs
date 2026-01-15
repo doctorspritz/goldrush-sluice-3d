@@ -1,9 +1,10 @@
 //! 3D MAC (Marker-and-Cell) staggered grid for incompressible fluid simulation.
 
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 
 /// Cell classification for pressure solve.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum CellType {
     /// Solid obstacle (no flow)
     Solid,
@@ -22,6 +23,7 @@ pub enum CellType {
 /// - w (Z-velocity) on XY faces at z = k * dx
 ///
 /// Pressure and cell type are stored at cell centers.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Grid3D {
     /// Number of cells in X direction
     pub width: usize,

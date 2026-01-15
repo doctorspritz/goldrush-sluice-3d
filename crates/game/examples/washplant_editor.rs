@@ -35,11 +35,12 @@ use game::editor::{
 };
 use game::gpu::flip_3d::GpuFlip3D;
 use game::gpu::fluid_renderer::ScreenSpaceFluidRenderer;
+use game::scenario::{Scenario, SimulationState};
 use game::sluice_geometry::SluiceVertex;
 use glam::{Mat3, Mat4, Vec3};
 use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, SdfParams};
 use sim3d::test_geometry::{TestBox, TestFloor, TestSdfGenerator};
-use sim3d::FlipSimulation3D;
+use sim3d::{constants, FlipSimulation3D};
 use std::path::Path;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -62,13 +63,13 @@ const SIM_CELL_SIZE: f32 = 0.025; // 2.5cm cells (larger for speed)
 const SIM_MAX_PARTICLES: usize = 50_000;
 const SIM_PRESSURE_ITERS: usize = 30; // Reduced for speed
 const SIM_SUBSTEPS: u32 = 2;
-const SIM_GRAVITY: f32 = -9.8;
+const SIM_GRAVITY: f32 = constants::GRAVITY;
 
 // DEM constants
 const DEM_CLUMP_RADIUS: f32 = 0.008; // 8mm clumps
-const DEM_GOLD_DENSITY: f32 = 19300.0; // kg/m³
-const DEM_SAND_DENSITY: f32 = 2650.0; // kg/m³
-const DEM_WATER_DENSITY: f32 = 1000.0; // kg/m³
+const DEM_GOLD_DENSITY: f32 = constants::GOLD_DENSITY;
+const DEM_SAND_DENSITY: f32 = constants::GANGUE_DENSITY;
+const DEM_WATER_DENSITY: f32 = constants::WATER_DENSITY;
 const DEM_DRAG_COEFF: f32 = 5.0; // Water drag coefficient
 const DEM_SEDIMENT_RATIO: f32 = 0.1; // 10% of particles are sediment
 
@@ -122,6 +123,7 @@ struct VisualTest {
     expect: &'static str,
     watch: &'static str,
     category: TestCategory,
+    scenario: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -142,6 +144,7 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Particles fall from height, bounce once or twice, settle on gutter floor",
         watch: "PASS: All particles rest ON floor (y > 0), none fall through. FAIL: Particles clip through floor or hover.",
         category: TestCategory::Dem,
+        scenario: Some("crates/game/scenarios/dem_floor_collision.json"),
     },
     VisualTest {
         key: '2',
@@ -149,6 +152,7 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Particles thrown sideways hit gutter wall and bounce back",
         watch: "PASS: Particles reflect off walls, stay inside gutter. FAIL: Particles pass through walls.",
         category: TestCategory::Dem,
+        scenario: Some("crates/game/scenarios/dem_wall_collision.json"),
     },
     VisualTest {
         key: '3',
@@ -156,6 +160,7 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Mix of gold (yellow, heavy) and sand (gray, light) dropped into water",
         watch: "PASS: Yellow particles sink to bottom, gray stay above. FAIL: Same height or gold on top.",
         category: TestCategory::Dem,
+        scenario: Some("crates/game/scenarios/dem_density_separation.json"),
     },
     VisualTest {
         key: '4',
@@ -163,6 +168,7 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "50 particles dropped, should all come to rest within 5 seconds",
         watch: "PASS: Motion stops, particles stationary. FAIL: Still bouncing after 5s or jittering forever.",
         category: TestCategory::Dem,
+        scenario: Some("crates/game/scenarios/dem_settling_time.json"),
     },
     // ═══════════════════════════════════════════════════════════════════════════
     // FLUID TESTS (FLIP/APIC water simulation)
@@ -286,6 +292,15 @@ struct MultiGridSim {
 }
 
 impl MultiGridSim {
+    fn create_state(&self) -> SimulationState {
+        SimulationState {
+            flips: self.pieces.iter().map(|p| p.sim.clone()).collect(),
+            dem: Some(self.dem_sim.clone()),
+        }
+    }
+}
+
+impl MultiGridSim {
     fn new() -> Self {
         // Create DEM simulation with large bounds (covers all pieces)
         let mut dem_sim = ClusterSimulation3D::new(
@@ -403,6 +418,7 @@ impl MultiGridSim {
         device: &wgpu::Device,
         gutter: &GutterPiece,
         gutter_idx: usize,
+        existing_sim: Option<FlipSimulation3D>,
     ) -> usize {
         // Calculate grid dimensions based on gutter size (use max_width for variable-width gutters)
         let cell_size = SIM_CELL_SIZE;
@@ -442,26 +458,29 @@ impl MultiGridSim {
                 - margin,
         );
 
-        let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
-        sim.pressure_iterations = SIM_PRESSURE_ITERS;
+        let mut sim = existing_sim.unwrap_or_else(|| {
+            let mut s = FlipSimulation3D::new(width, height, depth, cell_size);
+            s.pressure_iterations = SIM_PRESSURE_ITERS;
 
-        // Mark gutter solid cells (in local grid space)
-        // Use max_width for centering so both inlet and outlet widths fit
-        let gutter_local = GutterPiece {
-            id: 0, // Temporary local piece
-            position: Vec3::new(
-                margin + gutter.length / 2.0,
-                margin,
-                margin + gutter.max_width() / 2.0,
-            ),
-            rotation: Rotation::R0, // Local space, no rotation needed
-            angle_deg: gutter.angle_deg,
-            length: gutter.length,
-            width: gutter.width,
-            end_width: gutter.end_width,
-            wall_height: gutter.wall_height,
-        };
-        Self::mark_gutter_solid_cells(&mut sim, &gutter_local, cell_size);
+            // Mark gutter solid cells (in local grid space)
+            // Use max_width for centering so both inlet and outlet widths fit
+            let gutter_local = GutterPiece {
+                id: 0, // Temporary local piece
+                position: Vec3::new(
+                    margin + gutter.length / 2.0,
+                    margin,
+                    margin + gutter.max_width() / 2.0,
+                ),
+                rotation: Rotation::R0, // Local space, no rotation needed
+                angle_deg: gutter.angle_deg,
+                length: gutter.length,
+                width: gutter.width,
+                end_width: gutter.end_width,
+                wall_height: gutter.wall_height,
+            };
+            Self::mark_gutter_solid_cells(&mut s, &gutter_local, cell_size);
+            s
+        });
 
         sim.grid.compute_sdf();
 
@@ -500,6 +519,7 @@ impl MultiGridSim {
         device: &wgpu::Device,
         sluice: &SluicePiece,
         sluice_idx: usize,
+        existing_sim: Option<FlipSimulation3D>,
     ) -> usize {
         let cell_size = SIM_CELL_SIZE;
         let margin = cell_size * 4.0;
@@ -534,25 +554,28 @@ impl MultiGridSim {
                 - margin,
         );
 
-        let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
-        sim.pressure_iterations = SIM_PRESSURE_ITERS;
+        let mut sim = existing_sim.unwrap_or_else(|| {
+            let mut s = FlipSimulation3D::new(width, height, depth, cell_size);
+            s.pressure_iterations = SIM_PRESSURE_ITERS;
 
-        // Mark sluice solid cells
-        let sluice_local = SluicePiece {
-            id: 0, // Temporary local piece
-            position: Vec3::new(
-                margin + sluice.length / 2.0,
-                margin,
-                margin + sluice.width / 2.0,
-            ),
-            rotation: Rotation::R0,
-            length: sluice.length,
-            width: sluice.width,
-            slope_deg: sluice.slope_deg,
-            riffle_spacing: sluice.riffle_spacing,
-            riffle_height: sluice.riffle_height,
-        };
-        Self::mark_sluice_solid_cells(&mut sim, &sluice_local, cell_size);
+            // Mark sluice solid cells
+            let sluice_local = SluicePiece {
+                id: 0, // Temporary local piece
+                position: Vec3::new(
+                    margin + sluice.length / 2.0,
+                    margin,
+                    margin + sluice.width / 2.0,
+                ),
+                rotation: Rotation::R0,
+                length: sluice.length,
+                width: sluice.width,
+                slope_deg: sluice.slope_deg,
+                riffle_spacing: sluice.riffle_spacing,
+                riffle_height: sluice.riffle_height,
+            };
+            Self::mark_sluice_solid_cells(&mut s, &sluice_local, cell_size);
+            s
+        });
 
         sim.grid.compute_sdf();
 
@@ -591,6 +614,7 @@ impl MultiGridSim {
         device: &wgpu::Device,
         deck: &ShakerDeckPiece,
         deck_idx: usize,
+        existing_sim: Option<FlipSimulation3D>,
     ) -> usize {
         let cell_size = SIM_CELL_SIZE;
         let margin = cell_size * 4.0;
@@ -626,27 +650,30 @@ impl MultiGridSim {
                 - margin,
         );
 
-        let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
-        sim.pressure_iterations = SIM_PRESSURE_ITERS;
+        let mut sim = existing_sim.unwrap_or_else(|| {
+            let mut s = FlipSimulation3D::new(width, height, depth, cell_size);
+            s.pressure_iterations = SIM_PRESSURE_ITERS;
 
-        // Mark shaker deck solid cells (walls only - grid is porous)
-        let deck_local = ShakerDeckPiece {
-            id: 0,
-            position: Vec3::new(
-                margin + deck.length / 2.0,
-                margin,
-                margin + deck.max_width() / 2.0,
-            ),
-            rotation: Rotation::R0,
-            length: deck.length,
-            width: deck.width,
-            end_width: deck.end_width,
-            tilt_deg: deck.tilt_deg,
-            hole_size: deck.hole_size,
-            wall_height: deck.wall_height,
-            bar_thickness: deck.bar_thickness,
-        };
-        Self::mark_shaker_deck_solid_cells(&mut sim, &deck_local, cell_size);
+            // Mark shaker deck solid cells (walls only - grid is porous)
+            let deck_local = ShakerDeckPiece {
+                id: 0,
+                position: Vec3::new(
+                    margin + deck.length / 2.0,
+                    margin,
+                    margin + deck.max_width() / 2.0,
+                ),
+                rotation: Rotation::R0,
+                length: deck.length,
+                width: deck.width,
+                end_width: deck.end_width,
+                tilt_deg: deck.tilt_deg,
+                hole_size: deck.hole_size,
+                wall_height: deck.wall_height,
+                bar_thickness: deck.bar_thickness,
+            };
+            Self::mark_shaker_deck_solid_cells(&mut s, &deck_local, cell_size);
+            s
+        });
 
         sim.grid.compute_sdf();
 
@@ -1319,7 +1346,7 @@ impl MultiGridSim {
         }
 
         // Pass 3: inject into target with world-space coordinate transformation
-        const GRAVITY: f32 = 9.81;
+        const GRAVITY: f32 = -constants::GRAVITY;
 
         for (tidx, transfer) in self.transfers.iter().enumerate() {
             if transfer_data[tidx].is_empty() {
@@ -1425,14 +1452,14 @@ impl MultiGridSim {
                 let particle_volume =
                     (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
                 let total_volume = particle_volume * template.local_offsets.len() as f32;
-                let buoyancy_force = DEM_WATER_DENSITY * total_volume * 9.81;
+                let buoyancy_force = constants::WATER_DENSITY * total_volume * (-constants::GRAVITY);
 
                 // Drag force: F_d = 0.5 * C_d * ρ_water * A * v²
                 // Approximate cross-sectional area as circle with bounding radius
                 let area = std::f32::consts::PI * template.bounding_radius.powi(2);
                 let speed = clump.velocity.length();
                 let drag_force = if speed > 0.001 {
-                    0.5 * DEM_DRAG_COEFF * DEM_WATER_DENSITY * area * speed * speed
+                    0.5 * DEM_DRAG_COEFF * constants::WATER_DENSITY * area * speed * speed
                 } else {
                     0.0
                 };
@@ -1725,6 +1752,44 @@ impl App {
         }
     }
 
+    fn restore_simulation_state(&mut self, state: SimulationState) {
+        let Some(gpu) = &self.gpu else {
+            println!("Cannot restore simulation state: no GPU state!");
+            return;
+        };
+
+        let mut multi_sim = MultiGridSim::new();
+        
+        // Match flips to pieces in order: gutters, then sluices, then shaker decks
+        let mut flip_idx = 0;
+
+        for (idx, gutter) in self.layout.gutters.iter().enumerate() {
+            let existing = state.flips.get(flip_idx).cloned();
+            if existing.is_some() { flip_idx += 1; }
+            multi_sim.add_gutter(&gpu.ctx.device, gutter, idx, existing);
+        }
+
+        for (idx, sluice) in self.layout.sluices.iter().enumerate() {
+            let existing = state.flips.get(flip_idx).cloned();
+            if existing.is_some() { flip_idx += 1; }
+            multi_sim.add_sluice(&gpu.ctx.device, sluice, idx, existing);
+        }
+
+        for (idx, deck) in self.layout.shaker_decks.iter().enumerate() {
+            let existing = state.flips.get(flip_idx).cloned();
+            if existing.is_some() { flip_idx += 1; }
+            multi_sim.add_shaker_deck(&gpu.ctx.device, deck, idx, existing);
+        }
+
+        if let Some(dem) = state.dem {
+            multi_sim.dem_sim = dem;
+        }
+
+        self.multi_sim = Some(multi_sim);
+        self.is_simulating = true;
+        println!("Simulation state restored.");
+    }
+
     fn run_test(&mut self, test_idx: usize) {
         if test_idx >= VISUAL_TESTS.len() {
             println!("Invalid test index: {}", test_idx);
@@ -1761,6 +1826,31 @@ impl App {
 
     fn setup_test_scenario(&mut self, test_idx: usize) {
         let test = &VISUAL_TESTS[test_idx];
+
+        // Try to load from scenario file if defined
+        if let Some(scenario_path) = test.scenario {
+            match Scenario::load_json(Path::new(scenario_path)) {
+                Ok(scenario) => {
+                    self.layout = scenario.layout;
+                    if let Some(target) = scenario.camera_target {
+                        self.camera.target = target;
+                    }
+                    if let Some(dist) = scenario.camera_distance {
+                        self.camera.distance = dist;
+                    }
+                    if let Some(state) = scenario.state {
+                        self.restore_simulation_state(state);
+                    } else {
+                        self.start_simulation();
+                    }
+                    println!("Loaded test scenario from {}", scenario_path);
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("Failed to load scenario {}: {}. Falling back to hardcoded.", scenario_path, e);
+                }
+            }
+        }
 
         // DEM tests (0-3) use simplified test geometry for isolated physics testing
         // Other tests use the full washplant layout
@@ -1988,7 +2078,7 @@ impl App {
 
         // Add a piece simulation for each gutter
         for (idx, gutter) in self.layout.gutters.iter().enumerate() {
-            let piece_idx = multi_sim.add_gutter(&gpu.ctx.device, gutter, idx);
+            let piece_idx = multi_sim.add_gutter(&gpu.ctx.device, gutter, idx, None);
             let piece = &multi_sim.pieces[piece_idx];
             println!(
                 "  Gutter #{}: grid {}x{}x{} at {:?}",
@@ -1998,7 +2088,7 @@ impl App {
 
         // Add a piece simulation for each sluice
         for (idx, sluice) in self.layout.sluices.iter().enumerate() {
-            let piece_idx = multi_sim.add_sluice(&gpu.ctx.device, sluice, idx);
+            let piece_idx = multi_sim.add_sluice(&gpu.ctx.device, sluice, idx, None);
             let piece = &multi_sim.pieces[piece_idx];
             println!(
                 "  Sluice #{}: grid {}x{}x{} at {:?}",
@@ -2008,7 +2098,7 @@ impl App {
 
         // Add a piece simulation for each shaker deck
         for (idx, deck) in self.layout.shaker_decks.iter().enumerate() {
-            let piece_idx = multi_sim.add_shaker_deck(&gpu.ctx.device, deck, idx);
+            let piece_idx = multi_sim.add_shaker_deck(&gpu.ctx.device, deck, idx, None);
             let piece = &multi_sim.pieces[piece_idx];
             println!(
                 "  ShakerDeck #{}: grid {}x{}x{} at {:?}",
@@ -2824,21 +2914,44 @@ impl App {
                 self.adjust_selected_wall_height(0.01); // Increase
             }
 
-            // Save/Load (Ctrl+S or just hold shift and press S)
+            // Save/Load Scenario (Shift+S to save, L to load)
             KeyCode::KeyS if self.shift_pressed => {
-                let path = Path::new("editor_layout.json");
-                match self.layout.save_json(path) {
-                    Ok(_) => println!("Saved to {}", path.display()),
+                let path = Path::new("scenario.json");
+                let state = self.multi_sim.as_ref().map(|s| s.create_state());
+                let scenario = Scenario {
+                    layout: self.layout.clone(),
+                    state,
+                    name: "Current State".to_string(),
+                    description: "Saved from washplant_editor".to_string(),
+                    camera_target: Some(self.camera.target),
+                    camera_distance: Some(self.camera.distance),
+                };
+                match scenario.save_json(path) {
+                    Ok(_) => println!("Saved scenario to {}", path.display()),
                     Err(e) => eprintln!("Save failed: {}", e),
                 }
             }
             KeyCode::KeyL => {
-                let path = Path::new("editor_layout.json");
-                match EditorLayout::load_json(path) {
-                    Ok(layout) => {
-                        self.layout = layout;
+                let path = Path::new("scenario.json");
+                match Scenario::load_json(path) {
+                    Ok(scenario) => {
+                        self.layout = scenario.layout;
                         self.selection = Selection::None;
-                        println!("Loaded from {}", path.display());
+                        if let Some(target) = scenario.camera_target {
+                            self.camera.target = target;
+                        }
+                        if let Some(dist) = scenario.camera_distance {
+                            self.camera.distance = dist;
+                        }
+                        println!("Loaded scenario from {}", path.display());
+
+                        // If it has state, we need to restore the multi_sim
+                        if let Some(state) = scenario.state {
+                            self.restore_simulation_state(state);
+                        } else {
+                            println!("Scenario has no simulation state, just layout loaded.");
+                        }
+
                         self.print_status();
                     }
                     Err(e) => eprintln!("Load failed: {}", e),
@@ -5904,13 +6017,13 @@ mod tests {
                 let template = &multi_sim.dem_sim.templates[clump.template_idx];
                 let particle_volume = (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
                 let total_volume = particle_volume * template.local_offsets.len() as f32;
-                let buoyancy_force = DEM_WATER_DENSITY * total_volume * 9.81;
+                let buoyancy_force = constants::WATER_DENSITY * total_volume * (-constants::GRAVITY);
                 clump.velocity.y += buoyancy_force * dt / template.mass;
 
                 let speed = clump.velocity.length();
                 if speed > 0.001 {
                     let area = std::f32::consts::PI * template.bounding_radius.powi(2);
-                    let drag_force = 0.5 * DEM_DRAG_COEFF * DEM_WATER_DENSITY * area * speed * speed;
+                    let drag_force = 0.5 * DEM_DRAG_COEFF * constants::WATER_DENSITY * area * speed * speed;
                     let drag_dir = -clump.velocity.normalize();
                     let drag_dv = (drag_force * dt / template.mass).min(speed);
                     clump.velocity += drag_dir * drag_dv;
@@ -6026,13 +6139,13 @@ mod tests {
                 let template = &multi_sim.dem_sim.templates[clump.template_idx];
                 let particle_volume = (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
                 let total_volume = particle_volume * template.local_offsets.len() as f32;
-                let buoyancy_force = DEM_WATER_DENSITY * total_volume * 9.81;
+                let buoyancy_force = constants::WATER_DENSITY * total_volume * (-constants::GRAVITY);
                 clump.velocity.y += buoyancy_force * dt / template.mass;
 
                 let speed = clump.velocity.length();
                 if speed > 0.001 {
                     let area = std::f32::consts::PI * template.bounding_radius.powi(2);
-                    let drag_force = 0.5 * DEM_DRAG_COEFF * DEM_WATER_DENSITY * area * speed * speed;
+                    let drag_force = 0.5 * DEM_DRAG_COEFF * constants::WATER_DENSITY * area * speed * speed;
                     let drag_dir = -clump.velocity.normalize();
                     let drag_dv = (drag_force * dt / template.mass).min(speed);
                     clump.velocity += drag_dir * drag_dv;

@@ -26,7 +26,7 @@ use game::gpu::flip_3d::GpuFlip3D;
 use game::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder};
 use glam::{Mat3, Mat4, Vec3, Vec4};
 use sim3d::{
-    ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, Grid3D, SdfParams,
+    constants, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, Grid3D, SdfParams,
     TerrainMaterial, World,
 };
 use std::collections::HashSet;
@@ -71,8 +71,8 @@ const MAX_FLIP_PARTICLES: usize = 300_000;
 const WATER_EMIT_RATE: usize = 200;
 const SEDIMENT_EMIT_RATE: usize = 2;
 const PARTICLE_SIZE: f32 = DETAIL_SLUICE_CELL_SIZE * 0.6;
-const GANGUE_DENSITY: f32 = 2.7;
-const GOLD_DENSITY: f32 = 19.3;
+const GANGUE_DENSITY: f32 = constants::GANGUE_DENSITY;
+const GOLD_DENSITY: f32 = constants::GOLD_DENSITY;
 const GOLD_FRACTION: f32 = 0.05;
 const GANGUE_RADIUS_CELLS: f32 = 0.12;
 const GOLD_RADIUS_CELLS: f32 = 0.02;
@@ -344,7 +344,7 @@ impl App {
             DETAIL_FLIP_GRID_Z,
             DETAIL_FLIP_CELL_SIZE,
         );
-        flip_sim.gravity = Vec3::new(0.0, -9.8, 0.0);
+        flip_sim.gravity = Vec3::new(0.0, constants::GRAVITY, 0.0);
         flip_sim.flip_ratio = 0.95;
         flip_sim.pressure_iterations = FLIP_PRESSURE_ITERS;
 
@@ -634,7 +634,7 @@ impl App {
                             Some(&self.flip_sim.grid.sdf),
                             None, // bed_height
                             DT,   // Use same timestep as heightfield
-                            -9.8,
+                            constants::GRAVITY,
                             0.0,
                             self.flip_sim.pressure_iterations as u32,
                         );

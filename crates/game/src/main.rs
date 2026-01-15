@@ -9,7 +9,7 @@ use game::gpu::flip_3d::GpuFlip3D;
 use game::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder, SluiceVertex};
 use game::water_heightfield::{WaterHeightfieldRenderer, WaterRenderConfig, WaterVertex};
 use glam::{Mat3, Mat4, Vec3};
-use sim3d::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, SdfParams};
+use sim3d::{constants, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, SdfParams};
 use std::sync::Arc;
 use std::time::Instant;
 use wgpu::util::DeviceExt;
@@ -31,7 +31,7 @@ const GRID_HEIGHT: usize = 52; // 0.52 m
 const MAX_PARTICLES: usize = 300_000;
 
 // Simulation
-const GRAVITY: f32 = -9.8;
+const GRAVITY: f32 = constants::GRAVITY;
 const PRESSURE_ITERS: u32 = 120;
 const SUBSTEPS: u32 = 2;
 const TRACER_INTERVAL_FRAMES: u32 = 300; // 5s at 60 FPS
@@ -45,13 +45,13 @@ const GPU_SYNC_STRIDE: u32 = 4; // GPU readback cadence (frames)
 // Grain sizing (relative to cell size)
 const GANGUE_RADIUS_CELLS: f32 = 0.12; // Coarse gangue grains
 const GOLD_RADIUS_CELLS: f32 = 0.02; // Fine gold grains
-const GANGUE_DENSITY: f32 = 2.7;
-const GOLD_DENSITY: f32 = 19.3;
+const GANGUE_DENSITY: f32 = constants::GANGUE_DENSITY;
+const GOLD_DENSITY: f32 = constants::GOLD_DENSITY;
 const GOLD_FRACTION: f32 = 0.05; // 5% of sediment spawns as gold
 
 // Sediment colors
-const GANGUE_COLOR: [f32; 4] = [0.6, 0.4, 0.2, 1.0];
-const GOLD_COLOR: [f32; 4] = [0.95, 0.85, 0.2, 1.0];
+const GANGUE_COLOR: [f32; 4] = constants::GANGUE_COLOR;
+const GOLD_COLOR: [f32; 4] = constants::GOLD_COLOR;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -337,7 +337,7 @@ impl App {
             (config.floor_height_left as f32 - config.floor_height_right as f32) * config.cell_size;
         let run = config.grid_width as f32 * config.cell_size;
         let slope = rise / run;
-        9.8 * slope
+        9.81 * slope
     }
 
     fn compute_flow_metrics(&self) -> FlowMetrics {

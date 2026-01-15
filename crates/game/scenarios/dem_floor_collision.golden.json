@@ -1,0 +1,25 @@
+{
+  "scenario_name": "DEM: Floor Collision",
+  "target_frame": 300,
+  "metrics": {
+    "frame": 300,
+    "particle_count": 25,
+    "mean_velocity": [
+      2.0138538,
+      -29.846329,
+      -2.2612581
+    ],
+    "mean_density": 0.0,
+    "settled_count": 0,
+    "additional_metrics": {
+      "mean_velocity_y": -29.846329,
+      "mean_velocity_z": -2.2612581,
+      "mean_velocity_x": 2.0138538
+    }
+  },
+  "tolerances": {
+    "mean_velocity_z": 0.01,
+    "mean_velocity_x": 0.01,
+    "mean_velocity_y": 0.01
+  }
+}

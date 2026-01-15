@@ -1,16 +1,21 @@
 //! 3D rigid clumps (multi-sphere clusters) for rock/gravel prototypes.
 
+use crate::serde_utils::{
+    deserialize_mat3, deserialize_quat, deserialize_vec3, serialize_mat3, serialize_quat,
+    serialize_vec3,
+};
 use glam::{Mat3, Quat, Vec3};
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::HashMap, f32::consts::PI};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum IrregularStyle3D {
     Round,
     Sharp,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ClumpShape3D {
     Tetra,
     Cube2,
@@ -23,15 +28,39 @@ pub enum ClumpShape3D {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClumpTemplate3D {
     pub shape: ClumpShape3D,
+    #[serde(
+        serialize_with = "serialize_vec3_vec",
+        deserialize_with = "deserialize_vec3_vec"
+    )]
     pub local_offsets: Vec<Vec3>,
     pub particle_radius: f32,
     pub particle_mass: f32,
     pub mass: f32,
+    #[serde(serialize_with = "serialize_mat3", deserialize_with = "deserialize_mat3")]
     pub inertia_inv_local: Mat3,
     pub bounding_radius: f32,
+}
+
+// Helper for Vec<Vec3>
+fn serialize_vec3_vec<S>(v: &Vec<Vec3>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    use crate::serde_utils::Vec3Def;
+    let defs: Vec<Vec3Def> = v.iter().map(|&vec| vec.into()).collect();
+    defs.serialize(s)
+}
+
+fn deserialize_vec3_vec<'de, D>(d: D) -> Result<Vec<Vec3>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use crate::serde_utils::Vec3Def;
+    let defs: Vec<Vec3Def> = Vec::deserialize(d)?;
+    Ok(defs.into_iter().map(|def| def.into()).collect())
 }
 
 impl ClumpTemplate3D {
@@ -108,11 +137,15 @@ impl ClumpTemplate3D {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Clump3D {
+    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub position: Vec3,
+    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub velocity: Vec3,
+    #[serde(serialize_with = "serialize_quat", deserialize_with = "deserialize_quat")]
     pub rotation: Quat,
+    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub angular_velocity: Vec3,
     pub template_idx: usize,
 }
@@ -142,26 +175,26 @@ impl Clump3D {
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-struct SphereContactKey {
-    a: usize,
-    b: usize,
-    ia: usize,
-    ib: usize,
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SphereContactKey {
+    pub a: usize,
+    pub b: usize,
+    pub ia: usize,
+    pub ib: usize,
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-struct PlaneContactKey {
-    clump: usize,
-    particle: usize,
-    axis: u8,
-    side: i8,
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaneContactKey {
+    pub clump: usize,
+    pub particle: usize,
+    pub axis: u8,
+    pub side: i8,
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-struct SdfContactKey {
-    clump: usize,
-    particle: usize,
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SdfContactKey {
+    pub clump: usize,
+    pub particle: usize,
 }
 
 /// Parameters for SDF collision
@@ -176,9 +209,11 @@ pub struct SdfParams<'a> {
     pub grid_offset: Vec3,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterSimulation3D {
     pub templates: Vec<ClumpTemplate3D>,
     pub clumps: Vec<Clump3D>,
+    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub gravity: Vec3,
     pub restitution: f32,
     pub friction: f32,
@@ -191,11 +226,98 @@ pub struct ClusterSimulation3D {
     /// Rolling friction when wet (lower)
     pub wet_rolling_friction: f32,
     pub use_dem: bool,
+    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub bounds_min: Vec3,
+    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub bounds_max: Vec3,
-    sphere_contacts: HashMap<SphereContactKey, Vec3>,
-    plane_contacts: HashMap<PlaneContactKey, Vec3>,
-    sdf_contacts: HashMap<SdfContactKey, Vec3>,
+    #[serde(
+        serialize_with = "serialize_sphere_contacts",
+        deserialize_with = "deserialize_sphere_contacts"
+    )]
+    pub sphere_contacts: HashMap<SphereContactKey, Vec3>,
+    #[serde(
+        serialize_with = "serialize_plane_contacts",
+        deserialize_with = "deserialize_plane_contacts"
+    )]
+    pub plane_contacts: HashMap<PlaneContactKey, Vec3>,
+    #[serde(
+        serialize_with = "serialize_sdf_contacts",
+        deserialize_with = "deserialize_sdf_contacts"
+    )]
+    pub sdf_contacts: HashMap<SdfContactKey, Vec3>,
+}
+
+// Helpers for serializing HashMaps with glam types in values
+fn serialize_sphere_contacts<S>(m: &HashMap<SphereContactKey, Vec3>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use crate::serde_utils::Vec3Def;
+    let map: HashMap<SphereContactKey, Vec3Def> = m
+        .iter()
+        .map(|(&k, &v)| (k, Vec3Def::from(v)))
+        .collect();
+    map.serialize(s)
+}
+
+fn deserialize_sphere_contacts<'de, D>(d: D) -> Result<HashMap<SphereContactKey, Vec3>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use crate::serde_utils::Vec3Def;
+    let map: HashMap<SphereContactKey, Vec3Def> = HashMap::deserialize(d)?;
+    Ok(map
+        .into_iter()
+        .map(|(k, v)| (k, Vec3::from(v)))
+        .collect())
+}
+
+fn serialize_plane_contacts<S>(m: &HashMap<PlaneContactKey, Vec3>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use crate::serde_utils::Vec3Def;
+    let map: HashMap<PlaneContactKey, Vec3Def> = m
+        .iter()
+        .map(|(&k, &v)| (k, Vec3Def::from(v)))
+        .collect();
+    map.serialize(s)
+}
+
+fn deserialize_plane_contacts<'de, D>(d: D) -> Result<HashMap<PlaneContactKey, Vec3>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use crate::serde_utils::Vec3Def;
+    let map: HashMap<PlaneContactKey, Vec3Def> = HashMap::deserialize(d)?;
+    Ok(map
+        .into_iter()
+        .map(|(k, v)| (k, Vec3::from(v)))
+        .collect())
+}
+
+fn serialize_sdf_contacts<S>(m: &HashMap<SdfContactKey, Vec3>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use crate::serde_utils::Vec3Def;
+    let map: HashMap<SdfContactKey, Vec3Def> = m
+        .iter()
+        .map(|(&k, &v)| (k, Vec3Def::from(v)))
+        .collect();
+    map.serialize(s)
+}
+
+fn deserialize_sdf_contacts<'de, D>(d: D) -> Result<HashMap<SdfContactKey, Vec3>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use crate::serde_utils::Vec3Def;
+    let map: HashMap<SdfContactKey, Vec3Def> = HashMap::deserialize(d)?;
+    Ok(map
+        .into_iter()
+        .map(|(k, v)| (k, Vec3::from(v)))
+        .collect())
 }
 
 impl ClusterSimulation3D {

@@ -1,0 +1,25 @@
+{
+  "scenario_name": "DEM: Settling Time",
+  "target_frame": 300,
+  "metrics": {
+    "frame": 300,
+    "particle_count": 50,
+    "mean_velocity": [
+      -2.2239852,
+      -19.409918,
+      3.5860224
+    ],
+    "mean_density": 0.0,
+    "settled_count": 0,
+    "additional_metrics": {
+      "mean_velocity_x": -2.2239852,
+      "mean_velocity_z": 3.5860224,
+      "mean_velocity_y": -19.409918
+    }
+  },
+  "tolerances": {
+    "mean_velocity_x": 0.01,
+    "mean_velocity_y": 0.01,
+    "mean_velocity_z": 0.01
+  }
+}

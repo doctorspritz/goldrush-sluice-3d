@@ -30,11 +30,13 @@
 
 pub mod advection;
 pub mod clump;
+pub mod constants;
 pub mod grid;
 pub mod heightfield;
 pub mod kernels;
 pub mod particle;
 pub mod pressure;
+pub mod serde_utils;
 pub mod terrain_generator;
 pub mod test_geometry;
 pub mod transfer;
@@ -53,23 +55,25 @@ pub use world::{ExcavationResult, TerrainMaterial, World, WorldParams};
 
 use transfer::TransferBuffers;
 
+use crate::serde_utils::{deserialize_vec3, serialize_vec3};
+use serde::{Deserialize, Serialize};
+
 /// 3D FLIP fluid simulation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FlipSimulation3D {
     /// The MAC grid for pressure and velocity
     pub grid: Grid3D,
     /// All particles in the simulation
     pub particles: Particles3D,
-
     /// Transfer buffers (pre-allocated to avoid per-frame allocation)
-    transfer_buffers: TransferBuffers,
-
+    pub transfer_buffers: TransferBuffers,
     /// Gravity vector (default: -Y)
+    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub gravity: Vec3,
     /// FLIP/PIC blend ratio (0.97 = 97% FLIP, 3% PIC)
     pub flip_ratio: f32,
     /// Number of pressure solver iterations
     pub pressure_iterations: usize,
-
     /// Current simulation frame
     pub frame: u32,
 }

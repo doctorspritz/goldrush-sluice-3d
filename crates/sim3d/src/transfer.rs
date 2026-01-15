@@ -4,12 +4,14 @@
 //! G2P: Gather grid velocity to particles with APIC affine velocity reconstruction.
 
 use glam::{Mat3, Vec3};
+use serde::{Deserialize, Serialize};
 
 use crate::grid::Grid3D;
 use crate::kernels::{apic_d_inverse, quadratic_bspline_1d};
 use crate::particle::Particles3D;
 
-/// Pre-allocated buffers for P2G transfer (avoids allocation each frame).
+/// Particle-Grid transfer functions for 3D FLIP/APIC.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransferBuffers {
     pub u_sum: Vec<f32>,
     pub u_weight: Vec<f32>,

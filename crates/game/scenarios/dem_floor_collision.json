@@ -1,0 +1,717 @@
+{
+  "layout": {
+    "gutters": [],
+    "sluices": [],
+    "emitters": [],
+    "shaker_decks": [],
+    "test_boxes": [],
+    "test_floors": [
+      {
+        "id": 1,
+        "y": 0.0
+      }
+    ],
+    "next_id": 0
+  },
+  "state": {
+    "flips": [],
+    "dem": {
+      "templates": [
+        {
+          "shape": {
+            "Irregular": {
+              "count": 5,
+              "seed": 123,
+              "style": "Round"
+            }
+          },
+          "local_offsets": [
+            {
+              "x": 0.004563992,
+              "y": -0.005028327,
+              "z": -0.03295372
+            },
+            {
+              "x": -0.01906851,
+              "y": 0.011661218,
+              "z": 0.0013895631
+            },
+            {
+              "x": 0.015139668,
+              "y": 0.007027681,
+              "z": 0.01984559
+            },
+            {
+              "x": -0.008802751,
+              "y": 0.0087974155,
+              "z": 0.011819099
+            },
+            {
+              "x": 0.008167601,
+              "y": -0.022457987,
+              "z": -0.00010053394
+            }
+          ],
+          "particle_radius": 0.008,
+          "particle_mass": 0.0056833522,
+          "mass": 0.02841676,
+          "inertia_inv_local": {
+            "x_axis": {
+              "x": 1000000.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "y_axis": {
+              "x": 0.0,
+              "y": 1000000.0,
+              "z": 0.0
+            },
+            "z_axis": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 1000000.0
+            }
+          },
+          "bounding_radius": 0.041646127
+        }
+      ],
+      "clumps": [
+        {
+          "position": {
+            "x": -0.1,
+            "y": 0.5,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": -0.1,
+            "y": 0.53,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": -0.1,
+            "y": 0.56,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": -0.1,
+            "y": 0.59,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": -0.1,
+            "y": 0.62,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": -0.05,
+            "y": 0.5,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": -0.05,
+            "y": 0.53,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": -0.05,
+            "y": 0.56,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": -0.05,
+            "y": 0.59,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": -0.05,
+            "y": 0.62,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.0,
+            "y": 0.5,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.0,
+            "y": 0.53,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.0,
+            "y": 0.56,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.0,
+            "y": 0.59,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.0,
+            "y": 0.62,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.05,
+            "y": 0.5,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.05,
+            "y": 0.53,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.05,
+            "y": 0.56,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.05,
+            "y": 0.59,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.05,
+            "y": 0.62,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.1,
+            "y": 0.5,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.1,
+            "y": 0.53,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.1,
+            "y": 0.56,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.1,
+            "y": 0.59,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        },
+        {
+          "position": {
+            "x": 0.1,
+            "y": 0.62,
+            "z": 0.0
+          },
+          "velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "rotation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "w": 1.0
+          },
+          "angular_velocity": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "template_idx": 0
+        }
+      ],
+      "gravity": {
+        "x": 0.0,
+        "y": -9.81,
+        "z": 0.0
+      },
+      "restitution": 0.1,
+      "friction": 0.4,
+      "floor_friction": 0.6,
+      "wet_friction": 0.08,
+      "normal_stiffness": 1000.0,
+      "tangential_stiffness": 500.0,
+      "rolling_friction": 0.02,
+      "wet_rolling_friction": 0.002,
+      "use_dem": true,
+      "bounds_min": {
+        "x": -10.0,
+        "y": -2.0,
+        "z": -10.0
+      },
+      "bounds_max": {
+        "x": 20.0,
+        "y": 10.0,
+        "z": 20.0
+      },
+      "sphere_contacts": {},
+      "plane_contacts": {},
+      "sdf_contacts": {}
+    }
+  },
+  "name": "DEM: Floor Collision",
+  "description": "Particles fall from height and settle on a floor",
+  "camera_target": {
+    "x": 0.0,
+    "y": 0.3,
+    "z": 0.0
+  },
+  "camera_distance": 1.5
+}
