@@ -294,4 +294,9 @@ fn update_depth(@builtin(global_invocation_id) global_id: vec3<u32>) {
     new_depth = max(0.0, new_depth);
 
     water_depth[idx] = new_depth;
+    
+    // Apply artificial viscosity to dampen numerical oscillations
+    // This prevents water sloshing in still/settling conditions
+    water_velocity_x[idx] *= 0.99;  // 1% damping per frame
+    water_velocity_z[idx] *= 0.99;
 }

@@ -21,6 +21,8 @@ struct Uniforms {
 @group(0) @binding(10) var<storage, read> suspended_overburden_buf: array<f32>;
 @group(0) @binding(11) var<storage, read> suspended_gravel_buf: array<f32>;
 @group(0) @binding(12) var<storage, read> suspended_paydirt_buf: array<f32>;
+@group(0) @binding(13) var<storage, read> water_velocity_x_buf: array<f32>;
+@group(0) @binding(14) var<storage, read> water_velocity_z_buf: array<f32>;
 
 struct VertexInput {
     @location(0) grid_pos: vec2<f32>,
@@ -38,6 +40,7 @@ struct WaterVertexOutput {
     @location(1) depth: f32, // water depth
     @location(2) normal: vec3<f32>,
     @location(3) sediment_load: f32, // suspended sediment concentration
+    @location(4) velocity_mag: f32, // water velocity magnitude (m/s)
 }
 
 fn get_height(x: u32, z: u32) -> f32 {
@@ -604,6 +607,31 @@ fn vs_water(in: VertexInput) -> WaterVertexOutput {
     let safe_depth = max(depth, 0.01);
     out.sediment_load = suspended / safe_depth; // kg/m³ concentration
 
+    // Sample water velocity for visualization
+    // Velocities are stored at cell faces - average adjacent faces for cell-center velocity
+    var avg_vel_x = 0.0;
+    var avg_vel_z = 0.0;
+    
+    if (depth > 0.01) {  // Only compute velocity where there's water
+        // X-velocity: average of left face (idx-1) and right face (idx)
+        let vel_x_right = water_velocity_x_buf[idx];
+        var vel_x_left = 0.0;
+        if (gx > 0u) {
+            vel_x_left = water_velocity_x_buf[idx - 1u];
+        }
+        avg_vel_x = (vel_x_left + vel_x_right) * 0.5;
+        
+        // Z-velocity: average of back face (idx-width) and front face (idx)
+        let vel_z_front = water_velocity_z_buf[idx];
+        var vel_z_back = 0.0;
+        if (gz > 0u) {
+            vel_z_back = water_velocity_z_buf[idx - uniforms.grid_width];
+        }
+        avg_vel_z = (vel_z_back + vel_z_front) * 0.5;
+    }
+    
+    out.velocity_mag = sqrt(avg_vel_x * avg_vel_x + avg_vel_z * avg_vel_z);
+
     return out;
 }
 
@@ -667,6 +695,32 @@ fn fs_water(in: WaterVertexOutput) -> @location(0) vec4<f32> {
     // Blend clean to muddy based on sediment
     let water_base = mix(clean_base, muddy_base, sediment_factor);
     
+    // VELOCITY VISUALIZATION: override color based on speed
+    // Only show velocity colors where there's meaningful water depth (>5cm)
+    // Shallow water can have unstable velocity values
+    let vel = select(0.0, in.velocity_mag, in.depth > 0.05);
+    let vel_color_still = vec3<f32>(0.1, 0.2, 0.6);   // Blue - still
+    let vel_color_slow = vec3<f32>(0.0, 0.6, 0.6);    // Cyan - slow (near erosion threshold)
+    let vel_color_medium = vec3<f32>(0.2, 0.8, 0.2);  // Green - medium
+    let vel_color_fast = vec3<f32>(0.9, 0.7, 0.1);    // Yellow - fast
+    let vel_color_rapid = vec3<f32>(0.9, 0.2, 0.1);   // Red - rapid
+    
+    var velocity_color = vel_color_still;
+    if (vel < 0.05) {
+        velocity_color = mix(vel_color_still, vel_color_slow, vel / 0.05);
+    } else if (vel < 0.10) {
+        velocity_color = mix(vel_color_slow, vel_color_medium, (vel - 0.05) / 0.05);
+    } else if (vel < 0.25) {
+        velocity_color = mix(vel_color_medium, vel_color_fast, (vel - 0.10) / 0.15);
+    } else {
+        velocity_color = mix(vel_color_fast, vel_color_rapid, clamp((vel - 0.25) / 0.25, 0.0, 1.0));
+    }
+    
+    // Blend velocity color with water_base based on depth confidence
+    // Shallow water uses normal water color, deeper water shows velocity
+    let depth_confidence = smoothstep(0.03, 0.15, in.depth);
+    let final_water_base = mix(water_base, velocity_color, depth_confidence);
+    
     // Foam at edges (depth < 0.05)
     let p_noise = in.world_pos.xz * 10.0;
     let foam_noise = sin(p_noise.x + t * 0.5) * cos(p_noise.y - t * 0.3) * 0.5 + 0.5;
@@ -675,7 +729,7 @@ fn fs_water(in: WaterVertexOutput) -> @location(0) vec4<f32> {
     var foam_factor = 1.0 - smoothstep(0.0, foam_reach, in.depth);
     foam_factor = foam_factor * (0.5 + 0.5 * foam_noise); // Soften and break up the line
     
-    let water_color = mix(water_base, foam_color, foam_factor * 0.3); // Dial down foam intensity
+    let water_color = mix(final_water_base, foam_color, foam_factor * 0.3); // Dial down foam intensity
     
     // Opacity: Smooth fade-in at shorelines
     // alpha_fade goes from 0.0 at depth 0.0 to 1.0 at depth 0.1

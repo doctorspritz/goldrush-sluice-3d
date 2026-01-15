@@ -18,6 +18,56 @@ pub struct RenderUniforms {
     pub _pad: u32,
 }
 
+pub const HEIGHTFIELD_DEBUG_STATS_LEN: usize = 12;
+pub const HEIGHTFIELD_DEBUG_SCALE: f32 = 1000.0;
+
+const DBG_EROSION_CELLS: usize = 0;
+const DBG_DEPOSITION_CELLS: usize = 1;
+const DBG_EROSION_MAX_MM: usize = 2;
+const DBG_DEPOSITION_MAX_MM: usize = 3;
+const DBG_EROSION_SEDIMENT: usize = 4;
+const DBG_EROSION_OVERBURDEN: usize = 5;
+const DBG_EROSION_GRAVEL: usize = 6;
+const DBG_EROSION_PAYDIRT: usize = 7;
+const DBG_DEPOSITION_SEDIMENT: usize = 8;
+const DBG_DEPOSITION_OVERBURDEN: usize = 9;
+const DBG_DEPOSITION_GRAVEL: usize = 10;
+const DBG_DEPOSITION_PAYDIRT: usize = 11;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HeightfieldErosionDebugStats {
+    pub erosion_cells: u32,
+    pub deposition_cells: u32,
+    pub erosion_max_height: f32,
+    pub deposition_max_height: f32,
+    pub erosion_layers: [u32; 4],
+    pub deposition_layers: [u32; 4],
+}
+
+impl HeightfieldErosionDebugStats {
+    pub fn from_raw(raw: &[u32]) -> Self {
+        let get = |idx: usize| -> u32 { *raw.get(idx).unwrap_or(&0) };
+        Self {
+            erosion_cells: get(DBG_EROSION_CELLS),
+            deposition_cells: get(DBG_DEPOSITION_CELLS),
+            erosion_max_height: get(DBG_EROSION_MAX_MM) as f32 / HEIGHTFIELD_DEBUG_SCALE,
+            deposition_max_height: get(DBG_DEPOSITION_MAX_MM) as f32 / HEIGHTFIELD_DEBUG_SCALE,
+            erosion_layers: [
+                get(DBG_EROSION_SEDIMENT),
+                get(DBG_EROSION_OVERBURDEN),
+                get(DBG_EROSION_GRAVEL),
+                get(DBG_EROSION_PAYDIRT),
+            ],
+            deposition_layers: [
+                get(DBG_DEPOSITION_SEDIMENT),
+                get(DBG_DEPOSITION_OVERBURDEN),
+                get(DBG_DEPOSITION_GRAVEL),
+                get(DBG_DEPOSITION_PAYDIRT),
+            ],
+        }
+    }
+}
+
 /// GPU-accelerated Heightfield Simulation.
 ///
 /// Manages the state for:
@@ -28,6 +78,7 @@ pub struct GpuHeightfield {
     width: u32,
     depth: u32,
     cell_size: f32,
+    debug_flags: u32,
 
     // Geology Buffers
     pub bedrock_buffer: wgpu::Buffer,
@@ -36,6 +87,7 @@ pub struct GpuHeightfield {
     pub overburden_buffer: wgpu::Buffer,
     pub sediment_buffer: wgpu::Buffer, // Deposited sediment
     pub surface_material_buffer: wgpu::Buffer, // What material is on TOP (0=bed,1=pay,2=gravel,3=over,4=sed)
+    pub settling_time_buffer: wgpu::Buffer,    // u32: frames since last disturbance (for temporal stability)
 
     // Water State Buffers
     pub water_depth_buffer: wgpu::Buffer,
@@ -54,6 +106,7 @@ pub struct GpuHeightfield {
     pub water_surface_buffer: wgpu::Buffer, // Calculated as Ground + Water Depth
     pub flux_x_buffer: wgpu::Buffer,
     pub flux_z_buffer: wgpu::Buffer,
+    pub debug_stats_buffer: wgpu::Buffer,
 
     // Bind Groups
     pub params_bind_group: wgpu::BindGroup,
@@ -144,6 +197,16 @@ impl GpuHeightfield {
                 | wgpu::BufferUsages::COPY_SRC,
         });
 
+        // Settling time tracker: frames since last disturbance (starts at 0 = freshly deposited)
+        let settling_time_data = vec![0u32; (width * depth) as usize];
+        let settling_time = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Settling Time Buffer"),
+            contents: bytemuck::cast_slice(&settling_time_data),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+        });
+
         // 2. Initialize Water
         let water_depth = create_storage("Water Depth Buffer", 0.0);
         let water_vel_x = create_storage("Water Vel X Buffer", 0.0);
@@ -161,6 +224,14 @@ impl GpuHeightfield {
         let water_surface = create_storage("Water Surface Buffer", 0.0);
         let flux_x = create_storage("Flux X Buffer", 0.0);
         let flux_z = create_storage("Flux Z Buffer", 0.0);
+        let debug_stats_data = vec![0u32; HEIGHTFIELD_DEBUG_STATS_LEN];
+        let debug_stats_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Heightfield Debug Stats Buffer"),
+            contents: bytemuck::cast_slice(&debug_stats_data),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+        });
 
         // Bind Group Layouts (Placeholder - will implement in next step with proper layout)
         // For now constructing the struct fields. simpler to create layout and bindgroups here.
@@ -477,6 +548,26 @@ impl GpuHeightfield {
                     },
                     count: None,
                 }, // surface_material
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }, // settling_time
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }, // debug_stats
             ],
         });
 
@@ -507,6 +598,14 @@ impl GpuHeightfield {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: surface_material.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: settling_time.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: debug_stats_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -1120,6 +1219,26 @@ impl GpuHeightfield {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1178,6 +1297,14 @@ impl GpuHeightfield {
                 wgpu::BindGroupEntry {
                     binding: 12,
                     resource: suspended_paydirt.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: water_vel_x.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: water_vel_z.as_entire_binding(),
                 },
             ],
         });
@@ -1333,12 +1460,14 @@ impl GpuHeightfield {
             width,
             depth,
             cell_size,
+            debug_flags: 0,
             bedrock_buffer: bedrock,
             paydirt_buffer: paydirt,
             gravel_buffer: gravel,
             overburden_buffer: overburden,
             sediment_buffer: sediment,
             surface_material_buffer: surface_material,
+            settling_time_buffer: settling_time,
 
             water_depth_buffer: water_depth,
             water_velocity_x_buffer: water_vel_x,
@@ -1355,6 +1484,7 @@ impl GpuHeightfield {
             water_surface_buffer: water_surface,
             flux_x_buffer: flux_x,
             flux_z_buffer: flux_z,
+            debug_stats_buffer,
 
             terrain_bind_group,
             water_bind_group,
@@ -1516,10 +1646,58 @@ impl GpuHeightfield {
             bytemuck::cast(0.045f32), // critical_shields
             bytemuck::cast(0.01f32), // k_erosion (100x CPU rate for visibility)
             bytemuck::cast(0.05f32), // max_erosion_per_step (10x CPU, dt=0.02 → 1mm/step max)
-            0,
-            0,
+            self.debug_flags,
+            bytemuck::cast(HEIGHTFIELD_DEBUG_SCALE),
         ];
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&params));
+    }
+
+    pub fn set_debug_flags(&mut self, flags: u32) {
+        self.debug_flags = flags;
+    }
+
+    pub fn debug_flags(&self) -> u32 {
+        self.debug_flags
+    }
+
+    pub fn reset_debug_stats(&self, queue: &wgpu::Queue) {
+        let zeros = [0u32; HEIGHTFIELD_DEBUG_STATS_LEN];
+        queue.write_buffer(&self.debug_stats_buffer, 0, bytemuck::cast_slice(&zeros));
+    }
+
+    pub async fn read_debug_stats(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> HeightfieldErosionDebugStats {
+        if self.debug_flags == 0 {
+            return HeightfieldErosionDebugStats::default();
+        }
+
+        let size = (HEIGHTFIELD_DEBUG_STATS_LEN * std::mem::size_of::<u32>()) as u64;
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Heightfield Debug Stats Staging"),
+            size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(&self.debug_stats_buffer, 0, &staging, 0, size);
+        queue.submit(Some(encoder.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+
+        let data = slice.get_mapped_range();
+        let raw: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        staging.unmap();
+
+        HeightfieldErosionDebugStats::from_raw(&raw)
     }
 
     /// Update GPU emitter parameters

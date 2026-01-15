@@ -82,6 +82,7 @@ const MOUSE_SENSITIVITY: f32 = 0.003;
 
 const STEPS_PER_FRAME: usize = 10; // More steps for faster filling
 const DT: f32 = 0.02;
+const DEBUG_HEIGHTFIELD_STATS: bool = true;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InteractionMode {
@@ -737,6 +738,29 @@ impl App {
                 "Heightfield water: {:.2}, sediment: {:.2} | FLIP particles: {}",
                 water, sediment, flip_count
             );
+            if DEBUG_HEIGHTFIELD_STATS {
+                if let Some(gpu) = &self.gpu {
+                    let debug = pollster::block_on(
+                        gpu.heightfield.read_debug_stats(&gpu.device, &gpu.queue),
+                    );
+                    println!(
+                        "Erosion debug: erode_cells={} deposit_cells={} max_erode={:.6}m max_deposit={:.6}m | erode(s/o/g/p)={}/{}/{}/{} deposit(s/o/g/p)={}/{}/{}/{}",
+                        debug.erosion_cells,
+                        debug.deposition_cells,
+                        debug.erosion_max_height,
+                        debug.deposition_max_height,
+                        debug.erosion_layers[0],
+                        debug.erosion_layers[1],
+                        debug.erosion_layers[2],
+                        debug.erosion_layers[3],
+                        debug.deposition_layers[0],
+                        debug.deposition_layers[1],
+                        debug.deposition_layers[2],
+                        debug.deposition_layers[3],
+                    );
+                    gpu.heightfield.reset_debug_stats(&gpu.queue);
+                }
+            }
             self.last_stats = Instant::now();
         }
     }
@@ -1232,7 +1256,7 @@ impl App {
         });
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let heightfield = GpuHeightfield::new(
+        let mut heightfield = GpuHeightfield::new(
             &device,
             self.world.width as u32,
             self.world.depth as u32,
@@ -1240,6 +1264,10 @@ impl App {
             INITIAL_HEIGHT,
             config.format,
         );
+        if DEBUG_HEIGHTFIELD_STATS {
+            heightfield.set_debug_flags(1);
+            heightfield.reset_debug_stats(&queue);
+        }
         heightfield.upload_from_world(&queue, &self.world);
 
         // ===== Particle Rendering Setup =====
@@ -1567,9 +1595,11 @@ impl ApplicationHandler for App {
                                 KeyCode::Digit2 => self.add_muddy_water_at_cursor(),
                                 KeyCode::Digit3 => {
                                     if let Some(hit) = self.raycast_terrain() {
+                                        // Place emitter above terrain
                                         self.emitter.position = hit;
+                                        self.emitter.position.y += 2.0; // 2m above ground
                                         self.emitter.enabled = true;
-                                        println!("Emitter placed at {:?}", hit);
+                                        println!("Emitter placed at {:?}", self.emitter.position);
                                     } else {
                                         self.emitter.enabled = !self.emitter.enabled;
                                         println!("Emitter enabled: {}", self.emitter.enabled);
@@ -1606,6 +1636,20 @@ impl ApplicationHandler for App {
                                             InteractionMode::Dig
                                         }
                                     };
+                                }
+                                KeyCode::KeyE => {
+                                    self.emitter.enabled = !self.emitter.enabled;
+                                    println!("Emitter: {}", if self.emitter.enabled { "ON" } else { "OFF" });
+                                }
+                                KeyCode::KeyQ => {
+                                    // Reset emitter to river source
+                                    self.emitter.position.x = (WORLD_WIDTH as f32 * 0.5) * CELL_SIZE;
+                                    self.emitter.position.z = 5.0 * CELL_SIZE;
+                                    self.emitter.position.y = 12.0; // Above river start
+                                    self.emitter.radius = (WORLD_WIDTH as f32 * 0.05 * CELL_SIZE) * 0.8;
+                                    self.emitter.rate = 2.0;
+                                    self.emitter.enabled = true;
+                                    println!("Emitter reset to river source");
                                 }
                                 _ => {}
                             }
@@ -1678,20 +1722,181 @@ impl ApplicationHandler for App {
 }
 
 fn build_world() -> World {
-    use sim3d::{generate_klondike_terrain, TerrainConfig};
-
-    let config = TerrainConfig::default();
-    let mut world = generate_klondike_terrain(WORLD_WIDTH, WORLD_DEPTH, CELL_SIZE, &config);
-    let center = detail_center(&world);
-    carve_flat_pad(
-        &mut world,
-        center,
-        DETAIL_PAD_RADIUS,
-        DETAIL_PAD_FALLOFF,
-        DETAIL_PAD_HEIGHT_OFFSET,
-    );
+    let mut world = World::new(WORLD_WIDTH, WORLD_DEPTH, CELL_SIZE, 20.0);
+    
+    // ========== NOISE FUNCTIONS ==========
+    fn noise2d(x: f32, y: f32) -> f32 {
+        // Simple hash-based noise
+        let n = (x * 127.1 + y * 311.7).sin() * 43758.5453;
+        n.fract()
+    }
+    
+    fn smooth_noise(x: f32, y: f32, scale: f32) -> f32 {
+        let sx = x / scale;
+        let sy = y / scale;
+        let x0 = sx.floor();
+        let y0 = sy.floor();
+        let fx = sx - x0;
+        let fy = sy - y0;
+        
+        // Smooth interpolation
+        let u = fx * fx * (3.0 - 2.0 * fx);
+        let v = fy * fy * (3.0 - 2.0 * fy);
+        
+        let n00 = noise2d(x0, y0);
+        let n10 = noise2d(x0 + 1.0, y0);
+        let n01 = noise2d(x0, y0 + 1.0);
+        let n11 = noise2d(x0 + 1.0, y0 + 1.0);
+        
+        let nx0 = n00 + (n10 - n00) * u;
+        let nx1 = n01 + (n11 - n01) * u;
+        nx0 + (nx1 - nx0) * v
+    }
+    
+    fn fbm(x: f32, y: f32, octaves: u32) -> f32 {
+        let mut value = 0.0;
+        let mut amp = 0.5;
+        let mut freq = 1.0;
+        for _ in 0..octaves {
+            value += amp * smooth_noise(x * freq, y * freq, 1.0);
+            amp *= 0.5;
+            freq *= 2.0;
+        }
+        value
+    }
+    
+    // ========== VALLEY PARAMETERS ==========
+    let valley_width_cells = (WORLD_WIDTH as f32 * 0.35) as i32; // 35% of width is the valley
+    let river_width_cells = (WORLD_WIDTH as f32 * 0.08) as i32;  // 8% is the actual river
+    let center_x = WORLD_WIDTH as i32 / 2;
+    
+    // Ridge heights
+    let ridge_base = 18.0;
+    let valley_floor_base = 6.0;
+    
+    for z in 0..WORLD_DEPTH {
+        let zf = z as f32;
+        let z_progress = zf / WORLD_DEPTH as f32;
+        
+        // River gradient (drops 6m over length)
+        let river_gradient = z_progress * 6.0;
+        
+        // Meander - river curves side to side
+        let meander = ((zf * 0.015).sin() * 0.7 + (zf * 0.008).cos() * 0.3) 
+                    * valley_width_cells as f32 * 0.2;
+        let river_center = center_x as f32 + meander;
+        
+        // Pool-riffle sequence with varying amplitude
+        let pool_riffle = (zf * 0.04).sin() * 0.5 
+                        + (zf * 0.11).sin() * 0.25
+                        + (zf * 0.23).cos() * 0.15;
+        
+        for x in 0..WORLD_WIDTH {
+            let xf = x as f32;
+            let idx = world.idx(x, z);
+            
+            // Distance from river center (signed)
+            let dist_from_river = xf - river_center;
+            let abs_dist = dist_from_river.abs();
+            
+            // Large-scale terrain noise
+            let terrain_noise = fbm(xf * 0.02, zf * 0.02, 4);
+            let detail_noise = fbm(xf * 0.08, zf * 0.08, 3);
+            
+            // ========== BEDROCK ELEVATION ==========
+            let bedrock;
+            let mut gravel = 0.0;
+            let mut paydirt = 0.0;
+            let mut overburden = 0.0;
+            
+            if abs_dist < river_width_cells as f32 / 2.0 {
+                // === RIVER BED ===
+                // U-shaped channel with irregular bottom
+                let cross = (abs_dist / (river_width_cells as f32 / 2.0)).powi(2);
+                let channel_depth = 1.8 * (1.0 - cross);
+                
+                // Add rock outcrops and pools
+                let outcrop = if detail_noise > 0.7 { (detail_noise - 0.7) * 2.0 } else { 0.0 };
+                let pool_depth = if detail_noise < 0.25 { (0.25 - detail_noise) * 1.5 } else { 0.0 };
+                
+                bedrock = (valley_floor_base - river_gradient - channel_depth + pool_riffle + outcrop - pool_depth).max(0.5);
+                
+                // Gravel deposits in pools and behind outcrops
+                gravel = 0.15 + rand_float() * 0.2;
+                if detail_noise < 0.3 { gravel += 0.3; } // More gravel in pools
+                
+                // Paydirt in certain spots (gold bearing)
+                if detail_noise > 0.4 && detail_noise < 0.6 {
+                    paydirt = 0.1 + rand_float() * 0.15;
+                }
+                
+            } else if abs_dist < valley_width_cells as f32 / 2.0 {
+                // === VALLEY FLOOR / BANKS ===
+                let bank_t = (abs_dist - river_width_cells as f32 / 2.0) 
+                           / (valley_width_cells as f32 / 2.0 - river_width_cells as f32 / 2.0);
+                let bank_t = bank_t.clamp(0.0, 1.0);
+                
+                // Smooth transition from river to valley walls
+                let floor_elev = valley_floor_base - river_gradient * (1.0 - bank_t * 0.5);
+                let wall_rise = bank_t.powi(2) * 3.0; // Steeper near edges
+                
+                bedrock = floor_elev + wall_rise + terrain_noise * 1.5;
+                
+                // Point bars and gravel deposits on inside of bends
+                let bend_inside = dist_from_river * meander < 0.0; // Inside of meander bend
+                if bend_inside && bank_t < 0.3 {
+                    gravel = 0.3 + rand_float() * 0.4;
+                    paydirt = rand_float() * 0.2; // Gold accumulates on point bars
+                } else {
+                    gravel = (0.3 - bank_t * 0.3).max(0.0) + rand_float() * 0.1;
+                }
+                overburden = bank_t * 0.5 + detail_noise * 0.3;
+                
+            } else {
+                // === VALLEY WALLS / RIDGES ===
+                let wall_t = (abs_dist - valley_width_cells as f32 / 2.0) 
+                           / (WORLD_WIDTH as f32 / 2.0 - valley_width_cells as f32 / 2.0);
+                let wall_t = wall_t.clamp(0.0, 1.0);
+                
+                // Rising valley walls with rough texture
+                let wall_height = wall_t.sqrt() * (ridge_base - valley_floor_base);
+                bedrock = valley_floor_base + wall_height + terrain_noise * 3.0 + detail_noise * 1.0;
+                
+                // Overburden on slopes
+                let slope = wall_t.sqrt();
+                overburden = (1.0 - slope) * 2.0 + detail_noise * 0.5;
+                gravel = detail_noise * 0.2;
+            }
+            
+            world.bedrock_elevation[idx] = bedrock;
+            world.gravel_thickness[idx] = gravel;
+            world.paydirt_thickness[idx] = paydirt;
+            world.overburden_thickness[idx] = overburden;
+            world.terrain_sediment[idx] = 0.0;
+        }
+    }
+    
+    // Pre-fill river with water
+    for z in 0..WORLD_DEPTH {
+        let zf = z as f32;
+        let meander = ((zf * 0.015).sin() * 0.7 + (zf * 0.008).cos() * 0.3) 
+                    * valley_width_cells as f32 * 0.2;
+        let river_center = center_x as f32 + meander;
+        
+        for x in 0..WORLD_WIDTH {
+            let dist = (x as f32 - river_center).abs();
+            if dist < river_width_cells as f32 / 2.0 {
+                let idx = world.idx(x, z);
+                world.water_surface[idx] = world.ground_height(x, z) + 0.4;
+            }
+        }
+    }
+    
     world
 }
+
+
+
 
 fn detail_center(world: &World) -> Vec3 {
     Vec3::new(

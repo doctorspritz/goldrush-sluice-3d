@@ -543,7 +543,7 @@ impl FineRegion {
                 let v_eff = v_settle * deposition_suppression;
                 let depth_scale = water_depth.max(0.02);
                 let settling_rate = v_eff / depth_scale;
-                let settle_cap = if flow_speed < 0.05 { 0.3 } else { 0.05 };
+                let settle_cap = if flow_speed < 0.05 { 0.1 } else { 0.02 };
                 let settled_frac = (settling_rate * dt).min(settle_cap);
                 let settled_conc = suspended_before * settled_frac;
                 let deposit_height = settled_conc * water_depth;
@@ -2108,7 +2108,7 @@ impl World {
                 let v_eff = v_settle * deposition_suppression;
                 let depth_scale = water_depth.max(0.02);
                 let settling_rate = v_eff / depth_scale;
-                let settle_cap = if flow_speed < 0.05 { 0.3 } else { 0.05 };
+                let settle_cap = if flow_speed < 0.05 { 0.1 } else { 0.02 };
                 let settled_frac = (settling_rate * dt).min(settle_cap);
                 let settled_conc = suspended_before * settled_frac;
 
