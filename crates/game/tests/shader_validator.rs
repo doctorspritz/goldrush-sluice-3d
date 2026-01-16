@@ -1,6 +1,74 @@
 use std::fs;
 use std::path::Path;
 
+/// Standard GPU limits required by this project.
+/// All examples and code MUST request these limits.
+pub const REQUIRED_STORAGE_BUFFERS_PER_STAGE: u32 = 16;
+pub const REQUIRED_STORAGE_BUFFER_BINDING_SIZE: u32 = 256 * 1024 * 1024;
+
+/// Creates a headless GPU device with our standard limits.
+/// Use this in examples to avoid the "Too many bindings" error.
+fn create_test_device() -> (wgpu::Device, wgpu::Queue) {
+    pollster::block_on(async {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })
+            .await
+            .expect("Failed to find GPU adapter");
+
+        let mut limits = wgpu::Limits::default();
+        limits.max_storage_buffers_per_shader_stage = REQUIRED_STORAGE_BUFFERS_PER_STAGE;
+        limits.max_storage_buffer_binding_size = REQUIRED_STORAGE_BUFFER_BINDING_SIZE;
+
+        adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("Test Device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: limits,
+                    memory_hints: wgpu::MemoryHints::Performance,
+                },
+                None,
+            )
+            .await
+            .expect("Failed to create GPU device")
+    })
+}
+
+/// Test that GpuHeightfield can be created with our standard limits.
+/// This catches the "Too many bindings of type StorageBuffers" error at test time.
+#[test]
+fn gpu_heightfield_respects_storage_limits() {
+    let (device, _queue) = create_test_device();
+
+    // This will panic if GpuHeightfield needs more storage buffers than our limits allow
+    let _heightfield = game::gpu::heightfield::GpuHeightfield::new(
+        &device,
+        64,  // small test size
+        64,
+        1.0,
+        10.0,
+        wgpu::TextureFormat::Bgra8Unorm,
+    );
+}
+
+/// Test that GpuFlip3D can be created with our standard limits.
+#[test]
+fn gpu_flip3d_respects_storage_limits() {
+    let (device, _queue) = create_test_device();
+
+    let _flip = game::gpu::flip_3d::GpuFlip3D::new(
+        &device,
+        16, 16, 16,  // small test grid
+        0.1,         // cell size
+        1000,        // max particles
+    );
+}
+
 #[test]
 fn validate_all_shaders() {
     let shader_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gpu/shaders");

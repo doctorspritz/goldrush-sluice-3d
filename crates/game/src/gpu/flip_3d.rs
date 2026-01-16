@@ -462,6 +462,8 @@ pub struct GpuFlip3D {
     pub open_boundaries: u32,
     /// Vorticity confinement strength (default 0.05, range 0.0-0.25)
     pub vorticity_epsilon: f32,
+    /// Enable density projection (volume conservation). Disable for basic tests.
+    pub density_projection_enabled: bool,
     /// Target sediment particles per cell for porosity fraction.
     pub sediment_rest_particles: f32,
     /// Speed below which friction kicks in (m/s).
@@ -2773,6 +2775,7 @@ impl GpuFlip3D {
             cell_size,
             open_boundaries: 0, // All boundaries closed by default
             vorticity_epsilon: 0.05,
+            density_projection_enabled: true, // Enable by default for main sim
             sediment_rest_particles: 8.0,
             sediment_friction_threshold: 0.1,
             sediment_friction_strength: 0.5,
@@ -3524,6 +3527,43 @@ impl GpuFlip3D {
         );
         queue.submit(std::iter::once(encoder.finish()));
 
+        // 3.5 Cell type classification: mark cells as FLUID/AIR based on particle presence.
+        // This MUST happen BEFORE gravity so gravity is applied to fluid cells!
+        {
+            let sediment_cell_params = SedimentCellTypeParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                _pad0: 0,
+            };
+            queue.write_buffer(
+                &self.sediment_cell_type_params_buffer,
+                0,
+                bytemuck::bytes_of(&sediment_cell_params),
+            );
+
+            // Multiple iterations to propagate jamming upward (for sediment piles)
+            let cell_type_iterations = 5;
+            for _ in 0..cell_type_iterations {
+                let mut ct_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Cell Type 3D Encoder"),
+                });
+                {
+                    let mut pass = ct_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Cell Type 3D Pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.sediment_cell_type_pipeline);
+                    pass.set_bind_group(0, &self.sediment_cell_type_bind_group, &[]);
+                    let workgroups_x = (self.width + 7) / 8;
+                    let workgroups_y = (self.height + 7) / 8;
+                    let workgroups_z = (self.depth + 3) / 4;
+                    pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+                }
+                queue.submit(std::iter::once(ct_encoder.finish()));
+            }
+        }
+
         // 4. Apply gravity
 
         let gravity_params = GravityParams3D {
@@ -3670,7 +3710,13 @@ impl GpuFlip3D {
             }
         }
 
+        // Submit vorticity passes before pressure solve
+        queue.submit(std::iter::once(encoder.finish()));
+
         // 7. Pressure solve (divergence → iterations → gradient)
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("FLIP 3D Pressure Encoder"),
+        });
         self.pressure.encode(&mut encoder, pressure_iterations);
 
         queue.submit(std::iter::once(encoder.finish()));
@@ -3758,167 +3804,135 @@ impl GpuFlip3D {
         // ========== Density Projection (Implicit Density Projection) ==========
         // Push particles from crowded regions to empty regions
         // This causes water level to "rise" when particles accumulate behind riffles
-
-        // 1. Compute density error from particle counts (populated during P2G)
-        let density_error_params = DensityErrorParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            rest_density: 8.0, // Target ~8 particles per cell
-            dt,
-            _pad1: 0,
-            _pad2: 0,
-            _pad3: 0,
-        };
-        queue.write_buffer(
-            &self.density_error_params_buffer,
-            0,
-            bytemuck::bytes_of(&density_error_params),
-        );
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Density Projection Encoder"),
-        });
-
-        // Dispatch density error shader - writes to divergence_buffer
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Density Error 3D Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.density_error_pipeline);
-            pass.set_bind_group(0, &self.density_error_bind_group, &[]);
-            let workgroups_x = self.width.div_ceil(8);
-            let workgroups_y = self.height.div_ceil(8);
-            let workgroups_z = self.depth.div_ceil(4);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-        }
-
-        queue.submit(std::iter::once(encoder.finish()));
-
-        // 2. Clear pressure and run density pressure iterations
-        self.pressure.clear_pressure(queue);
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Density Pressure Encoder"),
-        });
-
-        // Run pressure solver iterations with density error as RHS
-        // Uses same Jacobi solver, just different input
-        let density_iterations = 40; // More iterations for volume conservation
-        self.pressure
-            .encode_iterations_only(&mut encoder, density_iterations);
-
-        queue.submit(std::iter::once(encoder.finish()));
-
-        // 3. Compute position deltas on grid (blub approach)
-        // Update grid shader params with dt
-        let grid_params = DensityPositionGridParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            dt,
-        };
-        queue.write_buffer(
-            &self.density_position_grid_params_buffer,
-            0,
-            bytemuck::bytes_of(&grid_params),
-        );
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Position Grid Encoder"),
-        });
-
-        // Dispatch grid position delta shader
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Density Position Grid 3D Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.density_position_grid_pipeline);
-            pass.set_bind_group(0, &self.density_position_grid_bind_group, &[]);
-            let workgroups_x = self.width.div_ceil(8);
-            let workgroups_y = self.height.div_ceil(8);
-            let workgroups_z = self.depth.div_ceil(4);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-        }
-
-        queue.submit(std::iter::once(encoder.finish()));
-
-        // 4. Apply position correction to particles (trilinear sampling from grid)
-        let density_correct_params = DensityCorrectionParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            particle_count,
-            cell_size: self.cell_size,
-            dt,
-            _pad1: 0,
-            _pad2: 0,
-        };
-        queue.write_buffer(
-            &self.density_correct_params_buffer,
-            0,
-            bytemuck::bytes_of(&density_correct_params),
-        );
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Position Correction Encoder"),
-        });
-
-        // Dispatch particle position correction shader
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Density Correct 3D Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.density_correct_pipeline);
-            pass.set_bind_group(0, &self.density_correct_bind_group, &[]);
-            let workgroups = particle_count.div_ceil(256);
-            pass.dispatch_workgroups(workgroups, 1, 1);
-        }
-
-        queue.submit(std::iter::once(encoder.finish()));
-
-        // ========== Sediment Density Projection (Granular Packing) ==========
-        if self.sediment_rest_particles > 0.0 {
-            let sediment_cell_params = SedimentCellTypeParams3D {
+        // DISABLE for basic tests - only needed for dense water simulations
+        if self.density_projection_enabled {
+            // 1. Compute density error from particle counts (populated during P2G)
+            let density_error_params = DensityErrorParams3D {
                 width: self.width,
                 height: self.height,
                 depth: self.depth,
-                _pad0: 0,
+                rest_density: 8.0, // Target ~8 particles per cell
+                dt,
+                _pad1: 0,
+                _pad2: 0,
+                _pad3: 0,
             };
             queue.write_buffer(
-                &self.sediment_cell_type_params_buffer,
+                &self.density_error_params_buffer,
                 0,
-                bytemuck::bytes_of(&sediment_cell_params),
+                bytemuck::bytes_of(&density_error_params),
             );
 
-            // DISABLED for friction-only model: jamming causes infinite compression
-            // because sediment marked as SOLID doesn't participate in pressure solve.
-            // With friction-only, sediment flows like water but settles + has friction.
-            /*
-            let jamming_iterations = 5;
-            for _ in 0..jamming_iterations {
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Sediment Cell Type 3D Encoder"),
-                });
-                {
-                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("Sediment Cell Type 3D Pass"),
-                        timestamp_writes: None,
-                    });
-                    pass.set_pipeline(&self.sediment_cell_type_pipeline);
-                    pass.set_bind_group(0, &self.sediment_cell_type_bind_group, &[]);
-                    let workgroups_x = (self.width + 7) / 8;
-                    let workgroups_y = (self.height + 7) / 8;
-                    let workgroups_z = (self.depth + 3) / 4;
-                    pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-                }
-                queue.submit(std::iter::once(encoder.finish()));
-            }
-            */
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("FLIP 3D Density Projection Encoder"),
+            });
 
+            // Dispatch density error shader - writes to divergence_buffer
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Density Error 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.density_error_pipeline);
+                pass.set_bind_group(0, &self.density_error_bind_group, &[]);
+                let workgroups_x = self.width.div_ceil(8);
+                let workgroups_y = self.height.div_ceil(8);
+                let workgroups_z = self.depth.div_ceil(4);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+
+            queue.submit(std::iter::once(encoder.finish()));
+
+            // 2. Clear pressure and run density pressure iterations
+            self.pressure.clear_pressure(queue);
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("FLIP 3D Density Pressure Encoder"),
+            });
+
+            // Run pressure solver iterations with density error as RHS
+            // Uses same Jacobi solver, just different input
+            let density_iterations = 40; // More iterations for volume conservation
+            self.pressure
+                .encode_iterations_only(&mut encoder, density_iterations);
+
+            queue.submit(std::iter::once(encoder.finish()));
+
+            // 3. Compute position deltas on grid (blub approach)
+            // Update grid shader params with dt
+            let grid_params = DensityPositionGridParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                dt,
+            };
+            queue.write_buffer(
+                &self.density_position_grid_params_buffer,
+                0,
+                bytemuck::bytes_of(&grid_params),
+            );
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("FLIP 3D Position Grid Encoder"),
+            });
+
+            // Dispatch grid position delta shader
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Density Position Grid 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.density_position_grid_pipeline);
+                pass.set_bind_group(0, &self.density_position_grid_bind_group, &[]);
+                let workgroups_x = self.width.div_ceil(8);
+                let workgroups_y = self.height.div_ceil(8);
+                let workgroups_z = self.depth.div_ceil(4);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+
+            queue.submit(std::iter::once(encoder.finish()));
+
+            // 4. Apply position correction to particles (trilinear sampling from grid)
+            let density_correct_params = DensityCorrectionParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                particle_count,
+                cell_size: self.cell_size,
+                dt,
+                _pad1: 0,
+                _pad2: 0,
+            };
+            queue.write_buffer(
+                &self.density_correct_params_buffer,
+                0,
+                bytemuck::bytes_of(&density_correct_params),
+            );
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("FLIP 3D Position Correction Encoder"),
+            });
+
+            // Dispatch particle position correction shader
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Density Correct 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.density_correct_pipeline);
+                pass.set_bind_group(0, &self.density_correct_bind_group, &[]);
+                let workgroups = particle_count.div_ceil(256);
+                pass.dispatch_workgroups(workgroups, 1, 1);
+            }
+
+            queue.submit(std::iter::once(encoder.finish()));
+        }
+
+        // ========== Sediment Density Projection (Granular Packing) ==========
+        // NOTE: Cell type classification has been moved BEFORE pressure solve (step 6.5)
+        // to ensure cells are properly marked as FLUID before the solver runs.
+
+        if self.sediment_rest_particles > 0.0 {
             // DISABLED: Using voxel-based jamming instead of density projection
             /*
             let sediment_density_error_params = DensityErrorParams3D {
@@ -4448,4 +4462,151 @@ impl GpuFlip3D {
         particle_count_staging.unmap();
         vorticity_staging.unmap();
     }
+
+    /// Read back divergence and pressure for physics validation
+    pub fn read_physics_diagnostics(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> PhysicsDiagnostics {
+        let cell_count = (self.width * self.height * self.depth) as usize;
+        let buffer_size = (cell_count * std::mem::size_of::<f32>()) as u64;
+
+        // Create staging buffers
+        let div_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Divergence Staging"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let pressure_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pressure Staging"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let cell_type_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Cell Type Staging"),
+            size: (cell_count * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Copy from GPU
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Physics Diagnostics Readback"),
+        });
+        encoder.copy_buffer_to_buffer(&self.pressure.divergence_buffer, 0, &div_staging, 0, buffer_size);
+        encoder.copy_buffer_to_buffer(&self.pressure.pressure_buffer, 0, &pressure_staging, 0, buffer_size);
+        encoder.copy_buffer_to_buffer(
+            &self.pressure.cell_type_buffer,
+            0,
+            &cell_type_staging,
+            0,
+            (cell_count * std::mem::size_of::<u32>()) as u64,
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // Map buffers
+        let div_slice = div_staging.slice(..);
+        let pressure_slice = pressure_staging.slice(..);
+        let cell_type_slice = cell_type_staging.slice(..);
+
+        let (div_tx, div_rx) = std::sync::mpsc::channel();
+        let (p_tx, p_rx) = std::sync::mpsc::channel();
+        let (ct_tx, ct_rx) = std::sync::mpsc::channel();
+
+        div_slice.map_async(wgpu::MapMode::Read, move |r| { div_tx.send(r).unwrap(); });
+        pressure_slice.map_async(wgpu::MapMode::Read, move |r| { p_tx.send(r).unwrap(); });
+        cell_type_slice.map_async(wgpu::MapMode::Read, move |r| { ct_tx.send(r).unwrap(); });
+
+        device.poll(wgpu::Maintain::Wait);
+        div_rx.recv().unwrap().unwrap();
+        p_rx.recv().unwrap().unwrap();
+        ct_rx.recv().unwrap().unwrap();
+
+        let div_data = div_slice.get_mapped_range();
+        let p_data = pressure_slice.get_mapped_range();
+        let ct_data = cell_type_slice.get_mapped_range();
+
+        let divergence: &[f32] = bytemuck::cast_slice(&div_data);
+        let pressure: &[f32] = bytemuck::cast_slice(&p_data);
+        let cell_types: &[u32] = bytemuck::cast_slice(&ct_data);
+
+        // Calculate statistics for fluid cells only
+        let mut max_div = 0.0f32;
+        let mut sum_div = 0.0f32;
+        let mut max_p = 0.0f32;
+        let mut sum_p = 0.0f32;
+        let mut fluid_count = 0usize;
+        let mut div_values = Vec::new();
+        let mut p_values = Vec::new();
+
+        for i in 0..cell_count {
+            if cell_types[i] == 1 { // FLUID
+                let div = divergence[i].abs();
+                let p = pressure[i];
+                max_div = max_div.max(div);
+                sum_div += div;
+                max_p = max_p.max(p);
+                sum_p += p;
+                div_values.push(divergence[i]);
+                p_values.push(p);
+                fluid_count += 1;
+            }
+        }
+
+        drop(div_data);
+        drop(p_data);
+        drop(ct_data);
+        div_staging.unmap();
+        pressure_staging.unmap();
+        cell_type_staging.unmap();
+
+        let avg_div = if fluid_count > 0 { sum_div / fluid_count as f32 } else { 0.0 };
+        let avg_p = if fluid_count > 0 { sum_p / fluid_count as f32 } else { 0.0 };
+
+        PhysicsDiagnostics {
+            max_divergence: max_div,
+            avg_divergence: avg_div,
+            max_pressure: max_p,
+            avg_pressure: avg_p,
+            fluid_cell_count: fluid_count,
+            divergence_values: div_values,
+            pressure_values: p_values,
+        }
+    }
+
+    /// Compute and read post-correction divergence (re-runs divergence shader on current grid velocities)
+    pub fn compute_post_correction_divergence(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> f32 {
+        // Re-run divergence computation on current grid velocities
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Post-correction Divergence Encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Post-correction Divergence Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.pressure.divergence_pipeline);
+            pass.set_bind_group(0, &self.pressure.divergence_bind_group, &[]);
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // Read back divergence values
+        let diag = self.read_physics_diagnostics(device, queue);
+        diag.max_divergence
+    }
+}
+
+/// Physics diagnostic data for testing
+#[derive(Debug, Clone)]
+pub struct PhysicsDiagnostics {
+    pub max_divergence: f32,
+    pub avg_divergence: f32,
+    pub max_pressure: f32,
+    pub avg_pressure: f32,
+    pub fluid_cell_count: usize,
+    pub divergence_values: Vec<f32>,
+    pub pressure_values: Vec<f32>,
 }

@@ -175,26 +175,36 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    // Check if particle would enter a jammed sediment cell (voxel collision)
+    // Check if particle would enter a jammed sediment cell (INTERNAL solid obstacles only)
     // Skip for sediment particles - DEM handles their collision properly
+    // Skip for boundary cells - handled by boundary clamping below
     if (!is_sediment) {
         let cell_i = i32(pos.x / params.cell_size);
         let cell_j = i32(pos.y / params.cell_size);
         let cell_k = i32(pos.z / params.cell_size);
 
-        if (is_cell_solid(cell_i, cell_j, cell_k)) {
-            // Particle is trying to enter a jammed cell - push it back
+        // Only check for INTERNAL solid cells, not boundary walls
+        // Boundary walls are handled by the clamping code below
+        let is_boundary_cell = cell_i <= 0 || cell_i >= i32(params.width) - 1 ||
+                               cell_j <= 0 || cell_j >= i32(params.height) - 1 ||
+                               cell_k <= 0 || cell_k >= i32(params.depth) - 1;
+
+        if (!is_boundary_cell && is_cell_solid(cell_i, cell_j, cell_k)) {
+            // Particle entered an INTERNAL solid cell (jammed sediment) - push to nearest fluid
             let old_pos = positions[pid].xyz;
 
             // Find the nearest non-solid cell by checking neighbors
+            // Priority: same level (dj=0) first, then upward (dj=1,2)
             var best_pos = old_pos;
             var found_valid = false;
 
-            for (var dj: i32 = 1; dj <= 2; dj++) {
+            for (var dj: i32 = 0; dj <= 2; dj++) {
                 for (var dk: i32 = -1; dk <= 1; dk++) {
                     for (var di: i32 = -1; di <= 1; di++) {
+                        if (di == 0 && dj == 0 && dk == 0) { continue; }
+
                         let test_i = cell_i + di;
-                        let test_j = cell_j + dj;  // Prefer upward
+                        let test_j = cell_j + dj;
                         let test_k = cell_k + dk;
 
                         if (!is_cell_solid(test_i, test_j, test_k)) {

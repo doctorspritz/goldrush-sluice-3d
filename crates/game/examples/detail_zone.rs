@@ -15,6 +15,8 @@
 //! - 1: Add heightfield water at cursor
 //! - 2: Add muddy water at cursor
 //! - 3: Toggle heightfield emitter
+//! - V: Toggle velocity coloring (blue=slow -> red=fast)
+//! - X: Reposition detail emitter to cursor (in focus mode)
 //! - R: Reset
 //! - ESC: Quit
 //!
@@ -104,7 +106,7 @@ struct Uniforms {
     camera_pos: [f32; 3],
     particle_size: f32,
     camera_right: [f32; 3],
-    _pad0: f32,
+    show_velocity: f32, // 1.0 = velocity coloring, 0.0 = normal water blue
     camera_up: [f32; 3],
     highlight_tint: f32, // 1.0 = normal, >1.0 = brighter
 }
@@ -299,6 +301,7 @@ struct App {
     selected_material: u32,
     terrain_dirty: bool,
     show_water: bool,
+    show_velocity: bool, // Toggle velocity-based particle coloring
 
     // FLIP simulation
     flip_sim: FlipSimulation3D,
@@ -442,6 +445,7 @@ impl App {
             selected_material: 2,
             terrain_dirty: true,
             show_water: true,
+            show_velocity: false,
 
             // FLIP
             flip_sim,
@@ -465,6 +469,12 @@ impl App {
 
             sluice_hovered: false,
             emitter_mesh: None,
+            detail_emitter_mesh: None,
+            detail_emitter_pos: Vec3::new(
+                2.0 * DETAIL_FLIP_CELL_SIZE,                               // emit_x
+                0.0, // Will be computed from sluice floor
+                (DETAIL_SLUICE_DEPTH as f32 * DETAIL_FLIP_CELL_SIZE) * 0.5, // center_z
+            ),
         }
     }
 
@@ -755,8 +765,8 @@ impl App {
             self.last_stats = Instant::now();
         }
 
-        // Update Emitter Mesh if enabled
-        if self.emitter.enabled {
+        // Update Emitter Mesh if enabled (heightfield emitter)
+        if self.emitter.enabled && !self.focus_mode {
             if let Some(gpu) = self.gpu.as_ref() {
                 let (positions, indices) = self.emitter.visualize(16);
                 let vertices: Vec<WorldVertex> = positions
@@ -780,6 +790,52 @@ impl App {
             }
         } else {
              self.emitter_mesh = None;
+        }
+
+        // Update Detail Zone Emitter Mesh (small sphere at emission point)
+        if self.focus_mode {
+            if let Some(gpu) = self.gpu.as_ref() {
+                // Emission location matches emit_particles() logic
+                let cell_size = self.sluice_config.cell_size;
+                let emit_x = self.detail_emitter_pos.x;
+                let center_z = self.detail_emitter_pos.z;
+                let floor_y = self.sluice_floor_height(emit_x);
+                let drop_height = 2.5 * cell_size;
+                let sheet_height = 4.0 * cell_size;
+
+                // Position emitter visualization at center of emission region
+                let emitter_pos = self.flip_origin
+                    + Vec3::new(emit_x, floor_y + drop_height + sheet_height * 0.5, center_z);
+
+                let (positions, indices) =
+                    create_small_sphere(emitter_pos, DETAIL_EMITTER_VISUAL_RADIUS, 12);
+                let vertices: Vec<WorldVertex> = positions
+                    .iter()
+                    .map(|p| WorldVertex {
+                        position: p.to_array(),
+                        color: [1.0, 0.5, 0.0, 1.0], // Orange for detail emitter
+                    })
+                    .collect();
+
+                if let Some(mesh) = self.detail_emitter_mesh.as_mut() {
+                    mesh.update(
+                        &gpu.device,
+                        &gpu.queue,
+                        &vertices,
+                        &indices,
+                        "Detail Emitter Mesh",
+                    );
+                } else {
+                    self.detail_emitter_mesh = Some(Mesh::new(
+                        &gpu.device,
+                        &vertices,
+                        &indices,
+                        "Detail Emitter Mesh",
+                    ));
+                }
+            }
+        } else {
+            self.detail_emitter_mesh = None;
         }
     }
 
@@ -833,8 +889,9 @@ impl App {
         let config = &self.sluice_config;
         let cell_size = config.cell_size;
         let grid_depth = config.grid_depth as f32;
-        let emit_x = 2.0 * cell_size;
-        let center_z = grid_depth * cell_size * 0.5;
+        // Use detail_emitter_pos for emission location
+        let emit_x = self.detail_emitter_pos.x;
+        let center_z = self.detail_emitter_pos.z;
         let floor_y = self.sluice_floor_height(emit_x);
         let drop_height = 2.5 * cell_size;
         let sheet_height = 4.0 * cell_size;
@@ -1326,7 +1383,7 @@ impl App {
                     wgpu::VertexBufferLayout {
                         array_stride: 16,
                         step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![1 => Float32x3],
+                        attributes: &wgpu::vertex_attr_array![1 => Float32x4], // xyz = position, w = velocity magnitude
                     },
                 ],
                 compilation_options: Default::default(),
@@ -1419,7 +1476,7 @@ impl App {
             camera_pos: self.camera.position.to_array(),
             particle_size: PARTICLE_SIZE,
             camera_right: camera_right.to_array(),
-            _pad0: 0.0,
+            show_velocity: if self.show_velocity { 1.0 } else { 0.0 },
             camera_up: camera_up.to_array(),
             highlight_tint: 1.0, // Default, updated per-object
         };
@@ -1452,9 +1509,10 @@ impl App {
             self.camera.position.to_array(),
             self.start_time.elapsed().as_secs_f32(),
             self.show_water,
+            self.show_velocity,
         );
 
-        // Render Emitter
+        // Render Emitter (heightfield emitter - only when not in focus mode)
         if let Some(mesh) = self.emitter_mesh.as_ref() {
              let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Emitter Render Pass"),
@@ -1472,12 +1530,43 @@ impl App {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     }),
-                    stencil_ops: None, 
+                    stencil_ops: None,
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            
+
+            rpass.set_pipeline(&gpu.pipeline);
+            rpass.set_bind_group(0, &gpu.bind_group, &[]);
+            rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            rpass.draw_indexed(0..mesh.num_indices, 0, 0..1);
+        }
+
+        // Render Detail Emitter (small sphere in focus mode)
+        if let Some(mesh) = self.detail_emitter_mesh.as_ref() {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Detail Emitter Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &frame_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &gpu.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
             rpass.set_pipeline(&gpu.pipeline);
             rpass.set_bind_group(0, &gpu.bind_group, &[]);
             rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -1528,7 +1617,7 @@ impl App {
         if self.focus_mode {
             let particle_count = self.flip_sim.particle_count();
             if particle_count > 0 {
-                // Upload particle positions (with flip_origin offset)
+                // Upload particle positions (with flip_origin offset) and velocity magnitude
                 let positions: Vec<[f32; 4]> = self
                     .flip_sim
                     .particles
@@ -1536,7 +1625,8 @@ impl App {
                     .iter()
                     .map(|p| {
                         let world_pos = p.position + self.flip_origin;
-                        [world_pos.x, world_pos.y, world_pos.z, 0.0]
+                        let vel_mag = p.velocity.length();
+                        [world_pos.x, world_pos.y, world_pos.z, vel_mag]
                     })
                     .collect();
                 gpu.queue.write_buffer(
@@ -1689,6 +1779,10 @@ impl ApplicationHandler for App {
                                     self.emitter.enabled = !self.emitter.enabled;
                                     println!("Emitter: {}", if self.emitter.enabled { "ON" } else { "OFF" });
                                 }
+                                KeyCode::KeyV => {
+                                    self.show_velocity = !self.show_velocity;
+                                    println!("Velocity coloring: {}", if self.show_velocity { "ON" } else { "OFF" });
+                                }
                                 KeyCode::KeyQ => {
                                     // Reset emitter to river source
                                     self.emitter.position.x = (WORLD_WIDTH as f32 * 0.5) * CELL_SIZE;
@@ -1698,6 +1792,30 @@ impl ApplicationHandler for App {
                                     self.emitter.rate = 2.0;
                                     self.emitter.enabled = true;
                                     println!("Emitter reset to river source");
+                                }
+                                KeyCode::KeyX => {
+                                    // Reposition detail emitter at cursor (in focus mode)
+                                    if self.focus_mode {
+                                        if let Some(hit) = self.raycast_terrain() {
+                                            // Convert world coords to grid-local coords
+                                            let local_pos = hit - self.flip_origin;
+                                            // Clamp to valid grid bounds
+                                            let grid_max_x = DETAIL_FLIP_GRID_X as f32
+                                                * DETAIL_FLIP_CELL_SIZE;
+                                            let grid_max_z = DETAIL_FLIP_GRID_Z as f32
+                                                * DETAIL_FLIP_CELL_SIZE;
+                                            self.detail_emitter_pos.x =
+                                                local_pos.x.clamp(0.0, grid_max_x);
+                                            self.detail_emitter_pos.z =
+                                                local_pos.z.clamp(0.0, grid_max_z);
+                                            println!(
+                                                "Detail emitter moved to ({:.3}, {:.3})",
+                                                self.detail_emitter_pos.x, self.detail_emitter_pos.z
+                                            );
+                                        }
+                                    } else {
+                                        println!("X: Enter focus mode first to reposition detail emitter");
+                                    }
                                 }
                                 _ => {}
                             }
@@ -2715,14 +2833,14 @@ fn build_water_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
     (vertices, indices)
 }
 
-// Particle shader - blue billboards
+// Particle shader - blue billboards with optional velocity coloring
 const PARTICLE_SHADER: &str = r#"
 struct Uniforms {
     view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
     particle_size: f32,
     camera_right: vec3<f32>,
-    _pad0: f32,
+    show_velocity: f32,
     camera_up: vec3<f32>,
     _pad1: f32,
 }
@@ -2733,30 +2851,63 @@ var<uniform> uniforms: Uniforms;
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    @location(1) velocity_mag: f32,
 }
 
 @vertex
 fn vs_main(
     @location(0) vertex: vec2<f32>,
-    @location(1) pos: vec3<f32>,
+    @location(1) pos_vel: vec4<f32>, // xyz = position, w = velocity magnitude
 ) -> VertexOutput {
+    let pos = pos_vel.xyz;
+    let vel_mag = pos_vel.w;
     let size = uniforms.particle_size;
     let offset_world = (uniforms.camera_right * vertex.x + uniforms.camera_up * vertex.y) * size;
     let clip_pos = uniforms.view_proj * vec4<f32>(pos + offset_world, 1.0);
-    
+
     var out: VertexOutput;
     out.position = clip_pos;
     out.uv = vertex;
+    out.velocity_mag = vel_mag;
     return out;
+}
+
+// Velocity to color mapping (blue = slow, green = medium, red = fast)
+fn velocity_color(vel_mag: f32) -> vec3<f32> {
+    // Normalize velocity to 0-1 range (assuming max ~2.0 m/s in sluice)
+    let t = clamp(vel_mag / 1.5, 0.0, 1.0);
+
+    // Blue -> Cyan -> Green -> Yellow -> Red
+    if (t < 0.25) {
+        let s = t / 0.25;
+        return mix(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 1.0, 1.0), s);
+    } else if (t < 0.5) {
+        let s = (t - 0.25) / 0.25;
+        return mix(vec3<f32>(0.0, 1.0, 1.0), vec3<f32>(0.0, 1.0, 0.0), s);
+    } else if (t < 0.75) {
+        let s = (t - 0.5) / 0.25;
+        return mix(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 1.0, 0.0), s);
+    } else {
+        let s = (t - 0.75) / 0.25;
+        return mix(vec3<f32>(1.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), s);
+    }
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let dist = length(in.uv);
     if (dist > 1.0) { discard; }
-    // Blue/Cyan water color
     let shading = 1.0 - dist * 0.4;
-    return vec4<f32>(0.0, 0.5 * shading, 1.0 * shading, 1.0); 
+
+    var color: vec3<f32>;
+    if (uniforms.show_velocity > 0.5) {
+        // Velocity-based coloring
+        color = velocity_color(in.velocity_mag) * shading;
+    } else {
+        // Default blue/cyan water color
+        color = vec3<f32>(0.0, 0.5 * shading, 1.0 * shading);
+    }
+    return vec4<f32>(color, 1.0);
 }
 "#;
 
@@ -2811,6 +2962,46 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(final_color, in.color.a);
 }
 "#;
+
+/// Create a small sphere mesh for visualization
+fn create_small_sphere(center: Vec3, radius: f32, resolution: u32) -> (Vec<Vec3>, Vec<u32>) {
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+
+    let segments = resolution;
+    let rings = resolution / 2;
+
+    for r in 0..=rings {
+        let theta = std::f32::consts::PI * r as f32 / rings as f32;
+        let y = radius * theta.cos();
+        let ring_radius = radius * theta.sin();
+
+        for s in 0..=segments {
+            let phi = 2.0 * std::f32::consts::PI * s as f32 / segments as f32;
+            let x = ring_radius * phi.cos();
+            let z = ring_radius * phi.sin();
+
+            positions.push(center + Vec3::new(x, y, z));
+        }
+    }
+
+    for r in 0..rings {
+        for s in 0..segments {
+            let cur = r * (segments + 1) + s;
+            let next = cur + segments + 1;
+
+            indices.push(cur as u32);
+            indices.push((cur + 1) as u32);
+            indices.push(next as u32);
+
+            indices.push((cur + 1) as u32);
+            indices.push((next + 1) as u32);
+            indices.push(next as u32);
+        }
+    }
+
+    (positions, indices)
+}
 
 fn main() {
     env_logger::init();

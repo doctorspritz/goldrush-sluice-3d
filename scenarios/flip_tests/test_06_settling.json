@@ -1,0 +1,19 @@
+{
+  "name": "Test 6: Dense Fluid Settling",
+  "description": "Water column falls and reaches equilibrium",
+  "grid_width": 10,
+  "grid_height": 10,
+  "grid_depth": 10,
+  "cell_size": 0.05,
+  "gravity": -9.81,
+  "open_top": true,
+  "cpu_boundary_clamp": false,
+  "vorticity_epsilon": 0.0,
+  "pressure_iterations": 40,
+  "fill_region": {
+    "min_cell": [1, 1, 1],
+    "max_cell": [9, 5, 9]
+  },
+  "particles": [],
+  "expected": "Fluid settles, Y_max decreases, velocity approaches 0"
+}

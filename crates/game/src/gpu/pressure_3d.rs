@@ -47,7 +47,7 @@ pub struct GpuPressure3D {
     pressure_params_buffer: wgpu::Buffer,
 
     // Compute pipelines
-    divergence_pipeline: wgpu::ComputePipeline,
+    pub divergence_pipeline: wgpu::ComputePipeline,
     pressure_red_pipeline: wgpu::ComputePipeline,
     pressure_black_pipeline: wgpu::ComputePipeline,
     gradient_u_pipeline: wgpu::ComputePipeline,
@@ -55,7 +55,7 @@ pub struct GpuPressure3D {
     gradient_w_pipeline: wgpu::ComputePipeline,
 
     // Bind groups
-    divergence_bind_group: wgpu::BindGroup,
+    pub divergence_bind_group: wgpu::BindGroup,
     pressure_bind_group: wgpu::BindGroup,
     gradient_bind_group: wgpu::BindGroup,
 }

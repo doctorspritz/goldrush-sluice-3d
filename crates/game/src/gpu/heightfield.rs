@@ -15,7 +15,7 @@ pub struct RenderUniforms {
     pub grid_width: u32,
     pub grid_depth: u32,
     pub time: f32,
-    pub _pad: u32,
+    pub show_velocity: f32, // 1.0 = velocity coloring, 0.0 = plain water
 }
 
 pub const HEIGHTFIELD_DEBUG_STATS_LEN: usize = 12;
@@ -2175,6 +2175,7 @@ impl GpuHeightfield {
         camera_pos: [f32; 3],
         time: f32,
         draw_water: bool,
+        show_velocity: bool,
     ) {
         // Update Uniforms
         let uniforms = RenderUniforms {
@@ -2184,7 +2185,7 @@ impl GpuHeightfield {
             grid_width: self.width,
             grid_depth: self.depth,
             time,
-            _pad: 0,
+            show_velocity: if show_velocity { 1.0 } else { 0.0 },
         };
         queue.write_buffer(
             &self.render_uniform_buffer,

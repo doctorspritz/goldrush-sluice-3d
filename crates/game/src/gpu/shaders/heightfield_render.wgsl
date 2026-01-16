@@ -5,6 +5,7 @@ struct Uniforms {
     grid_width: u32,
     grid_depth: u32,
     time: f32,
+    show_velocity: f32, // 1.0 = velocity coloring, 0.0 = plain water
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -716,10 +717,11 @@ fn fs_water(in: WaterVertexOutput) -> @location(0) vec4<f32> {
         velocity_color = mix(vel_color_fast, vel_color_rapid, clamp((vel - 0.25) / 0.25, 0.0, 1.0));
     }
     
-    // Blend velocity color with water_base based on depth confidence
+    // Blend velocity color with water_base based on depth confidence (only if show_velocity enabled)
     // Shallow water uses normal water color, deeper water shows velocity
     let depth_confidence = smoothstep(0.03, 0.15, in.depth);
-    let final_water_base = mix(water_base, velocity_color, depth_confidence);
+    let vel_blend = depth_confidence * uniforms.show_velocity; // Only blend velocity color if enabled
+    let final_water_base = mix(water_base, velocity_color, vel_blend);
     
     // Foam at edges (depth < 0.05)
     let p_noise = in.world_pos.xz * 10.0;

@@ -98,7 +98,7 @@ impl WaterEmitter {
 
         let segments = resolution;
         let rings = resolution / 2;
-        let radius = self.radius.max(0.5); // Visual size
+        let radius = (self.radius * 0.1).max(0.5); // Visual size: 10% of actual radius
         
         // Simple sphere mesh
          for r in 0..=rings {
