@@ -232,10 +232,22 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Boundary clamping - respects open_boundaries bitmask
     // Open boundaries allow particles to exit (for transfer to adjacent grids)
+    //
+    // Grid layout (8-wide example):
+    //   Cell 0: [0.0, 0.1] - SOLID wall
+    //   Cell 1: [0.1, 0.2] - FLUID (first valid cell)
+    //   ...
+    //   Cell 6: [0.6, 0.7] - FLUID (last valid cell)
+    //   Cell 7: [0.7, 0.8] - SOLID wall
+    //
+    // Valid fluid region: cells 1 to (W-2), positions [cell_size, (W-1)*cell_size]
     let margin = params.cell_size * 0.1;
-    let max_x = f32(params.width) * params.cell_size - margin;
-    let max_y = f32(params.height) * params.cell_size - margin;
-    let max_z = f32(params.depth) * params.cell_size - margin;
+    let min_x = params.cell_size + margin;  // Just inside cell 1
+    let min_y = params.cell_size + margin;  // Just inside cell 1
+    let min_z = params.cell_size + margin;  // Just inside cell 1
+    let max_x = f32(params.width - 1u) * params.cell_size - margin;   // Just inside cell W-2
+    let max_y = f32(params.height - 1u) * params.cell_size - margin;  // Just inside cell H-2
+    let max_z = f32(params.depth - 1u) * params.cell_size - margin;   // Just inside cell D-2
 
     // Check open boundary flags
     let open_neg_x = (params.open_boundaries & 1u) != 0u;
@@ -246,14 +258,14 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
     let open_pos_z = (params.open_boundaries & 32u) != 0u;
 
     // Floor (Y min) - usually closed
-    if (pos.y < margin && !open_neg_y) {
-        pos.y = margin;
+    if (pos.y < min_y && !open_neg_y) {
+        pos.y = min_y;
         if (vel.y < 0.0) { vel.y = 0.0; }
     }
 
     // X boundaries
-    if (pos.x < margin && !open_neg_x) {
-        pos.x = margin;
+    if (pos.x < min_x && !open_neg_x) {
+        pos.x = min_x;
         if (vel.x < 0.0) { vel.x = 0.0; }
     }
     if (pos.x > max_x && !open_pos_x) {
@@ -268,8 +280,8 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     // Z boundaries
-    if (pos.z < margin && !open_neg_z) {
-        pos.z = margin;
+    if (pos.z < min_z && !open_neg_z) {
+        pos.z = min_z;
         if (vel.z < 0.0) { vel.z = 0.0; }
     }
     if (pos.z > max_z && !open_pos_z) {
