@@ -1,5 +1,13 @@
 //! Physical constants for the 3D simulation.
 //!
+//! ## Gravity Conventions
+//!
+//! This module provides gravity in THREE forms for different use cases:
+//!
+//! 1. **`GRAVITY`** (-9.81) - Signed scalar for Y-axis calculations
+//! 2. **`GRAVITY_MAGNITUDE`** (9.81) - Unsigned scalar for physics formulas
+//! 3. **`GRAVITY_VEC`** - Vec3(0, -9.81, 0) for direct vector operations
+//!
 //! ## Density Conventions
 //!
 //! This module provides densities in TWO forms:
@@ -13,8 +21,23 @@
 //! FLIP's `Particle3D.density` uses relative density (see particle.rs line 22-23).
 //! DEM mass calculations need absolute density in kg/m³.
 
-/// Gravity acceleration (m/s^2) - negative Y direction
-pub const GRAVITY: f32 = -9.81;
+use glam::Vec3;
+
+// =============================================================================
+// GRAVITY CONSTANTS
+// =============================================================================
+
+/// Gravity magnitude (m/s²) - always positive, use for physics formulas
+/// Example: Shields parameter τ* = τ / (ρ_s - ρ_w) * g * d
+pub const GRAVITY_MAGNITUDE: f32 = 9.81;
+
+/// Gravity acceleration on Y-axis (m/s²) - negative (downward)
+/// Use for velocity updates: v.y += GRAVITY * dt
+pub const GRAVITY: f32 = -GRAVITY_MAGNITUDE;
+
+/// Gravity as a 3D vector pointing downward
+/// Use for direct vector operations: velocity += GRAVITY_VEC * dt
+pub const GRAVITY_VEC: Vec3 = Vec3::new(0.0, GRAVITY, 0.0);
 
 // =============================================================================
 // ABSOLUTE DENSITIES (kg/m³) - For DEM physics (mass, buoyancy, drag)

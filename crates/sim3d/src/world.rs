@@ -3,6 +3,7 @@
 //! This is the "background" simulation for areas outside active particle zones.
 //! Everything is heightfield-based for performance.
 
+use crate::constants::GRAVITY_MAGNITUDE;
 use glam::Vec3;
 
 /// World simulation parameters.
@@ -62,7 +63,7 @@ impl Default for WorldParams {
             angle_of_repose: 35.0_f32.to_radians(),
             collapse_transfer_rate: 0.35,
             collapse_max_outflow: 0.5,
-            gravity: 9.81,
+            gravity: GRAVITY_MAGNITUDE,
             water_damping: 0.0, // Deprecated, use manning_n
             manning_n: 0.03, // Smooth channel roughness
             settling_velocity: 0.01, // Deprecated
