@@ -480,21 +480,27 @@ impl ClusterSimulation3D {
                     clump.position += normal * penetration * 1.01; // 1% extra to avoid re-penetration
 
                     // Velocity correction - remove velocity into solid + apply friction
+                    // IMPORTANT: Apply velocity DELTA, not replacement, to preserve FLIP drag/settling
                     let v_n = vel.dot(normal);
                     if v_n < 0.0 {
                         // Moving into solid - bounce with restitution
                         let v_normal = normal * v_n;
                         let v_tangent = vel - v_normal;
 
-                        // Apply restitution to normal component
-                        let new_v_normal = -v_normal * self.restitution;
+                        // Compute collision response as delta from current velocity:
+                        // - Normal: reverse and apply restitution
+                        //   new_normal = -v_normal * restitution
+                        //   delta_normal = new_normal - v_normal = -v_normal * (1 + restitution)
+                        let delta_normal = -v_normal * (1.0 + self.restitution);
 
-                        // Apply friction to tangent component (wet = low friction = slides easily)
+                        // - Tangent: apply friction damping
+                        //   new_tangent = v_tangent * friction_damp
+                        //   delta_tangent = new_tangent - v_tangent = v_tangent * (friction_damp - 1)
                         let friction_damp = 1.0 - friction * dt * 10.0;
-                        let new_v_tangent = v_tangent * friction_damp.max(0.0);
+                        let delta_tangent = v_tangent * (friction_damp.max(0.0) - 1.0);
 
-                        // Reconstruct velocity (without angular contribution for now)
-                        clump.velocity = new_v_normal + new_v_tangent;
+                        // Apply velocity delta (preserves FLIP drag/settling contributions)
+                        clump.velocity += delta_normal + delta_tangent;
 
                         // Track contact for history-based friction
                         let key = SdfContactKey {

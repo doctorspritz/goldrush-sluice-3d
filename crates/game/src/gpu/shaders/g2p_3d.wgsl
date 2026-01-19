@@ -339,22 +339,22 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         // Blend particle velocity toward water velocity (drag entrainment)
         var vel_after_drag = mix(particle_vel, water_vel, drag_blend);
 
-        // SETTLING: This is where density matters!
+        // SETTLING: Use pre-computed Stokes settling velocities
         // Heavy particles sink faster, landing upstream before the flow carries them.
         // Light particles sink slowly, drifting downstream as they fall.
         //
-        // Terminal velocity in water ~ sqrt((rho_p - rho_w) * g * d / (C_d * rho_w))
-        // For settling, use (density - 1) as the driving factor.
-        // Gold (19.3): effective weight = 18.3 units → sinks FAST
-        // Sand (2.65): effective weight = 1.65 units → sinks slower (~11x slower)
-
-        let settling_velocity = sediment_params.settling_velocity * (density - 1.0);
-        if (is_gold) {
-            // Gold sinks even faster (it's dense and compact)
-            vel_after_drag.y -= settling_velocity * 2.0;
-        } else {
-            vel_after_drag.y -= settling_velocity;
-        }
+        // Stokes settling: vs = g * (rho_p - rho_f) * d^2 / (18 * mu)
+        // The settling velocities are pre-computed on CPU with physical constants.
+        // Gold: smaller particles but much denser, settling_velocity ≈ 0.1 m/s
+        // Sand/gravel: larger particles, settling_velocity ≈ 0.3-0.5 m/s
+        //
+        // Select appropriate settling velocity based on particle type (density threshold)
+        let settling_vel = select(
+            sediment_params.settling_velocity,      // Sand/gravel
+            sediment_params.gold_settling_velocity, // Gold
+            is_gold
+        );
+        vel_after_drag.y -= settling_vel;
 
         final_velocity = vel_after_drag;
     } else {

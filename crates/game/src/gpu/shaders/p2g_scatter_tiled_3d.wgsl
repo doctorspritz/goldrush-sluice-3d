@@ -7,7 +7,7 @@
 // Tile: 4×4×4 cells, workgroup: 256 threads
 // Expected ~80× reduction in atomic contention vs naive scatter.
 
-const SCALE: f32 = 1000000.0;
+const SCALE: f32 = 100000.0;
 
 // Tile dimensions (cells)
 const TILE_X: u32 = 4u;

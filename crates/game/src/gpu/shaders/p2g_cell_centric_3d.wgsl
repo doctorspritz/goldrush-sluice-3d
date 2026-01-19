@@ -10,7 +10,7 @@
 //
 // Requires sorted particles and cell_offsets buffer from counting sort.
 
-const SCALE: f32 = 1000000.0;
+const SCALE: f32 = 100000.0;
 
 struct Params {
     cell_size: f32,

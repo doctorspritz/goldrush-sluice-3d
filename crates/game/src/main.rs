@@ -1582,12 +1582,18 @@ impl ApplicationHandler for App {
 
 
 
+/// Thread-safe random float generator using thread-local storage.
+/// Returns a value in [0.0, 1.0).
 fn rand_float() -> f32 {
-    static mut SEED: u32 = 12345;
-    unsafe {
-        SEED = SEED.wrapping_mul(1103515245).wrapping_add(12345);
-        (SEED as f32) / (u32::MAX as f32)
+    use std::cell::Cell;
+    thread_local! {
+        static SEED: Cell<u32> = const { Cell::new(12345) };
     }
+    SEED.with(|seed| {
+        let s = seed.get().wrapping_mul(1103515245).wrapping_add(12345);
+        seed.set(s);
+        (s as f32) / (u32::MAX as f32)
+    })
 }
 
 fn main() {

@@ -9,8 +9,9 @@
 // - V velocities: stored at bottom XZ faces, width x (height+1) x depth
 // - W velocities: stored at back XY faces, width x height x (depth+1)
 
-// Fixed-point scale: 10^6 gives ±2147 range with 6 decimal digits precision
-const SCALE: f32 = 1000000.0;
+// Fixed-point scale: 10^5 gives ±21,474 range with 5 decimal digits precision
+// Reduced from 10^6 to prevent overflow with high particle concentrations (100k+)
+const SCALE: f32 = 100000.0;
 
 struct Params {
     cell_size: f32,
