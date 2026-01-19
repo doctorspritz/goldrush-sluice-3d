@@ -68,11 +68,6 @@ pub struct GpuP2g3D {
     // Sediment count per cell (atomic i32) - for sediment fraction
     pub sediment_count_buffer: wgpu::Buffer,
 
-    // Staging buffers for readback
-    grid_u_staging: wgpu::Buffer,
-    grid_v_staging: wgpu::Buffer,
-    grid_w_staging: wgpu::Buffer,
-
     // Parameters
     params_buffer: wgpu::Buffer,
 
@@ -228,28 +223,6 @@ impl GpuP2g3D {
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        // Create staging buffers for readback
-        let grid_u_staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("P2G 3D Grid U Staging"),
-            size: (u_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let grid_v_staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("P2G 3D Grid V Staging"),
-            size: (v_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let grid_w_staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("P2G 3D Grid W Staging"),
-            size: (w_size * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -734,9 +707,6 @@ impl GpuP2g3D {
             grid_w_buffer,
             particle_count_buffer,
             sediment_count_buffer,
-            grid_u_staging,
-            grid_v_staging,
-            grid_w_staging,
             params_buffer,
             scatter_pipeline,
             divide_u_pipeline,
@@ -910,69 +880,6 @@ impl GpuP2g3D {
             let workgroups_z = (self.depth + 1).div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
-    }
-
-    /// Download grid velocities from GPU
-    pub fn download(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        grid_u: &mut [f32],
-        grid_v: &mut [f32],
-        grid_w: &mut [f32],
-    ) {
-        let u_size = ((self.width + 1) * self.height * self.depth) as usize;
-        let v_size = (self.width * (self.height + 1) * self.depth) as usize;
-        let w_size = (self.width * self.height * (self.depth + 1)) as usize;
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("P2G 3D Download Encoder"),
-        });
-
-        encoder.copy_buffer_to_buffer(
-            &self.grid_u_buffer,
-            0,
-            &self.grid_u_staging,
-            0,
-            (u_size * 4) as u64,
-        );
-        encoder.copy_buffer_to_buffer(
-            &self.grid_v_buffer,
-            0,
-            &self.grid_v_staging,
-            0,
-            (v_size * 4) as u64,
-        );
-        encoder.copy_buffer_to_buffer(
-            &self.grid_w_buffer,
-            0,
-            &self.grid_w_staging,
-            0,
-            (w_size * 4) as u64,
-        );
-
-        queue.submit(std::iter::once(encoder.finish()));
-
-        // Map and read U
-        Self::read_staging_buffer(device, &self.grid_u_staging, grid_u);
-        Self::read_staging_buffer(device, &self.grid_v_staging, grid_v);
-        Self::read_staging_buffer(device, &self.grid_w_staging, grid_w);
-    }
-
-    fn read_staging_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer, output: &mut [f32]) {
-        let buffer_slice = buffer.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
-        });
-        device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
-
-        {
-            let data = buffer_slice.get_mapped_range();
-            output.copy_from_slice(bytemuck::cast_slice(&data));
-        }
-        buffer.unmap();
     }
 
     /// Grid buffer sizes

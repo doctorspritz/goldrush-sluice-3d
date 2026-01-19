@@ -561,180 +561,223 @@ impl ClusterSimulation3D {
         let cell_size = max_radius * 2.0 + 0.001; // Small epsilon to avoid edge cases
         let inv_cell_size = 1.0 / cell_size;
 
-        // Build spatial hash: cell -> list of clump indices
-        let mut spatial_hash: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
-        for (idx, clump) in self.clumps.iter().enumerate() {
+        // Counting sort spatial hash: O(n) with better cache locality than HashMap
+        // Step 1: Find grid bounds from clump positions
+        let (mut min_cx, mut min_cy, mut min_cz) = (i32::MAX, i32::MAX, i32::MAX);
+        let (mut max_cx, mut max_cy, mut max_cz) = (i32::MIN, i32::MIN, i32::MIN);
+        for clump in &self.clumps {
             let cx = (clump.position.x * inv_cell_size).floor() as i32;
             let cy = (clump.position.y * inv_cell_size).floor() as i32;
             let cz = (clump.position.z * inv_cell_size).floor() as i32;
-            spatial_hash.entry((cx, cy, cz)).or_default().push(idx);
+            min_cx = min_cx.min(cx);
+            min_cy = min_cy.min(cy);
+            min_cz = min_cz.min(cz);
+            max_cx = max_cx.max(cx);
+            max_cy = max_cy.max(cy);
+            max_cz = max_cz.max(cz);
+        }
+        // Extend bounds by 1 for neighbor lookups
+        min_cx -= 1;
+        min_cy -= 1;
+        min_cz -= 1;
+        max_cx += 1;
+        max_cy += 1;
+        max_cz += 1;
+
+        let grid_nx = (max_cx - min_cx + 1) as usize;
+        let grid_ny = (max_cy - min_cy + 1) as usize;
+        let grid_nz = (max_cz - min_cz + 1) as usize;
+        let num_cells = grid_nx * grid_ny * grid_nz;
+
+        // Cell index helper (inline closure for performance)
+        let cell_index = |cx: i32, cy: i32, cz: i32| -> usize {
+            let lx = (cx - min_cx) as usize;
+            let ly = (cy - min_cy) as usize;
+            let lz = (cz - min_cz) as usize;
+            lz * grid_nx * grid_ny + ly * grid_nx + lx
+        };
+
+        // Step 2: Count clumps per cell
+        let mut cell_counts = vec![0u32; num_cells];
+        let mut clump_cells = Vec::with_capacity(self.clumps.len());
+        for clump in &self.clumps {
+            let cx = (clump.position.x * inv_cell_size).floor() as i32;
+            let cy = (clump.position.y * inv_cell_size).floor() as i32;
+            let cz = (clump.position.z * inv_cell_size).floor() as i32;
+            let cell_idx = cell_index(cx, cy, cz);
+            cell_counts[cell_idx] += 1;
+            clump_cells.push((cx, cy, cz, cell_idx));
+        }
+
+        // Step 3: Prefix sum to get cell offsets
+        let mut cell_offsets = Vec::with_capacity(num_cells + 1);
+        cell_offsets.push(0u32);
+        let mut running_sum = 0u32;
+        for &count in &cell_counts {
+            running_sum += count;
+            cell_offsets.push(running_sum);
+        }
+
+        // Step 4: Scatter clump indices into sorted array
+        let mut sorted_indices = vec![0usize; self.clumps.len()];
+        let mut write_offsets = cell_offsets[..num_cells].to_vec();
+        for (idx, &(_, _, _, cell_idx)) in clump_cells.iter().enumerate() {
+            let write_pos = write_offsets[cell_idx] as usize;
+            sorted_indices[write_pos] = idx;
+            write_offsets[cell_idx] += 1;
         }
 
         // Check collisions only with neighbors (27 cells including self)
         let mut checked_pairs: std::collections::HashSet<(usize, usize)> =
             std::collections::HashSet::new();
 
-        for (&(cx, cy, cz), indices) in &spatial_hash {
-            for &i in indices {
-                // Check all 27 neighboring cells (including self)
-                for dx in -1..=1 {
-                    for dy in -1..=1 {
-                        for dz in -1..=1 {
-                            let neighbor_key = (cx.saturating_add(dx), cy.saturating_add(dy), cz.saturating_add(dz));
-                            if let Some(neighbor_indices) = spatial_hash.get(&neighbor_key) {
-                                for &j in neighbor_indices {
-                                    // Skip self and already-checked pairs
-                                    if i >= j {
+        for (idx, &(cx, cy, cz, _)) in clump_cells.iter().enumerate() {
+            let i = idx;
+            // Check all 27 neighboring cells (including self)
+            for dz in -1i32..=1 {
+                for dy in -1i32..=1 {
+                    for dx in -1i32..=1 {
+                        let nx = cx + dx;
+                        let ny = cy + dy;
+                        let nz = cz + dz;
+                        // Bounds check (cells outside grid have no clumps)
+                        if nx < min_cx || nx > max_cx || ny < min_cy || ny > max_cy || nz < min_cz || nz > max_cz {
+                            continue;
+                        }
+                        let neighbor_cell = cell_index(nx, ny, nz);
+                        let start = cell_offsets[neighbor_cell] as usize;
+                        let end = cell_offsets[neighbor_cell + 1] as usize;
+                        for k in start..end {
+                            let j = sorted_indices[k];
+                            // Skip self and already-checked pairs
+                            if i >= j {
+                                continue;
+                            }
+                            // Avoid duplicate checks
+                            let pair = (i, j);
+                            if checked_pairs.contains(&pair) {
+                                continue;
+                            }
+                            checked_pairs.insert(pair);
+
+                            let clump_a = &self.clumps[i];
+                            let clump_b = &self.clumps[j];
+                            let template_a = &self.templates[clump_a.template_idx];
+                            let template_b = &self.templates[clump_b.template_idx];
+
+                            let delta = clump_b.position - clump_a.position;
+                            let max_dist =
+                                template_a.bounding_radius + template_b.bounding_radius;
+                            if delta.length_squared() > max_dist * max_dist {
+                                continue;
+                            }
+
+                            let contact_dist =
+                                template_a.particle_radius + template_b.particle_radius;
+                            let contact_dist_sq = contact_dist * contact_dist;
+                            let m_eff = (template_a.particle_mass * template_b.particle_mass)
+                                / (template_a.particle_mass + template_b.particle_mass);
+
+                            let c_n = dem_damping(self.restitution, self.normal_stiffness, m_eff);
+                            let c_t = dem_damping(self.restitution, self.tangential_stiffness, m_eff);
+
+                            for (ia, offset_a) in template_a.local_offsets.iter().enumerate() {
+                                let ra = clump_a.rotation * *offset_a;
+                                let pa = clump_a.position + ra;
+                                let va = clump_a.velocity + clump_a.angular_velocity.cross(ra);
+
+                                for (ib, offset_b) in template_b.local_offsets.iter().enumerate() {
+                                    let rb = clump_b.rotation * *offset_b;
+                                    let pb = clump_b.position + rb;
+                                    let vb = clump_b.velocity + clump_b.angular_velocity.cross(rb);
+
+                                    let diff = pb - pa;
+                                    let dist_sq = diff.length_squared();
+                                    if dist_sq >= contact_dist_sq {
                                         continue;
                                     }
-                                    // Avoid duplicate checks
-                                    let pair = (i, j);
-                                    if checked_pairs.contains(&pair) {
-                                        continue;
-                                    }
-                                    checked_pairs.insert(pair);
-                                    let clump_a = &self.clumps[i];
-                                    let clump_b = &self.clumps[j];
-                                    let template_a = &self.templates[clump_a.template_idx];
-                                    let template_b = &self.templates[clump_b.template_idx];
 
-                                    let delta = clump_b.position - clump_a.position;
-                                    let max_dist =
-                                        template_a.bounding_radius + template_b.bounding_radius;
-                                    if delta.length_squared() > max_dist * max_dist {
-                                        continue;
-                                    }
-
-                                    let contact_dist =
-                                        template_a.particle_radius + template_b.particle_radius;
-                                    let contact_dist_sq = contact_dist * contact_dist;
-                                    let m_eff = (template_a.particle_mass
-                                        * template_b.particle_mass)
-                                        / (template_a.particle_mass + template_b.particle_mass);
-
-                                    let c_n =
-                                        dem_damping(self.restitution, self.normal_stiffness, m_eff);
-                                    let c_t = dem_damping(
-                                        self.restitution,
-                                        self.tangential_stiffness,
-                                        m_eff,
-                                    );
-
-                                    for (ia, offset_a) in
-                                        template_a.local_offsets.iter().enumerate()
-                                    {
-                                        let ra = clump_a.rotation * *offset_a;
-                                        let pa = clump_a.position + ra;
-                                        let va =
-                                            clump_a.velocity + clump_a.angular_velocity.cross(ra);
-
-                                        for (ib, offset_b) in
-                                            template_b.local_offsets.iter().enumerate()
-                                        {
-                                            let rb = clump_b.rotation * *offset_b;
-                                            let pb = clump_b.position + rb;
-                                            let vb = clump_b.velocity
-                                                + clump_b.angular_velocity.cross(rb);
-
-                                            let diff = pb - pa;
-                                            let dist_sq = diff.length_squared();
-                                            if dist_sq >= contact_dist_sq {
-                                                continue;
-                                            }
-
-                                            let (normal, dist) = if dist_sq > 1.0e-10 {
-                                                let dist = dist_sq.sqrt();
-                                                (diff / dist, dist)
+                                    let (normal, dist) = if dist_sq > 1.0e-10 {
+                                        let dist = dist_sq.sqrt();
+                                        (diff / dist, dist)
+                                    } else {
+                                        let rel = vb - va;
+                                        let fallback = if rel.length_squared() > 1.0e-10 {
+                                            rel.normalize()
+                                        } else {
+                                            let center = clump_b.position - clump_a.position;
+                                            if center.length_squared() > 1.0e-10 {
+                                                center.normalize()
                                             } else {
-                                                let rel = vb - va;
-                                                let fallback = if rel.length_squared() > 1.0e-10 {
-                                                    rel.normalize()
-                                                } else {
-                                                    let center =
-                                                        clump_b.position - clump_a.position;
-                                                    if center.length_squared() > 1.0e-10 {
-                                                        center.normalize()
-                                                    } else {
-                                                        Vec3::Y
-                                                    }
-                                                };
-                                                (fallback, 0.0)
-                                            };
-                                            let penetration = contact_dist - dist;
-                                            if penetration <= 0.0 {
-                                                continue;
+                                                Vec3::Y
                                             }
+                                        };
+                                        (fallback, 0.0)
+                                    };
+                                    let penetration = contact_dist - dist;
+                                    if penetration <= 0.0 {
+                                        continue;
+                                    }
 
-                                            let rel_vel = vb - va;
-                                            let v_n = rel_vel.dot(normal);
-                                            let mut fn_mag =
-                                                self.normal_stiffness * penetration - c_n * v_n;
-                                            if fn_mag < 0.0 {
-                                                fn_mag = 0.0;
-                                            }
+                                    let rel_vel = vb - va;
+                                    let v_n = rel_vel.dot(normal);
+                                    let mut fn_mag = self.normal_stiffness * penetration - c_n * v_n;
+                                    if fn_mag < 0.0 {
+                                        fn_mag = 0.0;
+                                    }
 
-                                            let vt = rel_vel - normal * v_n;
-                                            let key = SphereContactKey { a: i, b: j, ia, ib };
-                                            let prev = self
-                                                .sphere_contacts
-                                                .get(&key)
-                                                .copied()
-                                                .unwrap_or(Vec3::ZERO);
-                                            let mut delta_t = prev + vt * dt;
+                                    let vt = rel_vel - normal * v_n;
+                                    let key = SphereContactKey { a: i, b: j, ia, ib };
+                                    let prev = self
+                                        .sphere_contacts
+                                        .get(&key)
+                                        .copied()
+                                        .unwrap_or(Vec3::ZERO);
+                                    let mut delta_t = prev + vt * dt;
 
-                                            let mut ft =
-                                                -self.tangential_stiffness * delta_t - c_t * vt;
-                                            let max_ft = self.friction * fn_mag;
-                                            if ft.length_squared() > max_ft * max_ft {
-                                                if ft.length_squared() > 1.0e-10 {
-                                                    ft = ft.normalize() * max_ft;
-                                                } else {
-                                                    ft = Vec3::ZERO;
-                                                }
-                                                if self.tangential_stiffness > 0.0 {
-                                                    delta_t = -(ft + c_t * vt)
-                                                        / self.tangential_stiffness;
-                                                }
-                                            }
-                                            new_sphere_contacts.insert(key, delta_t);
+                                    let mut ft = -self.tangential_stiffness * delta_t - c_t * vt;
+                                    let max_ft = self.friction * fn_mag;
+                                    if ft.length_squared() > max_ft * max_ft {
+                                        if ft.length_squared() > 1.0e-10 {
+                                            ft = ft.normalize() * max_ft;
+                                        } else {
+                                            ft = Vec3::ZERO;
+                                        }
+                                        if self.tangential_stiffness > 0.0 {
+                                            delta_t = -(ft + c_t * vt) / self.tangential_stiffness;
+                                        }
+                                    }
+                                    new_sphere_contacts.insert(key, delta_t);
 
-                                            let total = normal * fn_mag + ft;
-                                            forces[i] -= total;
-                                            forces[j] += total;
-                                            torques[i] += ra.cross(-total);
-                                            torques[j] += rb.cross(total);
+                                    let total = normal * fn_mag + ft;
+                                    forces[i] -= total;
+                                    forces[j] += total;
+                                    torques[i] += ra.cross(-total);
+                                    torques[j] += rb.cross(total);
 
-                                            if self.rolling_friction > 0.0 {
-                                                if clump_a.angular_velocity.length_squared()
-                                                    > 1.0e-8
-                                                {
-                                                    let roll =
-                                                        -clump_a.angular_velocity.normalize()
-                                                            * (self.rolling_friction
-                                                                * fn_mag
-                                                                * template_a.particle_radius);
-                                                    torques[i] += roll;
-                                                }
-                                                if clump_b.angular_velocity.length_squared()
-                                                    > 1.0e-8
-                                                {
-                                                    let roll =
-                                                        -clump_b.angular_velocity.normalize()
-                                                            * (self.rolling_friction
-                                                                * fn_mag
-                                                                * template_b.particle_radius);
-                                                    torques[j] += roll;
-                                                }
-                                            } // end rolling_friction if
-                                        } // end ib loop
-                                    } // end ia loop
-                                } // end for &j
-                            } // end if let Some
-                        } // end for dz
-                    } // end for dy
-                } // end for dx
-            } // end for &i
-        } // end for spatial_hash
+                                    if self.rolling_friction > 0.0 {
+                                        if clump_a.angular_velocity.length_squared() > 1.0e-8 {
+                                            let roll = -clump_a.angular_velocity.normalize()
+                                                * (self.rolling_friction
+                                                    * fn_mag
+                                                    * template_a.particle_radius);
+                                            torques[i] += roll;
+                                        }
+                                        if clump_b.angular_velocity.length_squared() > 1.0e-8 {
+                                            let roll = -clump_b.angular_velocity.normalize()
+                                                * (self.rolling_friction
+                                                    * fn_mag
+                                                    * template_b.particle_radius);
+                                            torques[j] += roll;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         for (idx, clump) in self.clumps.iter().enumerate() {
             let template = &self.templates[clump.template_idx];

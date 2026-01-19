@@ -27,4 +27,5 @@ png = "0.17"
 
 [dev-dependencies]
 naga = { version = "28.0.0", features = ["wgsl-in"] }
+proptest = "1.4"
 
