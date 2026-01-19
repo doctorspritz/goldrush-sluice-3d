@@ -17,6 +17,10 @@ use bytemuck::{Pod, Zeroable};
 use std::sync::{mpsc, Arc};
 use wgpu::util::DeviceExt;
 
+pub mod readback;
+
+use readback::{ReadbackSlot, ReadbackMode};
+
 //==============================================================================
 // HYDROSTATIC EQUILIBRIUM - VALIDATED PARAMETERS
 //
@@ -245,261 +249,6 @@ struct SdfCollisionParams3D {
     /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
     open_boundaries: u32,
     _pad0: u32,
-}
-
-#[derive(Copy, Clone)]
-enum ReadbackMode {
-    None,
-    Sync,
-    Async,
-}
-
-struct ReadbackSlot {
-    positions_staging: wgpu::Buffer,
-    velocities_staging: wgpu::Buffer,
-    c_col0_staging: wgpu::Buffer,
-    c_col1_staging: wgpu::Buffer,
-    c_col2_staging: wgpu::Buffer,
-    capacity: usize,
-    count: usize,
-    pending: bool,
-    positions_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
-    velocities_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
-    c_col0_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
-    c_col1_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
-    c_col2_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
-}
-
-impl ReadbackSlot {
-    fn new(device: &wgpu::Device, max_particles: usize) -> Self {
-        let buffer_size = (max_particles * std::mem::size_of::<[f32; 4]>()) as u64;
-        Self {
-            positions_staging: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Readback Positions Staging"),
-                size: buffer_size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            velocities_staging: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Readback Velocities Staging"),
-                size: buffer_size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            c_col0_staging: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Readback C Col0 Staging"),
-                size: buffer_size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            c_col1_staging: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Readback C Col1 Staging"),
-                size: buffer_size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            c_col2_staging: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Readback C Col2 Staging"),
-                size: buffer_size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            capacity: max_particles,
-            count: 0,
-            pending: false,
-            positions_rx: None,
-            velocities_rx: None,
-            c_col0_rx: None,
-            c_col1_rx: None,
-            c_col2_rx: None,
-        }
-    }
-
-    fn schedule(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        positions: &wgpu::Buffer,
-        velocities: &wgpu::Buffer,
-        c_col0: &wgpu::Buffer,
-        c_col1: &wgpu::Buffer,
-        c_col2: &wgpu::Buffer,
-        count: usize,
-    ) -> bool {
-        if self.pending {
-            return false;
-        }
-
-        let count = count.min(self.capacity);
-        if count == 0 {
-            return false;
-        }
-
-        let byte_size = (count * std::mem::size_of::<[f32; 4]>()) as u64;
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Readback Copy Encoder"),
-        });
-        encoder.copy_buffer_to_buffer(positions, 0, &self.positions_staging, 0, byte_size);
-        encoder.copy_buffer_to_buffer(velocities, 0, &self.velocities_staging, 0, byte_size);
-        encoder.copy_buffer_to_buffer(c_col0, 0, &self.c_col0_staging, 0, byte_size);
-        encoder.copy_buffer_to_buffer(c_col1, 0, &self.c_col1_staging, 0, byte_size);
-        encoder.copy_buffer_to_buffer(c_col2, 0, &self.c_col2_staging, 0, byte_size);
-        queue.submit(std::iter::once(encoder.finish()));
-
-        self.count = count;
-        self.pending = true;
-
-        let (tx, rx) = mpsc::channel();
-        self.positions_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = tx.send(result);
-            });
-        self.positions_rx = Some(rx);
-
-        let (tx, rx) = mpsc::channel();
-        self.velocities_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = tx.send(result);
-            });
-        self.velocities_rx = Some(rx);
-
-        let (tx, rx) = mpsc::channel();
-        self.c_col0_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = tx.send(result);
-            });
-        self.c_col0_rx = Some(rx);
-
-        let (tx, rx) = mpsc::channel();
-        self.c_col1_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = tx.send(result);
-            });
-        self.c_col1_rx = Some(rx);
-
-        let (tx, rx) = mpsc::channel();
-        self.c_col2_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = tx.send(result);
-            });
-        self.c_col2_rx = Some(rx);
-
-        true
-    }
-
-    fn try_read(
-        &mut self,
-        positions_out: &mut [glam::Vec3],
-        velocities_out: &mut [glam::Vec3],
-        c_matrices_out: &mut [glam::Mat3],
-    ) -> Option<usize> {
-        if !self.pending {
-            return None;
-        }
-
-        let mut failed = false;
-        let mut all_ready = true;
-        for rx in [
-            &mut self.positions_rx,
-            &mut self.velocities_rx,
-            &mut self.c_col0_rx,
-            &mut self.c_col1_rx,
-            &mut self.c_col2_rx,
-        ] {
-            if let Some(receiver) = rx {
-                match receiver.try_recv() {
-                    Ok(Ok(())) => {
-                        *rx = None;
-                    }
-                    Ok(Err(_)) => {
-                        failed = true;
-                        *rx = None;
-                    }
-                    Err(mpsc::TryRecvError::Empty) => {
-                        all_ready = false;
-                    }
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        failed = true;
-                        *rx = None;
-                    }
-                }
-            }
-        }
-
-        if failed {
-            self.pending = false;
-            self.positions_staging.unmap();
-            self.velocities_staging.unmap();
-            self.c_col0_staging.unmap();
-            self.c_col1_staging.unmap();
-            self.c_col2_staging.unmap();
-            return None;
-        }
-
-        if !all_ready {
-            return None;
-        }
-
-        let count = self
-            .count
-            .min(positions_out.len())
-            .min(velocities_out.len())
-            .min(c_matrices_out.len());
-
-        {
-            let data = self.positions_staging.slice(..).get_mapped_range();
-            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-            for i in 0..count {
-                positions_out[i] = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-            }
-        }
-        self.positions_staging.unmap();
-
-        {
-            let data = self.velocities_staging.slice(..).get_mapped_range();
-            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-            for i in 0..count {
-                velocities_out[i] = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-            }
-        }
-        self.velocities_staging.unmap();
-
-        {
-            let data = self.c_col0_staging.slice(..).get_mapped_range();
-            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-            for i in 0..count {
-                c_matrices_out[i].x_axis = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-            }
-        }
-        self.c_col0_staging.unmap();
-
-        {
-            let data = self.c_col1_staging.slice(..).get_mapped_range();
-            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-            for i in 0..count {
-                c_matrices_out[i].y_axis = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-            }
-        }
-        self.c_col1_staging.unmap();
-
-        {
-            let data = self.c_col2_staging.slice(..).get_mapped_range();
-            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-            for i in 0..count {
-                c_matrices_out[i].z_axis = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-            }
-        }
-        self.c_col2_staging.unmap();
-
-        self.pending = false;
-        self.count = 0;
-        Some(count)
-    }
 }
 
 /// GPU-accelerated 3D FLIP simulation
@@ -944,7 +693,7 @@ impl GpuFlip3D {
         // Create gravity shader
         let gravity_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Gravity 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/gravity_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/gravity_3d.wgsl").into()),
         });
 
         let gravity_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1055,7 +804,7 @@ impl GpuFlip3D {
         // Create flow acceleration shader (for sluice downstream flow)
         let flow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Flow 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/flow_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/flow_3d.wgsl").into()),
         });
 
         let flow_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1140,7 +889,7 @@ impl GpuFlip3D {
         // ========== Vorticity Confinement ==========
         let vorticity_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Vorticity 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/vorticity_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/vorticity_3d.wgsl").into()),
         });
 
         let vorticity_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1310,7 +1059,7 @@ impl GpuFlip3D {
         let vorticity_confine_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Vorticity Confine 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/vorticity_confine_3d.wgsl").into(),
+                include_str!("../shaders/vorticity_confine_3d.wgsl").into(),
             ),
         });
 
@@ -1502,7 +1251,7 @@ impl GpuFlip3D {
         let sediment_fraction_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Sediment Fraction 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/sediment_fraction_3d.wgsl").into(),
+                include_str!("../shaders/sediment_fraction_3d.wgsl").into(),
             ),
         });
 
@@ -1597,7 +1346,7 @@ impl GpuFlip3D {
         let sediment_pressure_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Sediment Pressure 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/sediment_pressure_3d.wgsl").into(),
+                include_str!("../shaders/sediment_pressure_3d.wgsl").into(),
             ),
         });
 
@@ -1684,7 +1433,7 @@ impl GpuFlip3D {
         // ========== Porosity Drag ==========
         let porosity_drag_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Porosity Drag 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/porosity_drag_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/porosity_drag_3d.wgsl").into()),
         });
 
         let porosity_drag_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1818,7 +1567,7 @@ impl GpuFlip3D {
         // Create boundary condition enforcement shader
         let bc_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Enforce BC 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/enforce_bc_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/enforce_bc_3d.wgsl").into()),
         });
 
         let bc_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1953,7 +1702,7 @@ impl GpuFlip3D {
         // Create density error shader
         let density_error_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Density Error 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/density_error_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/density_error_3d.wgsl").into()),
         });
 
         let density_error_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -2079,7 +1828,7 @@ impl GpuFlip3D {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Density Position Grid 3D Shader"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("shaders/density_position_grid_3d.wgsl").into(),
+                    include_str!("../shaders/density_position_grid_3d.wgsl").into(),
                 ),
             });
 
@@ -2211,7 +1960,7 @@ impl GpuFlip3D {
         let density_correct_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Density Correct 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/density_correct_3d.wgsl").into(),
+                include_str!("../shaders/density_correct_3d.wgsl").into(),
             ),
         });
 
@@ -2370,19 +2119,19 @@ impl GpuFlip3D {
         let sediment_cell_type_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Sediment Cell Type 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/sediment_cell_type_3d.wgsl").into(),
+                include_str!("../shaders/sediment_cell_type_3d.wgsl").into(),
             ),
         });
         let gravel_obstacle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Gravel Obstacle 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/gravel_obstacle_3d.wgsl").into(),
+                include_str!("../shaders/gravel_obstacle_3d.wgsl").into(),
             ),
         });
         let gravel_porosity_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Gravel Porosity 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/gravel_porosity_3d.wgsl").into(),
+                include_str!("../shaders/gravel_porosity_3d.wgsl").into(),
             ),
         });
 
@@ -2616,7 +2365,7 @@ impl GpuFlip3D {
         let fluid_cell_expand_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Fluid Cell Expand 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/fluid_cell_expand_3d.wgsl").into(),
+                include_str!("../shaders/fluid_cell_expand_3d.wgsl").into(),
             ),
         });
 
@@ -2697,7 +2446,7 @@ impl GpuFlip3D {
         let velocity_extrap_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Velocity Extrapolate 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/velocity_extrapolate_3d.wgsl").into(),
+                include_str!("../shaders/velocity_extrapolate_3d.wgsl").into(),
             ),
         });
 
@@ -2940,7 +2689,7 @@ impl GpuFlip3D {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Sediment Density Error 3D Shader"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("shaders/sediment_density_error_3d.wgsl").into(),
+                    include_str!("../shaders/sediment_density_error_3d.wgsl").into(),
                 ),
             });
 
@@ -2982,7 +2731,7 @@ impl GpuFlip3D {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Sediment Density Correct 3D Shader"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("shaders/sediment_density_correct_3d.wgsl").into(),
+                    include_str!("../shaders/sediment_density_correct_3d.wgsl").into(),
                 ),
             });
 
@@ -2999,7 +2748,7 @@ impl GpuFlip3D {
         // ========== SDF Collision (Advection + Solid Collision) ==========
         let sdf_collision_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("SDF Collision 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sdf_collision_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/sdf_collision_3d.wgsl").into()),
         });
 
         let sdf_collision_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
