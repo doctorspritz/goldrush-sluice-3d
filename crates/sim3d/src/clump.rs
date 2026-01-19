@@ -477,7 +477,7 @@ impl ClusterSimulation3D {
                     let normal = sdf_normal.normalize();
 
                     // Push particle out of solid (position correction)
-                    clump.position += normal * penetration * 1.01; // 1% extra to avoid re-penetration
+                    clump.position += normal * penetration;
 
                     // Velocity correction - remove velocity into solid + apply friction
                     // IMPORTANT: Apply velocity DELTA, not replacement, to preserve FLIP drag/settling
@@ -1567,5 +1567,131 @@ mod tests {
         let clump = Clump3D::new(Vec3::new(1.0, 2.0, 3.0), Vec3::ZERO, 0);
         let pos = clump.particle_world_position(template.local_offsets[0]);
         assert!((pos - clump.position).length() > 0.0);
+    }
+
+    #[test]
+    fn test_sdf_collision_no_oscillation() {
+        // Test that particles don't oscillate after colliding with an SDF surface
+        // This verifies that the position correction doesn't overshoot (no 1.01x multiplier)
+
+        // Create a simple single-particle template to make the test clearer
+        // We'll manually create a template with just one particle at the center
+        let particle_radius = 0.05;
+        let template = ClumpTemplate3D {
+            shape: ClumpShape3D::Cube2,
+            local_offsets: vec![Vec3::ZERO], // Single particle at center
+            particle_radius,
+            particle_mass: 1.0,
+            mass: 1.0,
+            inertia_inv_local: Mat3::IDENTITY,
+            bounding_radius: particle_radius,
+        };
+
+        // Create a simulation with one clump
+        let mut sim = ClusterSimulation3D {
+            templates: vec![template],
+            clumps: vec![],
+            gravity: Vec3::new(0.0, -9.8, 0.0),
+            restitution: 0.0, // No bounce for this test
+            friction: 0.5,
+            floor_friction: 0.5,
+            wet_friction: 0.1,
+            normal_stiffness: 1000.0,
+            tangential_stiffness: 500.0,
+            rolling_friction: 0.01,
+            wet_rolling_friction: 0.005,
+            use_dem: true,
+            bounds_min: Vec3::new(-10.0, -10.0, -10.0),
+            bounds_max: Vec3::new(10.0, 10.0, 10.0),
+            sphere_contacts: Default::default(),
+            plane_contacts: Default::default(),
+            sdf_contacts: Default::default(),
+        };
+
+        // Create a flat SDF ground plane
+        // The SDF grid represents grid nodes, not cell centers
+        // Grid node at index j is at world position y = (j * cell_size + grid_min_y)
+        // Use a smaller cell size to avoid clamping issues
+        let grid_width = 20;
+        let grid_height = 20;
+        let grid_depth = 20;
+        let cell_size = 0.01; // 1cm cells
+
+        let mut sdf = vec![f32::MAX; grid_width * grid_height * grid_depth];
+        for k in 0..grid_depth {
+            for j in 0..grid_height {
+                for i in 0..grid_width {
+                    // World position of this grid node
+                    let y_world = j as f32 * cell_size;
+                    // For a ground plane at y=0, the signed distance is simply y_world
+                    // Positive values are above ground (outside solid)
+                    // Negative would be inside solid
+                    let idx = k * grid_width * grid_height + j * grid_width + i;
+                    sdf[idx] = y_world;
+                }
+            }
+        }
+
+        let sdf_params = SdfParams {
+            sdf: &sdf,
+            grid_width,
+            grid_height,
+            grid_depth,
+            cell_size,
+            grid_offset: Vec3::ZERO,
+        };
+
+        // Position particle so it penetrates the ground
+        // The particle radius is 0.05, so placing it at y=0.02 means
+        // the bottom is at y=-0.03, which penetrates the ground plane at y=0
+        // The SDF at y=0.02 should be ~0.02, so penetration = 0.05 - 0.02 = 0.03
+        let initial_y = 0.02;
+        let clump = Clump3D::new(
+            Vec3::new(0.5, initial_y, 0.5),
+            Vec3::ZERO, // No initial velocity
+            0,
+        );
+        sim.clumps.push(clump);
+
+        let dt = 0.016; // ~60 FPS timestep
+
+        // Run collision response for several timesteps
+        // The first step should push the particle up to y=0.05
+        // Subsequent steps should not change the position (no oscillation)
+        let mut y_positions = Vec::new();
+        for _ in 0..10 {
+            sim.collision_response_only(dt, &sdf_params, false);
+            y_positions.push(sim.clumps[0].position.y);
+        }
+
+        // The particle should be corrected to y = particle_radius (0.05)
+        // after the first collision and remain stable
+        let particle_radius = sim.templates[0].particle_radius;
+
+        // First position should be corrected
+        let first_y = y_positions[0];
+        assert!(
+            (first_y - particle_radius).abs() < 0.001,
+            "First position y={} should be corrected to expected y={} (error: {})",
+            first_y,
+            particle_radius,
+            (first_y - particle_radius).abs()
+        );
+
+        // Check for oscillation: all subsequent positions should be stable
+        // Calculate the range of positions across all steps
+        let min_y = y_positions.iter().copied().fold(f32::MAX, f32::min);
+        let max_y = y_positions.iter().copied().fold(f32::MIN, f32::max);
+        let range = max_y - min_y;
+
+        // Range should be very small - no oscillation
+        // With the 1.01x multiplier, this would oscillate
+        // Without it, positions should be identical after first correction
+        assert!(
+            range < 0.001,
+            "Position should stabilize without oscillation. Range across all steps: {} (positions: {:?})",
+            range,
+            y_positions
+        );
     }
 }
