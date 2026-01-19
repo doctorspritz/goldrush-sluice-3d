@@ -827,7 +827,7 @@ impl App {
 
             if self.gpu_needs_upload {
                 self.emit_pending_particles();
-                self.run_dem_and_cleanup(dt);
+                self.run_dem_and_cleanup(dt_sub); // Use substep dt for DEM physics sync
                 self.prepare_gpu_inputs();
             }
 
@@ -932,7 +932,7 @@ impl App {
                 self.apply_gpu_results(self.positions.len());
             }
 
-            self.run_dem_and_cleanup(dt);
+            self.run_dem_and_cleanup(dt_sub); // Use substep dt for DEM physics sync
         }
 
         self.frame += 1;

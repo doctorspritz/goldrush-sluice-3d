@@ -77,17 +77,18 @@ fn expand_fluid_cells(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    // CRITICAL: If this cell has particles, mark as FLUID for pressure enforcement
-    // This overrides SDF-based SOLID marking - particles need incompressibility!
-    let pcount = get_particle_count(i32(i), i32(j), i32(k));
-    if (pcount > 0) {
-        cell_type[idx] = CELL_FLUID;
+    // CRITICAL: SDF-marked SOLID cells stay SOLID regardless of particles.
+    // This ensures pressure solver sees obstacles correctly.
+    // Particles inside solid regions (from numerical errors) are handled by collision,
+    // not by making the cell FLUID which would hide the obstacle from pressure.
+    if (current_type == CELL_SOLID) {
         return;
     }
 
-    // Cell has no particles - check if it was marked SOLID (from SDF)
-    // Keep it SOLID so pressure solver has proper boundary conditions
-    if (current_type == CELL_SOLID) {
+    // Non-solid cell with particles: mark as FLUID for pressure enforcement
+    let pcount = get_particle_count(i32(i), i32(j), i32(k));
+    if (pcount > 0) {
+        cell_type[idx] = CELL_FLUID;
         return;
     }
 

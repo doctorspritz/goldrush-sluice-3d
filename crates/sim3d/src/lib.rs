@@ -208,10 +208,10 @@ impl FlipSimulation3D {
     /// This causes the simulation to become numerically unstable.
     ///
     /// CFL condition: max_vel < dx/dt
-    /// For typical parameters (dx=0.025m, dt=1/120s): max_vel < 3 m/s
-    /// We clamp to 10 m/s to allow some headroom while staying stable.
+    /// For typical parameters (dx=0.01m, dt=1/120s): max_vel < 1.2 m/s
+    /// We clamp to 1.0 m/s for CFL < 1 safety margin.
     fn clamp_grid_velocities(&mut self) {
-        const MAX_GRID_VEL: f32 = 10.0;
+        const MAX_GRID_VEL: f32 = 1.0;
 
         for u in &mut self.grid.u {
             *u = u.clamp(-MAX_GRID_VEL, MAX_GRID_VEL);

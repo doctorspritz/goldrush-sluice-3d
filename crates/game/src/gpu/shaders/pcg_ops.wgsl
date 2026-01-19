@@ -17,10 +17,10 @@ struct PcgParams {
 @group(0) @binding(3) var<storage, read_write> buffer_d: array<f32>;  // output or partial_sums
 @group(0) @binding(4) var<uniform> params: PcgParams;
 
-// Cell type constants (when buffer_c is used as cell_type)
-const CELL_SOLID: u32 = 0u;
+// Cell type constants (must match main 3D shaders: AIR=0, FLUID=1, SOLID=2)
+const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
-const CELL_AIR: u32 = 2u;
+const CELL_SOLID: u32 = 2u;
 
 fn get_index(i: u32, j: u32) -> u32 {
     return j * params.width + i;

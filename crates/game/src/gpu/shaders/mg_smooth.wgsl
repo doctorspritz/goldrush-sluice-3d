@@ -19,10 +19,10 @@ struct LevelParams {
 @group(0) @binding(2) var<storage, read> cell_type: array<u32>;
 @group(0) @binding(3) var<uniform> params: LevelParams;
 
-// Cell type constants (matching sim crate CellType enum order)
-const CELL_SOLID: u32 = 0u;
+// Cell type constants (must match main 3D shaders: AIR=0, FLUID=1, SOLID=2)
+const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
-const CELL_AIR: u32 = 2u;
+const CELL_SOLID: u32 = 2u;
 
 fn get_index(i: u32, j: u32) -> u32 {
     return j * params.width + i;

@@ -529,7 +529,7 @@ impl GpuG2p3D {
             d_inv,
             flip_ratio,
             dt,
-            max_velocity: 50.0, // Reduced from 2000.0 to 50.0 for stability
+            max_velocity: 1.0, // CFL-safe: max_vel < dx/dt = 0.01/0.0083 ≈ 1.2 m/s
             _padding: [0.0; 3],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));

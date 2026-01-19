@@ -399,8 +399,8 @@ fn integrate_velocity(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     vel += params.dt * accel;
     
-    // Final speed limit for terminal stability
-    let max_vel = 10.0;
+    // CFL-based speed limit: max_vel < h / dt for stability
+    let max_vel = params.h * 0.5 / params.dt;  // 0.5*h per timestep for safety
     let speed = length(vel);
     if (speed > max_vel) {
         vel = vel * (max_vel / speed);
