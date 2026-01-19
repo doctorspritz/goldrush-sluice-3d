@@ -1,7 +1,7 @@
 //! Visual Chained Grids Demo
 //!
-//! Two small FLIP grids connected in series with real-time rendering.
-//! Demonstrates domain decomposition for fluid simulation.
+//! Two FLIP grids connected in series with real-time rendering.
+//! Grid A feeds into Grid B - particles exit A and enter B.
 //!
 //! Controls:
 //! - Mouse drag: rotate camera
@@ -16,7 +16,6 @@ use game::example_utils::{Camera, WgpuContext, create_depth_view, Pos3Color4Vert
 use game::gpu::flip_3d::GpuFlip3D;
 use glam::{Mat3, Vec3};
 
-// Custom shader that renders particles as screenspace quads
 const QUAD_SHADER: &str = r#"
 struct Uniforms {
     view_proj: mat4x4<f32>,
@@ -41,30 +40,21 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-
-    // Project center to clip space
     let clip_center = uniforms.view_proj * vec4<f32>(in.position, 1.0);
-
-    // Get quad corner offset based on vertex index (0-5 for 2 triangles)
-    // Triangle 1: 0,1,2 = bottom-left, top-left, top-right
-    // Triangle 2: 3,4,5 = bottom-left, top-right, bottom-right
     let corner_idx = in.vertex_index % 6u;
     var offset: vec2<f32>;
     switch corner_idx {
-        case 0u: { offset = vec2<f32>(-1.0, -1.0); }  // bottom-left
-        case 1u: { offset = vec2<f32>(-1.0, 1.0); }   // top-left
-        case 2u: { offset = vec2<f32>(1.0, 1.0); }    // top-right
-        case 3u: { offset = vec2<f32>(-1.0, -1.0); }  // bottom-left
-        case 4u: { offset = vec2<f32>(1.0, 1.0); }    // top-right
-        case 5u: { offset = vec2<f32>(1.0, -1.0); }   // bottom-right
+        case 0u: { offset = vec2<f32>(-1.0, -1.0); }
+        case 1u: { offset = vec2<f32>(-1.0, 1.0); }
+        case 2u: { offset = vec2<f32>(1.0, 1.0); }
+        case 3u: { offset = vec2<f32>(-1.0, -1.0); }
+        case 4u: { offset = vec2<f32>(1.0, 1.0); }
+        case 5u: { offset = vec2<f32>(1.0, -1.0); }
         default: { offset = vec2<f32>(0.0, 0.0); }
     }
-
-    // Scale offset by point size and apply in clip space (screenspace pixels)
-    let size = uniforms.point_size / 500.0;  // Normalize to reasonable scale
+    let size = uniforms.point_size / 500.0;
     out.clip_position = clip_center + vec4<f32>(offset * size, 0.0, 0.0);
     out.color = in.color;
-
     return out;
 }
 
@@ -74,7 +64,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-// Simple line shader (reuse from BASIC_SHADER style)
 const LINE_SHADER: &str = r#"
 struct Uniforms {
     view_proj: mat4x4<f32>,
@@ -108,6 +97,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return in.color;
 }
 "#;
+
 use std::sync::Arc;
 use std::time::Instant;
 use winit::{
@@ -118,28 +108,26 @@ use winit::{
     window::{Window, WindowId},
 };
 
-// Grid dimensions (smaller grids to see volume building)
-const GRID_WIDTH: usize = 12;
+// Grid dimensions
+const GRID_WIDTH: usize = 16;
 const GRID_HEIGHT: usize = 10;
 const GRID_DEPTH: usize = 8;
 const CELL_SIZE: f32 = 0.04;
 const MAX_PARTICLES: usize = 50000;
 
-// Outflow only allowed above this height (70% up - higher weir to see more fill)
-const OUTFLOW_MIN_Y: f32 = (GRID_HEIGHT as f32 * 0.7) * CELL_SIZE;
+// Weir at 50% height
+const OUTFLOW_MIN_Y: f32 = (GRID_HEIGHT as f32 * 0.5) * CELL_SIZE;
 
 // Simulation
 const DT: f32 = 1.0 / 120.0;
 const SUBSTEPS: u32 = 2;
 const PRESSURE_ITERS: u32 = 50;
 const GRAVITY: f32 = -9.8;
-const FLOW_ACCEL: f32 = 2.0;  // Slower flow
-const INLET_RATE: usize = 15; // Slower inlet to see fill
-const INLET_VELOCITY: f32 = 0.2; // Slower injection
+const FLOW_ACCEL: f32 = 6.0;
+const INLET_RATE: usize = 30;
+const INLET_VELOCITY: f32 = 0.6;
 
-// Particle sprite size (in pixels)
 const POINT_SIZE: f32 = 4.0;
-
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[repr(C)]
@@ -155,17 +143,14 @@ fn rand_f32(seed: &mut u64) -> f32 {
     ((*seed >> 33) as f32) / (u32::MAX as f32)
 }
 
-fn grid_boundary_lines(offset: Vec3, color: [f32; 4]) -> Vec<Pos3Color4Vertex> {
-    // Draw where particles can ACTUALLY go (must match CPU collision bounds!)
-    // CPU collision uses: min=1.0*CELL, max=(N-1.5)*CELL
+fn grid_boundary_lines(offset: Vec3, color: [f32; 4], show_weir: bool) -> Vec<Pos3Color4Vertex> {
     let x_min = CELL_SIZE * 1.0;
-    let x_max = (GRID_WIDTH as f32 - 1.5) * CELL_SIZE;   // Matches exit_x
+    let x_max = (GRID_WIDTH as f32 - 1.5) * CELL_SIZE;
     let y_min = CELL_SIZE * 1.0;
-    let y_max = (GRID_HEIGHT as f32 - 1.5) * CELL_SIZE;  // Matches ceiling_y
+    let y_max = (GRID_HEIGHT as f32 - 1.5) * CELL_SIZE;
     let z_min = CELL_SIZE * 1.0;
-    let z_max = (GRID_DEPTH as f32 - 1.5) * CELL_SIZE;   // Matches max_z
+    let z_max = (GRID_DEPTH as f32 - 1.5) * CELL_SIZE;
 
-    // 8 corners of the fluid region box
     let corners = [
         offset + Vec3::new(x_min, y_min, z_min),
         offset + Vec3::new(x_max, y_min, z_min),
@@ -176,22 +161,23 @@ fn grid_boundary_lines(offset: Vec3, color: [f32; 4]) -> Vec<Pos3Color4Vertex> {
         offset + Vec3::new(x_max, y_max, z_max),
         offset + Vec3::new(x_min, y_max, z_max),
     ];
-    // 12 edges as line pairs
     let edges = [
-        (0, 1), (1, 2), (2, 3), (3, 0), // front face
-        (4, 5), (5, 6), (6, 7), (7, 4), // back face
-        (0, 4), (1, 5), (2, 6), (3, 7), // connecting edges
+        (0, 1), (1, 2), (2, 3), (3, 0),
+        (4, 5), (5, 6), (6, 7), (7, 4),
+        (0, 4), (1, 5), (2, 6), (3, 7),
     ];
-    let mut lines = Vec::with_capacity(28); // 24 + 4 for weir line
+    let mut lines = Vec::with_capacity(32);
     for (a, b) in edges {
         lines.push(Pos3Color4Vertex { position: corners[a].to_array(), color });
         lines.push(Pos3Color4Vertex { position: corners[b].to_array(), color });
     }
 
-    // Add weir line (outflow threshold) on exit face - yellow/orange color
-    let weir_color = [1.0, 0.8, 0.2, 1.0];
-    lines.push(Pos3Color4Vertex { position: (offset + Vec3::new(x_max, OUTFLOW_MIN_Y, z_min)).to_array(), color: weir_color });
-    lines.push(Pos3Color4Vertex { position: (offset + Vec3::new(x_max, OUTFLOW_MIN_Y, z_max)).to_array(), color: weir_color });
+    // Weir line (yellow) on exit face
+    if show_weir {
+        let weir_color = [1.0, 0.8, 0.2, 1.0];
+        lines.push(Pos3Color4Vertex { position: (offset + Vec3::new(x_max, OUTFLOW_MIN_Y, z_min)).to_array(), color: weir_color });
+        lines.push(Pos3Color4Vertex { position: (offset + Vec3::new(x_max, OUTFLOW_MIN_Y, z_max)).to_array(), color: weir_color });
+    }
 
     lines
 }
@@ -202,9 +188,10 @@ struct GridSegment {
     velocities: Vec<Vec3>,
     c_matrices: Vec<Mat3>,
     densities: Vec<f32>,
+    is_ghost: Vec<bool>, // Ghost particles are removed after one step
     cell_types: Vec<u32>,
     world_offset: Vec3,
-    input_buffer: Vec<(Vec3, Vec3)>,
+    input_buffer: Vec<(Vec3, Vec3, Mat3, f32, bool)>, // pos, vel, c_mat, density, is_ghost
 }
 
 impl GridSegment {
@@ -213,27 +200,19 @@ impl GridSegment {
             device, GRID_WIDTH as u32, GRID_HEIGHT as u32, GRID_DEPTH as u32, CELL_SIZE, MAX_PARTICLES,
         );
         gpu.vorticity_epsilon = 0.0;
-        gpu.open_boundaries = 2;
+        gpu.open_boundaries = 2; // +X open
 
         let mut cell_types = vec![0u32; GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH];
         for z in 0..GRID_DEPTH {
             for y in 0..GRID_HEIGHT {
                 for x in 0..GRID_WIDTH {
                     let idx = z * GRID_WIDTH * GRID_HEIGHT + y * GRID_WIDTH + x;
-                    // Solid boundaries:
-                    // - Floor: y=0
-                    // - Ceiling: y=GRID_HEIGHT-1 (closed top)
-                    // - Side walls: z=0 and z=GRID_DEPTH-1
-                    // - Inlet wall: x=0
-                    // - Exit wall below weir: x=GRID_WIDTH-1 && y < outflow threshold
-                    let outflow_cell_y = (OUTFLOW_MIN_Y / CELL_SIZE) as usize;
                     let is_floor = y == 0;
                     let is_ceiling = y == GRID_HEIGHT - 1;
                     let is_z_wall = z == 0 || z == GRID_DEPTH - 1;
                     let is_inlet = x == 0;
-                    let is_exit_wall = x == GRID_WIDTH - 1 && y < outflow_cell_y;
-
-                    if is_floor || is_ceiling || is_z_wall || is_inlet || is_exit_wall {
+                    // No solid exit wall - open boundary
+                    if is_floor || is_ceiling || is_z_wall || is_inlet {
                         cell_types[idx] = 2; // SOLID
                     }
                 }
@@ -242,7 +221,7 @@ impl GridSegment {
 
         Self {
             gpu, positions: Vec::new(), velocities: Vec::new(), c_matrices: Vec::new(),
-            densities: Vec::new(), cell_types, world_offset, input_buffer: Vec::new(),
+            densities: Vec::new(), is_ghost: Vec::new(), cell_types, world_offset, input_buffer: Vec::new(),
         }
     }
 
@@ -251,16 +230,18 @@ impl GridSegment {
         self.velocities.push(vel);
         self.c_matrices.push(Mat3::ZERO);
         self.densities.push(1.0);
+        self.is_ghost.push(false);
     }
 
     fn process_input(&mut self) {
         let buf: Vec<_> = self.input_buffer.drain(..).collect();
-        for (p, v) in buf { self.inject(p, v); }
+        for (p, v, c, d, ghost) in buf { self.inject_full(p, v, c, d, ghost); }
     }
 
     fn step(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         if self.positions.is_empty() { return; }
 
+        // Update fluid cells
         for idx in 0..self.cell_types.len() {
             if self.cell_types[idx] != 2 { self.cell_types[idx] = 0; }
         }
@@ -277,31 +258,22 @@ impl GridSegment {
         self.gpu.step(device, queue, &mut self.positions, &mut self.velocities, &mut self.c_matrices,
             &self.densities, &self.cell_types, None, None, DT, GRAVITY, FLOW_ACCEL, PRESSURE_ITERS);
 
-        // Collision boundaries must match cell_types solid cells:
-        // - Solid at y=0 → floor_y = 0.5 * CELL_SIZE (center of cell 0)
-        // - Solid at y=HEIGHT-1 → ceiling_y = (HEIGHT-1.5) * CELL_SIZE
-        // - Solid at z=0,DEPTH-1 → z in [0.5*CELL, (DEPTH-1.5)*CELL]
-        // - Solid at x=0 → min_x = 0.5 * CELL_SIZE
-        // - Solid at x=WIDTH-1 for y<weir → exit wall
-        let min_x = CELL_SIZE * 1.0;  // Inside cell 1 (cell 0 is solid inlet)
-        let floor_y = CELL_SIZE * 1.0;  // Inside cell 1 (cell 0 is solid floor)
-        let ceiling_y = (GRID_HEIGHT as f32 - 1.5) * CELL_SIZE;  // Below solid ceiling cell
-        let min_z = CELL_SIZE * 1.0;  // Inside cell 1 (cell 0 is solid)
-        let max_z = (GRID_DEPTH as f32 - 1.5) * CELL_SIZE;  // Inside cell DEPTH-2
-        let exit_x = (GRID_WIDTH as f32 - 1.5) * CELL_SIZE;  // Before exit wall cells
+        // CPU collision
+        let min_x = CELL_SIZE * 1.0;
+        let floor_y = CELL_SIZE * 1.0;
+        let ceiling_y = (GRID_HEIGHT as f32 - 1.5) * CELL_SIZE;
+        let min_z = CELL_SIZE * 1.0;
+        let max_z = (GRID_DEPTH as f32 - 1.5) * CELL_SIZE;
 
         for i in 0..self.positions.len() {
-            // Floor collision
             if self.positions[i].y < floor_y {
                 self.positions[i].y = floor_y;
                 self.velocities[i].y = self.velocities[i].y.abs() * 0.1;
             }
-            // Ceiling collision
             if self.positions[i].y > ceiling_y {
                 self.positions[i].y = ceiling_y;
                 self.velocities[i].y = -self.velocities[i].y.abs() * 0.1;
             }
-            // Z walls
             if self.positions[i].z < min_z {
                 self.positions[i].z = min_z;
                 self.velocities[i].z = self.velocities[i].z.abs() * 0.1;
@@ -310,42 +282,71 @@ impl GridSegment {
                 self.positions[i].z = max_z;
                 self.velocities[i].z = -self.velocities[i].z.abs() * 0.1;
             }
-            // Inlet wall
             if self.positions[i].x < min_x {
                 self.positions[i].x = min_x;
                 self.velocities[i].x = self.velocities[i].x.abs() * 0.1;
             }
-            // Exit wall below outflow threshold
-            if self.positions[i].x >= exit_x && self.positions[i].y < OUTFLOW_MIN_Y {
-                self.positions[i].x = exit_x - CELL_SIZE * 0.1;
-                self.velocities[i].x = -self.velocities[i].x.abs() * 0.1;
-            }
+            // No +X collision - particles can exit freely
         }
     }
 
-    fn extract_exit(&mut self) -> Vec<(Vec3, Vec3)> {
+    /// Extract particles that exit through +X boundary above the weir
+    /// Returns: (world_pos, velocity, c_matrix, density) - only real particles, not ghosts
+    fn extract_exit(&mut self) -> Vec<(Vec3, Vec3, Mat3, f32)> {
         let mut out = Vec::new();
-        let exit_x = (GRID_WIDTH as f32 - 1.5) * CELL_SIZE;  // Match collision boundary
+        let exit_x = (GRID_WIDTH as f32 - 2.0) * CELL_SIZE; // Near the exit edge
         let mut i = 0;
         while i < self.positions.len() {
-            // Only allow exit if particle is at the exit edge AND above the outflow threshold
-            if self.positions[i].x >= exit_x && self.positions[i].y >= OUTFLOW_MIN_Y {
-                out.push((self.positions[i] + self.world_offset, self.velocities[i]));
+            if self.positions[i].x >= exit_x && self.positions[i].y >= OUTFLOW_MIN_Y && !self.is_ghost[i] {
+                out.push((
+                    self.positions[i] + self.world_offset,
+                    self.velocities[i],
+                    self.c_matrices[i],
+                    self.densities[i],
+                ));
                 self.positions.swap_remove(i); self.velocities.swap_remove(i);
                 self.c_matrices.swap_remove(i); self.densities.swap_remove(i);
+                self.is_ghost.swap_remove(i);
             } else { i += 1; }
         }
         out
     }
 
+    /// Inject particle with full state (for handoff)
+    fn inject_full(&mut self, pos: Vec3, vel: Vec3, c_mat: Mat3, density: f32, is_ghost: bool) {
+        self.positions.push(pos);
+        self.velocities.push(vel);
+        self.c_matrices.push(c_mat);
+        self.densities.push(density);
+        self.is_ghost.push(is_ghost);
+    }
+
+    /// Remove ghost particles (call after step - they've done their P2G job)
+    fn remove_ghosts(&mut self) {
+        let mut i = 0;
+        while i < self.positions.len() {
+            if self.is_ghost[i] {
+                self.positions.swap_remove(i);
+                self.velocities.swap_remove(i);
+                self.c_matrices.swap_remove(i);
+                self.densities.swap_remove(i);
+                self.is_ghost.swap_remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     fn remove_oob(&mut self) {
         let max_y = (GRID_HEIGHT as f32 - 0.5) * CELL_SIZE;
+        let max_x = GRID_WIDTH as f32 * CELL_SIZE;
         let mut i = 0;
         while i < self.positions.len() {
             let p = self.positions[i];
-            if p.y < 0.0 || p.y > max_y || !p.is_finite() || !self.velocities[i].is_finite() {
+            if p.y < 0.0 || p.y > max_y || p.x > max_x || p.x < 0.0 || !p.is_finite() || !self.velocities[i].is_finite() {
                 self.positions.swap_remove(i); self.velocities.swap_remove(i);
                 self.c_matrices.swap_remove(i); self.densities.swap_remove(i);
+                self.is_ghost.swap_remove(i);
             } else { i += 1; }
         }
     }
@@ -362,51 +363,50 @@ struct App {
     vertex_buffer: Option<wgpu::Buffer>,
     line_buffer: Option<wgpu::Buffer>,
 
-    grid: Option<GridSegment>,
+    grid_a: Option<GridSegment>,
+    grid_b: Option<GridSegment>,
 
     camera: Camera,
     paused: bool,
-    frame: u32,
     seed: u64,
     total_injected: usize,
+    total_handoffs: usize,
     total_exited: usize,
     mouse_pressed: bool,
     last_mouse: Option<(f64, f64)>,
     last_fps_time: Instant,
     fps_count: u32,
-    fps: f32,
 }
 
 impl App {
     fn new() -> Self {
-        // Center camera on single grid
+        // Center camera on both grids
+        let grid_length = GRID_WIDTH as f32 * CELL_SIZE;
         let center = Vec3::new(
-            GRID_WIDTH as f32 * CELL_SIZE * 0.5,
+            grid_length, // Center between two grids
             GRID_HEIGHT as f32 * CELL_SIZE * 0.5,
             GRID_DEPTH as f32 * CELL_SIZE * 0.5
         );
         Self {
             window: None, ctx: None, depth_view: None, point_pipeline: None, line_pipeline: None,
             uniform_buffer: None, uniform_bind_group: None, vertex_buffer: None, line_buffer: None,
-            grid: None,
-            camera: Camera::new(0.0, 0.3, 1.5, center),
-            paused: false, frame: 0, seed: 12345,
-            total_injected: 0, total_exited: 0,
+            grid_a: None, grid_b: None,
+            camera: Camera::new(0.0, 0.3, 2.5, center),
+            paused: false, seed: 12345,
+            total_injected: 0, total_handoffs: 0, total_exited: 0,
             mouse_pressed: false, last_mouse: None,
-            last_fps_time: Instant::now(), fps_count: 0, fps: 0.0,
+            last_fps_time: Instant::now(), fps_count: 0,
         }
     }
 
     fn spawn_inlet(&mut self) {
-        if let Some(grid) = &mut self.grid {
-            // Spawn inside valid fluid region (avoiding solid boundary cells)
-            // Valid region: x in [1,WIDTH-2], y in [1,HEIGHT-2], z in [1,DEPTH-2]
-            let floor_y = CELL_SIZE * 1.5;  // Just above floor
-            let max_y = CELL_SIZE * 3.5;    // Low in the tank
-            let min_z = CELL_SIZE * 1.5;    // Inside z walls
+        if let Some(grid) = &mut self.grid_a {
+            let floor_y = CELL_SIZE * 1.5;
+            let max_y = (GRID_HEIGHT as f32 - 2.0) * CELL_SIZE;
+            let min_z = CELL_SIZE * 1.5;
             let max_z = (GRID_DEPTH as f32 - 1.5) * CELL_SIZE;
             for _ in 0..INLET_RATE {
-                let x = CELL_SIZE * 1.5;  // Just inside inlet wall
+                let x = CELL_SIZE * 1.5;
                 let y = floor_y + rand_f32(&mut self.seed) * (max_y - floor_y);
                 let z = min_z + rand_f32(&mut self.seed) * (max_z - min_z);
                 grid.inject(Vec3::new(x, y, z), Vec3::new(INLET_VELOCITY, 0.0, 0.0));
@@ -417,19 +417,59 @@ impl App {
 
     fn step(&mut self) {
         self.spawn_inlet();
-        if let Some(g) = &mut self.grid { g.process_input(); }
+
+        if let Some(g) = &mut self.grid_a { g.process_input(); }
+        if let Some(g) = &mut self.grid_b { g.process_input(); }
 
         let ctx = self.ctx.as_ref().unwrap();
         for _ in 0..SUBSTEPS {
-            if let Some(g) = &mut self.grid { g.step(&ctx.device, &ctx.queue); }
+            if let Some(g) = &mut self.grid_a { g.step(&ctx.device, &ctx.queue); }
+            if let Some(g) = &mut self.grid_b { g.step(&ctx.device, &ctx.queue); }
         }
 
-        // Count particles that exit over the weir
-        if let Some(g) = &mut self.grid {
-            self.total_exited += g.extract_exit().len();
-            g.remove_oob();
+        // Handoff: A exits -> B enters (preserve full particle state)
+        // Also inject ghost particles to establish velocity field at inlet
+        if let Some(ga) = &mut self.grid_a {
+            let exited = ga.extract_exit();
+            if let Some(gb) = &mut self.grid_b {
+                for (world_pos, vel, c_mat, density) in exited {
+                    // Convert to Grid B local coords
+                    let local_pos = world_pos - gb.world_offset;
+                    // Place at inlet of Grid B, preserving Y and Z
+                    let local_pos = Vec3::new(CELL_SIZE * 1.5, local_pos.y, local_pos.z);
+
+                    // Inject the actual particle (not a ghost)
+                    gb.input_buffer.push((local_pos, vel, c_mat, density, false));
+
+                    // Inject ghost particles ahead to establish velocity field
+                    // These are removed after one step (after P2G)
+                    for dx in 1..4 {
+                        let ghost_pos = Vec3::new(
+                            local_pos.x + dx as f32 * CELL_SIZE,
+                            local_pos.y,
+                            local_pos.z,
+                        );
+                        gb.input_buffer.push((ghost_pos, vel, c_mat, density, true)); // ghost=true
+                    }
+
+                    self.total_handoffs += 1;
+                }
+            }
         }
-        self.frame += 1;
+
+        // Remove ghost particles after they've done their P2G job
+        if let Some(gb) = &mut self.grid_b {
+            gb.remove_ghosts();
+        }
+
+        // B exits -> leave system
+        if let Some(gb) = &mut self.grid_b {
+            self.total_exited += gb.extract_exit().len();
+            gb.remove_oob();
+        }
+        if let Some(ga) = &mut self.grid_a {
+            ga.remove_oob();
+        }
     }
 
     fn render(&mut self) {
@@ -442,31 +482,45 @@ impl App {
         };
         let view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Collect particles - 6 vertices per particle for quad rendering
+        // Collect particles - 6 vertices per particle
         let mut vertices: Vec<Pos3Color4Vertex> = Vec::new();
-        if let Some(g) = &self.grid {
+
+        // Grid A particles - blue
+        if let Some(g) = &self.grid_a {
             for p in &g.positions {
                 let wp = *p + g.world_offset;
                 let color = [0.2, 0.5, 1.0, 1.0];
-                // 6 vertices per particle (2 triangles = 1 quad)
                 for _ in 0..6 {
                     vertices.push(Pos3Color4Vertex { position: wp.to_array(), color });
                 }
             }
         }
 
-        // Update vertex buffer (clamp to buffer size - 6 verts per particle)
-        let max_verts = MAX_PARTICLES * 6;
-        if vertices.len() > max_verts { vertices.truncate(max_verts); }
-        if !vertices.is_empty() {
-            let data = bytemuck::cast_slice(&vertices);
-            if let Some(vb) = &self.vertex_buffer {
-                ctx.queue.write_buffer(vb, 0, data);
+        // Grid B particles - cyan
+        if let Some(g) = &self.grid_b {
+            for p in &g.positions {
+                let wp = *p + g.world_offset;
+                let color = [0.2, 0.9, 0.8, 1.0];
+                for _ in 0..6 {
+                    vertices.push(Pos3Color4Vertex { position: wp.to_array(), color });
+                }
             }
         }
 
-        // Grid boundary lines (single grid)
-        let line_verts: Vec<Pos3Color4Vertex> = grid_boundary_lines(Vec3::ZERO, [0.3, 0.6, 1.0, 1.0]);
+        let max_verts = MAX_PARTICLES * 2 * 6;
+        if vertices.len() > max_verts { vertices.truncate(max_verts); }
+        if !vertices.is_empty() {
+            if let Some(vb) = &self.vertex_buffer {
+                ctx.queue.write_buffer(vb, 0, bytemuck::cast_slice(&vertices));
+            }
+        }
+
+        // Grid boundary lines
+        let grid_length = GRID_WIDTH as f32 * CELL_SIZE;
+        let mut line_verts: Vec<Pos3Color4Vertex> = Vec::new();
+        line_verts.extend(grid_boundary_lines(Vec3::ZERO, [0.3, 0.6, 1.0, 1.0], true)); // Grid A - blue
+        line_verts.extend(grid_boundary_lines(Vec3::new(grid_length, 0.0, 0.0), [0.2, 0.8, 0.7, 1.0], true)); // Grid B - cyan
+
         if let Some(lb) = &self.line_buffer {
             ctx.queue.write_buffer(lb, 0, bytemuck::cast_slice(&line_verts));
         }
@@ -507,7 +561,6 @@ impl App {
                 pass.draw(0..vertices.len() as u32, 0..1);
             }
 
-            // Draw grid boundary lines
             if let (Some(pipeline), Some(bg), Some(lb)) = (&self.line_pipeline, &self.uniform_bind_group, &self.line_buffer) {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, bg, &[]);
@@ -518,27 +571,32 @@ impl App {
         ctx.queue.submit(std::iter::once(encoder.finish()));
         surface_texture.present();
 
-        // FPS
+        // FPS and stats
         self.fps_count += 1;
         if Instant::now().duration_since(self.last_fps_time).as_secs_f32() >= 1.0 {
-            self.fps = self.fps_count as f32;
+            let count_a = self.grid_a.as_ref().map(|g| g.positions.len()).unwrap_or(0);
+            let count_b = self.grid_b.as_ref().map(|g| g.positions.len()).unwrap_or(0);
+            println!("FPS:{} A:{} B:{} handoffs:{} exited:{}",
+                self.fps_count, count_a, count_b, self.total_handoffs, self.total_exited);
             self.fps_count = 0;
             self.last_fps_time = Instant::now();
-            let count = self.grid.as_ref().map(|g| g.positions.len()).unwrap_or(0);
-            println!("FPS:{:.0} particles:{} injected:{} exited:{}", self.fps, count, self.total_injected, self.total_exited);
         }
     }
 
     fn reset(&mut self) {
-        if let Some(g) = &mut self.grid {
-            g.positions.clear();
-            g.velocities.clear();
-            g.c_matrices.clear();
-            g.densities.clear();
+        if let Some(g) = &mut self.grid_a {
+            g.positions.clear(); g.velocities.clear();
+            g.c_matrices.clear(); g.densities.clear();
+            g.is_ghost.clear(); g.input_buffer.clear();
+        }
+        if let Some(g) = &mut self.grid_b {
+            g.positions.clear(); g.velocities.clear();
+            g.c_matrices.clear(); g.densities.clear();
+            g.is_ghost.clear(); g.input_buffer.clear();
         }
         self.total_injected = 0;
+        self.total_handoffs = 0;
         self.total_exited = 0;
-        self.frame = 0;
     }
 }
 
@@ -550,12 +608,9 @@ impl ApplicationHandler for App {
         self.window = Some(window.clone());
 
         let ctx = pollster::block_on(WgpuContext::init(window.clone()));
-        let size = window.inner_size();
 
-        // Depth
         self.depth_view = Some(create_depth_view(&ctx.device, &ctx.config));
 
-        // Uniform buffer
         let uniform_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Uniforms"), size: std::mem::size_of::<Uniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
@@ -575,14 +630,12 @@ impl ApplicationHandler for App {
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() }],
         });
 
-        // Pipelines - separate shaders for quads and lines
         let quad_shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("Quad Shader"), source: wgpu::ShaderSource::Wgsl(QUAD_SHADER.into()) });
         let line_shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("Line Shader"), source: wgpu::ShaderSource::Wgsl(LINE_SHADER.into()) });
         let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None, bind_group_layouts: &[&bind_group_layout], push_constant_ranges: &[],
         });
 
-        // Point pipeline renders particles as screen-space quads (TriangleList)
         let point_pipeline = ctx.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Quad Pipeline"),
             layout: Some(&pipeline_layout),
@@ -610,15 +663,13 @@ impl ApplicationHandler for App {
             cache: None,
         });
 
-        // Vertex buffer (6 vertices per particle for quads)
         let vertex_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertices"),
-            size: (MAX_PARTICLES * 6 * std::mem::size_of::<Pos3Color4Vertex>()) as u64,
+            size: (MAX_PARTICLES * 2 * 6 * std::mem::size_of::<Pos3Color4Vertex>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        // Line pipeline (for grid boundaries)
         let line_pipeline = ctx.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Line Pipeline"),
             layout: Some(&pipeline_layout),
@@ -646,16 +697,18 @@ impl ApplicationHandler for App {
             cache: None,
         });
 
-        // Line buffer (for single grid boundary + weir line = 28 vertices)
+        // Two grids worth of boundary lines (28 verts each)
         let line_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Lines"),
-            size: (28 * std::mem::size_of::<Pos3Color4Vertex>()) as u64,
+            size: (64 * std::mem::size_of::<Pos3Color4Vertex>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        // Single grid
-        self.grid = Some(GridSegment::new(&ctx.device, Vec3::ZERO));
+        // Create two grids
+        let grid_length = GRID_WIDTH as f32 * CELL_SIZE;
+        self.grid_a = Some(GridSegment::new(&ctx.device, Vec3::ZERO));
+        self.grid_b = Some(GridSegment::new(&ctx.device, Vec3::new(grid_length, 0.0, 0.0)));
 
         self.ctx = Some(ctx);
         self.point_pipeline = Some(point_pipeline);
@@ -665,9 +718,9 @@ impl ApplicationHandler for App {
         self.vertex_buffer = Some(vertex_buffer);
         self.line_buffer = Some(line_buffer);
 
-        println!("=== Single Grid Volume Fill ===");
-        println!("Blue=water, Yellow=outflow weir (halfway up)");
-        println!("Water fills up below weir before overflowing");
+        println!("=== CHAINED GRIDS ===");
+        println!("Blue box = Grid A, Cyan box = Grid B");
+        println!("Particles exit A above yellow weir -> enter B");
         println!("Mouse drag=rotate, Scroll=zoom, Space=pause, R=reset");
     }
 
