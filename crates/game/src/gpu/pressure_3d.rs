@@ -596,6 +596,7 @@ impl GpuPressure3D {
 
     /// Encode full pressure solve: divergence → iterations → gradient
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, iterations: u32) {
+        log::trace!("Pressure solver: {} iterations ({}x{}x{} grid)", iterations, self.width, self.height, self.depth);
         let workgroups_x = self.width.div_ceil(8);
         let workgroups_y = self.height.div_ceil(8);
         let workgroups_z = self.depth.div_ceil(4);
@@ -685,6 +686,7 @@ impl GpuPressure3D {
     /// - divergence_buffer is pre-filled with density error
     /// - We want the resulting pressure to apply to particle positions, not grid velocities
     pub fn encode_iterations_only(&self, encoder: &mut wgpu::CommandEncoder, iterations: u32) {
+        log::trace!("Density pressure solver: {} iterations", iterations);
         let workgroups_x = self.width.div_ceil(8);
         let workgroups_y = self.height.div_ceil(8);
         let workgroups_z = self.depth.div_ceil(4);

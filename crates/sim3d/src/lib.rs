@@ -81,6 +81,7 @@ pub struct FlipSimulation3D {
 impl FlipSimulation3D {
     /// Create a new simulation with the given grid dimensions.
     pub fn new(width: usize, height: usize, depth: usize, cell_size: f32) -> Self {
+        assert!(cell_size > 0.0, "cell_size must be positive, got {}", cell_size);
         let grid = Grid3D::new(width, height, depth, cell_size);
         let transfer_buffers = TransferBuffers::new(&grid);
 
@@ -352,5 +353,17 @@ mod tests {
             .fold(0.0f32, f32::max);
 
         assert!(max_vel < 10.0, "Velocities exploded: max_vel = {}", max_vel);
+    }
+
+    #[test]
+    #[should_panic(expected = "cell_size must be positive, got 0")]
+    fn test_zero_cell_size_panics() {
+        let _ = FlipSimulation3D::new(4, 4, 4, 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "cell_size must be positive, got -1")]
+    fn test_negative_cell_size_panics() {
+        let _ = FlipSimulation3D::new(4, 4, 4, -1.0);
     }
 }

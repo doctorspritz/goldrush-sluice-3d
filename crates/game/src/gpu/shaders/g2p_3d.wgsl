@@ -265,7 +265,9 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     // Normalize velocities AND C matrix by weight sum (weighted average)
     // C matrix MUST be normalized - without this, C explodes near boundaries where Σw < 1
     // NOTE: old_grid_vel uses same stencil as new_velocity, so both normalize by same weights
-    if (weight_sum.x > 0.0) {
+    // Use epsilon threshold to prevent NaN from division by near-zero weights
+    const WEIGHT_EPSILON: f32 = 1e-10;
+    if (weight_sum.x > WEIGHT_EPSILON) {
         new_velocity.x /= weight_sum.x;
         old_grid_vel.x /= weight_sum.x;
         new_c_row0 /= weight_sum.x;
@@ -273,7 +275,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
             water_velocity.x /= weight_sum.x;
         }
     }
-    if (weight_sum.y > 0.0) {
+    if (weight_sum.y > WEIGHT_EPSILON) {
         new_velocity.y /= weight_sum.y;
         old_grid_vel.y /= weight_sum.y;
         new_c_row1 /= weight_sum.y;
@@ -281,7 +283,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
             water_velocity.y /= weight_sum.y;
         }
     }
-    if (weight_sum.z > 0.0) {
+    if (weight_sum.z > WEIGHT_EPSILON) {
         new_velocity.z /= weight_sum.z;
         old_grid_vel.z /= weight_sum.z;
         new_c_row2 /= weight_sum.z;

@@ -75,6 +75,7 @@ pub struct Grid3D {
 impl Grid3D {
     /// Create a new grid with the given dimensions.
     pub fn new(width: usize, height: usize, depth: usize, cell_size: f32) -> Self {
+        assert!(cell_size > 0.0, "cell_size must be positive, got {}", cell_size);
         let cell_count = width * height * depth;
         let u_count = (width + 1) * height * depth;
         let v_count = width * (height + 1) * depth;
@@ -644,5 +645,17 @@ mod tests {
         grid.set_solid(1, 2, 3);
         assert!(grid.is_solid(1, 2, 3));
         assert!(!grid.is_solid(0, 0, 0));
+    }
+
+    #[test]
+    #[should_panic(expected = "cell_size must be positive, got 0")]
+    fn test_zero_cell_size_panics() {
+        let _ = Grid3D::new(4, 4, 4, 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "cell_size must be positive, got -0.1")]
+    fn test_negative_cell_size_panics() {
+        let _ = Grid3D::new(4, 4, 4, -0.1);
     }
 }

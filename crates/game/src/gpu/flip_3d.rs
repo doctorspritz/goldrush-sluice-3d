@@ -706,6 +706,7 @@ impl GpuFlip3D {
         cell_size: f32,
         max_particles: usize,
     ) -> Self {
+        assert!(cell_size > 0.0, "cell_size must be positive, got {}", cell_size);
         // Shared particle buffers for P2G/G2P
         let particle_buffer_size = (max_particles * std::mem::size_of::<[f32; 4]>()) as u64;
         let positions_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
