@@ -17,6 +17,35 @@ use bytemuck::{Pod, Zeroable};
 use std::sync::{mpsc, Arc};
 use wgpu::util::DeviceExt;
 
+//==============================================================================
+// HYDROSTATIC EQUILIBRIUM - VALIDATED PARAMETERS
+//
+// These parameters have been validated to achieve true hydrostatic equilibrium
+// (water at rest with max velocity < 0.01 m/s). DO NOT CHANGE without re-running
+// test_hydrostatic_equilibrium in flip_component_tests.rs.
+//
+// Critical settings for hydrostatic equilibrium:
+//   - flip_ratio = 0.0       (Pure PIC for maximum damping)
+//   - slip_factor = 0.0      (No-slip at solid boundaries)
+//   - open_boundaries = 8    (+Y open for free surface, all others closed)
+//   - vorticity_epsilon = 0.0 (Disable vorticity confinement)
+//   - density_projection_enabled = false (Disable - causes particle clumping)
+//
+// Particle seeding: 8 particles per cell (2×2×2 stratified, Zhu & Bridson 2005)
+//==============================================================================
+
+/// Validated flip_ratio for hydrostatic equilibrium tests.
+/// Pure PIC (0.0) provides maximum damping for equilibrium scenarios.
+pub const HYDROSTATIC_FLIP_RATIO: f32 = 0.0;
+
+/// Validated slip_factor for hydrostatic equilibrium tests.
+/// No-slip (0.0) at solid boundaries is essential for proper hydrostatic equilibrium.
+pub const HYDROSTATIC_SLIP_FACTOR: f32 = 0.0;
+
+/// Validated open_boundaries for hydrostatic equilibrium tests.
+/// Bit 3 (8) = +Y open for free surface at top, all other boundaries closed.
+pub const HYDROSTATIC_OPEN_BOUNDARIES: u32 = 8;
+
 const GRAVEL_OBSTACLE_MAX: u32 = 2048;
 
 #[repr(C)]
@@ -48,9 +77,13 @@ struct GravityParams3D {
     depth: u32,
     gravity_dt: f32,
     cell_size: f32,
+    /// Bitmask for open boundaries (velocity NOT zeroed):
+    /// Bit 0 (1): -X open, Bit 1 (2): +X open
+    /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
+    /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
+    open_boundaries: u32,
     _pad0: u32,
     _pad1: u32,
-    _pad2: u32,
 }
 
 /// Flow acceleration parameters (for sluice downstream flow)
@@ -124,7 +157,18 @@ struct BcParams3D {
     width: u32,
     height: u32,
     depth: u32,
-    _pad: u32,
+    /// Bitmask for open boundaries (velocity NOT zeroed):
+    /// Bit 0 (1): -X open, Bit 1 (2): +X open
+    /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
+    /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
+    open_boundaries: u32,
+    /// Slip factor for tangential velocities at solid boundaries:
+    /// 1.0 = free-slip (allow tangential flow, default)
+    /// 0.0 = no-slip (zero tangential velocity)
+    slip_factor: f32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 /// Density error computation parameters
@@ -173,6 +217,16 @@ struct SedimentCellTypeParams3D {
     height: u32,
     depth: u32,
     _pad0: u32,
+}
+
+/// Velocity extrapolation parameters
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct VelocityExtrapParams3D {
+    width: u32,
+    height: u32,
+    depth: u32,
+    extrap_pass: u32,  // Current extrapolation pass
 }
 
 /// SDF collision parameters
@@ -462,8 +516,18 @@ pub struct GpuFlip3D {
     pub open_boundaries: u32,
     /// Vorticity confinement strength (default 0.05, range 0.0-0.25)
     pub vorticity_epsilon: f32,
+    /// FLIP/PIC ratio (0.0 = pure PIC, 1.0 = pure FLIP). Default 0.99 for water.
+    /// Lower values add more damping, useful for settling simulations.
+    pub flip_ratio: f32,
     /// Enable density projection (volume conservation). Disable for basic tests.
     pub density_projection_enabled: bool,
+    /// Slip factor for tangential velocities at solid boundaries:
+    /// 1.0 = free-slip (allow tangential flow, default for dynamic flow)
+    /// 0.0 = no-slip (zero tangential velocity, good for hydrostatic equilibrium)
+    pub slip_factor: f32,
+    /// Target water particles per cell for density projection.
+    /// Must match the particle seeding density (e.g., 1.0 for 1 particle/cell, 8.0 for 2x2x2 seeding).
+    pub water_rest_density: f32,
     /// Target sediment particles per cell for porosity fraction.
     pub sediment_rest_particles: f32,
     /// Speed below which friction kicks in (m/s).
@@ -579,6 +643,20 @@ pub struct GpuFlip3D {
     sediment_cell_type_pipeline: wgpu::ComputePipeline,
     sediment_cell_type_bind_group: wgpu::BindGroup,
     sediment_cell_type_params_buffer: wgpu::Buffer,
+    // Fluid cell expansion (standard FLIP "7 points per particle")
+    fluid_cell_expand_pipeline: wgpu::ComputePipeline,
+    fluid_cell_expand_bind_group: wgpu::BindGroup,
+    // Velocity extrapolation (standard FLIP - extend velocities into AIR cells)
+    velocity_extrap_params_buffer: wgpu::Buffer,
+    valid_u_buffer: wgpu::Buffer,
+    valid_v_buffer: wgpu::Buffer,
+    valid_w_buffer: wgpu::Buffer,
+    velocity_extrap_init_pipeline: wgpu::ComputePipeline,
+    velocity_extrap_u_pipeline: wgpu::ComputePipeline,
+    velocity_extrap_v_pipeline: wgpu::ComputePipeline,
+    velocity_extrap_w_pipeline: wgpu::ComputePipeline,
+    velocity_extrap_finalize_pipeline: wgpu::ComputePipeline,
+    velocity_extrap_bind_group: wgpu::BindGroup,
     sediment_density_error_pipeline: wgpu::ComputePipeline,
     sediment_density_error_bind_group: wgpu::BindGroup,
     sediment_density_correct_pipeline: wgpu::ComputePipeline,
@@ -2532,6 +2610,312 @@ impl GpuFlip3D {
                 compilation_options: Default::default(),
                 cache: None,
             });
+
+        // ========== Fluid Cell Expansion (Standard FLIP "7 points per particle") ==========
+        let fluid_cell_expand_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Fluid Cell Expand 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("shaders/fluid_cell_expand_3d.wgsl").into(),
+            ),
+        });
+
+        let fluid_cell_expand_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Fluid Cell Expand 3D Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let fluid_cell_expand_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Fluid Cell Expand 3D Bind Group"),
+            layout: &fluid_cell_expand_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: sediment_cell_type_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: p2g.particle_count_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: pressure.cell_type_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let fluid_cell_expand_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Fluid Cell Expand 3D Pipeline Layout"),
+                bind_group_layouts: &[&fluid_cell_expand_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let fluid_cell_expand_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Fluid Cell Expand 3D Pipeline"),
+                layout: Some(&fluid_cell_expand_pipeline_layout),
+                module: &fluid_cell_expand_shader,
+                entry_point: Some("expand_fluid_cells"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+        // Velocity extrapolation: extend velocities into AIR cells near surface
+        let velocity_extrap_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Velocity Extrapolate 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("shaders/velocity_extrapolate_3d.wgsl").into(),
+            ),
+        });
+
+        let velocity_extrap_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Velocity Extrap Params Buffer"),
+            size: std::mem::size_of::<VelocityExtrapParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Create validity buffers for U, V, W faces
+        let u_face_count = ((width + 1) * height * depth) as usize;
+        let v_face_count = (width * (height + 1) * depth) as usize;
+        let w_face_count = (width * height * (depth + 1)) as usize;
+
+        let valid_u_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Valid U Buffer"),
+            size: (u_face_count * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let valid_v_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Valid V Buffer"),
+            size: (v_face_count * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let valid_w_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Valid W Buffer"),
+            size: (w_face_count * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let velocity_extrap_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Velocity Extrap 3D Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let velocity_extrap_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Velocity Extrap 3D Bind Group"),
+            layout: &velocity_extrap_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: velocity_extrap_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: pressure.cell_type_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: p2g.grid_u_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: p2g.grid_v_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: p2g.grid_w_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: valid_u_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: valid_v_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: valid_w_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let velocity_extrap_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Velocity Extrap 3D Pipeline Layout"),
+                bind_group_layouts: &[&velocity_extrap_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let velocity_extrap_init_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Velocity Extrap Init Pipeline"),
+                layout: Some(&velocity_extrap_pipeline_layout),
+                module: &velocity_extrap_shader,
+                entry_point: Some("init_valid_faces"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+        let velocity_extrap_u_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Velocity Extrap U Pipeline"),
+                layout: Some(&velocity_extrap_pipeline_layout),
+                module: &velocity_extrap_shader,
+                entry_point: Some("extrapolate_u"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+        let velocity_extrap_v_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Velocity Extrap V Pipeline"),
+                layout: Some(&velocity_extrap_pipeline_layout),
+                module: &velocity_extrap_shader,
+                entry_point: Some("extrapolate_v"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+        let velocity_extrap_w_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Velocity Extrap W Pipeline"),
+                layout: Some(&velocity_extrap_pipeline_layout),
+                module: &velocity_extrap_shader,
+                entry_point: Some("extrapolate_w"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+        let velocity_extrap_finalize_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Velocity Extrap Finalize Pipeline"),
+                layout: Some(&velocity_extrap_pipeline_layout),
+                module: &velocity_extrap_shader,
+                entry_point: Some("finalize_valid"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
         let gravel_obstacle_pipeline =
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("Gravel Obstacle 3D Pipeline"),
@@ -2775,7 +3159,10 @@ impl GpuFlip3D {
             cell_size,
             open_boundaries: 0, // All boundaries closed by default
             vorticity_epsilon: 0.05,
+            flip_ratio: 0.99, // Standard FLIP ratio for water (99% FLIP, 1% PIC)
             density_projection_enabled: true, // Enable by default for main sim
+            slip_factor: 1.0, // Free-slip by default (allow tangential flow at boundaries)
+            water_rest_density: 8.0, // Target 8 particles per cell (2x2x2 seeding)
             sediment_rest_particles: 8.0,
             sediment_friction_threshold: 0.1,
             sediment_friction_strength: 0.5,
@@ -2852,6 +3239,18 @@ impl GpuFlip3D {
             sediment_cell_type_pipeline,
             sediment_cell_type_bind_group,
             sediment_cell_type_params_buffer,
+            fluid_cell_expand_pipeline,
+            fluid_cell_expand_bind_group,
+            velocity_extrap_params_buffer,
+            valid_u_buffer,
+            valid_v_buffer,
+            valid_w_buffer,
+            velocity_extrap_init_pipeline,
+            velocity_extrap_u_pipeline,
+            velocity_extrap_v_pipeline,
+            velocity_extrap_w_pipeline,
+            velocity_extrap_finalize_pipeline,
+            velocity_extrap_bind_group,
             sediment_density_error_pipeline,
             sediment_density_error_bind_group,
             sediment_density_correct_pipeline,
@@ -3007,7 +3406,7 @@ impl GpuFlip3D {
         // 3. G2P
         let sediment_params = SedimentParams3D::default();
         self.g2p
-            .upload_params(queue, particle_count, self.cell_size, dt, sediment_params);
+            .upload_params(queue, particle_count, self.cell_size, dt, self.flip_ratio, sediment_params);
         self.g2p.encode(encoder, particle_count);
 
         // 4. SDF Collision
@@ -3019,6 +3418,26 @@ impl GpuFlip3D {
         pass.set_bind_group(0, &self.sdf_collision_bind_group, &[]);
         let workgroups = particle_count.div_ceil(256);
         pass.dispatch_workgroups(workgroups, 1, 1);
+    }
+
+    /// Configure the solver for hydrostatic equilibrium testing.
+    ///
+    /// Sets validated parameters that achieve true hydrostatic equilibrium
+    /// (water at rest with max velocity < 0.01 m/s). Use this configuration
+    /// when testing static water scenarios.
+    ///
+    /// Parameters set:
+    /// - `flip_ratio = 0.0` (Pure PIC for maximum damping)
+    /// - `slip_factor = 0.0` (No-slip at solid boundaries)
+    /// - `open_boundaries = 8` (+Y open for free surface)
+    /// - `vorticity_epsilon = 0.0` (Disable vorticity confinement)
+    /// - `density_projection_enabled = false` (Disable - causes particle clumping)
+    pub fn configure_for_hydrostatic_equilibrium(&mut self) {
+        self.flip_ratio = HYDROSTATIC_FLIP_RATIO;
+        self.slip_factor = HYDROSTATIC_SLIP_FACTOR;
+        self.open_boundaries = HYDROSTATIC_OPEN_BOUNDARIES;
+        self.vorticity_epsilon = 0.0;
+        self.density_projection_enabled = false;
     }
 
     pub fn step(
@@ -3181,14 +3600,18 @@ impl GpuFlip3D {
     fn upload_bc_and_cell_types(&self, queue: &wgpu::Queue, cell_types: &[u32]) {
         // Upload cell types FIRST (needed for BC enforcement)
         self.pressure
-            .upload_cell_types(queue, cell_types, self.cell_size);
+            .upload_cell_types(queue, cell_types, self.cell_size, self.open_boundaries);
 
         // Upload BC params
         let bc_params = BcParams3D {
             width: self.width,
             height: self.height,
             depth: self.depth,
-            _pad: 0,
+            open_boundaries: self.open_boundaries,
+            slip_factor: self.slip_factor,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
         };
         queue.write_buffer(&self.bc_params_buffer, 0, bytemuck::bytes_of(&bc_params));
     }
@@ -3562,6 +3985,28 @@ impl GpuFlip3D {
                 }
                 queue.submit(std::iter::once(ct_encoder.finish()));
             }
+
+            // Fluid cell expansion: mark cells as FLUID if 2+ face-neighbors have particles
+            // Conservative approach to prevent over-expansion
+            {
+                let mut expand_encoder =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Fluid Cell Expand 3D Encoder"),
+                    });
+                {
+                    let mut pass = expand_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Fluid Cell Expand 3D Pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.fluid_cell_expand_pipeline);
+                    pass.set_bind_group(0, &self.fluid_cell_expand_bind_group, &[]);
+                    let workgroups_x = (self.width + 7) / 8;
+                    let workgroups_y = (self.height + 7) / 8;
+                    let workgroups_z = (self.depth + 3) / 4;
+                    pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+                }
+                queue.submit(std::iter::once(expand_encoder.finish()));
+            }
         }
 
         // 4. Apply gravity
@@ -3572,9 +4017,9 @@ impl GpuFlip3D {
             depth: self.depth,
             gravity_dt: gravity * dt,
             cell_size: self.cell_size,
+            open_boundaries: self.open_boundaries,
             _pad0: 0,
             _pad1: 0,
-            _pad2: 0,
         };
         queue.write_buffer(
             &self.gravity_params_buffer,
@@ -3721,6 +4166,11 @@ impl GpuFlip3D {
 
         queue.submit(std::iter::once(encoder.finish()));
 
+        // NOTE: Post-pressure BC REMOVED - it was introducing divergence into the
+        // divergence-free velocity field, causing fluid expansion over time.
+        // BC is only applied BEFORE the pressure solve (in step 6).
+        // The pressure solve naturally enforces no-penetration at walls.
+
         if self.sediment_porosity_drag > 0.0 {
             let drag_params = PorosityDragParams3D {
                 width: self.width,
@@ -3777,6 +4227,140 @@ impl GpuFlip3D {
             queue.submit(std::iter::once(encoder.finish()));
         }
 
+        // 7.8 Velocity extrapolation: extend velocities into AIR cells near surface
+        // This is critical for FLIP stability - particles near the surface need to sample
+        // from valid velocity fields, not undefined AIR cell values.
+        // Run 4 passes to extrapolate 4 cells deep into AIR.
+        {
+            let extrap_params = VelocityExtrapParams3D {
+                width: self.width,
+                height: self.height,
+                depth: self.depth,
+                extrap_pass: 0,
+            };
+            queue.write_buffer(
+                &self.velocity_extrap_params_buffer,
+                0,
+                bytemuck::bytes_of(&extrap_params),
+            );
+
+            // Calculate workgroups for U, V, W grids (they have different sizes)
+            let workgroups_u = (
+                (self.width + 1 + 7) / 8,
+                (self.height + 7) / 8,
+                (self.depth + 3) / 4,
+            );
+            let workgroups_v = (
+                (self.width + 7) / 8,
+                (self.height + 1 + 7) / 8,
+                (self.depth + 3) / 4,
+            );
+            let workgroups_w = (
+                (self.width + 7) / 8,
+                (self.height + 7) / 8,
+                (self.depth + 1 + 3) / 4,
+            );
+            // Use the maximum for init/finalize passes that touch all grids
+            let workgroups_max = (
+                workgroups_u.0.max(workgroups_v.0).max(workgroups_w.0),
+                workgroups_u.1.max(workgroups_v.1).max(workgroups_w.1),
+                workgroups_u.2.max(workgroups_v.2).max(workgroups_w.2),
+            );
+
+            // Initialize valid flags based on FLUID cells
+            {
+                let mut encoder =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Velocity Extrap Init Encoder"),
+                    });
+                {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Velocity Extrap Init Pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.velocity_extrap_init_pipeline);
+                    pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
+                    pass.dispatch_workgroups(workgroups_max.0, workgroups_max.1, workgroups_max.2);
+                }
+                queue.submit(std::iter::once(encoder.finish()));
+            }
+
+            // Run 4 extrapolation passes (deeper extrapolation for better surface coverage)
+            for _pass in 0..4 {
+                // Extrapolate U
+                {
+                    let mut encoder =
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Velocity Extrap U Encoder"),
+                        });
+                    {
+                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("Velocity Extrap U Pass"),
+                            timestamp_writes: None,
+                        });
+                        pass.set_pipeline(&self.velocity_extrap_u_pipeline);
+                        pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
+                        pass.dispatch_workgroups(workgroups_u.0, workgroups_u.1, workgroups_u.2);
+                    }
+                    queue.submit(std::iter::once(encoder.finish()));
+                }
+
+                // Extrapolate V
+                {
+                    let mut encoder =
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Velocity Extrap V Encoder"),
+                        });
+                    {
+                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("Velocity Extrap V Pass"),
+                            timestamp_writes: None,
+                        });
+                        pass.set_pipeline(&self.velocity_extrap_v_pipeline);
+                        pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
+                        pass.dispatch_workgroups(workgroups_v.0, workgroups_v.1, workgroups_v.2);
+                    }
+                    queue.submit(std::iter::once(encoder.finish()));
+                }
+
+                // Extrapolate W
+                {
+                    let mut encoder =
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Velocity Extrap W Encoder"),
+                        });
+                    {
+                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("Velocity Extrap W Pass"),
+                            timestamp_writes: None,
+                        });
+                        pass.set_pipeline(&self.velocity_extrap_w_pipeline);
+                        pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
+                        pass.dispatch_workgroups(workgroups_w.0, workgroups_w.1, workgroups_w.2);
+                    }
+                    queue.submit(std::iter::once(encoder.finish()));
+                }
+
+                // Finalize: mark newly extrapolated faces as valid
+                {
+                    let mut encoder =
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Velocity Extrap Finalize Encoder"),
+                        });
+                    {
+                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("Velocity Extrap Finalize Pass"),
+                            timestamp_writes: None,
+                        });
+                        pass.set_pipeline(&self.velocity_extrap_finalize_pipeline);
+                        pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
+                        pass.dispatch_workgroups(workgroups_max.0, workgroups_max.1, workgroups_max.2);
+                    }
+                    queue.submit(std::iter::once(encoder.finish()));
+                }
+            }
+        }
+
         // 8. Run G2P using grid buffers already on GPU
         let sediment_params = SedimentParams3D {
             settling_velocity: self.sediment_settling_velocity,
@@ -3793,7 +4377,7 @@ impl GpuFlip3D {
         };
         let g2p_count = self
             .g2p
-            .upload_params(queue, count, self.cell_size, dt, sediment_params);
+            .upload_params(queue, count, self.cell_size, dt, self.flip_ratio, sediment_params);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D G2P Encoder"),
@@ -3811,7 +4395,7 @@ impl GpuFlip3D {
                 width: self.width,
                 height: self.height,
                 depth: self.depth,
-                rest_density: 8.0, // Target ~8 particles per cell
+                rest_density: self.water_rest_density,
                 dt,
                 _pad1: 0,
                 _pad2: 0,
