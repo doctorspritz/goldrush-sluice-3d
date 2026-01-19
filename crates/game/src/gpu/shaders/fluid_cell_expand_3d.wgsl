@@ -11,7 +11,11 @@ struct Params {
     width: u32,
     height: u32,
     depth: u32,
-    _pad0: u32,
+    // Bitmask for open boundaries:
+    // Bit 0 (1): -X open, Bit 1 (2): +X open
+    // Bit 2 (4): -Y open, Bit 3 (8): +Y open
+    // Bit 4 (16): -Z open, Bit 5 (32): +Z open
+    open_boundaries: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -58,6 +62,29 @@ fn is_domain_boundary(i: u32, j: u32, k: u32) -> bool {
            k == 0u || k == params.depth - 1u;
 }
 
+// Check if a boundary cell should be SOLID based on open_boundaries config.
+// OPEN boundaries are treated as AIR, CLOSED boundaries as SOLID.
+fn is_boundary_solid(i: u32, j: u32, k: u32) -> bool {
+    // Extract open boundary flags
+    let open_neg_x = (params.open_boundaries & 1u) != 0u;
+    let open_pos_x = (params.open_boundaries & 2u) != 0u;
+    let open_neg_y = (params.open_boundaries & 4u) != 0u;
+    let open_pos_y = (params.open_boundaries & 8u) != 0u;
+    let open_neg_z = (params.open_boundaries & 16u) != 0u;
+    let open_pos_z = (params.open_boundaries & 32u) != 0u;
+
+    // Check each boundary and return false (not solid) if it's open
+    if (i == 0u && open_neg_x) { return false; }
+    if (i == params.width - 1u && open_pos_x) { return false; }
+    if (j == 0u && open_neg_y) { return false; }
+    if (j == params.height - 1u && open_pos_y) { return false; }
+    if (k == 0u && open_neg_z) { return false; }
+    if (k == params.depth - 1u && open_pos_z) { return false; }
+
+    // If we reach here and it's a boundary, it's a closed boundary -> SOLID
+    return is_domain_boundary(i, j, k);
+}
+
 @compute @workgroup_size(8, 8, 4)
 fn expand_fluid_cells(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = id.x;
@@ -71,8 +98,9 @@ fn expand_fluid_cells(@builtin(global_invocation_id) id: vec3<u32>) {
     let idx = cell_index(i, j, k);
     let current_type = cell_type[idx];
 
-    // Domain boundary cells are ALWAYS solid (particles get clamped away from these)
-    if (is_domain_boundary(i, j, k)) {
+    // Boundary cells are SOLID only if they're CLOSED boundaries.
+    // OPEN boundaries allow particles to flow through (treated as AIR).
+    if (is_boundary_solid(i, j, k)) {
         cell_type[idx] = CELL_SOLID;
         return;
     }
