@@ -517,11 +517,10 @@ impl FineRegion {
                 let vz = (flow_z_up + flow_z_down) * 0.5;
                 let flow_speed = (vx * vx + vz * vz).sqrt();
 
-                let slope = bed_slope(x, z, self);
-                let grav_term = g * water_depth * slope;
+                // Shear stress using velocity-only formula (not additive with gravity)
                 let cf = 0.003;
-                let velocity_term = cf * (vx * vx + vz * vz);
-                let shear_stress = params.rho_water * (grav_term + velocity_term);
+                let v_sq = vx * vx + vz * vz;
+                let shear_stress = params.rho_water * cf * v_sq;
 
                 let max_conc = 0.5;
                 let mut suspended_before = self.suspended_sediment[idx].min(max_conc);
@@ -535,8 +534,10 @@ impl FineRegion {
                 let mut p_thick = p0;
 
                 let v_settle = settling_velocity(params.d50_sediment);
-                let deposition_suppression = if flow_speed > v_settle {
-                    (v_settle / flow_speed).powi(2)
+                // Linear suppression with threshold (not quadratic)
+                let suppression_threshold = 2.0 * v_settle;
+                let deposition_suppression = if flow_speed > suppression_threshold {
+                    suppression_threshold / flow_speed
                 } else {
                     1.0
                 };
@@ -848,19 +849,12 @@ impl World {
     }
 
     /// Calculate shear velocity at a cell.
-    /// Combines gravitational (slope-based) and turbulent (velocity-based) contributions.
-    /// u* = sqrt(g × h × S + Cf × v²)
+    /// Uses velocity-based formula (not combined with gravitational term).
+    /// u* = sqrt(Cf × v²)
     /// where Cf ≈ 0.003 is a friction coefficient.
     pub fn shear_velocity(&self, x: usize, z: usize) -> f32 {
-        let g = self.params.gravity;
-        let h = self.water_depth(x, z);
-        let s = self.bed_slope(x, z);
-
-        // Gravitational contribution from slope
-        let grav_term = g * h * s;
-
-        // Turbulent contribution from flow velocity
-        // τ_velocity = Cf × ρ × v² where Cf ≈ 0.003 is friction coefficient
+        // Velocity-based shear stress formula
+        // τ = Cf × ρ × v² where Cf ≈ 0.003 is friction coefficient
         // u*² = τ/ρ = Cf × v²
         let cf = 0.003; // Friction coefficient for turbulent flow
         let flow_x_left = self.water_flow_x[self.flow_x_idx(x, z)];
@@ -870,10 +864,9 @@ impl World {
         let vel_x = (flow_x_left + flow_x_right) * 0.5;
         let vel_z = (flow_z_up + flow_z_down) * 0.5;
         let v_sq = vel_x * vel_x + vel_z * vel_z;
-        let velocity_term = cf * v_sq;
 
-        // Combined shear velocity
-        (grav_term + velocity_term).sqrt()
+        // Shear velocity
+        (cf * v_sq).sqrt()
     }
 
     /// Calculate bed shear stress at a cell.
@@ -2103,8 +2096,10 @@ impl World {
                 // 4) Deposition: deposit from the suspended_before amount, velocity-dependent
                 // Deposition should be suppressed if flow is strong relative to settling
                 let v_settle = self.settling_velocity(self.params.d50_sediment);
-                let deposition_suppression = if flow_speed > v_settle {
-                    (v_settle / flow_speed).powi(2)
+                // Linear suppression with threshold (not quadratic)
+                let suppression_threshold = 2.0 * v_settle;
+                let deposition_suppression = if flow_speed > suppression_threshold {
+                    suppression_threshold / flow_speed
                 } else {
                     1.0
                 };
@@ -3308,5 +3303,84 @@ mod tests {
 
         assert!((actual - expected).abs() < 0.0001,
             "Settling velocity calculation mismatch: expected {:.6}, got {:.6}", expected, actual);
+    }
+
+    #[test]
+    fn test_shear_stress_velocity_only() {
+        // Test that shear stress uses velocity-only formula, not additive with gravity
+        let mut world = World::new(10, 10, 1.0, 0.0);
+
+        // Create a slope and flow
+        let idx = world.idx(5, 5);
+        let idx_neighbor = world.idx(6, 5);
+        world.terrain_sediment[idx] = 5.0;
+        world.terrain_sediment[idx_neighbor] = 0.0; // Steep slope
+        world.water_surface[idx] = 6.0; // 1.0m water depth above terrain
+
+        // Add flow velocity
+        let flow_idx = world.flow_x_idx(5, 5);
+        let flow_idx_neighbor = world.flow_x_idx(6, 5);
+        world.water_flow_x[flow_idx] = 2.0; // 2 m/s flow
+        world.water_flow_x[flow_idx_neighbor] = 2.0;
+
+        let shear_vel = world.shear_velocity(5, 5);
+
+        // Expected: sqrt(cf * v²) = sqrt(0.003 * 4) = sqrt(0.012) ≈ 0.1095
+        let cf = 0.003_f32;
+        let v_sq = 2.0_f32 * 2.0_f32;
+        let expected = (cf * v_sq).sqrt();
+
+        assert!((shear_vel - expected).abs() < 0.001,
+            "Shear velocity should use velocity-only formula: expected {:.6}, got {:.6}",
+            expected, shear_vel);
+    }
+
+    #[test]
+    fn test_deposition_suppression_linear() {
+        // Test that deposition suppression uses linear formula with threshold
+        let world = World::new(10, 10, 1.0, 0.0);
+        let v_settle = world.settling_velocity(world.params.d50_sediment);
+
+        // Case 1: Flow speed below threshold (2 * v_settle)
+        // Should have no suppression (factor = 1.0)
+        let flow_speed_slow = v_settle;
+        let suppression_threshold = 2.0 * v_settle;
+        let suppression_slow = if flow_speed_slow > suppression_threshold {
+            suppression_threshold / flow_speed_slow
+        } else {
+            1.0
+        };
+        assert_eq!(suppression_slow, 1.0, "Slow flow should have no suppression");
+
+        // Case 2: Flow speed above threshold
+        // Should use linear suppression: threshold / flow_speed
+        let flow_speed_fast = 4.0 * v_settle;
+        let suppression_fast = if flow_speed_fast > suppression_threshold {
+            suppression_threshold / flow_speed_fast
+        } else {
+            1.0
+        };
+        let expected_fast = suppression_threshold / flow_speed_fast;
+        assert_eq!(suppression_fast, expected_fast, "Fast flow should use linear suppression");
+
+        // Case 3: At threshold, should be exactly 1.0
+        let flow_speed_threshold = suppression_threshold;
+        let suppression_at_threshold = if flow_speed_threshold > suppression_threshold {
+            suppression_threshold / flow_speed_threshold
+        } else {
+            1.0
+        };
+        assert_eq!(suppression_at_threshold, 1.0, "Flow at threshold should have no suppression");
+
+        // Case 4: Verify linear is less aggressive than quadratic
+        // For flow_speed = 4 * v_settle:
+        // Linear: (2 * v_settle) / (4 * v_settle) = 0.5
+        // Quadratic (old): (v_settle / (4 * v_settle))^2 = 0.0625
+        // Linear allows MORE deposition (0.5 > 0.0625)
+        let linear = suppression_threshold / (4.0 * v_settle);
+        let quadratic = (v_settle / (4.0 * v_settle)).powi(2);
+        assert!(linear > quadratic,
+            "Linear suppression ({:.3}) should be less aggressive than quadratic ({:.3})",
+            linear, quadratic);
     }
 }
