@@ -3,9 +3,10 @@
 //! This is the "background" simulation for areas outside active particle zones.
 //! Everything is heightfield-based for performance.
 
-use crate::constants::GRAVITY_MAGNITUDE;
+use crate::constants::*;
 use glam::Vec3;
 
+mod erosion;
 mod geometry;
 mod physics;
 mod terrain;
@@ -463,48 +464,6 @@ impl FineRegion {
         let mut delta_overburden = vec![0.0; width * depth];
         let mut delta_paydirt = vec![0.0; width * depth];
 
-        let bed_slope = |x: usize, z: usize, this: &FineRegion| -> f32 {
-            let h_here = this.ground_height(x, z);
-            let slope_x = if x > 0 && x < this.width - 1 {
-                let h_left = this.ground_height(x - 1, z);
-                let h_right = this.ground_height(x + 1, z);
-                (h_left - h_right) / (2.0 * this.cell_size)
-            } else if x == 0 && this.width > 1 {
-                (h_here - this.ground_height(x + 1, z)) / this.cell_size
-            } else if x + 1 == this.width && this.width > 1 {
-                (this.ground_height(x - 1, z) - h_here) / this.cell_size
-            } else {
-                0.0
-            };
-
-            let slope_z = if z > 0 && z < this.depth - 1 {
-                let h_up = this.ground_height(x, z - 1);
-                let h_down = this.ground_height(x, z + 1);
-                (h_up - h_down) / (2.0 * this.cell_size)
-            } else if z == 0 && this.depth > 1 {
-                (h_here - this.ground_height(x, z + 1)) / this.cell_size
-            } else if z + 1 == this.depth && this.depth > 1 {
-                (this.ground_height(x, z - 1) - h_here) / this.cell_size
-            } else {
-                0.0
-            };
-
-            (slope_x * slope_x + slope_z * slope_z).sqrt()
-        };
-
-        let settling_velocity = |d50: f32| -> f32 {
-            let g = params.gravity;
-            let rho_p = params.rho_sediment;
-            let rho_f = params.rho_water;
-            let mu = params.water_viscosity;
-
-            let vs_stokes = g * (rho_p - rho_f) * d50 * d50 / (18.0 * mu);
-            let vs_turbulent =
-                (4.0 * g * d50 * (rho_p - rho_f) / (3.0 * rho_f * 0.44)).sqrt();
-            let transition = (d50 / 0.001).clamp(0.0, 1.0);
-            vs_stokes * (1.0 - transition) + vs_turbulent * transition
-        };
-
         for z in 1..depth - 1 {
             for x in 1..width - 1 {
                 let idx = self.idx(x, z);
@@ -523,10 +482,7 @@ impl FineRegion {
                 let vz = (flow_z_up + flow_z_down) * 0.5;
                 let flow_speed = (vx * vx + vz * vz).sqrt();
 
-                // Shear stress using velocity-only formula (not additive with gravity)
-                let cf = 0.003;
-                let v_sq = vx * vx + vz * vz;
-                let shear_stress = params.rho_water * cf * v_sq;
+                let shear_stress = erosion::shear_stress_from_velocity(vx, vz, params.rho_water);
 
                 let max_conc = 0.5;
                 let mut suspended_before = self.suspended_sediment[idx].min(max_conc);
@@ -539,7 +495,7 @@ impl FineRegion {
                 let mut o_thick = o0;
                 let mut p_thick = p0;
 
-                let v_settle = settling_velocity(params.d50_sediment);
+                let v_settle = erosion::settling_velocity(params.d50_sediment, params);
                 // Linear suppression with threshold (not quadratic)
                 let suppression_threshold = 2.0 * v_settle;
                 let deposition_suppression = if flow_speed > suppression_threshold {
