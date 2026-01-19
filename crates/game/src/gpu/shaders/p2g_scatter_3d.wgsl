@@ -166,11 +166,12 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 );
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
-                let momentum_x = (vel.x + affine_vel.x) * w;
+                // Mass-weighted momentum: m * (v + C*offset) * w
+                let momentum_x = density * (vel.x + affine_vel.x) * w;
 
                 let idx = u_index(u32(ni), u32(nj), u32(nk));
                 atomicAdd(&u_sum[idx], i32(momentum_x * SCALE));
-                atomicAdd(&u_weight[idx], i32(w * SCALE));
+                atomicAdd(&u_weight[idx], i32(density * w * SCALE));
             }
         }
     }
@@ -222,11 +223,12 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 );
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
-                let momentum_y = (vel.y + affine_vel.y) * w;
+                // Mass-weighted momentum: m * (v + C*offset) * w
+                let momentum_y = density * (vel.y + affine_vel.y) * w;
 
                 let idx = v_index(u32(ni), u32(nj), u32(nk));
                 atomicAdd(&v_sum[idx], i32(momentum_y * SCALE));
-                atomicAdd(&v_weight[idx], i32(w * SCALE));
+                atomicAdd(&v_weight[idx], i32(density * w * SCALE));
             }
         }
     }
@@ -278,11 +280,12 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 );
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
-                let momentum_z = (vel.z + affine_vel.z) * w;
+                // Mass-weighted momentum: m * (v + C*offset) * w
+                let momentum_z = density * (vel.z + affine_vel.z) * w;
 
                 let idx = w_index(u32(ni), u32(nj), u32(nk));
                 atomicAdd(&w_sum[idx], i32(momentum_z * SCALE));
-                atomicAdd(&w_weight[idx], i32(w * SCALE));
+                atomicAdd(&w_weight[idx], i32(density * w * SCALE));
             }
         }
     }

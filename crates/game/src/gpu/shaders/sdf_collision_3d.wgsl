@@ -165,8 +165,8 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
     let dist = sample_sdf(pos);
     if (dist < 0.0) {
         let normal = sdf_gradient(pos);
-        // Robust penetration clamping: don't push more than 2x cell_size per frame
-        let penetration = min(-dist + params.cell_size * 0.1, params.cell_size * 2.0);
+        // Penetration clamping: allow up to 10x cell_size to escape thin geometry
+        let penetration = min(-dist + params.cell_size * 0.1, params.cell_size * 10.0);
         pos += normal * penetration;
 
         let vel_into = dot(vel, normal);

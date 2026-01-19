@@ -3274,4 +3274,39 @@ mod tests {
             panic!("Fine region not created");
         }
     }
+
+    #[test]
+    fn test_settling_velocity_formula() {
+        // Test that Stokes settling velocity formula produces reasonable values
+        let world = World::new(10, 10, 1.0, 0.0);
+
+        // Test 1: 0.1mm fine silt in water (Stokes regime)
+        // Expected: ~0.008-0.01 m/s
+        let d_silt = 0.0001; // 0.1mm
+        let vs_silt = world.settling_velocity(d_silt);
+        assert!(vs_silt > 0.005 && vs_silt < 0.015,
+            "0.1mm silt settling velocity should be ~0.008-0.01 m/s, got {:.4} m/s", vs_silt);
+
+        // Test 2: 1mm sand in water (turbulent regime)
+        // Expected: ~0.15-0.25 m/s (turbulent, not Stokes)
+        let d_sand = 0.001; // 1mm
+        let vs_sand = world.settling_velocity(d_sand);
+        assert!(vs_sand > 0.15 && vs_sand < 0.30,
+            "1mm sand settling velocity should be ~0.15-0.25 m/s, got {:.4} m/s", vs_sand);
+
+        // Test 3: Verify Stokes formula correctness with manual calculation
+        // For small particles (< 0.1mm), should use pure Stokes
+        // Stokes law: vs = g * (ρp - ρf) * d² / (18 * μ)
+        let g = world.params.gravity;
+        let rho_p = world.params.rho_sediment;
+        let rho_f = world.params.rho_water;
+        let mu = world.params.water_viscosity;
+        let d = 0.00005; // 0.05mm - in pure Stokes regime
+
+        let expected = g * (rho_p - rho_f) * d * d / (18.0 * mu);
+        let actual = world.settling_velocity(d);
+
+        assert!((actual - expected).abs() < 0.0001,
+            "Settling velocity calculation mismatch: expected {:.6}, got {:.6}", expected, actual);
+    }
 }

@@ -205,7 +205,12 @@ for particle in particles.iter_mut() {
 ### Mathematical Formula
 
 ```
-v_s = (2/9) × (g × (ρ_p - ρ_f) × d²) / μ
+v_s = g × (ρ_p - ρ_f) × d² / (18 × μ)
+```
+
+**Note:** This formula uses particle **diameter** (d). The equivalent formula using particle **radius** (r, where d = 2r) is:
+```
+v_s = (2/9) × g × (ρ_p - ρ_f) × r² / μ
 ```
 
 where:
@@ -213,7 +218,7 @@ where:
 - g = gravitational acceleration
 - ρ_p = particle density
 - ρ_f = fluid density
-- d = particle diameter
+- d = particle diameter (or r = particle radius)
 - μ = dynamic viscosity of fluid
 
 ### Validity Conditions
@@ -263,7 +268,7 @@ where:
 
 **Modified Stokes:**
 ```
-v_s = (2/9) × (g × (ρ_p - ρ_f) × d²) / μ × ψ^k
+v_s = g × (ρ_p - ρ_f) × d² / (18 × μ) × ψ^k
 ```
 where k is empirically determined (typically k ≈ 1)
 
@@ -280,9 +285,8 @@ fn stokes_settling_velocity(
     let g = 9.81;  // m/s²
     let density_diff = particle_density - fluid_density;
 
-    // Basic Stokes velocity
-    let v_stokes = (2.0/9.0) * g * density_diff *
-                   particle_diameter.powi(2) / dynamic_viscosity;
+    // Basic Stokes velocity (using diameter)
+    let v_stokes = g * density_diff * particle_diameter.powi(2) / (18.0 * dynamic_viscosity);
 
     // Apply shape correction
     let v_corrected = v_stokes * shape_factor;
@@ -1159,8 +1163,8 @@ fn calculate_drag_force(
 ### Critical Equations for Implementation:
 
 ```rust
-// Settling velocity
-v_s = (2/9) × g × (ρ_p - ρ_f) × d² / μ
+// Settling velocity (using diameter d)
+v_s = g × (ρ_p - ρ_f) × d² / (18 × μ)
 
 // Shields parameter
 θ = τ / ((ρ_s - ρ_f) × g × d)
