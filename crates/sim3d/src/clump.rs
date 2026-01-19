@@ -1,5 +1,6 @@
 //! 3D rigid clumps (multi-sphere clusters) for rock/gravel prototypes.
 
+use crate::constants::GRAVITY_VEC;
 use crate::serde_utils::{
     deserialize_mat3, deserialize_quat, deserialize_vec3, serialize_mat3, serialize_quat,
     serialize_vec3,
@@ -325,7 +326,7 @@ impl ClusterSimulation3D {
         Self {
             templates: Vec::new(),
             clumps: Vec::new(),
-            gravity: Vec3::new(0.0, -9.81, 0.0),
+            gravity: GRAVITY_VEC,
             restitution: 0.2,
             friction: 0.4,
             floor_friction: 0.6,
