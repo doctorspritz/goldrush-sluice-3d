@@ -341,6 +341,19 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         // Blend particle velocity toward water velocity (drag entrainment)
         var vel_after_drag = mix(particle_vel, water_vel, drag_blend);
 
+        // BUOYANCY FORCE: F_buoyancy = (ρ_fluid - ρ_sediment) * V * g
+        // This creates a net downward acceleration for sediment denser than water.
+        // For particles with relative density ρ_rel (water=1.0):
+        //   a_buoyancy = (1.0 - ρ_rel) * g
+        // Negative (downward) for ρ_rel > 1.0, positive (upward) for ρ_rel < 1.0
+        //
+        // This is applied as a velocity change (impulse) over the timestep:
+        //   Δv_buoyancy = a_buoyancy * dt = (1.0 - ρ_rel) * g * dt
+        const GRAVITY: f32 = 9.81;
+        let buoyancy_accel = (1.0 - density) * GRAVITY;  // m/s²
+        let buoyancy_impulse = buoyancy_accel * params.dt;  // m/s
+        vel_after_drag.y -= buoyancy_impulse;  // Negative because Y-axis points up
+
         // SETTLING: Use pre-computed Stokes settling velocities
         // Heavy particles sink faster, landing upstream before the flow carries them.
         // Light particles sink slowly, drifting downstream as they fall.
