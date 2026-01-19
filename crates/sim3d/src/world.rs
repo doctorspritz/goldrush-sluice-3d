@@ -2055,7 +2055,10 @@ impl World {
         let rho_diff = self.params.rho_sediment - self.params.rho_water;
         let critical_shields = self.params.critical_shields;
         // Per-step erosion cap (tuneable)
-        let max_erosion_per_step = 0.00001 * dt;
+        // Increased from 0.00001 to allow hardness-based erosion rates to dominate
+        // The physics-based rate (k_erosion * excess / hardness * dt) should control
+        // erosion speed, not this safety cap
+        let max_erosion_per_step = 0.001 * dt;
         let min_erosion_speed = 0.1;
 
         let mut delta_sediment = vec![0.0; width * depth];

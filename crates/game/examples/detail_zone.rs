@@ -78,6 +78,7 @@ const GOLD_DENSITY: f32 = constants::GOLD_DENSITY;
 const GOLD_FRACTION: f32 = 0.05;
 const GANGUE_RADIUS_CELLS: f32 = 0.12;
 const GOLD_RADIUS_CELLS: f32 = 0.02;
+const DETAIL_EMITTER_VISUAL_RADIUS: f32 = 0.05;
 
 const MOVE_SPEED: f32 = 20.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
@@ -325,6 +326,8 @@ struct App {
 
     sluice_hovered: bool,
     emitter_mesh: Option<Mesh>,
+    detail_emitter_mesh: Option<Mesh>,
+    detail_emitter_pos: Vec3,
 }
 
 impl App {
