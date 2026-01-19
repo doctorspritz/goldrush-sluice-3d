@@ -129,48 +129,36 @@ fn apply_gradient_u(@builtin(global_invocation_id) id: vec3<u32>) {
     let left_type = get_cell_type(i32(i) - 1, i32(j), i32(k));
     let right_type = get_cell_type(i32(i), i32(j), i32(k));
 
-    // DIRECTIONAL no-penetration: only block velocity INTO solid
-    // If left is solid: block positive U (would flow from solid)
-    // If right is solid: block negative U (would flow into solid)
+    // Case 1: Both solid - zero velocity
     if (left_type == CELL_SOLID && right_type == CELL_SOLID) {
         grid_u[idx] = 0.0;
         return;
     }
-    if (left_type == CELL_SOLID) {
-        // Left is solid - can't have positive flow (from solid)
-        grid_u[idx] = min(grid_u[idx], 0.0);
-    }
-    if (right_type == CELL_SOLID) {
-        // Right is solid - can't have negative flow (into solid)
-        grid_u[idx] = max(grid_u[idx], 0.0);
-    }
 
-    // Skip pressure update if both sides are air (no fluid to drive flow)
+    // Case 2: Both air - no pressure gradient (no fluid)
     if (left_type == CELL_AIR && right_type == CELL_AIR) {
         return;
     }
 
-    // Skip pressure update if both sides are solid
-    if (left_type == CELL_SOLID && right_type == CELL_SOLID) {
+    // Case 3: One side is solid - Neumann BC (dp/dn = 0)
+    // No pressure gradient through solid walls, just enforce no-penetration
+    if (left_type == CELL_SOLID) {
+        // Left is solid: can't have positive velocity (from solid)
+        grid_u[idx] = min(grid_u[idx], 0.0);
+        return;
+    }
+    if (right_type == CELL_SOLID) {
+        // Right is solid: can't have negative velocity (into solid)
+        grid_u[idx] = max(grid_u[idx], 0.0);
         return;
     }
 
-    // Apply pressure gradient
+    // Case 4: Both sides are fluid or air - apply pressure gradient
+    // This includes fluid-fluid, fluid-air, and air-fluid faces
     let p_right = get_pressure(i32(i), i32(j), i32(k));
     let p_left = get_pressure(i32(i) - 1, i32(j), i32(k));
 
-    // Apply pressure gradient, then enforce directional constraints
-    var new_u = grid_u[idx] - (p_right - p_left) * params.inv_cell_size;
-
-    // Re-apply directional constraints after pressure gradient
-    if (left_type == CELL_SOLID) {
-        new_u = min(new_u, 0.0);
-    }
-    if (right_type == CELL_SOLID) {
-        new_u = max(new_u, 0.0);
-    }
-
-    grid_u[idx] = new_u;
+    grid_u[idx] = grid_u[idx] - (p_right - p_left) * params.inv_cell_size;
 }
 
 // Apply pressure gradient to V velocity component
@@ -191,47 +179,36 @@ fn apply_gradient_v(@builtin(global_invocation_id) id: vec3<u32>) {
     let bottom_type = get_cell_type(i32(i), i32(j) - 1, i32(k));
     let top_type = get_cell_type(i32(i), i32(j), i32(k));
 
-    // DIRECTIONAL no-penetration: only block velocity INTO solid
-    // If bottom is solid: block positive V (would flow from solid)
-    // If top is solid: block negative V (would flow into solid)
+    // Case 1: Both solid - zero velocity
     if (bottom_type == CELL_SOLID && top_type == CELL_SOLID) {
         grid_v[idx] = 0.0;
         return;
     }
-    if (bottom_type == CELL_SOLID) {
-        // Bottom is solid - can't have positive flow (from solid)
-        grid_v[idx] = min(grid_v[idx], 0.0);
-    }
-    if (top_type == CELL_SOLID) {
-        // Top is solid - can't have negative flow (into solid)
-        grid_v[idx] = max(grid_v[idx], 0.0);
-    }
 
-    // Skip pressure update if both sides are air
+    // Case 2: Both air - no pressure gradient (no fluid)
     if (bottom_type == CELL_AIR && top_type == CELL_AIR) {
         return;
     }
 
-    // Skip pressure update if both sides are solid
-    if (bottom_type == CELL_SOLID && top_type == CELL_SOLID) {
+    // Case 3: One side is solid - Neumann BC (dp/dn = 0)
+    // No pressure gradient through solid walls, just enforce no-penetration
+    if (bottom_type == CELL_SOLID) {
+        // Bottom is solid: can't have positive velocity (from solid)
+        grid_v[idx] = min(grid_v[idx], 0.0);
+        return;
+    }
+    if (top_type == CELL_SOLID) {
+        // Top is solid: can't have negative velocity (into solid)
+        grid_v[idx] = max(grid_v[idx], 0.0);
         return;
     }
 
+    // Case 4: Both sides are fluid or air - apply pressure gradient
+    // This includes fluid-fluid, fluid-air, and air-fluid faces
     let p_top = get_pressure(i32(i), i32(j), i32(k));
     let p_bottom = get_pressure(i32(i), i32(j) - 1, i32(k));
 
-    // Apply pressure gradient, then enforce directional constraints
-    var new_v = grid_v[idx] - (p_top - p_bottom) * params.inv_cell_size;
-
-    // Re-apply directional constraints after pressure gradient
-    if (bottom_type == CELL_SOLID) {
-        new_v = min(new_v, 0.0);
-    }
-    if (top_type == CELL_SOLID) {
-        new_v = max(new_v, 0.0);
-    }
-
-    grid_v[idx] = new_v;
+    grid_v[idx] = grid_v[idx] - (p_top - p_bottom) * params.inv_cell_size;
 }
 
 // Apply pressure gradient to W velocity component
@@ -252,45 +229,34 @@ fn apply_gradient_w(@builtin(global_invocation_id) id: vec3<u32>) {
     let back_type = get_cell_type(i32(i), i32(j), i32(k) - 1);
     let front_type = get_cell_type(i32(i), i32(j), i32(k));
 
-    // DIRECTIONAL no-penetration: only block velocity INTO solid
-    // If back is solid: block positive W (would flow from solid)
-    // If front is solid: block negative W (would flow into solid)
+    // Case 1: Both solid - zero velocity
     if (back_type == CELL_SOLID && front_type == CELL_SOLID) {
         grid_w[idx] = 0.0;
         return;
     }
-    if (back_type == CELL_SOLID) {
-        // Back is solid - can't have positive flow (from solid)
-        grid_w[idx] = min(grid_w[idx], 0.0);
-    }
-    if (front_type == CELL_SOLID) {
-        // Front is solid - can't have negative flow (into solid)
-        grid_w[idx] = max(grid_w[idx], 0.0);
-    }
 
-    // Skip pressure update if both sides are air
+    // Case 2: Both air - no pressure gradient (no fluid)
     if (back_type == CELL_AIR && front_type == CELL_AIR) {
         return;
     }
 
-    // Skip pressure update if both sides are solid
-    if (back_type == CELL_SOLID && front_type == CELL_SOLID) {
+    // Case 3: One side is solid - Neumann BC (dp/dn = 0)
+    // No pressure gradient through solid walls, just enforce no-penetration
+    if (back_type == CELL_SOLID) {
+        // Back is solid: can't have positive velocity (from solid)
+        grid_w[idx] = min(grid_w[idx], 0.0);
+        return;
+    }
+    if (front_type == CELL_SOLID) {
+        // Front is solid: can't have negative velocity (into solid)
+        grid_w[idx] = max(grid_w[idx], 0.0);
         return;
     }
 
+    // Case 4: Both sides are fluid or air - apply pressure gradient
+    // This includes fluid-fluid, fluid-air, and air-fluid faces
     let p_front = get_pressure(i32(i), i32(j), i32(k));
     let p_back = get_pressure(i32(i), i32(j), i32(k) - 1);
 
-    // Apply pressure gradient, then enforce directional constraints
-    var new_w = grid_w[idx] - (p_front - p_back) * params.inv_cell_size;
-
-    // Re-apply directional constraints after pressure gradient
-    if (back_type == CELL_SOLID) {
-        new_w = min(new_w, 0.0);
-    }
-    if (front_type == CELL_SOLID) {
-        new_w = max(new_w, 0.0);
-    }
-
-    grid_w[idx] = new_w;
+    grid_w[idx] = grid_w[idx] - (p_front - p_back) * params.inv_cell_size;
 }
