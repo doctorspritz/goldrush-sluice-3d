@@ -19,6 +19,7 @@ use wgpu::util::DeviceExt;
 
 pub mod diagnostics;
 pub mod params;
+pub mod pipeline_builder;
 pub mod readback;
 
 pub use diagnostics::PhysicsDiagnostics;
