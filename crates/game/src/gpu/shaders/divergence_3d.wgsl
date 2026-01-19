@@ -11,6 +11,11 @@ struct Params {
     height: u32,
     depth: u32,
     inv_cell_size: f32,  // 1.0 / cell_size
+    // Bitmask for open boundaries (not used by divergence, but needed for struct layout)
+    open_boundaries: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;

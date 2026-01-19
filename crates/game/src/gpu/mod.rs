@@ -11,6 +11,7 @@ pub mod p2g_cell_centric_3d;
 pub mod particle_sort;
 pub mod pressure_3d;
 pub mod sph_3d;
+pub mod sph_dfsph;
 
 use std::sync::Arc;
 use wgpu::SurfaceTarget;

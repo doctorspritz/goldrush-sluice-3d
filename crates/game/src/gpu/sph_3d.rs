@@ -6,7 +6,9 @@
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 use std::borrow::Cow;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
+use super::particle_sort::GpuParticleSort;
 
 /// Diagnostic metrics for one simulation frame
 #[derive(Debug, Clone, Copy)]
@@ -24,6 +26,11 @@ pub struct FrameMetrics {
     pub avg_y: f32,
     /// Y spread = max_y - min_y (should increase as particles stack)
     pub y_spread: f32,
+    
+    // Oscillation diagnostics
+    pub avg_velocity: f32,
+    pub max_velocity: f32,
+    pub avg_kinetic_energy: f32,
 }
 
 /// SPH simulation parameters (uniform buffer)
@@ -88,16 +95,6 @@ impl SphParams {
     }
 }
 
-/// Sort parameters for bitonic sort (passed via dynamic uniform buffer)
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct SortParams {
-    j: u32,      // Current step size
-    k: u32,      // Current block size
-    n: u32,      // Total elements (padded to power of 2)
-    _pad: u32,
-}
-
 /// GPU SPH simulation state
 pub struct GpuSph3D {
     // Parameters
@@ -105,13 +102,13 @@ pub struct GpuSph3D {
     params_buffer: wgpu::Buffer,
 
     // Particle buffers (SoA layout)
-    pub positions: wgpu::Buffer,
-    pub velocities: wgpu::Buffer,
-    positions_pred: wgpu::Buffer,
-    densities: wgpu::Buffer,
-    pressures: wgpu::Buffer,
-    d_ii: wgpu::Buffer,           // IISPH diagonal
-    sum_dij_pj: wgpu::Buffer,     // IISPH off-diagonal sum
+    pub positions: Arc<wgpu::Buffer>,
+    pub velocities: Arc<wgpu::Buffer>,
+    positions_pred: Arc<wgpu::Buffer>,
+    densities: Arc<wgpu::Buffer>,
+    pub pressures: Arc<wgpu::Buffer>,
+    d_ii: Arc<wgpu::Buffer>,           // IISPH diagonal
+    sum_dij_pj: Arc<wgpu::Buffer>,     // IISPH off-diagonal sum
 
     // Debug staging buffers (for CPU readback)
     debug_density_staging: wgpu::Buffer,
@@ -119,8 +116,8 @@ pub struct GpuSph3D {
     debug_order_staging: wgpu::Buffer,
 
     // Spatial hash buffers
-    cell_indices: wgpu::Buffer,   // Per-particle cell hash
-    particle_order: wgpu::Buffer, // Sorted particle indices
+    cell_indices: Arc<wgpu::Buffer>,   // Per-particle cell hash
+    particle_order: Arc<wgpu::Buffer>, // Sorted particle indices
     cell_offsets: wgpu::Buffer,   // Start index per cell
 
     // Pipelines
@@ -131,10 +128,6 @@ pub struct GpuSph3D {
     update_pressure_pipeline: wgpu::ComputePipeline,
     apply_pressure_pipeline: wgpu::ComputePipeline,
     boundary_pipeline: wgpu::ComputePipeline,
-
-    // Sort pipelines (bitonic sort stages)
-    sort_local_pipeline: wgpu::ComputePipeline,
-    sort_global_pipeline: wgpu::ComputePipeline,
 
     // Simple test pipeline (gravity + boundary only)
     simple_step_pipeline: wgpu::ComputePipeline,
@@ -147,10 +140,6 @@ pub struct GpuSph3D {
     bf_apply_pressure_pipeline: wgpu::ComputePipeline,
     bf_boundary_pipeline: wgpu::ComputePipeline,
 
-    // Sorting
-    sort_params_buffer: wgpu::Buffer,
-    sort_params_align: u64,
-
     // Bind groups
     bind_group: wgpu::BindGroup,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -159,6 +148,9 @@ pub struct GpuSph3D {
     max_particles: u32,
     num_particles_capacity: u32, // Max particles the buffers can hold
     num_cells: u32,
+
+    // Radix Sorter
+    sorter: GpuParticleSort,
 }
 
 impl GpuSph3D {
@@ -181,21 +173,21 @@ impl GpuSph3D {
 
         // Create particle buffers
         let create_particle_buffer = |label: &str, size: usize| {
-            device.create_buffer(&wgpu::BufferDescriptor {
+            Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
                 size: (max_particles as usize * size) as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
-            })
+            }))
         };
 
         // Positions needs VERTEX usage for rendering
-        let positions = device.create_buffer(&wgpu::BufferDescriptor {
+        let positions = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SPH Positions"),
             size: (max_particles as usize * 16) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::VERTEX,
             mapped_at_creation: false,
-        });
+        }));
         let velocities = create_particle_buffer("SPH Velocities", 16);
         let positions_pred = create_particle_buffer("SPH Positions Predicted", 16);
         let densities = create_particle_buffer("SPH Densities", 4);
@@ -225,7 +217,15 @@ impl GpuSph3D {
 
         // Spatial hash buffers
         let cell_indices = create_particle_buffer("SPH Cell Indices", 4);
-        let particle_order = create_particle_buffer("SPH Particle Order", 4);
+        
+        // Initialize particle_order to Identity (0..Max) as we use Physical Sort
+        // This is static and never changes because we physically sort data instead of indices
+        let order_data: Vec<u32> = (0..max_particles).collect();
+        let particle_order = Arc::new(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("SPH Particle Order"),
+            contents: bytemuck::cast_slice(&order_data),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        }));
 
         let cell_offsets = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SPH Cell Offsets"),
@@ -233,6 +233,19 @@ impl GpuSph3D {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
+
+        // Initialize Radix Sorter
+        let sorter = GpuParticleSort::new(
+            device,
+            grid_dims[0], grid_dims[1], grid_dims[2],
+            max_particles as usize,
+            positions_pred.clone(), // in_positions (Used for Keys - Must be Pred)
+            velocities.clone(),     // in_velocities
+            densities.clone(),      // in_densities
+            positions.clone(),      // in_c_col0 (Mapped to Positions - Carried)
+            pressures.clone(),      // in_c_col1 (Mapped to Pressures)
+            velocities.clone(),     // in_c_col2 (Dummy/Unused)
+        );
 
         // Create bind group layout
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -354,37 +367,12 @@ impl GpuSph3D {
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false, // Changed to false for this one
+                        has_dynamic_offset: false, 
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                // 11: Sort Params (Dynamic Uniform)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true, // IMPORTANT
-                        min_binding_size: wgpu::BufferSize::new(16),
-                    },
-                    count: None,
-                },
             ],
-        });
-
-        // Create sort params buffer
-        // Max passes for 1M particles (~210). buffer size ~64KB.
-        let min_limit = device.limits().min_uniform_buffer_offset_alignment as u64;
-        let sort_params_align = min_limit.max(16); // 256 typically
-        let max_passes = 256; 
-        let sort_buffer_size = sort_params_align * max_passes;
-        
-        let sort_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("SPH Sort Params"),
-            size: sort_buffer_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -402,14 +390,6 @@ impl GpuSph3D {
                 wgpu::BindGroupEntry { binding: 8, resource: cell_indices.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 9, resource: particle_order.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 10, resource: cell_offsets.as_entire_binding() },
-                wgpu::BindGroupEntry { 
-                    binding: 11, 
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &sort_params_buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16), // Bind one struct size window
-                    }) 
-                },
             ],
         });
 
@@ -445,11 +425,6 @@ impl GpuSph3D {
         let update_pressure_pipeline = create_pipeline("SPH Update Pressure", iisph_shader, "update_pressure");
         let apply_pressure_pipeline = create_pipeline("SPH Apply Pressure", iisph_shader, "apply_pressure");
         let boundary_pipeline = create_pipeline("SPH Boundary", iisph_shader, "boundary_collision");
-
-        // Bitonic sort - use separate shader
-        let sort_shader = include_str!("shaders/sph_bitonic_sort.wgsl");
-        let sort_local_pipeline = create_pipeline("SPH Sort Local", sort_shader, "bitonic_sort_local");
-        let sort_global_pipeline = create_pipeline("SPH Sort Global", sort_shader, "bitonic_sort_global");
 
         // Simple test shader (gravity + boundary only)
         let simple_shader = include_str!("shaders/sph_simple.wgsl");
@@ -487,8 +462,6 @@ impl GpuSph3D {
             update_pressure_pipeline,
             apply_pressure_pipeline,
             boundary_pipeline,
-            sort_local_pipeline,
-            sort_global_pipeline,
             simple_step_pipeline,
             bf_predict_pipeline,
             bf_density_dii_pipeline,
@@ -497,14 +470,13 @@ impl GpuSph3D {
             bf_apply_pressure_pipeline,
             bf_boundary_pipeline,
             
-            sort_params_buffer,
-            sort_params_align,
-            
             bind_group,
             bind_group_layout,
             max_particles,
             num_particles_capacity: max_particles,
             num_cells,
+
+            sorter,
         }
     }
 
@@ -534,14 +506,6 @@ impl GpuSph3D {
                 wgpu::BindGroupEntry { binding: 8, resource: self.cell_indices.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 9, resource: self.particle_order.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 10, resource: self.cell_offsets.as_entire_binding() },
-                wgpu::BindGroupEntry { 
-                    binding: 11, 
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.sort_params_buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }) 
-                },
             ],
         });
         
@@ -580,10 +544,8 @@ impl GpuSph3D {
         queue.write_buffer(&self.positions, 0, bytemuck::cast_slice(&pos_padded));
         queue.write_buffer(&self.velocities, 0, bytemuck::cast_slice(&vel_padded));
 
-        // Initialize particle_order to [0, 1, 2, ... n-1]
-        // This is CRITICAL to avoid using stale indices from previous (larger) particle sets
-        let order: Vec<u32> = (0..n as u32).collect();
-        queue.write_buffer(&self.particle_order, 0, bytemuck::cast_slice(&order));
+        // Note: No need to initialize "particle_order" buffer with [0,1,2...] 
+        // because Radix Sort does a physical sort and doesn't rely on index indirection from previous frames.
     }
 
     /// Append new particles without overwriting existing GPU state
@@ -634,7 +596,7 @@ impl GpuSph3D {
             timestamp_writes: None,
         });
         pass.set_pipeline(&self.simple_step_pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[0]);
+        pass.set_bind_group(0, &self.bind_group, &[]);
         pass.dispatch_workgroups(workgroups, 1, 1);
     }
 
@@ -651,7 +613,7 @@ impl GpuSph3D {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.bf_predict_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[0]);
+            pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
@@ -662,7 +624,7 @@ impl GpuSph3D {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.bf_density_dii_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[0]);
+            pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
@@ -675,7 +637,7 @@ impl GpuSph3D {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.bf_sum_dij_pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[0]);
+                pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.dispatch_workgroups(workgroups, 1, 1);
             }
 
@@ -686,7 +648,7 @@ impl GpuSph3D {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.bf_update_pressure_pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[0]);
+                pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.dispatch_workgroups(workgroups, 1, 1);
             }
         }
@@ -699,7 +661,7 @@ impl GpuSph3D {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.bf_apply_pressure_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[0]);
+            pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
@@ -710,11 +672,15 @@ impl GpuSph3D {
     /// Run one full simulation step (Grid-accelerated IISPH)
     pub fn step(&mut self, encoder: &mut wgpu::CommandEncoder, queue: &wgpu::Queue) {
         if self.params.num_particles == 0 { return; }
-        println!("STEP: num_particles={}, h={:.2}", self.params.num_particles, self.params.h);
+        // println!("STEP: num_particles={}, h={:.2}", self.params.num_particles, self.params.h);
         
         let workgroups = (self.params.num_particles + 255) / 256;
         if workgroups == 0 { return; }
         
+        // 0. Prepare Sorter (Reset counters)
+        // Must be done before encoder execution
+        self.sorter.prepare(queue, self.params.num_particles, self.params.cell_size);
+
         // 1. Predict positions + Apply Gravity
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -722,24 +688,35 @@ impl GpuSph3D {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.predict_hash_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[0]);
+            pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
-        // 2. Sort particles (Bitonic Sort)
-        // Ensure "Predict" writes to cell_indices are visible (implicit barrier between dispatch)
-        self.bitonic_sort(encoder, queue);
-
-        // 3. Build cell offset table
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("SPH: Build Offsets"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.build_offsets_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[0]);
-            pass.dispatch_workgroups(workgroups, 1, 1);
-        }
+        // 2. Radix Sort
+        self.sorter.encode(encoder, queue, self.params.num_particles);
+        
+        // 3. Update Buffers with Sorted Data (Physical Sort)
+        let n_bytes = (self.params.num_particles as u64) * 16; // Vec4
+        let n_bytes_u32 = (self.params.num_particles as u64) * 4; // F32 / U32
+        
+        // Retrieve sorted buffers from sorter output
+        let (out_pos, out_vel, out_den, out_col0, out_col1, _out_col2) = self.sorter.sorted_buffers();
+        
+        // Copy back to main buffers
+        // Mapping: 
+        // out_pos (Keys source) -> sorted positions_pred
+        // out_col0 (Carried) -> sorted positions
+        
+        encoder.copy_buffer_to_buffer(out_pos, 0, &self.positions_pred, 0, n_bytes);
+        encoder.copy_buffer_to_buffer(out_col0, 0, &self.positions, 0, n_bytes); // Positions
+        encoder.copy_buffer_to_buffer(out_vel, 0, &self.velocities, 0, n_bytes);
+        encoder.copy_buffer_to_buffer(out_den, 0, &self.densities, 0, n_bytes_u32);
+        encoder.copy_buffer_to_buffer(out_col1, 0, &self.pressures, 0, n_bytes_u32);
+        
+        // Copy cell offsets (Sorter computes them during prefix sum)
+        // Sorter offset buffer size is (num_cells + 1) * 4
+        let offset_bytes = ((self.num_cells + 1) as u64) * 4;
+        encoder.copy_buffer_to_buffer(&self.sorter.cell_offsets_buffer, 0, &self.cell_offsets, 0, offset_bytes);
 
         // 4. Compute density and d_ii
         {
@@ -748,7 +725,7 @@ impl GpuSph3D {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.density_dii_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[0]);
+            pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
@@ -761,7 +738,7 @@ impl GpuSph3D {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.sum_dij_pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[0]);
+                pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.dispatch_workgroups(workgroups, 1, 1);
             }
 
@@ -772,7 +749,7 @@ impl GpuSph3D {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.update_pressure_pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[0]);
+                pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.dispatch_workgroups(workgroups, 1, 1);
             }
         }
@@ -784,7 +761,7 @@ impl GpuSph3D {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.apply_pressure_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[0]);
+            pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
 
@@ -795,65 +772,8 @@ impl GpuSph3D {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.boundary_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[0]);
+            pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);
-        }
-    }
-
-    /// Bitonic sort for spatial hash
-    fn bitonic_sort(&self, encoder: &mut wgpu::CommandEncoder, queue: &wgpu::Queue) {
-        let n = self.params.num_particles;
-        if n <= 1 { return; }
-
-        let n_padded = n.next_power_of_two();
-        let workgroups = (n_padded + 255) / 256;
-
-        let mut pass_idx = 0;
-        let mut k = 2; // Block size
-        
-        while k <= n_padded {
-            let mut j = k / 2;
-            
-            while j > 0 {
-                // Prepare params
-                let params = SortParams {
-                    j: j as u32,
-                    k: k as u32,
-                    n: n_padded as u32,
-                    _pad: 0,
-                };
-
-                // Calculate aligned offset
-                let offset = (pass_idx as u64) * self.sort_params_align;
-                
-                // Write params to buffer (requires queue write)
-                // Note: bitonic_sort takes encoder, but to write params we need queue.
-                // Assuming we can write via queue before submitting encoder? 
-                // Wait, queue writes are ordered before encoder submits if submitted after?
-                // Standard wgpu pattern: queue.write, then encoder commands.
-                // But we need to write multiple times FOR THE SAME ENCODER SUBMISSION.
-                // WE CANNOT queue.write multiple times for same encoder submission to unrelated spots without finishing previous?
-                // No, queue writes are atomic ops.
-                // We are writing to DIFFERENT OFFSETS. This is fine.
-                queue.write_buffer(&self.sort_params_buffer, offset, bytemuck::bytes_of(&params));
-                
-                {
-                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("SPH: Bitonic Sort"),
-                        timestamp_writes: None,
-                    });
-                    
-                    pass.set_pipeline(&self.sort_global_pipeline);
-                    // Bind with DYNAMIC offset
-                    pass.set_bind_group(0, &self.bind_group, &[offset as u32]);
-                    
-                    pass.dispatch_workgroups(workgroups, 1, 1);
-                }
-                
-                pass_idx += 1;
-                j /= 2;
-            }
-            k *= 2;
         }
     }
 
@@ -875,6 +795,11 @@ impl GpuSph3D {
     /// Get mutable access to params (call rebuild_params_buffer after modifying)
     pub fn params_mut(&mut self) -> &mut SphParams {
         &mut self.params
+    }
+
+    /// Set rest density parameter (updates GPU buffer)
+    pub fn set_pressure_iters(&mut self, iters: u32) {
+        self.params.pressure_iters = iters;
     }
 
     /// Set rest density parameter (updates GPU buffer)
@@ -954,7 +879,7 @@ impl GpuSph3D {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.bf_predict_pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[0]);
+                pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.dispatch_workgroups((positions.len() as u32 + 255) / 256, 1, 1);
             }
             
@@ -965,7 +890,7 @@ impl GpuSph3D {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.bf_density_dii_pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[0]);
+                pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.dispatch_workgroups((positions.len() as u32 + 255) / 256, 1, 1);
             }
             
@@ -1189,6 +1114,38 @@ impl GpuSph3D {
         densities
     }
 
+    /// Read velocity values from GPU to CPU (blocking)
+    pub fn read_velocities(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<Vec3> {
+        let n = self.params.num_particles as usize;
+        if n == 0 { return Vec::new(); }
+
+        let bytes_to_copy = (n * 16) as u64; // Vec4
+        // Create temporary staging buffer
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Velocities Staging"),
+            size: bytes_to_copy,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_buffer_to_buffer(&self.velocities, 0, &staging, 0, bytes_to_copy);
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+
+        let data = slice.get_mapped_range();
+        let vec4s: &[[f32; 4]] = bytemuck::cast_slice(&data);
+        let vecs = vec4s.iter().map(|v| Vec3::new(v[0], v[1], v[2])).collect();
+        drop(data);
+        staging.unmap();
+        vecs
+    }
+
     /// Read pressure values from GPU to CPU (blocking)
     ///
     /// Copies from GPU storage buffer to staging buffer, then maps and reads.
@@ -1229,6 +1186,15 @@ impl GpuSph3D {
     ///
     /// Reads densities and pressures from GPU and computes statistics.
     /// This is a blocking operation - use sparingly (e.g., every 60 frames).
+    /// Set pressure values (for initialization/debug)
+    pub fn set_pressures(&self, queue: &wgpu::Queue, pressures: &[f32]) {
+        queue.write_buffer(&self.pressures, 0, bytemuck::cast_slice(pressures));
+    }
+
+    /// Compute diagnostic metrics for the current simulation state (blocking)
+    ///
+    /// Reads densities and pressures from GPU and computes statistics.
+    /// This is a blocking operation - use sparingly (e.g., every 60 frames).
     pub fn compute_metrics(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> FrameMetrics {
         let n = self.params.num_particles;
         if n == 0 {
@@ -1243,15 +1209,16 @@ impl GpuSph3D {
                 max_y: 0.0,
                 avg_y: 0.0,
                 y_spread: 0.0,
+                avg_velocity: 0.0,
+                max_velocity: 0.0,
+                avg_kinetic_energy: 0.0,
             };
         }
 
         let positions = self.read_positions(device, queue);
+        let velocities = self.read_velocities(device, queue);
         let densities = self.read_densities(device, queue);
         let pressures = self.read_pressures(device, queue);
-        
-        let gpu_params = self.read_params(device, queue);
-
         
         let rest_density = self.params.rest_density;
 
@@ -1259,34 +1226,42 @@ impl GpuSph3D {
         let mut total_density_error = 0.0f32;
         let mut max_density = f32::MIN;
         let mut min_density = f32::MAX;
-
+        
+        // Pressure stats
         let mut total_pressure = 0.0;
         let mut max_pressure = 0.0;
         
+        // Velocity stats
+        let mut total_velocity = 0.0;
+        let mut max_velocity = 0.0;
+        let mut total_ke = 0.0;
+
         let mut bulk_particle_count = 0;
 
         for (i, &rho) in densities.iter().enumerate() {
-            if i >= self.params.num_particles as usize { break; }
+            if i >= n as usize { break; }
             
-            // Track min/max
+            // Density
             if rho > max_density { max_density = rho; }
             if rho < min_density { min_density = rho; }
 
-            // Only count "bulk" particles for error metric
-            // Surface particles naturally have deficient density (0.5 * rho0)
-            // Error = |rho - rho0|/rho0
-            // If we include surface, error is huge (~0.5).
-            // We care about COMPRESSION (rho > rho0) or INTERIOR stability.
-            // Filter: rho > 0.8 * rho0
-            if rho > self.params.rest_density * 0.8 {
-                let error = (rho - self.params.rest_density).abs() / self.params.rest_density;
+            // Error (only for bulk)
+            if rho > rest_density * 0.8 {
+                let error = (rho - rest_density).abs() / rest_density;
                 total_density_error += error;
                 bulk_particle_count += 1;
             }
-
+            
+            // Pressure
             let p = pressures[i];
             total_pressure += p;
             if p > max_pressure { max_pressure = p; }
+            
+            // Velocity
+            let v = velocities[i].length();
+            total_velocity += v;
+            if v > max_velocity { max_velocity = v; }
+            total_ke += 0.5 * self.params.particle_mass * v * v;
         }
 
         let avg_density_error = if bulk_particle_count > 0 {
@@ -1295,10 +1270,22 @@ impl GpuSph3D {
             0.0
         };
         
-        println!("DEBUG: Bulk particles counted: {} / {}", bulk_particle_count, n);
+        // println!("DEBUG: Bulk particles counted: {} / {}", bulk_particle_count, n);
         
-        let avg_pressure = if self.params.num_particles > 0 {
-            total_pressure / self.params.num_particles as f32
+        let avg_pressure = if n > 0 {
+            total_pressure / n as f32
+        } else {
+            0.0
+        };
+        
+        let avg_velocity = if n > 0 {
+            total_velocity / n as f32
+        } else {
+            0.0
+        };
+        
+        let avg_kinetic_energy = if n > 0 {
+            total_ke / n as f32
         } else {
             0.0
         };
@@ -1328,6 +1315,9 @@ impl GpuSph3D {
             max_y,
             avg_y,
             y_spread,
+            avg_velocity,
+            max_velocity,
+            avg_kinetic_energy
         }
     }
 }

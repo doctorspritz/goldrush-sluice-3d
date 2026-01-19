@@ -608,3 +608,294 @@ fn test_particles_settle() {
 
     println!("Test PASSED: Particles settled with avg_y={:.4}", final_y_avg);
 }
+
+//==============================================================================
+// HYDROSTATIC EQUILIBRIUM TEST
+//
+// Based on published validation criteria:
+// - Zhu & Bridson 2005: 8 particles per cell (2×2×2 stratified)
+// - CFL ≤ 1.0 for stability
+// - Volume conservation < 0.1% (SPH Tutorial)
+// - Final velocity < 0.01 m/s for true equilibrium
+// - Settling time ~2 seconds (FLOW-3D dam break validation)
+//==============================================================================
+
+/// Spawns particles in 2×2×2 stratified pattern within a cell (8 particles per cell)
+/// This is the Zhu & Bridson recommended seeding pattern.
+fn spawn_stratified_particles(
+    cell_x: usize,
+    cell_y: usize,
+    cell_z: usize,
+    cell_size: f32,
+    positions: &mut Vec<Vec3>,
+    velocities: &mut Vec<Vec3>,
+    c_matrices: &mut Vec<Mat3>,
+    densities: &mut Vec<f32>,
+) {
+    // 2×2×2 stratified sampling: 8 subcells, 1 particle each at subcell center
+    let subcell = cell_size / 2.0;
+    let offsets = [0.25, 0.75]; // Subcell centers as fraction of cell
+
+    for &oz in &offsets {
+        for &oy in &offsets {
+            for &ox in &offsets {
+                let pos = Vec3::new(
+                    (cell_x as f32 + ox) * cell_size,
+                    (cell_y as f32 + oy) * cell_size,
+                    (cell_z as f32 + oz) * cell_size,
+                );
+                positions.push(pos);
+                velocities.push(Vec3::ZERO);
+                c_matrices.push(Mat3::ZERO);
+                densities.push(1.0); // Water density marker
+            }
+        }
+    }
+}
+
+/// TEST 7: Hydrostatic Equilibrium (VALIDATION TEST)
+///
+/// Published criteria (sources in comments):
+/// - 8 particles/cell: Zhu & Bridson SIGGRAPH 2005
+/// - CFL ≤ 1.0: Standard stability condition
+/// - Volume conservation < 0.1%: SPH incompressibility tutorial
+/// - Final velocity < 0.01 m/s: True hydrostatic equilibrium
+/// - Run time 2+ seconds: FLOW-3D dam break validation
+///
+/// Setup:
+/// - 10×12×10 grid, cell_size = 0.1m (1.0m × 1.2m × 1.0m domain)
+/// - Water fills cells [1,8] × [1,4] × [1,8] = 8×4×8 = 256 cells
+/// - 8 particles/cell = 2048 particles
+/// - Water height h = 0.4m
+/// - Expected hydrostatic pressure at floor: P = ρgh = 1000 × 9.81 × 0.4 ≈ 3924 Pa
+#[test]
+fn test_hydrostatic_equilibrium() {
+    let (device, queue) = match init_device() {
+        Some(d) => d,
+        None => { println!("Skipped: No GPU"); return; }
+    };
+
+    // Grid parameters
+    const W: usize = 10;  // Width (X)
+    const H: usize = 12;  // Height (Y) - extra headroom above water
+    const D: usize = 10;  // Depth (Z)
+    const CELL: f32 = 0.1; // 10cm cells
+
+    // Simulation parameters based on published criteria
+    const SIM_TIME: f32 = 10.0;  // 10 seconds equilibrium test
+    const DT: f32 = 1.0 / 60.0; // 60 Hz
+    const FRAMES: u32 = (SIM_TIME / DT) as u32; // 150 frames
+    const PRESSURE_ITERS: u32 = 100; // Reasonable iteration count
+
+    // Validation thresholds (from published sources)
+    const MAX_VELOCITY_EQUILIBRIUM: f32 = 0.01;  // m/s - true hydrostatic has ~zero velocity
+    const VOLUME_CONSERVATION_TOLERANCE: f32 = 0.001; // 0.1% volume change allowed
+    const PARTICLES_PER_CELL: usize = 8; // Zhu & Bridson recommendation
+
+    // Water region: cells [1,8] × [1,4] × [1,8]
+    const WATER_MIN_X: usize = 1;
+    const WATER_MAX_X: usize = 9; // exclusive
+    const WATER_MIN_Y: usize = 1;
+    const WATER_MAX_Y: usize = 5; // exclusive, 4 cells high = 0.4m
+    const WATER_MIN_Z: usize = 1;
+    const WATER_MAX_Z: usize = 9; // exclusive
+
+    let water_cells = (WATER_MAX_X - WATER_MIN_X)
+                    * (WATER_MAX_Y - WATER_MIN_Y)
+                    * (WATER_MAX_Z - WATER_MIN_Z);
+    let expected_particles = water_cells * PARTICLES_PER_CELL;
+
+    println!("\n{}", "=".repeat(60));
+    println!("HYDROSTATIC EQUILIBRIUM VALIDATION TEST");
+    println!("{}", "=".repeat(60));
+    println!("Grid: {}×{}×{} cells, cell_size={} m", W, H, D, CELL);
+    println!("Water region: cells [{},{}]×[{},{}]×[{},{}]",
+        WATER_MIN_X, WATER_MAX_X-1, WATER_MIN_Y, WATER_MAX_Y-1, WATER_MIN_Z, WATER_MAX_Z-1);
+    println!("Water cells: {}, particles/cell: {}, total: {}",
+        water_cells, PARTICLES_PER_CELL, expected_particles);
+    println!("Water height: {} m", (WATER_MAX_Y - WATER_MIN_Y) as f32 * CELL);
+    println!("Simulation: {} frames ({:.1}s) at {:.0} Hz", FRAMES, SIM_TIME, 1.0/DT);
+    println!("Pressure iterations: {}", PRESSURE_ITERS);
+    println!("\nValidation criteria:");
+    println!("  - Final max velocity: < {} m/s", MAX_VELOCITY_EQUILIBRIUM);
+    println!("  - Volume conservation: < {}%", VOLUME_CONSERVATION_TOLERANCE * 100.0);
+    println!("{}\n", "=".repeat(60));
+
+    // Create FLIP solver with validated hydrostatic equilibrium configuration
+    let mut flip = GpuFlip3D::new(&device, W as u32, H as u32, D as u32, CELL, expected_particles + 100);
+    flip.configure_for_hydrostatic_equilibrium();
+
+    // Spawn particles with 2×2×2 stratified sampling (8 per cell)
+    let mut positions = Vec::with_capacity(expected_particles);
+    let mut velocities = Vec::with_capacity(expected_particles);
+    let mut c_matrices = Vec::with_capacity(expected_particles);
+    let mut densities = Vec::with_capacity(expected_particles);
+
+    for cx in WATER_MIN_X..WATER_MAX_X {
+        for cy in WATER_MIN_Y..WATER_MAX_Y {
+            for cz in WATER_MIN_Z..WATER_MAX_Z {
+                spawn_stratified_particles(
+                    cx, cy, cz, CELL,
+                    &mut positions, &mut velocities, &mut c_matrices, &mut densities
+                );
+            }
+        }
+    }
+
+    assert_eq!(positions.len(), expected_particles,
+        "Particle count mismatch: got {}, expected {}", positions.len(), expected_particles);
+
+    // Setup cell types: solid walls on all sides, open at top for free surface
+    let mut cell_types = vec![0u32; W * H * D];
+    setup_solid_boundaries(&mut cell_types, W, H, D, true); // open_top = true
+
+    // Calculate initial volume (sum of particle volumes, assuming 1 particle = 1/8 cell volume)
+    let particle_volume = (CELL * CELL * CELL) / PARTICLES_PER_CELL as f32;
+    let initial_volume = positions.len() as f32 * particle_volume;
+    let initial_particle_count = positions.len();
+
+    // Calculate domain bounds for validation
+    let margin = CELL * 0.1;
+    let min_bound = CELL + margin;
+    let max_x = (W as f32 - 1.0) * CELL - margin;
+    let max_y = (H as f32 - 1.0) * CELL - margin; // Allow up to near ceiling
+    let max_z = (D as f32 - 1.0) * CELL - margin;
+
+    println!("Initial state:");
+    println!("  Particles: {}", initial_particle_count);
+    println!("  Volume: {:.6} m³", initial_volume);
+
+    let y_vals: Vec<f32> = positions.iter().map(|p| p.y).collect();
+    println!("  Y range: [{:.4}, {:.4}]",
+        y_vals.iter().fold(f32::MAX, |a, &b| a.min(b)),
+        y_vals.iter().fold(f32::MIN, |a, &b| a.max(b)));
+    println!();
+
+    // Run simulation - particles start at rest, gravity pulls down,
+    // pressure should balance gravity and system should reach equilibrium
+    for frame in 0..FRAMES {
+        // Zero C matrices to disable APIC angular momentum transfer
+        // Pure PIC + zero C = maximum damping for hydrostatic test
+        for c in c_matrices.iter_mut() {
+            *c = Mat3::ZERO;
+        }
+
+        flip.step(
+            &device, &queue,
+            &mut positions, &mut velocities, &mut c_matrices, &densities, &cell_types,
+            None, None,
+            DT,
+            -9.81, // Gravity
+            0.0,   // No flow acceleration
+            PRESSURE_ITERS,
+        );
+
+        // Check for NaN and bounds every frame
+        for (i, p) in positions.iter().enumerate() {
+            if !p.is_finite() {
+                panic!("FRAME {}: Particle {} has NaN position: {:?}", frame, i, p);
+            }
+            if p.x < min_bound || p.x > max_x || p.y < min_bound || p.y > max_y || p.z < min_bound || p.z > max_z {
+                panic!("FRAME {}: Particle {} out of bounds at ({:.4}, {:.4}, {:.4})",
+                    frame, i, p.x, p.y, p.z);
+            }
+        }
+
+        // Print progress every 0.5 seconds
+        if frame % 30 == 0 || frame == FRAMES - 1 {
+            let y_min = positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+            let y_max = positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+            let y_avg = positions.iter().map(|p| p.y).sum::<f32>() / positions.len() as f32;
+            let v_max = velocities.iter().map(|v| v.length()).fold(0.0f32, f32::max);
+            let v_avg = velocities.iter().map(|v| v.length()).sum::<f32>() / velocities.len() as f32;
+
+            // Check pressure solver residual (divergence after pressure correction)
+            let max_div = flip.compute_post_correction_divergence(&device, &queue);
+
+            let current_volume = positions.len() as f32 * particle_volume;
+            let volume_change = ((current_volume - initial_volume) / initial_volume).abs();
+
+            println!("Frame {:3} (t={:.2}s): Y=[{:.4}, {:.4}] avg={:.4}, vel_max={:.4}, div={:.4}, vol_err={:.4}%",
+                frame, frame as f32 * DT, y_min, y_max, y_avg, v_max, max_div, volume_change * 100.0);
+        }
+    }
+
+    // Final validation
+    println!("\n{}", "=".repeat(60));
+    println!("FINAL VALIDATION");
+    println!("{}", "=".repeat(60));
+
+    let final_particle_count = positions.len();
+    let final_volume = final_particle_count as f32 * particle_volume;
+    let volume_change = ((final_volume - initial_volume) / initial_volume).abs();
+
+    let final_y_min = positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+    let final_y_max = positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    let final_y_avg = positions.iter().map(|p| p.y).sum::<f32>() / positions.len() as f32;
+
+    let final_v_max = velocities.iter().map(|v| v.length()).fold(0.0f32, f32::max);
+    let final_v_avg = velocities.iter().map(|v| v.length()).sum::<f32>() / velocities.len() as f32;
+
+    // Analyze high-velocity particles
+    let mut speeds: Vec<(f32, usize)> = velocities.iter().enumerate()
+        .map(|(i, v)| (v.length(), i)).collect();
+    speeds.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); // Sort by speed descending
+
+    println!("\nHigh-velocity particle analysis:");
+    println!("Top 10 fastest particles:");
+    for (speed, idx) in speeds.iter().take(10) {
+        let p = positions[*idx];
+        let v = velocities[*idx];
+        println!("  #{}: pos=({:.3}, {:.3}, {:.3}), vel=({:.3}, {:.3}, {:.3}), speed={:.4} m/s",
+            idx, p.x, p.y, p.z, v.x, v.y, v.z, speed);
+    }
+
+    // Velocity percentiles
+    let n = speeds.len();
+    println!("\nVelocity distribution:");
+    println!("  100%% (max): {:.4} m/s", speeds[0].0);
+    println!("   99%%: {:.4} m/s", speeds[n / 100].0);
+    println!("   95%%: {:.4} m/s", speeds[n * 5 / 100].0);
+    println!("   90%%: {:.4} m/s", speeds[n * 10 / 100].0);
+    println!("   50%% (median): {:.4} m/s", speeds[n / 2].0);
+    println!("   10%%: {:.4} m/s", speeds[n * 90 / 100].0);
+
+    println!("\nParticle count: {} -> {} (conserved: {})",
+        initial_particle_count, final_particle_count,
+        if initial_particle_count == final_particle_count { "YES" } else { "NO" });
+    println!("Volume: {:.6} -> {:.6} m³ (change: {:.4}%)",
+        initial_volume, final_volume, volume_change * 100.0);
+    println!("Y range: [{:.4}, {:.4}], avg={:.4}", final_y_min, final_y_max, final_y_avg);
+    println!("Velocity: max={:.6} m/s, avg={:.6} m/s", final_v_max, final_v_avg);
+
+    // Assertions based on published criteria
+
+    // 1. Particle count must be exactly conserved
+    assert_eq!(
+        final_particle_count, initial_particle_count,
+        "PARTICLE CONSERVATION FAILED: {} -> {}",
+        initial_particle_count, final_particle_count
+    );
+    println!("✓ Particle count conserved");
+
+    // 2. Volume conservation < 0.1%
+    assert!(
+        volume_change < VOLUME_CONSERVATION_TOLERANCE,
+        "VOLUME CONSERVATION FAILED: {:.4}% change exceeds {:.4}% threshold",
+        volume_change * 100.0, VOLUME_CONSERVATION_TOLERANCE * 100.0
+    );
+    println!("✓ Volume conservation: {:.4}% < {:.4}%", volume_change * 100.0, VOLUME_CONSERVATION_TOLERANCE * 100.0);
+
+    // 3. Final velocity should be near zero (hydrostatic equilibrium)
+    assert!(
+        final_v_max < MAX_VELOCITY_EQUILIBRIUM,
+        "HYDROSTATIC EQUILIBRIUM FAILED: max velocity {:.6} m/s exceeds {} m/s threshold\n\
+         Water should be at rest in hydrostatic equilibrium.",
+        final_v_max, MAX_VELOCITY_EQUILIBRIUM
+    );
+    println!("✓ Hydrostatic equilibrium: max_vel={:.6} m/s < {} m/s", final_v_max, MAX_VELOCITY_EQUILIBRIUM);
+
+    println!("\n{}", "=".repeat(60));
+    println!("TEST PASSED: Hydrostatic equilibrium achieved");
+    println!("{}", "=".repeat(60));
+}

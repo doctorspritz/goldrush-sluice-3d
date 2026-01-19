@@ -513,6 +513,7 @@ impl GpuG2p3D {
         particle_count: u32,
         cell_size: f32,
         dt: f32,
+        flip_ratio: f32,
         sediment_params: SedimentParams3D,
     ) -> u32 {
         let particle_count = particle_count.min(self.max_particles as u32);
@@ -526,7 +527,7 @@ impl GpuG2p3D {
             depth: self.depth,
             particle_count,
             d_inv,
-            flip_ratio: 0.99,
+            flip_ratio,
             dt,
             max_velocity: 50.0, // Reduced from 2000.0 to 50.0 for stability
             _padding: [0.0; 3],

@@ -192,9 +192,13 @@ fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Grid position deltas point from center cell toward neighbor
     // With forward difference: delta = (p_neighbor - p_center) * dt
-    // Crowded center has high p, so delta is NEGATIVE toward sparse neighbor
-    // We want particles to move TOWARD lower pressure (sparse), so we NEGATE the delta
-    let correction_scale: f32 = 15.0;  // Empirical scaling factor (increased for stronger volume conservation)
+    //
+    // NOTE: The sign convention between density_error and this correction
+    // needs further investigation. The current implementation causes expansion
+    // rather than volume conservation. Density projection is disabled by default.
+    //
+    // Based on: blub/density_projection_correct_particles.comp
+    let correction_scale: f32 = 15.0;  // Empirical scaling factor
     let delta = vec3<f32>(-delta_x, -delta_y, -delta_z) * correction_scale;
 
     let corrected = pos + delta;

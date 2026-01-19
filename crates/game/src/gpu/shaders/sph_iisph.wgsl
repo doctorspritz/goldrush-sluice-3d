@@ -335,16 +335,22 @@ fn update_pressure(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rho_target = params.rest_density;
     
     var p_new = p_i;
-    if (abs(a_ii) > 1e-9) {
-        // The instruction's formula for correction and p_new is slightly different from the original comment.
-        // It seems to be a specific IISPH pressure update formula.
-        // Assuming rho_adv is rho_i (current density before pressure correction)
-        let correction = (params.rest_density - rho_i - params.dt2 * d_rho_pressure) / a_ii;
-        p_new = (1.0 - params.omega) * p_i + params.omega * correction;
+    // a_ii is usually negative and scales with dt^2. 
+    // Small a_ii means isolated particle or numerical error.
+    if (abs(a_ii) > 1e-6) {
+        let correction = (rho_target - rho_predicted) / a_ii; // Note: simplified derived formula
+        // p_new = (1.0 - params.omega) * p_i + params.omega * p_current?
+        // Actually standard form: p += omega * (rho0 - rho)/aii
+        p_new = p_i + params.omega * correction;
     } else {
         p_new = 0.0;
     }
-    pressures[idx] = max(p_new, 0.0);
+
+    // Clamp pressure to be non-negative and finite
+    // Ensure P >= 0.0 to prevent tensile instability (clumping)
+    p_new = max(p_new, 0.0);
+    p_new = min(p_new, 100000.0); // Hard limit to prevent explosion
+    pressures[idx] = p_new;
 }
 
 // ============================================================================
@@ -406,14 +412,21 @@ fn apply_pressure(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     // Stability: Clamp total pressure acceleration
-    let accel_limit = 5000.0;
+    let accel_limit = 20000.0; // Increased to allow separation
     if (length(f_pressure) > accel_limit) {
         f_pressure = normalize(f_pressure) * accel_limit;
     }
 
     // Update velocity with pressure force
     let vel_pred = velocities[idx].xyz;
-    let vel_new = vel_pred + f_pressure * params.dt;
+    let damping = 0.9; // Aggressive damping for stability
+    var vel_new = (vel_pred + f_pressure * params.dt) * damping;
+
+    // Hard velocity clamp to prevent explosion
+    let max_v = 5.0;
+    if (length(vel_new) > max_v) {
+        vel_new = normalize(vel_new) * max_v;
+    }
 
     // Update position
     let pos_old = positions[idx].xyz;

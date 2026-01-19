@@ -107,21 +107,26 @@ fn scan_block_sums() {
 }
 
 // Add block offsets back to local results
+// CRITICAL: local_prefix_sum uses 512-element blocks (256 threads × 2 elements each)
+// We must match that indexing here, NOT use our workgroup_id which is based on 256 elements
 @compute @workgroup_size(256)
 fn add_block_offsets(
     @builtin(global_invocation_id) global_id: vec3<u32>,
-    @builtin(workgroup_id) workgroup_id: vec3<u32>,
 ) {
-    if (workgroup_id.x == 0u) {
-        // First block has no offset to add
-        return;
-    }
-
     let idx = global_id.x;
     if (idx >= params.element_count) {
         return;
     }
 
+    // Which 512-element block does this element belong to?
+    // This MUST match the block size used in local_prefix_sum (512 elements per workgroup)
+    let block_idx = idx / 512u;
+
+    if (block_idx == 0u) {
+        // First 512-element block has no offset to add
+        return;
+    }
+
     // Add the prefix sum of previous blocks (now stored in block_sums after scan_block_sums)
-    data[idx] += block_sums[workgroup_id.x];
+    data[idx] += block_sums[block_idx];
 }

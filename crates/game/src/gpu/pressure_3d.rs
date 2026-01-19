@@ -18,6 +18,14 @@ struct GridParams3D {
     height: u32,
     depth: u32,
     inv_cell_size: f32,
+    /// Bitmask for open boundaries:
+    /// Bit 0 (1): -X open, Bit 1 (2): +X open
+    /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
+    /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
+    open_boundaries: u32,
+    _pad0: u32, // Align to 8 bytes
+    _pad1: u32,
+    _pad2: u32,
 }
 
 /// Parameters for pressure solver
@@ -29,6 +37,13 @@ struct PressureParams3D {
     depth: u32,
     omega: f32, // SOR relaxation factor (1.5-1.9)
     h_sq: f32,  // cell_size^2, for Poisson equation scaling
+    /// Bitmask for open boundaries (Dirichlet p=0):
+    /// Bit 0 (1): -X open, Bit 1 (2): +X open
+    /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
+    /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
+    open_boundaries: u32,
+    _pad0: u32, // Align to 8 bytes for uniform buffer
+    _pad1: u32,
 }
 
 /// GPU-based pressure solver for 3D FLIP
@@ -523,7 +538,18 @@ impl GpuPressure3D {
     }
 
     /// Upload cell types and initialize pressure to zero
-    pub fn upload_cell_types(&self, queue: &wgpu::Queue, cell_types: &[u32], cell_size: f32) {
+    ///
+    /// `open_boundaries` bitmask:
+    /// Bit 0 (1): -X open, Bit 1 (2): +X open
+    /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
+    /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
+    pub fn upload_cell_types(
+        &self,
+        queue: &wgpu::Queue,
+        cell_types: &[u32],
+        cell_size: f32,
+        open_boundaries: u32,
+    ) {
         queue.write_buffer(&self.cell_type_buffer, 0, bytemuck::cast_slice(cell_types));
 
         // Clear pressure
@@ -536,6 +562,10 @@ impl GpuPressure3D {
             height: self.height,
             depth: self.depth,
             inv_cell_size: 1.0 / cell_size,
+            open_boundaries,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
         };
         queue.write_buffer(
             &self.grid_params_buffer,
@@ -553,6 +583,9 @@ impl GpuPressure3D {
             depth: self.depth,
             omega: 1.85, // SOR over-relaxation for faster convergence (was 1.0)
             h_sq: cell_size * cell_size, // Poisson equation needs dx²
+            open_boundaries,
+            _pad0: 0,
+            _pad1: 0,
         };
         queue.write_buffer(
             &self.pressure_params_buffer,

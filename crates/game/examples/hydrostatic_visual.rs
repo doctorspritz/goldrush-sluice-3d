@@ -1,6 +1,17 @@
-//! BASIC TEST: Static water in a closed box.
-//! Water spawns, sits there, should NOT move or escape.
-//! Press SPACE to pause, R to reset.
+//! Hydrostatic Equilibrium Visual Test
+//!
+//! Matches test_flip_long_settling EXACTLY:
+//! - 16x16x16 grid at 0.05m cells
+//! - 512 particles (8x8x8 region, 1 per cell)
+//! - flip_ratio = 0.95 (FLIP mode)
+//! - density_projection_enabled = false
+//! - pressure_iterations = 20
+//! - Adaptive velocity damping
+//!
+//! Expected: Water spreads and settles to ~27% of initial height
+//! Max velocity drops below 0.03 m/s
+//!
+//! Controls: SPACE=pause, R=reset, Mouse=rotate, Scroll=zoom
 
 use bytemuck::{Pod, Zeroable};
 use game::example_utils::{Camera, WgpuContext, create_depth_view, Pos3Color4Vertex};
@@ -15,12 +26,28 @@ use winit::{
     window::Window,
 };
 
-// Grid: 8x8x8 cells - SMALL AND SIMPLE
-const GRID_WIDTH: usize = 8;
-const GRID_HEIGHT: usize = 8;
-const GRID_DEPTH: usize = 8;
-const CELL_SIZE: f32 = 0.05;
-const MAX_PARTICLES: usize = 2000;
+// Grid matching test_flip_long_settling EXACTLY
+const GRID_WIDTH: usize = 16;
+const GRID_HEIGHT: usize = 16;
+const GRID_DEPTH: usize = 16;
+const CELL_SIZE: f32 = 0.05;    // 5cm cells
+
+// Water region: cells [4,12)×[1,9)×[4,12) = 8×8×8 = 512 particles at 1 per cell
+const WATER_MIN_X: usize = 4;
+const WATER_MAX_X: usize = 12;  // exclusive
+const WATER_MIN_Y: usize = 1;
+const WATER_MAX_Y: usize = 9;   // exclusive, 8 cells high
+const WATER_MIN_Z: usize = 4;
+const WATER_MAX_Z: usize = 12;  // exclusive
+
+const PARTICLES_PER_CELL: usize = 1; // 1 particle per cell (matching test)
+const WATER_CELLS: usize = (WATER_MAX_X - WATER_MIN_X) * (WATER_MAX_Y - WATER_MIN_Y) * (WATER_MAX_Z - WATER_MIN_Z);
+const MAX_PARTICLES: usize = WATER_CELLS * PARTICLES_PER_CELL + 1000;
+
+// Physics constants from test
+const FLIP_RATIO: f32 = 0.95;
+const PRESSURE_ITERATIONS: u32 = 20;
+const SETTLED_VELOCITY_THRESHOLD: f32 = 0.03;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 const QUAD_SHADER: &str = r#"
@@ -110,6 +137,27 @@ struct Uniforms {
     point_size: f32,
 }
 
+/// Setup solid boundary cells - 1 cell thick walls on all sides except top
+fn setup_solid_boundaries(cell_types: &mut [u32], w: usize, h: usize, d: usize) {
+    const CELL_SOLID: u32 = 2;
+
+    for z in 0..d {
+        for y in 0..h {
+            for x in 0..w {
+                let idx = z * w * h + y * w + x;
+                // Solid if at any edge (except top)
+                let at_x_edge = x == 0 || x == w - 1;
+                let at_y_floor = y == 0;  // Floor only, top is open
+                let at_z_edge = z == 0 || z == d - 1;
+
+                if at_x_edge || at_y_floor || at_z_edge {
+                    cell_types[idx] = CELL_SOLID;
+                }
+            }
+        }
+    }
+}
+
 fn main() {
     let event_loop = EventLoop::new().unwrap();
     let mut app = App::new();
@@ -117,12 +165,10 @@ fn main() {
 }
 
 struct App {
-    // Window/GPU
     window: Option<Arc<Window>>,
     ctx: Option<WgpuContext>,
     depth_view: Option<wgpu::TextureView>,
 
-    // Pipelines
     point_pipeline: Option<wgpu::RenderPipeline>,
     line_pipeline: Option<wgpu::RenderPipeline>,
     uniform_buffer: Option<wgpu::Buffer>,
@@ -130,7 +176,6 @@ struct App {
     vertex_buffer: Option<wgpu::Buffer>,
     line_buffer: Option<wgpu::Buffer>,
 
-    // Simulation
     flip: Option<GpuFlip3D>,
     positions: Vec<Vec3>,
     velocities: Vec<Vec3>,
@@ -138,17 +183,23 @@ struct App {
     densities: Vec<f32>,
     cell_types: Vec<u32>,
 
-    // State
     camera: Camera,
     paused: bool,
     frame: u32,
+    sim_time: f32,
     initial_count: usize,
+    initial_height: f32,
     dragging: bool,
     last_mouse: (f32, f32),
 }
 
 impl App {
     fn new() -> Self {
+        let domain_center = Vec3::new(
+            GRID_WIDTH as f32 * CELL_SIZE * 0.5,
+            GRID_HEIGHT as f32 * CELL_SIZE * 0.5,
+            GRID_DEPTH as f32 * CELL_SIZE * 0.5,
+        );
         Self {
             window: None,
             ctx: None,
@@ -165,15 +216,12 @@ impl App {
             c_matrices: Vec::new(),
             densities: Vec::new(),
             cell_types: Vec::new(),
-            camera: Camera::new(
-                0.5,  // yaw
-                0.3,  // pitch
-                0.6,  // distance
-                Vec3::new(0.2, 0.15, 0.2), // target (grid center)
-            ),
+            camera: Camera::new(0.5, 0.4, 0.6, domain_center),
             paused: false,
             frame: 0,
+            sim_time: 0.0,
             initial_count: 0,
+            initial_height: 0.0,
             dragging: false,
             last_mouse: (0.0, 0.0),
         }
@@ -185,25 +233,31 @@ impl App {
         self.c_matrices.clear();
         self.densities.clear();
 
-        // Fill lower half with particles
-        for x in 1..(GRID_WIDTH - 1) {
-            for y in 1..(GRID_HEIGHT / 2) {
-                for z in 1..(GRID_DEPTH - 1) {
-                    let p = Vec3::new(
-                        (x as f32 + 0.5) * CELL_SIZE,
-                        (y as f32 + 0.5) * CELL_SIZE,
-                        (z as f32 + 0.5) * CELL_SIZE,
+        // Spawn 1 particle per cell - EXACTLY as in test_flip_long_settling
+        for cx in WATER_MIN_X..WATER_MAX_X {
+            for cy in WATER_MIN_Y..WATER_MAX_Y {
+                for cz in WATER_MIN_Z..WATER_MAX_Z {
+                    let pos = Vec3::new(
+                        (cx as f32 + 0.5) * CELL_SIZE,
+                        (cy as f32 + 0.5) * CELL_SIZE,
+                        (cz as f32 + 0.5) * CELL_SIZE,
                     );
-                    self.positions.push(p);
+                    self.positions.push(pos);
                     self.velocities.push(Vec3::ZERO);
                     self.c_matrices.push(Mat3::ZERO);
                     self.densities.push(1.0);
                 }
             }
         }
+
         self.initial_count = self.positions.len();
+        self.initial_height = (WATER_MAX_Y - WATER_MIN_Y) as f32 * CELL_SIZE;
         self.frame = 0;
-        println!("RESET: {} particles", self.initial_count);
+        self.sim_time = 0.0;
+
+        println!("\n=== RESET ===");
+        println!("Particles: {} ({} per cell, matching test)", self.initial_count, PARTICLES_PER_CELL);
+        println!("Initial height: {:.3}m ({} cells)", self.initial_height, WATER_MAX_Y - WATER_MIN_Y);
     }
 }
 
@@ -211,31 +265,19 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = Arc::new(event_loop.create_window(
             Window::default_attributes()
-                .with_title("STATIC WATER TEST - Should NOT move")
-                .with_inner_size(winit::dpi::LogicalSize::new(800, 600))
+                .with_title("HYDROSTATIC EQUILIBRIUM - Water should become STILL")
+                .with_inner_size(winit::dpi::LogicalSize::new(1024, 768))
         ).unwrap());
         self.window = Some(window.clone());
 
         let ctx = pollster::block_on(WgpuContext::init(window.clone()));
         self.depth_view = Some(create_depth_view(&ctx.device, &ctx.config));
 
-        // Setup cell_types: ALL boundaries solid
+        // Setup cell_types: solid walls on all sides, matching the unit test
         self.cell_types = vec![0u32; GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH];
-        for z in 0..GRID_DEPTH {
-            for y in 0..GRID_HEIGHT {
-                for x in 0..GRID_WIDTH {
-                    let idx = z * GRID_WIDTH * GRID_HEIGHT + y * GRID_WIDTH + x;
-                    if x == 0 || x == GRID_WIDTH - 1
-                        || y == 0 || y == GRID_HEIGHT - 1
-                        || z == 0 || z == GRID_DEPTH - 1
-                    {
-                        self.cell_types[idx] = 2; // SOLID
-                    }
-                }
-            }
-        }
+        setup_solid_boundaries(&mut self.cell_types, GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH);
 
-        // FLIP solver
+        // FLIP solver with EXACT test_flip_long_settling configuration
         let mut flip = GpuFlip3D::new(
             &ctx.device,
             GRID_WIDTH as u32,
@@ -244,10 +286,15 @@ impl ApplicationHandler for App {
             CELL_SIZE,
             MAX_PARTICLES,
         );
+
+        // EXACT settings from test_flip_long_settling
         flip.vorticity_epsilon = 0.0;
-        flip.open_boundaries = 0; // ALL CLOSED (box)
-        flip.flip_ratio = 0.0;    // Pure PIC for maximum damping
-        flip.slip_factor = 0.0;   // No-slip at solid boundaries (hydrostatic fix)
+        flip.water_rest_density = 1.0;
+        flip.open_boundaries = 0;
+        flip.flip_ratio = FLIP_RATIO;
+        flip.slip_factor = 0.0;
+        flip.density_projection_enabled = false;
+
         self.flip = Some(flip);
 
         // Initial particles
@@ -299,7 +346,6 @@ impl ApplicationHandler for App {
             source: wgpu::ShaderSource::Wgsl(LINE_SHADER.into()),
         });
 
-        // Point pipeline (quads)
         let point_pipeline = ctx.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Quad Pipeline"),
             layout: Some(&pipeline_layout),
@@ -318,7 +364,7 @@ impl ApplicationHandler for App {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: ctx.config.format,
-                    blend: None,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -339,7 +385,6 @@ impl ApplicationHandler for App {
             cache: None,
         });
 
-        // Line pipeline
         let line_pipeline = ctx.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Line Pipeline"),
             layout: Some(&pipeline_layout),
@@ -379,7 +424,6 @@ impl ApplicationHandler for App {
             cache: None,
         });
 
-        // Vertex buffer
         let vertex_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertices"),
             size: (MAX_PARTICLES * 6 * std::mem::size_of::<Pos3Color4Vertex>()) as u64,
@@ -387,10 +431,9 @@ impl ApplicationHandler for App {
             mapped_at_creation: false,
         });
 
-        // Line buffer for bounding box
         let line_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Lines"),
-            size: (24 * std::mem::size_of::<Pos3Color4Vertex>()) as u64,
+            size: (48 * std::mem::size_of::<Pos3Color4Vertex>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -403,11 +446,22 @@ impl ApplicationHandler for App {
         self.line_buffer = Some(line_buffer);
         self.ctx = Some(ctx);
 
-        println!("=== STATIC WATER TEST ===");
-        println!("Grid: {}x{}x{}", GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH);
-        println!("Particles: {}", self.initial_count);
-        println!("Expected: Water sits still, NO movement, NO escape");
-        println!("Controls: SPACE=pause, R=reset, Mouse=rotate, Scroll=zoom");
+        println!("\n=== HYDROSTATIC VISUAL TEST ===");
+        println!("Configuration matches test_flip_long_settling EXACTLY:");
+        println!("  Grid: {}x{}x{} cells @ {:.2}m", GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
+        println!("  Particles: {} (1 per cell)", self.initial_count);
+        println!("  flip_ratio: {}", FLIP_RATIO);
+        println!("  density_projection: false");
+        println!("  pressure_iterations: {}", PRESSURE_ITERATIONS);
+        println!("  Boundary: floor + walls, open top");
+        println!("");
+        println!("EXPECTED BEHAVIOR:");
+        println!("  - Water column spreads and flattens");
+        println!("  - Settles to ~27% of initial height");
+        println!("  - Max velocity drops below {} m/s", SETTLED_VELOCITY_THRESHOLD);
+        println!("");
+        println!("Controls: SPACE=pause, R=reset, Mouse drag=rotate, Scroll=zoom");
+        println!("============================================\n");
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: winit::window::WindowId, event: WindowEvent) {
@@ -417,7 +471,10 @@ impl ApplicationHandler for App {
                 event: KeyEvent { physical_key: PhysicalKey::Code(code), state: ElementState::Pressed, .. },
                 ..
             } => match code {
-                KeyCode::Space => self.paused = !self.paused,
+                KeyCode::Space => {
+                    self.paused = !self.paused;
+                    println!("{}", if self.paused { "PAUSED" } else { "RUNNING" });
+                }
                 KeyCode::KeyR => self.reset(),
                 KeyCode::Escape => event_loop.exit(),
                 _ => {}
@@ -444,8 +501,9 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 let ctx = self.ctx.as_ref().unwrap();
                 let flip = self.flip.as_mut().unwrap();
+                let dt = 1.0 / 60.0;
 
-                // Physics step
+                // Physics step - EXACT match to test_flip_long_settling
                 if !self.paused && !self.positions.is_empty() {
                     flip.step(
                         &ctx.device,
@@ -457,78 +515,128 @@ impl ApplicationHandler for App {
                         &self.cell_types,
                         None,
                         None,
-                        1.0 / 60.0,
+                        dt,
                         -9.81,
                         0.0,
-                        40,
+                        PRESSURE_ITERATIONS,
                     );
 
-                    // NO CPU CLAMP - let FLIP handle boundaries via cell_types
+                    // CPU boundary enforcement - EXACT match to test
+                    let floor_y = CELL_SIZE * 1.0;
+                    let min_x = CELL_SIZE * 1.0;
+                    let max_x = (GRID_WIDTH as f32 - 1.0) * CELL_SIZE;
+                    let min_z = CELL_SIZE * 1.0;
+                    let max_z = (GRID_DEPTH as f32 - 1.0) * CELL_SIZE;
+                    let ceiling_y = (GRID_HEIGHT as f32 - 0.5) * CELL_SIZE;
+
+                    // Adaptive velocity damping - EXACT match to test
+                    let damping_base = 0.005;
+                    let damping_growth = (self.sim_time / 60.0).min(1.0) * 0.015;
+                    let damping = 1.0 - (damping_base + damping_growth);
+
+                    for (pos, vel) in self.positions.iter_mut().zip(self.velocities.iter_mut()) {
+                        *vel *= damping;
+
+                        if pos.y < floor_y { pos.y = floor_y; vel.y = vel.y.abs().min(0.1); }
+                        if pos.x < min_x { pos.x = min_x; vel.x = vel.x.abs().min(0.1); }
+                        if pos.x > max_x { pos.x = max_x; vel.x = -vel.x.abs().min(0.1); }
+                        if pos.z < min_z { pos.z = min_z; vel.z = vel.z.abs().min(0.1); }
+                        if pos.z > max_z { pos.z = max_z; vel.z = -vel.z.abs().min(0.1); }
+                        if pos.y > ceiling_y { pos.y = ceiling_y; vel.y = -vel.y.abs().min(0.1); }
+                    }
+
                     self.frame += 1;
+                    self.sim_time += dt;
+
+                    // Print stats every second
                     if self.frame % 60 == 0 {
                         let max_vel = self.velocities.iter().map(|v| v.length()).fold(0.0f32, f32::max);
-                        let min_x = self.positions.iter().map(|p| p.x).fold(f32::MAX, f32::min);
-                        let max_x = self.positions.iter().map(|p| p.x).fold(f32::MIN, f32::max);
                         let min_y = self.positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
-                        let max_y_pos = self.positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
-                        let min_z = self.positions.iter().map(|p| p.z).fold(f32::MAX, f32::min);
-                        let max_z = self.positions.iter().map(|p| p.z).fold(f32::MIN, f32::max);
+                        let max_y = self.positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+                        let fluid_height = max_y - min_y;
+                        let height_ratio = fluid_height / self.initial_height;
+
+                        let status = if max_vel < SETTLED_VELOCITY_THRESHOLD {
+                            "SETTLED"
+                        } else if max_vel < 0.05 {
+                            "settling..."
+                        } else {
+                            "active"
+                        };
+
                         println!(
-                            "Frame {:4}: n={} vel={:.3} x=[{:.3},{:.3}] y=[{:.3},{:.3}] z=[{:.3},{:.3}]",
-                            self.frame, self.positions.len(), max_vel,
-                            min_x, max_x, min_y, max_y_pos, min_z, max_z
+                            "t={:5.1}s | max_vel={:.4} | height={:.3}m ({:4.0}%) | y=[{:.3},{:.3}] | {}",
+                            self.sim_time, max_vel, fluid_height, height_ratio * 100.0,
+                            min_y, max_y, status
                         );
                     }
                 }
 
-                // Build particle vertices (6 per particle for quads)
-                let water_color = [0.2f32, 0.5, 1.0, 0.9];
+                // Color particles by velocity magnitude
                 let mut vertices: Vec<Pos3Color4Vertex> = Vec::with_capacity(self.positions.len() * 6);
-                for pos in &self.positions {
+                for (i, pos) in self.positions.iter().enumerate() {
+                    let vel_mag = self.velocities[i].length();
+                    // Color: blue = still, red = moving
+                    let t = (vel_mag / 0.1).min(1.0);
+                    let color = [
+                        0.2 + 0.8 * t,      // R: increases with velocity
+                        0.3 * (1.0 - t),    // G: decreases with velocity
+                        1.0 - 0.8 * t,      // B: decreases with velocity
+                        0.85,
+                    ];
                     for _ in 0..6 {
                         vertices.push(Pos3Color4Vertex {
                             position: [pos.x, pos.y, pos.z],
-                            color: water_color,
+                            color,
                         });
                     }
                 }
 
-                // Build bounding box lines
-                let x_min = CELL_SIZE;
-                let x_max = (GRID_WIDTH as f32 - 1.0) * CELL_SIZE;
-                let y_min = CELL_SIZE;
-                let y_max = (GRID_HEIGHT as f32 - 1.0) * CELL_SIZE;
-                let z_min = CELL_SIZE;
-                let z_max = (GRID_DEPTH as f32 - 1.0) * CELL_SIZE;
-                let lc = [0.5f32, 0.5, 0.5, 1.0]; // Gray lines
+                // Build bounding box lines (domain boundaries)
+                let x_max = GRID_WIDTH as f32 * CELL_SIZE;
+                let y_max = GRID_HEIGHT as f32 * CELL_SIZE;
+                let z_max = GRID_DEPTH as f32 * CELL_SIZE;
+                let lc = [0.4f32, 0.4, 0.4, 1.0];
+                let wc = [0.3f32, 0.5, 0.7, 0.5]; // Water level indicator
+                let water_y = WATER_MAX_Y as f32 * CELL_SIZE; // Top of water region
+
                 let box_lines = [
-                    // Bottom
-                    Pos3Color4Vertex { position: [x_min, y_min, z_min], color: lc },
-                    Pos3Color4Vertex { position: [x_max, y_min, z_min], color: lc },
-                    Pos3Color4Vertex { position: [x_max, y_min, z_min], color: lc },
-                    Pos3Color4Vertex { position: [x_max, y_min, z_max], color: lc },
-                    Pos3Color4Vertex { position: [x_max, y_min, z_max], color: lc },
-                    Pos3Color4Vertex { position: [x_min, y_min, z_max], color: lc },
-                    Pos3Color4Vertex { position: [x_min, y_min, z_max], color: lc },
-                    Pos3Color4Vertex { position: [x_min, y_min, z_min], color: lc },
-                    // Top
-                    Pos3Color4Vertex { position: [x_min, y_max, z_min], color: lc },
-                    Pos3Color4Vertex { position: [x_max, y_max, z_min], color: lc },
-                    Pos3Color4Vertex { position: [x_max, y_max, z_min], color: lc },
+                    // Bottom face
+                    Pos3Color4Vertex { position: [0.0, 0.0, 0.0], color: lc },
+                    Pos3Color4Vertex { position: [x_max, 0.0, 0.0], color: lc },
+                    Pos3Color4Vertex { position: [x_max, 0.0, 0.0], color: lc },
+                    Pos3Color4Vertex { position: [x_max, 0.0, z_max], color: lc },
+                    Pos3Color4Vertex { position: [x_max, 0.0, z_max], color: lc },
+                    Pos3Color4Vertex { position: [0.0, 0.0, z_max], color: lc },
+                    Pos3Color4Vertex { position: [0.0, 0.0, z_max], color: lc },
+                    Pos3Color4Vertex { position: [0.0, 0.0, 0.0], color: lc },
+                    // Top face
+                    Pos3Color4Vertex { position: [0.0, y_max, 0.0], color: lc },
+                    Pos3Color4Vertex { position: [x_max, y_max, 0.0], color: lc },
+                    Pos3Color4Vertex { position: [x_max, y_max, 0.0], color: lc },
                     Pos3Color4Vertex { position: [x_max, y_max, z_max], color: lc },
                     Pos3Color4Vertex { position: [x_max, y_max, z_max], color: lc },
-                    Pos3Color4Vertex { position: [x_min, y_max, z_max], color: lc },
-                    Pos3Color4Vertex { position: [x_min, y_max, z_max], color: lc },
-                    Pos3Color4Vertex { position: [x_min, y_max, z_min], color: lc },
-                    // Verticals
-                    Pos3Color4Vertex { position: [x_min, y_min, z_min], color: lc },
-                    Pos3Color4Vertex { position: [x_min, y_max, z_min], color: lc },
-                    Pos3Color4Vertex { position: [x_max, y_min, z_min], color: lc },
-                    Pos3Color4Vertex { position: [x_max, y_max, z_min], color: lc },
-                    Pos3Color4Vertex { position: [x_max, y_min, z_max], color: lc },
+                    Pos3Color4Vertex { position: [0.0, y_max, z_max], color: lc },
+                    Pos3Color4Vertex { position: [0.0, y_max, z_max], color: lc },
+                    Pos3Color4Vertex { position: [0.0, y_max, 0.0], color: lc },
+                    // Vertical edges
+                    Pos3Color4Vertex { position: [0.0, 0.0, 0.0], color: lc },
+                    Pos3Color4Vertex { position: [0.0, y_max, 0.0], color: lc },
+                    Pos3Color4Vertex { position: [x_max, 0.0, 0.0], color: lc },
+                    Pos3Color4Vertex { position: [x_max, y_max, 0.0], color: lc },
+                    Pos3Color4Vertex { position: [x_max, 0.0, z_max], color: lc },
                     Pos3Color4Vertex { position: [x_max, y_max, z_max], color: lc },
-                    Pos3Color4Vertex { position: [x_min, y_min, z_max], color: lc },
-                    Pos3Color4Vertex { position: [x_min, y_max, z_max], color: lc },
+                    Pos3Color4Vertex { position: [0.0, 0.0, z_max], color: lc },
+                    Pos3Color4Vertex { position: [0.0, y_max, z_max], color: lc },
+                    // Water level indicator
+                    Pos3Color4Vertex { position: [0.0, water_y, 0.0], color: wc },
+                    Pos3Color4Vertex { position: [x_max, water_y, 0.0], color: wc },
+                    Pos3Color4Vertex { position: [x_max, water_y, 0.0], color: wc },
+                    Pos3Color4Vertex { position: [x_max, water_y, z_max], color: wc },
+                    Pos3Color4Vertex { position: [x_max, water_y, z_max], color: wc },
+                    Pos3Color4Vertex { position: [0.0, water_y, z_max], color: wc },
+                    Pos3Color4Vertex { position: [0.0, water_y, z_max], color: wc },
+                    Pos3Color4Vertex { position: [0.0, water_y, 0.0], color: wc },
                 ];
 
                 // Upload
@@ -553,7 +661,7 @@ impl ApplicationHandler for App {
                 let uniforms = Uniforms {
                     view_proj: view_proj.to_cols_array_2d(),
                     camera_pos: self.camera.position().to_array(),
-                    point_size: 8.0,
+                    point_size: 6.0,
                 };
                 ctx.queue.write_buffer(
                     self.uniform_buffer.as_ref().unwrap(),
@@ -573,7 +681,7 @@ impl ApplicationHandler for App {
                             view: &view,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.1, b: 0.15, a: 1.0 }),
+                                load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.05, g: 0.05, b: 0.1, a: 1.0 }),
                                 store: wgpu::StoreOp::Store,
                             },
                         })],
@@ -592,7 +700,7 @@ impl ApplicationHandler for App {
                     pass.set_pipeline(self.line_pipeline.as_ref().unwrap());
                     pass.set_bind_group(0, self.uniform_bind_group.as_ref().unwrap(), &[]);
                     pass.set_vertex_buffer(0, self.line_buffer.as_ref().unwrap().slice(..));
-                    pass.draw(0..24, 0..1);
+                    pass.draw(0..32, 0..1);
 
                     // Draw particles
                     if !vertices.is_empty() {

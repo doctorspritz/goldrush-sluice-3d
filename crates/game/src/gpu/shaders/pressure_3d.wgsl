@@ -16,6 +16,13 @@ struct Params {
     depth: u32,
     omega: f32,  // SOR relaxation factor (typically 1.5-1.9 for 3D)
     h_sq: f32,   // cell_size^2, needed to scale divergence in Poisson equation
+    // Bitmask for open boundaries (Dirichlet p=0):
+    // Bit 0 (1): -X open, Bit 1 (2): +X open
+    // Bit 2 (4): -Y open, Bit 3 (8): +Y open
+    // Bit 4 (16): -Z open, Bit 5 (32): +Z open
+    open_boundaries: u32,
+    _pad0: u32,
+    _pad1: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> pressure: array<f32>;
@@ -98,54 +105,65 @@ fn pressure_red(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let p = pressure[idx];
 
+    // Check open boundary flags
+    let open_neg_x = (params.open_boundaries & 1u) != 0u;
+    let open_pos_x = (params.open_boundaries & 2u) != 0u;
+    let open_neg_y = (params.open_boundaries & 4u) != 0u;
+    let open_pos_y = (params.open_boundaries & 8u) != 0u;
+    let open_neg_z = (params.open_boundaries & 16u) != 0u;
+    let open_pos_z = (params.open_boundaries & 32u) != 0u;
+
     // Gather neighbor pressures with proper boundary conditions
-    // Always count 6 neighbors (proper Neumann/Dirichlet handling)
+    // OPEN boundary → Dirichlet BC (p=0) → sum_neighbors += 0.0
+    // CLOSED boundary → Neumann BC (dp/dn=0) → sum_neighbors += p
     var sum_neighbors = 0.0;
 
-    // -X neighbor (inlet side: Dirichlet p=0 for OPEN inlet)
+    // -X neighbor
     if (i > 0u) {
         sum_neighbors += get_neighbor_pressure(i - 1u, j, k, p);
     } else {
-        sum_neighbors += 0.0;  // Dirichlet BC: OPEN inlet (atmospheric pressure)
+        sum_neighbors += select(p, 0.0, open_neg_x);  // Neumann if closed, Dirichlet if open
     }
 
-    // +X neighbor (outlet side: Dirichlet p=0 at domain edge for open outlet)
+    // +X neighbor
     if (i < params.width - 1u) {
         sum_neighbors += get_neighbor_pressure(i + 1u, j, k, p);
     } else {
-        sum_neighbors += 0.0;  // Dirichlet BC: OPEN outlet
+        sum_neighbors += select(p, 0.0, open_pos_x);
     }
 
-    // -Y neighbor (floor: Neumann if at boundary)
+    // -Y neighbor (floor)
     if (j > 0u) {
         sum_neighbors += get_neighbor_pressure(i, j - 1u, k, p);
     } else {
-        sum_neighbors += p;  // Neumann BC at floor
+        sum_neighbors += select(p, 0.0, open_neg_y);
     }
 
-    // +Y neighbor (top: Dirichlet p=0 for open air interface)
+    // +Y neighbor (ceiling/top)
     if (j < params.height - 1u) {
         sum_neighbors += get_neighbor_pressure(i, j + 1u, k, p);
     } else {
-        sum_neighbors += 0.0;  // Dirichlet BC: OPEN top
+        sum_neighbors += select(p, 0.0, open_pos_y);
     }
 
-    // -Z neighbor (side wall: Neumann)
+    // -Z neighbor (side wall)
     if (k > 0u) {
         sum_neighbors += get_neighbor_pressure(i, j, k - 1u, p);
     } else {
-        sum_neighbors += p;  // Neumann BC at side wall
+        sum_neighbors += select(p, 0.0, open_neg_z);
     }
 
-    // +Z neighbor (side wall: Neumann)
+    // +Z neighbor (side wall)
     if (k < params.depth - 1u) {
         sum_neighbors += get_neighbor_pressure(i, j, k + 1u, p);
     } else {
-        sum_neighbors += p;  // Neumann BC at side wall
+        sum_neighbors += select(p, 0.0, open_pos_z);
     }
 
     // Gauss-Seidel update with SOR
-    // Poisson equation: (p_neighbors - 6p) / h² = -div
+    // Poisson equation: ∇²p = div(u) (note: positive RHS)
+    // This convention: when div > 0 (outflow), we need pressure to push inward
+    // Discretized: (sum_neighbors - 6p) / h² = div
     // Rearranged: p = (sum_neighbors - h² * div) / 6
     let new_p = (sum_neighbors - divergence[idx] * params.h_sq) / 6.0;
     // SOR: weighted average of old and new values
@@ -176,49 +194,59 @@ fn pressure_black(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let p = pressure[idx];
 
+    // Check open boundary flags
+    let open_neg_x = (params.open_boundaries & 1u) != 0u;
+    let open_pos_x = (params.open_boundaries & 2u) != 0u;
+    let open_neg_y = (params.open_boundaries & 4u) != 0u;
+    let open_pos_y = (params.open_boundaries & 8u) != 0u;
+    let open_neg_z = (params.open_boundaries & 16u) != 0u;
+    let open_pos_z = (params.open_boundaries & 32u) != 0u;
+
     // Gather neighbor pressures with proper boundary conditions
+    // OPEN boundary → Dirichlet BC (p=0) → sum_neighbors += 0.0
+    // CLOSED boundary → Neumann BC (dp/dn=0) → sum_neighbors += p
     var sum_neighbors = 0.0;
 
-    // -X neighbor (inlet: Dirichlet p=0 for OPEN inlet)
+    // -X neighbor
     if (i > 0u) {
         sum_neighbors += get_neighbor_pressure(i - 1u, j, k, p);
     } else {
-        sum_neighbors += 0.0;  // Dirichlet BC: OPEN inlet (atmospheric pressure)
+        sum_neighbors += select(p, 0.0, open_neg_x);
     }
 
-    // +X neighbor (outlet: open)
+    // +X neighbor
     if (i < params.width - 1u) {
         sum_neighbors += get_neighbor_pressure(i + 1u, j, k, p);
     } else {
-        sum_neighbors += 0.0;  // Dirichlet BC: OPEN outlet
+        sum_neighbors += select(p, 0.0, open_pos_x);
     }
 
     // -Y neighbor
     if (j > 0u) {
         sum_neighbors += get_neighbor_pressure(i, j - 1u, k, p);
     } else {
-        sum_neighbors += p;  // Neumann BC at floor
+        sum_neighbors += select(p, 0.0, open_neg_y);
     }
 
-    // +Y neighbor (top: open)
+    // +Y neighbor
     if (j < params.height - 1u) {
         sum_neighbors += get_neighbor_pressure(i, j + 1u, k, p);
     } else {
-        sum_neighbors += 0.0;  // Dirichlet BC: OPEN top
+        sum_neighbors += select(p, 0.0, open_pos_y);
     }
 
     // -Z neighbor
     if (k > 0u) {
         sum_neighbors += get_neighbor_pressure(i, j, k - 1u, p);
     } else {
-        sum_neighbors += p;  // Neumann BC at side wall
+        sum_neighbors += select(p, 0.0, open_neg_z);
     }
 
     // +Z neighbor
     if (k < params.depth - 1u) {
         sum_neighbors += get_neighbor_pressure(i, j, k + 1u, p);
     } else {
-        sum_neighbors += p;  // Neumann BC at side wall
+        sum_neighbors += select(p, 0.0, open_pos_z);
     }
 
     // Poisson equation: p = (sum_neighbors - h² * div) / 6
