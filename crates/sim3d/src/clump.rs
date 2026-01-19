@@ -529,7 +529,8 @@ impl ClusterSimulation3D {
         }
 
         // Inter-clump collision (simple position-based resolution)
-        self.resolve_dem_penetrations(2);
+        // 6 iterations helps particles settle into stable configurations without gaps
+        self.resolve_dem_penetrations(6);
 
         self.sdf_contacts = new_sdf_contacts;
     }

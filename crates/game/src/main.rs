@@ -33,7 +33,7 @@ const MAX_PARTICLES: usize = 300_000;
 // Simulation
 const GRAVITY: f32 = constants::GRAVITY;
 const PRESSURE_ITERS: u32 = 120;
-const SUBSTEPS: u32 = 2;
+const SUBSTEPS: u32 = 4; // CFL safety: max_vel < cell_size / dt_sub = 0.01 / 0.004 = 2.5 m/s
 const TRACER_INTERVAL_FRAMES: u32 = 300; // 5s at 60 FPS
 const TRACER_COUNT: u32 = 3;
 
