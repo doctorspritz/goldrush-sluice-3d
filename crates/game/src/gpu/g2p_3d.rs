@@ -629,10 +629,13 @@ impl GpuG2p3D {
         let buffer_slice = buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
+            let _ = tx.send(result);
         });
         device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        if let Err(e) = super::await_buffer_map(rx) {
+            log::error!("GPU G2P readback failed: {}", e);
+            return Vec::new();
+        }
 
         let data = buffer_slice.get_mapped_range();
         let result: Vec<[f32; 4]> = bytemuck::cast_slice(&data)[..count].to_vec();

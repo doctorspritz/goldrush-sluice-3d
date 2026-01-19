@@ -796,6 +796,13 @@ impl App {
             return;
         }
 
+        // Check for GPU device lost
+        if game::gpu::is_device_lost() {
+            log::error!("GPU device lost - pausing simulation");
+            self.paused = true;
+            return;
+        }
+
         let dt = 1.0 / 60.0;
         let dt_sub = dt / SUBSTEPS as f32;
         let flow_accel = self.flow_accel();

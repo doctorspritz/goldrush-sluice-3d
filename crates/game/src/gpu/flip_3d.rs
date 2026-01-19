@@ -4771,10 +4771,13 @@ impl GpuFlip3D {
         let buffer_slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
+            let _ = tx.send(result); // Ignore send error if receiver dropped
         });
         device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        if let Err(e) = super::await_buffer_map(rx) {
+            log::error!("GPU readback failed: {}", e);
+            return;
+        }
 
         {
             let data = buffer_slice.get_mapped_range();
@@ -4860,23 +4863,27 @@ impl GpuFlip3D {
         let (vort_tx, vort_rx) = std::sync::mpsc::channel();
 
         ct_slice.map_async(wgpu::MapMode::Read, move |r| {
-            ct_tx.send(r).unwrap();
+            let _ = ct_tx.send(r);
         });
         sed_slice.map_async(wgpu::MapMode::Read, move |r| {
-            sed_tx.send(r).unwrap();
+            let _ = sed_tx.send(r);
         });
         part_slice.map_async(wgpu::MapMode::Read, move |r| {
-            part_tx.send(r).unwrap();
+            let _ = part_tx.send(r);
         });
         vort_slice.map_async(wgpu::MapMode::Read, move |r| {
-            vort_tx.send(r).unwrap();
+            let _ = vort_tx.send(r);
         });
 
         device.poll(wgpu::Maintain::Wait);
-        ct_rx.recv().unwrap().unwrap();
-        sed_rx.recv().unwrap().unwrap();
-        part_rx.recv().unwrap().unwrap();
-        vort_rx.recv().unwrap().unwrap();
+        if super::await_buffer_map(ct_rx).is_err()
+            || super::await_buffer_map(sed_rx).is_err()
+            || super::await_buffer_map(part_rx).is_err()
+            || super::await_buffer_map(vort_rx).is_err()
+        {
+            log::error!("GPU jamming diagnostics readback failed");
+            return;
+        }
 
         let ct_data = ct_slice.get_mapped_range();
         let sed_data = sed_slice.get_mapped_range();
@@ -5096,14 +5103,26 @@ impl GpuFlip3D {
         let (p_tx, p_rx) = std::sync::mpsc::channel();
         let (ct_tx, ct_rx) = std::sync::mpsc::channel();
 
-        div_slice.map_async(wgpu::MapMode::Read, move |r| { div_tx.send(r).unwrap(); });
-        pressure_slice.map_async(wgpu::MapMode::Read, move |r| { p_tx.send(r).unwrap(); });
-        cell_type_slice.map_async(wgpu::MapMode::Read, move |r| { ct_tx.send(r).unwrap(); });
+        div_slice.map_async(wgpu::MapMode::Read, move |r| { let _ = div_tx.send(r); });
+        pressure_slice.map_async(wgpu::MapMode::Read, move |r| { let _ = p_tx.send(r); });
+        cell_type_slice.map_async(wgpu::MapMode::Read, move |r| { let _ = ct_tx.send(r); });
 
         device.poll(wgpu::Maintain::Wait);
-        div_rx.recv().unwrap().unwrap();
-        p_rx.recv().unwrap().unwrap();
-        ct_rx.recv().unwrap().unwrap();
+        if super::await_buffer_map(div_rx).is_err()
+            || super::await_buffer_map(p_rx).is_err()
+            || super::await_buffer_map(ct_rx).is_err()
+        {
+            log::error!("GPU pressure diagnostics readback failed");
+            return PhysicsDiagnostics {
+                max_divergence: 0.0,
+                avg_divergence: 0.0,
+                max_pressure: 0.0,
+                avg_pressure: 0.0,
+                fluid_cell_count: 0,
+                divergence_values: Vec::new(),
+                pressure_values: Vec::new(),
+            };
+        }
 
         let div_data = div_slice.get_mapped_range();
         let p_data = pressure_slice.get_mapped_range();
