@@ -1,7 +1,7 @@
 //! Visual Chained Grids Demo
 //!
-//! Two FLIP grids connected in series with real-time rendering.
-//! Grid A feeds into Grid B - particles exit A and enter B.
+//! Three FLIP grids connected in series with real-time rendering.
+//! Grid A → Grid B → Grid C → exit
 //!
 //! Controls:
 //! - Mouse drag: rotate camera
@@ -123,7 +123,7 @@ const DT: f32 = 1.0 / 120.0;
 const SUBSTEPS: u32 = 2;
 const PRESSURE_ITERS: u32 = 50;
 const GRAVITY: f32 = -9.8;
-const FLOW_ACCEL: f32 = 6.0;
+const FLOW_ACCEL: f32 = 2.0; // Small acceleration for visual demo (headless uses 0.0)
 const INLET_RATE: usize = 30;
 const INLET_VELOCITY: f32 = 0.6;
 
@@ -365,6 +365,7 @@ struct App {
 
     grid_a: Option<GridSegment>,
     grid_b: Option<GridSegment>,
+    grid_c: Option<GridSegment>,
 
     camera: Camera,
     paused: bool,
@@ -380,18 +381,18 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        // Center camera on both grids
+        // Center camera on all three grids
         let grid_length = GRID_WIDTH as f32 * CELL_SIZE;
         let center = Vec3::new(
-            grid_length, // Center between two grids
+            grid_length * 1.5, // Center of three grids
             GRID_HEIGHT as f32 * CELL_SIZE * 0.5,
             GRID_DEPTH as f32 * CELL_SIZE * 0.5
         );
         Self {
             window: None, ctx: None, depth_view: None, point_pipeline: None, line_pipeline: None,
             uniform_buffer: None, uniform_bind_group: None, vertex_buffer: None, line_buffer: None,
-            grid_a: None, grid_b: None,
-            camera: Camera::new(0.0, 0.3, 2.5, center),
+            grid_a: None, grid_b: None, grid_c: None,
+            camera: Camera::new(0.0, 0.3, 3.5, center),
             paused: false, seed: 12345,
             total_injected: 0, total_handoffs: 0, total_exited: 0,
             mouse_pressed: false, last_mouse: None,
@@ -420,11 +421,13 @@ impl App {
 
         if let Some(g) = &mut self.grid_a { g.process_input(); }
         if let Some(g) = &mut self.grid_b { g.process_input(); }
+        if let Some(g) = &mut self.grid_c { g.process_input(); }
 
         let ctx = self.ctx.as_ref().unwrap();
         for _ in 0..SUBSTEPS {
             if let Some(g) = &mut self.grid_a { g.step(&ctx.device, &ctx.queue); }
             if let Some(g) = &mut self.grid_b { g.step(&ctx.device, &ctx.queue); }
+            if let Some(g) = &mut self.grid_c { g.step(&ctx.device, &ctx.queue); }
         }
 
         // Handoff: A exits -> B enters (preserve full particle state)
@@ -457,14 +460,45 @@ impl App {
             }
         }
 
+        // Handoff: B exits -> C enters
+        if let Some(gb) = &mut self.grid_b {
+            let exited = gb.extract_exit();
+            if let Some(gc) = &mut self.grid_c {
+                for (world_pos, vel, c_mat, density) in exited {
+                    let local_pos = world_pos - gc.world_offset;
+                    let local_pos = Vec3::new(CELL_SIZE * 1.5, local_pos.y, local_pos.z);
+
+                    gc.input_buffer.push((local_pos, vel, c_mat, density, false));
+
+                    // Ghost particles
+                    for dx in 1..4 {
+                        let ghost_pos = Vec3::new(
+                            local_pos.x + dx as f32 * CELL_SIZE,
+                            local_pos.y,
+                            local_pos.z,
+                        );
+                        gc.input_buffer.push((ghost_pos, vel, c_mat, density, true));
+                    }
+
+                    self.total_handoffs += 1;
+                }
+            }
+        }
+
         // Remove ghost particles after they've done their P2G job
         if let Some(gb) = &mut self.grid_b {
             gb.remove_ghosts();
         }
+        if let Some(gc) = &mut self.grid_c {
+            gc.remove_ghosts();
+        }
 
-        // B exits -> leave system
+        // C exits -> leave system
+        if let Some(gc) = &mut self.grid_c {
+            self.total_exited += gc.extract_exit().len();
+            gc.remove_oob();
+        }
         if let Some(gb) = &mut self.grid_b {
-            self.total_exited += gb.extract_exit().len();
             gb.remove_oob();
         }
         if let Some(ga) = &mut self.grid_a {
@@ -507,7 +541,18 @@ impl App {
             }
         }
 
-        let max_verts = MAX_PARTICLES * 2 * 6;
+        // Grid C particles - green
+        if let Some(g) = &self.grid_c {
+            for p in &g.positions {
+                let wp = *p + g.world_offset;
+                let color = [0.4, 1.0, 0.4, 1.0];
+                for _ in 0..6 {
+                    vertices.push(Pos3Color4Vertex { position: wp.to_array(), color });
+                }
+            }
+        }
+
+        let max_verts = MAX_PARTICLES * 3 * 6;
         if vertices.len() > max_verts { vertices.truncate(max_verts); }
         if !vertices.is_empty() {
             if let Some(vb) = &self.vertex_buffer {
@@ -520,6 +565,7 @@ impl App {
         let mut line_verts: Vec<Pos3Color4Vertex> = Vec::new();
         line_verts.extend(grid_boundary_lines(Vec3::ZERO, [0.3, 0.6, 1.0, 1.0], true)); // Grid A - blue
         line_verts.extend(grid_boundary_lines(Vec3::new(grid_length, 0.0, 0.0), [0.2, 0.8, 0.7, 1.0], true)); // Grid B - cyan
+        line_verts.extend(grid_boundary_lines(Vec3::new(grid_length * 2.0, 0.0, 0.0), [0.4, 0.9, 0.4, 1.0], true)); // Grid C - green
 
         if let Some(lb) = &self.line_buffer {
             ctx.queue.write_buffer(lb, 0, bytemuck::cast_slice(&line_verts));
@@ -576,8 +622,9 @@ impl App {
         if Instant::now().duration_since(self.last_fps_time).as_secs_f32() >= 1.0 {
             let count_a = self.grid_a.as_ref().map(|g| g.positions.len()).unwrap_or(0);
             let count_b = self.grid_b.as_ref().map(|g| g.positions.len()).unwrap_or(0);
-            println!("FPS:{} A:{} B:{} handoffs:{} exited:{}",
-                self.fps_count, count_a, count_b, self.total_handoffs, self.total_exited);
+            let count_c = self.grid_c.as_ref().map(|g| g.positions.len()).unwrap_or(0);
+            println!("FPS:{} A:{} B:{} C:{} handoffs:{} exited:{}",
+                self.fps_count, count_a, count_b, count_c, self.total_handoffs, self.total_exited);
             self.fps_count = 0;
             self.last_fps_time = Instant::now();
         }
@@ -590,6 +637,11 @@ impl App {
             g.is_ghost.clear(); g.input_buffer.clear();
         }
         if let Some(g) = &mut self.grid_b {
+            g.positions.clear(); g.velocities.clear();
+            g.c_matrices.clear(); g.densities.clear();
+            g.is_ghost.clear(); g.input_buffer.clear();
+        }
+        if let Some(g) = &mut self.grid_c {
             g.positions.clear(); g.velocities.clear();
             g.c_matrices.clear(); g.densities.clear();
             g.is_ghost.clear(); g.input_buffer.clear();
@@ -665,7 +717,7 @@ impl ApplicationHandler for App {
 
         let vertex_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertices"),
-            size: (MAX_PARTICLES * 2 * 6 * std::mem::size_of::<Pos3Color4Vertex>()) as u64,
+            size: (MAX_PARTICLES * 3 * 6 * std::mem::size_of::<Pos3Color4Vertex>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -697,18 +749,19 @@ impl ApplicationHandler for App {
             cache: None,
         });
 
-        // Two grids worth of boundary lines (28 verts each)
+        // Three grids worth of boundary lines (28 verts each)
         let line_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Lines"),
-            size: (64 * std::mem::size_of::<Pos3Color4Vertex>()) as u64,
+            size: (96 * std::mem::size_of::<Pos3Color4Vertex>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        // Create two grids
+        // Create three grids
         let grid_length = GRID_WIDTH as f32 * CELL_SIZE;
         self.grid_a = Some(GridSegment::new(&ctx.device, Vec3::ZERO));
         self.grid_b = Some(GridSegment::new(&ctx.device, Vec3::new(grid_length, 0.0, 0.0)));
+        self.grid_c = Some(GridSegment::new(&ctx.device, Vec3::new(grid_length * 2.0, 0.0, 0.0)));
 
         self.ctx = Some(ctx);
         self.point_pipeline = Some(point_pipeline);
@@ -719,8 +772,8 @@ impl ApplicationHandler for App {
         self.line_buffer = Some(line_buffer);
 
         println!("=== CHAINED GRIDS ===");
-        println!("Blue box = Grid A, Cyan box = Grid B");
-        println!("Particles exit A above yellow weir -> enter B");
+        println!("Blue = Grid A, Cyan = Grid B, Green = Grid C");
+        println!("Particles flow: A -> B -> C -> exit");
         println!("Mouse drag=rotate, Scroll=zoom, Space=pause, R=reset");
     }
 
