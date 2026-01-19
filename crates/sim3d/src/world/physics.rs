@@ -8,7 +8,6 @@
 //! - Material property queries
 
 use super::World;
-use super::WorldParams;
 
 impl World {
     /// Calculate the topographic gradient (bed slope) at a cell.
