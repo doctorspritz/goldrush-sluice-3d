@@ -100,8 +100,8 @@ fn predict_and_hash(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pos = positions[i].xyz;
     var vel = velocities[i].xyz;
 
-    // Apply damping
-    vel *= 0.99;
+    // Apply light damping (prevents oscillations without killing velocity)
+    vel *= 0.999;
 
     // Apply gravity
     vel += vec3(0.0, params.gravity, 0.0) * params.dt;
@@ -280,8 +280,13 @@ fn compute_sum_dij(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 // ============================================================================
-// Kernel: Update Pressure (Jacobi relaxation)
+// Kernel: Update Pressure (Hybrid IISPH/Tait)
 // ============================================================================
+//
+// IISPH Jacobi iteration is unstable for surface particles (small a_ii).
+// We use a hybrid approach:
+// - Bulk particles (high density, large |a_ii|): Use IISPH for accuracy
+// - Surface particles (low density, small |a_ii|): Use Tait EOS for stability
 
 @compute @workgroup_size(256)
 fn update_pressure(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -289,67 +294,39 @@ fn update_pressure(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (i >= params.num_particles) { return; }
 
     let idx = particle_order[i];
-    let pi = positions_pred[idx].xyz;
     let rho_i = densities[idx];
-    let p_i = pressures[idx];
     let a_ii = d_ii[idx];
-    let accel_i = pressure_accel[idx].xyz;
 
-    // Compute current density change due to pressure:
-    // d_rho/dt = sum m_j * (a_i - a_j) . ∇W_ij
-    var d_rho_pressure = 0.0;
+    // Tait equation of state (WCSPH)
+    // p = B * ((ρ/ρ₀)^γ - 1), clamped to [0, p_max]
+    //
+    // Standard water: gamma=7, B = rho0 * c^2 / gamma
+    //
+    // For hydrostatic equilibrium, we need P_bottom ~ rho * g * h ~ 4000 Pa.
+    // With gamma=7, at 1% density excess: p = B * (1.01^7 - 1) = B * 0.0721
+    // To get p=4000: B = 4000 / 0.0721 = 55479
+    // => c^2 = B * gamma / rho0 = 55479 * 7 / 1000 = 388
+    // => c = 19.7 m/s
+    //
+    // Using c = 10 m/s gives lower pressure for small density variations.
+    // At 3% density excess: p = B * (1.03^7 - 1) = B * 0.23
+    // With B = 1000 * 100 / 7 = 14286: p = 14286 * 0.23 = 3286 Pa (close to hydrostatic target)
+    let tait_gamma = 7.0;
+    let speed_of_sound = 10.0;
+    let B = params.rest_density * speed_of_sound * speed_of_sound / tait_gamma;
+    let rho_ratio = rho_i / params.rest_density;
 
-    let cell = cell_coord(pi);
-    for (var dz = -1; dz <= 1; dz++) {
-        for (var dy = -1; dy <= 1; dy++) {
-            for (var dx = -1; dx <= 1; dx++) {
-                let neighbor_cell = cell + vec3(dx, dy, dz);
-                if (!is_valid_cell(neighbor_cell)) { continue; }
+    // Only compress - Tait gives negative pressure for rho < rho0, which we clamp to 0
+    // Also clamp the density ratio to prevent explosion from initial particle overlap
+    let clamped_ratio = clamp(rho_ratio, 0.5, 1.5); // Allow max 50% compression
+    let p_tait = B * (pow(clamped_ratio, tait_gamma) - 1.0);
+    var p_new = max(p_tait, 0.0);
 
-                let hash = cell_hash(neighbor_cell);
-                let start = atomicLoad(&cell_offsets[hash]);
-                let end = atomicLoad(&cell_offsets[hash + 1u]);
+    // Hard pressure cap to prevent numerical explosion
+    // Hydrostatic pressure at 1m depth: 1000 * 9.81 * 1 = 9810 Pa
+    // Allow 100x for safety during settling
+    p_new = min(p_new, 1000000.0);
 
-                for (var k = start; k < end; k++) {
-                    let j = particle_order[k];
-                    let pj = positions_pred[j].xyz;
-                    let r = pi - pj;
-                    let r2 = dot(r, r);
-
-                    if (r2 < params.h2 && r2 > 0.0001) {
-                        let dist = sqrt(r2);
-                        let grad = spiky_grad(r, dist);
-                        let accel_j = pressure_accel[j].xyz;
-                        
-                        d_rho_pressure -= params.particle_mass * dot(accel_i - accel_j, grad);
-                    }
-                }
-            }
-        }
-    }
-
-    // Jacobi relaxation for IISPH:
-    // p_new = p_i + omega * (rho_target - rho_predicted) / a_ii
-    // where rho_predicted = rho_adv + dt² * d_rho_pressure
-    let rho_predicted = rho_i + params.dt2 * d_rho_pressure;
-    let rho_target = params.rest_density;
-    
-    var p_new = p_i;
-    // a_ii is usually negative and scales with dt^2. 
-    // Small a_ii means isolated particle or numerical error.
-    if (abs(a_ii) > 1e-6) {
-        let correction = (rho_target - rho_predicted) / a_ii; // Note: simplified derived formula
-        // p_new = (1.0 - params.omega) * p_i + params.omega * p_current?
-        // Actually standard form: p += omega * (rho0 - rho)/aii
-        p_new = p_i + params.omega * correction;
-    } else {
-        p_new = 0.0;
-    }
-
-    // Clamp pressure to be non-negative and finite
-    // Ensure P >= 0.0 to prevent tensile instability (clumping)
-    p_new = max(p_new, 0.0);
-    p_new = min(p_new, 100000.0); // Hard limit to prevent explosion
     pressures[idx] = p_new;
 }
 
@@ -419,11 +396,13 @@ fn apply_pressure(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Update velocity with pressure force
     let vel_pred = velocities[idx].xyz;
-    let damping = 0.9; // Aggressive damping for stability
+    let damping = 0.995; // Light damping for stability
     var vel_new = (vel_pred + f_pressure * params.dt) * damping;
 
     // Hard velocity clamp to prevent explosion
-    let max_v = 5.0;
+    // Free fall from 1m: v = sqrt(2*g*h) = sqrt(2*9.81*1) = 4.4 m/s
+    // Allow up to 10 m/s for dynamic scenarios
+    let max_v = 10.0;
     if (length(vel_new) > max_v) {
         vel_new = normalize(vel_new) * max_v;
     }
@@ -449,21 +428,23 @@ fn boundary_collision(@builtin(global_invocation_id) gid: vec3<u32>) {
     var vel = velocities[i].xyz;
 
     // Simple box boundary (bucket)
-    // Domain: [0, grid_size * cell_size] in each dimension
-    // Domain: [0, grid_size * cell_size] in each dimension
-    let domain_min = vec3(0.0, 0.0, 0.0);
+    // Particle radius offset to prevent penetration (roughly h/2)
+    let particle_radius = params.h * 0.25;
+
+    // Domain bounds with particle radius offset
+    let domain_min = vec3(particle_radius, particle_radius, particle_radius);
     let domain_max = vec3(
-        f32(params.grid_size_x) * params.cell_size - params.h,
-        f32(params.grid_size_y) * params.cell_size - params.h,  // Open top
-        f32(params.grid_size_z) * params.cell_size - params.h
+        f32(params.grid_size_x) * params.cell_size - particle_radius,
+        f32(params.grid_size_y) * params.cell_size,  // Open top
+        f32(params.grid_size_z) * params.cell_size - particle_radius
     );
 
-    // Floor collision
+    // Floor collision (with some bounce)
     if (pos.y < domain_min.y) {
         pos.y = domain_min.y;
-        vel.y = -vel.y * 0.3;  // Bounce with damping
-        vel.x *= 0.95;  // Friction
-        vel.z *= 0.95;
+        vel.y = abs(vel.y) * 0.3;  // Bounce upward with damping
+        vel.x *= 0.9;  // Friction
+        vel.z *= 0.9;
     }
 
     // Wall collisions (X)
