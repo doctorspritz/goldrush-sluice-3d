@@ -52,6 +52,12 @@ fn count_neighbors_with_particles(i: i32, j: i32, k: i32) -> u32 {
     return count;
 }
 
+fn is_domain_boundary(i: u32, j: u32, k: u32) -> bool {
+    return i == 0u || i == params.width - 1u ||
+           j == 0u || j == params.height - 1u ||
+           k == 0u || k == params.depth - 1u;
+}
+
 @compute @workgroup_size(8, 8, 4)
 fn expand_fluid_cells(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = id.x;
@@ -63,20 +69,30 @@ fn expand_fluid_cells(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let idx = cell_index(i, j, k);
+    let current_type = cell_type[idx];
 
-    // Preserve solid geometry (static obstacles, jammed sediment)
-    if (cell_type[idx] == CELL_SOLID) {
+    // Domain boundary cells are ALWAYS solid (particles get clamped away from these)
+    if (is_domain_boundary(i, j, k)) {
+        cell_type[idx] = CELL_SOLID;
         return;
     }
 
-    // If this cell has particles, definitely FLUID
-    if (get_particle_count(i32(i), i32(j), i32(k)) > 0) {
+    // CRITICAL: If this cell has particles, mark as FLUID for pressure enforcement
+    // This overrides SDF-based SOLID marking - particles need incompressibility!
+    let pcount = get_particle_count(i32(i), i32(j), i32(k));
+    if (pcount > 0) {
         cell_type[idx] = CELL_FLUID;
         return;
     }
 
-    // Empty cell: only mark FLUID if surrounded by 2+ neighbors with particles
-    // This prevents over-expansion at the fluid surface
+    // Cell has no particles - check if it was marked SOLID (from SDF)
+    // Keep it SOLID so pressure solver has proper boundary conditions
+    if (current_type == CELL_SOLID) {
+        return;
+    }
+
+    // Empty non-solid cell: mark FLUID if surrounded by enough neighbors with particles
+    // This prevents gaps at the fluid surface that cause volume collapse
     let neighbor_count = count_neighbors_with_particles(i32(i), i32(j), i32(k));
     if (neighbor_count >= MIN_NEIGHBORS_FOR_EXPANSION) {
         cell_type[idx] = CELL_FLUID;

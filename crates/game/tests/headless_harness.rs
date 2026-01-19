@@ -2,6 +2,7 @@ use game::gpu::flip_3d::{GpuFlip3D, PhysicsDiagnostics};
 use game::gpu::sph_3d::GpuSph3D;
 use game::gpu::sph_dfsph::{GpuSphDfsph, DfsphMetrics};
 use glam::{Mat3, Vec3};
+use sim3d::test_geometry::{TestBox, TestSdfGenerator};
 use std::sync::Arc;
 
 //==============================================================================
@@ -1920,4 +1921,570 @@ fn test_flip_long_settling() {
     );
 
     println!("\n✓ Long-duration settling test PASSED");
+}
+
+//==============================================================================
+// FLIP SDF BOX VOLUME PRESERVATION TEST
+// Tests volume preservation with solid boundaries defined by SDF
+//==============================================================================
+
+/// Test: Volume preservation in an SDF-defined solid container
+/// Uses TestBox from sim3d::test_geometry to create a thick-walled container.
+/// Verifies:
+/// 1. Particles stay inside the SDF-defined boundary
+/// 2. Volume is preserved (particle count conserved)
+/// 3. Fluid settles properly within the container
+#[test]
+fn test_flip_sdf_box_volume() {
+    let (device, queue) = match init_device_queue() {
+        Some(h) => h,
+        None => { println!("Skipped: No GPU"); return; }
+    };
+
+    // Grid dimensions - must be large enough to contain the box with margin
+    const WIDTH: u32 = 24;
+    const HEIGHT: u32 = 20;
+    const DEPTH: u32 = 24;
+    const CELL_SIZE: f32 = 0.05; // 5cm cells
+    const MAX_PARTICLES: usize = 10000;
+    const DT: f32 = 1.0 / 60.0;
+    const STEPS: usize = 300; // 5 seconds of simulation
+
+    println!("\n=== FLIP SDF Box Volume Preservation Test ===");
+    println!("Grid: {}x{}x{}, cell_size={}m", WIDTH, HEIGHT, DEPTH, CELL_SIZE);
+
+    // Create FLIP solver
+    let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
+    flip.vorticity_epsilon = 0.0;
+    flip.water_rest_density = 8.0; // 8 particles per cell for good resolution
+    flip.open_boundaries = 0; // Closed domain - SDF handles boundaries
+    flip.flip_ratio = 0.95;
+    flip.slip_factor = 0.0;
+    flip.density_projection_enabled = false;
+
+    // Create a thick-walled box using TestBox
+    // Box is centered at grid center, raised above floor
+    let box_center = Vec3::new(
+        WIDTH as f32 * CELL_SIZE / 2.0,      // Center X
+        CELL_SIZE * 2.0,                      // Floor of box at 2 cells up
+        DEPTH as f32 * CELL_SIZE / 2.0,       // Center Z
+    );
+    let box_width = 0.5;   // 50cm inner width
+    let box_depth = 0.5;   // 50cm inner depth
+    let box_height = 0.4;  // 40cm wall height
+    let wall_thickness = CELL_SIZE * 2.0;  // 2 cells thick walls
+    let floor_thickness = CELL_SIZE * 3.0; // 3 cells thick floor
+
+    let test_box = TestBox::with_thickness(
+        box_center,
+        box_width,
+        box_depth,
+        box_height,
+        wall_thickness,
+        floor_thickness,
+    );
+
+    println!("SDF Box:");
+    println!("  Center: ({:.2}, {:.2}, {:.2})", box_center.x, box_center.y, box_center.z);
+    println!("  Inner size: {:.2}m × {:.2}m × {:.2}m", box_width, box_depth, box_height);
+    println!("  Wall thickness: {:.3}m ({:.1} cells)", wall_thickness, wall_thickness / CELL_SIZE);
+    println!("  Floor thickness: {:.3}m ({:.1} cells)", floor_thickness, floor_thickness / CELL_SIZE);
+
+    // Generate SDF grid
+    let mut sdf_gen = TestSdfGenerator::new(
+        WIDTH as usize,
+        HEIGHT as usize,
+        DEPTH as usize,
+        CELL_SIZE,
+        Vec3::ZERO, // Grid offset at origin
+    );
+    sdf_gen.add_box(&test_box);
+
+    // Debug: Sample SDF at a few key positions
+    println!("\nSDF Debug (negative = inside solid, positive = in open space):");
+    let test_points = [
+        (box_center, "box center (floor surface)"),
+        (box_center + Vec3::new(0.0, 0.05, 0.0), "5cm above floor"),
+        (box_center + Vec3::new(0.0, 0.15, 0.0), "15cm above floor"),
+        (box_center + Vec3::new(0.0, -0.05, 0.0), "5cm below floor (in solid)"),
+        (box_center + Vec3::new(box_width/2.0 - 0.02, 0.1, 0.0), "near wall inside"),
+        (box_center + Vec3::new(box_width/2.0 + 0.05, 0.1, 0.0), "inside wall solid"),
+    ];
+    for (pos, desc) in &test_points {
+        let sdf_val = test_box.sdf(*pos);
+        println!("  {} at ({:.3}, {:.3}, {:.3}): SDF = {:.4}",
+            desc, pos.x, pos.y, pos.z, sdf_val);
+    }
+
+    // Upload SDF to FLIP
+    flip.upload_sdf(&queue, sdf_gen.sdf_slice());
+    println!("\nSDF uploaded to GPU ({} values)", sdf_gen.sdf_slice().len());
+
+    // Cell types - mark SDF solids for pressure solver consistency
+    // The pressure solver needs to know about solid boundaries to enforce incompressibility
+    let mut cell_types = vec![0u32; (WIDTH * HEIGHT * DEPTH) as usize];
+    let mut solid_count = 0;
+    for z in 0..DEPTH {
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let idx = (z * WIDTH * HEIGHT + y * WIDTH + x) as usize;
+
+                // Domain boundary = solid (for pressure solve)
+                if x == 0 || x == WIDTH - 1 || y == 0 || y == HEIGHT - 1 || z == 0 || z == DEPTH - 1 {
+                    cell_types[idx] = CELL_SOLID;
+                    solid_count += 1;
+                } else {
+                    // Check SDF: if negative, cell is inside solid geometry
+                    let sdf_val = sdf_gen.sdf_slice()[idx];
+                    if sdf_val < 0.0 {
+                        cell_types[idx] = CELL_SOLID;
+                        solid_count += 1;
+                    }
+                }
+            }
+        }
+    }
+    println!("Cell types: {} solid cells marked (from SDF + boundaries)", solid_count);
+
+    // Create particles inside the box
+    // Use 2×2×2 particles per cell (8 particles per cell)
+    let mut positions = Vec::new();
+    let mut velocities = Vec::new();
+    let mut c_matrices = Vec::new();
+    let mut densities = Vec::new();
+
+    let inner_min_x = box_center.x - box_width / 2.0 + CELL_SIZE * 0.5;
+    let inner_max_x = box_center.x + box_width / 2.0 - CELL_SIZE * 0.5;
+    let inner_min_z = box_center.z - box_depth / 2.0 + CELL_SIZE * 0.5;
+    let inner_max_z = box_center.z + box_depth / 2.0 - CELL_SIZE * 0.5;
+    let floor_y = box_center.y + CELL_SIZE * 0.25; // Just above floor surface
+    let fill_height = 0.20; // Fill 20cm high (half the box)
+
+    let particle_spacing = CELL_SIZE / 2.0; // 2 particles per cell dimension
+
+    let mut x = inner_min_x;
+    while x < inner_max_x {
+        let mut z = inner_min_z;
+        while z < inner_max_z {
+            let mut y = floor_y;
+            while y < floor_y + fill_height {
+                positions.push(Vec3::new(x, y, z));
+                velocities.push(Vec3::ZERO);
+                c_matrices.push(glam::Mat3::ZERO);
+                densities.push(1.0);
+                y += particle_spacing;
+            }
+            z += particle_spacing;
+        }
+        x += particle_spacing;
+    }
+
+    let initial_count = positions.len();
+    println!("Initial particles: {}", initial_count);
+    println!("Particle region: X=[{:.3}, {:.3}], Y=[{:.3}, {:.3}], Z=[{:.3}, {:.3}]",
+        inner_min_x, inner_max_x, floor_y, floor_y + fill_height, inner_min_z, inner_max_z);
+
+    // Track metrics
+    let initial_min_y = positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+    let initial_max_y = positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    let initial_height = initial_max_y - initial_min_y;
+
+    // Run simulation
+    for step in 0..STEPS {
+        flip.step(
+            &device, &queue,
+            &mut positions, &mut velocities, &mut c_matrices, &densities, &cell_types,
+            None, None, DT, -9.81, 0.0, 40,
+        );
+
+        // Check for NaN
+        for (i, p) in positions.iter().enumerate() {
+            assert!(p.is_finite(), "NaN position at step {}, particle {}: {:?}", step, i, p);
+        }
+
+        // Progress output
+        if step % 60 == 0 || step == STEPS - 1 {
+            let max_vel = velocities.iter().map(|v| v.length()).fold(0.0f32, f32::max);
+            let min_y = positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+            let max_y = positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+            let min_x = positions.iter().map(|p| p.x).fold(f32::MAX, f32::min);
+            let max_x = positions.iter().map(|p| p.x).fold(f32::MIN, f32::max);
+            let min_z = positions.iter().map(|p| p.z).fold(f32::MAX, f32::min);
+            let max_z = positions.iter().map(|p| p.z).fold(f32::MIN, f32::max);
+
+            println!("Step {:3}/{}: particles={}, max_vel={:.3}, bbox=[{:.3},{:.3}]×[{:.3},{:.3}]×[{:.3},{:.3}]",
+                step, STEPS, positions.len(), max_vel,
+                min_x, max_x, min_y, max_y, min_z, max_z);
+        }
+    }
+
+    // Final analysis
+    let final_count = positions.len();
+    let final_min_y = positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+    let final_max_y = positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    let final_height = final_max_y - final_min_y;
+    let max_vel = velocities.iter().map(|v| v.length()).fold(0.0f32, f32::max);
+
+    // Check if particles stayed inside box bounds (with margin for SDF collision)
+    let margin = CELL_SIZE * 0.5;
+    let expected_min_x = box_center.x - box_width / 2.0 - margin;
+    let expected_max_x = box_center.x + box_width / 2.0 + margin;
+    let expected_min_z = box_center.z - box_depth / 2.0 - margin;
+    let expected_max_z = box_center.z + box_depth / 2.0 + margin;
+    let expected_min_y = box_center.y - margin; // Above floor
+    let expected_max_y = box_center.y + box_height + margin; // Below top (open)
+
+    let mut outside_count = 0;
+    for p in &positions {
+        if p.x < expected_min_x || p.x > expected_max_x ||
+           p.y < expected_min_y || p.y > expected_max_y ||
+           p.z < expected_min_z || p.z > expected_max_z {
+            outside_count += 1;
+        }
+    }
+
+    println!("\n=== Final State (t={:.1}s) ===", STEPS as f32 * DT);
+    println!("Particles: {} (started: {})", final_count, initial_count);
+    println!("Max velocity: {:.4} m/s", max_vel);
+    println!("Fluid height: {:.4}m (was {:.4}m, ratio={:.1}%)",
+        final_height, initial_height, (final_height / initial_height) * 100.0);
+    println!("Particles outside bounds: {}", outside_count);
+
+    // ASSERTIONS - Focus on SDF boundary collision effectiveness
+
+    // 1. Particle conservation (fundamental FLIP requirement)
+    assert_eq!(
+        final_count, initial_count,
+        "PARTICLE LOSS! Started with {}, ended with {}",
+        initial_count, final_count
+    );
+
+    // 2. SDF collision keeps particles inside box bounds
+    // This is the PRIMARY goal of this test
+    assert!(
+        outside_count == 0,
+        "SDF COLLISION FAILED! {} particles escaped the box bounds",
+        outside_count
+    );
+
+    // 3. Fluid should be reasonably settled (not exploding)
+    assert!(
+        max_vel < 1.0,
+        "FLUID UNSTABLE! Max velocity {:.4} is too high after {} steps",
+        max_vel, STEPS
+    );
+
+    // 4. Floor penetration check - SDF floor collision must work
+    // Particles should stay above box floor (SDF boundary)
+    let box_floor_y = box_center.y;
+    let penetration_threshold = box_floor_y - CELL_SIZE * 0.5;
+    let below_floor = positions.iter().filter(|p| p.y < penetration_threshold).count();
+    assert!(
+        below_floor == 0,
+        "SDF FLOOR PENETRATION! {} particles fell below box floor (y < {:.4})",
+        below_floor, penetration_threshold
+    );
+
+    // 5. Wall penetration check - SDF walls must work
+    // Particles should stay inside the wall boundaries
+    let wall_inner_x_min = box_center.x - box_width / 2.0;
+    let wall_inner_x_max = box_center.x + box_width / 2.0;
+    let wall_inner_z_min = box_center.z - box_depth / 2.0;
+    let wall_inner_z_max = box_center.z + box_depth / 2.0;
+    let wall_margin = CELL_SIZE * 0.25; // Small margin for SDF collision push-back
+
+    let wall_violations = positions.iter().filter(|p| {
+        p.x < wall_inner_x_min - wall_margin ||
+        p.x > wall_inner_x_max + wall_margin ||
+        p.z < wall_inner_z_min - wall_margin ||
+        p.z > wall_inner_z_max + wall_margin
+    }).count();
+    assert!(
+        wall_violations == 0,
+        "SDF WALL PENETRATION! {} particles outside wall bounds",
+        wall_violations
+    );
+
+    // 6. Volume preservation - critical for pressure solver correctness
+    // The GPU shader fix (fluid_cell_expand_3d.wgsl) ensures cells with particles
+    // are marked FLUID for pressure enforcement, preventing volume collapse.
+    let height_ratio = final_height / initial_height;
+    println!("Height ratio: {:.1}% (initial={:.4}m, final={:.4}m)",
+        height_ratio * 100.0, initial_height, final_height);
+    assert!(
+        height_ratio > 0.85,
+        "VOLUME COLLAPSE! Height ratio {:.1}% is below 85% threshold. \
+         Pressure solver may not be enforcing incompressibility correctly.",
+        height_ratio * 100.0
+    );
+
+    println!("\n✓ SDF Box Volume test PASSED (SDF boundaries + volume preservation working)");
+}
+
+//==============================================================================
+// FLIP SDF BOX FILLING TEST
+// Tests filling an SDF-defined container with particles over time
+//==============================================================================
+
+/// Test: Filling an SDF-defined container
+/// Emits particles into the box over time (like a faucet filling a bucket).
+/// Verifies:
+/// 1. Water level rises as particles are added
+/// 2. Particles stay inside the SDF-defined boundary
+/// 3. No overflow/escape when box fills up
+#[test]
+fn test_flip_sdf_box_filling() {
+    let (device, queue) = match init_device_queue() {
+        Some(h) => h,
+        None => { println!("Skipped: No GPU"); return; }
+    };
+
+    const WIDTH: u32 = 24;
+    const HEIGHT: u32 = 24;
+    const DEPTH: u32 = 24;
+    const CELL_SIZE: f32 = 0.05;
+    const MAX_PARTICLES: usize = 15000;
+    const DT: f32 = 1.0 / 60.0;
+    const FILL_STEPS: usize = 300;  // 5 seconds of filling
+    const SETTLE_STEPS: usize = 120; // 2 seconds to settle after filling
+
+    println!("\n=== FLIP SDF Box Filling Test ===");
+    println!("Grid: {}x{}x{}, cell_size={}m", WIDTH, HEIGHT, DEPTH, CELL_SIZE);
+
+    // Create FLIP solver
+    let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
+    flip.vorticity_epsilon = 0.0;
+    flip.water_rest_density = 8.0;
+    flip.open_boundaries = 0;
+    flip.flip_ratio = 0.95;
+    flip.slip_factor = 0.0;
+    flip.density_projection_enabled = false;
+
+    // Create SDF box - same as volume test but taller
+    let box_center = Vec3::new(
+        WIDTH as f32 * CELL_SIZE / 2.0,
+        CELL_SIZE * 2.0,
+        DEPTH as f32 * CELL_SIZE / 2.0,
+    );
+    let box_width = 0.5;
+    let box_depth = 0.5;
+    let box_height = 0.6; // Taller box for filling
+    let wall_thickness = CELL_SIZE * 2.0;
+    let floor_thickness = CELL_SIZE * 3.0;
+
+    let test_box = TestBox::with_thickness(
+        box_center,
+        box_width,
+        box_depth,
+        box_height,
+        wall_thickness,
+        floor_thickness,
+    );
+
+    println!("SDF Box:");
+    println!("  Center: ({:.2}, {:.2}, {:.2})", box_center.x, box_center.y, box_center.z);
+    println!("  Inner size: {:.2}m × {:.2}m × {:.2}m", box_width, box_depth, box_height);
+
+    // Generate SDF
+    let mut sdf_gen = TestSdfGenerator::new(
+        WIDTH as usize,
+        HEIGHT as usize,
+        DEPTH as usize,
+        CELL_SIZE,
+        Vec3::ZERO,
+    );
+    sdf_gen.add_box(&test_box);
+    flip.upload_sdf(&queue, sdf_gen.sdf_slice());
+
+    // Cell types - sync with SDF
+    let mut cell_types = vec![0u32; (WIDTH * HEIGHT * DEPTH) as usize];
+    for z in 0..DEPTH {
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let idx = (z * WIDTH * HEIGHT + y * WIDTH + x) as usize;
+                if x == 0 || x == WIDTH - 1 || y == 0 || y == HEIGHT - 1 || z == 0 || z == DEPTH - 1 {
+                    cell_types[idx] = CELL_SOLID;
+                } else if sdf_gen.sdf_slice()[idx] < 0.0 {
+                    cell_types[idx] = CELL_SOLID;
+                }
+            }
+        }
+    }
+
+    // Start with empty container
+    let mut positions: Vec<Vec3> = Vec::new();
+    let mut velocities: Vec<Vec3> = Vec::new();
+    let mut c_matrices: Vec<glam::Mat3> = Vec::new();
+    let mut densities: Vec<f32> = Vec::new();
+
+    // Emitter position - above the box center
+    let emitter_pos = Vec3::new(box_center.x, box_center.y + box_height + 0.15, box_center.z);
+    let emitter_radius = 0.08; // Small stream
+    let particles_per_step = 8;
+    let particle_spacing = CELL_SIZE / 2.0;
+
+    println!("Emitter at ({:.2}, {:.2}, {:.2}), radius={:.2}m",
+        emitter_pos.x, emitter_pos.y, emitter_pos.z, emitter_radius);
+    println!("Emitting {} particles/step for {} steps", particles_per_step, FILL_STEPS);
+
+    let mut total_emitted = 0;
+
+    // FILLING PHASE
+    println!("\n--- Filling Phase ---");
+    for step in 0..FILL_STEPS {
+        // Emit particles in a small circle pattern
+        for i in 0..particles_per_step {
+            let angle = (i as f32 / particles_per_step as f32) * std::f32::consts::TAU;
+            let r = emitter_radius * ((step * particles_per_step + i) as f32 * 0.1).sin().abs();
+            let pos = Vec3::new(
+                emitter_pos.x + r * angle.cos(),
+                emitter_pos.y,
+                emitter_pos.z + r * angle.sin(),
+            );
+            positions.push(pos);
+            velocities.push(Vec3::new(0.0, -0.5, 0.0)); // Downward initial velocity
+            c_matrices.push(glam::Mat3::ZERO);
+            densities.push(1.0);
+            total_emitted += 1;
+        }
+
+        // Run simulation step
+        flip.step(
+            &device, &queue,
+            &mut positions, &mut velocities, &mut c_matrices, &densities, &cell_types,
+            None, None, DT, -9.81, 0.0, 40,
+        );
+
+        // Check for NaN
+        for (i, p) in positions.iter().enumerate() {
+            assert!(p.is_finite(), "NaN position at step {}, particle {}: {:?}", step, i, p);
+        }
+
+        // Progress output
+        if step % 60 == 0 {
+            let max_vel = velocities.iter().map(|v| v.length()).fold(0.0f32, f32::max);
+            let min_y = positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+            let max_y = positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+            let water_level = min_y;
+            let fill_height = max_y - box_center.y;
+
+            println!("Fill step {:3}/{}: particles={}, water_level={:.3}, fill_height={:.3}m, max_vel={:.3}",
+                step, FILL_STEPS, positions.len(), water_level, fill_height, max_vel);
+        }
+    }
+
+    let particles_after_fill = positions.len();
+    let max_y_after_fill = positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    let min_y_after_fill = positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+    let fill_height_after_fill = max_y_after_fill - min_y_after_fill;
+
+    println!("\nAfter filling: {} particles, height={:.3}m", particles_after_fill, fill_height_after_fill);
+
+    // SETTLING PHASE - let it settle without adding more
+    println!("\n--- Settling Phase ---");
+    for step in 0..SETTLE_STEPS {
+        flip.step(
+            &device, &queue,
+            &mut positions, &mut velocities, &mut c_matrices, &densities, &cell_types,
+            None, None, DT, -9.81, 0.0, 40,
+        );
+
+        if step % 30 == 0 || step == SETTLE_STEPS - 1 {
+            let max_vel = velocities.iter().map(|v| v.length()).fold(0.0f32, f32::max);
+            let min_y = positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+            let max_y = positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+
+            println!("Settle step {:3}/{}: particles={}, y=[{:.3},{:.3}], max_vel={:.4}",
+                step, SETTLE_STEPS, positions.len(), min_y, max_y, max_vel);
+        }
+    }
+
+    // Final analysis
+    let final_count = positions.len();
+    let final_min_y = positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+    let final_max_y = positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    let final_height = final_max_y - final_min_y;
+    let max_vel = velocities.iter().map(|v| v.length()).fold(0.0f32, f32::max);
+
+    // Check bounds
+    let margin = CELL_SIZE * 0.5;
+    let expected_min_x = box_center.x - box_width / 2.0 - margin;
+    let expected_max_x = box_center.x + box_width / 2.0 + margin;
+    let expected_min_z = box_center.z - box_depth / 2.0 - margin;
+    let expected_max_z = box_center.z + box_depth / 2.0 + margin;
+    let expected_min_y = box_center.y - margin;
+
+    let mut outside_count = 0;
+    for p in &positions {
+        if p.x < expected_min_x || p.x > expected_max_x ||
+           p.y < expected_min_y ||
+           p.z < expected_min_z || p.z > expected_max_z {
+            outside_count += 1;
+        }
+    }
+
+    println!("\n=== Final State ===");
+    println!("Total emitted: {}", total_emitted);
+    println!("Final particles: {} (retained {:.1}%)", final_count, 100.0 * final_count as f32 / total_emitted as f32);
+    println!("Final height: {:.4}m", final_height);
+    println!("Final Y range: [{:.4}, {:.4}]", final_min_y, final_max_y);
+    println!("Max velocity: {:.4} m/s", max_vel);
+    println!("Particles outside bounds: {}", outside_count);
+
+    // ASSERTIONS
+
+    // 1. Particles should mostly be retained (some may splash out, allow 10% loss)
+    let retention_rate = final_count as f32 / total_emitted as f32;
+    assert!(
+        retention_rate > 0.90,
+        "TOO MUCH PARTICLE LOSS! Only {:.1}% retained (expected >90%)",
+        retention_rate * 100.0
+    );
+
+    // 2. Particles should stay inside SDF bounds
+    assert!(
+        outside_count < (final_count as f32 * 0.01) as usize,
+        "SDF CONTAINMENT FAILED! {} particles ({:.1}%) escaped bounds",
+        outside_count, 100.0 * outside_count as f32 / final_count as f32
+    );
+
+    // 3. Water level should be above the floor (box actually filled)
+    let water_level_above_floor = final_min_y - box_center.y;
+    assert!(
+        water_level_above_floor > -CELL_SIZE,
+        "WATER FELL THROUGH FLOOR! Min Y {:.4} is below box floor {:.4}",
+        final_min_y, box_center.y
+    );
+
+    // 4. Should have some meaningful fill height
+    assert!(
+        final_height > 0.01,
+        "NO WATER ACCUMULATED! Final height {:.4}m is too small",
+        final_height
+    );
+
+    // 5. Fluid should be reasonably settled after settling phase
+    assert!(
+        max_vel < 1.0,
+        "FLUID NOT SETTLED! Max velocity {:.4} still too high",
+        max_vel
+    );
+
+    // 6. Volume preservation - verify water level matches expected volume
+    // Expected volume = particle_count * particle_volume_per_particle
+    // Expected height = expected_volume / (box_width * box_depth)
+    // Using particle spacing = CELL_SIZE/2 = 0.025m, each particle represents ~(0.025)³ volume
+    let expected_volume = final_count as f32 * particle_spacing.powi(3);
+    let expected_height = expected_volume / (box_width * box_depth);
+    let volume_ratio = final_height / expected_height;
+    println!("Volume preservation: expected height={:.4}m, actual={:.4}m, ratio={:.1}%",
+        expected_height, final_height, volume_ratio * 100.0);
+    assert!(
+        volume_ratio > 0.70,
+        "VOLUME COLLAPSE IN FILLING! Height {:.4}m is only {:.1}% of expected {:.4}m. \
+         Pressure solver may not be enforcing incompressibility correctly.",
+        final_height, volume_ratio * 100.0, expected_height
+    );
+
+    println!("\n✓ SDF Box Filling test PASSED (SDF boundaries + volume preservation working)");
 }
