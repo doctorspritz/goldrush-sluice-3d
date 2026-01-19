@@ -1,12 +1,23 @@
 ---
-status: pending
+status: resolved
 priority: p1
 issue_id: "020"
 tags: [code-review, physics, flow, critical]
 dependencies: []
+resolved: 2026-01-19
 ---
 
 # Flow Shader Skips Faces Adjacent to Riffles
+
+## Resolution
+
+**FIXED** - The shader now applies flow to all fluid-adjacent faces. Code comment documents the fix:
+```wgsl
+// OLD BUG: Skipping solid-adjacent faces created "dead zones" where
+// water pooled behind riffles with no downstream push.
+```
+
+---
 
 ## Problem Statement
 
