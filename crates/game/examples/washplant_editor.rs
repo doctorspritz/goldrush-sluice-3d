@@ -65,10 +65,10 @@ const SIM_PRESSURE_ITERS: usize = 30; // Reduced for speed
 const SIM_SUBSTEPS: u32 = 2;
 const SIM_GRAVITY: f32 = constants::GRAVITY;
 
-// DEM constants
+// DEM constants (use absolute density in kg/m³ for mass and buoyancy)
 const DEM_CLUMP_RADIUS: f32 = 0.008; // 8mm clumps
-const DEM_GOLD_DENSITY: f32 = constants::GOLD_DENSITY;
-const DEM_SAND_DENSITY: f32 = constants::GANGUE_DENSITY;
+const DEM_GOLD_DENSITY: f32 = constants::GOLD_DENSITY_KGM3;
+const DEM_SAND_DENSITY: f32 = constants::GANGUE_DENSITY_KGM3;
 const DEM_WATER_DENSITY: f32 = constants::WATER_DENSITY;
 const DEM_DRAG_COEFF: f32 = 5.0; // Water drag coefficient
 const DEM_SEDIMENT_RATIO: f32 = 0.1; // 10% of particles are sediment

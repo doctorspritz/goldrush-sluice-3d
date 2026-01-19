@@ -73,8 +73,12 @@ const MAX_FLIP_PARTICLES: usize = 300_000;
 const WATER_EMIT_RATE: usize = 200;
 const SEDIMENT_EMIT_RATE: usize = 2;
 const PARTICLE_SIZE: f32 = DETAIL_SLUICE_CELL_SIZE * 0.6;
+// Relative densities for FLIP particles (water=1.0)
 const GANGUE_DENSITY: f32 = constants::GANGUE_DENSITY;
 const GOLD_DENSITY: f32 = constants::GOLD_DENSITY;
+// Absolute densities for DEM mass calculation (kg/m³)
+const GANGUE_DENSITY_KGM3: f32 = constants::GANGUE_DENSITY_KGM3;
+const GOLD_DENSITY_KGM3: f32 = constants::GOLD_DENSITY_KGM3;
 const GOLD_FRACTION: f32 = 0.05;
 const GANGUE_RADIUS_CELLS: f32 = 0.12;
 const GOLD_RADIUS_CELLS: f32 = 0.02;
@@ -370,7 +374,7 @@ impl App {
 
         let gangue_radius = DETAIL_SLUICE_CELL_SIZE * GANGUE_RADIUS_CELLS;
         let gangue_mass =
-            GANGUE_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * gangue_radius.powi(3);
+            GANGUE_DENSITY_KGM3 * (4.0 / 3.0) * std::f32::consts::PI * gangue_radius.powi(3);
         let gangue_template = ClumpTemplate3D::generate(
             ClumpShape3D::Irregular {
                 count: 1,
@@ -383,7 +387,7 @@ impl App {
         let gangue_template_idx = dem.add_template(gangue_template);
 
         let gold_radius = DETAIL_SLUICE_CELL_SIZE * GOLD_RADIUS_CELLS;
-        let gold_mass = GOLD_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * gold_radius.powi(3);
+        let gold_mass = GOLD_DENSITY_KGM3 * (4.0 / 3.0) * std::f32::consts::PI * gold_radius.powi(3);
         let gold_template = ClumpTemplate3D::generate(ClumpShape3D::Flat4, gold_radius, gold_mass);
         let gold_template_idx = dem.add_template(gold_template);
 

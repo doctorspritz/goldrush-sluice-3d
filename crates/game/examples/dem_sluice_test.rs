@@ -15,9 +15,10 @@ use std::time::Instant;
 const CELL_SIZE: f32 = 0.025; // 2.5cm cells - matches washplant_editor
 const PRESSURE_ITERS: usize = 60;
 
-// Material densities (for sediment tests)
-const SAND_DENSITY: f32 = 2650.0;
-const GOLD_DENSITY: f32 = 19300.0;
+// Material densities - relative to water (water=1.0)
+// Used for FLIP Particle3D.density
+const SAND_DENSITY: f32 = 2.65;
+const GOLD_DENSITY: f32 = 19.3;
 
 // =============================================================================
 // Geometry marking - COPIED EXACTLY from washplant_editor.rs
@@ -335,13 +336,13 @@ fn test_density_settling() -> TestResult {
         sim.update(dt);
     }
 
-    // Find particles by density (gold is much denser)
+    // Find particles by density (relative density: gold=19.3, sand=2.65)
     let mut gold_y = drop_y;
     let mut sand_y = drop_y;
     for p in &sim.particles.list {
-        if p.density > 10000.0 {
+        if p.density > 10.0 {
             gold_y = p.position.y;
-        } else if p.density > 2000.0 {
+        } else if p.density > 2.0 {
             sand_y = p.position.y;
         }
     }

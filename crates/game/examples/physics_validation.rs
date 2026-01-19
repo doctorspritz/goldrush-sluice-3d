@@ -571,10 +571,10 @@ fn test_density_settling() -> PhysicsTest {
         sim.update(dt);
     }
 
-    // Now drop gold (19300 kg/m³) and sand (2650 kg/m³) from same height
+    // Now drop gold (density 19.3 relative to water) and sand (2.65) from same height
     let drop_y = 0.8;
-    let gold_density = 19300.0;
-    let sand_density = 2650.0;
+    let gold_density = 19.3; // Relative density (water=1.0)
+    let sand_density = 2.65; // Relative density (water=1.0)
 
     sim.spawn_sediment(Vec3::new(0.3, drop_y, 0.375), Vec3::ZERO, gold_density);
     sim.spawn_sediment(Vec3::new(0.45, drop_y, 0.375), Vec3::ZERO, sand_density);
@@ -584,13 +584,13 @@ fn test_density_settling() -> PhysicsTest {
         sim.update(dt);
     }
 
-    // Find gold and sand by density
+    // Find gold and sand by density (relative density: gold=19.3, sand=2.65)
     let mut gold_y = drop_y;
     let mut sand_y = drop_y;
     for p in &sim.particles.list {
-        if p.density > 10000.0 {
+        if p.density > 10.0 {
             gold_y = p.position.y;
-        } else if p.density > 2000.0 && p.density < 5000.0 {
+        } else if p.density > 2.0 && p.density < 5.0 {
             sand_y = p.position.y;
         }
     }

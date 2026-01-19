@@ -35,9 +35,9 @@ const RIFFLE_SPACING: usize = 10;
 const RIFFLE_HEIGHT: usize = 2;
 const RIFFLE_THICKNESS: usize = 1;
 
-// Particle configuration
-const GOLD_DENSITY: f32 = 19300.0;
-const SAND_DENSITY: f32 = 2650.0;
+// Particle configuration - relative density (water=1.0)
+const GOLD_DENSITY: f32 = 19.3;
+const SAND_DENSITY: f32 = 2.65;
 const GOLD_RADIUS: f32 = 0.006;
 const SAND_RADIUS: f32 = 0.008;
 const NUM_GOLD: usize = 8;

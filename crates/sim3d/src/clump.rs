@@ -1413,7 +1413,11 @@ fn compute_inertia(offsets: &[Vec3], particle_mass: f32, particle_radius: f32) -
     for r in offsets {
         let r2 = r.length_squared();
         let diag = Mat3::from_diagonal(Vec3::splat(r2));
-        let outer = Mat3::from_cols(*r * r.x, *r * r.y, *r * r.z);
+        let outer = Mat3::from_cols(
+            Vec3::new(r.x * r.x, r.y * r.x, r.z * r.x),
+            Vec3::new(r.x * r.y, r.y * r.y, r.z * r.y),
+            Vec3::new(r.x * r.z, r.y * r.z, r.z * r.z),
+        );
         inertia += (diag - outer) * particle_mass;
     }
 
