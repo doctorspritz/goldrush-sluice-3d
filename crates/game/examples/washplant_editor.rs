@@ -1228,7 +1228,7 @@ impl MultiGridSim {
                 }
             }
 
-            let sdf = Some(piece.sim.grid.sdf.clone());
+            let sdf = Some(piece.sim.grid.sdf().to_vec());
 
             if let Some(gpu_flip) = &mut piece.gpu_flip {
                 gpu_flip.step(
@@ -1545,7 +1545,7 @@ impl MultiGridSim {
                     let (gw, gh, gd) = piece.grid_dims;
 
                     let sdf_params = SdfParams {
-                        sdf: &piece.sim.grid.sdf,
+                        sdf: piece.sim.grid.sdf(),
                         grid_width: gw,
                         grid_height: gh,
                         grid_depth: gd,
@@ -2712,7 +2712,7 @@ impl App {
     fn prepare_gpu_inputs(&mut self) {
         let Some(sim) = &self.sim else { return };
 
-        let particle_count = sim.particles.list.len();
+        let particle_count = sim.particles.list().len();
         self.positions.clear();
         self.positions.reserve(particle_count);
         self.velocities.clear();
@@ -2722,7 +2722,7 @@ impl App {
         self.densities.clear();
         self.densities.reserve(particle_count);
 
-        for p in &sim.particles.list {
+        for p in sim.particles.list() {
             self.positions.push(p.position);
             self.velocities.push(p.velocity);
             self.affine_vels.push(p.affine_velocity);
@@ -4344,7 +4344,7 @@ impl App {
                     }
                 }
 
-                let sdf = self.sim.as_ref().map(|s| s.grid.sdf.clone());
+                let sdf = self.sim.as_ref().map(|s| s.grid.sdf().to_vec());
 
                 if let (Some(gpu), Some(gpu_flip)) = (&self.gpu, &mut self.gpu_flip) {
                     let dt = 1.0 / 60.0;
@@ -5534,7 +5534,7 @@ mod tests {
             let half_wid = gutter.width / 2.0;
             let center_z = gutter.position.z;
 
-            for p in &sim.particles.list {
+            for p in sim.particles.list() {
                 min_y_seen = min_y_seen.min(p.position.y);
 
                 // Only check floor penetration for particles INSIDE the channel
@@ -5710,7 +5710,7 @@ mod tests {
             let half_wid = sluice.width / 2.0;
             let center_z = sluice.position.z;
 
-            for p in &sim.particles.list {
+            for p in sim.particles.list() {
                 min_y_seen = min_y_seen.min(p.position.y);
 
                 // Only check floor penetration for particles INSIDE the channel
