@@ -2,7 +2,7 @@ struct Params {
     width: u32,
     height: u32,
     depth: u32,
-    obstacle_count: u32,
+    extra: u32,  // obstacle_count
     cell_size: f32,
     _pad0: u32,
     _pad1: u32,
@@ -47,7 +47,7 @@ fn build_gravel_obstacles(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var n: u32 = 0u;
     loop {
-        if (n >= params.obstacle_count) {
+        if (n >= params.extra) {
             break;
         }
         let obs = obstacles[n];
