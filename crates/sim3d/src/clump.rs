@@ -1488,18 +1488,663 @@ pub fn sample_sdf_with_gradient(
 mod tests {
     use super::*;
 
+    // ========== ClumpTemplate3D Tests ==========
+
     #[test]
-    fn test_template_bounds() {
-        let template = ClumpTemplate3D::generate(ClumpShape3D::Cube2, 0.05, 1.0);
+    fn test_template_tetra_shape() {
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.05, 1.0);
+        assert_eq!(template.local_offsets.len(), 4);
         assert!(template.bounding_radius > 0.0);
-        assert!(template.mass > 0.0);
+        assert_eq!(template.mass, 4.0); // 4 particles * 1.0 mass each
+        assert_eq!(template.particle_radius, 0.05);
+        assert_eq!(template.particle_mass, 1.0);
     }
 
     #[test]
-    fn test_clump_world_positions() {
-        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.1, 1.0);
+    fn test_template_cube2_shape() {
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Cube2, 0.05, 1.0);
+        assert_eq!(template.local_offsets.len(), 8);
+        assert!(template.bounding_radius > 0.0);
+        assert_eq!(template.mass, 8.0);
+    }
+
+    #[test]
+    fn test_template_flat4_shape() {
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Flat4, 0.05, 1.0);
+        assert_eq!(template.local_offsets.len(), 4);
+        // Flat4 should have all particles at same Y level
+        let y_values: Vec<f32> = template.local_offsets.iter().map(|o| o.y).collect();
+        let y_spread = y_values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap()
+            - y_values.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        assert!(y_spread.abs() < 1e-5, "Flat4 should be planar in XZ");
+    }
+
+    #[test]
+    fn test_template_rod3_shape() {
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Rod3, 0.05, 1.0);
+        assert_eq!(template.local_offsets.len(), 3);
+        // Rod3 should be linear along X axis
+        for offset in &template.local_offsets {
+            assert!(offset.y.abs() < 1e-5);
+            assert!(offset.z.abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn test_template_irregular_round() {
+        let template = ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 5,
+                seed: 42,
+                style: IrregularStyle3D::Round,
+            },
+            0.05,
+            1.0,
+        );
+        assert_eq!(template.local_offsets.len(), 5);
+        assert_eq!(template.mass, 5.0);
+    }
+
+    #[test]
+    fn test_template_irregular_sharp() {
+        let template = ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 7,
+                seed: 123,
+                style: IrregularStyle3D::Sharp,
+            },
+            0.05,
+            1.0,
+        );
+        assert_eq!(template.local_offsets.len(), 7);
+        assert_eq!(template.mass, 7.0);
+    }
+
+    #[test]
+    fn test_template_irregular_deterministic() {
+        // Same seed should produce same offsets
+        let t1 = ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 4,
+                seed: 999,
+                style: IrregularStyle3D::Round,
+            },
+            0.05,
+            1.0,
+        );
+        let t2 = ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 4,
+                seed: 999,
+                style: IrregularStyle3D::Round,
+            },
+            0.05,
+            1.0,
+        );
+        for (o1, o2) in t1.local_offsets.iter().zip(t2.local_offsets.iter()) {
+            assert!((*o1 - *o2).length() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_template_centered_on_com() {
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Cube2, 0.05, 1.0);
+        let com: Vec3 = template.local_offsets.iter().fold(Vec3::ZERO, |acc, v| acc + *v)
+            / template.local_offsets.len() as f32;
+        assert!(com.length() < 1e-5, "Template should be centered on COM");
+    }
+
+    #[test]
+    fn test_template_inv_mass() {
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.05, 2.0);
+        assert_eq!(template.mass, 8.0); // 4 particles * 2.0
+        assert!((template.inv_mass() - 1.0 / 8.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_template_inv_mass_zero() {
+        let mut template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.05, 1.0);
+        template.mass = 0.0;
+        assert_eq!(template.inv_mass(), 0.0);
+    }
+
+    #[test]
+    fn test_template_inertia_valid() {
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Cube2, 0.05, 1.0);
+        // Inverse inertia should have finite, positive diagonal elements
+        let diag = Vec3::new(
+            template.inertia_inv_local.x_axis.x,
+            template.inertia_inv_local.y_axis.y,
+            template.inertia_inv_local.z_axis.z,
+        );
+        assert!(diag.x > 0.0 && diag.x.is_finite());
+        assert!(diag.y > 0.0 && diag.y.is_finite());
+        assert!(diag.z > 0.0 && diag.z.is_finite());
+    }
+
+    // ========== Clump3D Tests ==========
+
+    #[test]
+    fn test_clump_new() {
+        let clump = Clump3D::new(Vec3::new(1.0, 2.0, 3.0), Vec3::new(0.5, 0.0, -0.5), 0);
+        assert_eq!(clump.position, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(clump.velocity, Vec3::new(0.5, 0.0, -0.5));
+        assert_eq!(clump.rotation, Quat::IDENTITY);
+        assert_eq!(clump.angular_velocity, Vec3::ZERO);
+        assert_eq!(clump.template_idx, 0);
+    }
+
+    #[test]
+    fn test_clump_world_position_no_rotation() {
         let clump = Clump3D::new(Vec3::new(1.0, 2.0, 3.0), Vec3::ZERO, 0);
-        let pos = clump.particle_world_position(template.local_offsets[0]);
-        assert!((pos - clump.position).length() > 0.0);
+        let offset = Vec3::new(0.1, 0.2, 0.3);
+        let world_pos = clump.particle_world_position(offset);
+        assert!((world_pos - Vec3::new(1.1, 2.2, 3.3)).length() < 1e-6);
+    }
+
+    #[test]
+    fn test_clump_world_position_with_rotation() {
+        let mut clump = Clump3D::new(Vec3::ZERO, Vec3::ZERO, 0);
+        // Rotate 90 degrees around Y axis
+        clump.rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let offset = Vec3::new(1.0, 0.0, 0.0);
+        let world_pos = clump.particle_world_position(offset);
+        // After 90deg Y rotation, X becomes Z
+        assert!((world_pos.x - 0.0).abs() < 1e-5);
+        assert!((world_pos.z - (-1.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_clump_world_velocity_linear_only() {
+        let clump = Clump3D::new(Vec3::ZERO, Vec3::new(1.0, 2.0, 3.0), 0);
+        let vel = clump.particle_world_velocity(Vec3::new(0.1, 0.0, 0.0));
+        // With zero angular velocity, world velocity equals linear velocity
+        assert!((vel - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-6);
+    }
+
+    #[test]
+    fn test_clump_world_velocity_with_angular() {
+        let mut clump = Clump3D::new(Vec3::ZERO, Vec3::ZERO, 0);
+        clump.angular_velocity = Vec3::new(0.0, 1.0, 0.0); // Rotating around Y
+        let offset_world = Vec3::new(1.0, 0.0, 0.0);
+        let vel = clump.particle_world_velocity(offset_world);
+        // omega × r = (0, 1, 0) × (1, 0, 0) = (0, 0, -1)
+        assert!((vel.z - (-1.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_clump_world_inertia_identity_rotation() {
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Cube2, 0.05, 1.0);
+        let clump = Clump3D::new(Vec3::ZERO, Vec3::ZERO, 0);
+        let world_inertia = clump.world_inertia_inv(&template);
+        // With identity rotation, world inertia equals local inertia
+        for i in 0..3 {
+            for j in 0..3 {
+                let local = template.inertia_inv_local.col(i)[j];
+                let world = world_inertia.col(i)[j];
+                assert!((local - world).abs() < 1e-6);
+            }
+        }
+    }
+
+    // ========== ClusterSimulation3D Basic Tests ==========
+
+    #[test]
+    fn test_simulation_new() {
+        let sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::new(10.0, 10.0, 10.0));
+        assert_eq!(sim.bounds_min, Vec3::ZERO);
+        assert_eq!(sim.bounds_max, Vec3::new(10.0, 10.0, 10.0));
+        assert!(sim.clumps.is_empty());
+        assert!(sim.templates.is_empty());
+        assert_eq!(sim.gravity, Vec3::new(0.0, -9.81, 0.0));
+    }
+
+    #[test]
+    fn test_simulation_add_template() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.05, 1.0);
+        let idx = sim.add_template(template);
+        assert_eq!(idx, 0);
+        assert_eq!(sim.templates.len(), 1);
+
+        let template2 = ClumpTemplate3D::generate(ClumpShape3D::Cube2, 0.05, 1.0);
+        let idx2 = sim.add_template(template2);
+        assert_eq!(idx2, 1);
+        assert_eq!(sim.templates.len(), 2);
+    }
+
+    #[test]
+    fn test_simulation_spawn() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.05, 1.0);
+        sim.add_template(template);
+
+        let idx = sim.spawn(0, Vec3::new(5.0, 5.0, 5.0), Vec3::ZERO);
+        assert_eq!(idx, 0);
+        assert_eq!(sim.clumps.len(), 1);
+        assert_eq!(sim.clumps[0].position, Vec3::new(5.0, 5.0, 5.0));
+    }
+
+    #[test]
+    fn test_simulation_contact_counts_initial() {
+        let sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        assert_eq!(sim.sphere_contact_count(), 0);
+        assert_eq!(sim.plane_contact_count(), 0);
+    }
+
+    // ========== Physics Simulation Tests ==========
+
+    #[test]
+    fn test_gravity_accelerates_downward() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(100.0));
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.05, 1.0);
+        sim.add_template(template);
+        sim.spawn(0, Vec3::new(50.0, 50.0, 50.0), Vec3::ZERO);
+
+        let initial_y = sim.clumps[0].position.y;
+        sim.step(0.016); // ~60fps timestep
+
+        // Should have moved downward due to gravity
+        assert!(sim.clumps[0].position.y < initial_y);
+        assert!(sim.clumps[0].velocity.y < 0.0);
+    }
+
+    #[test]
+    fn test_floor_collision() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.05, 1.0);
+        sim.add_template(template);
+
+        // Spawn just above floor
+        sim.spawn(0, Vec3::new(5.0, 0.5, 5.0), Vec3::new(0.0, -5.0, 0.0));
+
+        // Run simulation for a while
+        for _ in 0..100 {
+            sim.step(0.016);
+        }
+
+        // Clump should not fall through floor
+        let template = &sim.templates[0];
+        let clump = &sim.clumps[0];
+        for offset in &template.local_offsets {
+            let world_pos = clump.particle_world_position(*offset);
+            assert!(
+                world_pos.y - template.particle_radius >= -0.01,
+                "Particle should not penetrate floor"
+            );
+        }
+    }
+
+    #[test]
+    fn test_wall_collision() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        sim.gravity = Vec3::ZERO; // Disable gravity for this test
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.05, 1.0);
+        sim.add_template(template);
+
+        // Launch toward wall
+        sim.spawn(0, Vec3::new(9.0, 5.0, 5.0), Vec3::new(10.0, 0.0, 0.0));
+
+        for _ in 0..100 {
+            sim.step(0.016);
+        }
+
+        // Should bounce off wall and stay in bounds
+        assert!(sim.clumps[0].position.x <= 10.0);
+    }
+
+    #[test]
+    fn test_energy_dissipation_with_restitution() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        sim.restitution = 0.5;
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.05, 1.0);
+        sim.add_template(template);
+
+        // Drop from height
+        sim.spawn(0, Vec3::new(5.0, 5.0, 5.0), Vec3::ZERO);
+
+        // Run for a while
+        for _ in 0..500 {
+            sim.step(0.016);
+        }
+
+        // Should have settled (low velocity) due to energy loss
+        let speed = sim.clumps[0].velocity.length();
+        assert!(speed < 1.0, "Clump should settle due to energy dissipation");
+    }
+
+    // ========== Collision Detection Tests ==========
+
+    #[test]
+    fn test_sphere_sphere_collision_detection() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        sim.gravity = Vec3::ZERO;
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.1, 1.0);
+        sim.add_template(template);
+
+        // Spawn two clumps moving toward each other
+        sim.spawn(0, Vec3::new(4.0, 5.0, 5.0), Vec3::new(2.0, 0.0, 0.0));
+        sim.spawn(0, Vec3::new(6.0, 5.0, 5.0), Vec3::new(-2.0, 0.0, 0.0));
+
+        // Step until collision
+        for _ in 0..50 {
+            sim.step(0.016);
+        }
+
+        // Clumps should have bounced apart
+        let dist = (sim.clumps[0].position - sim.clumps[1].position).length();
+        assert!(dist > 0.1, "Clumps should have separated after collision");
+    }
+
+    #[test]
+    fn test_has_contact() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        sim.gravity = Vec3::ZERO;
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.2, 1.0);
+        sim.add_template(template);
+
+        // Spawn overlapping clumps
+        sim.spawn(0, Vec3::new(5.0, 5.0, 5.0), Vec3::ZERO);
+        sim.spawn(0, Vec3::new(5.3, 5.0, 5.0), Vec3::ZERO);
+
+        sim.step(0.001); // Small step to detect contacts
+
+        // Should detect contact between overlapping clumps
+        // Note: has_contact checks sphere_contacts which are populated during DEM step
+        let contact_count = sim.sphere_contact_count();
+        assert!(contact_count > 0, "Should detect sphere-sphere contacts");
+    }
+
+    // ========== SDF Tests ==========
+
+    #[test]
+    fn test_sample_sdf_uniform_positive() {
+        // SDF with uniform positive value (empty space)
+        let sdf: Vec<f32> = vec![1.0; 8]; // 2x2x2 grid
+        let (value, _gradient) = sample_sdf_with_gradient(
+            &sdf,
+            Vec3::new(0.5, 0.5, 0.5),
+            Vec3::ZERO,
+            2,
+            2,
+            2,
+            1.0,
+        );
+        assert!((value - 1.0).abs() < 0.1, "Uniform SDF should return ~1.0");
+    }
+
+    #[test]
+    fn test_sample_sdf_floor_plane() {
+        // Create a floor SDF: negative below y=2, positive above
+        let width = 4;
+        let height = 4;
+        let depth = 4;
+        let mut sdf = vec![0.0; width * height * depth];
+
+        for k in 0..depth {
+            for j in 0..height {
+                for i in 0..width {
+                    let idx = k * width * height + j * width + i;
+                    sdf[idx] = j as f32 - 1.5; // Floor at y=1.5 cells
+                }
+            }
+        }
+
+        // Sample above floor
+        let (value_above, grad_above) = sample_sdf_with_gradient(
+            &sdf,
+            Vec3::new(2.0, 3.0, 2.0),
+            Vec3::ZERO,
+            width,
+            height,
+            depth,
+            1.0,
+        );
+        assert!(value_above > 0.0, "Above floor should be positive");
+        assert!(grad_above.y > 0.0, "Gradient should point up (away from solid)");
+
+        // Sample below floor
+        let (value_below, _) = sample_sdf_with_gradient(
+            &sdf,
+            Vec3::new(2.0, 0.5, 2.0),
+            Vec3::ZERO,
+            width,
+            height,
+            depth,
+            1.0,
+        );
+        assert!(value_below < 0.0, "Below floor should be negative");
+    }
+
+    #[test]
+    fn test_sample_sdf_with_grid_offset() {
+        let sdf: Vec<f32> = vec![2.0; 8]; // 2x2x2 grid
+        let grid_offset = Vec3::new(10.0, 20.0, 30.0);
+
+        // Sample at world position that maps to grid center
+        let (value, _) = sample_sdf_with_gradient(
+            &sdf,
+            Vec3::new(11.0, 21.0, 31.0), // grid_offset + (1,1,1)
+            grid_offset,
+            2,
+            2,
+            2,
+            1.0,
+        );
+        assert!((value - 2.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_step_with_sdf_floor() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.1, 1.0);
+        sim.add_template(template);
+        sim.spawn(0, Vec3::new(5.0, 2.0, 5.0), Vec3::ZERO);
+
+        // Create floor SDF at y=1
+        let width = 12;
+        let height = 12;
+        let depth = 12;
+        let mut sdf = vec![10.0; width * height * depth];
+
+        for k in 0..depth {
+            for j in 0..height {
+                for i in 0..width {
+                    let idx = k * width * height + j * width + i;
+                    let y = j as f32;
+                    sdf[idx] = y - 1.0; // Floor at y=1 cell (y=1.0 world)
+                }
+            }
+        }
+
+        let sdf_params = SdfParams {
+            sdf: &sdf,
+            grid_width: width,
+            grid_height: height,
+            grid_depth: depth,
+            cell_size: 1.0,
+            grid_offset: Vec3::ZERO,
+        };
+
+        for _ in 0..200 {
+            sim.step_with_sdf(0.016, &sdf_params);
+        }
+
+        // Clump should rest on the floor
+        assert!(
+            sim.clumps[0].position.y > 0.5,
+            "Clump should not fall through SDF floor"
+        );
+    }
+
+    // ========== Helper Function Tests ==========
+
+    #[test]
+    fn test_dem_damping_zero_restitution() {
+        // Zero restitution = critical damping
+        let damping = dem_damping(0.0, 1000.0, 1.0);
+        let critical = 2.0 * (1000.0_f32 * 1.0).sqrt();
+        assert!((damping - critical).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_dem_damping_high_restitution() {
+        // High restitution = low damping
+        let damping_high = dem_damping(0.9, 1000.0, 1.0);
+        let damping_low = dem_damping(0.1, 1000.0, 1.0);
+        assert!(damping_high < damping_low);
+    }
+
+    #[test]
+    fn test_dem_damping_invalid_inputs() {
+        assert_eq!(dem_damping(0.5, 0.0, 1.0), 0.0);
+        assert_eq!(dem_damping(0.5, 1000.0, 0.0), 0.0);
+        assert_eq!(dem_damping(0.5, -1.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn test_center_on_com_empty() {
+        let mut offsets: Vec<Vec3> = vec![];
+        center_on_com(&mut offsets);
+        assert!(offsets.is_empty());
+    }
+
+    #[test]
+    fn test_center_on_com_single() {
+        let mut offsets = vec![Vec3::new(1.0, 2.0, 3.0)];
+        center_on_com(&mut offsets);
+        assert!(offsets[0].length() < 1e-6, "Single point should be at origin");
+    }
+
+    #[test]
+    fn test_center_on_com_multiple() {
+        let mut offsets = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+            Vec3::new(0.0, 0.0, 2.0),
+        ];
+        center_on_com(&mut offsets);
+        let com: Vec3 = offsets.iter().fold(Vec3::ZERO, |acc, v| acc + *v) / 4.0;
+        assert!(com.length() < 1e-6, "COM should be at origin after centering");
+    }
+
+    #[test]
+    fn test_compute_inertia_positive_definite() {
+        let offsets = vec![
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+        ];
+        let (inertia_inv, bounding_radius) = compute_inertia(&offsets, 1.0, 0.1);
+
+        // Inverse inertia should be positive definite (positive diagonal)
+        assert!(inertia_inv.x_axis.x > 0.0);
+        assert!(inertia_inv.y_axis.y > 0.0);
+        assert!(inertia_inv.z_axis.z > 0.0);
+
+        // Bounding radius should encompass all particles
+        assert!(bounding_radius >= 1.0 + 0.1);
+    }
+
+    #[test]
+    fn test_compute_inertia_symmetry() {
+        // Symmetric configuration should have equal moments about each axis
+        let offsets = vec![
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, -1.0),
+        ];
+        let (inertia_inv, _) = compute_inertia(&offsets, 1.0, 0.1);
+
+        // Should be approximately equal due to symmetry
+        let ixx = inertia_inv.x_axis.x;
+        let iyy = inertia_inv.y_axis.y;
+        let izz = inertia_inv.z_axis.z;
+        assert!((ixx - iyy).abs() < 1e-5);
+        assert!((iyy - izz).abs() < 1e-5);
+    }
+
+    // ========== Integration Tests ==========
+
+    #[test]
+    fn test_multiple_clumps_settle() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::new(2.0, 5.0, 2.0));
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.05, 0.5);
+        sim.add_template(template);
+
+        // Stack clumps vertically
+        for i in 0..3 {
+            sim.spawn(0, Vec3::new(1.0, 1.0 + i as f32 * 0.5, 1.0), Vec3::ZERO);
+        }
+
+        // Let them settle
+        for _ in 0..500 {
+            sim.step(0.016);
+        }
+
+        // All clumps should be above floor and have low velocity
+        for clump in &sim.clumps {
+            assert!(clump.position.y > 0.0);
+            assert!(clump.velocity.length() < 2.0);
+        }
+    }
+
+    #[test]
+    fn test_rotation_integration() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        sim.gravity = Vec3::ZERO;
+        sim.use_dem = false; // Disable DEM for pure rotation test
+
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Rod3, 0.05, 1.0);
+        sim.add_template(template);
+        sim.spawn(0, Vec3::new(5.0, 5.0, 5.0), Vec3::ZERO);
+
+        // Set angular velocity
+        sim.clumps[0].angular_velocity = Vec3::new(0.0, 1.0, 0.0);
+
+        let initial_rotation = sim.clumps[0].rotation;
+        sim.step(0.1);
+
+        // Rotation should have changed
+        let angle = initial_rotation.angle_between(sim.clumps[0].rotation);
+        assert!(angle > 0.05, "Clump should have rotated");
+    }
+
+    #[test]
+    fn test_collision_response_only_preserves_position() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.1, 1.0);
+        sim.add_template(template);
+        sim.spawn(0, Vec3::new(5.0, 5.0, 5.0), Vec3::ZERO);
+
+        // Create empty SDF (no collision)
+        let sdf: Vec<f32> = vec![10.0; 8];
+        let sdf_params = SdfParams {
+            sdf: &sdf,
+            grid_width: 2,
+            grid_height: 2,
+            grid_depth: 2,
+            cell_size: 5.0,
+            grid_offset: Vec3::ZERO,
+        };
+
+        let pos_before = sim.clumps[0].position;
+        sim.collision_response_only(0.016, &sdf_params, false);
+        let pos_after = sim.clumps[0].position;
+
+        // Without penetration, position should be unchanged
+        assert!((pos_before - pos_after).length() < 0.01);
+    }
+
+    #[test]
+    fn test_wet_friction_lower_than_dry() {
+        let sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+        assert!(sim.wet_friction < sim.floor_friction);
+        assert!(sim.wet_rolling_friction < sim.rolling_friction);
     }
 }
