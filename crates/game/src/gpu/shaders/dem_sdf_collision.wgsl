@@ -137,8 +137,7 @@ fn sample_sdf_with_gradient(world_pos: vec3<f32>) -> SdfSample {
     
     var res: SdfSample;
     res.value = sdf_value;
-    // DEBUG: Force vertical gradient to test lateral instability
-    res.gradient = vec3<f32>(0.0, grad_y, 0.0);
+    res.gradient = vec3<f32>(grad_x, grad_y, grad_z);
     return res;
 }
 
