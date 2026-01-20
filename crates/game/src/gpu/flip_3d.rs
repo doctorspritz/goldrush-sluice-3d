@@ -2477,6 +2477,21 @@ impl GpuFlip3D {
         &self.p2g.particle_count_buffer
     }
 
+    /// Get the U velocity grid buffer (MAC staggered: width+1 x height x depth)
+    pub fn grid_u_buffer(&self) -> &wgpu::Buffer {
+        &self.p2g.grid_u_buffer
+    }
+
+    /// Get the V velocity grid buffer (MAC staggered: width x height+1 x depth)
+    pub fn grid_v_buffer(&self) -> &wgpu::Buffer {
+        &self.p2g.grid_v_buffer
+    }
+
+    /// Get the W velocity grid buffer (MAC staggered: width x height x depth+1)
+    pub fn grid_w_buffer(&self) -> &wgpu::Buffer {
+        &self.p2g.grid_w_buffer
+    }
+
     fn upload_bc_and_cell_types(&self, queue: &wgpu::Queue, cell_types: &[u32]) {
         // Upload cell types FIRST (needed for BC enforcement)
         self.pressure
