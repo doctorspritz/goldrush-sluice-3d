@@ -7,7 +7,7 @@ struct VorticityParams {
     width: u32,
     height: u32,
     depth: u32,
-    cell_size: f32,
+    value: f32,  // cell_size
 }
 
 @group(0) @binding(0) var<uniform> params: VorticityParams;
@@ -70,7 +70,7 @@ fn compute_vorticity(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let inv_2h = 0.5 / params.cell_size;
+    let inv_2h = 0.5 / params.value;
 
     // omega_x = dw/dy - dv/dz
     let dw_dy = (grid_w[w_index(i, j + 1u, k)] - grid_w[w_index(i, j - 1u, k)]) * inv_2h;

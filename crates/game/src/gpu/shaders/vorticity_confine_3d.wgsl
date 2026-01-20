@@ -7,7 +7,7 @@ struct ConfineParams {
     width: u32,
     height: u32,
     depth: u32,
-    epsilon_h_dt: f32,
+    value: f32,  // epsilon_h_dt
 }
 
 @group(0) @binding(0) var<uniform> params: ConfineParams;
@@ -75,9 +75,9 @@ fn compute_force(i: u32, j: u32, k: u32) -> vec3<f32> {
     let wy = vort_y[idx];
     let wz = vort_z[idx];
 
-    let fx = (ny * wz - nz * wy) * params.epsilon_h_dt;
-    let fy = (nz * wx - nx * wz) * params.epsilon_h_dt;
-    let fz = (nx * wy - ny * wx) * params.epsilon_h_dt;
+    let fx = (ny * wz - nz * wy) * params.value;
+    let fy = (nz * wx - nx * wz) * params.value;
+    let fz = (nx * wy - ny * wx) * params.value;
 
     return vec3(fx, fy, fz);
 }

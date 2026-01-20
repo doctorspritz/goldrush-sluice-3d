@@ -6,7 +6,7 @@ struct Params {
     width: u32,
     height: u32,
     depth: u32,
-    rest_particles: f32,
+    value: f32,  // rest_particles
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -29,6 +29,6 @@ fn compute_sediment_fraction(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let idx = cell_index(i, j, k);
     let count = f32(atomicLoad(&sediment_count[idx]));
-    let denom = max(params.rest_particles, 1.0);
+    let denom = max(params.value, 1.0);
     sediment_fraction[idx] = clamp(count / denom, 0.0, 1.0);
 }

@@ -2229,16 +2229,13 @@ impl GpuFlip3D {
             return;
         }
 
-        let params = GravelObstacleParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            obstacle_count: self.gravel_obstacle_count,
-            cell_size: self.cell_size,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
-        };
+        let params = GravelObstacleParams3D::new(
+            self.width,
+            self.height,
+            self.depth,
+            self.gravel_obstacle_count,
+            self.cell_size,
+        );
         queue.write_buffer(
             &self.gravel_obstacle_params_buffer,
             0,
@@ -2486,12 +2483,7 @@ impl GpuFlip3D {
             .upload_cell_types(queue, cell_types, self.cell_size, self.open_boundaries);
 
         // Upload BC params
-        let bc_params = BcParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            _pad: 0,
-        };
+        let bc_params = BcParams3D::new(self.width, self.height, self.depth);
         queue.write_buffer(&self.bc_params_buffer, 0, bytemuck::bytes_of(&bc_params));
     }
 
@@ -2805,12 +2797,12 @@ impl GpuFlip3D {
             queue.submit(std::iter::once(encoder.finish()));
         }
 
-        let sediment_fraction_params = SedimentFractionParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            rest_particles: self.sediment_rest_particles,
-        };
+        let sediment_fraction_params = SedimentFractionParams3D::new(
+            self.width,
+            self.height,
+            self.depth,
+            self.sediment_rest_particles,
+        );
         queue.write_buffer(
             &self.sediment_fraction_params_buffer,
             0,
@@ -2913,16 +2905,13 @@ impl GpuFlip3D {
 
         // 4. Apply gravity
 
-        let gravity_params = GravityParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            gravity_dt: gravity * dt,
-            cell_size: self.cell_size,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
-        };
+        let gravity_params = GravityParams3D::new(
+            self.width,
+            self.height,
+            self.depth,
+            gravity * dt, // gravity_dt
+            self.cell_size,
+        );
         queue.write_buffer(
             &self.gravity_params_buffer,
             0,
@@ -2950,12 +2939,12 @@ impl GpuFlip3D {
         // 5. Apply flow acceleration (for sluice downstream flow)
         // This MUST happen before pressure solve so the solver can account for the flow!
         if flow_accel.abs() > 0.0001 {
-            let flow_params = FlowParams3D {
-                width: self.width,
-                height: self.height,
-                depth: self.depth,
-                flow_accel_dt: flow_accel * dt,
-            };
+            let flow_params = FlowParams3D::new(
+                self.width,
+                self.height,
+                self.depth,
+                flow_accel * dt, // flow_accel_dt
+            );
             queue.write_buffer(
                 &self.flow_params_buffer,
                 0,
@@ -2977,12 +2966,12 @@ impl GpuFlip3D {
 
         // 6. Vorticity confinement (adds rotational energy)
         if self.vorticity_epsilon > 0.0 {
-            let vort_params = VorticityParams3D {
-                width: self.width,
-                height: self.height,
-                depth: self.depth,
-                cell_size: self.cell_size,
-            };
+            let vort_params = VorticityParams3D::new(
+                self.width,
+                self.height,
+                self.depth,
+                self.cell_size,
+            );
             queue.write_buffer(
                 &self.vorticity_params_buffer,
                 0,
@@ -3002,12 +2991,12 @@ impl GpuFlip3D {
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
 
-            let confine_params = VortConfineParams3D {
-                width: self.width,
-                height: self.height,
-                depth: self.depth,
-                epsilon_h_dt: self.vorticity_epsilon * self.cell_size * dt,
-            };
+            let confine_params = VortConfineParams3D::new(
+                self.width,
+                self.height,
+                self.depth,
+                self.vorticity_epsilon * self.cell_size * dt, // epsilon_h_dt
+            );
             queue.write_buffer(
                 &self.vort_confine_params_buffer,
                 0,
@@ -3126,12 +3115,12 @@ impl GpuFlip3D {
         queue.submit(std::iter::once(pressure_encoder.finish()));
 
         if self.sediment_porosity_drag > 0.0 {
-            let drag_params = PorosityDragParams3D {
-                width: self.width,
-                height: self.height,
-                depth: self.depth,
-                drag_dt: self.sediment_porosity_drag * dt,
-            };
+            let drag_params = PorosityDragParams3D::new(
+                self.width,
+                self.height,
+                self.depth,
+                self.sediment_porosity_drag * dt, // drag_dt
+            );
             queue.write_buffer(
                 &self.porosity_drag_params_buffer,
                 0,
@@ -3207,12 +3196,11 @@ impl GpuFlip3D {
 
         // ========== Sediment Density Projection (Granular Packing) ==========
         if self.sediment_rest_particles > 0.0 {
-            let sediment_cell_params = SedimentCellTypeParams3D {
-                width: self.width,
-                height: self.height,
-                depth: self.depth,
-                _pad0: 0,
-            };
+            let sediment_cell_params = SedimentCellTypeParams3D::new(
+                self.width,
+                self.height,
+                self.depth,
+            );
             queue.write_buffer(
                 &self.sediment_cell_type_params_buffer,
                 0,
