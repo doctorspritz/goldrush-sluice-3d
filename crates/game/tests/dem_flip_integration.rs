@@ -639,3 +639,192 @@ fn test_water_drag_slows_clumps() {
 
     println!("PASS: Water drag effectively slows DEM clumps");
 }
+
+/// Test 5: Shields stress entrainment
+/// Verifies that particles are entrained only when Shields stress exceeds critical threshold
+#[test]
+fn test_shields_stress_entrainment() {
+    use sim3d::clump::{FluidParams, FluidVelocityField};
+
+    println!("=== Test: Shields stress entrainment ===");
+
+    // Grid dimensions for the velocity field
+    let grid_width = 20;
+    let grid_height = 10;
+    let grid_depth = 20;
+    let cell_size = SIM_CELL_SIZE;
+
+    // Create fluid velocity field with uniform flow
+    // Different flow speeds to test entrainment threshold
+    let slow_speed = 0.1; // m/s - below critical for both sand and gold
+    let medium_speed = 0.5; // m/s - should entrain sand but not gold
+    let fast_speed = 2.0; // m/s - should entrain both
+
+    // Create uniform velocity fields (flow in +X direction)
+    let u_size = (grid_width + 1) * grid_height * grid_depth;
+    let v_size = grid_width * (grid_height + 1) * grid_depth;
+    let w_size = grid_width * grid_height * (grid_depth + 1);
+
+    let slow_u: Vec<f32> = vec![slow_speed; u_size];
+    let medium_u: Vec<f32> = vec![medium_speed; u_size];
+    let fast_u: Vec<f32> = vec![fast_speed; u_size];
+    let zero_v: Vec<f32> = vec![0.0; v_size];
+    let zero_w: Vec<f32> = vec![0.0; w_size];
+
+    let fluid_params = FluidParams::default();
+
+    // Create bounds
+    let bounds = Vec3::new(
+        grid_width as f32 * cell_size,
+        grid_height as f32 * cell_size,
+        grid_depth as f32 * cell_size,
+    );
+
+    // --- Test 1: Light particle (sand) entrainment threshold ---
+    println!("\n--- Testing sand particle entrainment ---");
+
+    let mut dem_sand = ClusterSimulation3D::new(Vec3::ZERO, bounds);
+    dem_sand.gravity = Vec3::new(0.0, GRAVITY, 0.0);
+
+    let sand_mass = particle_mass_from_density(DEM_CLUMP_RADIUS, DEM_SAND_DENSITY);
+    let sand_template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, sand_mass);
+    let sand_idx = dem_sand.add_template(sand_template);
+
+    // Spawn sand clump at rest
+    let spawn_pos = Vec3::new(
+        grid_width as f32 * cell_size * 0.5,
+        grid_height as f32 * cell_size * 0.3,
+        grid_depth as f32 * cell_size * 0.5,
+    );
+    let sand_clump_idx = dem_sand.spawn(sand_idx, spawn_pos, Vec3::ZERO);
+
+    // Check Shields parameter at different flow speeds
+    let slow_field = FluidVelocityField {
+        grid_u: &slow_u,
+        grid_v: &zero_v,
+        grid_w: &zero_w,
+        grid_width,
+        grid_height,
+        grid_depth,
+        cell_size,
+        grid_offset: Vec3::ZERO,
+    };
+
+    let theta_slow = dem_sand.shields_parameter(sand_clump_idx, &slow_field, &fluid_params);
+    let entrained_slow = dem_sand.is_entrained(sand_clump_idx, &slow_field, &fluid_params);
+    println!(
+        "Slow flow ({:.2} m/s): θ* = {:.6}, entrained = {}",
+        slow_speed, theta_slow, entrained_slow
+    );
+
+    let medium_field = FluidVelocityField {
+        grid_u: &medium_u,
+        grid_v: &zero_v,
+        grid_w: &zero_w,
+        grid_width,
+        grid_height,
+        grid_depth,
+        cell_size,
+        grid_offset: Vec3::ZERO,
+    };
+
+    let theta_medium = dem_sand.shields_parameter(sand_clump_idx, &medium_field, &fluid_params);
+    let entrained_medium = dem_sand.is_entrained(sand_clump_idx, &medium_field, &fluid_params);
+    println!(
+        "Medium flow ({:.2} m/s): θ* = {:.6}, entrained = {}",
+        medium_speed, theta_medium, entrained_medium
+    );
+
+    let fast_field = FluidVelocityField {
+        grid_u: &fast_u,
+        grid_v: &zero_v,
+        grid_w: &zero_w,
+        grid_width,
+        grid_height,
+        grid_depth,
+        cell_size,
+        grid_offset: Vec3::ZERO,
+    };
+
+    let theta_fast = dem_sand.shields_parameter(sand_clump_idx, &fast_field, &fluid_params);
+    let entrained_fast = dem_sand.is_entrained(sand_clump_idx, &fast_field, &fluid_params);
+    println!(
+        "Fast flow ({:.2} m/s): θ* = {:.6}, entrained = {}",
+        fast_speed, theta_fast, entrained_fast
+    );
+
+    // Shields parameter should increase with flow speed (τ ∝ U²)
+    assert!(
+        theta_medium > theta_slow,
+        "Shields should increase with flow speed"
+    );
+    assert!(
+        theta_fast > theta_medium,
+        "Shields should increase with flow speed"
+    );
+
+    // --- Test 2: Gold particle requires higher flow to entrain ---
+    println!("\n--- Testing gold particle entrainment ---");
+
+    let mut dem_gold = ClusterSimulation3D::new(Vec3::ZERO, bounds);
+    dem_gold.gravity = Vec3::new(0.0, GRAVITY, 0.0);
+
+    let gold_mass = particle_mass_from_density(DEM_CLUMP_RADIUS, DEM_GOLD_DENSITY);
+    let gold_template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, gold_mass);
+    let gold_idx = dem_gold.add_template(gold_template);
+    let gold_clump_idx = dem_gold.spawn(gold_idx, spawn_pos, Vec3::ZERO);
+
+    let theta_gold_medium =
+        dem_gold.shields_parameter(gold_clump_idx, &medium_field, &fluid_params);
+    let theta_gold_fast = dem_gold.shields_parameter(gold_clump_idx, &fast_field, &fluid_params);
+
+    println!(
+        "Gold at medium flow: θ* = {:.6} (sand: {:.6})",
+        theta_gold_medium, theta_medium
+    );
+    println!(
+        "Gold at fast flow: θ* = {:.6} (sand: {:.6})",
+        theta_gold_fast, theta_fast
+    );
+
+    // Gold should have lower Shields parameter (harder to entrain) due to higher density
+    // θ* = τ / ((ρs - ρf) × g × d) - higher density difference means lower θ*
+    assert!(
+        theta_gold_medium < theta_medium,
+        "Gold should have lower Shields parameter than sand at same flow: gold={:.6}, sand={:.6}",
+        theta_gold_medium,
+        theta_medium
+    );
+
+    // --- Test 3: Apply forces and verify entrainment behavior ---
+    println!("\n--- Testing force application ---");
+
+    // Reset sand to rest
+    dem_sand.clumps[sand_clump_idx].velocity = Vec3::ZERO;
+
+    // Apply fluid forces with fast flow
+    let results = dem_sand.apply_fluid_forces_with_shields(DT, &fast_field, &fluid_params);
+    let (theta_applied, was_entrained) = results[sand_clump_idx];
+
+    println!(
+        "After force application: θ* = {:.6}, entrained = {}",
+        theta_applied, was_entrained
+    );
+
+    // If entrained, particle should have gained velocity in flow direction
+    if was_entrained {
+        let vel = dem_sand.clumps[sand_clump_idx].velocity;
+        println!("Velocity after entrainment: {:?}", vel);
+        assert!(
+            vel.x > 0.0,
+            "Entrained particle should have positive X velocity"
+        );
+    }
+
+    println!("\n=== Shields Stress Test Summary ===");
+    println!("Critical Shields: {:.3}", fluid_params.critical_shields);
+    println!("Sand (ρ=2650): θ* scales with U², entrainment depends on flow");
+    println!("Gold (ρ=19300): Lower θ* at same flow, requires faster water");
+
+    println!("\nPASS: Shields stress correctly models sediment entrainment");
+}

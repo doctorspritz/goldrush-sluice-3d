@@ -176,6 +176,66 @@ pub struct SdfParams<'a> {
     pub grid_offset: Vec3,
 }
 
+/// Parameters for fluid coupling using Shields stress criterion.
+///
+/// Shields stress determines when sediment particles begin to move under fluid flow.
+/// The dimensionless Shields parameter θ* = τ / ((ρs - ρf) × g × d) compares the
+/// bed shear stress τ to the submerged weight of the particle.
+///
+/// When θ* > θ_cr (critical Shields), particles are entrained by the flow.
+/// When θ* < θ_cr, particles remain stationary on the bed.
+#[derive(Clone, Copy, Debug)]
+pub struct FluidParams {
+    /// Water density (kg/m³). Default: 1000
+    pub water_density: f32,
+    /// Dynamic viscosity of water (Pa·s). Default: 0.001 (water at 20°C)
+    pub water_viscosity: f32,
+    /// Critical Shields parameter for incipient motion. Default: 0.045
+    /// Typical values: 0.03-0.06 depending on grain shape and packing
+    pub critical_shields: f32,
+    /// Drag coefficient for particles in flow. Default: 0.47 (sphere)
+    pub drag_coefficient: f32,
+    /// Lift coefficient for particles near bed. Default: 0.2
+    pub lift_coefficient: f32,
+    /// Bed friction coefficient for Shields calculation. Default: 0.01
+    /// This relates flow velocity to bed shear stress via τ = Cf × ρf × U²
+    pub bed_friction_coefficient: f32,
+}
+
+impl Default for FluidParams {
+    fn default() -> Self {
+        Self {
+            water_density: 1000.0,
+            water_viscosity: 0.001,
+            critical_shields: 0.045,
+            drag_coefficient: 0.47,
+            lift_coefficient: 0.2,
+            bed_friction_coefficient: 0.01,
+        }
+    }
+}
+
+/// Fluid velocity field for Shields stress calculation.
+///
+/// Provides the fluid velocity at a given position for calculating
+/// bed shear stress and Shields parameter.
+pub struct FluidVelocityField<'a> {
+    /// Fluid velocity components on staggered MAC grid (U component)
+    pub grid_u: &'a [f32],
+    /// Fluid velocity components on staggered MAC grid (V component)
+    pub grid_v: &'a [f32],
+    /// Fluid velocity components on staggered MAC grid (W component)
+    pub grid_w: &'a [f32],
+    /// Grid dimensions
+    pub grid_width: usize,
+    pub grid_height: usize,
+    pub grid_depth: usize,
+    /// Cell size (m)
+    pub cell_size: f32,
+    /// Grid offset in world space
+    pub grid_offset: Vec3,
+}
+
 pub struct ClusterSimulation3D {
     pub templates: Vec<ClumpTemplate3D>,
     pub clumps: Vec<Clump3D>,
@@ -1278,6 +1338,265 @@ impl ClusterSimulation3D {
             }
         }
     }
+
+    /// Apply fluid forces to DEM particles using Shields stress criterion.
+    ///
+    /// This method calculates the Shields parameter for each particle based on
+    /// local fluid velocity, and applies entrainment forces only when the
+    /// Shields stress exceeds the critical threshold.
+    ///
+    /// # Physics
+    ///
+    /// The Shields parameter θ* compares bed shear stress to particle weight:
+    /// ```text
+    /// θ* = τ / ((ρs - ρf) × g × d)
+    /// ```
+    ///
+    /// Where:
+    /// - τ = bed shear stress = Cf × ρf × U² (from friction coefficient)
+    /// - ρs = sediment density (from particle mass/volume)
+    /// - ρf = water density
+    /// - g = gravity magnitude
+    /// - d = grain diameter (2 × particle radius)
+    ///
+    /// When θ* > θ_cr (critical Shields):
+    /// - Drag force: F_d = 0.5 × Cd × ρf × A × |U_rel|² × dir(U_rel)
+    /// - Lift force: F_l = 0.5 × Cl × ρf × A × U² (upward)
+    ///
+    /// When θ* < θ_cr:
+    /// - Particle remains stationary (no entrainment force)
+    ///
+    /// Buoyancy is always applied: F_b = ρf × V × g (upward)
+    ///
+    /// # Arguments
+    ///
+    /// * `dt` - Time step
+    /// * `fluid_field` - Fluid velocity field for sampling
+    /// * `fluid_params` - Physical parameters for fluid coupling
+    ///
+    /// # Returns
+    ///
+    /// A vector of (Shields parameter, was_entrained) tuples for each clump,
+    /// useful for debugging and visualization.
+    pub fn apply_fluid_forces_with_shields(
+        &mut self,
+        dt: f32,
+        fluid_field: &FluidVelocityField,
+        fluid_params: &FluidParams,
+    ) -> Vec<(f32, bool)> {
+        let g = self.gravity.length();
+        let rho_f = fluid_params.water_density;
+        let cf = fluid_params.bed_friction_coefficient;
+        let theta_cr = fluid_params.critical_shields;
+        let cd = fluid_params.drag_coefficient;
+        let cl = fluid_params.lift_coefficient;
+
+        let mut results = Vec::with_capacity(self.clumps.len());
+
+        for clump in &mut self.clumps {
+            let template = &self.templates[clump.template_idx];
+
+            // Particle properties
+            let radius = template.particle_radius;
+            let diameter = radius * 2.0;
+            let volume = (4.0 / 3.0) * PI * radius.powi(3) * template.local_offsets.len() as f32;
+            let area = PI * template.bounding_radius.powi(2);
+            let mass = template.mass;
+
+            // Estimate particle density from mass and volume
+            let rho_s = mass / volume;
+            let rho_diff = rho_s - rho_f;
+
+            // Sample fluid velocity at particle position
+            let fluid_vel = sample_fluid_velocity(fluid_field, clump.position);
+            let fluid_speed = fluid_vel.length();
+
+            // Calculate bed shear stress: τ = Cf × ρf × U²
+            let tau = cf * rho_f * fluid_speed * fluid_speed;
+
+            // Calculate Shields parameter: θ* = τ / ((ρs - ρf) × g × d)
+            // Avoid division by zero for very fine particles or neutral buoyancy
+            let theta = if rho_diff > 0.0 && diameter > 1e-6 {
+                tau / (rho_diff * g * diameter)
+            } else {
+                0.0
+            };
+
+            // Always apply buoyancy: F_b = ρf × V × g (upward)
+            let buoyancy_force = Vec3::new(0.0, rho_f * volume * g, 0.0);
+            clump.velocity += buoyancy_force * dt / mass;
+
+            // Check if Shields stress exceeds critical value
+            let entrained = theta > theta_cr;
+
+            if entrained && fluid_speed > 1e-4 {
+                // Particle is being entrained - apply drag and lift forces
+                let relative_vel = fluid_vel - clump.velocity;
+                let relative_speed = relative_vel.length();
+
+                if relative_speed > 1e-4 {
+                    // Drag force: F_d = 0.5 × Cd × ρf × A × |U_rel|²
+                    // Scales with (θ - θ_cr) / θ_cr for gradual entrainment
+                    let excess_shields = (theta - theta_cr) / theta_cr.max(0.001);
+                    let entrainment_factor = excess_shields.min(1.0);
+
+                    let drag_mag = 0.5 * cd * rho_f * area * relative_speed * relative_speed;
+                    let drag_force = relative_vel.normalize() * drag_mag * entrainment_factor;
+                    clump.velocity += drag_force * dt / mass;
+
+                    // Lift force: F_l = 0.5 × Cl × ρf × A × U² (upward only)
+                    // Only significant for particles near the bed
+                    let lift_mag = 0.5 * cl * rho_f * area * fluid_speed * fluid_speed;
+                    let lift_force = Vec3::new(0.0, lift_mag * entrainment_factor, 0.0);
+                    clump.velocity += lift_force * dt / mass;
+                }
+            }
+
+            results.push((theta, entrained));
+        }
+
+        results
+    }
+
+    /// Calculate Shields parameter for a single clump at its current position.
+    ///
+    /// Useful for diagnostics and visualization without applying forces.
+    pub fn shields_parameter(
+        &self,
+        clump_idx: usize,
+        fluid_field: &FluidVelocityField,
+        fluid_params: &FluidParams,
+    ) -> f32 {
+        let clump = &self.clumps[clump_idx];
+        let template = &self.templates[clump.template_idx];
+
+        let g = self.gravity.length();
+        let rho_f = fluid_params.water_density;
+        let cf = fluid_params.bed_friction_coefficient;
+
+        let radius = template.particle_radius;
+        let diameter = radius * 2.0;
+        let volume = (4.0 / 3.0) * PI * radius.powi(3) * template.local_offsets.len() as f32;
+        let rho_s = template.mass / volume;
+        let rho_diff = rho_s - rho_f;
+
+        let fluid_vel = sample_fluid_velocity(fluid_field, clump.position);
+        let fluid_speed = fluid_vel.length();
+        let tau = cf * rho_f * fluid_speed * fluid_speed;
+
+        if rho_diff > 0.0 && diameter > 1e-6 {
+            tau / (rho_diff * g * diameter)
+        } else {
+            0.0
+        }
+    }
+
+    /// Check if a clump would be entrained at its current position.
+    pub fn is_entrained(
+        &self,
+        clump_idx: usize,
+        fluid_field: &FluidVelocityField,
+        fluid_params: &FluidParams,
+    ) -> bool {
+        let theta = self.shields_parameter(clump_idx, fluid_field, fluid_params);
+        theta > fluid_params.critical_shields
+    }
+}
+
+/// Sample fluid velocity from a MAC grid at a given world position.
+fn sample_fluid_velocity(field: &FluidVelocityField, pos: Vec3) -> Vec3 {
+    let local_pos = pos - field.grid_offset;
+    let cell_size = field.cell_size;
+    let width = field.grid_width;
+    let height = field.grid_height;
+    let depth = field.grid_depth;
+
+    // Trilinear interpolation for each velocity component
+
+    // U component (staggered on X faces)
+    let u_pos = local_pos / cell_size - Vec3::new(0.0, 0.5, 0.5);
+    let u = trilinear_sample(
+        field.grid_u,
+        u_pos,
+        width + 1,
+        height,
+        depth,
+    );
+
+    // V component (staggered on Y faces)
+    let v_pos = local_pos / cell_size - Vec3::new(0.5, 0.0, 0.5);
+    let v = trilinear_sample(
+        field.grid_v,
+        v_pos,
+        width,
+        height + 1,
+        depth,
+    );
+
+    // W component (staggered on Z faces)
+    let w_pos = local_pos / cell_size - Vec3::new(0.5, 0.5, 0.0);
+    let w = trilinear_sample(
+        field.grid_w,
+        w_pos,
+        width,
+        height,
+        depth + 1,
+    );
+
+    Vec3::new(u, v, w)
+}
+
+/// Trilinear interpolation for a scalar field.
+fn trilinear_sample(
+    field: &[f32],
+    pos: Vec3,
+    width: usize,
+    height: usize,
+    depth: usize,
+) -> f32 {
+    let x = pos.x.max(0.0);
+    let y = pos.y.max(0.0);
+    let z = pos.z.max(0.0);
+
+    let i0 = (x.floor() as usize).min(width.saturating_sub(2));
+    let j0 = (y.floor() as usize).min(height.saturating_sub(2));
+    let k0 = (z.floor() as usize).min(depth.saturating_sub(2));
+
+    let i1 = (i0 + 1).min(width - 1);
+    let j1 = (j0 + 1).min(height - 1);
+    let k1 = (k0 + 1).min(depth - 1);
+
+    let fx = (x - i0 as f32).clamp(0.0, 1.0);
+    let fy = (y - j0 as f32).clamp(0.0, 1.0);
+    let fz = (z - k0 as f32).clamp(0.0, 1.0);
+
+    let idx = |i: usize, j: usize, k: usize| -> usize {
+        k * width * height + j * width + i
+    };
+
+    // Bounds check
+    if idx(i1, j1, k1) >= field.len() {
+        return 0.0;
+    }
+
+    let c000 = field[idx(i0, j0, k0)];
+    let c100 = field[idx(i1, j0, k0)];
+    let c010 = field[idx(i0, j1, k0)];
+    let c110 = field[idx(i1, j1, k0)];
+    let c001 = field[idx(i0, j0, k1)];
+    let c101 = field[idx(i1, j0, k1)];
+    let c011 = field[idx(i0, j1, k1)];
+    let c111 = field[idx(i1, j1, k1)];
+
+    let c00 = c000 * (1.0 - fx) + c100 * fx;
+    let c10 = c010 * (1.0 - fx) + c110 * fx;
+    let c01 = c001 * (1.0 - fx) + c101 * fx;
+    let c11 = c011 * (1.0 - fx) + c111 * fx;
+
+    let c0 = c00 * (1.0 - fy) + c10 * fy;
+    let c1 = c01 * (1.0 - fy) + c11 * fy;
+
+    c0 * (1.0 - fz) + c1 * fz
 }
 
 fn dem_damping(restitution: f32, stiffness: f32, mass: f32) -> f32 {
