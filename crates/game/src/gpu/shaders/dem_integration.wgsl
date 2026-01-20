@@ -113,7 +113,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Update angular velocity buffer
     particle_angular_velocities[particle_idx] = vec4<f32>(new_angular_vel, 0.0);
     
-    let angular_delta = new_angular_vel * params.dt * 0.5; // Half angle for quaternion
+    let angular_delta = new_angular_vel * params.dt; // Full rotation angle (half-angle applied in quaternion construction)
     
     // Create quaternion from angular velocity
     let angle = length(angular_delta);
