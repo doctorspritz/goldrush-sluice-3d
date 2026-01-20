@@ -85,7 +85,7 @@ pub struct GpuHeightfield {
     pub paydirt_buffer: wgpu::Buffer,
     pub gravel_buffer: wgpu::Buffer, // Gravel layer (erosion resistant)
     pub overburden_buffer: wgpu::Buffer,
-    pub sediment_buffer: wgpu::Buffer, // Deposited sediment
+    pub sediment_buffer: wgpu::Buffer,         // Deposited sediment
     pub surface_material_buffer: wgpu::Buffer, // What material is on TOP (0=bed,1=pay,2=gravel,3=over,4=sed)
     pub settling_time_buffer: wgpu::Buffer,    // u32: frames since last disturbance (for temporal stability)
 
@@ -117,7 +117,6 @@ pub struct GpuHeightfield {
     pub surface_pipeline: wgpu::ComputePipeline,
     pub flux_pipeline: wgpu::ComputePipeline,
     pub depth_pipeline: wgpu::ComputePipeline,
-
     pub settling_pipeline: wgpu::ComputePipeline,
     pub erosion_pipeline: wgpu::ComputePipeline,
     pub sediment_transport_pipeline: wgpu::ComputePipeline,
@@ -1640,6 +1639,7 @@ impl GpuHeightfield {
         // Use red-black pattern for race-free updates: red cells don't neighbor other red cells
         dispatch_step!("Update Collapse Red", &self.collapse_red_pipeline);
         dispatch_step!("Update Collapse Black", &self.collapse_black_pipeline);
+
     }
 
     pub fn update_params(&self, queue: &wgpu::Queue, dt: f32) {

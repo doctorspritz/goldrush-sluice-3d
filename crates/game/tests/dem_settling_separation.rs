@@ -118,7 +118,8 @@ fn test_dem_settling_time() {
             );
 
             // Only check for settling after minimum fall time
-            if step >= min_steps_before_check && avg_vel < avg_threshold && max_vel < max_threshold {
+            if step >= min_steps_before_check && avg_vel < avg_threshold && max_vel < max_threshold
+            {
                 settled = true;
                 settling_step = step;
                 println!("SETTLED at step {} ({:.2}s)", step, step as f32 * DT);

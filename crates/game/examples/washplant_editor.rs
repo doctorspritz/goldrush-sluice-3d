@@ -28,19 +28,18 @@
 //!   0-9            - In test mode: select test scenario
 
 use bytemuck::{Pod, Zeroable};
-use game::example_utils::{Camera, WgpuContext, create_depth_view};
 use game::editor::{
-    EditorLayout, EditorMode, EmitterPiece, GutterPiece, Rotation, Selection, ShakerDeckPiece,
-    SluicePiece,
+    EditorLayout, EditorMode, EmitterPiece, GutterPiece, Rotation, ScenarioConfig, Selection,
+    ShakerDeckPiece, SluicePiece,
 };
 use game::gpu::flip_3d::GpuFlip3D;
 use game::gpu::fluid_renderer::ScreenSpaceFluidRenderer;
-use game::scenario::{Scenario, SimulationState};
+use game::multigrid::MultiGridSim;
 use game::sluice_geometry::SluiceVertex;
-use glam::{Mat3, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, SdfParams};
 use sim3d::test_geometry::{TestBox, TestFloor, TestSdfGenerator};
-use sim3d::{constants, FlipSimulation3D};
+use sim3d::FlipSimulation3D;
 use std::path::Path;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -63,13 +62,13 @@ const SIM_CELL_SIZE: f32 = 0.025; // 2.5cm cells (larger for speed)
 const SIM_MAX_PARTICLES: usize = 50_000;
 const SIM_PRESSURE_ITERS: usize = 30; // Reduced for speed
 const SIM_SUBSTEPS: u32 = 2;
-const SIM_GRAVITY: f32 = constants::GRAVITY;
+const SIM_GRAVITY: f32 = -9.8;
 
-// DEM constants (use absolute density in kg/m³ for mass and buoyancy)
+// DEM constants
 const DEM_CLUMP_RADIUS: f32 = 0.008; // 8mm clumps
-const DEM_GOLD_DENSITY: f32 = constants::GOLD_DENSITY_KGM3;
-const DEM_SAND_DENSITY: f32 = constants::GANGUE_DENSITY_KGM3;
-const DEM_WATER_DENSITY: f32 = constants::WATER_DENSITY;
+const DEM_GOLD_DENSITY: f32 = 19300.0; // kg/m³
+const DEM_SAND_DENSITY: f32 = 2650.0; // kg/m³
+const DEM_WATER_DENSITY: f32 = 1000.0; // kg/m³
 const DEM_DRAG_COEFF: f32 = 5.0; // Water drag coefficient
 const DEM_SEDIMENT_RATIO: f32 = 0.1; // 10% of particles are sediment
 
@@ -78,24 +77,18 @@ const MAX_GRID_WIDTH: usize = 120;
 const MAX_GRID_HEIGHT: usize = 80;
 const MAX_GRID_DEPTH: usize = 60;
 
-/// Simple deterministic PRNG (PCG32-style)
-struct SimpleRng {
-    state: u64,
-}
+/// Simple random float [0, 1) using atomic counter
+fn rand_float() -> f32 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-impl SimpleRng {
-    fn new(seed: u64) -> Self {
-        Self { state: seed }
-    }
-
-    fn next_float(&mut self) -> f32 {
-        self.state = self.state.wrapping_add(1);
-        let mut x = self.state.wrapping_add(0x9E3779B97F4A7C15);
-        x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-        x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
-        x = x ^ (x >> 31);
-        (x as f32) / (u64::MAX as f32)
-    }
+    let seed = COUNTER.fetch_add(1, Ordering::Relaxed);
+    // Simple xorshift-style hash
+    let mut x = seed.wrapping_add(0x9E3779B97F4A7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
+    x = x ^ (x >> 31);
+    (x as f32) / (u64::MAX as f32)
 }
 
 #[repr(C)]
@@ -129,13 +122,13 @@ struct VisualTest {
     expect: &'static str,
     watch: &'static str,
     category: TestCategory,
-    scenario: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum TestCategory {
     Dem,      // DEM collision, friction, settling
     Swe,      // Shallow water flow
+    SweBox,   // GPU FLIP in a closed box
     Terrain,  // Collapse + erosion
     Sediment, // Sediment transport
 }
@@ -150,7 +143,6 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Particles fall from height, bounce once or twice, settle on gutter floor",
         watch: "PASS: All particles rest ON floor (y > 0), none fall through. FAIL: Particles clip through floor or hover.",
         category: TestCategory::Dem,
-        scenario: Some("crates/game/scenarios/dem_floor_collision.json"),
     },
     VisualTest {
         key: '2',
@@ -158,7 +150,6 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Particles thrown sideways hit gutter wall and bounce back",
         watch: "PASS: Particles reflect off walls, stay inside gutter. FAIL: Particles pass through walls.",
         category: TestCategory::Dem,
-        scenario: Some("crates/game/scenarios/dem_wall_collision.json"),
     },
     VisualTest {
         key: '3',
@@ -166,7 +157,6 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Mix of gold (yellow, heavy) and sand (gray, light) dropped into water",
         watch: "PASS: Yellow particles sink to bottom, gray stay above. FAIL: Same height or gold on top.",
         category: TestCategory::Dem,
-        scenario: Some("crates/game/scenarios/dem_density_separation.json"),
     },
     VisualTest {
         key: '4',
@@ -174,7 +164,6 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "50 particles dropped, should all come to rest within 5 seconds",
         watch: "PASS: Motion stops, particles stationary. FAIL: Still bouncing after 5s or jittering forever.",
         category: TestCategory::Dem,
-        scenario: Some("crates/game/scenarios/dem_settling_time.json"),
     },
     // ═══════════════════════════════════════════════════════════════════════════
     // FLUID TESTS (FLIP/APIC water simulation)
@@ -185,15 +174,13 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Water released at top of tilted gutter flows downward",
         watch: "PASS: Blue particles flow from high end to low end. FAIL: Water stuck, flows uphill, or wrong direction.",
         category: TestCategory::Swe,
-        scenario: None,
     },
     VisualTest {
         key: '6',
-        name: "Fluid: Pool Equilibrium",
-        expect: "Flat pool of water should stay still",
-        watch: "PASS: Water surface is flat, no motion. FAIL: Ripples, sloshing, or energy appearing from nowhere.",
-        category: TestCategory::Swe,
-        scenario: None,
+        name: "Fluid: Box Fill (GPU)",
+        expect: "Closed box filled with water should settle and remain contained",
+        watch: "PASS: Water calms and stays inside. FAIL: Water leaks or explodes.",
+        category: TestCategory::SweBox,
     },
     VisualTest {
         key: '7',
@@ -201,7 +188,6 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Water poured into gutter stays inside walls",
         watch: "PASS: All water remains between gutter walls. FAIL: Water leaks through walls or floor.",
         category: TestCategory::Swe,
-        scenario: None,
     },
     // ═══════════════════════════════════════════════════════════════════════════
     // SEDIMENT TESTS (Particles in fluid)
@@ -212,7 +198,6 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Drop sediment into still pool, should sink to bottom",
         watch: "PASS: Particles descend through water, rest on floor. FAIL: Float, stuck, or instant teleport.",
         category: TestCategory::Sediment,
-        scenario: None,
     },
     VisualTest {
         key: '9',
@@ -220,7 +205,6 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Sediment dropped into flowing water gets carried downstream",
         watch: "PASS: Particles move with water flow direction. FAIL: Stuck in place or move against flow.",
         category: TestCategory::Sediment,
-        scenario: None,
     },
     // ═══════════════════════════════════════════════════════════════════════════
     // INTEGRATION TESTS (Full system)
@@ -231,1354 +215,14 @@ const VISUAL_TESTS: &[VisualTest] = &[
         expect: "Gold+sand in water flow over sluice riffles, gold gets trapped",
         watch: "PASS: Yellow (gold) particles accumulate behind riffles, gray washes over. FAIL: All wash through or all stuck.",
         category: TestCategory::Sediment,
-        scenario: None,
     },
 ];
-
-// ============================================================================
-// Multi-Grid Simulation Types
-// ============================================================================
-
-/// Which type of piece this simulation belongs to
-#[derive(Clone, Copy, Debug)]
-enum PieceKind {
-    Gutter(usize),     // index into layout.gutters
-    Sluice(usize),     // index into layout.sluices
-    ShakerDeck(usize), // index into layout.shaker_decks
-}
-
-/// Per-piece simulation grid
-struct PieceSimulation {
-    kind: PieceKind,
-
-    // Grid configuration
-    grid_offset: Vec3, // World position of grid origin
-    grid_dims: (usize, usize, usize),
-    cell_size: f32,
-
-    // Simulation state
-    sim: FlipSimulation3D,
-    gpu_flip: Option<GpuFlip3D>,
-
-    // Particle data buffers
-    positions: Vec<Vec3>,
-    velocities: Vec<Vec3>,
-    affine_vels: Vec<Mat3>,
-    densities: Vec<f32>,
-}
-
-/// Defines particle transfer between two pieces
-struct PieceTransfer {
-    from_piece: usize, // Index into MultiGridSim::pieces
-    to_piece: usize,
-
-    // Capture region (in from_piece's sim-space)
-    capture_min: Vec3,
-    capture_max: Vec3,
-
-    // Injection position (in to_piece's sim-space)
-    inject_pos: Vec3,
-    inject_vel: Vec3,
-
-    // Particles in transit
-    transit_queue: Vec<(Vec3, Vec3, f32)>, // (position, velocity, density)
-    transit_time: f32,
-}
-
-/// Multi-grid simulation manager
-struct MultiGridSim {
-    pieces: Vec<PieceSimulation>,
-    transfers: Vec<PieceTransfer>,
-    frame: u32,
-
-    // DEM simulation (global, not per-piece)
-    dem_sim: ClusterSimulation3D,
-    gold_template_idx: usize,
-    sand_template_idx: usize,
-
-    test_sdf: Option<Vec<f32>>,
-    test_sdf_dims: (usize, usize, usize),
-    test_sdf_cell_size: f32,
-    test_sdf_offset: Vec3,
-
-    // Deterministic RNG
-    rng: SimpleRng,
-}
-
-impl MultiGridSim {
-    fn create_state(&self) -> SimulationState {
-        SimulationState {
-            flips: self.pieces.iter().map(|p| p.sim.clone()).collect(),
-            dem: Some(self.dem_sim.clone()),
-        }
-    }
-}
-
-impl MultiGridSim {
-    fn new() -> Self {
-        // Create DEM simulation with large bounds (covers all pieces)
-        let mut dem_sim = ClusterSimulation3D::new(
-            Vec3::new(-10.0, -2.0, -10.0),
-            Vec3::new(20.0, 10.0, 20.0),
-        );
-
-        // Reduce stiffness for stability with small particles
-        // Default 6000 N/m causes particles to explode on collision
-        dem_sim.normal_stiffness = 1000.0;
-        dem_sim.tangential_stiffness = 500.0;
-        dem_sim.restitution = 0.1; // Lower bounce
-
-        // Create gold template (heavy, ~8mm clumps)
-        // Gold: 19300 kg/m³, water: 1000 kg/m³
-        // Volume of 8mm sphere ≈ 2.68e-7 m³, mass ≈ 5.17g for gold
-        let gold_particle_mass = DEM_GOLD_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * DEM_CLUMP_RADIUS.powi(3);
-        let gold_template = ClumpTemplate3D::generate(
-            ClumpShape3D::Irregular {
-                count: 5,
-                seed: 42,
-                style: sim3d::clump::IrregularStyle3D::Round,
-            },
-            DEM_CLUMP_RADIUS,
-            gold_particle_mass,
-        );
-        let gold_template_idx = dem_sim.add_template(gold_template);
-
-        // Create sand/gangue template (lighter)
-        let sand_particle_mass = DEM_SAND_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * DEM_CLUMP_RADIUS.powi(3);
-        let sand_template = ClumpTemplate3D::generate(
-            ClumpShape3D::Irregular {
-                count: 4,
-                seed: 123,
-                style: sim3d::clump::IrregularStyle3D::Sharp,
-            },
-            DEM_CLUMP_RADIUS,
-            sand_particle_mass,
-        );
-        let sand_template_idx = dem_sim.add_template(sand_template);
-
-        Self {
-            pieces: Vec::new(),
-            transfers: Vec::new(),
-            frame: 0,
-            dem_sim,
-            gold_template_idx,
-            sand_template_idx,
-            test_sdf: None,
-            test_sdf_dims: (0, 0, 0),
-            test_sdf_cell_size: SIM_CELL_SIZE,
-            test_sdf_offset: Vec3::ZERO,
-            rng: SimpleRng::new(0xDEADBEEF), // Fixed seed for determinism
-        }
-    }
-
-    /// Set up test SDF using TestFloor geometry for isolated floor collision tests
-    fn setup_test_floor(&mut self, floor_y: f32) {
-        let cell_size = SIM_CELL_SIZE;
-        let width = 40usize;   // 1m
-        let height = 60usize;  // 1.5m
-        let depth = 40usize;   // 1m
-        let offset = Vec3::new(-0.5, -0.5, -0.5); // Grid origin in world space
-
-        // TestFloor works in WORLD coordinates (cell_center returns world pos)
-        let floor = TestFloor::with_thickness(floor_y, cell_size * 4.0);
-        let mut gen = TestSdfGenerator::new(width, height, depth, cell_size, offset);
-        gen.add_floor(&floor);
-
-        self.test_sdf = Some(gen.sdf);
-        self.test_sdf_dims = (width, height, depth);
-        self.test_sdf_cell_size = cell_size;
-        self.test_sdf_offset = offset;
-
-        println!("Test SDF: floor at world y={} with {}x{}x{} grid, offset {:?}",
-            floor_y, width, height, depth, offset);
-    }
-
-    /// Set up test SDF using TestBox geometry for isolated box collision tests
-    fn setup_test_box(&mut self, center: Vec3, width: f32, depth: f32, wall_height: f32) {
-        let cell_size = SIM_CELL_SIZE;
-        let grid_width = 60usize;   // 1.5m
-        let grid_height = 60usize;  // 1.5m
-        let grid_depth = 60usize;   // 1.5m
-        let offset = center - Vec3::splat(cell_size * grid_width as f32 / 2.0);
-
-        // TestBox works in WORLD coordinates (cell_center returns world pos)
-        let test_box = TestBox::with_thickness(
-            center,
-            width,
-            depth,
-            wall_height,
-            cell_size * 4.0, // wall thickness
-            cell_size * 4.0, // floor thickness
-        );
-        let mut gen = TestSdfGenerator::new(grid_width, grid_height, grid_depth, cell_size, offset);
-        gen.add_box(&test_box);
-
-        self.test_sdf = Some(gen.sdf);
-        self.test_sdf_dims = (grid_width, grid_height, grid_depth);
-        self.test_sdf_cell_size = cell_size;
-        self.test_sdf_offset = offset;
-
-        println!("Test SDF: box at world {:?}, size {}x{}x{}, offset {:?}",
-            center, width, depth, wall_height, offset);
-    }
-
-    /// Clear the test SDF (return to using piece SDFs)
-    fn clear_test_sdf(&mut self) {
-        self.test_sdf = None;
-    }
-
-    /// Add a gutter piece simulation
-    fn add_gutter(
-        &mut self,
-        device: &wgpu::Device,
-        gutter: &GutterPiece,
-        gutter_idx: usize,
-        existing_sim: Option<FlipSimulation3D>,
-    ) -> usize {
-        // Calculate grid dimensions based on gutter size (use max_width for variable-width gutters)
-        let cell_size = SIM_CELL_SIZE;
-        let margin = cell_size * 4.0;
-        let max_width = gutter.max_width();
-
-        let width = ((gutter.length + margin * 2.0) / cell_size).ceil() as usize;
-        let height = ((gutter.wall_height + margin + 0.5) / cell_size).ceil() as usize;
-        let depth = ((max_width + margin * 2.0) / cell_size).ceil() as usize;
-
-        // Clamp to reasonable sizes
-        let width = width.clamp(10, 60);
-        let height = height.clamp(10, 40);
-        let depth = depth.clamp(10, 40);
-
-        // Grid origin is at gutter center minus margin
-        let (dir_x, dir_z) = match gutter.rotation {
-            Rotation::R0 => (1.0f32, 0.0f32),
-            Rotation::R90 => (0.0, 1.0),
-            Rotation::R180 => (-1.0, 0.0),
-            Rotation::R270 => (0.0, -1.0),
-        };
-
-        // Grid offset must account for both length and width based on rotation
-        // For R0 (dir_x=1, dir_z=0): length along X, width along Z
-        // For R90 (dir_x=0, dir_z=1): length along Z, width along X
-        // Use max_width for grid sizing to accommodate variable-width gutters
-        let grid_offset = Vec3::new(
-            gutter.position.x
-                - gutter.length / 2.0 * dir_x.abs()
-                - max_width / 2.0 * dir_z.abs()
-                - margin,
-            gutter.position.y - margin,
-            gutter.position.z
-                - gutter.length / 2.0 * dir_z.abs()
-                - max_width / 2.0 * dir_x.abs()
-                - margin,
-        );
-
-        let mut sim = existing_sim.unwrap_or_else(|| {
-            let mut s = FlipSimulation3D::new(width, height, depth, cell_size);
-            s.pressure_iterations = SIM_PRESSURE_ITERS;
-
-            // Mark gutter solid cells (in local grid space)
-            // Use max_width for centering so both inlet and outlet widths fit
-            let gutter_local = GutterPiece {
-                id: 0, // Temporary local piece
-                position: Vec3::new(
-                    margin + gutter.length / 2.0,
-                    margin,
-                    margin + gutter.max_width() / 2.0,
-                ),
-                rotation: Rotation::R0, // Local space, no rotation needed
-                angle_deg: gutter.angle_deg,
-                length: gutter.length,
-                width: gutter.width,
-                end_width: gutter.end_width,
-                wall_height: gutter.wall_height,
-            };
-            Self::mark_gutter_solid_cells(&mut s, &gutter_local, cell_size);
-            s
-        });
-
-        sim.grid.compute_sdf();
-
-        let mut gpu_flip = GpuFlip3D::new(
-            device,
-            width as u32,
-            height as u32,
-            depth as u32,
-            cell_size,
-            20000, // Max particles per piece
-        );
-        // Gutter: +X boundary is open (outlet) - particles exit here for transfer
-        // Bit 1 (value 2) = +X open
-        gpu_flip.open_boundaries = 2;
-
-        let idx = self.pieces.len();
-        self.pieces.push(PieceSimulation {
-            kind: PieceKind::Gutter(gutter_idx),
-            grid_offset,
-            grid_dims: (width, height, depth),
-            cell_size,
-            sim,
-            gpu_flip: Some(gpu_flip),
-            positions: Vec::new(),
-            velocities: Vec::new(),
-            affine_vels: Vec::new(),
-            densities: Vec::new(),
-        });
-
-        idx
-    }
-
-    /// Add a sluice piece simulation
-    fn add_sluice(
-        &mut self,
-        device: &wgpu::Device,
-        sluice: &SluicePiece,
-        sluice_idx: usize,
-        existing_sim: Option<FlipSimulation3D>,
-    ) -> usize {
-        let cell_size = SIM_CELL_SIZE;
-        let margin = cell_size * 4.0;
-
-        let width = ((sluice.length + margin * 2.0) / cell_size).ceil() as usize;
-        // Height needs to accommodate water coming from above (gutters can be higher)
-        let height = ((0.8 + margin) / cell_size).ceil() as usize; // Taller to catch incoming water
-        let depth = ((sluice.width + margin * 2.0) / cell_size).ceil() as usize;
-
-        let width = width.clamp(10, 80);
-        let height = height.clamp(10, 30);
-        let depth = depth.clamp(10, 40);
-
-        // Grid origin based on rotation
-        let (dir_x, dir_z) = match sluice.rotation {
-            Rotation::R0 => (1.0f32, 0.0f32),
-            Rotation::R90 => (0.0, 1.0),
-            Rotation::R180 => (-1.0, 0.0),
-            Rotation::R270 => (0.0, -1.0),
-        };
-
-        // Grid offset must account for both length and width based on rotation
-        let grid_offset = Vec3::new(
-            sluice.position.x
-                - sluice.length / 2.0 * dir_x.abs()
-                - sluice.width / 2.0 * dir_z.abs()
-                - margin,
-            sluice.position.y - margin,
-            sluice.position.z
-                - sluice.length / 2.0 * dir_z.abs()
-                - sluice.width / 2.0 * dir_x.abs()
-                - margin,
-        );
-
-        let mut sim = existing_sim.unwrap_or_else(|| {
-            let mut s = FlipSimulation3D::new(width, height, depth, cell_size);
-            s.pressure_iterations = SIM_PRESSURE_ITERS;
-
-            // Mark sluice solid cells
-            let sluice_local = SluicePiece {
-                id: 0, // Temporary local piece
-                position: Vec3::new(
-                    margin + sluice.length / 2.0,
-                    margin,
-                    margin + sluice.width / 2.0,
-                ),
-                rotation: Rotation::R0,
-                length: sluice.length,
-                width: sluice.width,
-                slope_deg: sluice.slope_deg,
-                riffle_spacing: sluice.riffle_spacing,
-                riffle_height: sluice.riffle_height,
-            };
-            Self::mark_sluice_solid_cells(&mut s, &sluice_local, cell_size);
-            s
-        });
-
-        sim.grid.compute_sdf();
-
-        let mut gpu_flip = GpuFlip3D::new(
-            device,
-            width as u32,
-            height as u32,
-            depth as u32,
-            cell_size,
-            30000,
-        );
-        // Sluice: -X (inlet) and +X (outlet) boundaries are open
-        // Bit 0 (1) = -X open, Bit 1 (2) = +X open -> combined = 3
-        gpu_flip.open_boundaries = 3;
-
-        let idx = self.pieces.len();
-        self.pieces.push(PieceSimulation {
-            kind: PieceKind::Sluice(sluice_idx),
-            grid_offset,
-            grid_dims: (width, height, depth),
-            cell_size,
-            sim,
-            gpu_flip: Some(gpu_flip),
-            positions: Vec::new(),
-            velocities: Vec::new(),
-            affine_vels: Vec::new(),
-            densities: Vec::new(),
-        });
-
-        idx
-    }
-
-    /// Add a shaker deck piece simulation
-    fn add_shaker_deck(
-        &mut self,
-        device: &wgpu::Device,
-        deck: &ShakerDeckPiece,
-        deck_idx: usize,
-        existing_sim: Option<FlipSimulation3D>,
-    ) -> usize {
-        let cell_size = SIM_CELL_SIZE;
-        let margin = cell_size * 4.0;
-        let max_width = deck.max_width();
-
-        let width = ((deck.length + margin * 2.0) / cell_size).ceil() as usize;
-        // Height includes wall height + headroom for particles
-        let height = ((deck.wall_height + margin + 0.3) / cell_size).ceil() as usize;
-        let depth = ((max_width + margin * 2.0) / cell_size).ceil() as usize;
-
-        let width = width.clamp(10, 60);
-        let height = height.clamp(10, 40);
-        let depth = depth.clamp(10, 40);
-
-        // Grid origin based on rotation
-        let (dir_x, dir_z) = match deck.rotation {
-            Rotation::R0 => (1.0f32, 0.0f32),
-            Rotation::R90 => (0.0, 1.0),
-            Rotation::R180 => (-1.0, 0.0),
-            Rotation::R270 => (0.0, -1.0),
-        };
-
-        // Grid offset accounting for rotation
-        let grid_offset = Vec3::new(
-            deck.position.x
-                - deck.length / 2.0 * dir_x.abs()
-                - max_width / 2.0 * dir_z.abs()
-                - margin,
-            deck.position.y - margin,
-            deck.position.z
-                - deck.length / 2.0 * dir_z.abs()
-                - max_width / 2.0 * dir_x.abs()
-                - margin,
-        );
-
-        let mut sim = existing_sim.unwrap_or_else(|| {
-            let mut s = FlipSimulation3D::new(width, height, depth, cell_size);
-            s.pressure_iterations = SIM_PRESSURE_ITERS;
-
-            // Mark shaker deck solid cells (walls only - grid is porous)
-            let deck_local = ShakerDeckPiece {
-                id: 0,
-                position: Vec3::new(
-                    margin + deck.length / 2.0,
-                    margin,
-                    margin + deck.max_width() / 2.0,
-                ),
-                rotation: Rotation::R0,
-                length: deck.length,
-                width: deck.width,
-                end_width: deck.end_width,
-                tilt_deg: deck.tilt_deg,
-                hole_size: deck.hole_size,
-                wall_height: deck.wall_height,
-                bar_thickness: deck.bar_thickness,
-            };
-            Self::mark_shaker_deck_solid_cells(&mut s, &deck_local, cell_size);
-            s
-        });
-
-        sim.grid.compute_sdf();
-
-        let mut gpu_flip = GpuFlip3D::new(
-            device,
-            width as u32,
-            height as u32,
-            depth as u32,
-            cell_size,
-            20000,
-        );
-        // Shaker deck: +X (outlet) open for oversize material
-        // -Y (bottom) open for fines falling through the perforated deck
-        // Bit 1 (2) = +X, Bit 2 (4) = -Y -> combined = 6
-        gpu_flip.open_boundaries = 6; // +X and -Y open
-
-        let idx = self.pieces.len();
-        self.pieces.push(PieceSimulation {
-            kind: PieceKind::ShakerDeck(deck_idx),
-            grid_offset,
-            grid_dims: (width, height, depth),
-            cell_size,
-            sim,
-            gpu_flip: Some(gpu_flip),
-            positions: Vec::new(),
-            velocities: Vec::new(),
-            affine_vels: Vec::new(),
-            densities: Vec::new(),
-        });
-
-        idx
-    }
-
-    /// Mark gutter solid cells using cell-index approach (like friction_sluice)
-    /// Supports variable width gutters (funnel effect) via width_at()
-    fn mark_gutter_solid_cells(sim: &mut FlipSimulation3D, gutter: &GutterPiece, cell_size: f32) {
-        let width = sim.grid.width;
-        let height = sim.grid.height;
-        let depth = sim.grid.depth;
-
-        // Gutter position gives center in X/Z and base floor height in Y
-        let center_i = (gutter.position.x / cell_size).round() as i32;
-        let base_j = (gutter.position.y / cell_size).round() as i32;
-        let center_k = (gutter.position.z / cell_size).round() as i32;
-
-        // Channel dimensions in cells
-        let half_len_cells = ((gutter.length / 2.0) / cell_size).ceil() as i32;
-        // Inlet (start) half width for back wall
-        let inlet_half_wid_cells = ((gutter.width / 2.0) / cell_size).ceil() as i32;
-
-        // Floor height drop due to angle (in cells)
-        let angle_rad = gutter.angle_deg.to_radians();
-        let total_drop = gutter.length * angle_rad.tan();
-        let half_drop_cells = ((total_drop / 2.0) / cell_size).round() as i32;
-
-        // Floor heights at inlet (left) and outlet (right)
-        let _floor_j_left = base_j + half_drop_cells; // Inlet is higher
-        let _floor_j_right = base_j - half_drop_cells; // Outlet is lower
-
-        // Wall parameters
-        let wall_height_cells = ((gutter.wall_height / cell_size).ceil() as i32).max(8);
-        let wall_thick_cells = 2_i32;
-
-        // Channel bounds in i (length direction)
-        let i_start = (center_i - half_len_cells).max(0) as usize;
-        let i_end = ((center_i + half_len_cells) as usize).min(width);
-
-        // Outlet width (at end of channel)
-        let outlet_half_wid_cells = ((gutter.width_at(1.0) / 2.0) / cell_size).ceil() as i32;
-
-        for i in 0..width {
-            // Calculate position along gutter (0.0 = inlet, 1.0 = outlet)
-            let i_i = i as i32;
-            let t = if i_i <= center_i - half_len_cells {
-                0.0
-            } else if i_i >= center_i + half_len_cells {
-                1.0
-            } else {
-                ((i_i - (center_i - half_len_cells)) as f32)
-                    / ((half_len_cells * 2) as f32).max(1.0)
-            };
-
-            // Variable width at this position (funnel effect)
-            let local_width = gutter.width_at(t);
-            let half_wid_cells = ((local_width / 2.0) / cell_size).ceil() as i32;
-
-            // Channel bounds in k (width direction) - variable!
-            let k_start = (center_k - half_wid_cells).max(0) as usize;
-            let k_end = ((center_k + half_wid_cells) as usize).min(depth);
-
-            // Compute floor_j directly from mesh floor position to align with visual
-            // Mesh floor Y at this position = gutter.position.y + half_drop - t * total_drop
-            // Solid top should be at mesh floor, so floor_j = floor(mesh_floor_Y / cell_size)
-            let mesh_floor_y = gutter.position.y + (total_drop / 2.0) - t * total_drop;
-            let floor_j = (mesh_floor_y / cell_size).floor() as i32;
-
-            // Look BOTH forward AND backward to cover staircase transitions
-            // At floor drops, both adjacent cells need the higher floor_j to prevent diagonal gaps
-            let t_next = if i_i + 1 >= center_i + half_len_cells {
-                1.0
-            } else if i_i + 1 <= center_i - half_len_cells {
-                0.0
-            } else {
-                ((i_i + 1 - (center_i - half_len_cells)) as f32)
-                    / ((half_len_cells * 2) as f32).max(1.0)
-            };
-            let mesh_floor_y_next = gutter.position.y + (total_drop / 2.0) - t_next * total_drop;
-            let floor_j_next = (mesh_floor_y_next / cell_size).floor() as i32;
-
-            let t_prev = if i_i - 1 <= center_i - half_len_cells {
-                0.0
-            } else if i_i - 1 >= center_i + half_len_cells {
-                1.0
-            } else {
-                ((i_i - 1 - (center_i - half_len_cells)) as f32)
-                    / ((half_len_cells * 2) as f32).max(1.0)
-            };
-            let mesh_floor_y_prev = gutter.position.y + (total_drop / 2.0) - t_prev * total_drop;
-            let floor_j_prev = (mesh_floor_y_prev / cell_size).floor() as i32;
-
-            // Use the HIGHEST of prev, current, and next floor_j to prevent staircase gaps
-            let effective_floor_j = floor_j.max(floor_j_next).max(floor_j_prev);
-            let wall_top_j = effective_floor_j + wall_height_cells;
-
-            // Is this position past the channel outlet? (in the margin zone leading to grid edge)
-            let past_outlet = i >= i_end;
-
-            for k in 0..depth {
-                let k_i = k as i32;
-                let in_channel_width = k >= k_start && k < k_end;
-                let in_channel_length = i >= i_start && i < i_end;
-
-                // For the margin zone past the outlet, use outlet dimensions
-                let in_outlet_chute = past_outlet
-                    && k_i >= (center_k - outlet_half_wid_cells)
-                    && k_i < (center_k + outlet_half_wid_cells);
-
-                // Outlet floor_j computed from mesh position at t=1.0
-                let outlet_floor_j = ((gutter.position.y - total_drop / 2.0) / cell_size).floor() as i32;
-
-                for j in 0..height {
-                    let j_i = j as i32;
-
-                    // Floor - fill ALL cells at and below effective_floor_j within channel
-                    // Use effective_floor_j for channel, outlet_floor_j for outlet chute
-                    let is_channel_floor =
-                        in_channel_length && in_channel_width && j_i <= effective_floor_j;
-                    let is_outlet_chute_floor = in_outlet_chute && j_i <= outlet_floor_j;
-                    let is_floor = is_channel_floor || is_outlet_chute_floor;
-
-                    // Side walls - mark ALL cells outside channel as solid (not just thin strip)
-                    // This prevents particles from escaping through gaps at grid edges
-                    // Also extend walls into margin zone past outlet
-                    let at_left_wall = k_i < (center_k - half_wid_cells);
-                    let at_right_wall = k_i >= (center_k + half_wid_cells);
-                    let is_side_wall_channel = (at_left_wall || at_right_wall)
-                        && in_channel_length
-                        && j_i <= wall_top_j
-                        && j_i >= 0;
-
-                    // Walls in the margin zone past outlet (using outlet width)
-                    let at_left_wall_outlet = k_i < (center_k - outlet_half_wid_cells);
-                    let at_right_wall_outlet = k_i >= (center_k + outlet_half_wid_cells);
-                    let is_side_wall_outlet = (at_left_wall_outlet || at_right_wall_outlet)
-                        && past_outlet
-                        && j_i <= outlet_floor_j + wall_height_cells
-                        && j_i >= 0;
-
-                    let is_side_wall = is_side_wall_channel || is_side_wall_outlet;
-
-                    // Back wall at inlet (left end, outside channel)
-                    // Use inlet width for back wall
-                    let at_back = i_i >= (center_i - half_len_cells - wall_thick_cells)
-                        && i_i < (center_i - half_len_cells);
-                    let is_back_wall = at_back
-                        && j_i <= wall_top_j
-                        && j_i >= 0
-                        && k_i >= (center_k - inlet_half_wid_cells - wall_thick_cells)
-                        && k_i < (center_k + inlet_half_wid_cells + wall_thick_cells);
-
-                    if is_floor || is_side_wall || is_back_wall {
-                        sim.grid.set_solid(i, j, k);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Mark sluice solid cells using cell-index approach (like friction_sluice)
-    fn mark_sluice_solid_cells(sim: &mut FlipSimulation3D, sluice: &SluicePiece, cell_size: f32) {
-        let width = sim.grid.width;
-        let height = sim.grid.height;
-        let depth = sim.grid.depth;
-
-        // Sluice position gives center in X/Z and base floor height in Y
-        let center_i = (sluice.position.x / cell_size).round() as i32;
-        let center_k = (sluice.position.z / cell_size).round() as i32;
-
-        // Channel dimensions in cells
-        let half_len_cells = ((sluice.length / 2.0) / cell_size).ceil() as i32;
-        let half_wid_cells = ((sluice.width / 2.0) / cell_size).ceil() as i32;
-
-        // Floor height drop due to slope
-        let slope_rad = sluice.slope_deg.to_radians();
-        let total_drop = sluice.length * slope_rad.tan();
-
-        // Riffle parameters in cells
-        let riffle_spacing_cells = (sluice.riffle_spacing / cell_size).round() as i32;
-        let riffle_height_cells = (sluice.riffle_height / cell_size).ceil() as i32;
-        let riffle_thick_cells = 2_i32;
-
-        // Wall parameters
-        let wall_height_cells = 12_i32; // Enough wall height
-
-        // Channel bounds
-        let i_start = (center_i - half_len_cells).max(0) as usize;
-        let i_end = ((center_i + half_len_cells) as usize).min(width);
-        let k_start = (center_k - half_wid_cells).max(0) as usize;
-        let k_end = ((center_k + half_wid_cells) as usize).min(depth);
-
-        // Inlet floor_j computed from mesh position at t=0
-        let inlet_floor_j = ((sluice.position.y + total_drop / 2.0) / cell_size).floor() as i32;
-
-        for i in 0..width {
-            let i_i = i as i32;
-
-            // Calculate t along sluice (0 = inlet, 1 = outlet)
-            let t = if i_i <= center_i - half_len_cells {
-                0.0
-            } else if i_i >= center_i + half_len_cells {
-                1.0
-            } else {
-                ((i_i - (center_i - half_len_cells)) as f32)
-                    / ((half_len_cells * 2) as f32).max(1.0)
-            };
-
-            // Compute floor_j from mesh floor position to align with visual
-            let mesh_floor_y = sluice.position.y + (total_drop / 2.0) - t * total_drop;
-            let floor_j = (mesh_floor_y / cell_size).floor() as i32;
-
-            // Look BOTH forward AND backward to cover staircase transitions
-            let t_next = if i_i + 1 >= center_i + half_len_cells {
-                1.0
-            } else if i_i + 1 <= center_i - half_len_cells {
-                0.0
-            } else {
-                ((i_i + 1 - (center_i - half_len_cells)) as f32)
-                    / ((half_len_cells * 2) as f32).max(1.0)
-            };
-            let mesh_floor_y_next = sluice.position.y + (total_drop / 2.0) - t_next * total_drop;
-            let floor_j_next = (mesh_floor_y_next / cell_size).floor() as i32;
-
-            let t_prev = if i_i - 1 <= center_i - half_len_cells {
-                0.0
-            } else if i_i - 1 >= center_i + half_len_cells {
-                1.0
-            } else {
-                ((i_i - 1 - (center_i - half_len_cells)) as f32)
-                    / ((half_len_cells * 2) as f32).max(1.0)
-            };
-            let mesh_floor_y_prev = sluice.position.y + (total_drop / 2.0) - t_prev * total_drop;
-            let floor_j_prev = (mesh_floor_y_prev / cell_size).floor() as i32;
-
-            // Use HIGHEST of prev, current, and next to prevent staircase gaps
-            let effective_floor_j = floor_j.max(floor_j_next).max(floor_j_prev);
-            let wall_top_j = effective_floor_j + riffle_height_cells + wall_height_cells;
-
-            // Check if this i position is on a riffle
-            let dist_from_start = i_i - (center_i - half_len_cells);
-            let is_riffle_x = if riffle_spacing_cells > 0 && dist_from_start > 4 {
-                (dist_from_start % riffle_spacing_cells) < riffle_thick_cells
-            } else {
-                false
-            };
-
-            // Is this position before the channel inlet? (inlet chute zone)
-            let before_inlet = (i as i32) < (center_i - half_len_cells);
-
-            for k in 0..depth {
-                let k_i = k as i32;
-                let in_channel_width = k >= k_start && k < k_end;
-                let in_channel_length = i >= i_start && i < i_end;
-
-                // Inlet chute: extend floor from grid edge to channel inlet
-                let in_inlet_chute = before_inlet
-                    && k_i >= (center_k - half_wid_cells)
-                    && k_i < (center_k + half_wid_cells);
-
-                for j in 0..height {
-                    let j_i = j as i32;
-
-                    // Floor - fill ALL cells at and below effective_floor_j within channel
-                    let is_channel_floor = j_i <= effective_floor_j && in_channel_length && in_channel_width;
-
-                    // Inlet chute floor - use inlet floor height
-                    let is_inlet_chute_floor = in_inlet_chute && j_i <= inlet_floor_j;
-
-                    let is_floor = is_channel_floor || is_inlet_chute_floor;
-
-                    // Riffles - extend above floor at regular intervals
-                    let is_riffle = is_riffle_x
-                        && in_channel_width
-                        && in_channel_length
-                        && j_i > effective_floor_j
-                        && j_i <= effective_floor_j + riffle_height_cells;
-
-                    // Side walls - mark ALL cells outside channel as solid (not just thin strip)
-                    // This prevents particles from escaping through gaps at grid edges
-                    // Also extend walls into inlet chute zone
-                    let at_left_wall = k_i < (center_k - half_wid_cells);
-                    let at_right_wall = k_i >= (center_k + half_wid_cells);
-                    let is_side_wall_channel = (at_left_wall || at_right_wall)
-                        && in_channel_length
-                        && j_i <= wall_top_j
-                        && j_i >= 0;
-                    let is_side_wall_inlet = (at_left_wall || at_right_wall)
-                        && before_inlet
-                        && j_i <= inlet_floor_j + wall_height_cells
-                        && j_i >= 0;
-                    let is_side_wall = is_side_wall_channel || is_side_wall_inlet;
-
-                    // Back wall at inlet - NO back wall since we have inlet chute now
-                    // Particles enter from the inlet side
-
-                    if is_floor || is_riffle || is_side_wall {
-                        sim.grid.set_solid(i, j, k);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Mark shaker deck solid cells - walls only (grid is porous)
-    /// Supports variable width (funnel effect)
-    /// Marks side walls, back wall, and grate bars as solid
-    fn mark_shaker_deck_solid_cells(sim: &mut FlipSimulation3D, deck: &ShakerDeckPiece, cell_size: f32) {
-        let width = sim.grid.width;
-        let height = sim.grid.height;
-        let depth = sim.grid.depth;
-
-        // Deck position gives center in X/Z and base height in Y
-        let center_i = (deck.position.x / cell_size).round() as i32;
-        let center_k = (deck.position.z / cell_size).round() as i32;
-
-        // Channel dimensions in cells
-        let half_len_cells = ((deck.length / 2.0) / cell_size).ceil() as i32;
-        // Variable width: inlet vs outlet
-        let inlet_half_wid_cells = ((deck.width / 2.0) / cell_size).ceil() as i32;
-        let outlet_half_wid_cells = ((deck.end_width / 2.0) / cell_size).ceil() as i32;
-
-        // Floor height drop due to tilt
-        let tilt_rad = deck.tilt_deg.to_radians();
-        let total_drop = deck.length * tilt_rad.tan();
-
-        // Wall parameters - deck walls are solid
-        let wall_height_cells = ((deck.wall_height / cell_size).ceil() as i32).max(4);
-        let wall_thick_cells = 2_i32;
-
-        // Grate parameters - bars and holes
-        let bar_spacing = deck.hole_size + deck.bar_thickness;
-        let bar_thick_cells = (deck.bar_thickness / cell_size).ceil() as i32;
-        let hole_cells = (deck.hole_size / cell_size).floor() as i32;
-        let pattern_cells = bar_thick_cells + hole_cells;
-
-        // Cross bar spacing (every 3rd bar_spacing)
-        let cross_spacing = bar_spacing * 3.0;
-        let cross_pattern_cells = (cross_spacing / cell_size).round() as i32;
-
-        // Channel bounds in i (length direction)
-        let i_start = (center_i - half_len_cells).max(0) as usize;
-        let i_end = ((center_i + half_len_cells) as usize).min(width);
-
-        for i in 0..width {
-            let i_i = i as i32;
-
-            // Calculate position along deck (0.0 = inlet, 1.0 = outlet)
-            let t = if i_i <= center_i - half_len_cells {
-                0.0
-            } else if i_i >= center_i + half_len_cells {
-                1.0
-            } else {
-                ((i_i - (center_i - half_len_cells)) as f32)
-                    / ((half_len_cells * 2) as f32).max(1.0)
-            };
-
-            // Variable width at this position (funnel effect)
-            let local_half_wid_cells = (inlet_half_wid_cells as f32
-                + (outlet_half_wid_cells - inlet_half_wid_cells) as f32 * t) as i32;
-
-            // Compute floor_j from mesh floor position
-            let mesh_floor_y = deck.position.y + (total_drop / 2.0) - t * total_drop;
-            let floor_j = (mesh_floor_y / cell_size).floor() as i32;
-            let wall_top_j = floor_j + wall_height_cells;
-
-            let in_channel_length = i >= i_start && i < i_end;
-
-            // Check if this X position is on a cross bar
-            let dist_from_start = i_i - (center_i - half_len_cells);
-            let on_cross_bar = if cross_pattern_cells > 0 {
-                (dist_from_start % cross_pattern_cells) < bar_thick_cells
-            } else {
-                false
-            };
-
-            for k in 0..depth {
-                let k_i = k as i32;
-
-                // Check if this Z position is on a longitudinal bar
-                let dist_from_center_z = (k_i - center_k).abs();
-                let on_long_bar = if pattern_cells > 0 {
-                    (dist_from_center_z % pattern_cells) < bar_thick_cells
-                } else {
-                    true // If no pattern, treat as solid
-                };
-
-                // Within channel width?
-                let in_channel_width = k_i >= (center_k - local_half_wid_cells)
-                    && k_i < (center_k + local_half_wid_cells);
-
-                for j in 0..height {
-                    let j_i = j as i32;
-
-                    // Side walls - mark cells outside channel width as solid
-                    let at_left_wall = k_i < (center_k - local_half_wid_cells);
-                    let at_right_wall = k_i >= (center_k + local_half_wid_cells);
-                    let is_side_wall = (at_left_wall || at_right_wall)
-                        && in_channel_length
-                        && j_i <= wall_top_j
-                        && j_i >= floor_j;
-
-                    // Back wall at inlet
-                    let at_back = i_i >= (center_i - half_len_cells - wall_thick_cells)
-                        && i_i < (center_i - half_len_cells);
-                    let is_back_wall = at_back
-                        && j_i <= wall_top_j
-                        && j_i >= floor_j
-                        && k_i >= (center_k - inlet_half_wid_cells - wall_thick_cells)
-                        && k_i < (center_k + inlet_half_wid_cells + wall_thick_cells);
-
-                    // Grate bars - at floor level, where bars exist (not holes)
-                    // Bars are solid, holes let particles through
-                    // Make bars 4 cells thick to prevent tunneling
-                    let at_floor_level = j_i >= floor_j && j_i <= floor_j + 3;
-                    let is_grate_bar = in_channel_length
-                        && in_channel_width
-                        && at_floor_level
-                        && (on_long_bar || on_cross_bar);
-
-                    if is_side_wall || is_back_wall || is_grate_bar {
-                        sim.grid.set_solid(i, j, k);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Add a transfer between pieces
-    fn add_transfer(
-        &mut self,
-        from_piece: usize,
-        to_piece: usize,
-        capture_min: Vec3,
-        capture_max: Vec3,
-        inject_pos: Vec3,
-        inject_vel: Vec3,
-    ) {
-        self.transfers.push(PieceTransfer {
-            from_piece,
-            to_piece,
-            capture_min,
-            capture_max,
-            inject_pos,
-            inject_vel,
-            transit_queue: Vec::new(),
-            transit_time: 0.05,
-        });
-    }
-
-    /// Emit particles with specific density into a piece
-    fn emit_into_piece_with_density(&mut self, piece_idx: usize, world_pos: Vec3, velocity: Vec3, density: f32, count: usize) {
-        if piece_idx >= self.pieces.len() {
-            return;
-        }
-
-        let piece = &mut self.pieces[piece_idx];
-        let sim_pos = world_pos - piece.grid_offset;
-
-        for _ in 0..count {
-            let spread = 0.01;
-            let offset = Vec3::new(
-                (self.rng.next_float() - 0.5) * spread,
-                (self.rng.next_float() - 0.5) * spread,
-                (self.rng.next_float() - 0.5) * spread,
-            );
-
-            piece.positions.push(sim_pos + offset);
-            piece.velocities.push(velocity);
-            piece.affine_vels.push(Mat3::ZERO);
-            piece.densities.push(density);
-
-            piece.sim.particles.spawn(sim_pos + offset, velocity);
-        }
-    }
-
-    /// Emit water particles (density = 1.0)
-    fn emit_into_piece(&mut self, piece_idx: usize, world_pos: Vec3, velocity: Vec3, count: usize) {
-        self.emit_into_piece_with_density(piece_idx, world_pos, velocity, 1.0, count);
-    }
-
-    /// Step all piece simulations
-    fn step(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, dt: f32) {
-        // Step each piece
-        for piece in &mut self.pieces {
-            if piece.positions.is_empty() {
-                continue;
-            }
-
-            // Create cell types
-            let (gw, gh, gd) = piece.grid_dims;
-            let cell_count = gw * gh * gd;
-            let mut cell_types = vec![0u32; cell_count];
-
-            // Mark particle cells as fluid
-            for pos in &piece.positions {
-                let i = (pos.x / piece.cell_size).floor() as isize;
-                let j = (pos.y / piece.cell_size).floor() as isize;
-                let k = (pos.z / piece.cell_size).floor() as isize;
-                if i >= 0
-                    && (i as usize) < gw
-                    && j >= 0
-                    && (j as usize) < gh
-                    && k >= 0
-                    && (k as usize) < gd
-                {
-                    let idx = (k as usize) * gw * gh + (j as usize) * gw + i as usize;
-                    cell_types[idx] = 1; // FLUID
-                }
-            }
-
-            let sdf = Some(piece.sim.grid.sdf().to_vec());
-
-            if let Some(gpu_flip) = &mut piece.gpu_flip {
-                gpu_flip.step(
-                    device,
-                    queue,
-                    &mut piece.positions,
-                    &mut piece.velocities,
-                    &mut piece.affine_vels,
-                    &piece.densities,
-                    &cell_types,
-                    sdf.as_deref(),
-                    None,
-                    dt,
-                    SIM_GRAVITY,
-                    0.0,
-                    SIM_PRESSURE_ITERS as u32,
-                );
-            }
-        }
-
-        // Process transfers - physically accurate world-space transformation
-        // Pass 1: collect particles to transfer with full state
-        #[derive(Clone)]
-        struct TransferParticle {
-            local_pos: Vec3,
-            vel: Vec3,
-            affine: Mat3,
-            density: f32,
-        }
-        let mut transfer_data: Vec<Vec<TransferParticle>> =
-            vec![Vec::new(); self.transfers.len()];
-
-        // Also collect grid offsets for coordinate transformation
-        let mut transfer_offsets: Vec<(Vec3, Vec3)> = Vec::new();
-        for transfer in self.transfers.iter() {
-            let from_offset = self.pieces[transfer.from_piece].grid_offset;
-            let to_offset = self.pieces[transfer.to_piece].grid_offset;
-            transfer_offsets.push((from_offset, to_offset));
-        }
-
-        for (tidx, transfer) in self.transfers.iter().enumerate() {
-            let from_piece = &self.pieces[transfer.from_piece];
-
-            // Debug: track max X position of particles in this piece
-            let mut max_x = f32::NEG_INFINITY;
-            let mut count_near_outlet = 0;
-
-            for i in 0..from_piece.positions.len() {
-                let pos = from_piece.positions[i];
-                if pos.x > max_x {
-                    max_x = pos.x;
-                }
-                // Count particles near the capture X range
-                if pos.x >= transfer.capture_min.x - 0.1 {
-                    count_near_outlet += 1;
-                }
-
-                if pos.x >= transfer.capture_min.x
-                    && pos.x <= transfer.capture_max.x
-                    && pos.y >= transfer.capture_min.y
-                    && pos.y <= transfer.capture_max.y
-                    && pos.z >= transfer.capture_min.z
-                    && pos.z <= transfer.capture_max.z
-                {
-                    transfer_data[tidx].push(TransferParticle {
-                        local_pos: pos,
-                        vel: from_piece.velocities[i],
-                        affine: from_piece.affine_vels[i],
-                        density: from_piece.densities[i],
-                    });
-                }
-            }
-
-            // Print debug info every 60 frames (more frequent)
-            if self.frame % 60 == 0 && !from_piece.positions.is_empty() {
-                // Also track Y range and particle distribution
-                let mut min_y = f32::INFINITY;
-                let mut avg_x = 0.0;
-                let mut min_x = f32::INFINITY;
-                for pos in &from_piece.positions {
-                    if pos.y < min_y {
-                        min_y = pos.y;
-                    }
-                    if pos.x < min_x {
-                        min_x = pos.x;
-                    }
-                    avg_x += pos.x;
-                }
-                avg_x /= from_piece.positions.len() as f32;
-
-                println!(
-                    "  Gutter: x=[{:.3},{:.3}], avg={:.3}, min_y={:.3}, cap_x=[{:.3},{:.3}], near={}, cap={}",
-                    min_x,
-                    max_x,
-                    avg_x,
-                    min_y,
-                    transfer.capture_min.x,
-                    transfer.capture_max.x,
-                    count_near_outlet,
-                    transfer_data[tidx].len()
-                );
-            }
-        }
-
-        // Pass 2: remove captured particles from source
-        for (tidx, transfer) in self.transfers.iter().enumerate() {
-            if transfer_data[tidx].is_empty() {
-                continue;
-            }
-
-            let from_piece = &mut self.pieces[transfer.from_piece];
-            let mut i = 0;
-            while i < from_piece.positions.len() {
-                let pos = from_piece.positions[i];
-                if pos.x >= transfer.capture_min.x
-                    && pos.x <= transfer.capture_max.x
-                    && pos.y >= transfer.capture_min.y
-                    && pos.y <= transfer.capture_max.y
-                    && pos.z >= transfer.capture_min.z
-                    && pos.z <= transfer.capture_max.z
-                {
-                    from_piece.positions.swap_remove(i);
-                    from_piece.velocities.swap_remove(i);
-                    from_piece.affine_vels.swap_remove(i);
-                    from_piece.densities.swap_remove(i);
-                } else {
-                    i += 1;
-                }
-            }
-        }
-
-        // Pass 3: inject into target with world-space coordinate transformation
-        const GRAVITY: f32 = -constants::GRAVITY;
-
-        for (tidx, transfer) in self.transfers.iter().enumerate() {
-            if transfer_data[tidx].is_empty() {
-                continue;
-            }
-
-            let (from_offset, to_offset) = transfer_offsets[tidx];
-            let to_piece = &mut self.pieces[transfer.to_piece];
-
-            for particle in &transfer_data[tidx] {
-                // Convert local position to world space
-                let world_pos = particle.local_pos + from_offset;
-
-                // Convert world position to target's local space
-                let target_local_pos = world_pos - to_offset;
-
-                // Calculate height drop for gravity acceleration
-                let height_drop = from_offset.y - to_offset.y;
-                let mut new_vel = particle.vel;
-
-                // Add gravity acceleration for height drop (v^2 = v0^2 + 2*g*h)
-                if height_drop > 0.0 {
-                    // Falling: add downward velocity from gravity
-                    let gravity_vel = (2.0 * GRAVITY * height_drop).sqrt();
-                    new_vel.y -= gravity_vel;
-                }
-
-                // Only clamp if significantly outside grid - allow particles at edges
-                let grid_dims = to_piece.grid_dims;
-                let cell_size = to_piece.cell_size;
-                let min_bound = cell_size; // Allow near edge
-                let max_x = (grid_dims.0 as f32) * cell_size - cell_size;
-                let max_y = (grid_dims.1 as f32) * cell_size - cell_size;
-                let max_z = (grid_dims.2 as f32) * cell_size - cell_size;
-                let clamped_pos = Vec3::new(
-                    target_local_pos.x.clamp(min_bound, max_x),
-                    target_local_pos.y.clamp(min_bound, max_y),
-                    target_local_pos.z.clamp(min_bound, max_z),
-                );
-
-                to_piece.positions.push(clamped_pos);
-                to_piece.velocities.push(new_vel);
-                to_piece.affine_vels.push(particle.affine); // Preserve affine velocity!
-                to_piece.densities.push(particle.density);
-                to_piece.sim.particles.spawn(clamped_pos, new_vel);
-            }
-
-            if !transfer_data[tidx].is_empty() {
-                static TRANSFER_PRINTED: std::sync::atomic::AtomicBool =
-                    std::sync::atomic::AtomicBool::new(false);
-                if !TRANSFER_PRINTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    println!(
-                        "Transfer: {} particles from piece {} to piece {} (world-space)",
-                        transfer_data[tidx].len(),
-                        transfer.from_piece,
-                        transfer.to_piece
-                    );
-                }
-            }
-        }
-
-        // Pass 4: Remove particles that have exited far past grid boundaries
-        // These are particles that flowed out of open boundaries and weren't captured by any transfer
-        let exit_margin = SIM_CELL_SIZE * 20.0; // Allow some distance before removal
-        for piece in &mut self.pieces {
-            let (gw, gh, gd) = piece.grid_dims;
-            let max_x = (gw as f32) * piece.cell_size + exit_margin;
-            let max_y = (gh as f32) * piece.cell_size + exit_margin;
-            let max_z = (gd as f32) * piece.cell_size + exit_margin;
-            let min_bound = -exit_margin;
-
-            let mut i = 0;
-            while i < piece.positions.len() {
-                let pos = piece.positions[i];
-                let out_of_bounds = pos.x < min_bound
-                    || pos.x > max_x
-                    || pos.y < min_bound
-                    || pos.y > max_y
-                    || pos.z < min_bound
-                    || pos.z > max_z;
-
-                if out_of_bounds {
-                    piece.positions.swap_remove(i);
-                    piece.velocities.swap_remove(i);
-                    piece.affine_vels.swap_remove(i);
-                    piece.densities.swap_remove(i);
-                } else {
-                    i += 1;
-                }
-            }
-        }
-
-        // Apply water-DEM coupling forces (only if fluid pieces exist)
-        // For dry DEM tests (no pieces), skip water forces
-        let has_fluid = !self.pieces.is_empty();
-        if has_fluid && !self.dem_sim.clumps.is_empty() {
-            // Apply water-DEM coupling forces to each clump
-            for clump in &mut self.dem_sim.clumps {
-                let template = &self.dem_sim.templates[clump.template_idx];
-
-                // Buoyancy force: F_b = ρ_water * V * g (upward)
-                // Volume of clump ≈ n_particles * (4/3)πr³
-                let particle_volume =
-                    (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
-                let total_volume = particle_volume * template.local_offsets.len() as f32;
-                let buoyancy_force = constants::WATER_DENSITY * total_volume * (-constants::GRAVITY);
-
-                // Drag force: F_d = 0.5 * C_d * ρ_water * A * v²
-                // Approximate cross-sectional area as circle with bounding radius
-                let area = std::f32::consts::PI * template.bounding_radius.powi(2);
-                let speed = clump.velocity.length();
-                let drag_force = if speed > 0.001 {
-                    0.5 * DEM_DRAG_COEFF * constants::WATER_DENSITY * area * speed * speed
-                } else {
-                    0.0
-                };
-
-                // Apply forces as velocity change (F = ma, so dv = F*dt/m)
-                // Buoyancy acts upward
-                clump.velocity.y += buoyancy_force * dt / template.mass;
-
-                // Drag opposes velocity
-                if speed > 0.001 {
-                    let drag_dir = -clump.velocity.normalize();
-                    let drag_dv = drag_force * dt / template.mass;
-                    // Don't let drag reverse velocity
-                    let max_drag = speed;
-                    clump.velocity += drag_dir * drag_dv.min(max_drag);
-                }
-            }
-        }
-
-        // Step DEM simulation (always, regardless of water)
-        if !self.dem_sim.clumps.is_empty() {
-            // If test_sdf is set, use it for isolated physics testing
-            // Otherwise, use piece SDFs for normal operation
-            if let Some(ref test_sdf) = self.test_sdf {
-                // Use test SDF for isolated physics testing
-                let (gw, gh, gd) = self.test_sdf_dims;
-                let sdf_params = SdfParams {
-                    sdf: test_sdf,
-                    grid_width: gw,
-                    grid_height: gh,
-                    grid_depth: gd,
-                    cell_size: self.test_sdf_cell_size,
-                    grid_offset: self.test_sdf_offset,
-                };
-
-                // Debug: print particle state every 30 frames
-                if self.frame % 30 == 0 && !self.dem_sim.clumps.is_empty() {
-                    let clump = &self.dem_sim.clumps[0];
-                    let max_vel = self.dem_sim.clumps.iter().map(|c| c.velocity.length()).fold(0.0f32, f32::max);
-                    let avg_y = self.dem_sim.clumps.iter().map(|c| c.position.y).sum::<f32>() / self.dem_sim.clumps.len() as f32;
-                    let min_y = self.dem_sim.clumps.iter().map(|c| c.position.y).fold(f32::MAX, f32::min);
-                    let max_y = self.dem_sim.clumps.iter().map(|c| c.position.y).fold(f32::MIN, f32::max);
-
-                    // Sample SDF at first particle position
-                    use sim3d::clump::sample_sdf_with_gradient;
-                    let (sdf_val, _normal) = sample_sdf_with_gradient(
-                        test_sdf,
-                        clump.position,
-                        self.test_sdf_offset,
-                        gw, gh, gd,
-                        self.test_sdf_cell_size,
-                    );
-
-                    println!("[Frame {}] N={}, Y: avg={:.3} min={:.3} max={:.3}, MaxVel={:.3}, Particle0: pos={:.3},{:.3},{:.3} vel={:.3},{:.3},{:.3} sdf={:.4}",
-                        self.frame, self.dem_sim.clumps.len(), avg_y, min_y, max_y, max_vel,
-                        clump.position.x, clump.position.y, clump.position.z,
-                        clump.velocity.x, clump.velocity.y, clump.velocity.z, sdf_val);
-                }
-
-                self.dem_sim.step_with_sdf(dt, &sdf_params);
-            } else if !self.pieces.is_empty() {
-                // Normal operation: use piece SDFs
-                // First, do DEM integration step (forces, velocity, position)
-                self.dem_sim.step(dt);
-
-                // Then apply collision response against EACH piece's SDF
-                for piece in &self.pieces {
-                    let (gw, gh, gd) = piece.grid_dims;
-
-                    let sdf_params = SdfParams {
-                        sdf: piece.sim.grid.sdf(),
-                        grid_width: gw,
-                        grid_height: gh,
-                        grid_depth: gd,
-                        cell_size: piece.cell_size,
-                        grid_offset: piece.grid_offset, // World position of grid origin
-                    };
-
-                    // collision_response_only handles SDF collision without re-integrating
-                    // wet=true uses lower friction (gravel slides in water)
-                    self.dem_sim.collision_response_only(dt, &sdf_params, true);
-                }
-            } else {
-                self.dem_sim.step(dt);
-            }
-
-            // Remove clumps that fall too far below
-            self.dem_sim.clumps.retain(|c| c.position.y > -2.0);
-        }
-
-        self.frame += 1;
-    }
-
-    /// Get total particle count across all pieces
-    fn total_particles(&self) -> usize {
-        self.pieces.iter().map(|p| p.positions.len()).sum()
-    }
-}
 
 struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
     layout: EditorLayout,
-    rng: SimpleRng,
+    scenario: Option<ScenarioConfig>,
 
     // Editor state
     mode: EditorMode,
@@ -1589,7 +233,10 @@ struct App {
     preview_shaker_deck: ShakerDeckPiece,
 
     // Camera state
-    camera: Camera,
+    camera_yaw: f32,
+    camera_pitch: f32,
+    camera_distance: f32,
+    camera_target: Vec3,
 
     // Input state
     mouse_pressed: bool,
@@ -1601,6 +248,7 @@ struct App {
     is_simulating: bool,
     multi_sim: Option<MultiGridSim>,
     fluid_renderer: Option<ScreenSpaceFluidRenderer>,
+    particle_stream_cap: Option<usize>,
 
     // Visual Test mode
     test_mode: bool,
@@ -1620,7 +268,10 @@ struct App {
 }
 
 struct GpuState {
-    ctx: WgpuContext,
+    surface: wgpu::Surface<'static>,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
+    config: wgpu::SurfaceConfiguration,
 
     // Mesh rendering
     mesh_pipeline: wgpu::RenderPipeline,
@@ -1630,7 +281,7 @@ struct GpuState {
     bind_group: wgpu::BindGroup,
 
     // Depth buffer
-    depth_view: wgpu::TextureView,
+    depth_texture: wgpu::TextureView,
 }
 
 impl App {
@@ -1640,20 +291,28 @@ impl App {
 
     fn new_with_scenario(scenario_path: Option<String>) -> Self {
         // Load scenario from file if provided, otherwise use default connected layout
-        let layout = if let Some(ref path) = scenario_path {
-            match EditorLayout::load_json(Path::new(path)) {
-                Ok(loaded) => {
-                    println!("Loaded scenario: {}", path);
-                    loaded
+        let (layout, scenario) = if let Some(ref path) = scenario_path {
+            match ScenarioConfig::load_json(Path::new(path)) {
+                Ok(config) => {
+                    if let Some(name) = config.name.as_deref() {
+                        println!("Loaded scenario: {} ({})", path, name);
+                    } else {
+                        println!("Loaded scenario: {}", path);
+                    }
+                    if let Some(description) = config.description.as_deref() {
+                        println!("  {}", description);
+                    }
+                    let layout = config.layout.clone();
+                    (layout, Some(config))
                 }
                 Err(e) => {
                     eprintln!("Failed to load scenario '{}': {}", path, e);
                     eprintln!("Falling back to default layout");
-                    EditorLayout::new_connected()
+                    (EditorLayout::new_connected(), None)
                 }
             }
         } else {
-            EditorLayout::new_connected()
+            (EditorLayout::new_connected(), None)
         };
 
         if scenario_path.is_none() {
@@ -1698,14 +357,17 @@ impl App {
             window: None,
             gpu: None,
             layout,
-            rng: SimpleRng::new(0xCAFEBABE),
+            scenario,
             mode: EditorMode::Select,
             selection: Selection::None,
             preview_gutter: GutterPiece::default(),
             preview_sluice: SluicePiece::default(),
             preview_emitter: EmitterPiece::default(),
             preview_shaker_deck: ShakerDeckPiece::default(),
-            camera: Camera::new(0.5, 0.6, 5.0, Vec3::new(0.0, 0.5, 0.0)),
+            camera_yaw: 0.5,
+            camera_pitch: 0.6,
+            camera_distance: 5.0,
+            camera_target: Vec3::new(0.0, 0.5, 0.0),
             mouse_pressed: false,
             last_mouse_pos: None,
             shift_pressed: false,
@@ -1714,8 +376,9 @@ impl App {
             is_simulating: false,
             multi_sim: None,
             fluid_renderer: None,
+            particle_stream_cap: None,
             // Visual test mode
-            test_mode: false,
+            test_mode: true,
             test_idx: 0,
             test_frame: 0,
             // Legacy single-grid fields
@@ -1731,6 +394,14 @@ impl App {
         }
     }
 
+    fn camera_position(&self) -> Vec3 {
+        self.camera_target
+            + Vec3::new(
+                self.camera_distance * self.camera_yaw.cos() * self.camera_pitch.cos(),
+                self.camera_distance * self.camera_pitch.sin(),
+                self.camera_distance * self.camera_yaw.sin() * self.camera_pitch.cos(),
+            )
+    }
 
     // =========================================================================
     // Visual Test Mode
@@ -1769,44 +440,6 @@ impl App {
         }
     }
 
-    fn restore_simulation_state(&mut self, state: SimulationState) {
-        let Some(gpu) = &self.gpu else {
-            println!("Cannot restore simulation state: no GPU state!");
-            return;
-        };
-
-        let mut multi_sim = MultiGridSim::new();
-        
-        // Match flips to pieces in order: gutters, then sluices, then shaker decks
-        let mut flip_idx = 0;
-
-        for (idx, gutter) in self.layout.gutters.iter().enumerate() {
-            let existing = state.flips.get(flip_idx).cloned();
-            if existing.is_some() { flip_idx += 1; }
-            multi_sim.add_gutter(&gpu.ctx.device, gutter, idx, existing);
-        }
-
-        for (idx, sluice) in self.layout.sluices.iter().enumerate() {
-            let existing = state.flips.get(flip_idx).cloned();
-            if existing.is_some() { flip_idx += 1; }
-            multi_sim.add_sluice(&gpu.ctx.device, sluice, idx, existing);
-        }
-
-        for (idx, deck) in self.layout.shaker_decks.iter().enumerate() {
-            let existing = state.flips.get(flip_idx).cloned();
-            if existing.is_some() { flip_idx += 1; }
-            multi_sim.add_shaker_deck(&gpu.ctx.device, deck, idx, existing);
-        }
-
-        if let Some(dem) = state.dem {
-            multi_sim.dem_sim = dem;
-        }
-
-        self.multi_sim = Some(multi_sim);
-        self.is_simulating = true;
-        println!("Simulation state restored.");
-    }
-
     fn run_test(&mut self, test_idx: usize) {
         if test_idx >= VISUAL_TESTS.len() {
             println!("Invalid test index: {}", test_idx);
@@ -1829,7 +462,10 @@ impl App {
 
         // Update window title
         if let Some(w) = &self.window {
-            w.set_title(&format!("TEST {}: {} | {}", test.key, test.name, test.watch));
+            w.set_title(&format!(
+                "TEST {}: {} | {}",
+                test.key, test.name, test.watch
+            ));
         }
 
         // Stop current simulation if running
@@ -1844,35 +480,14 @@ impl App {
     fn setup_test_scenario(&mut self, test_idx: usize) {
         let test = &VISUAL_TESTS[test_idx];
 
-        // Try to load from scenario file if defined
-        if let Some(scenario_path) = test.scenario {
-            match Scenario::load_json(Path::new(scenario_path)) {
-                Ok(scenario) => {
-                    self.layout = scenario.layout;
-                    if let Some(target) = scenario.camera_target {
-                        self.camera.target = target;
-                    }
-                    if let Some(dist) = scenario.camera_distance {
-                        self.camera.distance = dist;
-                    }
-                    if let Some(state) = scenario.state {
-                        self.restore_simulation_state(state);
-                    } else {
-                        self.start_simulation();
-                    }
-                    println!("Loaded test scenario from {}", scenario_path);
-                    return;
-                }
-                Err(e) => {
-                    eprintln!("Failed to load scenario {}: {}. Falling back to hardcoded.", scenario_path, e);
-                }
-            }
-        }
-
         // DEM tests (0-3) use simplified test geometry for isolated physics testing
         // Other tests use the full washplant layout
         if matches!(test.category, TestCategory::Dem) {
             self.setup_dem_test(test_idx);
+            return;
+        }
+        if matches!(test.category, TestCategory::SweBox) {
+            self.setup_fluid_box_test();
             return;
         }
 
@@ -1886,28 +501,29 @@ impl App {
                 // View the shaker deck and gutter flow
                 if !self.layout.shaker_decks.is_empty() {
                     let deck = &self.layout.shaker_decks[0];
-                    self.camera.target = deck.position;
+                    self.camera_target = deck.position;
                 }
-                self.camera.distance = 2.0;
-                self.camera.yaw = 0.5;
-                self.camera.pitch = 0.5;
+                self.camera_distance = 2.0;
+                self.camera_yaw = 0.5;
+                self.camera_pitch = 0.5;
             }
+            TestCategory::SweBox => unreachable!(), // Handled above
             TestCategory::Sediment => {
                 // View the sluice for gold capture
                 if !self.layout.sluices.is_empty() {
                     let sluice = &self.layout.sluices[0];
-                    self.camera.target = sluice.position;
+                    self.camera_target = sluice.position;
                 }
-                self.camera.distance = 1.5;
-                self.camera.yaw = 0.2;
-                self.camera.pitch = 0.3;
+                self.camera_distance = 1.5;
+                self.camera_yaw = 0.2;
+                self.camera_pitch = 0.3;
             }
             TestCategory::Terrain => {
                 // View overall system
-                self.camera.target = Vec3::new(0.0, 0.8, 0.0);
-                self.camera.distance = 3.0;
-                self.camera.yaw = 0.5;
-                self.camera.pitch = 0.6;
+                self.camera_target = Vec3::new(0.0, 0.8, 0.0);
+                self.camera_distance = 3.0;
+                self.camera_yaw = 0.5;
+                self.camera_pitch = 0.6;
             }
         }
 
@@ -1915,11 +531,13 @@ impl App {
         self.start_simulation();
 
         println!("Test scenario {} setup complete.", test_idx + 1);
-        println!("Layout: {} gutters, {} sluices, {} emitters, {} shaker decks",
+        println!(
+            "Layout: {} gutters, {} sluices, {} emitters, {} shaker decks",
             self.layout.gutters.len(),
             self.layout.sluices.len(),
             self.layout.emitters.len(),
-            self.layout.shaker_decks.len());
+            self.layout.shaker_decks.len()
+        );
         println!("Watch: {}", test.watch);
         println!("\nColor key: Blue=water, Yellow=gold(heavy), Gray=sand(light)");
     }
@@ -1930,6 +548,7 @@ impl App {
 
         // Clear the layout - we're using test geometry, not washplant pieces
         self.layout = EditorLayout::default();
+        self.layout.emitters.clear();
 
         // Create MultiGridSim for DEM-only simulation
         let mut multi_sim = MultiGridSim::new();
@@ -1951,16 +570,18 @@ impl App {
                             0.5 + (j as f32) * 0.03, // Drop from 0.5m height
                             0.0,
                         );
-                        multi_sim.dem_sim.spawn(multi_sim.sand_template_idx, pos, Vec3::ZERO);
+                        multi_sim
+                            .dem_sim
+                            .spawn(multi_sim.sand_template_idx, pos, Vec3::ZERO);
                     }
                 }
                 println!("  Spawned 25 particles at y=0.5, floor at y=0");
 
                 // Camera setup
-                self.camera.target = Vec3::new(0.0, 0.3, 0.0);
-                self.camera.distance = 1.5;
-                self.camera.yaw = 0.3;
-                self.camera.pitch = 0.5;
+                self.camera_target = Vec3::new(0.0, 0.3, 0.0);
+                self.camera_distance = 1.5;
+                self.camera_yaw = 0.3;
+                self.camera_pitch = 0.5;
             }
             1 => {
                 // Test 2: DEM Wall Collision
@@ -1976,15 +597,17 @@ impl App {
                     );
                     // Throw toward +X wall
                     let vel = Vec3::new(1.0, 0.0, 0.0);
-                    multi_sim.dem_sim.spawn(multi_sim.sand_template_idx, pos, vel);
+                    multi_sim
+                        .dem_sim
+                        .spawn(multi_sim.sand_template_idx, pos, vel);
                 }
                 println!("  Spawned 10 particles with sideways velocity in box");
 
                 // Camera setup
-                self.camera.target = Vec3::new(0.0, 0.15, 0.0);
-                self.camera.distance = 1.0;
-                self.camera.yaw = 0.0;
-                self.camera.pitch = 0.6;
+                self.camera_target = Vec3::new(0.0, 0.15, 0.0);
+                self.camera_distance = 1.0;
+                self.camera_yaw = 0.0;
+                self.camera_pitch = 0.6;
             }
             2 => {
                 // Test 3: DEM Density Separation
@@ -2001,19 +624,23 @@ impl App {
                         );
                         // Alternate between gold and sand
                         if (i + j) % 2 == 0 {
-                            multi_sim.dem_sim.spawn(multi_sim.gold_template_idx, pos, Vec3::ZERO);
+                            multi_sim
+                                .dem_sim
+                                .spawn(multi_sim.gold_template_idx, pos, Vec3::ZERO);
                         } else {
-                            multi_sim.dem_sim.spawn(multi_sim.sand_template_idx, pos, Vec3::ZERO);
+                            multi_sim
+                                .dem_sim
+                                .spawn(multi_sim.sand_template_idx, pos, Vec3::ZERO);
                         }
                     }
                 }
                 println!("  Spawned 25 mixed gold/sand particles");
 
                 // Camera setup
-                self.camera.target = Vec3::new(0.0, 0.2, 0.0);
-                self.camera.distance = 1.0;
-                self.camera.yaw = 0.3;
-                self.camera.pitch = 0.5;
+                self.camera_target = Vec3::new(0.0, 0.2, 0.0);
+                self.camera_distance = 1.0;
+                self.camera_yaw = 0.3;
+                self.camera_pitch = 0.5;
             }
             3 => {
                 // Test 4: DEM Settling Time
@@ -2023,18 +650,20 @@ impl App {
                 // Spawn 50 particles in a random-ish pattern
                 for i in 0..50 {
                     let x = ((i * 7) % 10) as f32 * 0.04 - 0.2;
-                    let y = 0.3 + (i as f32 * 0.005);
+                    let y = 0.3 + (i as f32 * 0.025);
                     let z = ((i * 13) % 10) as f32 * 0.04 - 0.2;
                     let pos = Vec3::new(x, y, z);
-                    multi_sim.dem_sim.spawn(multi_sim.sand_template_idx, pos, Vec3::ZERO);
+                    multi_sim
+                        .dem_sim
+                        .spawn(multi_sim.sand_template_idx, pos, Vec3::ZERO);
                 }
                 println!("  Spawned 50 particles, should settle within 5s");
 
                 // Camera setup
-                self.camera.target = Vec3::new(0.0, 0.15, 0.0);
-                self.camera.distance = 1.2;
-                self.camera.yaw = 0.4;
-                self.camera.pitch = 0.6;
+                self.camera_target = Vec3::new(0.0, 0.15, 0.0);
+                self.camera_distance = 1.2;
+                self.camera_yaw = 0.4;
+                self.camera_pitch = 0.6;
             }
             _ => {
                 println!("  Unknown DEM test index: {}", test_idx);
@@ -2046,6 +675,84 @@ impl App {
         println!("Watch: {}", test.watch);
         println!("\nColor key: Yellow=gold(heavy), Gray=sand(light)");
 
+        // Initialize GPU DEM if we have GPU state
+        if let Some(gpu) = &self.gpu {
+            multi_sim.init_gpu_dem(gpu.device.clone(), gpu.queue.clone());
+        }
+
+        // Store simulation and mark as running
+        self.multi_sim = Some(multi_sim);
+        self.is_simulating = true;
+    }
+
+    /// Start a GPU FLIP test in a closed box using equipment_geometry.
+    fn setup_fluid_box_test(&mut self) {
+        // Clear layout - box test uses standalone geometry
+        self.layout = EditorLayout::default();
+
+        let Some(gpu) = &self.gpu else {
+            println!("Cannot start box test: no GPU state!");
+            return;
+        };
+
+        println!("=== Starting GPU FLIP Box Test ===");
+
+        let mut multi_sim = MultiGridSim::new();
+
+        let cell_size = SIM_CELL_SIZE;
+        let grid_width = 32usize;
+        let grid_height = 20usize;
+        let grid_depth = 32usize;
+        let wall_thickness = 2usize;
+
+        let grid_offset = Vec3::new(
+            -(grid_width as f32 * cell_size) * 0.5,
+            0.0,
+            -(grid_depth as f32 * cell_size) * 0.5,
+        );
+
+        let piece_idx = multi_sim.add_equipment_box(
+            &gpu.device,
+            grid_offset,
+            grid_width,
+            grid_height,
+            grid_depth,
+            wall_thickness,
+        );
+
+        // Configure a streaming emitter above the left wall
+        let emitter_id = self.layout.next_id();
+        let mut emitter = EmitterPiece::new(emitter_id);
+        emitter.position = Vec3::new(
+            grid_offset.x - cell_size * 0.5,
+            grid_offset.y + (grid_height as f32) * cell_size * 0.75,
+            grid_offset.z + (grid_depth as f32 * cell_size) * 0.5,
+        );
+        emitter.rotation = Rotation::R0;
+        emitter.rate = 6000.0;
+        emitter.velocity = 2.5;
+        emitter.spread_deg = 5.0;
+        emitter.radius = cell_size * 0.5;
+        emitter.width = grid_depth as f32 * cell_size * 0.8;
+        emitter.spawn_sediment = false;
+        self.layout.emitters.push(emitter);
+
+        println!(
+            "  Box grid: {}x{}x{} @ cell_size={:.3}",
+            grid_width, grid_height, grid_depth, cell_size
+        );
+        println!(
+            "  Streaming emitter rate: {:.0} particles/s (cap 100_000)",
+            6000.0
+        );
+
+        // Camera setup
+        self.camera_target = Vec3::new(0.0, 0.25, 0.0);
+        self.camera_distance = 1.6;
+        self.camera_yaw = 0.4;
+        self.camera_pitch = 0.5;
+
+        self.particle_stream_cap = Some(100_000);
         // Store simulation and mark as running
         self.multi_sim = Some(multi_sim);
         self.is_simulating = true;
@@ -2095,7 +802,7 @@ impl App {
 
         // Add a piece simulation for each gutter
         for (idx, gutter) in self.layout.gutters.iter().enumerate() {
-            let piece_idx = multi_sim.add_gutter(&gpu.ctx.device, gutter, idx, None);
+            let piece_idx = multi_sim.add_gutter(&gpu.device, gutter, idx);
             let piece = &multi_sim.pieces[piece_idx];
             println!(
                 "  Gutter #{}: grid {}x{}x{} at {:?}",
@@ -2105,7 +812,7 @@ impl App {
 
         // Add a piece simulation for each sluice
         for (idx, sluice) in self.layout.sluices.iter().enumerate() {
-            let piece_idx = multi_sim.add_sluice(&gpu.ctx.device, sluice, idx, None);
+            let piece_idx = multi_sim.add_sluice(&gpu.device, sluice, idx);
             let piece = &multi_sim.pieces[piece_idx];
             println!(
                 "  Sluice #{}: grid {}x{}x{} at {:?}",
@@ -2115,7 +822,7 @@ impl App {
 
         // Add a piece simulation for each shaker deck
         for (idx, deck) in self.layout.shaker_decks.iter().enumerate() {
-            let piece_idx = multi_sim.add_shaker_deck(&gpu.ctx.device, deck, idx, None);
+            let piece_idx = multi_sim.add_shaker_deck(&gpu.device, deck, idx);
             let piece = &multi_sim.pieces[piece_idx];
             println!(
                 "  ShakerDeck #{}: grid {}x{}x{} at {:?}",
@@ -2146,10 +853,10 @@ impl App {
             let capture_depth = gutter.length * 0.2 + SIM_CELL_SIZE * 4.0;
             let capture_x_min = outlet_x - capture_depth;
             let capture_x_max = outlet_x + SIM_CELL_SIZE * 10.0; // Extend past outlet to catch fast particles
-            // Y: full range - capture at any height (particles may have fallen)
+                                                                 // Y: full range - capture at any height (particles may have fallen)
             let capture_y_min = -1.0; // Allow negative Y for fallen particles
             let capture_y_max = 10.0; // Generous - capture everything
-            // Z: full grid width to catch any lateral drift
+                                      // Z: full grid width to catch any lateral drift
             let center_z = margin + gutter.max_width() / 2.0;
             let half_width = gutter.max_width() / 2.0 + SIM_CELL_SIZE * 4.0;
             let capture_z_min = center_z - half_width;
@@ -2197,7 +904,10 @@ impl App {
 
             // Check where gutter outlet maps to in sluice local space
             let outlet_in_sluice_local = gutter_outlet_world - sluice_piece.grid_offset;
-            println!("    Gutter outlet in sluice local: {:?}", outlet_in_sluice_local);
+            println!(
+                "    Gutter outlet in sluice local: {:?}",
+                outlet_in_sluice_local
+            );
             println!("    Sluice grid size: {:?}", sluice_piece.grid_dims);
         }
 
@@ -2209,7 +919,7 @@ impl App {
             let shaker_idx = num_gutters + num_sluices;
             let gutter_idx = 0; // Transfer to first gutter (funnel below)
 
-            let _deck = &self.layout.shaker_decks[0];
+            let deck = &self.layout.shaker_decks[0];
             let gutter = &self.layout.gutters[0];
 
             // Capture region: bottom of shaker deck grid
@@ -2266,9 +976,12 @@ impl App {
         }
 
         // Create fluid renderer
-        let mut fluid_renderer = ScreenSpaceFluidRenderer::new(&gpu.ctx.device, gpu.ctx.config.format);
+        let mut fluid_renderer = ScreenSpaceFluidRenderer::new(&gpu.device, gpu.config.format);
         fluid_renderer.particle_radius = SIM_CELL_SIZE * 0.5;
-        fluid_renderer.resize(&gpu.ctx.device, gpu.ctx.config.width, gpu.ctx.config.height);
+        fluid_renderer.resize(&gpu.device, gpu.config.width, gpu.config.height);
+
+        // Initialize GPU DEM
+        multi_sim.init_gpu_dem(gpu.device.clone(), gpu.queue.clone());
 
         self.multi_sim = Some(multi_sim);
         self.fluid_renderer = Some(fluid_renderer);
@@ -2289,6 +1002,7 @@ impl App {
         self.affine_vels.clear();
         self.densities.clear();
         println!("Simulation stopped.");
+        self.particle_stream_cap = None;
     }
 
     /// Mark solid cells in the simulation grid from editor geometry
@@ -2505,15 +1219,15 @@ impl App {
             for _ in 0..emit_count {
                 // Spray bar: spread along perpendicular axis based on width
                 let perp = Vec3::new(-base_dir.z, 0.0, base_dir.x);
-                let width_offset = (self.rng.next_float() - 0.5) * emitter.width;
+                let width_offset = (rand_float() - 0.5) * emitter.width;
                 // Small random offset in emit direction and Y for natural spray
-                let depth_offset = self.rng.next_float() * emitter.radius;
-                let y_offset = (self.rng.next_float() - 0.5) * emitter.radius * 0.5;
+                let depth_offset = rand_float() * emitter.radius;
+                let y_offset = (rand_float() - 0.5) * emitter.radius * 0.5;
                 let pos_offset = perp * width_offset + base_dir * depth_offset + Vec3::Y * y_offset;
 
                 // Random spread angles (yaw and pitch)
-                let spread_yaw = (self.rng.next_float() - 0.5) * spread_rad;
-                let spread_pitch = (self.rng.next_float() - 0.5) * spread_rad * 0.5;
+                let spread_yaw = (rand_float() - 0.5) * spread_rad;
+                let spread_pitch = (rand_float() - 0.5) * spread_rad * 0.5;
 
                 // Apply spread to base direction
                 let cy = spread_yaw.cos();
@@ -2592,11 +1306,7 @@ impl App {
 
             if in_x && in_z && above {
                 // Compute distance to center of piece
-                let center = Vec3::new(
-                    (gw as f32 * cs) / 2.0,
-                    margin,
-                    (gd as f32 * cs) / 2.0,
-                );
+                let center = Vec3::new((gw as f32 * cs) / 2.0, margin, (gd as f32 * cs) / 2.0);
                 let dist = (local_pos - center).length();
                 if dist < best_dist {
                     best_dist = dist;
@@ -2618,7 +1328,14 @@ impl App {
             return;
         }
 
+        let mut cap_remaining = self
+            .particle_stream_cap
+            .map(|limit| limit.saturating_sub(multi_sim.total_particles()));
+
         for emitter in &self.layout.emitters {
+            if let Some(0) = cap_remaining {
+                break;
+            }
             // Find the best target piece for this emitter
             let target_piece = Self::find_piece_for_emitter(multi_sim, emitter.position);
             // Calculate emit count based on rate (particles per second at 60 FPS)
@@ -2634,18 +1351,27 @@ impl App {
 
             let spread_rad = emitter.spread_deg.to_radians();
 
-            for _ in 0..emit_count {
+            let actual_emit = if let Some(rem) = cap_remaining {
+                emit_count.min(rem)
+            } else {
+                emit_count
+            };
+            if actual_emit == 0 {
+                continue;
+            }
+
+            for _ in 0..actual_emit {
                 // Spray bar: spread along perpendicular axis based on width
                 let perp = Vec3::new(-base_dir.z, 0.0, base_dir.x);
-                let width_offset = (multi_sim.rng.next_float() - 0.5) * emitter.width;
+                let width_offset = (rand_float() - 0.5) * emitter.width;
                 // Small random offset in emit direction and Y for natural spray
-                let depth_offset = multi_sim.rng.next_float() * emitter.radius;
-                let y_offset = (multi_sim.rng.next_float() - 0.5) * emitter.radius * 0.5;
+                let depth_offset = rand_float() * emitter.radius;
+                let y_offset = (rand_float() - 0.5) * emitter.radius * 0.5;
                 let pos_offset = perp * width_offset + base_dir * depth_offset + Vec3::Y * y_offset;
 
                 // Random spread
-                let spread_yaw = (multi_sim.rng.next_float() - 0.5) * spread_rad;
-                let spread_pitch = (multi_sim.rng.next_float() - 0.5) * spread_rad * 0.5;
+                let spread_yaw = (rand_float() - 0.5) * spread_rad;
+                let spread_pitch = (rand_float() - 0.5) * spread_rad * 0.5;
                 let cy = spread_yaw.cos();
                 let sy = spread_yaw.sin();
                 let cp = spread_pitch.cos();
@@ -2669,9 +1395,9 @@ impl App {
                 multi_sim.emit_into_piece(target_piece, world_pos, velocity, 1);
 
                 // Spawn DEM clumps alongside water (DEM_SEDIMENT_RATIO of particles are sediment)
-                if multi_sim.rng.next_float() < DEM_SEDIMENT_RATIO {
+                if emitter.spawn_sediment && rand_float() < DEM_SEDIMENT_RATIO {
                     // 20% gold, 80% sand/gangue
-                    let template_idx = if multi_sim.rng.next_float() < 0.2 {
+                    let template_idx = if rand_float() < 0.2 {
                         multi_sim.gold_template_idx
                     } else {
                         multi_sim.sand_template_idx
@@ -2679,6 +1405,9 @@ impl App {
                     // Spawn at same position as water (IN the water flow)
                     multi_sim.dem_sim.spawn(template_idx, world_pos, velocity);
                 }
+            }
+            if let Some(rem) = cap_remaining.as_mut() {
+                *rem -= actual_emit;
             }
         }
 
@@ -2692,18 +1421,32 @@ impl App {
                 let local_pos = emitter.position - piece.grid_offset;
                 let (gw, gh, gd) = piece.grid_dims;
                 let cs = piece.cell_size;
-                let in_bounds = local_pos.x >= 0.0 && local_pos.x < gw as f32 * cs
-                    && local_pos.y >= 0.0 && local_pos.y < gh as f32 * cs
-                    && local_pos.z >= 0.0 && local_pos.z < gd as f32 * cs;
-                println!("  Emitter {}: world={:?} -> piece {} (local={:?}, in_bounds={})",
-                    i, emitter.position, target, local_pos, in_bounds);
-                println!("    Piece {} grid: offset={:?}, dims={:?}, size={:.3}x{:.3}x{:.3}",
-                    target, piece.grid_offset, piece.grid_dims,
-                    gw as f32 * cs, gh as f32 * cs, gd as f32 * cs);
+                let in_bounds = local_pos.x >= 0.0
+                    && local_pos.x < gw as f32 * cs
+                    && local_pos.y >= 0.0
+                    && local_pos.y < gh as f32 * cs
+                    && local_pos.z >= 0.0
+                    && local_pos.z < gd as f32 * cs;
+                println!(
+                    "  Emitter {}: world={:?} -> piece {} (local={:?}, in_bounds={})",
+                    i, emitter.position, target, local_pos, in_bounds
+                );
+                println!(
+                    "    Piece {} grid: offset={:?}, dims={:?}, size={:.3}x{:.3}x{:.3}",
+                    target,
+                    piece.grid_offset,
+                    piece.grid_dims,
+                    gw as f32 * cs,
+                    gh as f32 * cs,
+                    gd as f32 * cs
+                );
             }
             println!("  Total pieces: {}", multi_sim.pieces.len());
             for (i, piece) in multi_sim.pieces.iter().enumerate() {
-                println!("    Piece {}: offset={:?}, dims={:?}", i, piece.grid_offset, piece.grid_dims);
+                println!(
+                    "    Piece {}: offset={:?}, dims={:?}",
+                    i, piece.grid_offset, piece.grid_dims
+                );
             }
         }
     }
@@ -2712,7 +1455,7 @@ impl App {
     fn prepare_gpu_inputs(&mut self) {
         let Some(sim) = &self.sim else { return };
 
-        let particle_count = sim.particles.list().len();
+        let particle_count = sim.particles.list.len();
         self.positions.clear();
         self.positions.reserve(particle_count);
         self.velocities.clear();
@@ -2722,7 +1465,7 @@ impl App {
         self.densities.clear();
         self.densities.reserve(particle_count);
 
-        for p in sim.particles.list() {
+        for p in &sim.particles.list {
             self.positions.push(p.position);
             self.velocities.push(p.velocity);
             self.affine_vels.push(p.affine_velocity);
@@ -2734,16 +1477,46 @@ impl App {
         // In test mode, number keys select tests instead of editor modes
         if self.test_mode {
             match key {
-                KeyCode::Digit0 => { self.run_test(9); return; }  // Test 0 is index 9
-                KeyCode::Digit1 => { self.run_test(0); return; }
-                KeyCode::Digit2 => { self.run_test(1); return; }
-                KeyCode::Digit3 => { self.run_test(2); return; }
-                KeyCode::Digit4 => { self.run_test(3); return; }
-                KeyCode::Digit5 => { self.run_test(4); return; }
-                KeyCode::Digit6 => { self.run_test(5); return; }
-                KeyCode::Digit7 => { self.run_test(6); return; }
-                KeyCode::Digit8 => { self.run_test(7); return; }
-                KeyCode::Digit9 => { self.run_test(8); return; }
+                KeyCode::Digit0 => {
+                    self.run_test(9);
+                    return;
+                } // Test 0 is index 9
+                KeyCode::Digit1 => {
+                    self.run_test(0);
+                    return;
+                }
+                KeyCode::Digit2 => {
+                    self.run_test(1);
+                    return;
+                }
+                KeyCode::Digit3 => {
+                    self.run_test(2);
+                    return;
+                }
+                KeyCode::Digit4 => {
+                    self.run_test(3);
+                    return;
+                }
+                KeyCode::Digit5 => {
+                    self.run_test(4);
+                    return;
+                }
+                KeyCode::Digit6 => {
+                    self.run_test(5);
+                    return;
+                }
+                KeyCode::Digit7 => {
+                    self.run_test(6);
+                    return;
+                }
+                KeyCode::Digit8 => {
+                    self.run_test(7);
+                    return;
+                }
+                KeyCode::Digit9 => {
+                    self.run_test(8);
+                    return;
+                }
                 KeyCode::Escape => {
                     // Exit test mode
                     self.toggle_test_mode();
@@ -2773,7 +1546,9 @@ impl App {
             KeyCode::Digit4 if !self.test_mode => {
                 self.mode = EditorMode::PlaceShakerDeck;
                 self.selection = Selection::None;
-                println!("Mode: PLACE SHAKER DECK (arrows to position, R to rotate, Enter to place)");
+                println!(
+                    "Mode: PLACE SHAKER DECK (arrows to position, R to rotate, Enter to place)"
+                );
             }
             KeyCode::Escape => {
                 if self.mode != EditorMode::Select {
@@ -2931,44 +1706,21 @@ impl App {
                 self.adjust_selected_wall_height(0.01); // Increase
             }
 
-            // Save/Load Scenario (Shift+S to save, L to load)
+            // Save/Load (Ctrl+S or just hold shift and press S)
             KeyCode::KeyS if self.shift_pressed => {
-                let path = Path::new("scenario.json");
-                let state = self.multi_sim.as_ref().map(|s| s.create_state());
-                let scenario = Scenario {
-                    layout: self.layout.clone(),
-                    state,
-                    name: "Current State".to_string(),
-                    description: "Saved from washplant_editor".to_string(),
-                    camera_target: Some(self.camera.target),
-                    camera_distance: Some(self.camera.distance),
-                };
-                match scenario.save_json(path) {
-                    Ok(_) => println!("Saved scenario to {}", path.display()),
+                let path = Path::new("editor_layout.json");
+                match self.layout.save_json(path) {
+                    Ok(_) => println!("Saved to {}", path.display()),
                     Err(e) => eprintln!("Save failed: {}", e),
                 }
             }
             KeyCode::KeyL => {
-                let path = Path::new("scenario.json");
-                match Scenario::load_json(path) {
-                    Ok(scenario) => {
-                        self.layout = scenario.layout;
+                let path = Path::new("editor_layout.json");
+                match EditorLayout::load_json(path) {
+                    Ok(layout) => {
+                        self.layout = layout;
                         self.selection = Selection::None;
-                        if let Some(target) = scenario.camera_target {
-                            self.camera.target = target;
-                        }
-                        if let Some(dist) = scenario.camera_distance {
-                            self.camera.distance = dist;
-                        }
-                        println!("Loaded scenario from {}", path.display());
-
-                        // If it has state, we need to restore the multi_sim
-                        if let Some(state) = scenario.state {
-                            self.restore_simulation_state(state);
-                        } else {
-                            println!("Scenario has no simulation state, just layout loaded.");
-                        }
-
+                        println!("Loaded from {}", path.display());
                         self.print_status();
                     }
                     Err(e) => eprintln!("Load failed: {}", e),
@@ -3000,31 +1752,31 @@ impl App {
             // WASD camera movement
             KeyCode::KeyW => {
                 // Move camera target forward (in camera's look direction on XZ plane)
-                let forward = Vec3::new(-self.camera.yaw.sin(), 0.0, -self.camera.yaw.cos());
-                self.camera.target += forward * MOVE_STEP * 2.0;
+                let forward = Vec3::new(-self.camera_yaw.sin(), 0.0, -self.camera_yaw.cos());
+                self.camera_target += forward * MOVE_STEP * 2.0;
             }
             KeyCode::KeyS if !self.shift_pressed => {
                 // Move camera target backward (opposite of forward) - but not when shift is pressed (that's save)
-                let forward = Vec3::new(-self.camera.yaw.sin(), 0.0, -self.camera.yaw.cos());
-                self.camera.target -= forward * MOVE_STEP * 2.0;
+                let forward = Vec3::new(-self.camera_yaw.sin(), 0.0, -self.camera_yaw.cos());
+                self.camera_target -= forward * MOVE_STEP * 2.0;
             }
             KeyCode::KeyA => {
                 // Move camera target left
-                let right = Vec3::new(self.camera.yaw.cos(), 0.0, -self.camera.yaw.sin());
-                self.camera.target -= right * MOVE_STEP * 2.0;
+                let right = Vec3::new(self.camera_yaw.cos(), 0.0, -self.camera_yaw.sin());
+                self.camera_target -= right * MOVE_STEP * 2.0;
             }
             KeyCode::KeyD => {
                 // Move camera target right
-                let right = Vec3::new(self.camera.yaw.cos(), 0.0, -self.camera.yaw.sin());
-                self.camera.target += right * MOVE_STEP * 2.0;
+                let right = Vec3::new(self.camera_yaw.cos(), 0.0, -self.camera_yaw.sin());
+                self.camera_target += right * MOVE_STEP * 2.0;
             }
             KeyCode::KeyQ => {
                 // Move camera target down
-                self.camera.target.y -= MOVE_STEP * 2.0;
+                self.camera_target.y -= MOVE_STEP * 2.0;
             }
             KeyCode::KeyE => {
                 // Move camera target up
-                self.camera.target.y += MOVE_STEP * 2.0;
+                self.camera_target.y += MOVE_STEP * 2.0;
             }
 
             KeyCode::KeyN => {
@@ -3189,7 +1941,9 @@ impl App {
 
         // Check all other gutter outlets
         for (i, g) in self.layout.gutters.iter().enumerate() {
-            if i == idx { continue; }
+            if i == idx {
+                continue;
+            }
             let outlet = g.outlet_position();
             let dist = (inlet - outlet).length();
             if dist < SNAP_DISTANCE {
@@ -3254,7 +2008,9 @@ impl App {
 
         // Check all other sluice outlets
         for (i, s) in self.layout.sluices.iter().enumerate() {
-            if i == idx { continue; }
+            if i == idx {
+                continue;
+            }
             let outlet = s.outlet_position();
             let dist = (inlet - outlet).length();
             if dist < SNAP_DISTANCE {
@@ -3360,7 +2116,9 @@ impl App {
 
         // Check all other shaker deck outlets
         for (i, d) in self.layout.shaker_decks.iter().enumerate() {
-            if i == idx { continue; }
+            if i == idx {
+                continue;
+            }
             let outlet = d.outlet_position();
             let dist = (inlet - outlet).length();
             if dist < SNAP_DISTANCE {
@@ -3684,11 +2442,17 @@ impl App {
         match self.mode {
             EditorMode::PlaceGutter => {
                 self.preview_gutter.adjust_wall_height(delta);
-                println!("Preview gutter wall height: {:.2}m", self.preview_gutter.wall_height);
+                println!(
+                    "Preview gutter wall height: {:.2}m",
+                    self.preview_gutter.wall_height
+                );
             }
             EditorMode::PlaceShakerDeck => {
                 self.preview_shaker_deck.adjust_wall_height(delta);
-                println!("Preview shaker wall height: {:.2}m", self.preview_shaker_deck.wall_height);
+                println!(
+                    "Preview shaker wall height: {:.2}m",
+                    self.preview_shaker_deck.wall_height
+                );
             }
             EditorMode::PlaceSluice | EditorMode::PlaceEmitter => {
                 println!("Wall height adjustment only for gutters and shakers");
@@ -3754,11 +2518,60 @@ impl App {
     }
 
     async fn init_gpu(&mut self, window: Arc<Window>) {
-        let ctx = WgpuContext::init(window.clone()).await;
-        let device = &ctx.device;
-        let format = ctx.config.format;
+        let size = window.inner_size();
 
-        let depth_view = create_depth_view(device, &ctx.config);
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+
+        let surface = instance.create_surface(window.clone()).unwrap();
+
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .unwrap();
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("Device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits {
+                        max_storage_buffers_per_shader_stage: 16,
+                        ..wgpu::Limits::default()
+                    }
+                    .using_resolution(adapter.limits()),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+
+        let caps = surface.get_capabilities(&adapter);
+        let format = caps.formats[0];
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: size.width,
+            height: size.height,
+            present_mode: wgpu::PresentMode::AutoVsync,
+            alpha_mode: caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &config);
+
+        let depth_texture = Self::create_depth_texture(&device, size.width, size.height);
 
         let mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Mesh Shader"),
@@ -3807,7 +2620,11 @@ impl App {
             vertex: wgpu::VertexState {
                 module: &mesh_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[SluiceVertex::buffer_layout()],
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<SluiceVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
+                }],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -3838,12 +2655,33 @@ impl App {
         });
 
         self.gpu = Some(GpuState {
-            ctx,
+            surface,
+            device,
+            queue,
+            config,
             mesh_pipeline,
             uniform_buffer,
             bind_group,
-            depth_view,
+            depth_texture,
         });
+    }
+
+    fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        texture.create_view(&Default::default())
     }
 
     fn build_gutter_mesh(
@@ -3873,10 +2711,10 @@ impl App {
         // Floor (angled, tapered width)
         // Inlet at -half_len (high), outlet at +half_len (low)
         let floor_verts = [
-            transform(-half_len, half_drop, -half_wid_inlet),   // inlet left
-            transform(-half_len, half_drop, half_wid_inlet),    // inlet right
-            transform(half_len, -half_drop, half_wid_outlet),   // outlet right
-            transform(half_len, -half_drop, -half_wid_outlet),  // outlet left
+            transform(-half_len, half_drop, -half_wid_inlet), // inlet left
+            transform(-half_len, half_drop, half_wid_inlet),  // inlet right
+            transform(half_len, -half_drop, half_wid_outlet), // outlet right
+            transform(half_len, -half_drop, -half_wid_outlet), // outlet left
         ];
         let base = vertices.len() as u32;
         for v in &floor_verts {
@@ -4261,12 +3099,18 @@ impl App {
             return;
         }
 
+        // Auto-start test if in test mode and not running
+        if self.test_mode && !self.is_simulating {
+            self.run_test(self.test_idx);
+        }
+
+        let camera_pos = self.camera_position();
+        let view_matrix = Mat4::look_at_rh(camera_pos, self.camera_target, Vec3::Y);
+
         let size = self.window.as_ref().unwrap().inner_size();
         let aspect = size.width as f32 / size.height.max(1) as f32;
-        let view_matrix = self.camera.view_matrix();
-        let proj_matrix = self.camera.proj_matrix(aspect);
+        let proj_matrix = Mat4::perspective_rh(45.0_f32.to_radians(), aspect, 0.01, 100.0);
         let view_proj = proj_matrix * view_matrix;
-        let camera_pos = self.camera.position();
 
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
@@ -4289,10 +3133,11 @@ impl App {
 
                 // Now step and collect (reborrow multi_sim)
                 if let Some(multi_sim) = &mut self.multi_sim {
+                    let dt = 1.0 / 60.0;
+
                     // Step all piece simulations
                     if let Some(gpu) = &self.gpu {
-                        let dt = 1.0 / 60.0;
-                        multi_sim.step(&gpu.ctx.device, &gpu.ctx.queue, dt);
+                        multi_sim.step(&gpu.device, &gpu.queue, dt);
                     }
 
                     // Collect all particles from all pieces in world space
@@ -4305,15 +3150,55 @@ impl App {
 
                     self.sim_frame += 1;
 
-                    // Debug output periodically
-                    if self.sim_frame % 60 == 0 {
+                    // Debug output every frame for diagnosing falling
+                    if self.sim_frame % 1 == 0 {
                         let total = multi_sim.total_particles();
+                        if total > 0 {
+                            // Print first particle pos
+                            if !multi_sim.dem_sim.clumps.is_empty() {
+                                println!(
+                                    "Frame {}: P0 pos: {:?}",
+                                    self.sim_frame, multi_sim.dem_sim.clumps[0].position
+                                );
+                            }
+                        } else {
+                            println!("Frame {}: 0 particles", self.sim_frame);
+                        }
                         println!(
                             "Frame {}: {} particles ({} pieces)",
                             self.sim_frame,
                             total,
                             multi_sim.pieces.len()
                         );
+                        let occupied_volume = multi_sim.total_occupied_volume();
+                        if !multi_sim.pieces.is_empty() {
+                            let piece = &multi_sim.pieces[0];
+                            let cell_volume = piece.cell_size.powi(3);
+                            let occupied_cells = multi_sim.occupied_cell_count(0);
+                            let particles = piece.positions.len().max(1);
+                            let ppc = particles as f32 / occupied_cells.max(1) as f32;
+                            let expected_volume = (26.0 * 9.0 * 26.0) * cell_volume;
+                            let ratio = if expected_volume > 0.0 {
+                                occupied_volume / expected_volume
+                            } else {
+                                0.0
+                            };
+                            println!(
+                                "  Occupied volume ~ {:.6} m^3 (ratio {:.3}, ppc {:.2})",
+                                occupied_volume, ratio, ppc
+                            );
+                            if let Some(gpu) = &self.gpu {
+                                if let Some(gpu_flip) = piece.gpu_flip.as_ref() {
+                                    println!("DEBUG: gpu_flip.water_rest_particles = {}", gpu_flip.water_rest_particles);
+                                    gpu_flip.print_density_projection_diagnostics(
+                                        &gpu.device,
+                                        &gpu.queue,
+                                        dt,
+                                        gpu_flip.water_rest_particles,
+                                    );
+                                }
+                            }
+                        }
                         if !world_positions.is_empty() {
                             println!("  First particle world pos: {:?}", world_positions[0]);
                         }
@@ -4344,13 +3229,13 @@ impl App {
                     }
                 }
 
-                let sdf = self.sim.as_ref().map(|s| s.grid.sdf().to_vec());
+                let sdf = self.sim.as_ref().map(|s| s.grid.sdf.clone());
 
                 if let (Some(gpu), Some(gpu_flip)) = (&self.gpu, &mut self.gpu_flip) {
                     let dt = 1.0 / 60.0;
                     gpu_flip.step(
-                        &gpu.ctx.device,
-                        &gpu.ctx.queue,
+                        &gpu.device,
+                        &gpu.queue,
                         &mut self.positions,
                         &mut self.velocities,
                         &mut self.affine_vels,
@@ -4384,7 +3269,7 @@ impl App {
 
         // Write uniforms
         let gpu = self.gpu.as_ref().unwrap();
-        gpu.ctx.queue
+        gpu.queue
             .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Collect all meshes
@@ -4481,6 +3366,19 @@ impl App {
 
         // Render particles as small quads (already in world space)
         if self.is_simulating && !world_positions.is_empty() {
+            // ... existing particle rendering ...
+        }
+
+        // DEBUG: Render test SDF geometry if active
+        if let Some(multi_sim) = &self.multi_sim {
+            if let Some((verts, inds)) = &multi_sim.test_mesh {
+                let base = all_vertices.len() as u32;
+                all_vertices.extend(verts.iter().cloned());
+                all_indices.extend(inds.iter().map(|i| i + base));
+            }
+        }
+
+        if self.is_simulating && !world_positions.is_empty() {
             let particle_size = SIM_CELL_SIZE * 0.4;
             let particle_color: [f32; 4] = [0.2, 0.5, 0.9, 1.0]; // Blue water
 
@@ -4490,41 +3388,13 @@ impl App {
             for i in 0..max_render {
                 let world_pos = world_positions[i];
 
-                // Create a small billboard quad facing the camera
-                let to_cam = (camera_pos - world_pos).normalize();
-                let right = to_cam.cross(Vec3::Y).normalize() * particle_size;
-                let up = Vec3::Y * particle_size;
-
-                let p0 = world_pos - right - up;
-                let p1 = world_pos + right - up;
-                let p2 = world_pos + right + up;
-                let p3 = world_pos - right + up;
-
-                let base = all_vertices.len() as u32;
-                all_vertices.push(SluiceVertex {
-                    position: p0.to_array(),
-                    color: particle_color,
-                });
-                all_vertices.push(SluiceVertex {
-                    position: p1.to_array(),
-                    color: particle_color,
-                });
-                all_vertices.push(SluiceVertex {
-                    position: p2.to_array(),
-                    color: particle_color,
-                });
-                all_vertices.push(SluiceVertex {
-                    position: p3.to_array(),
-                    color: particle_color,
-                });
-                all_indices.extend_from_slice(&[
-                    base,
-                    base + 1,
-                    base + 2,
-                    base,
-                    base + 2,
-                    base + 3,
-                ]);
+                push_cube(
+                    world_pos,
+                    particle_size,
+                    particle_color,
+                    &mut all_vertices,
+                    &mut all_indices,
+                );
             }
         }
 
@@ -4546,48 +3416,20 @@ impl App {
                         sand_color
                     };
 
-                    // Create a small billboard quad facing the camera
-                    let to_cam = (camera_pos - clump.position).normalize();
-                    let right = to_cam.cross(Vec3::Y).normalize() * clump_size;
-                    let up = Vec3::Y * clump_size;
-
-                    let p0 = clump.position - right - up;
-                    let p1 = clump.position + right - up;
-                    let p2 = clump.position + right + up;
-                    let p3 = clump.position - right + up;
-
-                    let base = all_vertices.len() as u32;
-                    all_vertices.push(SluiceVertex {
-                        position: p0.to_array(),
+                    push_cube(
+                        clump.position,
+                        clump_size,
                         color,
-                    });
-                    all_vertices.push(SluiceVertex {
-                        position: p1.to_array(),
-                        color,
-                    });
-                    all_vertices.push(SluiceVertex {
-                        position: p2.to_array(),
-                        color,
-                    });
-                    all_vertices.push(SluiceVertex {
-                        position: p3.to_array(),
-                        color,
-                    });
-                    all_indices.extend_from_slice(&[
-                        base,
-                        base + 1,
-                        base + 2,
-                        base,
-                        base + 2,
-                        base + 3,
-                    ]);
+                        &mut all_vertices,
+                        &mut all_indices,
+                    );
                 }
             }
         }
 
         // Create buffers
         let vertex_buffer = gpu
-            .ctx.device
+            .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
                 contents: bytemuck::cast_slice(&all_vertices),
@@ -4595,7 +3437,7 @@ impl App {
             });
 
         let index_buffer = gpu
-            .ctx.device
+            .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Index Buffer"),
                 contents: bytemuck::cast_slice(&all_indices),
@@ -4603,13 +3445,13 @@ impl App {
             });
 
         // Render
-        let output = match gpu.ctx.surface.get_current_texture() {
+        let output = match gpu.surface.get_current_texture() {
             Ok(t) => t,
             Err(_) => return,
         };
         let view = output.texture.create_view(&Default::default());
 
-        let mut encoder = gpu.ctx.device.create_command_encoder(&Default::default());
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -4627,7 +3469,7 @@ impl App {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &gpu.depth_view,
+                    view: &gpu.depth_texture,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -4648,7 +3490,7 @@ impl App {
         // For now, we render particles as simple quads in the mesh pass above.
         // The particle geometry is added before this point.
 
-        gpu.ctx.queue.submit(std::iter::once(encoder.finish()));
+        gpu.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
         self.window.as_ref().unwrap().request_redraw();
@@ -4680,7 +3522,9 @@ impl ApplicationHandler for App {
                     if let Some((lx, ly)) = self.last_mouse_pos {
                         let dx = position.x - lx;
                         let dy = position.y - ly;
-                        self.camera.handle_mouse_move(dx as f32 * 0.5, dy as f32 * 0.5);
+                        self.camera_yaw += dx as f32 * 0.005;
+                        self.camera_pitch =
+                            (self.camera_pitch + dy as f32 * 0.005).clamp(-1.4, 1.4);
                     }
                 }
                 self.last_mouse_pos = Some((position.x, position.y));
@@ -4688,9 +3532,9 @@ impl ApplicationHandler for App {
             WindowEvent::MouseWheel { delta, .. } => {
                 let scroll = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.1,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.01,
                 };
-                self.camera.handle_zoom(scroll * 5.0);
+                self.camera_distance = (self.camera_distance - scroll * 0.5).clamp(1.0, 20.0);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 // Track shift state
@@ -4709,8 +3553,11 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
-                    gpu.ctx.resize(size.width, size.height);
-                    gpu.depth_view = create_depth_view(&gpu.ctx.device, &gpu.ctx.config);
+                    gpu.config.width = size.width.max(1);
+                    gpu.config.height = size.height.max(1);
+                    gpu.surface.configure(&gpu.device, &gpu.config);
+                    gpu.depth_texture =
+                        Self::create_depth_texture(&gpu.device, size.width, size.height);
                 }
             }
             WindowEvent::RedrawRequested => self.render(),
@@ -4735,6 +3582,7 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) world_pos: vec3<f32>,
 }
 
 @vertex
@@ -4742,12 +3590,28 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = uniforms.view_proj * vec4<f32>(in.position, 1.0);
     out.color = in.color;
+    out.world_pos = in.position;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return in.color;
+    // Derive face normal using derivatives (flat shading)
+    let dx = dpdx(in.world_pos);
+    let dy = dpdy(in.world_pos);
+    let normal = normalize(cross(dx, dy));
+
+    // Simple directional lighting
+    let light_dir = normalize(vec3<f32>(0.5, 0.8, 0.3));
+    // Valid normals might be flipped depending on triangle winding, correct for front-facing
+    // But for cubes/convex shapes with cull_mode=Back (default/none is used?), 
+    // we want standard dot. 
+    // Existing pipeline has cull_mode: None, so we might see backfaces. 
+    // We should take abs(dot) or ensure winding is consistent.
+    // Let's assume standard lighting.
+    let diff = max(dot(normal, light_dir), 0.3); // 0.3 ambient
+    
+    return vec4<f32>(in.color.rgb * diff, in.color.a);
 }
 "#;
 
@@ -4771,6 +3635,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use game::multigrid::{PieceKind, PieceSimulation};
 
     /// Test helper: count solid cells in a simulation grid
     fn count_solids(sim: &FlipSimulation3D) -> usize {
@@ -4974,8 +3839,8 @@ mod tests {
             position: Vec3::new(0.5, 0.25, 0.3), // Center at (20, 10, 12) in cells
             rotation: Rotation::R0,
             angle_deg: 0.0,
-            length: 0.5,  // 20 cells
-            width: 0.25,  // 10 cells (half_wid = 5 cells)
+            length: 0.5, // 20 cells
+            width: 0.25, // 10 cells (half_wid = 5 cells)
             end_width: 0.25,
             wall_height: 0.15,
         };
@@ -5045,8 +3910,8 @@ mod tests {
             id: 0,
             position: Vec3::new(0.75, 0.25, 0.3), // Center at (30, 10, 12) in cells
             rotation: Rotation::R0,
-            length: 1.0,  // 40 cells
-            width: 0.3,   // 12 cells
+            length: 1.0,    // 40 cells
+            width: 0.3,     // 12 cells
             slope_deg: 0.0, // Flat for simplicity
             riffle_spacing: 0.2,
             riffle_height: 0.02,
@@ -5211,28 +4076,23 @@ mod tests {
         let y_err = (correct_world_pos.y - gutter.position.y).abs();
         let z_err = (correct_world_pos.z - gutter.position.z).abs();
 
-        println!("Correct position errors: x={}, y={}, z={}", x_err, y_err, z_err);
+        println!(
+            "Correct position errors: x={}, y={}, z={}",
+            x_err, y_err, z_err
+        );
 
         // Assert correct version matches original position
-        assert!(
-            x_err < 0.001,
-            "X position error {} > 0.001",
-            x_err
-        );
-        assert!(
-            y_err < 0.001,
-            "Y position error {} > 0.001",
-            y_err
-        );
-        assert!(
-            z_err < 0.001,
-            "Z position error {} > 0.001",
-            z_err
-        );
+        assert!(x_err < 0.001, "X position error {} > 0.001", x_err);
+        assert!(y_err < 0.001, "Y position error {} > 0.001", y_err);
+        assert!(z_err < 0.001, "Z position error {} > 0.001", z_err);
 
         // This demonstrates the bug - the buggy version has wrong Z
         let buggy_z_err = (buggy_world_pos.z - gutter.position.z).abs();
-        println!("Buggy Z error = {} (expected ~{})", buggy_z_err, gutter.width / 2.0);
+        println!(
+            "Buggy Z error = {} (expected ~{})",
+            buggy_z_err,
+            gutter.width / 2.0
+        );
 
         // The bug should cause approximately width/2 error
         assert!(
@@ -5302,7 +4162,10 @@ mod tests {
 
         println!("Perfectly aligned transfer:");
         println!("  Particle local pos: {:?}", gutter_outlet_local);
-        println!("  World pos: {:?}", gutter_outlet_local + gutter_grid_offset);
+        println!(
+            "  World pos: {:?}",
+            gutter_outlet_local + gutter_grid_offset
+        );
         println!("  Result in sluice local: {:?}", result_pos);
         println!("  In bounds: {}", in_bounds);
 
@@ -5343,9 +4206,16 @@ mod tests {
         );
 
         println!("Gutter above sluice transfer:");
-        println!("  Gutter outlet world: {:?}", gutter_outlet_local + gutter_grid_offset);
+        println!(
+            "  Gutter outlet world: {:?}",
+            gutter_outlet_local + gutter_grid_offset
+        );
         println!("  Result in sluice local: {:?}", result_pos);
-        println!("  Sluice grid Y range: {} to {}", cell_size, sluice_grid_dims.1 as f32 * cell_size - cell_size);
+        println!(
+            "  Sluice grid Y range: {} to {}",
+            cell_size,
+            sluice_grid_dims.1 as f32 * cell_size - cell_size
+        );
         println!("  In bounds: {}", in_bounds);
 
         assert!(
@@ -5387,7 +4257,10 @@ mod tests {
         );
 
         println!("Gutter below sluice transfer (should fail):");
-        println!("  Gutter outlet world Y: {}", (gutter_outlet_local + gutter_grid_offset).y);
+        println!(
+            "  Gutter outlet world Y: {}",
+            (gutter_outlet_local + gutter_grid_offset).y
+        );
         println!("  Sluice grid Y min: {}", sluice_grid_offset.y + cell_size);
         println!("  Result in sluice local: {:?}", result_pos);
         println!("  In bounds: {}", in_bounds);
@@ -5421,7 +4294,7 @@ mod tests {
         let depth = 20;
 
         let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
-        sim.pressure_iterations = 40;
+        sim.pressure_iterations = 120; // Match MultiGridSim for consistent behavior
 
         // Set up a gutter with moderate angle
         let margin = cell_size * 4.0;
@@ -5462,7 +4335,10 @@ mod tests {
         let center_k = (gutter.position.z / cell_size).round() as usize;
 
         // Print solid cells at center column
-        println!("Solid cells at center_i={}, center_k={}:", center_i, center_k);
+        println!(
+            "Solid cells at center_i={}, center_k={}:",
+            center_i, center_k
+        );
         for j in 0..height.min(10) {
             let solid = sim.grid.is_solid(center_i, j, center_k);
             let sdf = sim.grid.sdf[sim.grid.cell_index(center_i, j, center_k)];
@@ -5485,13 +4361,20 @@ mod tests {
                 floor_j = j;
             }
         }
-        println!("Floor at center: j={} (y={:.3}m)", floor_j, floor_j as f32 * cell_size);
+        println!(
+            "Floor at center: j={} (y={:.3}m)",
+            floor_j,
+            floor_j as f32 * cell_size
+        );
 
         // Spawn multiple particles above the floor (single particle causes pressure instability)
         // Spawn only in the center of the gutter to avoid side wall issues
         let particle_start_y = (floor_j as f32 + 4.0) * cell_size; // 4 cells above floor
         let num_particles = 30;
-        println!("Spawning {} particles at Y={:.3}m, center_k={}", num_particles, particle_start_y, center_k);
+        println!(
+            "Spawning {} particles at Y={:.3}m, center_k={}",
+            num_particles, particle_start_y, center_k
+        );
 
         for i in 0..num_particles {
             // Spread particles along the center line of the gutter
@@ -5504,7 +4387,12 @@ mod tests {
             let pos = Vec3::new(x, y, z);
             sim.spawn_particle_with_velocity(pos, Vec3::ZERO);
         }
-        assert_eq!(sim.particles.list.len(), num_particles, "Should have {} particles", num_particles);
+        assert_eq!(
+            sim.particles.list.len(),
+            num_particles,
+            "Should have {} particles",
+            num_particles
+        );
 
         // Run simulation for many steps
         let dt = 0.008;
@@ -5534,7 +4422,7 @@ mod tests {
             let half_wid = gutter.width / 2.0;
             let center_z = gutter.position.z;
 
-            for p in sim.particles.list() {
+            for p in &sim.particles.list {
                 min_y_seen = min_y_seen.min(p.position.y);
 
                 // Only check floor penetration for particles INSIDE the channel
@@ -5577,7 +4465,12 @@ mod tests {
         }
 
         let final_count = sim.particles.list.len();
-        let final_y = sim.particles.list.iter().map(|p| p.position.y).fold(f32::MAX, f32::min);
+        let final_y = sim
+            .particles
+            .list
+            .iter()
+            .map(|p| p.position.y)
+            .fold(f32::MAX, f32::min);
         println!("After {} steps:", steps);
         println!("  Final particle count: {}", final_count);
         println!("  Final Y (any): {:.4}", final_y);
@@ -5589,7 +4482,10 @@ mod tests {
         // The gutter has an angled floor so the outlet is lower than the center.
         // For a 10° angle and 1m gutter, outlet floor is ~0.088m lower than center.
         // Just verify the simulation ran without the per-step panic triggering.
-        println!("Test passed: {} particles remain, none fell through their local floor", final_count);
+        println!(
+            "Test passed: {} particles remain, none fell through their local floor",
+            final_count
+        );
     }
 
     #[test]
@@ -5602,7 +4498,7 @@ mod tests {
         let depth = 28;
 
         let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
-        sim.pressure_iterations = 40;
+        sim.pressure_iterations = 120; // Match MultiGridSim for consistent behavior
 
         // Set up a sluice with moderate slope
         let margin = cell_size * 4.0;
@@ -5643,7 +4539,10 @@ mod tests {
         let center_k = (sluice.position.z / cell_size).round() as usize;
 
         // Print solid cells at center column
-        println!("Solid cells at center_i={}, center_k={}:", center_i, center_k);
+        println!(
+            "Solid cells at center_i={}, center_k={}:",
+            center_i, center_k
+        );
         for j in 0..height.min(10) {
             let solid = sim.grid.is_solid(center_i, j, center_k);
             let sdf = sim.grid.sdf[sim.grid.cell_index(center_i, j, center_k)];
@@ -5666,12 +4565,19 @@ mod tests {
                 floor_j = j;
             }
         }
-        println!("Floor at center: j={} (y={:.3}m)", floor_j, floor_j as f32 * cell_size);
+        println!(
+            "Floor at center: j={} (y={:.3}m)",
+            floor_j,
+            floor_j as f32 * cell_size
+        );
 
         // Spawn multiple particles above the floor
         let particle_start_y = (floor_j as f32 + 4.0) * cell_size; // 4 cells above floor
         let num_particles = 40;
-        println!("Spawning {} particles at Y={:.3}m, center_k={}", num_particles, particle_start_y, center_k);
+        println!(
+            "Spawning {} particles at Y={:.3}m, center_k={}",
+            num_particles, particle_start_y, center_k
+        );
 
         for i in 0..num_particles {
             // Spread particles along the center line of the sluice
@@ -5684,7 +4590,12 @@ mod tests {
             let pos = Vec3::new(x, y, z);
             sim.spawn_particle_with_velocity(pos, Vec3::ZERO);
         }
-        assert_eq!(sim.particles.list.len(), num_particles, "Should have {} particles", num_particles);
+        assert_eq!(
+            sim.particles.list.len(),
+            num_particles,
+            "Should have {} particles",
+            num_particles
+        );
 
         // Run simulation for many steps
         let dt = 0.008;
@@ -5710,7 +4621,7 @@ mod tests {
             let half_wid = sluice.width / 2.0;
             let center_z = sluice.position.z;
 
-            for p in sim.particles.list() {
+            for p in &sim.particles.list {
                 min_y_seen = min_y_seen.min(p.position.y);
 
                 // Only check floor penetration for particles INSIDE the channel
@@ -5745,7 +4656,10 @@ mod tests {
             if step % 20 == 0 {
                 println!(
                     "Step {:3}: {} particles, min_y={:.3}, floor_y={:.3}",
-                    step, sim.particles.list.len(), min_y_seen, floor_y
+                    step,
+                    sim.particles.list.len(),
+                    min_y_seen,
+                    floor_y
                 );
             }
         }
@@ -5756,7 +4670,10 @@ mod tests {
         println!("  Min Y seen (any): {:.4}", min_y_seen);
         println!("  Min Y in channel: {:.4}", min_y_in_channel);
         println!("  Floor Y at center: {:.4}", floor_y);
-        println!("Test passed: {} particles remain, none fell through their local floor", final_count);
+        println!(
+            "Test passed: {} particles remain, none fell through their local floor",
+            final_count
+        );
     }
 
     #[test]
@@ -5782,7 +4699,11 @@ mod tests {
         let depth = ((gutter.max_width() + margin * 2.0) / cell_size).ceil() as usize;
 
         println!("Grid dimensions: {}x{}x{}", width, height, depth);
-        println!("Gutter length: {}m = {} cells", gutter.length, gutter.length / cell_size);
+        println!(
+            "Gutter length: {}m = {} cells",
+            gutter.length,
+            gutter.length / cell_size
+        );
         println!("Margin: {}m = {} cells", margin, margin_cells);
 
         let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
@@ -5792,7 +4713,10 @@ mod tests {
         let half_len_cells = ((gutter.length / 2.0) / cell_size).ceil() as i32;
         let i_end = (center_i + half_len_cells) as usize;
 
-        println!("\nGutter center_i: {}, i_end (channel end): {}", center_i, i_end);
+        println!(
+            "\nGutter center_i: {}, i_end (channel end): {}",
+            center_i, i_end
+        );
         println!("Grid width: {} cells", width);
         println!("Outlet chute should extend from i={} to i={}", i_end, width);
 
@@ -5827,12 +4751,19 @@ mod tests {
         for j in 0..height {
             if sim.grid.is_solid(last_i, j, center_k) {
                 has_floor_at_end = true;
-                println!("\nFloor found at grid edge (i={}, j={}, k={})", last_i, j, center_k);
+                println!(
+                    "\nFloor found at grid edge (i={}, j={}, k={})",
+                    last_i, j, center_k
+                );
                 break;
             }
         }
 
-        assert!(has_floor_at_end, "Outlet chute floor should extend to grid edge (i={})", last_i);
+        assert!(
+            has_floor_at_end,
+            "Outlet chute floor should extend to grid edge (i={})",
+            last_i
+        );
     }
 
     #[test]
@@ -5876,7 +4807,10 @@ mod tests {
         let half_drop = total_drop / 2.0;
 
         println!("=== Angled Gutter SDF Profile ===");
-        println!("Gutter: angle={}°, length={}m, total_drop={:.3}m", gutter.angle_deg, gutter.length, total_drop);
+        println!(
+            "Gutter: angle={}°, length={}m, total_drop={:.3}m",
+            gutter.angle_deg, gutter.length, total_drop
+        );
         println!("Center: i={}, k={}", center_i, center_k);
         println!("Half length cells: {}", half_len_cells);
         println!("");
@@ -5917,19 +4851,29 @@ mod tests {
             if let Some(floor_j) = solid_floor_j {
                 let solid_top_y = (floor_j + 1) as f32 * cell_size;
                 println!("  Solid top (j={}) Y: {:.4}m", floor_j, solid_top_y);
-                println!("  Gap (solid_top - mesh): {:.4}m ({:.1} cells)", solid_top_y - mesh_floor_y, (solid_top_y - mesh_floor_y) / cell_size);
+                println!(
+                    "  Gap (solid_top - mesh): {:.4}m ({:.1} cells)",
+                    solid_top_y - mesh_floor_y,
+                    (solid_top_y - mesh_floor_y) / cell_size
+                );
             } else {
                 println!("  NO SOLID FLOOR FOUND!");
             }
 
             // Sample SDF at mesh floor level
             let test_y = mesh_floor_y + cell_size * 0.5; // Just above mesh surface
-            let test_pos = Vec3::new(*i as f32 * cell_size + cell_size * 0.5, test_y, center_k as f32 * cell_size + cell_size * 0.5);
+            let test_pos = Vec3::new(
+                *i as f32 * cell_size + cell_size * 0.5,
+                test_y,
+                center_k as f32 * cell_size + cell_size * 0.5,
+            );
             let sdf = sim.grid.sample_sdf(test_pos);
             println!("  SDF at Y={:.4}m: {:.4}", test_y, sdf);
 
             if sdf >= 0.0 {
-                println!("  ⚠️  WARNING: Positive SDF above mesh floor - particles will fall through!");
+                println!(
+                    "  ⚠️  WARNING: Positive SDF above mesh floor - particles will fall through!"
+                );
             }
             println!("");
         }
@@ -5944,11 +4888,19 @@ mod tests {
 
             // Test at 0.5 cells above mesh floor
             let test_y = mesh_floor_y + cell_size * 0.5;
-            let test_pos = Vec3::new(i as f32 * cell_size + cell_size * 0.5, test_y, center_k as f32 * cell_size + cell_size * 0.5);
+            let test_pos = Vec3::new(
+                i as f32 * cell_size + cell_size * 0.5,
+                test_y,
+                center_k as f32 * cell_size + cell_size * 0.5,
+            );
             let sdf = sim.grid.sample_sdf(test_pos);
 
-            if sdf > cell_size * 0.1 { // More than 0.1 cells positive = in air
-                println!("FALLTHROUGH at i={}: SDF={:.4} at y={:.4} (mesh floor={:.4})", i, sdf, test_y, mesh_floor_y);
+            if sdf > cell_size * 0.1 {
+                // More than 0.1 cells positive = in air
+                println!(
+                    "FALLTHROUGH at i={}: SDF={:.4} at y={:.4} (mesh floor={:.4})",
+                    i, sdf, test_y, mesh_floor_y
+                );
                 any_fallthrough = true;
             }
         }
@@ -6013,7 +4965,10 @@ mod tests {
         let spawn_x = 0.5;
         let spawn_z = 0.5;
 
-        println!("Spawning 5 gold clumps at Y = {} with 0.05m spacing", spawn_y);
+        println!(
+            "Spawning 5 gold clumps at Y = {} with 0.05m spacing",
+            spawn_y
+        );
 
         for i in 0..5 {
             let offset = i as f32 * 0.05;
@@ -6024,7 +4979,12 @@ mod tests {
             );
         }
 
-        let initial_y: Vec<f32> = multi_sim.dem_sim.clumps.iter().map(|c| c.position.y).collect();
+        let initial_y: Vec<f32> = multi_sim
+            .dem_sim
+            .clumps
+            .iter()
+            .map(|c| c.position.y)
+            .collect();
 
         // Step simulation
         let dt = 1.0 / 60.0;
@@ -6032,15 +4992,17 @@ mod tests {
             // Apply buoyancy and drag
             for clump in &mut multi_sim.dem_sim.clumps {
                 let template = &multi_sim.dem_sim.templates[clump.template_idx];
-                let particle_volume = (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
+                let particle_volume =
+                    (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
                 let total_volume = particle_volume * template.local_offsets.len() as f32;
-                let buoyancy_force = constants::WATER_DENSITY * total_volume * (-constants::GRAVITY);
+                let buoyancy_force = DEM_WATER_DENSITY * total_volume * 9.81;
                 clump.velocity.y += buoyancy_force * dt / template.mass;
 
                 let speed = clump.velocity.length();
                 if speed > 0.001 {
                     let area = std::f32::consts::PI * template.bounding_radius.powi(2);
-                    let drag_force = 0.5 * DEM_DRAG_COEFF * constants::WATER_DENSITY * area * speed * speed;
+                    let drag_force =
+                        0.5 * DEM_DRAG_COEFF * DEM_WATER_DENSITY * area * speed * speed;
                     let drag_dir = -clump.velocity.normalize();
                     let drag_dv = (drag_force * dt / template.mass).min(speed);
                     clump.velocity += drag_dir * drag_dv;
@@ -6061,12 +5023,22 @@ mod tests {
             multi_sim.dem_sim.step_with_sdf(dt, &sdf_params);
 
             if frame % 30 == 0 {
-                let y_positions: Vec<f32> = multi_sim.dem_sim.clumps.iter().map(|c| c.position.y).collect();
+                let y_positions: Vec<f32> = multi_sim
+                    .dem_sim
+                    .clumps
+                    .iter()
+                    .map(|c| c.position.y)
+                    .collect();
                 println!("Frame {}: Y = {:?}", frame, y_positions);
             }
         }
 
-        let final_y: Vec<f32> = multi_sim.dem_sim.clumps.iter().map(|c| c.position.y).collect();
+        let final_y: Vec<f32> = multi_sim
+            .dem_sim
+            .clumps
+            .iter()
+            .map(|c| c.position.y)
+            .collect();
         println!("Final Y positions: {:?}", final_y);
 
         // Verify: clumps fell, but stopped above floor
@@ -6076,13 +5048,17 @@ mod tests {
             assert!(
                 *y > min_y,
                 "Clump {} fell through floor! Y={}, floor_top={}",
-                i, y, floor_world_y
+                i,
+                y,
+                floor_world_y
             );
             // Should have fallen from initial position
             assert!(
                 *y < initial_y[i] - 0.1,
                 "Clump {} didn't fall enough! Initial={}, Final={}",
-                i, initial_y[i], y
+                i,
+                initial_y[i],
+                y
             );
         }
 
@@ -6147,22 +5123,27 @@ mod tests {
 
         println!("Gold density: {} kg/m3", DEM_GOLD_DENSITY);
         println!("Sand density: {} kg/m3", DEM_SAND_DENSITY);
-        println!("Initial Y - Gold: {}, Sand: {}", gold_initial_y, sand_initial_y);
+        println!(
+            "Initial Y - Gold: {}, Sand: {}",
+            gold_initial_y, sand_initial_y
+        );
 
         // Step for a short time
         let dt = 1.0 / 60.0;
         for _ in 0..30 {
             for clump in &mut multi_sim.dem_sim.clumps {
                 let template = &multi_sim.dem_sim.templates[clump.template_idx];
-                let particle_volume = (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
+                let particle_volume =
+                    (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
                 let total_volume = particle_volume * template.local_offsets.len() as f32;
-                let buoyancy_force = constants::WATER_DENSITY * total_volume * (-constants::GRAVITY);
+                let buoyancy_force = DEM_WATER_DENSITY * total_volume * 9.81;
                 clump.velocity.y += buoyancy_force * dt / template.mass;
 
                 let speed = clump.velocity.length();
                 if speed > 0.001 {
                     let area = std::f32::consts::PI * template.bounding_radius.powi(2);
-                    let drag_force = 0.5 * DEM_DRAG_COEFF * constants::WATER_DENSITY * area * speed * speed;
+                    let drag_force =
+                        0.5 * DEM_DRAG_COEFF * DEM_WATER_DENSITY * area * speed * speed;
                     let drag_dir = -clump.velocity.normalize();
                     let drag_dv = (drag_force * dt / template.mass).min(speed);
                     clump.velocity += drag_dir * drag_dv;
@@ -6196,9 +5177,65 @@ mod tests {
         assert!(
             gold_drop > sand_drop,
             "Gold (drop={}) should settle faster than sand (drop={})",
-            gold_drop, sand_drop
+            gold_drop,
+            sand_drop
         );
 
         println!("Gold settles faster than sand");
     }
+}
+
+/// Helper to push a 3D cube mesh into the vertex/index buffers
+fn push_cube(
+    center: Vec3,
+    size: f32,
+    color: [f32; 4],
+    vertices: &mut Vec<SluiceVertex>,
+    indices: &mut Vec<u32>,
+) {
+    let half = size * 0.5;
+    let base = vertices.len() as u32;
+
+    // 8 vertices
+    let corners = [
+        Vec3::new(-half, -half, -half), // 0: 000
+        Vec3::new( half, -half, -half), // 1: 100
+        Vec3::new(-half,  half, -half), // 2: 010
+        Vec3::new( half,  half, -half), // 3: 110
+        Vec3::new(-half, -half,  half), // 4: 001
+        Vec3::new( half, -half,  half), // 5: 101
+        Vec3::new(-half,  half,  half), // 6: 011
+        Vec3::new( half,  half,  half), // 7: 111
+    ];
+
+    for c in corners {
+        vertices.push(SluiceVertex {
+            position: (center + c).to_array(),
+            color,
+        });
+    }
+
+    // 36 indices (12 triangles)
+    // Front (+Z): 4 5 7, 4 7 6
+    // Back (-Z): 1 0 2, 1 2 3
+    // Right (+X): 5 1 3, 5 3 7
+    // Left (-X): 0 4 6, 0 6 2
+    // Top (+Y): 6 7 3, 6 3 2
+    // Bottom (-Y): 0 1 5, 0 5 4
+    let inds = [
+        // Front (+Z) - facing camera
+        4, 5, 7, 4, 7, 6,
+        // Back (-Z)
+        1, 0, 2, 1, 2, 3,
+        // Right (+X)
+        5, 1, 3, 5, 3, 7,
+        // Left (-X)
+        0, 4, 6, 0, 6, 2,
+        // Top (+Y)
+        6, 7, 3, 6, 3, 2,
+        // Bottom (-Y)
+        0, 1, 5, 0, 5, 4,
+    ];
+
+    indices.extend(inds.iter().map(|i| base + i));
 }

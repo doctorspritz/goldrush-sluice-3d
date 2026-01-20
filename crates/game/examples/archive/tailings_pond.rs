@@ -548,6 +548,7 @@ impl ApplicationHandler for App {
                     bridge.dispatch_emitter(
                         queue,
                         &mut encoder,
+                        flip,
                         pos.into(),
                         vel.into(),
                         0.1,
@@ -565,6 +566,7 @@ impl ApplicationHandler for App {
                     bridge.dispatch_emitter(
                         queue,
                         &mut encoder,
+                        flip,
                         pos.into(),
                         vel.into(),
                         0.1,

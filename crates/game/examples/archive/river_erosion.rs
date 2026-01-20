@@ -91,11 +91,11 @@ impl ErosionMetrics {
         // Sample points along the valley center
         let center_z = WORLD_DEPTH / 2;
         let sample_points: Vec<(usize, usize)> = vec![
-            (10, center_z),  // Upstream
-            (30, center_z),  // Mid-upstream
-            (50, center_z),  // Center
-            (70, center_z),  // Mid-downstream
-            (90, center_z),  // Downstream
+            (10, center_z), // Upstream
+            (30, center_z), // Mid-upstream
+            (50, center_z), // Center
+            (70, center_z), // Mid-downstream
+            (90, center_z), // Downstream
         ];
 
         let initial_heights: Vec<f32> = sample_points
@@ -103,7 +103,10 @@ impl ErosionMetrics {
             .map(|&(x, z)| world.ground_height(x, z))
             .collect();
 
-        Self { initial_heights, sample_points }
+        Self {
+            initial_heights,
+            sample_points,
+        }
     }
 
     fn get_erosion_depths(&self, world: &World) -> Vec<f32> {
@@ -278,7 +281,11 @@ impl App {
     }
 
     fn redraw(&mut self) {
-        if self.device.is_none() || self.queue.is_none() || self.surface.is_none() || self.heightfield.is_none() {
+        if self.device.is_none()
+            || self.queue.is_none()
+            || self.surface.is_none()
+            || self.heightfield.is_none()
+        {
             return;
         }
 
@@ -350,16 +357,11 @@ impl App {
 
         let view_matrix = self.camera.view_matrix();
         let config = self.config.as_ref().unwrap();
-        let proj_matrix = Mat4::perspective_rh(
-            0.8,
-            config.width as f32 / config.height as f32,
-            0.1,
-            500.0,
-        );
+        let proj_matrix =
+            Mat4::perspective_rh(0.8, config.width as f32 / config.height as f32, 0.1, 500.0);
         let view_proj = proj_matrix * view_matrix;
 
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
         hf.render(
             &mut encoder,
@@ -387,8 +389,16 @@ impl App {
                     "t={:>5.1}s | Water: {:>6.1}m³ | Flow: {:.1}m³/s | {}",
                     elapsed,
                     self.total_water_added,
-                    if elapsed > 0.0 { self.total_water_added / elapsed } else { 0.0 },
-                    if self.paused { "PAUSED" } else { "Running - watch colors change as layers erode!" }
+                    if elapsed > 0.0 {
+                        self.total_water_added / elapsed
+                    } else {
+                        0.0
+                    },
+                    if self.paused {
+                        "PAUSED"
+                    } else {
+                        "Running - watch colors change as layers erode!"
+                    }
                 );
 
                 LAST_PRINT = Some(Instant::now());
@@ -496,7 +506,10 @@ impl ApplicationHandler for App {
                             KeyCode::KeyQ | KeyCode::Escape => event_loop.exit(),
                             KeyCode::KeyP => {
                                 self.paused = !self.paused;
-                                println!("Simulation {}", if self.paused { "PAUSED" } else { "RESUMED" });
+                                println!(
+                                    "Simulation {}",
+                                    if self.paused { "PAUSED" } else { "RESUMED" }
+                                );
                             }
                             _ => {}
                         }

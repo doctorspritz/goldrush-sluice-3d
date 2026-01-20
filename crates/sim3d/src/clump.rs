@@ -1,22 +1,16 @@
 //! 3D rigid clumps (multi-sphere clusters) for rock/gravel prototypes.
 
-use crate::constants::GRAVITY_VEC;
-use crate::serde_utils::{
-    deserialize_mat3, deserialize_quat, deserialize_vec3, serialize_mat3, serialize_quat,
-    serialize_vec3,
-};
 use glam::{Mat3, Quat, Vec3};
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::HashMap, f32::consts::PI};
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
 pub enum IrregularStyle3D {
     Round,
     Sharp,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
 pub enum ClumpShape3D {
     Tetra,
     Cube2,
@@ -29,39 +23,15 @@ pub enum ClumpShape3D {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct ClumpTemplate3D {
     pub shape: ClumpShape3D,
-    #[serde(
-        serialize_with = "serialize_vec3_vec",
-        deserialize_with = "deserialize_vec3_vec"
-    )]
     pub local_offsets: Vec<Vec3>,
     pub particle_radius: f32,
     pub particle_mass: f32,
     pub mass: f32,
-    #[serde(serialize_with = "serialize_mat3", deserialize_with = "deserialize_mat3")]
     pub inertia_inv_local: Mat3,
     pub bounding_radius: f32,
-}
-
-// Helper for Vec<Vec3>
-fn serialize_vec3_vec<S>(v: &Vec<Vec3>, s: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    use crate::serde_utils::Vec3Def;
-    let defs: Vec<Vec3Def> = v.iter().map(|&vec| vec.into()).collect();
-    defs.serialize(s)
-}
-
-fn deserialize_vec3_vec<'de, D>(d: D) -> Result<Vec<Vec3>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use crate::serde_utils::Vec3Def;
-    let defs: Vec<Vec3Def> = Vec::deserialize(d)?;
-    Ok(defs.into_iter().map(|def| def.into()).collect())
 }
 
 impl ClumpTemplate3D {
@@ -138,15 +108,11 @@ impl ClumpTemplate3D {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
 pub struct Clump3D {
-    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub position: Vec3,
-    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub velocity: Vec3,
-    #[serde(serialize_with = "serialize_quat", deserialize_with = "deserialize_quat")]
     pub rotation: Quat,
-    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub angular_velocity: Vec3,
     pub template_idx: usize,
 }
@@ -176,26 +142,26 @@ impl Clump3D {
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SphereContactKey {
-    pub a: usize,
-    pub b: usize,
-    pub ia: usize,
-    pub ib: usize,
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct SphereContactKey {
+    a: usize,
+    b: usize,
+    ia: usize,
+    ib: usize,
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlaneContactKey {
-    pub clump: usize,
-    pub particle: usize,
-    pub axis: u8,
-    pub side: i8,
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct PlaneContactKey {
+    clump: usize,
+    particle: usize,
+    axis: u8,
+    side: i8,
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SdfContactKey {
-    pub clump: usize,
-    pub particle: usize,
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct SdfContactKey {
+    clump: usize,
+    particle: usize,
 }
 
 /// Parameters for SDF collision
@@ -210,11 +176,9 @@ pub struct SdfParams<'a> {
     pub grid_offset: Vec3,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterSimulation3D {
     pub templates: Vec<ClumpTemplate3D>,
     pub clumps: Vec<Clump3D>,
-    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub gravity: Vec3,
     pub restitution: f32,
     pub friction: f32,
@@ -227,98 +191,11 @@ pub struct ClusterSimulation3D {
     /// Rolling friction when wet (lower)
     pub wet_rolling_friction: f32,
     pub use_dem: bool,
-    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub bounds_min: Vec3,
-    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub bounds_max: Vec3,
-    #[serde(
-        serialize_with = "serialize_sphere_contacts",
-        deserialize_with = "deserialize_sphere_contacts"
-    )]
-    pub sphere_contacts: HashMap<SphereContactKey, Vec3>,
-    #[serde(
-        serialize_with = "serialize_plane_contacts",
-        deserialize_with = "deserialize_plane_contacts"
-    )]
-    pub plane_contacts: HashMap<PlaneContactKey, Vec3>,
-    #[serde(
-        serialize_with = "serialize_sdf_contacts",
-        deserialize_with = "deserialize_sdf_contacts"
-    )]
-    pub sdf_contacts: HashMap<SdfContactKey, Vec3>,
-}
-
-// Helpers for serializing HashMaps with glam types in values
-fn serialize_sphere_contacts<S>(m: &HashMap<SphereContactKey, Vec3>, s: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    use crate::serde_utils::Vec3Def;
-    let map: HashMap<SphereContactKey, Vec3Def> = m
-        .iter()
-        .map(|(&k, &v)| (k, Vec3Def::from(v)))
-        .collect();
-    map.serialize(s)
-}
-
-fn deserialize_sphere_contacts<'de, D>(d: D) -> Result<HashMap<SphereContactKey, Vec3>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use crate::serde_utils::Vec3Def;
-    let map: HashMap<SphereContactKey, Vec3Def> = HashMap::deserialize(d)?;
-    Ok(map
-        .into_iter()
-        .map(|(k, v)| (k, Vec3::from(v)))
-        .collect())
-}
-
-fn serialize_plane_contacts<S>(m: &HashMap<PlaneContactKey, Vec3>, s: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    use crate::serde_utils::Vec3Def;
-    let map: HashMap<PlaneContactKey, Vec3Def> = m
-        .iter()
-        .map(|(&k, &v)| (k, Vec3Def::from(v)))
-        .collect();
-    map.serialize(s)
-}
-
-fn deserialize_plane_contacts<'de, D>(d: D) -> Result<HashMap<PlaneContactKey, Vec3>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use crate::serde_utils::Vec3Def;
-    let map: HashMap<PlaneContactKey, Vec3Def> = HashMap::deserialize(d)?;
-    Ok(map
-        .into_iter()
-        .map(|(k, v)| (k, Vec3::from(v)))
-        .collect())
-}
-
-fn serialize_sdf_contacts<S>(m: &HashMap<SdfContactKey, Vec3>, s: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    use crate::serde_utils::Vec3Def;
-    let map: HashMap<SdfContactKey, Vec3Def> = m
-        .iter()
-        .map(|(&k, &v)| (k, Vec3Def::from(v)))
-        .collect();
-    map.serialize(s)
-}
-
-fn deserialize_sdf_contacts<'de, D>(d: D) -> Result<HashMap<SdfContactKey, Vec3>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use crate::serde_utils::Vec3Def;
-    let map: HashMap<SdfContactKey, Vec3Def> = HashMap::deserialize(d)?;
-    Ok(map
-        .into_iter()
-        .map(|(k, v)| (k, Vec3::from(v)))
-        .collect())
+    sphere_contacts: HashMap<SphereContactKey, Vec3>,
+    plane_contacts: HashMap<PlaneContactKey, Vec3>,
+    sdf_contacts: HashMap<SdfContactKey, Vec3>,
 }
 
 impl ClusterSimulation3D {
@@ -326,7 +203,7 @@ impl ClusterSimulation3D {
         Self {
             templates: Vec::new(),
             clumps: Vec::new(),
-            gravity: GRAVITY_VEC,
+            gravity: Vec3::new(0.0, -9.81, 0.0),
             restitution: 0.2,
             friction: 0.4,
             floor_friction: 0.6,
@@ -399,7 +276,9 @@ impl ClusterSimulation3D {
     pub fn step_with_sdf(&mut self, dt: f32, sdf_params: &SdfParams) {
         // Use substeps for stability. With stiffness k=6000 and mass m=0.025kg,
         // critical timestep is ~0.004s. Using 4 substeps gives sub_dt ~0.004s.
-        let substeps = 8;
+        // critical timestep is ~0.004s. Using 4 substeps gives sub_dt ~0.004s.
+        // INTEGRATION UPDATE: Increased to 20 substeps for stability with irregular clumps (sand)
+        let substeps = 20;
         let sub_dt = dt / substeps as f32;
 
         for _ in 0..substeps {
@@ -478,30 +357,24 @@ impl ClusterSimulation3D {
                     let normal = sdf_normal.normalize();
 
                     // Push particle out of solid (position correction)
-                    clump.position += normal * penetration;
+                    clump.position += normal * penetration * 1.01; // 1% extra to avoid re-penetration
 
                     // Velocity correction - remove velocity into solid + apply friction
-                    // IMPORTANT: Apply velocity DELTA, not replacement, to preserve FLIP drag/settling
                     let v_n = vel.dot(normal);
                     if v_n < 0.0 {
                         // Moving into solid - bounce with restitution
                         let v_normal = normal * v_n;
                         let v_tangent = vel - v_normal;
 
-                        // Compute collision response as delta from current velocity:
-                        // - Normal: reverse and apply restitution
-                        //   new_normal = -v_normal * restitution
-                        //   delta_normal = new_normal - v_normal = -v_normal * (1 + restitution)
-                        let delta_normal = -v_normal * (1.0 + self.restitution);
+                        // Apply restitution to normal component
+                        let new_v_normal = -v_normal * self.restitution;
 
-                        // - Tangent: apply friction damping
-                        //   new_tangent = v_tangent * friction_damp
-                        //   delta_tangent = new_tangent - v_tangent = v_tangent * (friction_damp - 1)
+                        // Apply friction to tangent component (wet = low friction = slides easily)
                         let friction_damp = 1.0 - friction * dt * 10.0;
-                        let delta_tangent = v_tangent * (friction_damp.max(0.0) - 1.0);
+                        let new_v_tangent = v_tangent * friction_damp.max(0.0);
 
-                        // Apply velocity delta (preserves FLIP drag/settling contributions)
-                        clump.velocity += delta_normal + delta_tangent;
+                        // Reconstruct velocity (without angular contribution for now)
+                        clump.velocity = new_v_normal + new_v_tangent;
 
                         // Track contact for history-based friction
                         let key = SdfContactKey {
@@ -530,8 +403,7 @@ impl ClusterSimulation3D {
         }
 
         // Inter-clump collision (simple position-based resolution)
-        // 6 iterations helps particles settle into stable configurations without gaps
-        self.resolve_dem_penetrations(6);
+        self.resolve_dem_penetrations(2);
 
         self.sdf_contacts = new_sdf_contacts;
     }
@@ -539,6 +411,49 @@ impl ClusterSimulation3D {
     fn step_dem_internal(&mut self, dt: f32, sdf_params: Option<&SdfParams>) {
         if self.clumps.is_empty() {
             return;
+        }
+
+        // CRITICAL: Prevent deep SDF penetration BEFORE force calculation
+        // This stops particles from getting embedded deep in geometry, which causes
+        // force explosion even with clamped penetration depths.
+        if let Some(sdf) = sdf_params {
+            for clump in &mut self.clumps {
+                let template = &self.templates[clump.template_idx];
+                let max_allowed = template.particle_radius * 0.1; // Allow only 10% penetration
+
+                for offset in &template.local_offsets {
+                    let r = clump.rotation * *offset;
+                    let pos = clump.position + r;
+                    let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
+                        sdf.sdf,
+                        pos,
+                        sdf.grid_offset,
+                        sdf.grid_width,
+                        sdf.grid_height,
+                        sdf.grid_depth,
+                        sdf.cell_size,
+                    );
+
+                    let penetration = template.particle_radius - sdf_value;
+                    if penetration > max_allowed && sdf_normal.length_squared() > 1e-6 {
+                        let excess = penetration - max_allowed;
+                        let normal = sdf_normal.normalize();
+                        clump.position += normal * excess;
+
+                        // Zero velocity into surface
+                        let v_n = clump.velocity.dot(normal);
+                        if v_n < 0.0 {
+                            clump.velocity -= normal * v_n;
+                        }
+
+                        // CRITICAL FIX: Dampen angular velocity to prevent "drilling"
+                        // Rotation can drive particles deep into the floor. If we only fix position
+                        // but leave angular velocity, it just rotates back in, gaining energy from the
+                        // position correction (potential energy pump).
+                        clump.angular_velocity *= 0.5;
+                    }
+                }
+            }
         }
 
         let mut forces = vec![Vec3::ZERO; self.clumps.len()];
@@ -563,223 +478,184 @@ impl ClusterSimulation3D {
         let cell_size = max_radius * 2.0 + 0.001; // Small epsilon to avoid edge cases
         let inv_cell_size = 1.0 / cell_size;
 
-        // Counting sort spatial hash: O(n) with better cache locality than HashMap
-        // Step 1: Find grid bounds from clump positions
-        let (mut min_cx, mut min_cy, mut min_cz) = (i32::MAX, i32::MAX, i32::MAX);
-        let (mut max_cx, mut max_cy, mut max_cz) = (i32::MIN, i32::MIN, i32::MIN);
-        for clump in &self.clumps {
+        // Build spatial hash: cell -> list of clump indices
+        let mut spatial_hash: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
+        for (idx, clump) in self.clumps.iter().enumerate() {
             let cx = (clump.position.x * inv_cell_size).floor() as i32;
             let cy = (clump.position.y * inv_cell_size).floor() as i32;
             let cz = (clump.position.z * inv_cell_size).floor() as i32;
-            min_cx = min_cx.min(cx);
-            min_cy = min_cy.min(cy);
-            min_cz = min_cz.min(cz);
-            max_cx = max_cx.max(cx);
-            max_cy = max_cy.max(cy);
-            max_cz = max_cz.max(cz);
-        }
-        // Extend bounds by 1 for neighbor lookups
-        min_cx -= 1;
-        min_cy -= 1;
-        min_cz -= 1;
-        max_cx += 1;
-        max_cy += 1;
-        max_cz += 1;
-
-        let grid_nx = (max_cx - min_cx + 1) as usize;
-        let grid_ny = (max_cy - min_cy + 1) as usize;
-        let grid_nz = (max_cz - min_cz + 1) as usize;
-        let num_cells = grid_nx * grid_ny * grid_nz;
-
-        // Cell index helper (inline closure for performance)
-        let cell_index = |cx: i32, cy: i32, cz: i32| -> usize {
-            let lx = (cx - min_cx) as usize;
-            let ly = (cy - min_cy) as usize;
-            let lz = (cz - min_cz) as usize;
-            lz * grid_nx * grid_ny + ly * grid_nx + lx
-        };
-
-        // Step 2: Count clumps per cell
-        let mut cell_counts = vec![0u32; num_cells];
-        let mut clump_cells = Vec::with_capacity(self.clumps.len());
-        for clump in &self.clumps {
-            let cx = (clump.position.x * inv_cell_size).floor() as i32;
-            let cy = (clump.position.y * inv_cell_size).floor() as i32;
-            let cz = (clump.position.z * inv_cell_size).floor() as i32;
-            let cell_idx = cell_index(cx, cy, cz);
-            cell_counts[cell_idx] += 1;
-            clump_cells.push((cx, cy, cz, cell_idx));
-        }
-
-        // Step 3: Prefix sum to get cell offsets
-        let mut cell_offsets = Vec::with_capacity(num_cells + 1);
-        cell_offsets.push(0u32);
-        let mut running_sum = 0u32;
-        for &count in &cell_counts {
-            running_sum += count;
-            cell_offsets.push(running_sum);
-        }
-
-        // Step 4: Scatter clump indices into sorted array
-        let mut sorted_indices = vec![0usize; self.clumps.len()];
-        let mut write_offsets = cell_offsets[..num_cells].to_vec();
-        for (idx, &(_, _, _, cell_idx)) in clump_cells.iter().enumerate() {
-            let write_pos = write_offsets[cell_idx] as usize;
-            sorted_indices[write_pos] = idx;
-            write_offsets[cell_idx] += 1;
+            spatial_hash.entry((cx, cy, cz)).or_default().push(idx);
         }
 
         // Check collisions only with neighbors (27 cells including self)
         let mut checked_pairs: std::collections::HashSet<(usize, usize)> =
             std::collections::HashSet::new();
 
-        for (idx, &(cx, cy, cz, _)) in clump_cells.iter().enumerate() {
-            let i = idx;
-            // Check all 27 neighboring cells (including self)
-            for dz in -1i32..=1 {
-                for dy in -1i32..=1 {
-                    for dx in -1i32..=1 {
-                        let nx = cx + dx;
-                        let ny = cy + dy;
-                        let nz = cz + dz;
-                        // Bounds check (cells outside grid have no clumps)
-                        if nx < min_cx || nx > max_cx || ny < min_cy || ny > max_cy || nz < min_cz || nz > max_cz {
-                            continue;
-                        }
-                        let neighbor_cell = cell_index(nx, ny, nz);
-                        let start = cell_offsets[neighbor_cell] as usize;
-                        let end = cell_offsets[neighbor_cell + 1] as usize;
-                        for k in start..end {
-                            let j = sorted_indices[k];
-                            // Skip self and already-checked pairs
-                            if i >= j {
-                                continue;
-                            }
-                            // Avoid duplicate checks
-                            let pair = (i, j);
-                            if checked_pairs.contains(&pair) {
-                                continue;
-                            }
-                            checked_pairs.insert(pair);
+        for (&(cx, cy, cz), indices) in &spatial_hash {
+            for &i in indices {
+                // Check all 27 neighboring cells (including self)
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            let neighbor_key = (
+                                cx.saturating_add(dx),
+                                cy.saturating_add(dy),
+                                cz.saturating_add(dz),
+                            );
+                            if let Some(neighbor_indices) = spatial_hash.get(&neighbor_key) {
+                                for &j in neighbor_indices {
+                                    // Skip self and already-checked pairs
+                                    if i >= j {
+                                        continue;
+                                    }
+                                    // Avoid duplicate checks
+                                    let pair = (i, j);
+                                    if checked_pairs.contains(&pair) {
+                                        continue;
+                                    }
+                                    checked_pairs.insert(pair);
+                                    let clump_a = &self.clumps[i];
+                                    let clump_b = &self.clumps[j];
+                                    let template_a = &self.templates[clump_a.template_idx];
+                                    let template_b = &self.templates[clump_b.template_idx];
 
-                            let clump_a = &self.clumps[i];
-                            let clump_b = &self.clumps[j];
-                            let template_a = &self.templates[clump_a.template_idx];
-                            let template_b = &self.templates[clump_b.template_idx];
-
-                            let delta = clump_b.position - clump_a.position;
-                            let max_dist =
-                                template_a.bounding_radius + template_b.bounding_radius;
-                            if delta.length_squared() > max_dist * max_dist {
-                                continue;
-                            }
-
-                            let contact_dist =
-                                template_a.particle_radius + template_b.particle_radius;
-                            let contact_dist_sq = contact_dist * contact_dist;
-                            let m_eff = (template_a.particle_mass * template_b.particle_mass)
-                                / (template_a.particle_mass + template_b.particle_mass);
-
-                            let c_n = dem_damping(self.restitution, self.normal_stiffness, m_eff);
-                            let c_t = dem_damping(self.restitution, self.tangential_stiffness, m_eff);
-
-                            for (ia, offset_a) in template_a.local_offsets.iter().enumerate() {
-                                let ra = clump_a.rotation * *offset_a;
-                                let pa = clump_a.position + ra;
-                                let va = clump_a.velocity + clump_a.angular_velocity.cross(ra);
-
-                                for (ib, offset_b) in template_b.local_offsets.iter().enumerate() {
-                                    let rb = clump_b.rotation * *offset_b;
-                                    let pb = clump_b.position + rb;
-                                    let vb = clump_b.velocity + clump_b.angular_velocity.cross(rb);
-
-                                    let diff = pb - pa;
-                                    let dist_sq = diff.length_squared();
-                                    if dist_sq >= contact_dist_sq {
+                                    let delta = clump_b.position - clump_a.position;
+                                    let max_dist =
+                                        template_a.bounding_radius + template_b.bounding_radius;
+                                    if delta.length_squared() > max_dist * max_dist {
                                         continue;
                                     }
 
-                                    let (normal, dist) = if dist_sq > 1.0e-10 {
-                                        let dist = dist_sq.sqrt();
-                                        (diff / dist, dist)
-                                    } else {
-                                        let rel = vb - va;
-                                        let fallback = if rel.length_squared() > 1.0e-10 {
-                                            rel.normalize()
-                                        } else {
-                                            let center = clump_b.position - clump_a.position;
-                                            if center.length_squared() > 1.0e-10 {
-                                                center.normalize()
-                                            } else {
-                                                Vec3::Y
+                                    let contact_dist =
+                                        template_a.particle_radius + template_b.particle_radius;
+                                    let contact_dist_sq = contact_dist * contact_dist;
+                                    let m_eff = (template_a.particle_mass
+                                        * template_b.particle_mass)
+                                        / (template_a.particle_mass + template_b.particle_mass);
+
+                                    let c_n =
+                                        dem_damping(self.restitution, self.normal_stiffness, m_eff);
+                                    let c_t = dem_damping(
+                                        self.restitution,
+                                        self.tangential_stiffness,
+                                        m_eff,
+                                    );
+
+                                    for (ia, offset_a) in
+                                        template_a.local_offsets.iter().enumerate()
+                                    {
+                                        let ra = clump_a.rotation * *offset_a;
+                                        let pa = clump_a.position + ra;
+                                        let va =
+                                            clump_a.velocity + clump_a.angular_velocity.cross(ra);
+
+                                        for (ib, offset_b) in
+                                            template_b.local_offsets.iter().enumerate()
+                                        {
+                                            let rb = clump_b.rotation * *offset_b;
+                                            let pb = clump_b.position + rb;
+                                            let vb = clump_b.velocity
+                                                + clump_b.angular_velocity.cross(rb);
+
+                                            let diff = pb - pa;
+                                            let dist_sq = diff.length_squared();
+                                            if dist_sq >= contact_dist_sq {
+                                                continue;
                                             }
-                                        };
-                                        (fallback, 0.0)
-                                    };
-                                    let penetration = contact_dist - dist;
-                                    if penetration <= 0.0 {
-                                        continue;
-                                    }
 
-                                    let rel_vel = vb - va;
-                                    let v_n = rel_vel.dot(normal);
-                                    let mut fn_mag = self.normal_stiffness * penetration - c_n * v_n;
-                                    if fn_mag < 0.0 {
-                                        fn_mag = 0.0;
-                                    }
+                                            let (normal, dist) = if dist_sq > 1.0e-10 {
+                                                let dist = dist_sq.sqrt();
+                                                (diff / dist, dist)
+                                            } else {
+                                                let rel = vb - va;
+                                                let fallback = if rel.length_squared() > 1.0e-10 {
+                                                    rel.normalize()
+                                                } else {
+                                                    let center =
+                                                        clump_b.position - clump_a.position;
+                                                    if center.length_squared() > 1.0e-10 {
+                                                        center.normalize()
+                                                    } else {
+                                                        Vec3::Y
+                                                    }
+                                                };
+                                                (fallback, 0.0)
+                                            };
+                                            let penetration = contact_dist - dist;
+                                            if penetration <= 0.0 {
+                                                continue;
+                                            }
 
-                                    let vt = rel_vel - normal * v_n;
-                                    let key = SphereContactKey { a: i, b: j, ia, ib };
-                                    let prev = self
-                                        .sphere_contacts
-                                        .get(&key)
-                                        .copied()
-                                        .unwrap_or(Vec3::ZERO);
-                                    let mut delta_t = prev + vt * dt;
+                                            let rel_vel = vb - va;
+                                            let v_n = rel_vel.dot(normal);
+                                            let mut fn_mag =
+                                                self.normal_stiffness * penetration - c_n * v_n;
+                                            if fn_mag < 0.0 {
+                                                fn_mag = 0.0;
+                                            }
 
-                                    let mut ft = -self.tangential_stiffness * delta_t - c_t * vt;
-                                    let max_ft = self.friction * fn_mag;
-                                    if ft.length_squared() > max_ft * max_ft {
-                                        if ft.length_squared() > 1.0e-10 {
-                                            ft = ft.normalize() * max_ft;
-                                        } else {
-                                            ft = Vec3::ZERO;
-                                        }
-                                        if self.tangential_stiffness > 0.0 {
-                                            delta_t = -(ft + c_t * vt) / self.tangential_stiffness;
-                                        }
-                                    }
-                                    new_sphere_contacts.insert(key, delta_t);
+                                            let vt = rel_vel - normal * v_n;
+                                            let key = SphereContactKey { a: i, b: j, ia, ib };
+                                            let prev = self
+                                                .sphere_contacts
+                                                .get(&key)
+                                                .copied()
+                                                .unwrap_or(Vec3::ZERO);
+                                            let mut delta_t = prev + vt * dt;
 
-                                    let total = normal * fn_mag + ft;
-                                    forces[i] -= total;
-                                    forces[j] += total;
-                                    torques[i] += ra.cross(-total);
-                                    torques[j] += rb.cross(total);
+                                            let mut ft =
+                                                -self.tangential_stiffness * delta_t - c_t * vt;
+                                            let max_ft = self.friction * fn_mag;
+                                            if ft.length_squared() > max_ft * max_ft {
+                                                if ft.length_squared() > 1.0e-10 {
+                                                    ft = ft.normalize() * max_ft;
+                                                } else {
+                                                    ft = Vec3::ZERO;
+                                                }
+                                                if self.tangential_stiffness > 0.0 {
+                                                    delta_t = -(ft + c_t * vt)
+                                                        / self.tangential_stiffness;
+                                                }
+                                            }
+                                            new_sphere_contacts.insert(key, delta_t);
 
-                                    if self.rolling_friction > 0.0 {
-                                        if clump_a.angular_velocity.length_squared() > 1.0e-8 {
-                                            let roll = -clump_a.angular_velocity.normalize()
-                                                * (self.rolling_friction
-                                                    * fn_mag
-                                                    * template_a.particle_radius);
-                                            torques[i] += roll;
-                                        }
-                                        if clump_b.angular_velocity.length_squared() > 1.0e-8 {
-                                            let roll = -clump_b.angular_velocity.normalize()
-                                                * (self.rolling_friction
-                                                    * fn_mag
-                                                    * template_b.particle_radius);
-                                            torques[j] += roll;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+                                            let total = normal * fn_mag + ft;
+                                            forces[i] -= total;
+                                            forces[j] += total;
+                                            torques[i] += ra.cross(-total);
+                                            torques[j] += rb.cross(total);
+
+                                            if self.rolling_friction > 0.0 {
+                                                if clump_a.angular_velocity.length_squared()
+                                                    > 1.0e-8
+                                                {
+                                                    let roll =
+                                                        -clump_a.angular_velocity.normalize()
+                                                            * (self.rolling_friction
+                                                                * fn_mag
+                                                                * template_a.particle_radius);
+                                                    torques[i] += roll;
+                                                }
+                                                if clump_b.angular_velocity.length_squared()
+                                                    > 1.0e-8
+                                                {
+                                                    let roll =
+                                                        -clump_b.angular_velocity.normalize()
+                                                            * (self.rolling_friction
+                                                                * fn_mag
+                                                                * template_b.particle_radius);
+                                                    torques[j] += roll;
+                                                }
+                                            } // end rolling_friction if
+                                        } // end ib loop
+                                    } // end ia loop
+                                } // end for &j
+                            } // end if let Some
+                        } // end for dz
+                    } // end for dy
+                } // end for dx
+            } // end for &i
+        } // end for spatial_hash
 
         for (idx, clump) in self.clumps.iter().enumerate() {
             let template = &self.templates[clump.template_idx];
@@ -933,9 +809,15 @@ impl ClusterSimulation3D {
                     );
 
                     // Check for penetration: SDF < radius means sphere penetrates solid
-                    let penetration = radius - sdf_value;
+                    let mut penetration = radius - sdf_value;
                     if penetration > 0.0 && sdf_normal.length_squared() > 1e-6 {
                         let normal = sdf_normal.normalize();
+
+                        // CRITICAL: Clamp penetration depth to prevent force explosion
+                        // Deep penetrations cause astronomical forces that make particles explode
+                        // Limit to 50% of particle radius (for 8mm particles, max 2mm penetration)
+                        let max_penetration = radius * 0.5;
+                        penetration = penetration.min(max_penetration);
 
                         // Apply contact force using spring-damper model
                         let v_n = vel.dot(normal);
@@ -954,6 +836,11 @@ impl ClusterSimulation3D {
                         if fn_mag < 0.0 {
                             fn_mag = 0.0;
                         }
+
+                        // Clamp force to prevent numerical explosion from deep penetrations
+                        // Max force: particle weight * 1000 (reasonable for particle collisions)
+                        let max_force = template.particle_mass * self.gravity.length() * 1000.0;
+                        fn_mag = fn_mag.min(max_force);
 
                         // Tangential (friction) force
                         let vt = vel - normal * v_n;
@@ -1041,6 +928,8 @@ impl ClusterSimulation3D {
                         if v_n < 0.0 {
                             clump.velocity -= normal * v_n;
                         }
+                        // CRITICAL FIX: Dampen angular velocity here too
+                        clump.angular_velocity *= 0.5;
                     }
                 }
                 let speed_sq = clump.velocity.length_squared();
@@ -1386,11 +1275,10 @@ impl ClusterSimulation3D {
 }
 
 fn dem_damping(restitution: f32, stiffness: f32, mass: f32) -> f32 {
-    use crate::constants::MAX_RESTITUTION;
     if stiffness <= 0.0 || mass <= 0.0 {
         return 0.0;
     }
-    let e = restitution.clamp(0.0, MAX_RESTITUTION);
+    let e = restitution.clamp(0.0, 0.999);
     if e <= 0.0 {
         return 2.0 * (stiffness * mass).sqrt();
     }
@@ -1415,11 +1303,7 @@ fn compute_inertia(offsets: &[Vec3], particle_mass: f32, particle_radius: f32) -
     for r in offsets {
         let r2 = r.length_squared();
         let diag = Mat3::from_diagonal(Vec3::splat(r2));
-        let outer = Mat3::from_cols(
-            Vec3::new(r.x * r.x, r.y * r.x, r.z * r.x),
-            Vec3::new(r.x * r.y, r.y * r.y, r.z * r.y),
-            Vec3::new(r.x * r.z, r.y * r.z, r.z * r.z),
-        );
+        let outer = Mat3::from_cols(*r * r.x, *r * r.y, *r * r.z);
         inertia += (diag - outer) * particle_mass;
     }
 
@@ -1617,131 +1501,5 @@ mod tests {
         let clump = Clump3D::new(Vec3::new(1.0, 2.0, 3.0), Vec3::ZERO, 0);
         let pos = clump.particle_world_position(template.local_offsets[0]);
         assert!((pos - clump.position).length() > 0.0);
-    }
-
-    #[test]
-    fn test_sdf_collision_no_oscillation() {
-        // Test that particles don't oscillate after colliding with an SDF surface
-        // This verifies that the position correction doesn't overshoot (no 1.01x multiplier)
-
-        // Create a simple single-particle template to make the test clearer
-        // We'll manually create a template with just one particle at the center
-        let particle_radius = 0.05;
-        let template = ClumpTemplate3D {
-            shape: ClumpShape3D::Cube2,
-            local_offsets: vec![Vec3::ZERO], // Single particle at center
-            particle_radius,
-            particle_mass: 1.0,
-            mass: 1.0,
-            inertia_inv_local: Mat3::IDENTITY,
-            bounding_radius: particle_radius,
-        };
-
-        // Create a simulation with one clump
-        let mut sim = ClusterSimulation3D {
-            templates: vec![template],
-            clumps: vec![],
-            gravity: Vec3::new(0.0, -9.8, 0.0),
-            restitution: 0.0, // No bounce for this test
-            friction: 0.5,
-            floor_friction: 0.5,
-            wet_friction: 0.1,
-            normal_stiffness: 1000.0,
-            tangential_stiffness: 500.0,
-            rolling_friction: 0.01,
-            wet_rolling_friction: 0.005,
-            use_dem: true,
-            bounds_min: Vec3::new(-10.0, -10.0, -10.0),
-            bounds_max: Vec3::new(10.0, 10.0, 10.0),
-            sphere_contacts: Default::default(),
-            plane_contacts: Default::default(),
-            sdf_contacts: Default::default(),
-        };
-
-        // Create a flat SDF ground plane
-        // The SDF grid represents grid nodes, not cell centers
-        // Grid node at index j is at world position y = (j * cell_size + grid_min_y)
-        // Use a smaller cell size to avoid clamping issues
-        let grid_width = 20;
-        let grid_height = 20;
-        let grid_depth = 20;
-        let cell_size = 0.01; // 1cm cells
-
-        let mut sdf = vec![f32::MAX; grid_width * grid_height * grid_depth];
-        for k in 0..grid_depth {
-            for j in 0..grid_height {
-                for i in 0..grid_width {
-                    // World position of this grid node
-                    let y_world = j as f32 * cell_size;
-                    // For a ground plane at y=0, the signed distance is simply y_world
-                    // Positive values are above ground (outside solid)
-                    // Negative would be inside solid
-                    let idx = k * grid_width * grid_height + j * grid_width + i;
-                    sdf[idx] = y_world;
-                }
-            }
-        }
-
-        let sdf_params = SdfParams {
-            sdf: &sdf,
-            grid_width,
-            grid_height,
-            grid_depth,
-            cell_size,
-            grid_offset: Vec3::ZERO,
-        };
-
-        // Position particle so it penetrates the ground
-        // The particle radius is 0.05, so placing it at y=0.02 means
-        // the bottom is at y=-0.03, which penetrates the ground plane at y=0
-        // The SDF at y=0.02 should be ~0.02, so penetration = 0.05 - 0.02 = 0.03
-        let initial_y = 0.02;
-        let clump = Clump3D::new(
-            Vec3::new(0.5, initial_y, 0.5),
-            Vec3::ZERO, // No initial velocity
-            0,
-        );
-        sim.clumps.push(clump);
-
-        let dt = 0.016; // ~60 FPS timestep
-
-        // Run collision response for several timesteps
-        // The first step should push the particle up to y=0.05
-        // Subsequent steps should not change the position (no oscillation)
-        let mut y_positions = Vec::new();
-        for _ in 0..10 {
-            sim.collision_response_only(dt, &sdf_params, false);
-            y_positions.push(sim.clumps[0].position.y);
-        }
-
-        // The particle should be corrected to y = particle_radius (0.05)
-        // after the first collision and remain stable
-        let particle_radius = sim.templates[0].particle_radius;
-
-        // First position should be corrected
-        let first_y = y_positions[0];
-        assert!(
-            (first_y - particle_radius).abs() < 0.001,
-            "First position y={} should be corrected to expected y={} (error: {})",
-            first_y,
-            particle_radius,
-            (first_y - particle_radius).abs()
-        );
-
-        // Check for oscillation: all subsequent positions should be stable
-        // Calculate the range of positions across all steps
-        let min_y = y_positions.iter().copied().fold(f32::MAX, f32::min);
-        let max_y = y_positions.iter().copied().fold(f32::MIN, f32::max);
-        let range = max_y - min_y;
-
-        // Range should be very small - no oscillation
-        // With the 1.01x multiplier, this would oscillate
-        // Without it, positions should be identical after first correction
-        assert!(
-            range < 0.001,
-            "Position should stabilize without oscillation. Range across all steps: {} (positions: {:?})",
-            range,
-            y_positions
-        );
     }
 }

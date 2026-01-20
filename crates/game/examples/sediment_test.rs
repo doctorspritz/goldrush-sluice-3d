@@ -157,8 +157,14 @@ impl App {
 
         println!("=== Sediment Test (Washplant Framework) ===\n");
         println!("Grid: {}x{}x{} cells", gw, gh, gd);
-        println!("Sluice: {:.1}m @ {:.0}° slope", sluice.length, sluice.slope_deg);
-        println!("\nDensities: Gold={:.1}x, Sand={:.1}x", GOLD_DENSITY, SAND_DENSITY);
+        println!(
+            "Sluice: {:.1}m @ {:.0}° slope",
+            sluice.length, sluice.slope_deg
+        );
+        println!(
+            "\nDensities: Gold={:.1}x, Sand={:.1}x",
+            GOLD_DENSITY, SAND_DENSITY
+        );
         println!("\nControls: SPACE=pause, Arrows=camera, ESC=quit\n");
 
         Self {
@@ -185,7 +191,12 @@ impl App {
         }
     }
 
-    fn mark_sluice_solid(sim: &mut FlipSimulation3D, sluice: &SluicePiece, cell_size: f32, margin: f32) {
+    fn mark_sluice_solid(
+        sim: &mut FlipSimulation3D,
+        sluice: &SluicePiece,
+        cell_size: f32,
+        margin: f32,
+    ) {
         let width = sim.grid.width;
         let height = sim.grid.height;
         let depth = sim.grid.depth;
@@ -218,8 +229,10 @@ impl App {
             let floor_y = base_y + (total_drop / 2.0) - t * total_drop;
             let floor_j = (floor_y / cell_size).floor() as i32;
 
-            let t_next = ((t * (half_len * 2) as f32 + 1.0) / (half_len * 2) as f32).clamp(0.0, 1.0);
-            let floor_j_next = ((base_y + (total_drop / 2.0) - t_next * total_drop) / cell_size).floor() as i32;
+            let t_next =
+                ((t * (half_len * 2) as f32 + 1.0) / (half_len * 2) as f32).clamp(0.0, 1.0);
+            let floor_j_next =
+                ((base_y + (total_drop / 2.0) - t_next * total_drop) / cell_size).floor() as i32;
             let eff_floor = floor_j.max(floor_j_next);
 
             let wall_top = eff_floor + riffle_h + wall_h;
@@ -239,7 +252,11 @@ impl App {
                 for j in 0..height {
                     let jj = j as i32;
                     let is_floor = jj <= eff_floor && in_len && in_width;
-                    let is_riffle = is_riffle_x && in_width && in_len && jj > eff_floor && jj <= eff_floor + riffle_h;
+                    let is_riffle = is_riffle_x
+                        && in_width
+                        && in_len
+                        && jj > eff_floor
+                        && jj <= eff_floor + riffle_h;
                     let at_wall = kk < (ck - half_wid) || kk >= (ck + half_wid);
                     let is_wall = at_wall && in_len && jj <= wall_top;
 
@@ -326,7 +343,10 @@ impl App {
         }
 
         self.sediment_spawned = true;
-        println!("Spawned {} gold + {} sand at frame {}", NUM_GOLD, NUM_SAND, self.frame);
+        println!(
+            "Spawned {} gold + {} sand at frame {}",
+            NUM_GOLD, NUM_SAND, self.frame
+        );
     }
 
     fn report(&self) {
@@ -352,16 +372,29 @@ impl App {
             }
         }
 
-        let gold_avg = if gold_n > 0 { gold_x / gold_n as f32 } else { 0.0 };
-        let sand_avg = if sand_n > 0 { sand_x / sand_n as f32 } else { 0.0 };
+        let gold_avg = if gold_n > 0 {
+            gold_x / gold_n as f32
+        } else {
+            0.0
+        };
+        let sand_avg = if sand_n > 0 {
+            sand_x / sand_n as f32
+        } else {
+            0.0
+        };
         let sluice_len = self.grid_dims.0 as f32 * SIM_CELL_SIZE;
         let sep = (sand_avg - gold_avg) / sluice_len * 100.0;
 
         println!(
             "Frame {}: n={}, gold={}/{} x={:.3}m, sand={}/{} x={:.3}m, sep={:.1}%",
-            self.frame, self.positions.len(),
-            gold_n, NUM_GOLD, gold_avg,
-            sand_n, NUM_SAND, sand_avg,
+            self.frame,
+            self.positions.len(),
+            gold_n,
+            NUM_GOLD,
+            gold_avg,
+            sand_n,
+            NUM_SAND,
+            sand_avg,
             sep
         );
     }
@@ -385,7 +418,13 @@ impl App {
             let i = (pos.x / SIM_CELL_SIZE).floor() as isize;
             let j = (pos.y / SIM_CELL_SIZE).floor() as isize;
             let k = (pos.z / SIM_CELL_SIZE).floor() as isize;
-            if i >= 0 && (i as usize) < gw && j >= 0 && (j as usize) < gh && k >= 0 && (k as usize) < gd {
+            if i >= 0
+                && (i as usize) < gw
+                && j >= 0
+                && (j as usize) < gh
+                && k >= 0
+                && (k as usize) < gd
+            {
                 let idx = (k as usize) * gw * gh + (j as usize) * gw + i as usize;
                 cell_types[idx] = 1;
             }
@@ -423,7 +462,13 @@ impl App {
         let mut i = 0;
         while i < self.positions.len() {
             let p = self.positions[i];
-            if p.x < min_b || p.x > max_x || p.y < min_b || p.y > max_y || p.z < min_b || p.z > max_z {
+            if p.x < min_b
+                || p.x > max_x
+                || p.y < min_b
+                || p.y > max_y
+                || p.z < min_b
+                || p.z > max_z
+            {
                 self.positions.swap_remove(i);
                 self.velocities.swap_remove(i);
                 self.affine_vels.swap_remove(i);
@@ -564,8 +609,16 @@ impl App {
                     array_stride: std::mem::size_of::<SluiceVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &[
-                        wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x3 },
-                        wgpu::VertexAttribute { offset: 12, shader_location: 1, format: wgpu::VertexFormat::Float32x4 },
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 12,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32x4,
+                        },
                     ],
                 }],
                 compilation_options: Default::default(),
@@ -612,9 +665,21 @@ impl App {
                     array_stride: std::mem::size_of::<SedimentInstance>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &[
-                        wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x3 },
-                        wgpu::VertexAttribute { offset: 12, shader_location: 1, format: wgpu::VertexFormat::Float32 },
-                        wgpu::VertexAttribute { offset: 16, shader_location: 2, format: wgpu::VertexFormat::Float32x4 },
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 12,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 16,
+                            shader_location: 2,
+                            format: wgpu::VertexFormat::Float32x4,
+                        },
                     ],
                 }],
                 compilation_options: Default::default(),
@@ -653,7 +718,14 @@ impl App {
         });
 
         let (gw, gh, gd) = self.grid_dims;
-        let mut gpu_flip = GpuFlip3D::new(&device, gw as u32, gh as u32, gd as u32, SIM_CELL_SIZE, SIM_MAX_PARTICLES);
+        let mut gpu_flip = GpuFlip3D::new(
+            &device,
+            gw as u32,
+            gh as u32,
+            gd as u32,
+            SIM_CELL_SIZE,
+            SIM_MAX_PARTICLES,
+        );
         gpu_flip.open_boundaries = 2;
         gpu_flip.sediment_drag_coefficient = 8.0;
         gpu_flip.gold_density_threshold = 5.0;
@@ -701,10 +773,22 @@ impl App {
         let outlet_y = base_y - drop / 2.0;
 
         let v0 = vertices.len() as u32;
-        vertices.push(SluiceVertex { position: [cx - hl, inlet_y, cz - hw], color });
-        vertices.push(SluiceVertex { position: [cx + hl, outlet_y, cz - hw], color });
-        vertices.push(SluiceVertex { position: [cx + hl, outlet_y, cz + hw], color });
-        vertices.push(SluiceVertex { position: [cx - hl, inlet_y, cz + hw], color });
+        vertices.push(SluiceVertex {
+            position: [cx - hl, inlet_y, cz - hw],
+            color,
+        });
+        vertices.push(SluiceVertex {
+            position: [cx + hl, outlet_y, cz - hw],
+            color,
+        });
+        vertices.push(SluiceVertex {
+            position: [cx + hl, outlet_y, cz + hw],
+            color,
+        });
+        vertices.push(SluiceVertex {
+            position: [cx - hl, inlet_y, cz + hw],
+            color,
+        });
         indices.extend_from_slice(&[v0, v0 + 1, v0 + 2, v0, v0 + 2, v0 + 3]);
 
         let riffle_color = [0.25, 0.2, 0.15, 1.0];
@@ -716,14 +800,38 @@ impl App {
             let thick = 0.015;
 
             let v = vertices.len() as u32;
-            vertices.push(SluiceVertex { position: [x - thick, floor_y, cz - hw], color: riffle_color });
-            vertices.push(SluiceVertex { position: [x + thick, floor_y, cz - hw], color: riffle_color });
-            vertices.push(SluiceVertex { position: [x + thick, top, cz - hw], color: riffle_color });
-            vertices.push(SluiceVertex { position: [x - thick, top, cz - hw], color: riffle_color });
-            vertices.push(SluiceVertex { position: [x - thick, floor_y, cz + hw], color: riffle_color });
-            vertices.push(SluiceVertex { position: [x + thick, floor_y, cz + hw], color: riffle_color });
-            vertices.push(SluiceVertex { position: [x + thick, top, cz + hw], color: riffle_color });
-            vertices.push(SluiceVertex { position: [x - thick, top, cz + hw], color: riffle_color });
+            vertices.push(SluiceVertex {
+                position: [x - thick, floor_y, cz - hw],
+                color: riffle_color,
+            });
+            vertices.push(SluiceVertex {
+                position: [x + thick, floor_y, cz - hw],
+                color: riffle_color,
+            });
+            vertices.push(SluiceVertex {
+                position: [x + thick, top, cz - hw],
+                color: riffle_color,
+            });
+            vertices.push(SluiceVertex {
+                position: [x - thick, top, cz - hw],
+                color: riffle_color,
+            });
+            vertices.push(SluiceVertex {
+                position: [x - thick, floor_y, cz + hw],
+                color: riffle_color,
+            });
+            vertices.push(SluiceVertex {
+                position: [x + thick, floor_y, cz + hw],
+                color: riffle_color,
+            });
+            vertices.push(SluiceVertex {
+                position: [x + thick, top, cz + hw],
+                color: riffle_color,
+            });
+            vertices.push(SluiceVertex {
+                position: [x - thick, top, cz + hw],
+                color: riffle_color,
+            });
 
             indices.extend_from_slice(&[v, v + 1, v + 2, v, v + 2, v + 3]);
             indices.extend_from_slice(&[v + 4, v + 6, v + 5, v + 4, v + 7, v + 6]);
@@ -743,15 +851,22 @@ impl App {
             Ok(t) => t,
             Err(_) => return,
         };
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         let margin = SIM_CELL_SIZE * 4.0;
-        let center = Vec3::new(margin + self.sluice.length / 2.0, 0.15, margin + self.sluice.width / 2.0);
-        let cam_pos = center + Vec3::new(
-            self.camera_distance * self.camera_angle.cos(),
-            self.camera_height,
-            self.camera_distance * self.camera_angle.sin(),
+        let center = Vec3::new(
+            margin + self.sluice.length / 2.0,
+            0.15,
+            margin + self.sluice.width / 2.0,
         );
+        let cam_pos = center
+            + Vec3::new(
+                self.camera_distance * self.camera_angle.cos(),
+                self.camera_height,
+                self.camera_distance * self.camera_angle.sin(),
+            );
 
         let aspect = gpu.config.width as f32 / gpu.config.height as f32;
         let view_mat = Mat4::look_at_rh(cam_pos, center, Vec3::Y);
@@ -763,22 +878,37 @@ impl App {
             camera_pos: cam_pos.to_array(),
             _pad: 0.0,
         };
-        gpu.queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        gpu.queue
+            .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let mut instances: Vec<SedimentInstance> = Vec::new();
         for i in 0..self.positions.len() {
             if self.is_sediment[i] {
                 let pos = self.positions[i];
-                let (color, r) = if self.is_gold[i] { (GOLD_COLOR, 0.008) } else { (SAND_COLOR, 0.006) };
-                instances.push(SedimentInstance { position: pos.to_array(), scale: r * 2.0, color });
+                let (color, r) = if self.is_gold[i] {
+                    (GOLD_COLOR, 0.008)
+                } else {
+                    (SAND_COLOR, 0.006)
+                };
+                instances.push(SedimentInstance {
+                    position: pos.to_array(),
+                    scale: r * 2.0,
+                    color,
+                });
             }
         }
 
         if !instances.is_empty() {
-            gpu.queue.write_buffer(&gpu.sediment_instance_buffer, 0, bytemuck::cast_slice(&instances));
+            gpu.queue.write_buffer(
+                &gpu.sediment_instance_buffer,
+                0,
+                bytemuck::cast_slice(&instances),
+            );
         }
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -787,13 +917,21 @@ impl App {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.12, b: 0.15, a: 1.0 }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.12,
+                            b: 0.15,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &gpu.depth_texture,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
                     stencil_ops: None,
                 }),
                 ..Default::default()
@@ -814,10 +952,17 @@ impl App {
 
         if let (Some(fluid_renderer), Some(gpu_flip)) = (&self.fluid_renderer, &self.gpu_flip) {
             fluid_renderer.render(
-                &gpu.device, &gpu.queue, &mut encoder, &view,
-                gpu_flip, self.positions.len() as u32,
-                view_mat.to_cols_array_2d(), proj_mat.to_cols_array_2d(),
-                cam_pos.to_array(), gpu.config.width, gpu.config.height,
+                &gpu.device,
+                &gpu.queue,
+                &mut encoder,
+                &view,
+                gpu_flip,
+                self.positions.len() as u32,
+                view_mat.to_cols_array_2d(),
+                proj_mat.to_cols_array_2d(),
+                cam_pos.to_array(),
+                gpu.config.width,
+                gpu.config.height,
             );
         }
 
@@ -851,7 +996,9 @@ impl ApplicationHandler for App {
                         }
                         PhysicalKey::Code(KeyCode::ArrowLeft) => self.camera_angle -= 0.1,
                         PhysicalKey::Code(KeyCode::ArrowRight) => self.camera_angle += 0.1,
-                        PhysicalKey::Code(KeyCode::ArrowUp) => self.camera_distance = (self.camera_distance - 0.1).max(0.3),
+                        PhysicalKey::Code(KeyCode::ArrowUp) => {
+                            self.camera_distance = (self.camera_distance - 0.1).max(0.3)
+                        }
                         PhysicalKey::Code(KeyCode::ArrowDown) => self.camera_distance += 0.1,
                         PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
                         _ => {}

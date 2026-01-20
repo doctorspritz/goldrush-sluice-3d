@@ -180,7 +180,9 @@ impl App {
         );
         println!(
             "Sluice: {:.1}m long, {:.1}° slope, {:.0}cm riffle spacing",
-            SLUICE_LENGTH, SLUICE_SLOPE, RIFFLE_SPACING * 100.0
+            SLUICE_LENGTH,
+            SLUICE_SLOPE,
+            RIFFLE_SPACING * 100.0
         );
         println!("\nDensities (relative to water):");
         println!("  Gold: {:.1}x", GOLD_DENSITY);
@@ -287,7 +289,8 @@ impl App {
                     let j_i = j as i32;
 
                     // Floor
-                    let is_floor = j_i <= effective_floor_j && in_channel_length && in_channel_width;
+                    let is_floor =
+                        j_i <= effective_floor_j && in_channel_length && in_channel_width;
 
                     // Riffles
                     let is_riffle = is_riffle_x
@@ -800,7 +803,7 @@ impl App {
         );
         // Open outlet boundary
         gpu_flip.open_boundaries = 2; // +X open
-        // Enable sediment drag based on density
+                                      // Enable sediment drag based on density
         gpu_flip.sediment_drag_coefficient = 8.0; // Moderate drag
         gpu_flip.gold_density_threshold = 5.0; // Particles > 5x water density are "heavy"
 
@@ -866,7 +869,14 @@ impl App {
             position: [center_x - half_len, inlet_y, center_z + half_wid],
             color,
         });
-        indices.extend_from_slice(&[v_base, v_base + 1, v_base + 2, v_base, v_base + 2, v_base + 3]);
+        indices.extend_from_slice(&[
+            v_base,
+            v_base + 1,
+            v_base + 2,
+            v_base,
+            v_base + 2,
+            v_base + 3,
+        ]);
 
         // Riffles
         let riffle_color = [0.25, 0.2, 0.15, 1.0];
@@ -912,11 +922,32 @@ impl App {
             });
 
             // Front face
-            indices.extend_from_slice(&[v_base, v_base + 1, v_base + 2, v_base, v_base + 2, v_base + 3]);
+            indices.extend_from_slice(&[
+                v_base,
+                v_base + 1,
+                v_base + 2,
+                v_base,
+                v_base + 2,
+                v_base + 3,
+            ]);
             // Back face
-            indices.extend_from_slice(&[v_base + 4, v_base + 6, v_base + 5, v_base + 4, v_base + 7, v_base + 6]);
+            indices.extend_from_slice(&[
+                v_base + 4,
+                v_base + 6,
+                v_base + 5,
+                v_base + 4,
+                v_base + 7,
+                v_base + 6,
+            ]);
             // Top face
-            indices.extend_from_slice(&[v_base + 3, v_base + 2, v_base + 6, v_base + 3, v_base + 6, v_base + 7]);
+            indices.extend_from_slice(&[
+                v_base + 3,
+                v_base + 2,
+                v_base + 6,
+                v_base + 3,
+                v_base + 6,
+                v_base + 7,
+            ]);
 
             x += self.sluice.riffle_spacing;
         }
@@ -936,14 +967,29 @@ impl App {
             color: wall_color,
         });
         vertices.push(SluiceVertex {
-            position: [center_x + half_len, outlet_y + wall_height, center_z - half_wid],
+            position: [
+                center_x + half_len,
+                outlet_y + wall_height,
+                center_z - half_wid,
+            ],
             color: wall_color,
         });
         vertices.push(SluiceVertex {
-            position: [center_x - half_len, inlet_y + wall_height, center_z - half_wid],
+            position: [
+                center_x - half_len,
+                inlet_y + wall_height,
+                center_z - half_wid,
+            ],
             color: wall_color,
         });
-        indices.extend_from_slice(&[v_base, v_base + 1, v_base + 2, v_base, v_base + 2, v_base + 3]);
+        indices.extend_from_slice(&[
+            v_base,
+            v_base + 1,
+            v_base + 2,
+            v_base,
+            v_base + 2,
+            v_base + 3,
+        ]);
 
         // Right wall
         let v_base = vertices.len() as u32;
@@ -956,14 +1002,29 @@ impl App {
             color: wall_color,
         });
         vertices.push(SluiceVertex {
-            position: [center_x + half_len, outlet_y + wall_height, center_z + half_wid],
+            position: [
+                center_x + half_len,
+                outlet_y + wall_height,
+                center_z + half_wid,
+            ],
             color: wall_color,
         });
         vertices.push(SluiceVertex {
-            position: [center_x - half_len, inlet_y + wall_height, center_z + half_wid],
+            position: [
+                center_x - half_len,
+                inlet_y + wall_height,
+                center_z + half_wid,
+            ],
             color: wall_color,
         });
-        indices.extend_from_slice(&[v_base, v_base + 2, v_base + 1, v_base, v_base + 3, v_base + 2]);
+        indices.extend_from_slice(&[
+            v_base,
+            v_base + 2,
+            v_base + 1,
+            v_base,
+            v_base + 3,
+            v_base + 2,
+        ]);
 
         (vertices, indices)
     }

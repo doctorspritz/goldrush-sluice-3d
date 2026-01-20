@@ -16,13 +16,7 @@ struct Params {
     depth: u32,
     omega: f32,  // SOR relaxation factor (typically 1.5-1.9 for 3D)
     h_sq: f32,   // cell_size^2, needed to scale divergence in Poisson equation
-    // Bitmask for open boundaries (Dirichlet p=0):
-    // Bit 0 (1): -X open, Bit 1 (2): +X open
-    // Bit 2 (4): -Y open, Bit 3 (8): +Y open
-    // Bit 4 (16): -Z open, Bit 5 (32): +Z open
-    open_boundaries: u32,
-    _pad0: u32,
-    _pad1: u32,
+    open_boundaries: u32,  // Bitmask: 1=-X, 2=+X, 4=-Y, 8=+Y, 16=-Z, 32=+Z
 }
 
 @group(0) @binding(0) var<storage, read_write> pressure: array<f32>;
@@ -105,109 +99,80 @@ fn pressure_red(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let p = pressure[idx];
 
-    // Check open boundary flags
-    let open_neg_x = (params.open_boundaries & 1u) != 0u;
-    let open_pos_x = (params.open_boundaries & 2u) != 0u;
-    let open_neg_y = (params.open_boundaries & 4u) != 0u;
-    let open_pos_y = (params.open_boundaries & 8u) != 0u;
-    let open_neg_z = (params.open_boundaries & 16u) != 0u;
-    let open_pos_z = (params.open_boundaries & 32u) != 0u;
-
     // Gather neighbor pressures with proper boundary conditions
-    // For each direction, we track:
-    // - sum_neighbors: the sum of pressures from non-solid neighbors
-    // - n_neighbors: count of non-solid neighbors (for correct diagonal)
-    //
-    // Solid neighbors: Neumann BC (dp/dn = 0) → don't add to sum, don't count
-    // Fluid/Air neighbors: add pressure to sum, count in diagonal
+    // Always count 6 neighbors (proper Neumann/Dirichlet handling)
     var sum_neighbors = 0.0;
-    var n_neighbors = 0.0;
 
     // -X neighbor
     if (i > 0u) {
-        let ct = get_cell_type(i - 1u, j, k);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i - 1u, j, k, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i - 1u, j, k, p);
+    } else {
+        if ((params.open_boundaries & 1u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_neg_x) {
-        // Open boundary: Dirichlet BC (p=0)
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
     }
-    // Closed boundary at domain edge: Neumann BC, don't count
 
     // +X neighbor
     if (i < params.width - 1u) {
-        let ct = get_cell_type(i + 1u, j, k);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i + 1u, j, k, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i + 1u, j, k, p);
+    } else {
+        if ((params.open_boundaries & 2u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_pos_x) {
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
     }
 
-    // -Y neighbor (floor)
+    // -Y neighbor
     if (j > 0u) {
-        let ct = get_cell_type(i, j - 1u, k);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i, j - 1u, k, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i, j - 1u, k, p);
+    } else {
+        if ((params.open_boundaries & 4u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_neg_y) {
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
     }
 
-    // +Y neighbor (ceiling/top)
+    // +Y neighbor
     if (j < params.height - 1u) {
-        let ct = get_cell_type(i, j + 1u, k);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i, j + 1u, k, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i, j + 1u, k, p);
+    } else {
+        if ((params.open_boundaries & 8u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_pos_y) {
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
     }
 
-    // -Z neighbor (side wall)
+    // -Z neighbor
     if (k > 0u) {
-        let ct = get_cell_type(i, j, k - 1u);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i, j, k - 1u, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i, j, k - 1u, p);
+    } else {
+        if ((params.open_boundaries & 16u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_neg_z) {
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
     }
 
-    // +Z neighbor (side wall)
+    // +Z neighbor
     if (k < params.depth - 1u) {
-        let ct = get_cell_type(i, j, k + 1u);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i, j, k + 1u, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i, j, k + 1u, p);
+    } else {
+        if ((params.open_boundaries & 32u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_pos_z) {
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
-    }
-
-    // Guard against isolated cells (no non-solid neighbors)
-    if (n_neighbors < 0.5) {
-        pressure[idx] = 0.0;
-        return;
     }
 
     // Gauss-Seidel update with SOR
-    // Poisson equation: ∇²p = div(u)
-    // Discretized with variable diagonal: (sum_neighbors - n*p) / h² = div
-    // Rearranged: p = (sum_neighbors - h² * div) / n
-    let new_p = (sum_neighbors - divergence[idx] * params.h_sq) / n_neighbors;
+    // Poisson equation: (p_neighbors - 6p) / h² = -div
+    // Rearranged: p = (sum_neighbors - h² * div) / 6
+    let new_p = (sum_neighbors - divergence[idx] * params.h_sq) / 6.0;
     // SOR: weighted average of old and new values
     pressure[idx] = mix(pressure[idx], new_p, params.omega);
 }
@@ -236,99 +201,77 @@ fn pressure_black(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let p = pressure[idx];
 
-    // Check open boundary flags
-    let open_neg_x = (params.open_boundaries & 1u) != 0u;
-    let open_pos_x = (params.open_boundaries & 2u) != 0u;
-    let open_neg_y = (params.open_boundaries & 4u) != 0u;
-    let open_pos_y = (params.open_boundaries & 8u) != 0u;
-    let open_neg_z = (params.open_boundaries & 16u) != 0u;
-    let open_pos_z = (params.open_boundaries & 32u) != 0u;
-
     // Gather neighbor pressures with proper boundary conditions
-    // Same logic as pressure_red - count non-solid neighbors for correct diagonal
     var sum_neighbors = 0.0;
-    var n_neighbors = 0.0;
 
     // -X neighbor
     if (i > 0u) {
-        let ct = get_cell_type(i - 1u, j, k);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i - 1u, j, k, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i - 1u, j, k, p);
+    } else {
+        if ((params.open_boundaries & 1u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_neg_x) {
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
     }
 
     // +X neighbor
     if (i < params.width - 1u) {
-        let ct = get_cell_type(i + 1u, j, k);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i + 1u, j, k, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i + 1u, j, k, p);
+    } else {
+        if ((params.open_boundaries & 2u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_pos_x) {
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
     }
 
     // -Y neighbor
     if (j > 0u) {
-        let ct = get_cell_type(i, j - 1u, k);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i, j - 1u, k, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i, j - 1u, k, p);
+    } else {
+        if ((params.open_boundaries & 4u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_neg_y) {
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
     }
 
     // +Y neighbor
     if (j < params.height - 1u) {
-        let ct = get_cell_type(i, j + 1u, k);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i, j + 1u, k, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i, j + 1u, k, p);
+    } else {
+        if ((params.open_boundaries & 8u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_pos_y) {
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
     }
 
     // -Z neighbor
     if (k > 0u) {
-        let ct = get_cell_type(i, j, k - 1u);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i, j, k - 1u, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i, j, k - 1u, p);
+    } else {
+        if ((params.open_boundaries & 16u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_neg_z) {
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
     }
 
     // +Z neighbor
     if (k < params.depth - 1u) {
-        let ct = get_cell_type(i, j, k + 1u);
-        if (ct != CELL_SOLID) {
-            sum_neighbors += get_neighbor_pressure(i, j, k + 1u, p);
-            n_neighbors += 1.0;
+        sum_neighbors += get_neighbor_pressure(i, j, k + 1u, p);
+    } else {
+        if ((params.open_boundaries & 32u) != 0u) {
+            sum_neighbors += 0.0;
+        } else {
+            sum_neighbors += p;
         }
-    } else if (open_pos_z) {
-        sum_neighbors += 0.0;
-        n_neighbors += 1.0;
     }
 
-    // Guard against isolated cells
-    if (n_neighbors < 0.5) {
-        pressure[idx] = 0.0;
-        return;
-    }
-
-    // Poisson equation with variable diagonal: p = (sum_neighbors - h² * div) / n
-    let new_p = (sum_neighbors - divergence[idx] * params.h_sq) / n_neighbors;
+    // Poisson equation: p = (sum_neighbors - h² * div) / 6
+    let new_p = (sum_neighbors - divergence[idx] * params.h_sq) / 6.0;
     pressure[idx] = mix(pressure[idx], new_p, params.omega);
 }
 

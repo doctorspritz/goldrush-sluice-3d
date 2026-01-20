@@ -4,6 +4,7 @@ pub mod app;
 pub mod editor;
 pub mod equipment_geometry;
 pub mod gpu;
+pub mod multigrid;
 pub mod sluice_geometry;
 pub mod scenario;
 pub mod test_harness;

@@ -448,6 +448,8 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let idx = get_idx(x, z);
     let depth = water_depth[idx];
+    let had_water = depth > 0.001;
+    let ground_before = get_ground_height(idx);
 
     if (depth < MIN_WATER_DEPTH) {
         return;
@@ -463,7 +465,6 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     
     let slope = get_terrain_slope(x, z);
-
     let u_star = shear_velocity(depth, slope, vel_x, vel_z, params.gravity);
     let tau = shear_stress(u_star, params.rho_water);
 
@@ -703,7 +704,6 @@ fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>
             net_sediment -= fz * conc_front;
         }
     }
-
     if (depth > 1e-4) {
         let delta_conc = net_sediment / (cell_area * depth);
         let new_sed = local_conc + delta_conc;

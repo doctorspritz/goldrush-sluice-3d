@@ -25,7 +25,13 @@ struct PhysicsTest {
 }
 
 impl PhysicsTest {
-    fn fail(name: &'static str, expected: String, actual: String, error: f32, tolerance: f32) -> Self {
+    fn fail(
+        name: &'static str,
+        expected: String,
+        actual: String,
+        error: f32,
+        tolerance: f32,
+    ) -> Self {
         Self {
             name,
             passed: false,
@@ -36,7 +42,13 @@ impl PhysicsTest {
         }
     }
 
-    fn pass(name: &'static str, expected: String, actual: String, error: f32, tolerance: f32) -> Self {
+    fn pass(
+        name: &'static str,
+        expected: String,
+        actual: String,
+        error: f32,
+        tolerance: f32,
+    ) -> Self {
         Self {
             name,
             passed: true,
@@ -186,10 +198,7 @@ fn test_projectile_motion() -> PhysicsTest {
     let vx0 = 2.0; // 2 m/s horizontal
     let vy0 = 3.0; // 3 m/s upward
 
-    sim.spawn_particle_with_velocity(
-        Vec3::new(x0, y0, 0.25),
-        Vec3::new(vx0, vy0, 0.0),
-    );
+    sim.spawn_particle_with_velocity(Vec3::new(x0, y0, 0.25), Vec3::new(vx0, vy0, 0.0));
 
     let dt = 1.0 / 120.0;
     let num_steps = 30; // 0.25 seconds
@@ -611,7 +620,10 @@ fn test_density_settling() -> PhysicsTest {
         PhysicsTest::fail(
             name,
             "gold_y < sand_y (gold should sink faster)".to_string(),
-            format!("gold={:.4}, sand={:.4} (same or gold higher!)", gold_y, sand_y),
+            format!(
+                "gold={:.4}, sand={:.4} (same or gold higher!)",
+                gold_y, sand_y
+            ),
             100.0,
             tolerance,
         )
@@ -656,16 +668,28 @@ fn test_momentum_conservation() -> PhysicsTest {
     if error_percent <= tolerance {
         PhysicsTest::pass(
             name,
-            format!("p = ({:.2}, {:.2}, {:.2})", initial_momentum.x, initial_momentum.y, initial_momentum.z),
-            format!("p = ({:.2}, {:.2}, {:.2})", final_momentum.x, final_momentum.y, final_momentum.z),
+            format!(
+                "p = ({:.2}, {:.2}, {:.2})",
+                initial_momentum.x, initial_momentum.y, initial_momentum.z
+            ),
+            format!(
+                "p = ({:.2}, {:.2}, {:.2})",
+                final_momentum.x, final_momentum.y, final_momentum.z
+            ),
             error_percent,
             tolerance,
         )
     } else {
         PhysicsTest::fail(
             name,
-            format!("p = ({:.2}, {:.2}, {:.2})", initial_momentum.x, initial_momentum.y, initial_momentum.z),
-            format!("p = ({:.2}, {:.2}, {:.2})", final_momentum.x, final_momentum.y, final_momentum.z),
+            format!(
+                "p = ({:.2}, {:.2}, {:.2})",
+                initial_momentum.x, initial_momentum.y, initial_momentum.z
+            ),
+            format!(
+                "p = ({:.2}, {:.2}, {:.2})",
+                final_momentum.x, final_momentum.y, final_momentum.z
+            ),
             error_percent,
             tolerance,
         )
@@ -714,13 +738,22 @@ fn main() {
         println!("[{}] {}", status, test.name);
         println!("       Expected: {}", test.expected);
         println!("       Actual:   {}", test.actual);
-        println!("       Error:    {:.1}% (tolerance: {:.1}%)", test.error_percent, test.tolerance_percent);
+        println!(
+            "       Error:    {:.1}% (tolerance: {:.1}%)",
+            test.error_percent, test.tolerance_percent
+        );
         println!();
     }
 
     let elapsed = start.elapsed();
     println!("════════════════════════════════════════════════════════════════════");
-    println!("Results: {}/{} passed, {} failed in {:.2}s", passed, tests.len(), failed, elapsed.as_secs_f32());
+    println!(
+        "Results: {}/{} passed, {} failed in {:.2}s",
+        passed,
+        tests.len(),
+        failed,
+        elapsed.as_secs_f32()
+    );
 
     if failed > 0 {
         println!();

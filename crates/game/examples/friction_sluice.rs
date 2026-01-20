@@ -927,6 +927,17 @@ impl App {
                 self.apply_gpu_results(self.positions.len());
             }
 
+            if self.frame % 50 == 0 {
+                if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
+                    gpu_flip.print_density_projection_diagnostics(
+                        &gpu.device,
+                        &gpu.queue,
+                        dt,
+                        8.0, // water_rest
+                    );
+                }
+            }
+
             self.run_dem_and_cleanup(dt);
         }
 

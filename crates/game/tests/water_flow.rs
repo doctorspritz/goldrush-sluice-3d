@@ -2,8 +2,8 @@
 //! Tests to verify water flows correctly in the heightfield simulation.
 
 extern crate game;
-extern crate sim3d;
 extern crate pollster;
+extern crate sim3d;
 
 use sim3d::World;
 
@@ -60,7 +60,10 @@ fn test_cpu_water_flows_downhill() {
         }
     }
 
-    println!("Left depth sum: {}, Right depth sum: {}", left_depth_sum, right_depth_sum);
+    println!(
+        "Left depth sum: {}, Right depth sum: {}",
+        left_depth_sum, right_depth_sum
+    );
 
     // Water should have flowed downhill - right side should have more now
     // or left side should have less than initial

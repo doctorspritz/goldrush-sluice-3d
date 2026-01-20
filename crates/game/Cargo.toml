@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 default = []
 panning = ["dep:rand"]
+gpu-dem = ["dep:rand"]
 macroquad-examples = ["dep:macroquad", "dep:rand"]
 
 [dependencies]
@@ -29,3 +30,12 @@ png = "0.17"
 naga = { version = "28.0.0", features = ["wgsl-in"] }
 proptest = "1.4"
 
+[[example]]
+name = "gpu_dem_test"
+path = "examples/gpu_dem_test.rs"
+required-features = ["gpu-dem"]
+
+[[example]]
+name = "gpu_dem_flip_test"
+path = "examples/gpu_dem_flip_test.rs"
+required-features = ["gpu-dem"]

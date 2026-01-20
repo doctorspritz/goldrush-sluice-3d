@@ -18,14 +18,6 @@ struct GridParams3D {
     height: u32,
     depth: u32,
     inv_cell_size: f32,
-    /// Bitmask for open boundaries:
-    /// Bit 0 (1): -X open, Bit 1 (2): +X open
-    /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
-    /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
-    open_boundaries: u32,
-    _pad0: u32, // Align to 8 bytes
-    _pad1: u32,
-    _pad2: u32,
 }
 
 /// Parameters for pressure solver
@@ -37,13 +29,7 @@ struct PressureParams3D {
     depth: u32,
     omega: f32, // SOR relaxation factor (1.5-1.9)
     h_sq: f32,  // cell_size^2, for Poisson equation scaling
-    /// Bitmask for open boundaries (Dirichlet p=0):
-    /// Bit 0 (1): -X open, Bit 1 (2): +X open
-    /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
-    /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
-    open_boundaries: u32,
-    _pad0: u32, // Align to 8 bytes for uniform buffer
-    _pad1: u32,
+    open_boundaries: u32, // Bitmask: 1=-X, 2=+X, 4=-Y, 8=+Y, 16=-Z, 32=+Z
 }
 
 /// GPU-based pressure solver for 3D FLIP
@@ -62,7 +48,7 @@ pub struct GpuPressure3D {
     pressure_params_buffer: wgpu::Buffer,
 
     // Compute pipelines
-    pub divergence_pipeline: wgpu::ComputePipeline,
+    divergence_pipeline: wgpu::ComputePipeline,
     pressure_red_pipeline: wgpu::ComputePipeline,
     pressure_black_pipeline: wgpu::ComputePipeline,
     gradient_u_pipeline: wgpu::ComputePipeline,
@@ -70,7 +56,7 @@ pub struct GpuPressure3D {
     gradient_w_pipeline: wgpu::ComputePipeline,
 
     // Bind groups
-    pub divergence_bind_group: wgpu::BindGroup,
+    divergence_bind_group: wgpu::BindGroup,
     pressure_bind_group: wgpu::BindGroup,
     gradient_bind_group: wgpu::BindGroup,
 }
@@ -538,11 +524,6 @@ impl GpuPressure3D {
     }
 
     /// Upload cell types and initialize pressure to zero
-    ///
-    /// `open_boundaries` bitmask:
-    /// Bit 0 (1): -X open, Bit 1 (2): +X open
-    /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
-    /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
     pub fn upload_cell_types(
         &self,
         queue: &wgpu::Queue,
@@ -562,10 +543,6 @@ impl GpuPressure3D {
             height: self.height,
             depth: self.depth,
             inv_cell_size: 1.0 / cell_size,
-            open_boundaries,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
         };
         queue.write_buffer(
             &self.grid_params_buffer,
@@ -581,11 +558,9 @@ impl GpuPressure3D {
             width: self.width,
             height: self.height,
             depth: self.depth,
-            omega: 1.85, // SOR over-relaxation for faster convergence (was 1.0)
+            omega: 1.5, // More stable relaxation factor (was 1.85)
             h_sq: cell_size * cell_size, // Poisson equation needs dx²
             open_boundaries,
-            _pad0: 0,
-            _pad1: 0,
         };
         queue.write_buffer(
             &self.pressure_params_buffer,
@@ -596,7 +571,6 @@ impl GpuPressure3D {
 
     /// Encode full pressure solve: divergence → iterations → gradient
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, iterations: u32) {
-        log::trace!("Pressure solver: {} iterations ({}x{}x{} grid)", iterations, self.width, self.height, self.depth);
         let workgroups_x = self.width.div_ceil(8);
         let workgroups_y = self.height.div_ceil(8);
         let workgroups_z = self.depth.div_ceil(4);
@@ -686,7 +660,6 @@ impl GpuPressure3D {
     /// - divergence_buffer is pre-filled with density error
     /// - We want the resulting pressure to apply to particle positions, not grid velocities
     pub fn encode_iterations_only(&self, encoder: &mut wgpu::CommandEncoder, iterations: u32) {
-        log::trace!("Density pressure solver: {} iterations", iterations);
         let workgroups_x = self.width.div_ceil(8);
         let workgroups_y = self.height.div_ceil(8);
         let workgroups_z = self.depth.div_ceil(4);

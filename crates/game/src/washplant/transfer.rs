@@ -116,7 +116,7 @@ impl TransferZone {
     }
 
     /// Add a particle to the transit queue
-    pub fn enqueue(&mut self, position: Vec3, velocity: Vec3, density: f32, is_sediment: bool) {
+    pub fn enqueue(&mut self, _position: Vec3, velocity: Vec3, density: f32, is_sediment: bool) {
         let transformed_vel = match self.velocity_transform {
             Some(t) => t * velocity,
             None => velocity,

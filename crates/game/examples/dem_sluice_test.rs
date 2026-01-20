@@ -75,7 +75,8 @@ fn mark_gutter_solid_cells(sim: &mut FlipSimulation3D, gutter: &GutterPiece, cel
         } else if i_i + 1 <= center_i - half_len_cells {
             0.0
         } else {
-            ((i_i + 1 - (center_i - half_len_cells)) as f32) / ((half_len_cells * 2) as f32).max(1.0)
+            ((i_i + 1 - (center_i - half_len_cells)) as f32)
+                / ((half_len_cells * 2) as f32).max(1.0)
         };
         let mesh_floor_y_next = gutter.position.y + (total_drop / 2.0) - t_next * total_drop;
         let floor_j_next = (mesh_floor_y_next / cell_size).floor() as i32;
@@ -85,7 +86,8 @@ fn mark_gutter_solid_cells(sim: &mut FlipSimulation3D, gutter: &GutterPiece, cel
         } else if i_i - 1 >= center_i + half_len_cells {
             1.0
         } else {
-            ((i_i - 1 - (center_i - half_len_cells)) as f32) / ((half_len_cells * 2) as f32).max(1.0)
+            ((i_i - 1 - (center_i - half_len_cells)) as f32)
+                / ((half_len_cells * 2) as f32).max(1.0)
         };
         let mesh_floor_y_prev = gutter.position.y + (total_drop / 2.0) - t_prev * total_drop;
         let floor_j_prev = (mesh_floor_y_prev / cell_size).floor() as i32;
@@ -110,8 +112,10 @@ fn mark_gutter_solid_cells(sim: &mut FlipSimulation3D, gutter: &GutterPiece, cel
                 let is_solid = if in_channel_length && in_channel_width {
                     // Inside channel
                     j_i <= effective_floor_j
-                        || (k_i <= center_k - half_wid_cells + wall_thick_cells && j_i <= wall_top_j)
-                        || (k_i >= center_k + half_wid_cells - wall_thick_cells && j_i <= wall_top_j)
+                        || (k_i <= center_k - half_wid_cells + wall_thick_cells
+                            && j_i <= wall_top_j)
+                        || (k_i >= center_k + half_wid_cells - wall_thick_cells
+                            && j_i <= wall_top_j)
                 } else if in_outlet_chute {
                     // Outlet chute
                     let outlet_floor_j = floor_j_right;
@@ -181,7 +185,8 @@ fn mark_sluice_solid_cells(sim: &mut FlipSimulation3D, sluice: &SluicePiece, cel
         } else if i_i + 1 <= center_i - half_len_cells {
             0.0
         } else {
-            ((i_i + 1 - (center_i - half_len_cells)) as f32) / ((half_len_cells * 2) as f32).max(1.0)
+            ((i_i + 1 - (center_i - half_len_cells)) as f32)
+                / ((half_len_cells * 2) as f32).max(1.0)
         };
         let mesh_floor_y_next = sluice.position.y + (total_drop / 2.0) - t_next * total_drop;
         let floor_j_next = (mesh_floor_y_next / cell_size).floor() as i32;
@@ -191,7 +196,8 @@ fn mark_sluice_solid_cells(sim: &mut FlipSimulation3D, sluice: &SluicePiece, cel
         } else if i_i - 1 >= center_i + half_len_cells {
             1.0
         } else {
-            ((i_i - 1 - (center_i - half_len_cells)) as f32) / ((half_len_cells * 2) as f32).max(1.0)
+            ((i_i - 1 - (center_i - half_len_cells)) as f32)
+                / ((half_len_cells * 2) as f32).max(1.0)
         };
         let mesh_floor_y_prev = sluice.position.y + (total_drop / 2.0) - t_prev * total_drop;
         let floor_j_prev = (mesh_floor_y_prev / cell_size).floor() as i32;
@@ -385,7 +391,11 @@ fn test_sluice_floor_collision() -> TestResult {
     // Mark sluice geometry
     let sluice_local = SluicePiece {
         id: 0,
-        position: Vec3::new(margin + sluice.length / 2.0, margin, margin + sluice.width / 2.0),
+        position: Vec3::new(
+            margin + sluice.length / 2.0,
+            margin,
+            margin + sluice.width / 2.0,
+        ),
         rotation: Rotation::R0,
         length: sluice.length,
         width: sluice.width,
@@ -481,7 +491,11 @@ fn test_gutter_flow() -> TestResult {
     // Mark gutter geometry - centered with margin
     let gutter_local = GutterPiece {
         id: 0,
-        position: Vec3::new(margin + gutter.length / 2.0, margin, margin + max_width / 2.0),
+        position: Vec3::new(
+            margin + gutter.length / 2.0,
+            margin,
+            margin + max_width / 2.0,
+        ),
         rotation: Rotation::R0,
         angle_deg: gutter.angle_deg,
         length: gutter.length,
@@ -562,7 +576,11 @@ fn test_riffle_trapping() -> TestResult {
 
     let sluice_local = SluicePiece {
         id: 0,
-        position: Vec3::new(margin + sluice.length / 2.0, margin, margin + sluice.width / 2.0),
+        position: Vec3::new(
+            margin + sluice.length / 2.0,
+            margin,
+            margin + sluice.width / 2.0,
+        ),
         rotation: Rotation::R0,
         length: sluice.length,
         width: sluice.width,

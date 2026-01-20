@@ -426,7 +426,7 @@ impl GpuParticleSort {
                 label: Some("Scatter Bind Group Layout"),
                 entries: &(0..16)
                     .map(|i| {
-                        let read_only = i < 4 || (i >= 4 && i < 10);
+                        let _read_only = i < 4 || (i >= 4 && i < 10);
                         wgpu::BindGroupLayoutEntry {
                             binding: i,
                             visibility: wgpu::ShaderStages::COMPUTE,

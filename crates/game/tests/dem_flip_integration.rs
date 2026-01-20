@@ -79,8 +79,7 @@ fn apply_water_dem_coupling(dem_sim: &mut ClusterSimulation3D, dt: f32) {
         let template = &dem_sim.templates[clump.template_idx];
 
         // Buoyancy force: F_b = ρ_water * V * g (upward)
-        let particle_volume =
-            (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
+        let particle_volume = (4.0 / 3.0) * std::f32::consts::PI * template.particle_radius.powi(3);
         let total_volume = particle_volume * template.local_offsets.len() as f32;
         let buoyancy_force = DEM_WATER_DENSITY * total_volume * 9.81;
 
@@ -160,8 +159,7 @@ fn test_dem_collides_with_gutter_sdf() {
 
     // Create clump template
     let particle_mass = particle_mass_from_density(DEM_CLUMP_RADIUS, DEM_SAND_DENSITY);
-    let template =
-        ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, particle_mass);
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, particle_mass);
     let template_idx = dem_sim.add_template(template);
 
     // Spawn clumps above the floor inside the gutter channel
@@ -280,14 +278,12 @@ fn test_gold_settles_faster_than_sand_in_water() {
 
     // Create gold template (heavy)
     let gold_mass = particle_mass_from_density(DEM_CLUMP_RADIUS, DEM_GOLD_DENSITY);
-    let gold_template =
-        ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, gold_mass);
+    let gold_template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, gold_mass);
     let gold_idx = dem_sim.add_template(gold_template);
 
     // Create sand template (light)
     let sand_mass = particle_mass_from_density(DEM_CLUMP_RADIUS, DEM_SAND_DENSITY);
-    let sand_template =
-        ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, sand_mass);
+    let sand_template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, sand_mass);
     let sand_idx = dem_sim.add_template(sand_template);
 
     println!(
@@ -459,8 +455,7 @@ fn test_flip_and_dem_together() {
 
     // Create DEM template
     let particle_mass = particle_mass_from_density(DEM_CLUMP_RADIUS, DEM_GOLD_DENSITY);
-    let template =
-        ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, particle_mass);
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, particle_mass);
     let template_idx = dem_sim.add_template(template);
 
     // Spawn water particles
@@ -494,10 +489,7 @@ fn test_flip_and_dem_together() {
     let idx = dem_sim.spawn(template_idx, Vec3::new(x, y, z), Vec3::ZERO);
     clump_indices.push(idx);
 
-    println!(
-        "Spawned {} DEM clumps IN the water",
-        clump_indices.len()
-    );
+    println!("Spawned {} DEM clumps IN the water", clump_indices.len());
 
     // Create SDF params
     let sdf_params = SdfParams {
@@ -573,22 +565,17 @@ fn test_water_drag_slows_clumps() {
     println!("=== Test: Water drag slows down DEM clumps ===");
 
     // Create open space (no walls for this test)
-    let mut dem_sim_with_drag = ClusterSimulation3D::new(
-        Vec3::new(-1.0, -1.0, -1.0),
-        Vec3::new(10.0, 10.0, 10.0),
-    );
+    let mut dem_sim_with_drag =
+        ClusterSimulation3D::new(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(10.0, 10.0, 10.0));
     dem_sim_with_drag.gravity = Vec3::ZERO; // Disable gravity for this test
 
-    let mut dem_sim_no_drag = ClusterSimulation3D::new(
-        Vec3::new(-1.0, -1.0, -1.0),
-        Vec3::new(10.0, 10.0, 10.0),
-    );
+    let mut dem_sim_no_drag =
+        ClusterSimulation3D::new(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(10.0, 10.0, 10.0));
     dem_sim_no_drag.gravity = Vec3::ZERO;
 
     // Create template
     let particle_mass = particle_mass_from_density(DEM_CLUMP_RADIUS, DEM_SAND_DENSITY);
-    let template =
-        ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, particle_mass);
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, DEM_CLUMP_RADIUS, particle_mass);
     let template_idx_drag = dem_sim_with_drag.add_template(template.clone());
     let template_idx_no_drag = dem_sim_no_drag.add_template(template);
 

@@ -1,7 +1,7 @@
 // Minimal test to debug coordinate systems
 
-use glam::Vec3;
 use game::editor::EditorLayout;
+use glam::Vec3;
 
 #[test]
 fn test_coordinate_systems() {
@@ -23,23 +23,32 @@ fn test_coordinate_systems() {
     );
 
     let dem_bounds_min = grid_offset;
-    let dem_bounds_max = grid_offset + Vec3::new(
-        width as f32 * cell_size,
-        height as f32 * cell_size,
-        depth as f32 * cell_size,
-    );
+    let dem_bounds_max = grid_offset
+        + Vec3::new(
+            width as f32 * cell_size,
+            height as f32 * cell_size,
+            depth as f32 * cell_size,
+        );
 
     println!("Gutter position: {:?}", gutter.position);
-    println!("Gutter dimensions: length={}, width={}, wall_height={}",
-             gutter.length, gutter.width, gutter.wall_height);
+    println!(
+        "Gutter dimensions: length={}, width={}, wall_height={}",
+        gutter.length, gutter.width, gutter.wall_height
+    );
     println!("Grid offset: {:?}", grid_offset);
     println!("Grid size: {}x{}x{} cells", width, height, depth);
-    println!("Grid world extents: {:?} to {:?}", dem_bounds_min, dem_bounds_max);
+    println!(
+        "Grid world extents: {:?} to {:?}",
+        dem_bounds_min, dem_bounds_max
+    );
 
     // Check if gutter.position is inside grid bounds
-    let inside = gutter.position.x >= dem_bounds_min.x && gutter.position.x <= dem_bounds_max.x
-        && gutter.position.y >= dem_bounds_min.y && gutter.position.y <= dem_bounds_max.y
-        && gutter.position.z >= dem_bounds_min.z && gutter.position.z <= dem_bounds_max.z;
+    let inside = gutter.position.x >= dem_bounds_min.x
+        && gutter.position.x <= dem_bounds_max.x
+        && gutter.position.y >= dem_bounds_min.y
+        && gutter.position.y <= dem_bounds_max.y
+        && gutter.position.z >= dem_bounds_min.z
+        && gutter.position.z <= dem_bounds_max.z;
 
     println!("Gutter position inside grid bounds: {}", inside);
     assert!(inside, "Gutter position should be inside grid bounds!");
