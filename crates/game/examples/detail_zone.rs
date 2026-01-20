@@ -89,7 +89,7 @@ const MOUSE_SENSITIVITY: f32 = 0.003;
 
 const STEPS_PER_FRAME: usize = 10; // More steps for faster filling
 const DT: f32 = 0.02;
-const DEBUG_HEIGHTFIELD_STATS: bool = true;
+const DEBUG_HEIGHTFIELD_STATS: bool = false; // Disabled: methods not available
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InteractionMode {
@@ -746,29 +746,16 @@ impl App {
                 "Heightfield water: {:.2}, sediment: {:.2} | FLIP particles: {}",
                 water, sediment, flip_count
             );
-            if DEBUG_HEIGHTFIELD_STATS {
-                if let Some(gpu) = &self.gpu {
-                    let debug = pollster::block_on(
-                        gpu.heightfield.read_debug_stats(&gpu.device, &gpu.queue),
-                    );
-                    println!(
-                        "Erosion debug: erode_cells={} deposit_cells={} max_erode={:.6}m max_deposit={:.6}m | erode(s/o/g/p)={}/{}/{}/{} deposit(s/o/g/p)={}/{}/{}/{}",
-                        debug.erosion_cells,
-                        debug.deposition_cells,
-                        debug.erosion_max_height,
-                        debug.deposition_max_height,
-                        debug.erosion_layers[0],
-                        debug.erosion_layers[1],
-                        debug.erosion_layers[2],
-                        debug.erosion_layers[3],
-                        debug.deposition_layers[0],
-                        debug.deposition_layers[1],
-                        debug.deposition_layers[2],
-                        debug.deposition_layers[3],
-                    );
-                    gpu.heightfield.reset_debug_stats(&gpu.queue);
-                }
-            }
+            // DEBUG_HEIGHTFIELD_STATS disabled - methods not available
+            // if DEBUG_HEIGHTFIELD_STATS {
+            //     if let Some(gpu) = &self.gpu {
+            //         let debug = pollster::block_on(
+            //             gpu.heightfield.read_debug_stats(&gpu.device, &gpu.queue),
+            //         );
+            //         println!(...);
+            //         gpu.heightfield.reset_debug_stats(&gpu.queue);
+            //     }
+            // }
             self.last_stats = Instant::now();
         }
 
@@ -1347,10 +1334,11 @@ impl App {
             INITIAL_HEIGHT,
             config.format,
         );
-        if DEBUG_HEIGHTFIELD_STATS {
-            heightfield.set_debug_flags(1);
-            heightfield.reset_debug_stats(&queue);
-        }
+        // DEBUG_HEIGHTFIELD_STATS disabled - methods not available
+        // if DEBUG_HEIGHTFIELD_STATS {
+        //     heightfield.set_debug_flags(1);
+        //     heightfield.reset_debug_stats(&queue);
+        // }
         heightfield.upload_from_world(&queue, &self.world);
 
         // ===== Particle Rendering Setup =====
@@ -1517,7 +1505,7 @@ impl App {
             self.camera.position.to_array(),
             self.start_time.elapsed().as_secs_f32(),
             self.show_water,
-            self.show_velocity,
+            // TODO: show_velocity not yet supported in heightfield module
         );
 
         // Render Emitter (heightfield emitter - only when not in focus mode)
