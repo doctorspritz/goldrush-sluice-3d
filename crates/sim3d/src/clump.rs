@@ -266,7 +266,7 @@ impl ClusterSimulation3D {
                     clump.rotation = (delta * clump.rotation).normalize();
                 }
 
-                self.resolve_bounds();
+                self.resolve_bounds(sub_dt);
                 self.resolve_clump_contacts();
             }
         }
@@ -292,7 +292,7 @@ impl ClusterSimulation3D {
                     clump.rotation = (delta * clump.rotation).normalize();
                 }
 
-                self.resolve_bounds();
+                self.resolve_bounds(sub_dt);
                 self.resolve_clump_contacts();
             }
         }
@@ -370,8 +370,9 @@ impl ClusterSimulation3D {
                         let new_v_normal = -v_normal * self.restitution;
 
                         // Apply friction to tangent component (wet = low friction = slides easily)
-                        let friction_damp = 1.0 - friction * dt * 10.0;
-                        let new_v_tangent = v_tangent * friction_damp.max(0.0);
+                        // Use exponential decay for frame-rate independence: exp(-rate*dt) instead of 1-rate*dt
+                        let friction_damp = (-friction * 10.0 * dt).exp();
+                        let new_v_tangent = v_tangent * friction_damp;
 
                         // Reconstruct velocity (without angular contribution for now)
                         clump.velocity = new_v_normal + new_v_tangent;
@@ -386,10 +387,12 @@ impl ClusterSimulation3D {
                         new_sdf_contacts.insert(key, delta_t);
 
                         // Apply rolling friction to angular velocity
+                        // Use exponential decay for frame-rate independence
+                        // Rate 120.0 preserves original behavior tuned for ~60Hz (2.0 / (1/60) = 120)
                         if rolling_friction > 0.0 && clump.angular_velocity.length_squared() > 1e-8
                         {
-                            let roll_damp = 1.0 - rolling_friction * 2.0;
-                            clump.angular_velocity *= roll_damp.max(0.0);
+                            let roll_damp = (-rolling_friction * 120.0 * dt).exp();
+                            clump.angular_velocity *= roll_damp;
                         }
                     }
                 }
@@ -1127,7 +1130,7 @@ impl ClusterSimulation3D {
         }
     }
 
-    fn resolve_bounds(&mut self) {
+    fn resolve_bounds(&mut self, dt: f32) {
         for clump in &mut self.clumps {
             let template = &self.templates[clump.template_idx];
             let mut min = Vec3::splat(f32::MAX);
@@ -1169,9 +1172,12 @@ impl ClusterSimulation3D {
                 clump.position.y += self.bounds_min.y - min.y;
                 if clump.velocity.y < 0.0 {
                     clump.velocity.y = -clump.velocity.y * self.restitution;
-                    clump.velocity.x *= 1.0 - self.friction;
-                    clump.velocity.z *= 1.0 - self.friction;
-                    clump.angular_velocity *= 0.7;
+                    // Use exponential decay for frame-rate independence
+                    let friction_damp = (-self.friction * 10.0 * dt).exp();
+                    clump.velocity.x *= friction_damp;
+                    clump.velocity.z *= friction_damp;
+                    // Angular damping: rate ~21 preserves original 0.7 at 60Hz
+                    clump.angular_velocity *= (-21.0 * dt).exp();
                 }
             } else if max.y > self.bounds_max.y {
                 clump.position.y += self.bounds_max.y - max.y;
