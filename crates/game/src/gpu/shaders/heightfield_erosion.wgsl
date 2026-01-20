@@ -26,6 +26,12 @@ struct Params {
 // =============================================================================
 // EROSION PHYSICS CONSTANTS
 // =============================================================================
+
+// Numerical thresholds
+const MIN_LAYER_THICKNESS: f32 = 0.001;  // Minimum thickness for layer existence (meters)
+const MIN_WATER_DEPTH: f32 = 0.001;      // Minimum water depth for calculations (meters)
+const EPSILON_FINE: f32 = 0.0001;        // Fine epsilon for numerical checks
+
 // Particle sizes (median diameter, meters)
 const D50_SEDIMENT: f32 = 0.0001;    // 0.1mm fine silt
 const D50_OVERBURDEN: f32 = 0.001;   // 1mm coarse sand
@@ -94,9 +100,8 @@ const DBG_DEPOSITION_PAYDIRT: u32 = 11u;
 
 // Determine what material is exposed on the surface based on layer thicknesses
 fn compute_surface_material(idx: u32) -> u32 {
-    let min_thick = 0.001;
-    if (sediment[idx] > min_thick) { return 4u; }
-    if (overburden[idx] > min_thick) { return 3u; }
+    if (sediment[idx] > MIN_LAYER_THICKNESS) { return 4u; }
+    if (overburden[idx] > MIN_LAYER_THICKNESS) { return 3u; }
     if (gravel[idx] > min_thick) { return 2u; }
     if (paydirt[idx] > min_thick) { return 1u; }
     return 0u; // bedrock
@@ -260,7 +265,7 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = get_idx(x, z);
     let depth = water_depth[idx];
 
-    if (depth < 0.001) {
+    if (depth < MIN_WATER_DEPTH) {
         return;
     }
 
@@ -303,7 +308,7 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
             if (settled_conc > 1e-6) {
                 let deposit_height = settled_conc * depth;
                 // Only deposit if it's meaningful (>1mm) to prevent micro-topography oscillation
-                if (deposit_height > 0.001) {
+                if (deposit_height > MIN_LAYER_THICKNESS) {
                     debug_record_deposit(deposit_height, 4u);
                     suspended -= settled_conc;
                     sediment[idx] += deposit_height;
@@ -340,7 +345,7 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let settled_conc = suspended * settled_frac;
             if (settled_conc > 1e-6) {
                 let deposit_height = settled_conc * depth;
-                if (deposit_height > 0.001) {
+                if (deposit_height > MIN_LAYER_THICKNESS) {
                     debug_record_deposit(deposit_height, 3u);
                     suspended -= settled_conc;
                     overburden[idx] += deposit_height;
@@ -377,7 +382,7 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let settled_conc = suspended * settled_frac;
             if (settled_conc > 1e-6) {
                 let deposit_height = settled_conc * depth;
-                if (deposit_height > 0.001) {
+                if (deposit_height > MIN_LAYER_THICKNESS) {
                     debug_record_deposit(deposit_height, 2u);
                     suspended -= settled_conc;
                     gravel[idx] += deposit_height;
@@ -414,7 +419,7 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let settled_conc = suspended * settled_frac;
             if (settled_conc > 1e-6) {
                 let deposit_height = settled_conc * depth;
-                if (deposit_height > 0.001) {
+                if (deposit_height > MIN_LAYER_THICKNESS) {
                     debug_record_deposit(deposit_height, 1u);
                     suspended -= settled_conc;
                     paydirt[idx] += deposit_height;
@@ -444,7 +449,7 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = get_idx(x, z);
     let depth = water_depth[idx];
 
-    if (depth < 0.001) {
+    if (depth < MIN_WATER_DEPTH) {
         return;
     }
 

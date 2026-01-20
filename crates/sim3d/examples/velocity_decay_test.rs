@@ -43,7 +43,7 @@ fn main() {
         // Compute average velocity
         let avg_vel: Vec3 = sim
             .particles
-            .list
+            .list()
             .iter()
             .map(|p| p.velocity)
             .fold(Vec3::ZERO, |a, b| a + b)
@@ -51,7 +51,7 @@ fn main() {
 
         let max_vel: f32 = sim
             .particles
-            .list
+            .list()
             .iter()
             .map(|p| p.velocity.length())
             .fold(0.0, f32::max);
@@ -69,7 +69,7 @@ fn main() {
     // Final state
     let avg_vel: Vec3 = sim
         .particles
-        .list
+        .list()
         .iter()
         .map(|p| p.velocity)
         .fold(Vec3::ZERO, |a, b| a + b)
@@ -82,7 +82,7 @@ fn main() {
 
     // Sample individual particles
     println!("\nSample particles:");
-    for (i, p) in sim.particles.list.iter().enumerate().take(5) {
+    for (i, p) in sim.particles.list().iter().enumerate().take(5) {
         println!(
             "  [{}] pos=({:.2}, {:.2}, {:.2}), vel=({:.3}, {:.3}, {:.3}), C={:?}",
             i,
@@ -121,7 +121,7 @@ fn main() {
     for frame in 0..60 {
         let avg_vel: Vec3 = sim2
             .particles
-            .list
+            .list()
             .iter()
             .map(|p| p.velocity)
             .fold(Vec3::ZERO, |a, b| a + b)
@@ -162,7 +162,7 @@ fn main() {
     for frame in 0..60 {
         let avg_vel: Vec3 = sim3
             .particles
-            .list
+            .list()
             .iter()
             .map(|p| p.velocity)
             .fold(Vec3::ZERO, |a, b| a + b)

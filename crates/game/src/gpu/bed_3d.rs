@@ -890,10 +890,10 @@ impl GpuBed3D {
         let slice = self.bed_height_staging.slice(..);
         let (tx, rx) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
+            tx.send(result).expect("Failed to send map_async result");
         });
         device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        rx.recv().expect("Failed to receive from channel").expect("Failed to map buffer for reading");
 
         {
             let data = slice.get_mapped_range();
@@ -914,10 +914,10 @@ impl GpuBed3D {
         let slice = self.probe_stats_staging.slice(..);
         let (tx, rx) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
+            tx.send(result).expect("Failed to send map_async result");
         });
         device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        rx.recv().expect("Failed to receive from channel").expect("Failed to map buffer for reading");
 
         {
             let data = slice.get_mapped_range();

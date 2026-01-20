@@ -159,7 +159,7 @@ impl Washplant {
                 };
 
                 let mut captured = Vec::new();
-                for (idx, particle) in from_stage.sim.particles.list.iter().enumerate() {
+                for (idx, particle) in from_stage.sim.particles.list().iter().enumerate() {
                     if transfer.should_capture(particle.position, particle.velocity) {
                         captured.push((
                             idx,

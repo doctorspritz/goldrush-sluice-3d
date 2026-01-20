@@ -1386,10 +1386,11 @@ impl ClusterSimulation3D {
 }
 
 fn dem_damping(restitution: f32, stiffness: f32, mass: f32) -> f32 {
+    use crate::constants::MAX_RESTITUTION;
     if stiffness <= 0.0 || mass <= 0.0 {
         return 0.0;
     }
-    let e = restitution.clamp(0.0, 0.999);
+    let e = restitution.clamp(0.0, MAX_RESTITUTION);
     if e <= 0.0 {
         return 2.0 * (stiffness * mass).sqrt();
     }

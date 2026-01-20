@@ -65,7 +65,7 @@ impl Default for Particle3D {
 /// Collection of particles.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Particles3D {
-    pub list: Vec<Particle3D>,
+    list: Vec<Particle3D>,
 }
 
 impl Particles3D {
@@ -100,6 +100,16 @@ impl Particles3D {
     /// Add a stationary sediment particle with specified density.
     pub fn spawn_sediment(&mut self, position: Vec3, density: f32) {
         self.list.push(Particle3D::sediment_at(position, density));
+    }
+
+    /// Get immutable reference to particle list.
+    pub fn list(&self) -> &[Particle3D] {
+        &self.list
+    }
+
+    /// Get mutable reference to particle list.
+    pub fn list_mut(&mut self) -> &mut Vec<Particle3D> {
+        &mut self.list
     }
 
     /// Number of particles.

@@ -22,7 +22,7 @@ fn test_z_boundary_containment() {
         sim.update(1.0 / 60.0);
     }
 
-    let pos = sim.particles.list[0].position;
+    let pos = sim.particles.list()[0].position;
 
     assert!(
         pos.z >= min.z,
@@ -51,7 +51,7 @@ fn test_front_z_boundary_containment() {
         sim.update(1.0 / 60.0);
     }
 
-    let pos = sim.particles.list[0].position;
+    let pos = sim.particles.list()[0].position;
 
     assert!(
         pos.z <= max.z,
@@ -73,14 +73,14 @@ fn test_z_velocity_reflection() {
     sim.gravity = Vec3::ZERO;
 
     // Get initial Z velocity
-    let initial_vz = sim.particles.list[0].velocity.z;
+    let initial_vz = sim.particles.list()[0].velocity.z;
 
     // Run several frames
     for _ in 0..20 {
         sim.update(1.0 / 60.0);
     }
 
-    let final_vz = sim.particles.list[0].velocity.z;
+    let final_vz = sim.particles.list()[0].velocity.z;
 
     // Velocity should have bounced (sign changed or at least reduced)
     // With damping, it should be smaller in magnitude
@@ -111,7 +111,7 @@ fn test_no_z_tunneling() {
         sim.update(1.0 / 120.0); // Small timestep
     }
 
-    let pos = sim.particles.list[0].position;
+    let pos = sim.particles.list()[0].position;
 
     // Particle should still be in bounds
     assert!(
@@ -137,7 +137,7 @@ fn test_advection_updates_all_components() {
     // Run one step
     sim3d::advection::advect_particles(&mut sim.particles, 1.0 / 60.0);
 
-    let final_pos = sim.particles.list[0].position;
+    let final_pos = sim.particles.list()[0].position;
     let expected_displacement = velocity * (1.0 / 60.0);
 
     // All components should have changed
@@ -184,7 +184,7 @@ fn test_gravity_falling_3d() {
     }
 
     let initial_y: f32 =
-        sim.particles.list.iter().map(|p| p.position.y).sum::<f32>() / sim.particle_count() as f32;
+        sim.particles.list().iter().map(|p| p.position.y).sum::<f32>() / sim.particle_count() as f32;
 
     // Run simulation
     for _ in 0..100 {
@@ -192,7 +192,7 @@ fn test_gravity_falling_3d() {
     }
 
     let final_y: f32 =
-        sim.particles.list.iter().map(|p| p.position.y).sum::<f32>() / sim.particle_count() as f32;
+        sim.particles.list().iter().map(|p| p.position.y).sum::<f32>() / sim.particle_count() as f32;
 
     assert!(
         final_y < initial_y,

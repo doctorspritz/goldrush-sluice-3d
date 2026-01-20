@@ -85,12 +85,12 @@ impl SimulationManager {
             }
 
             // Update FLIP Grid SDF & Cell Types
-            self.flip.grid.sdf = gen.sdf;
-
-            for i in 0..self.flip.grid.cell_type.len() {
-                if self.flip.grid.sdf[i] < 0.0 {
-                    self.flip.grid.cell_type[i] = CellType::Solid;
-                    self.flip.grid.solid[i] = true;
+            let sdf_data = gen.sdf;
+            for (i, &sdf_val) in sdf_data.iter().enumerate() {
+                self.flip.grid.sdf_mut()[i] = sdf_val;
+                if sdf_val < 0.0 {
+                    self.flip.grid.cell_type_mut()[i] = CellType::Solid;
+                    self.flip.grid.solid_mut()[i] = true;
                 }
             }
         }
@@ -109,7 +109,7 @@ impl SimulationManager {
 
         // 2. Synchronize FLIP grid to DEM SDF for collisions
         let sdf_params = SdfParams {
-            sdf: &self.flip.grid.sdf,
+            sdf: self.flip.grid.sdf(),
             grid_width: self.flip.grid.width,
             grid_height: self.flip.grid.height,
             grid_depth: self.flip.grid.depth,

@@ -65,6 +65,7 @@ pub struct WorldParams {
 
 impl Default for WorldParams {
     fn default() -> Self {
+        use crate::constants::{D50_FINE_SEDIMENT, D50_COARSE_SEDIMENT, SEDIMENT_DENSITY, WATER_DENSITY, WATER_VISCOSITY};
         Self {
             angle_of_repose: 35.0_f32.to_radians(),
             collapse_transfer_rate: 0.35,
@@ -81,15 +82,15 @@ impl Default for WorldParams {
             open_boundaries: true, // Default to open for simulation
 
             // Particle sizes (meters)
-            d50_sediment: 0.0001,    // 0.1mm fine silt
-            d50_overburden: 0.001,   // 1mm coarse sand
+            d50_sediment: D50_FINE_SEDIMENT,    // 0.1mm fine silt
+            d50_overburden: D50_COARSE_SEDIMENT,   // 1mm coarse sand
             d50_gravel: 0.01,        // 10mm gravel
             d50_paydirt: 0.002,      // 2mm compacted sand
 
             // Physical constants
-            rho_sediment: 2650.0,    // kg/m³ (quartz)
-            rho_water: 1000.0,       // kg/m³
-            water_viscosity: 0.001,  // Pa·s (water at 20°C)
+            rho_sediment: SEDIMENT_DENSITY,    // kg/m³ (quartz)
+            rho_water: WATER_DENSITY,       // kg/m³
+            water_viscosity: WATER_VISCOSITY,  // Pa·s (water at 20°C)
             critical_shields: 0.045, // Typical value for most sediments
         }
     }
@@ -1690,7 +1691,7 @@ impl World {
         self.apply_fine_boundary_conditions();
 
         // Step the fine region simulation
-        let fine = self.fine_region.as_mut().unwrap();
+        let fine = self.fine_region.as_mut().expect("Fine region should be initialized when stepping fine region");
 
         // Water flow (shallow water equations)
         FineRegion::update_water_flow(fine, dt, self.params.gravity, self.params.water_damping);
@@ -1775,7 +1776,7 @@ impl World {
         }
 
         // Now apply to fine region
-        let fine = self.fine_region.as_mut().unwrap();
+        let fine = self.fine_region.as_mut().expect("Fine region should be initialized when stepping fine region");
 
         for (fz, &val) in left_values.iter().enumerate() {
             let fidx = fz * fine.width;

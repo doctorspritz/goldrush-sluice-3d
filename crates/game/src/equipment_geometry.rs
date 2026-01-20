@@ -307,8 +307,8 @@ impl GrateGeometryBuilder {
             return;
         }
 
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
+        let vb = self.vertex_buffer.as_ref().expect("Vertex buffer should exist after upload check");
+        let ib = self.index_buffer.as_ref().expect("Index buffer should exist after upload check");
 
         let vertex_bytes = bytemuck::cast_slice(&self.vertices);
         let index_bytes = bytemuck::cast_slice(&self.indices);
@@ -614,8 +614,8 @@ impl BoxGeometryBuilder {
             return;
         }
 
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
+        let vb = self.vertex_buffer.as_ref().expect("Vertex buffer should exist after upload check");
+        let ib = self.index_buffer.as_ref().expect("Index buffer should exist after upload check");
 
         let vertex_bytes = bytemuck::cast_slice(&self.vertices);
         let index_bytes = bytemuck::cast_slice(&self.indices);
@@ -930,8 +930,8 @@ impl GutterGeometryBuilder {
             return;
         }
 
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
+        let vb = self.vertex_buffer.as_ref().expect("Vertex buffer should exist after upload check");
+        let ib = self.index_buffer.as_ref().expect("Index buffer should exist after upload check");
 
         let vertex_bytes = bytemuck::cast_slice(&self.vertices);
         let index_bytes = bytemuck::cast_slice(&self.indices);
@@ -1263,8 +1263,8 @@ impl HopperGeometryBuilder {
             return;
         }
 
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
+        let vb = self.vertex_buffer.as_ref().expect("Vertex buffer should exist after upload check");
+        let ib = self.index_buffer.as_ref().expect("Index buffer should exist after upload check");
 
         let vertex_bytes = bytemuck::cast_slice(&self.vertices);
         let index_bytes = bytemuck::cast_slice(&self.indices);
@@ -1623,8 +1623,8 @@ impl ChuteGeometryBuilder {
             return;
         }
 
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
+        let vb = self.vertex_buffer.as_ref().expect("Vertex buffer should exist after upload check");
+        let ib = self.index_buffer.as_ref().expect("Index buffer should exist after upload check");
 
         let vertex_bytes = bytemuck::cast_slice(&self.vertices);
         let index_bytes = bytemuck::cast_slice(&self.indices);
@@ -1944,8 +1944,8 @@ impl FrameGeometryBuilder {
             return;
         }
 
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
+        let vb = self.vertex_buffer.as_ref().expect("Vertex buffer should exist after upload check");
+        let ib = self.index_buffer.as_ref().expect("Index buffer should exist after upload check");
 
         let vertex_bytes = bytemuck::cast_slice(&self.vertices);
         let index_bytes = bytemuck::cast_slice(&self.indices);
@@ -2252,8 +2252,8 @@ impl BaffleGeometryBuilder {
             return;
         }
 
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
+        let vb = self.vertex_buffer.as_ref().expect("Vertex buffer should exist after upload check");
+        let ib = self.index_buffer.as_ref().expect("Index buffer should exist after upload check");
 
         let vertex_bytes = bytemuck::cast_slice(&self.vertices);
         let index_bytes = bytemuck::cast_slice(&self.indices);
@@ -2676,8 +2676,8 @@ impl ShakerGeometryBuilder {
             return;
         }
 
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
+        let vb = self.vertex_buffer.as_ref().expect("Vertex buffer should exist after upload check");
+        let ib = self.index_buffer.as_ref().expect("Index buffer should exist after upload check");
 
         let vertex_bytes = bytemuck::cast_slice(&self.vertices);
         let index_bytes = bytemuck::cast_slice(&self.indices);

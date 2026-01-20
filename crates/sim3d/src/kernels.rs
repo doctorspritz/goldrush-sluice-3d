@@ -6,11 +6,12 @@ use glam::Vec3;
 /// Support: [-1.5, 1.5] (covers 3 grid nodes)
 #[inline]
 pub fn quadratic_bspline_1d(r: f32) -> f32 {
+    use crate::constants::BSPLINE_SUPPORT_RADIUS;
     let r_abs = r.abs();
     if r_abs < 0.5 {
         0.75 - r_abs * r_abs
-    } else if r_abs < 1.5 {
-        let t = 1.5 - r_abs;
+    } else if r_abs < BSPLINE_SUPPORT_RADIUS {
+        let t = BSPLINE_SUPPORT_RADIUS - r_abs;
         0.5 * t * t
     } else {
         0.0
@@ -105,8 +106,9 @@ mod tests {
 
     #[test]
     fn test_bspline_zero_outside_support() {
-        assert_eq!(quadratic_bspline_1d(1.5), 0.0);
+        use crate::constants::BSPLINE_SUPPORT_RADIUS;
+        assert_eq!(quadratic_bspline_1d(BSPLINE_SUPPORT_RADIUS), 0.0);
         assert_eq!(quadratic_bspline_1d(2.0), 0.0);
-        assert_eq!(quadratic_bspline_1d(-1.5), 0.0);
+        assert_eq!(quadratic_bspline_1d(-BSPLINE_SUPPORT_RADIUS), 0.0);
     }
 }

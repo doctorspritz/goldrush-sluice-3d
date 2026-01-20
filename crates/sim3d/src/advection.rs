@@ -7,7 +7,7 @@ use crate::particle::Particles3D;
 
 /// Advect particles using simple Euler integration.
 pub fn advect_particles(particles: &mut Particles3D, dt: f32) {
-    for particle in &mut particles.list {
+    for particle in particles.list_mut() {
         particle.position += particle.velocity * dt;
     }
 }
@@ -24,7 +24,7 @@ pub fn enforce_particle_boundaries(particles: &mut Particles3D, grid: &Grid3D) {
         grid.world_depth() - grid.cell_size * 0.5,
     );
 
-    for particle in &mut particles.list {
+    for particle in particles.list_mut() {
         // Inlet (x=0): CLOSED - bounce back
         if particle.position.x < min.x {
             particle.position.x = min.x;
@@ -74,8 +74,8 @@ pub fn remove_exited_particles(particles: &mut Particles3D, grid: &Grid3D) -> us
     let max_x = grid.world_width();
     let max_y = grid.world_height();
 
-    let before = particles.list.len();
-    particles.list.retain(|p| {
+    let before = particles.list().len();
+    particles.list_mut().retain(|p| {
         // Keep if inside domain and valid
         p.position.x < max_x
             && p.position.y < max_y
@@ -84,12 +84,12 @@ pub fn remove_exited_particles(particles: &mut Particles3D, grid: &Grid3D) -> us
             && p.velocity.is_finite()
             && p.position.is_finite()
     });
-    before - particles.list.len()
+    before - particles.list().len()
 }
 
 /// Apply gravity to all particles.
 pub fn apply_gravity_to_particles(particles: &mut Particles3D, gravity: Vec3, dt: f32) {
-    for particle in &mut particles.list {
+    for particle in particles.list_mut() {
         particle.velocity += gravity * dt;
     }
 }
@@ -102,14 +102,14 @@ mod tests {
     #[test]
     fn test_advection() {
         let mut particles = Particles3D::new();
-        particles.list.push(Particle3D::new(
+        particles.list_mut().push(Particle3D::new(
             Vec3::new(1.0, 1.0, 1.0),
             Vec3::new(1.0, 2.0, 3.0),
         ));
 
         advect_particles(&mut particles, 0.5);
 
-        let p = &particles.list[0];
+        let p = &particles.list()[0];
         assert!((p.position.x - 1.5).abs() < 1e-6);
         assert!((p.position.y - 2.0).abs() < 1e-6);
         assert!((p.position.z - 2.5).abs() < 1e-6);
@@ -121,14 +121,14 @@ mod tests {
         let mut particles = Particles3D::new();
 
         // Particle outside bounds on inlet side (x<0) - should be clamped
-        particles.list.push(Particle3D::new(
+        particles.list_mut().push(Particle3D::new(
             Vec3::new(-1.0, 2.0, 2.0),
             Vec3::new(-1.0, 0.0, 0.0),
         ));
 
         enforce_particle_boundaries(&mut particles, &grid);
 
-        let p = &particles.list[0];
+        let p = &particles.list()[0];
         // X should be clamped to min (0.5)
         assert!(p.position.x >= 0.5, "X should be clamped at inlet");
         // Y is within bounds, shouldn't change
@@ -141,14 +141,14 @@ mod tests {
         let mut particles = Particles3D::new();
 
         // Particle at outlet (x > max) - should NOT be clamped (open boundary)
-        particles.list.push(Particle3D::new(
+        particles.list_mut().push(Particle3D::new(
             Vec3::new(5.0, 2.0, 2.0),
             Vec3::new(1.0, 0.0, 0.0),
         ));
 
         enforce_particle_boundaries(&mut particles, &grid);
 
-        let p = &particles.list[0];
+        let p = &particles.list()[0];
         // X should NOT be clamped - outlet is open
         assert!(
             p.position.x > 4.0,
@@ -168,23 +168,23 @@ mod tests {
 
         // Particle inside domain
         particles
-            .list
+            .list_mut()
             .push(Particle3D::new(Vec3::new(2.0, 2.0, 2.0), Vec3::ZERO));
         // Particle exited through outlet
         particles
-            .list
+            .list_mut()
             .push(Particle3D::new(Vec3::new(5.0, 2.0, 2.0), Vec3::ZERO));
         // Particle exited through top
         particles
-            .list
+            .list_mut()
             .push(Particle3D::new(Vec3::new(2.0, 5.0, 2.0), Vec3::ZERO));
 
         let removed = remove_exited_particles(&mut particles, &grid);
 
         assert_eq!(removed, 2, "Should remove 2 exited particles");
-        assert_eq!(particles.list.len(), 1, "Should have 1 particle remaining");
+        assert_eq!(particles.list().len(), 1, "Should have 1 particle remaining");
         assert!(
-            (particles.list[0].position.x - 2.0).abs() < 0.01,
+            (particles.list()[0].position.x - 2.0).abs() < 0.01,
             "Remaining particle should be the inside one"
         );
     }

@@ -28,7 +28,7 @@ pub trait App: 'static {
 }
 
 pub fn run<A: App>() -> ! {
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut runner = AppRunner::<A>::new();
     let _ = event_loop.run_app(&mut runner);
     std::process::exit(0)
@@ -64,7 +64,7 @@ impl<A: App> ApplicationHandler for AppRunner<A> {
                             .with_title(A::title())
                             .with_inner_size(winit::dpi::LogicalSize::new(1920, 1080)),
                     )
-                    .unwrap(),
+                    .expect("Failed to create window"),
             );
             self.window = Some(window.clone());
 
@@ -193,7 +193,7 @@ impl<A: App> ApplicationHandler for AppRunner<A> {
             ctx.update_view_uniforms(&uniforms);
 
             // Render
-            let surface_texture = ctx.surface.get_current_texture().unwrap();
+            let surface_texture = ctx.surface.get_current_texture().expect("Failed to get current surface texture");
             let view = surface_texture
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());

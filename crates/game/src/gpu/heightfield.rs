@@ -1716,9 +1716,9 @@ impl GpuHeightfield {
 
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
+        slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).expect("Failed to send map_async result"));
         device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        rx.recv().expect("Failed to receive from channel").expect("Failed to map buffer for reading");
 
         let data = slice.get_mapped_range();
         let raw: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
@@ -2114,9 +2114,9 @@ impl GpuHeightfield {
 
             let slice = staging.slice(..);
             let (tx, rx) = std::sync::mpsc::channel();
-            slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
+            slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).expect("Failed to send map_async result"));
             device.poll(wgpu::Maintain::Wait);
-            rx.recv().unwrap().unwrap();
+            rx.recv().expect("Failed to receive from channel").expect("Failed to map buffer for reading");
 
             let data = slice.get_mapped_range();
             let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();

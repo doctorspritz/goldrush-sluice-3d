@@ -14,9 +14,10 @@ pub fn settling_velocity(d50: f32, params: &WorldParams) -> f32 {
     let rho_f = params.rho_water;
     let mu = params.water_viscosity;
 
+    use crate::constants::D50_TURBULENT_MIN;
     let vs_stokes = g * (rho_p - rho_f) * d50 * d50 / (18.0 * mu);
     let vs_turbulent = (4.0 * g * d50 * (rho_p - rho_f) / (3.0 * rho_f * 0.44)).sqrt();
-    let transition = (d50 / 0.001).clamp(0.0, 1.0);
+    let transition = (d50 / D50_TURBULENT_MIN).clamp(0.0, 1.0);
     vs_stokes * (1.0 - transition) + vs_turbulent * transition
 }
 
@@ -89,10 +90,11 @@ mod tests {
 
     #[test]
     fn test_shear_stress_from_velocity() {
-        let stress_zero = shear_stress_from_velocity(0.0, 0.0, 1000.0);
+        use crate::constants::WATER_DENSITY;
+        let stress_zero = shear_stress_from_velocity(0.0, 0.0, WATER_DENSITY);
         assert_eq!(stress_zero, 0.0);
 
-        let stress_1ms = shear_stress_from_velocity(1.0, 0.0, 1000.0);
+        let stress_1ms = shear_stress_from_velocity(1.0, 0.0, WATER_DENSITY);
         assert!(stress_1ms > 0.0);
     }
 }

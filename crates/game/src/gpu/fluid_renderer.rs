@@ -465,7 +465,7 @@ impl ScreenSpaceFluidRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Fluid Depth Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: self.depth_view.as_ref().unwrap(),
+                    view: self.depth_view.as_ref().expect("Depth view should be initialized"),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -520,7 +520,7 @@ impl ScreenSpaceFluidRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(self.depth_view.as_ref().unwrap()),
+                    resource: wgpu::BindingResource::TextureView(self.depth_view.as_ref().expect("Depth view should be initialized")),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -533,7 +533,7 @@ impl ScreenSpaceFluidRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Fluid Blur H"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: self.blur_view_a.as_ref().unwrap(),
+                    view: self.blur_view_a.as_ref().expect("Blur view A should be initialized"),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -579,7 +579,7 @@ impl ScreenSpaceFluidRenderer {
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(
-                        self.blur_view_a.as_ref().unwrap(),
+                        self.blur_view_a.as_ref().expect("Blur view A should be initialized"),
                     ),
                 },
                 wgpu::BindGroupEntry {
@@ -593,7 +593,7 @@ impl ScreenSpaceFluidRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Fluid Blur V"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: self.blur_view_b.as_ref().unwrap(),
+                    view: self.blur_view_b.as_ref().expect("Blur view B should be initialized"),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -624,7 +624,7 @@ impl ScreenSpaceFluidRenderer {
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(
-                        self.blur_view_b.as_ref().unwrap(),
+                        self.blur_view_b.as_ref().expect("Blur view B should be initialized"),
                     ),
                 },
                 wgpu::BindGroupEntry {

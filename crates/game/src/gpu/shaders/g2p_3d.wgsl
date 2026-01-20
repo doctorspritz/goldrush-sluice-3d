@@ -13,6 +13,11 @@
 //
 // FLIP delta: Uses grid_*_old (pre-force velocities) vs grid_* (post-force)
 
+// Kernel constants
+const BSPLINE_SUPPORT_RADIUS: f32 = 1.5;  // Support range [-1.5, 1.5] for quadratic B-spline
+const EPSILON_METERS: f32 = 0.001;        // Small epsilon for numerical checks
+const GRAVITY: f32 = 9.81;                // Gravity magnitude (m/s²)
+
 struct Params {
     cell_size: f32,
     width: u32,
@@ -68,8 +73,8 @@ fn quadratic_bspline_1d(x: f32) -> f32 {
     let ax = abs(x);
     if (ax < 0.5) {
         return 0.75 - ax * ax;
-    } else if (ax < 1.5) {
-        let t = 1.5 - ax;
+    } else if (ax < BSPLINE_SUPPORT_RADIUS) {
+        let t = BSPLINE_SUPPORT_RADIUS - ax;
         return 0.5 * t * t;
     }
     return 0.0;
@@ -349,7 +354,6 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         //
         // This is applied as a velocity change (impulse) over the timestep:
         //   Δv_buoyancy = a_buoyancy * dt = (1.0 - ρ_rel) * g * dt
-        const GRAVITY: f32 = 9.81;
         let buoyancy_accel = (1.0 - density) * GRAVITY;  // m/s²
         let buoyancy_impulse = buoyancy_accel * params.dt;  // m/s
         vel_after_drag.y -= buoyancy_impulse;  // Negative because Y-axis points up
@@ -381,7 +385,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     if (is_sediment) {
         // Friction: when slow, damp velocity (creates clustering/settling)
         let speed = length(final_velocity);
-        if (speed < sediment_params.friction_threshold && speed > 0.001) {
+        if (speed < sediment_params.friction_threshold && speed > EPSILON_METERS) {
             // Smooth ramp: more friction as speed approaches zero
             let friction_factor = 1.0 - speed / sediment_params.friction_threshold;
             let friction = sediment_params.friction_strength * friction_factor;

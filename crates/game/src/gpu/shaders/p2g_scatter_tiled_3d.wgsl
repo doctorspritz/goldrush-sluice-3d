@@ -9,6 +9,9 @@
 
 const SCALE: f32 = 100000.0;
 
+// Kernel constants
+const BSPLINE_SUPPORT_RADIUS: f32 = 1.5;  // Support range [-1.5, 1.5] for quadratic B-spline
+
 // Tile dimensions (cells)
 const TILE_X: u32 = 4u;
 const TILE_Y: u32 = 4u;
@@ -76,8 +79,8 @@ fn quadratic_bspline_1d(x: f32) -> f32 {
     let ax = abs(x);
     if (ax < 0.5) {
         return 0.75 - ax * ax;
-    } else if (ax < 1.5) {
-        let t = 1.5 - ax;
+    } else if (ax < BSPLINE_SUPPORT_RADIUS) {
+        let t = BSPLINE_SUPPORT_RADIUS - ax;
         return 0.5 * t * t;
     }
     return 0.0;

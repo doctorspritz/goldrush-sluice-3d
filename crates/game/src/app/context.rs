@@ -22,7 +22,7 @@ impl GpuContext {
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window.clone()).unwrap();
+        let surface = instance.create_surface(window.clone()).expect("Failed to create surface");
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -30,7 +30,7 @@ impl GpuContext {
                 compatible_surface: Some(&surface),
             })
             .await
-            .unwrap();
+            .expect("Failed to find a suitable GPU adapter");
 
         let (device, queue) = adapter
             .request_device(
@@ -43,7 +43,7 @@ impl GpuContext {
                 None,
             )
             .await
-            .unwrap();
+            .expect("Failed to create device and queue");
 
         let device = Arc::new(device);
         let queue = Arc::new(queue);
@@ -78,7 +78,7 @@ impl GpuContext {
                         has_dynamic_offset: false,
                         min_binding_size: Some(
                             std::num::NonZeroU64::new(std::mem::size_of::<ViewUniforms>() as u64)
-                                .unwrap(),
+                                .expect("ViewUniforms size should not be zero"),
                         ),
                     },
                     count: None,

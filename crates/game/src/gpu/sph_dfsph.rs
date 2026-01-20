@@ -801,9 +801,9 @@ impl GpuSphDfsph {
         
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |res| tx.send(res).unwrap());
+        slice.map_async(wgpu::MapMode::Read, move |res| tx.send(res).expect("Failed to send map_async result"));
         device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        rx.recv().expect("Failed to receive from channel").expect("Failed to map buffer for reading");
         
         let data = slice.get_mapped_range();
         let pos4: &[[f32; 4]] = bytemuck::cast_slice(&data);
@@ -828,9 +828,9 @@ impl GpuSphDfsph {
         
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |res| tx.send(res).unwrap());
+        slice.map_async(wgpu::MapMode::Read, move |res| tx.send(res).expect("Failed to send map_async result"));
         device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        rx.recv().expect("Failed to receive from channel").expect("Failed to map buffer for reading");
         
         let data = slice.get_mapped_range();
         let vel4: &[[f32; 4]] = bytemuck::cast_slice(&data);
@@ -855,9 +855,9 @@ impl GpuSphDfsph {
         
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |res| tx.send(res).unwrap());
+        slice.map_async(wgpu::MapMode::Read, move |res| tx.send(res).expect("Failed to send map_async result"));
         device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        rx.recv().expect("Failed to receive from channel").expect("Failed to map buffer for reading");
         
         let data = slice.get_mapped_range();
         bytemuck::cast_slice(&data).to_vec()
@@ -881,9 +881,9 @@ impl GpuSphDfsph {
         
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |res| tx.send(res).unwrap());
+        slice.map_async(wgpu::MapMode::Read, move |res| tx.send(res).expect("Failed to send map_async result"));
         device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        rx.recv().expect("Failed to receive from channel").expect("Failed to map buffer for reading");
         
         let data = slice.get_mapped_range();
         let vec4_data: &[[f32; 4]] = bytemuck::cast_slice(&data);

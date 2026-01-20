@@ -164,13 +164,13 @@ impl FlipSimulation3D {
         self.grid.reset_cell_types();
 
         // Mark cells containing particles as Fluid
-        for particle in &self.particles.list {
+        for particle in self.particles.list() {
             let (i, j, k) = self.grid.world_to_cell(particle.position);
 
             if self.grid.cell_in_bounds(i, j, k) {
                 let idx = self.grid.cell_index(i as usize, j as usize, k as usize);
-                if self.grid.cell_type[idx] != CellType::Solid {
-                    self.grid.cell_type[idx] = CellType::Fluid;
+                if self.grid.cell_type()[idx] != CellType::Solid {
+                    self.grid.cell_type_mut()[idx] = CellType::Fluid;
                 }
             }
         }
@@ -181,14 +181,14 @@ impl FlipSimulation3D {
         let gravity_y = self.gravity.y * dt;
 
         // Apply to all V (vertical) velocities
-        for v in &mut self.grid.v {
+        for v in self.grid.v_mut() {
             *v += gravity_y;
         }
 
         // Apply to U (horizontal) if gravity has X component
         if self.gravity.x.abs() > 1e-6 {
             let gravity_x = self.gravity.x * dt;
-            for u in &mut self.grid.u {
+            for u in self.grid.u_mut() {
                 *u += gravity_x;
             }
         }
@@ -196,7 +196,7 @@ impl FlipSimulation3D {
         // Apply to W (depth) if gravity has Z component
         if self.gravity.z.abs() > 1e-6 {
             let gravity_z = self.gravity.z * dt;
-            for w in &mut self.grid.w {
+            for w in self.grid.w_mut() {
                 *w += gravity_z;
             }
         }
@@ -214,13 +214,13 @@ impl FlipSimulation3D {
     fn clamp_grid_velocities(&mut self) {
         const MAX_GRID_VEL: f32 = 1.0;
 
-        for u in &mut self.grid.u {
+        for u in self.grid.u_mut() {
             *u = u.clamp(-MAX_GRID_VEL, MAX_GRID_VEL);
         }
-        for v in &mut self.grid.v {
+        for v in self.grid.v_mut() {
             *v = v.clamp(-MAX_GRID_VEL, MAX_GRID_VEL);
         }
-        for w in &mut self.grid.w {
+        for w in self.grid.w_mut() {
             *w = w.clamp(-MAX_GRID_VEL, MAX_GRID_VEL);
         }
     }
@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(sim.particle_count(), initial_count);
 
         // Particles should have fallen due to gravity
-        let avg_y: f32 = sim.particles.list.iter().map(|p| p.position.y).sum::<f32>()
+        let avg_y: f32 = sim.particles.list().iter().map(|p| p.position.y).sum::<f32>()
             / sim.particle_count() as f32;
 
         // Initial Y was around 2.25-2.75, should have fallen
@@ -313,11 +313,11 @@ mod tests {
         sim.classify_cells();
 
         let idx = sim.grid.cell_index(1, 1, 1);
-        assert_eq!(sim.grid.cell_type[idx], CellType::Fluid);
+        assert_eq!(sim.grid.cell_type()[idx], CellType::Fluid);
 
         // Empty cell should be Air
         let idx_empty = sim.grid.cell_index(3, 3, 3);
-        assert_eq!(sim.grid.cell_type[idx_empty], CellType::Air);
+        assert_eq!(sim.grid.cell_type()[idx_empty], CellType::Air);
     }
 
     #[test]
@@ -347,7 +347,7 @@ mod tests {
         // Check that particles haven't exploded
         let max_vel = sim
             .particles
-            .list
+            .list()
             .iter()
             .map(|p| p.velocity.length())
             .fold(0.0f32, f32::max);

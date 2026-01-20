@@ -763,8 +763,7 @@ impl GpuFlip3D {
         }
         self.water_p2g.encode(&mut encoder, count);
 
-        queue.submit(std::iter::once(encoder.finish()));
-
+        // Sediment fraction pass (reuse encoder)
         let sediment_fraction_params = SedimentFractionParams3D {
             width: self.width,
             height: self.height,
@@ -777,9 +776,6 @@ impl GpuFlip3D {
             bytemuck::bytes_of(&sediment_fraction_params),
         );
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Sediment Fraction 3D Encoder"),
-        });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Sediment Fraction 3D Pass"),
@@ -805,8 +801,7 @@ impl GpuFlip3D {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
-        queue.submit(std::iter::once(encoder.finish()));
-
+        // Sediment pressure pass (reuse encoder)
         let sediment_pressure_params = SedimentPressureParams3D {
             width: self.width,
             height: self.height,
@@ -823,9 +818,6 @@ impl GpuFlip3D {
             bytemuck::bytes_of(&sediment_pressure_params),
         );
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Sediment Pressure 3D Encoder"),
-        });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Sediment Pressure 3D Pass"),
@@ -838,12 +830,13 @@ impl GpuFlip3D {
             pass.dispatch_workgroups(workgroups_x, 1, workgroups_z);
         }
 
+        // Submit batched P2G + sediment passes
         queue.submit(std::iter::once(encoder.finish()));
 
         // 2. Enforce boundary conditions BEFORE storing old velocities
         // This is critical for correct FLIP delta computation!
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D BC Encoder"),
+            label: Some("FLIP 3D BC + Grid Copy Encoder"),
         });
 
         // Enforce BC on U
@@ -888,12 +881,7 @@ impl GpuFlip3D {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
-        queue.submit(std::iter::once(encoder.finish()));
-
-        // 3. Save grid velocity for FLIP delta (now with proper BCs!)
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Grid Copy Encoder"),
-        });
+        // 3. Save grid velocity for FLIP delta (now with proper BCs!) - reuse encoder
         encoder.copy_buffer_to_buffer(
             &self.p2g.grid_u_buffer,
             0,
@@ -915,6 +903,8 @@ impl GpuFlip3D {
             0,
             (w_size * 4) as u64,
         );
+
+        // Submit batched BC + grid copy
         queue.submit(std::iter::once(encoder.finish()));
 
         // 3.5 Cell type classification: mark cells as FLUID/AIR based on particle presence.
@@ -932,52 +922,46 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&sediment_cell_params),
             );
 
+            // Batch all cell type iterations + fluid cell expansion into a single encoder
+            let mut ct_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Cell Type 3D Encoder"),
+            });
+
             // Multiple iterations to propagate jamming upward (for sediment piles)
             let cell_type_iterations = 5;
             for _ in 0..cell_type_iterations {
-                let mut ct_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Cell Type 3D Encoder"),
+                let mut pass = ct_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Cell Type 3D Pass"),
+                    timestamp_writes: None,
                 });
-                {
-                    let mut pass = ct_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("Cell Type 3D Pass"),
-                        timestamp_writes: None,
-                    });
-                    pass.set_pipeline(&self.sediment_cell_type_pipeline);
-                    pass.set_bind_group(0, &self.sediment_cell_type_bind_group, &[]);
-                    let workgroups_x = (self.width + 7) / 8;
-                    let workgroups_y = (self.height + 7) / 8;
-                    let workgroups_z = (self.depth + 3) / 4;
-                    pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-                }
-                queue.submit(std::iter::once(ct_encoder.finish()));
+                pass.set_pipeline(&self.sediment_cell_type_pipeline);
+                pass.set_bind_group(0, &self.sediment_cell_type_bind_group, &[]);
+                let workgroups_x = (self.width + 7) / 8;
+                let workgroups_y = (self.height + 7) / 8;
+                let workgroups_z = (self.depth + 3) / 4;
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
 
             // Fluid cell expansion: mark cells as FLUID if 2+ face-neighbors have particles
             // Conservative approach to prevent over-expansion
             {
-                let mut expand_encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Fluid Cell Expand 3D Encoder"),
-                    });
-                {
-                    let mut pass = expand_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("Fluid Cell Expand 3D Pass"),
-                        timestamp_writes: None,
-                    });
-                    pass.set_pipeline(&self.fluid_cell_expand_pipeline);
-                    pass.set_bind_group(0, &self.fluid_cell_expand_bind_group, &[]);
-                    let workgroups_x = (self.width + 7) / 8;
-                    let workgroups_y = (self.height + 7) / 8;
-                    let workgroups_z = (self.depth + 3) / 4;
-                    pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-                }
-                queue.submit(std::iter::once(expand_encoder.finish()));
+                let mut pass = ct_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Fluid Cell Expand 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.fluid_cell_expand_pipeline);
+                pass.set_bind_group(0, &self.fluid_cell_expand_bind_group, &[]);
+                let workgroups_x = (self.width + 7) / 8;
+                let workgroups_y = (self.height + 7) / 8;
+                let workgroups_z = (self.depth + 3) / 4;
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
+
+            // Submit batched cell type classification
+            queue.submit(std::iter::once(ct_encoder.finish()));
         }
 
-        // 4. Apply gravity
-
+        // 4. Apply gravity, flow, and vorticity (batched in single encoder)
         let gravity_params = GravityParams3D {
             width: self.width,
             height: self.height,
@@ -995,7 +979,7 @@ impl GpuFlip3D {
         );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Gravity Encoder"),
+            label: Some("FLIP 3D Gravity + Flow + Vorticity Encoder"),
         });
 
         // Apply gravity
@@ -1122,7 +1106,7 @@ impl GpuFlip3D {
             }
         }
 
-        // Submit vorticity passes before pressure solve
+        // Submit batched gravity + flow + vorticity
         queue.submit(std::iter::once(encoder.finish()));
 
         // 7. Pressure solve (divergence → iterations → gradient)
@@ -1138,6 +1122,7 @@ impl GpuFlip3D {
         // BC is only applied BEFORE the pressure solve (in step 6).
         // The pressure solve naturally enforces no-penetration at walls.
 
+        // Porosity drag (batched U, V, W passes)
         if self.sediment_porosity_drag > 0.0 {
             let drag_params = PorosityDragParams3D {
                 width: self.width,
@@ -1154,6 +1139,7 @@ impl GpuFlip3D {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Porosity Drag 3D Encoder"),
             });
+
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Porosity Drag U 3D Pass"),
@@ -1191,6 +1177,7 @@ impl GpuFlip3D {
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
 
+            // Submit batched porosity drag
             queue.submit(std::iter::once(encoder.finish()));
         }
 
@@ -1253,78 +1240,59 @@ impl GpuFlip3D {
             }
 
             // Run 4 extrapolation passes (deeper extrapolation for better surface coverage)
+            // Batch all passes within each iteration to reduce encoder overhead
             for _pass in 0..4 {
+                let mut encoder =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Velocity Extrap Iteration Encoder"),
+                    });
+
                 // Extrapolate U
                 {
-                    let mut encoder =
-                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("Velocity Extrap U Encoder"),
-                        });
-                    {
-                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                            label: Some("Velocity Extrap U Pass"),
-                            timestamp_writes: None,
-                        });
-                        pass.set_pipeline(&self.velocity_extrap_u_pipeline);
-                        pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
-                        pass.dispatch_workgroups(workgroups_u.0, workgroups_u.1, workgroups_u.2);
-                    }
-                    queue.submit(std::iter::once(encoder.finish()));
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Velocity Extrap U Pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.velocity_extrap_u_pipeline);
+                    pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
+                    pass.dispatch_workgroups(workgroups_u.0, workgroups_u.1, workgroups_u.2);
                 }
 
                 // Extrapolate V
                 {
-                    let mut encoder =
-                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("Velocity Extrap V Encoder"),
-                        });
-                    {
-                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                            label: Some("Velocity Extrap V Pass"),
-                            timestamp_writes: None,
-                        });
-                        pass.set_pipeline(&self.velocity_extrap_v_pipeline);
-                        pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
-                        pass.dispatch_workgroups(workgroups_v.0, workgroups_v.1, workgroups_v.2);
-                    }
-                    queue.submit(std::iter::once(encoder.finish()));
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Velocity Extrap V Pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.velocity_extrap_v_pipeline);
+                    pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
+                    pass.dispatch_workgroups(workgroups_v.0, workgroups_v.1, workgroups_v.2);
                 }
 
                 // Extrapolate W
                 {
-                    let mut encoder =
-                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("Velocity Extrap W Encoder"),
-                        });
-                    {
-                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                            label: Some("Velocity Extrap W Pass"),
-                            timestamp_writes: None,
-                        });
-                        pass.set_pipeline(&self.velocity_extrap_w_pipeline);
-                        pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
-                        pass.dispatch_workgroups(workgroups_w.0, workgroups_w.1, workgroups_w.2);
-                    }
-                    queue.submit(std::iter::once(encoder.finish()));
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Velocity Extrap W Pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.velocity_extrap_w_pipeline);
+                    pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
+                    pass.dispatch_workgroups(workgroups_w.0, workgroups_w.1, workgroups_w.2);
                 }
 
                 // Finalize: mark newly extrapolated faces as valid
                 {
-                    let mut encoder =
-                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("Velocity Extrap Finalize Encoder"),
-                        });
-                    {
-                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                            label: Some("Velocity Extrap Finalize Pass"),
-                            timestamp_writes: None,
-                        });
-                        pass.set_pipeline(&self.velocity_extrap_finalize_pipeline);
-                        pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
-                        pass.dispatch_workgroups(workgroups_max.0, workgroups_max.1, workgroups_max.2);
-                    }
-                    queue.submit(std::iter::once(encoder.finish()));
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Velocity Extrap Finalize Pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.velocity_extrap_finalize_pipeline);
+                    pass.set_bind_group(0, &self.velocity_extrap_bind_group, &[]);
+                    pass.dispatch_workgroups(workgroups_max.0, workgroups_max.1, workgroups_max.2);
                 }
+
+                // Submit batched extrapolation iteration
+                queue.submit(std::iter::once(encoder.finish()));
             }
         }
 
@@ -1346,6 +1314,8 @@ impl GpuFlip3D {
             .g2p
             .upload_params(queue, count, self.cell_size, dt, self.flip_ratio, sediment_params);
 
+        // Note: G2P and subsequent passes kept as separate submissions for now
+        // because they depend on optional SDF/bed_height uploads below
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D G2P Encoder"),
         });
@@ -1375,7 +1345,7 @@ impl GpuFlip3D {
             );
 
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("FLIP 3D Density Projection Encoder"),
+                label: Some("FLIP 3D Density Error Encoder"),
             });
 
             // Dispatch density error shader - writes to divergence_buffer
@@ -1423,26 +1393,6 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&grid_params),
             );
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("FLIP 3D Position Grid Encoder"),
-            });
-
-            // Dispatch grid position delta shader
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Density Position Grid 3D Pass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.density_position_grid_pipeline);
-                pass.set_bind_group(0, &self.density_position_grid_bind_group, &[]);
-                let workgroups_x = self.width.div_ceil(8);
-                let workgroups_y = self.height.div_ceil(8);
-                let workgroups_z = self.depth.div_ceil(4);
-                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-            }
-
-            queue.submit(std::iter::once(encoder.finish()));
-
             // 4. Apply position correction to particles (trilinear sampling from grid)
             let density_correct_params = DensityCorrectionParams3D {
                 width: self.width,
@@ -1460,9 +1410,24 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&density_correct_params),
             );
 
+            // Batch position grid + position correction
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("FLIP 3D Position Correction Encoder"),
+                label: Some("FLIP 3D Density Position Correction Encoder"),
             });
+
+            // Dispatch grid position delta shader
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Density Position Grid 3D Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.density_position_grid_pipeline);
+                pass.set_bind_group(0, &self.density_position_grid_bind_group, &[]);
+                let workgroups_x = self.width.div_ceil(8);
+                let workgroups_y = self.height.div_ceil(8);
+                let workgroups_z = self.depth.div_ceil(4);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
 
             // Dispatch particle position correction shader
             {
@@ -1476,6 +1441,7 @@ impl GpuFlip3D {
                 pass.dispatch_workgroups(workgroups, 1, 1);
             }
 
+            // Submit batched density position correction
             queue.submit(std::iter::once(encoder.finish()));
         }
 

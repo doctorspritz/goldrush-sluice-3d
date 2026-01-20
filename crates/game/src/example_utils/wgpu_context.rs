@@ -19,7 +19,7 @@ impl WgpuContext {
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window).unwrap();
+        let surface = instance.create_surface(window).expect("Failed to create surface");
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -28,7 +28,7 @@ impl WgpuContext {
                 force_fallback_adapter: false,
             })
             .await
-            .unwrap();
+            .expect("Failed to find a suitable GPU adapter");
 
         let (device, queue) = adapter
             .request_device(
@@ -45,7 +45,7 @@ impl WgpuContext {
                 None,
             )
             .await
-            .unwrap();
+            .expect("Failed to create device and queue");
 
         let caps = surface.get_capabilities(&adapter);
         let format = caps

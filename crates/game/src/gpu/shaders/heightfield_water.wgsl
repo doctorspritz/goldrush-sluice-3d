@@ -2,6 +2,10 @@
 // Shallow Water Equations (SWE) solver for heightfield water simulation.
 // Uses Manning friction for physically accurate flow velocities.
 
+// Physics constants
+const WATER_VELOCITY_DAMPING: f32 = 0.99;  // 1% damping per frame to prevent numerical oscillations
+const MIN_WATER_DEPTH: f32 = 0.001;         // Minimum depth threshold (meters)
+
 struct Params {
     world_width: u32,
     world_depth: u32,
@@ -88,7 +92,7 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let d_r = water_depth[idx_r];
 
         // Only calculate flow if water exists
-        if (d_l > 0.001 || d_r > 0.001) {
+        if (d_l > MIN_WATER_DEPTH || d_r > MIN_WATER_DEPTH) {
              // Detect wet-dry front
              let is_wet_dry_front = (d_l > 0.01 && d_r < 0.01) || (d_r > 0.01 && d_l < 0.01);
 
@@ -146,7 +150,7 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
     } else if (x == params.world_width - 1) {
         // OPEN BOUNDARY: Allow water to flow OUT at right edge
         let d_local = water_depth[idx];
-        if (d_local > 0.001) {
+        if (d_local > MIN_WATER_DEPTH) {
             var vel = water_velocity_x[idx];
             // Assume slight downhill gradient to encourage outflow
             vel += params.gravity * 0.01 * params.dt;
@@ -181,7 +185,7 @@ fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let d_b = water_depth[idx];
         let d_f = water_depth[idx_f];
         
-        if (d_b > 0.001 || d_f > 0.001) {
+        if (d_b > MIN_WATER_DEPTH || d_f > MIN_WATER_DEPTH) {
              // Detect wet-dry front
              let is_wet_dry_front_z = (d_b > 0.01 && d_f < 0.01) || (d_f > 0.01 && d_b < 0.01);
 
@@ -297,6 +301,6 @@ fn update_depth(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Apply artificial viscosity to dampen numerical oscillations
     // This prevents water sloshing in still/settling conditions
-    water_velocity_x[idx] *= 0.99;  // 1% damping per frame
-    water_velocity_z[idx] *= 0.99;
+    water_velocity_x[idx] *= WATER_VELOCITY_DAMPING;
+    water_velocity_z[idx] *= WATER_VELOCITY_DAMPING;
 }

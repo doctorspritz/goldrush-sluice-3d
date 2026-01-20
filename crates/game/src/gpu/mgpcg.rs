@@ -615,7 +615,7 @@ impl GpuMgpcgSolver {
                 label: Some(&format!("MG Smooth Red Level {}", level)),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(self.smooth_red_pipeline.as_ref().unwrap());
+            pass.set_pipeline(self.smooth_red_pipeline.as_ref().expect("Smooth red pipeline should be initialized"));
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
         }
@@ -626,7 +626,7 @@ impl GpuMgpcgSolver {
                 label: Some(&format!("MG Smooth Black Level {}", level)),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(self.smooth_black_pipeline.as_ref().unwrap());
+            pass.set_pipeline(self.smooth_black_pipeline.as_ref().expect("Smooth black pipeline should be initialized"));
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
         }
@@ -813,7 +813,7 @@ impl GpuMgpcgSolver {
             label: Some(&format!("MG Restrict {} -> {}", fine_level, fine_level + 1)),
             timestamp_writes: None,
         });
-        pass.set_pipeline(self.restrict_pipeline.as_ref().unwrap());
+        pass.set_pipeline(self.restrict_pipeline.as_ref().expect("Restrict pipeline should be initialized"));
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
     }
@@ -988,7 +988,7 @@ impl GpuMgpcgSolver {
             )),
             timestamp_writes: None,
         });
-        pass.set_pipeline(self.prolongate_pipeline.as_ref().unwrap());
+        pass.set_pipeline(self.prolongate_pipeline.as_ref().expect("Prolongate pipeline should be initialized"));
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
     }
@@ -1618,7 +1618,7 @@ impl GpuMgpcgSolver {
             label: Some(&format!("MG Residual Level {}", level)),
             timestamp_writes: None,
         });
-        pass.set_pipeline(self.mg_residual_pipeline.as_ref().unwrap());
+        pass.set_pipeline(self.mg_residual_pipeline.as_ref().expect("MG residual pipeline should be initialized"));
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
     }
@@ -1636,7 +1636,7 @@ impl GpuMgpcgSolver {
             label: Some(&format!("MG Clear Level {}", level)),
             timestamp_writes: None,
         });
-        pass.set_pipeline(self.clear_pipeline.as_ref().unwrap());
+        pass.set_pipeline(self.clear_pipeline.as_ref().expect("Clear pipeline should be initialized"));
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups(workgroup_count, 1, 1);
     }
@@ -1772,8 +1772,8 @@ impl GpuMgpcgSolver {
                 label: Some("Compute r = b - Ax"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(self.residual_pipeline.as_ref().unwrap());
-            pass.set_bind_group(0, self.pcg_residual_bind_group.as_ref().unwrap(), &[]);
+            pass.set_pipeline(self.residual_pipeline.as_ref().expect("Residual pipeline should be initialized"));
+            pass.set_bind_group(0, self.pcg_residual_bind_group.as_ref().expect("PCG residual bind group should be initialized"), &[]);
             pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
             drop(pass);
             gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -1800,7 +1800,7 @@ impl GpuMgpcgSolver {
         let mut rz = self.compute_dot_product(
             gpu,
             workgroup_count_1d,
-            self.pcg_dot_rz_bind_group.as_ref().unwrap(),
+            self.pcg_dot_rz_bind_group.as_ref().expect("PCG dot rz bind group should be initialized"),
         );
 
         // Main PCG iteration loop
@@ -1821,8 +1821,8 @@ impl GpuMgpcgSolver {
                     label: Some("Apply Laplacian"),
                     timestamp_writes: None,
                 });
-                pass.set_pipeline(self.laplacian_pipeline.as_ref().unwrap());
-                pass.set_bind_group(0, self.pcg_laplacian_bind_group.as_ref().unwrap(), &[]);
+                pass.set_pipeline(self.laplacian_pipeline.as_ref().expect("Laplacian pipeline should be initialized"));
+                pass.set_bind_group(0, self.pcg_laplacian_bind_group.as_ref().expect("PCG laplacian bind group should be initialized"), &[]);
                 pass.dispatch_workgroups(workgroup_x, workgroup_y, 1);
                 drop(pass);
                 gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -1832,7 +1832,7 @@ impl GpuMgpcgSolver {
             let pap = self.compute_dot_product(
                 gpu,
                 workgroup_count_1d,
-                self.pcg_dot_pap_bind_group.as_ref().unwrap(),
+                self.pcg_dot_pap_bind_group.as_ref().expect("PCG dot pap bind group should be initialized"),
             );
 
             // Compute alpha = rz / pAp
@@ -1842,7 +1842,7 @@ impl GpuMgpcgSolver {
             self.dispatch_axpy(
                 gpu,
                 alpha,
-                self.pcg_x_update_bind_group.as_ref().unwrap(),
+                self.pcg_x_update_bind_group.as_ref().expect("PCG x update bind group should be initialized"),
                 workgroup_count_1d,
             );
 
@@ -1850,7 +1850,7 @@ impl GpuMgpcgSolver {
             self.dispatch_axpy(
                 gpu,
                 -alpha,
-                self.pcg_r_update_bind_group.as_ref().unwrap(),
+                self.pcg_r_update_bind_group.as_ref().expect("PCG r update bind group should be initialized"),
                 workgroup_count_1d,
             );
 
@@ -1864,7 +1864,7 @@ impl GpuMgpcgSolver {
             rz = self.compute_dot_product(
                 gpu,
                 workgroup_count_1d,
-                self.pcg_dot_rz_bind_group.as_ref().unwrap(),
+                self.pcg_dot_rz_bind_group.as_ref().expect("PCG dot rz bind group should be initialized"),
             );
 
             // Compute beta = rz / rz_old
@@ -1920,8 +1920,8 @@ impl GpuMgpcgSolver {
                 label: Some("Copy -r to divergence"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(self.copy_pipeline.as_ref().unwrap());
-            pass.set_bind_group(0, self.pcg_copy_to_div_bind_group.as_ref().unwrap(), &[]);
+            pass.set_pipeline(self.copy_pipeline.as_ref().expect("Copy pipeline should be initialized"));
+            pass.set_bind_group(0, self.pcg_copy_to_div_bind_group.as_ref().expect("PCG copy to div bind group should be initialized"), &[]);
             pass.dispatch_workgroups(workgroup_count_1d, 1, 1);
             drop(pass);
             gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -1965,10 +1965,10 @@ impl GpuMgpcgSolver {
                 label: Some("Copy pressure to z"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(self.copy_pipeline.as_ref().unwrap());
+            pass.set_pipeline(self.copy_pipeline.as_ref().expect("Copy pipeline should be initialized"));
             pass.set_bind_group(
                 0,
-                self.pcg_copy_from_pressure_bind_group.as_ref().unwrap(),
+                self.pcg_copy_from_pressure_bind_group.as_ref().expect("PCG copy from pressure bind group should be initialized"),
                 &[],
             );
             pass.dispatch_workgroups(workgroup_count_1d, 1, 1);
@@ -2006,7 +2006,7 @@ impl GpuMgpcgSolver {
                 label: Some("Dot Partial Sums"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(self.dot_partial_pipeline.as_ref().unwrap());
+            pass.set_pipeline(self.dot_partial_pipeline.as_ref().expect("Dot partial pipeline should be initialized"));
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(workgroup_count, 1, 1);
             drop(pass);
@@ -2024,7 +2024,7 @@ impl GpuMgpcgSolver {
                 label: Some("Dot Finalize"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(self.dot_finalize_pipeline.as_ref().unwrap());
+            pass.set_pipeline(self.dot_finalize_pipeline.as_ref().expect("Dot finalize pipeline should be initialized"));
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
             drop(pass);
@@ -2044,10 +2044,10 @@ impl GpuMgpcgSolver {
         let buffer_slice = self.sum_staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
+            tx.send(result).expect("Failed to send map_async result");
         });
         gpu.device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        rx.recv().expect("Failed to receive from channel").expect("Failed to map buffer for reading");
 
         let data = buffer_slice.get_mapped_range();
         let result = bytemuck::from_bytes::<f32>(&data[..4]);
@@ -2085,7 +2085,7 @@ impl GpuMgpcgSolver {
             label: Some("AXPY"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(self.axpy_pipeline.as_ref().unwrap());
+        pass.set_pipeline(self.axpy_pipeline.as_ref().expect("Axpy pipeline should be initialized"));
         pass.set_bind_group(0, bind_group, &[]);
         pass.dispatch_workgroups(workgroup_count, 1, 1);
         drop(pass);
@@ -2113,8 +2113,8 @@ impl GpuMgpcgSolver {
             label: Some("XPAY p = z + beta*p"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(self.xpay_pipeline.as_ref().unwrap());
-        pass.set_bind_group(0, self.pcg_p_update_bind_group.as_ref().unwrap(), &[]);
+        pass.set_pipeline(self.xpay_pipeline.as_ref().expect("Xpay pipeline should be initialized"));
+        pass.set_bind_group(0, self.pcg_p_update_bind_group.as_ref().expect("PCG p update bind group should be initialized"), &[]);
         pass.dispatch_workgroups(workgroup_count, 1, 1);
         drop(pass);
         gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -2173,11 +2173,11 @@ impl GpuMgpcgSolver {
         let buffer_slice = self.pressure_staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
+            tx.send(result).expect("Failed to send map_async result");
         });
 
         gpu.device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        rx.recv().expect("Failed to receive from channel").expect("Failed to map buffer for reading");
 
         {
             let data = buffer_slice.get_mapped_range();

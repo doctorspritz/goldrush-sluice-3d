@@ -13,6 +13,10 @@
 const PI: f32 = 3.14159265359;
 const INVALID_CELL: u32 = 0xFFFFFFFFu;
 
+// Physics constants
+const SPH_VELOCITY_DAMPING: f32 = 0.999;  // 0.1% damping to prevent oscillations
+const EPSILON_FINE: f32 = 0.0001;         // Small epsilon for numerical stability
+
 struct SphParams {
     num_particles: u32,
     h: f32,
@@ -60,7 +64,7 @@ fn poly6(r2: f32) -> f32 {
 
 // Spiky kernel gradient - used for pressure forces
 fn spiky_grad(r: vec3<f32>, dist: f32) -> vec3<f32> {
-    if (dist >= params.h || dist < 0.0001) { return vec3(0.0); }
+    if (dist >= params.h || dist < EPSILON_FINE) { return vec3(0.0); }
     let diff = params.h - dist;
     return params.spiky_grad_coef * diff * diff * normalize(r);
 }
@@ -101,7 +105,7 @@ fn predict_and_hash(@builtin(global_invocation_id) gid: vec3<u32>) {
     var vel = velocities[i].xyz;
 
     // Apply light damping (prevents oscillations without killing velocity)
-    vel *= 0.999;
+    vel *= SPH_VELOCITY_DAMPING;
 
     // Apply gravity
     vel += vec3(0.0, params.gravity, 0.0) * params.dt;
@@ -202,7 +206,7 @@ fn compute_density_dii(@builtin(global_invocation_id) gid: vec3<u32>) {
                         rho += params.particle_mass * poly6(r2);
  
                         // d_ii contribution
-                        if (r2 > 0.0001) {
+                        if (r2 > EPSILON_FINE) {
                             let dist = sqrt(r2);
                             let grad = spiky_grad(r, dist);
                             let m_grad = params.particle_mass * grad;
@@ -257,7 +261,7 @@ fn compute_sum_dij(@builtin(global_invocation_id) gid: vec3<u32>) {
                     let r = pi - pj;
                     let r2 = dot(r, r);
 
-                    if (r2 < params.h2 && r2 > 0.0001) {
+                    if (r2 < params.h2 && r2 > EPSILON_FINE) {
                         let dist = sqrt(r2);
                         let rhoj = densities[j];
                         let pj_pressure = pressures[j];
@@ -367,7 +371,7 @@ fn apply_pressure(@builtin(global_invocation_id) gid: vec3<u32>) {
                     let r = pi - pj;
                     let r2 = dot(r, r);
 
-                    if (r2 < params.h2 && r2 > 0.0001) {
+                    if (r2 < params.h2 && r2 > EPSILON_FINE) {
                         let dist = sqrt(r2);
                         let rhoj = densities[j];
                         let pressj = pressures[j];

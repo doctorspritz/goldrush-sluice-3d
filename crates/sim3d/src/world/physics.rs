@@ -111,28 +111,30 @@ impl World {
         // d < 0.1mm: pure Stokes
         // d > 1mm: pure turbulent
         // intermediate: linear blend
-        if d50 < 0.0001 {
+        use crate::constants::{D50_STOKES_MAX, D50_TURBULENT_MIN};
+        if d50 < D50_STOKES_MAX {
             vs_stokes
-        } else if d50 > 0.001 {
+        } else if d50 > D50_TURBULENT_MIN {
             vs_turbulent
         } else {
             // Linear interpolation
-            let t = (d50 - 0.0001) / (0.001 - 0.0001);
+            let t = (d50 - D50_STOKES_MAX) / (D50_TURBULENT_MIN - D50_STOKES_MAX);
             vs_stokes * (1.0 - t) + vs_turbulent * t
         }
     }
 
     /// Get the particle size (d50) for the top material layer at a cell.
     pub fn top_material_d50(&self, x: usize, z: usize) -> f32 {
+        use crate::constants::MIN_LAYER_THICKNESS;
         let idx = self.idx(x, z);
 
-        if self.terrain_sediment[idx] > 0.001 {
+        if self.terrain_sediment[idx] > MIN_LAYER_THICKNESS {
             self.params.d50_sediment
-        } else if self.gravel_thickness[idx] > 0.001 {
+        } else if self.gravel_thickness[idx] > MIN_LAYER_THICKNESS {
             self.params.d50_gravel
-        } else if self.overburden_thickness[idx] > 0.001 {
+        } else if self.overburden_thickness[idx] > MIN_LAYER_THICKNESS {
             self.params.d50_overburden
-        } else if self.paydirt_thickness[idx] > 0.001 {
+        } else if self.paydirt_thickness[idx] > MIN_LAYER_THICKNESS {
             self.params.d50_paydirt
         } else {
             // Bedrock - use large value (won't erode anyway)

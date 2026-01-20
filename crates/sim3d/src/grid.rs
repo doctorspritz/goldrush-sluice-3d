@@ -36,40 +36,40 @@ pub struct Grid3D {
 
     /// U velocity (X-component) on left YZ faces
     /// Size: (width+1) * height * depth
-    pub u: Vec<f32>,
+    u: Vec<f32>,
 
     /// V velocity (Y-component) on bottom XZ faces
     /// Size: width * (height+1) * depth
-    pub v: Vec<f32>,
+    v: Vec<f32>,
 
     /// W velocity (Z-component) on back XY faces
     /// Size: width * height * (depth+1)
-    pub w: Vec<f32>,
+    w: Vec<f32>,
 
     /// Old U velocity (for FLIP delta)
-    pub u_old: Vec<f32>,
+    u_old: Vec<f32>,
 
     /// Old V velocity (for FLIP delta)
-    pub v_old: Vec<f32>,
+    v_old: Vec<f32>,
 
     /// Old W velocity (for FLIP delta)
-    pub w_old: Vec<f32>,
+    w_old: Vec<f32>,
 
     /// Pressure at cell centers
-    pub pressure: Vec<f32>,
+    pressure: Vec<f32>,
 
     /// Divergence at cell centers
-    pub divergence: Vec<f32>,
+    divergence: Vec<f32>,
 
     /// Cell classification (Solid/Fluid/Air)
-    pub cell_type: Vec<CellType>,
+    cell_type: Vec<CellType>,
 
     /// Permanent solid terrain
-    pub solid: Vec<bool>,
+    solid: Vec<bool>,
 
     /// Signed distance field for smooth collision
     /// Positive = outside solid, Negative = inside solid
-    pub sdf: Vec<f32>,
+    sdf: Vec<f32>,
 }
 
 impl Grid3D {
@@ -113,6 +113,118 @@ impl Grid3D {
     /// Total world size in Z direction.
     pub fn world_depth(&self) -> f32 {
         self.depth as f32 * self.cell_size
+    }
+
+    // ========== Field accessors ==========
+
+    /// Get immutable reference to U velocity field.
+    pub fn u(&self) -> &[f32] {
+        &self.u
+    }
+
+    /// Get mutable reference to U velocity field.
+    pub fn u_mut(&mut self) -> &mut [f32] {
+        &mut self.u
+    }
+
+    /// Get immutable reference to V velocity field.
+    pub fn v(&self) -> &[f32] {
+        &self.v
+    }
+
+    /// Get mutable reference to V velocity field.
+    pub fn v_mut(&mut self) -> &mut [f32] {
+        &mut self.v
+    }
+
+    /// Get immutable reference to W velocity field.
+    pub fn w(&self) -> &[f32] {
+        &self.w
+    }
+
+    /// Get mutable reference to W velocity field.
+    pub fn w_mut(&mut self) -> &mut [f32] {
+        &mut self.w
+    }
+
+    /// Get immutable reference to old U velocity field.
+    pub fn u_old(&self) -> &[f32] {
+        &self.u_old
+    }
+
+    /// Get mutable reference to old U velocity field.
+    pub fn u_old_mut(&mut self) -> &mut [f32] {
+        &mut self.u_old
+    }
+
+    /// Get immutable reference to old V velocity field.
+    pub fn v_old(&self) -> &[f32] {
+        &self.v_old
+    }
+
+    /// Get mutable reference to old V velocity field.
+    pub fn v_old_mut(&mut self) -> &mut [f32] {
+        &mut self.v_old
+    }
+
+    /// Get immutable reference to old W velocity field.
+    pub fn w_old(&self) -> &[f32] {
+        &self.w_old
+    }
+
+    /// Get mutable reference to old W velocity field.
+    pub fn w_old_mut(&mut self) -> &mut [f32] {
+        &mut self.w_old
+    }
+
+    /// Get immutable reference to pressure field.
+    pub fn pressure(&self) -> &[f32] {
+        &self.pressure
+    }
+
+    /// Get mutable reference to pressure field.
+    pub fn pressure_mut(&mut self) -> &mut [f32] {
+        &mut self.pressure
+    }
+
+    /// Get immutable reference to divergence field.
+    pub fn divergence(&self) -> &[f32] {
+        &self.divergence
+    }
+
+    /// Get mutable reference to divergence field.
+    pub fn divergence_mut(&mut self) -> &mut [f32] {
+        &mut self.divergence
+    }
+
+    /// Get immutable reference to cell type field.
+    pub fn cell_type(&self) -> &[CellType] {
+        &self.cell_type
+    }
+
+    /// Get mutable reference to cell type field.
+    pub fn cell_type_mut(&mut self) -> &mut [CellType] {
+        &mut self.cell_type
+    }
+
+    /// Get immutable reference to solid field.
+    pub fn solid(&self) -> &[bool] {
+        &self.solid
+    }
+
+    /// Get mutable reference to solid field.
+    pub fn solid_mut(&mut self) -> &mut [bool] {
+        &mut self.solid
+    }
+
+    /// Get immutable reference to SDF field.
+    pub fn sdf(&self) -> &[f32] {
+        &self.sdf
+    }
+
+    /// Get mutable reference to SDF field.
+    pub fn sdf_mut(&mut self) -> &mut [f32] {
+        &mut self.sdf
     }
 
     // ========== Index functions ==========
