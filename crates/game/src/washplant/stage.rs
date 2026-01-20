@@ -1,6 +1,6 @@
 use crate::equipment_geometry::{
-    GrateConfig, GrateGeometryBuilder, HopperConfig, HopperGeometryBuilder, ShakerConfig,
-    ShakerGeometryBuilder, SluiceVertex,
+    GeometryConfig, GrateConfig, GrateGeometryBuilder, HopperConfig, HopperGeometryBuilder,
+    ShakerConfig, ShakerGeometryBuilder, SluiceVertex,
 };
 use crate::gpu::flip_3d::GpuFlip3D;
 use crate::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder};

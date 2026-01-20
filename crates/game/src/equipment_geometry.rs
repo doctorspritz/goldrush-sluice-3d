@@ -23,67 +23,39 @@ use wgpu::util::DeviceExt;
 pub use crate::sluice_geometry::SluiceVertex;
 
 // ============================================================================
-// GRATE - Parallel bars with gaps
+// GEOMETRY CONFIG TRAIT - Common interface for all equipment configs
 // ============================================================================
 
-#[derive(Clone, Debug)]
-pub struct GrateConfig {
-    pub grid_width: usize,
-    pub grid_height: usize,
-    pub grid_depth: usize,
-    pub cell_size: f32,
-
-    /// Number of cells between bars
-    pub bar_spacing: usize,
-    /// Thickness of each bar in cells
-    pub bar_thickness: usize,
-    /// Orientation: 0 = bars parallel to X axis, 1 = bars parallel to Z axis
-    pub orientation: usize,
-
-    pub color_top: [f32; 4],
-    pub color_side: [f32; 4],
-    pub color_bottom: [f32; 4],
+/// Trait for equipment geometry configurations.
+/// Provides the common interface for grid dimensions, cell size, and colors.
+pub trait GeometryConfig {
+    fn grid_width(&self) -> usize;
+    fn grid_height(&self) -> usize;
+    fn grid_depth(&self) -> usize;
+    fn cell_size(&self) -> f32;
+    fn color_top(&self) -> [f32; 4];
+    fn color_side(&self) -> [f32; 4];
+    fn color_bottom(&self) -> [f32; 4];
+    fn is_solid(&self, i: usize, j: usize, k: usize) -> bool;
+    fn buffer_label(&self) -> &'static str;
 }
 
-impl Default for GrateConfig {
-    fn default() -> Self {
-        Self {
-            grid_width: 20,
-            grid_height: 4,
-            grid_depth: 20,
-            cell_size: 0.25,
-            bar_spacing: 3,
-            bar_thickness: 1,
-            orientation: 0,
-            color_top: [0.55, 0.50, 0.45, 1.0],
-            color_side: [0.45, 0.40, 0.35, 1.0],
-            color_bottom: [0.35, 0.30, 0.25, 1.0],
-        }
-    }
-}
+// ============================================================================
+// GENERIC GEOMETRY BUILDER - Common mesh generation for all equipment
+// ============================================================================
 
-impl GrateConfig {
-    pub fn is_solid(&self, i: usize, _j: usize, k: usize) -> bool {
-        if self.orientation == 0 {
-            // Bars parallel to X axis (vary along Z)
-            k % (self.bar_spacing + self.bar_thickness) < self.bar_thickness
-        } else {
-            // Bars parallel to Z axis (vary along X)
-            i % (self.bar_spacing + self.bar_thickness) < self.bar_thickness
-        }
-    }
-}
-
-pub struct GrateGeometryBuilder {
-    config: GrateConfig,
+/// Generic geometry builder that works with any GeometryConfig.
+/// Provides mesh generation, GPU buffer management, and solid cell iteration.
+pub struct GeometryBuilder<C: GeometryConfig> {
+    config: C,
     vertices: Vec<SluiceVertex>,
     indices: Vec<u32>,
     vertex_buffer: Option<wgpu::Buffer>,
     index_buffer: Option<wgpu::Buffer>,
 }
 
-impl GrateGeometryBuilder {
-    pub fn new(config: GrateConfig) -> Self {
+impl<C: GeometryConfig> GeometryBuilder<C> {
+    pub fn new(config: C) -> Self {
         Self {
             config,
             vertices: Vec::new(),
@@ -93,14 +65,14 @@ impl GrateGeometryBuilder {
         }
     }
 
-    pub fn config(&self) -> &GrateConfig {
+    pub fn config(&self) -> &C {
         &self.config
     }
 
     pub fn solid_cells(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
+        let width = self.config.grid_width();
+        let height = self.config.grid_height();
+        let depth = self.config.grid_depth();
 
         (0..depth).flat_map(move |k| {
             (0..height).flat_map(move |j| {
@@ -122,14 +94,14 @@ impl GrateGeometryBuilder {
         self.vertices.clear();
         self.indices.clear();
 
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-        let cs = self.config.cell_size;
+        let width = self.config.grid_width();
+        let height = self.config.grid_height();
+        let depth = self.config.grid_depth();
+        let cs = self.config.cell_size();
 
-        let color_top = self.config.color_top;
-        let color_side = self.config.color_side;
-        let color_bottom = self.config.color_bottom;
+        let color_top = self.config.color_top();
+        let color_side = self.config.color_side();
+        let color_bottom = self.config.color_bottom();
 
         for k in 0..depth {
             for j in 0..height {
@@ -280,9 +252,11 @@ impl GrateGeometryBuilder {
             return;
         }
 
+        let label = self.config.buffer_label();
+
         self.vertex_buffer = Some(
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Grate Vertex Buffer"),
+                label: Some(&format!("{} Vertex Buffer", label)),
                 contents: bytemuck::cast_slice(&self.vertices),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             }),
@@ -290,7 +264,7 @@ impl GrateGeometryBuilder {
 
         self.index_buffer = Some(
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Grate Index Buffer"),
+                label: Some(&format!("{} Index Buffer", label)),
                 contents: bytemuck::cast_slice(&self.indices),
                 usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             }),
@@ -334,6 +308,73 @@ impl GrateGeometryBuilder {
         self.indices.clear();
     }
 }
+
+// ============================================================================
+// GRATE - Parallel bars with gaps
+// ============================================================================
+
+#[derive(Clone, Debug)]
+pub struct GrateConfig {
+    pub grid_width: usize,
+    pub grid_height: usize,
+    pub grid_depth: usize,
+    pub cell_size: f32,
+
+    /// Number of cells between bars
+    pub bar_spacing: usize,
+    /// Thickness of each bar in cells
+    pub bar_thickness: usize,
+    /// Orientation: 0 = bars parallel to X axis, 1 = bars parallel to Z axis
+    pub orientation: usize,
+
+    pub color_top: [f32; 4],
+    pub color_side: [f32; 4],
+    pub color_bottom: [f32; 4],
+}
+
+impl Default for GrateConfig {
+    fn default() -> Self {
+        Self {
+            grid_width: 20,
+            grid_height: 4,
+            grid_depth: 20,
+            cell_size: 0.25,
+            bar_spacing: 3,
+            bar_thickness: 1,
+            orientation: 0,
+            color_top: [0.55, 0.50, 0.45, 1.0],
+            color_side: [0.45, 0.40, 0.35, 1.0],
+            color_bottom: [0.35, 0.30, 0.25, 1.0],
+        }
+    }
+}
+
+impl GrateConfig {
+    pub fn grate_is_solid(&self, i: usize, _j: usize, k: usize) -> bool {
+        if self.orientation == 0 {
+            // Bars parallel to X axis (vary along Z)
+            k % (self.bar_spacing + self.bar_thickness) < self.bar_thickness
+        } else {
+            // Bars parallel to Z axis (vary along X)
+            i % (self.bar_spacing + self.bar_thickness) < self.bar_thickness
+        }
+    }
+}
+
+impl GeometryConfig for GrateConfig {
+    fn grid_width(&self) -> usize { self.grid_width }
+    fn grid_height(&self) -> usize { self.grid_height }
+    fn grid_depth(&self) -> usize { self.grid_depth }
+    fn cell_size(&self) -> f32 { self.cell_size }
+    fn color_top(&self) -> [f32; 4] { self.color_top }
+    fn color_side(&self) -> [f32; 4] { self.color_side }
+    fn color_bottom(&self) -> [f32; 4] { self.color_bottom }
+    fn is_solid(&self, i: usize, j: usize, k: usize) -> bool { self.grate_is_solid(i, j, k) }
+    fn buffer_label(&self) -> &'static str { "Grate" }
+}
+
+/// Type alias for backwards compatibility
+pub type GrateGeometryBuilder = GeometryBuilder<GrateConfig>;
 
 // ============================================================================
 // BOX - Hollow rectangular container with open top
@@ -370,7 +411,7 @@ impl Default for BoxConfig {
 }
 
 impl BoxConfig {
-    pub fn is_solid(&self, i: usize, j: usize, k: usize) -> bool {
+    pub fn box_is_solid(&self, i: usize, j: usize, k: usize) -> bool {
         let wt = self.wall_thickness;
 
         // Floor
@@ -387,260 +428,20 @@ impl BoxConfig {
     }
 }
 
-pub struct BoxGeometryBuilder {
-    config: BoxConfig,
-    vertices: Vec<SluiceVertex>,
-    indices: Vec<u32>,
-    vertex_buffer: Option<wgpu::Buffer>,
-    index_buffer: Option<wgpu::Buffer>,
+impl GeometryConfig for BoxConfig {
+    fn grid_width(&self) -> usize { self.grid_width }
+    fn grid_height(&self) -> usize { self.grid_height }
+    fn grid_depth(&self) -> usize { self.grid_depth }
+    fn cell_size(&self) -> f32 { self.cell_size }
+    fn color_top(&self) -> [f32; 4] { self.color_top }
+    fn color_side(&self) -> [f32; 4] { self.color_side }
+    fn color_bottom(&self) -> [f32; 4] { self.color_bottom }
+    fn is_solid(&self, i: usize, j: usize, k: usize) -> bool { self.box_is_solid(i, j, k) }
+    fn buffer_label(&self) -> &'static str { "Box" }
 }
 
-impl BoxGeometryBuilder {
-    pub fn new(config: BoxConfig) -> Self {
-        Self {
-            config,
-            vertices: Vec::new(),
-            indices: Vec::new(),
-            vertex_buffer: None,
-            index_buffer: None,
-        }
-    }
-
-    pub fn config(&self) -> &BoxConfig {
-        &self.config
-    }
-
-    pub fn solid_cells(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-
-        (0..depth).flat_map(move |k| {
-            (0..height).flat_map(move |j| {
-                (0..width).filter_map(move |i| {
-                    if self.config.is_solid(i, j, k) {
-                        Some((i, j, k))
-                    } else {
-                        None
-                    }
-                })
-            })
-        })
-    }
-
-    pub fn build_mesh<F>(&mut self, is_solid: F)
-    where
-        F: Fn(usize, usize, usize) -> bool,
-    {
-        self.vertices.clear();
-        self.indices.clear();
-
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-        let cs = self.config.cell_size;
-
-        let color_top = self.config.color_top;
-        let color_side = self.config.color_side;
-        let color_bottom = self.config.color_bottom;
-
-        for k in 0..depth {
-            for j in 0..height {
-                for i in 0..width {
-                    if !is_solid(i, j, k) {
-                        continue;
-                    }
-
-                    let x0 = i as f32 * cs;
-                    let x1 = (i + 1) as f32 * cs;
-                    let y0 = j as f32 * cs;
-                    let y1 = (j + 1) as f32 * cs;
-                    let z0 = k as f32 * cs;
-                    let z1 = (k + 1) as f32 * cs;
-
-                    if i == 0 || !is_solid(i - 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if i == width - 1 || !is_solid(i + 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == 0 || !is_solid(i, j - 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z1], color_bottom),
-                            SluiceVertex::new([x0, y0, z1], color_bottom),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == height - 1 || !is_solid(i, j + 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z1], color_top),
-                            SluiceVertex::new([x0, y1, z1], color_top),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if k == 0 || !is_solid(i, j, k - 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if k == depth - 1 || !is_solid(i, j, k + 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn vertices(&self) -> &[SluiceVertex] {
-        &self.vertices
-    }
-
-    pub fn indices(&self) -> &[u32] {
-        &self.indices
-    }
-
-    pub fn num_indices(&self) -> u32 {
-        self.indices.len() as u32
-    }
-
-    pub fn upload(&mut self, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        self.vertex_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Box Vertex Buffer"),
-                contents: bytemuck::cast_slice(&self.vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-
-        self.index_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Box Index Buffer"),
-                contents: bytemuck::cast_slice(&self.indices),
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-    }
-
-    pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        if self.vertex_buffer.is_none() {
-            self.upload(device);
-            return;
-        }
-
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
-
-        let vertex_bytes = bytemuck::cast_slice(&self.vertices);
-        let index_bytes = bytemuck::cast_slice(&self.indices);
-
-        if vb.size() >= vertex_bytes.len() as u64 && ib.size() >= index_bytes.len() as u64 {
-            queue.write_buffer(vb, 0, vertex_bytes);
-            queue.write_buffer(ib, 0, index_bytes);
-        } else {
-            self.upload(device);
-        }
-    }
-
-    pub fn vertex_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.vertex_buffer.as_ref()
-    }
-
-    pub fn index_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.index_buffer.as_ref()
-    }
-
-    pub fn clear(&mut self) {
-        self.vertices.clear();
-        self.indices.clear();
-    }
-}
+/// Type alias for backwards compatibility
+pub type BoxGeometryBuilder = GeometryBuilder<BoxConfig>;
 
 // ============================================================================
 // GUTTER - U-shaped channel
@@ -683,18 +484,18 @@ impl Default for GutterConfig {
 }
 
 impl GutterConfig {
-    pub fn is_solid(&self, _i: usize, _j: usize, k: usize) -> bool {
+    pub fn gutter_is_solid(&self, _i: usize, j: usize, k: usize) -> bool {
         let z_center = self.grid_depth / 2;
         let half_width = self.channel_width / 2;
 
         // Floor
-        if _j < self.floor_thickness {
+        if j < self.floor_thickness {
             return true;
         }
 
         // Left and right walls
         if k < z_center.saturating_sub(half_width) || k >= z_center + half_width {
-            if _j < self.channel_depth + self.floor_thickness {
+            if j < self.channel_depth + self.floor_thickness {
                 return true;
             }
         }
@@ -703,260 +504,20 @@ impl GutterConfig {
     }
 }
 
-pub struct GutterGeometryBuilder {
-    config: GutterConfig,
-    vertices: Vec<SluiceVertex>,
-    indices: Vec<u32>,
-    vertex_buffer: Option<wgpu::Buffer>,
-    index_buffer: Option<wgpu::Buffer>,
+impl GeometryConfig for GutterConfig {
+    fn grid_width(&self) -> usize { self.grid_width }
+    fn grid_height(&self) -> usize { self.grid_height }
+    fn grid_depth(&self) -> usize { self.grid_depth }
+    fn cell_size(&self) -> f32 { self.cell_size }
+    fn color_top(&self) -> [f32; 4] { self.color_top }
+    fn color_side(&self) -> [f32; 4] { self.color_side }
+    fn color_bottom(&self) -> [f32; 4] { self.color_bottom }
+    fn is_solid(&self, i: usize, j: usize, k: usize) -> bool { self.gutter_is_solid(i, j, k) }
+    fn buffer_label(&self) -> &'static str { "Gutter" }
 }
 
-impl GutterGeometryBuilder {
-    pub fn new(config: GutterConfig) -> Self {
-        Self {
-            config,
-            vertices: Vec::new(),
-            indices: Vec::new(),
-            vertex_buffer: None,
-            index_buffer: None,
-        }
-    }
-
-    pub fn config(&self) -> &GutterConfig {
-        &self.config
-    }
-
-    pub fn solid_cells(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-
-        (0..depth).flat_map(move |k| {
-            (0..height).flat_map(move |j| {
-                (0..width).filter_map(move |i| {
-                    if self.config.is_solid(i, j, k) {
-                        Some((i, j, k))
-                    } else {
-                        None
-                    }
-                })
-            })
-        })
-    }
-
-    pub fn build_mesh<F>(&mut self, is_solid: F)
-    where
-        F: Fn(usize, usize, usize) -> bool,
-    {
-        self.vertices.clear();
-        self.indices.clear();
-
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-        let cs = self.config.cell_size;
-
-        let color_top = self.config.color_top;
-        let color_side = self.config.color_side;
-        let color_bottom = self.config.color_bottom;
-
-        for k in 0..depth {
-            for j in 0..height {
-                for i in 0..width {
-                    if !is_solid(i, j, k) {
-                        continue;
-                    }
-
-                    let x0 = i as f32 * cs;
-                    let x1 = (i + 1) as f32 * cs;
-                    let y0 = j as f32 * cs;
-                    let y1 = (j + 1) as f32 * cs;
-                    let z0 = k as f32 * cs;
-                    let z1 = (k + 1) as f32 * cs;
-
-                    if i == 0 || !is_solid(i - 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if i == width - 1 || !is_solid(i + 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == 0 || !is_solid(i, j - 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z1], color_bottom),
-                            SluiceVertex::new([x0, y0, z1], color_bottom),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == height - 1 || !is_solid(i, j + 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z1], color_top),
-                            SluiceVertex::new([x0, y1, z1], color_top),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if k == 0 || !is_solid(i, j, k - 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if k == depth - 1 || !is_solid(i, j, k + 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn vertices(&self) -> &[SluiceVertex] {
-        &self.vertices
-    }
-
-    pub fn indices(&self) -> &[u32] {
-        &self.indices
-    }
-
-    pub fn num_indices(&self) -> u32 {
-        self.indices.len() as u32
-    }
-
-    pub fn upload(&mut self, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        self.vertex_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Gutter Vertex Buffer"),
-                contents: bytemuck::cast_slice(&self.vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-
-        self.index_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Gutter Index Buffer"),
-                contents: bytemuck::cast_slice(&self.indices),
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-    }
-
-    pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        if self.vertex_buffer.is_none() {
-            self.upload(device);
-            return;
-        }
-
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
-
-        let vertex_bytes = bytemuck::cast_slice(&self.vertices);
-        let index_bytes = bytemuck::cast_slice(&self.indices);
-
-        if vb.size() >= vertex_bytes.len() as u64 && ib.size() >= index_bytes.len() as u64 {
-            queue.write_buffer(vb, 0, vertex_bytes);
-            queue.write_buffer(ib, 0, index_bytes);
-        } else {
-            self.upload(device);
-        }
-    }
-
-    pub fn vertex_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.vertex_buffer.as_ref()
-    }
-
-    pub fn index_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.index_buffer.as_ref()
-    }
-
-    pub fn clear(&mut self) {
-        self.vertices.clear();
-        self.indices.clear();
-    }
-}
+/// Type alias for backwards compatibility
+pub type GutterGeometryBuilder = GeometryBuilder<GutterConfig>;
 
 // ============================================================================
 // HOPPER - Inverted pyramid for material collection
@@ -1005,7 +566,7 @@ impl Default for HopperConfig {
 }
 
 impl HopperConfig {
-    pub fn is_solid(&self, i: usize, j: usize, k: usize) -> bool {
+    pub fn hopper_is_solid(&self, i: usize, j: usize, k: usize) -> bool {
         if j >= self.grid_height {
             return false;
         }
@@ -1036,260 +597,20 @@ impl HopperConfig {
     }
 }
 
-pub struct HopperGeometryBuilder {
-    config: HopperConfig,
-    vertices: Vec<SluiceVertex>,
-    indices: Vec<u32>,
-    vertex_buffer: Option<wgpu::Buffer>,
-    index_buffer: Option<wgpu::Buffer>,
+impl GeometryConfig for HopperConfig {
+    fn grid_width(&self) -> usize { self.grid_width }
+    fn grid_height(&self) -> usize { self.grid_height }
+    fn grid_depth(&self) -> usize { self.grid_depth }
+    fn cell_size(&self) -> f32 { self.cell_size }
+    fn color_top(&self) -> [f32; 4] { self.color_top }
+    fn color_side(&self) -> [f32; 4] { self.color_side }
+    fn color_bottom(&self) -> [f32; 4] { self.color_bottom }
+    fn is_solid(&self, i: usize, j: usize, k: usize) -> bool { self.hopper_is_solid(i, j, k) }
+    fn buffer_label(&self) -> &'static str { "Hopper" }
 }
 
-impl HopperGeometryBuilder {
-    pub fn new(config: HopperConfig) -> Self {
-        Self {
-            config,
-            vertices: Vec::new(),
-            indices: Vec::new(),
-            vertex_buffer: None,
-            index_buffer: None,
-        }
-    }
-
-    pub fn config(&self) -> &HopperConfig {
-        &self.config
-    }
-
-    pub fn solid_cells(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-
-        (0..depth).flat_map(move |k| {
-            (0..height).flat_map(move |j| {
-                (0..width).filter_map(move |i| {
-                    if self.config.is_solid(i, j, k) {
-                        Some((i, j, k))
-                    } else {
-                        None
-                    }
-                })
-            })
-        })
-    }
-
-    pub fn build_mesh<F>(&mut self, is_solid: F)
-    where
-        F: Fn(usize, usize, usize) -> bool,
-    {
-        self.vertices.clear();
-        self.indices.clear();
-
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-        let cs = self.config.cell_size;
-
-        let color_top = self.config.color_top;
-        let color_side = self.config.color_side;
-        let color_bottom = self.config.color_bottom;
-
-        for k in 0..depth {
-            for j in 0..height {
-                for i in 0..width {
-                    if !is_solid(i, j, k) {
-                        continue;
-                    }
-
-                    let x0 = i as f32 * cs;
-                    let x1 = (i + 1) as f32 * cs;
-                    let y0 = j as f32 * cs;
-                    let y1 = (j + 1) as f32 * cs;
-                    let z0 = k as f32 * cs;
-                    let z1 = (k + 1) as f32 * cs;
-
-                    if i == 0 || !is_solid(i - 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if i == width - 1 || !is_solid(i + 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == 0 || !is_solid(i, j - 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z1], color_bottom),
-                            SluiceVertex::new([x0, y0, z1], color_bottom),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == height - 1 || !is_solid(i, j + 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z1], color_top),
-                            SluiceVertex::new([x0, y1, z1], color_top),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if k == 0 || !is_solid(i, j, k - 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if k == depth - 1 || !is_solid(i, j, k + 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn vertices(&self) -> &[SluiceVertex] {
-        &self.vertices
-    }
-
-    pub fn indices(&self) -> &[u32] {
-        &self.indices
-    }
-
-    pub fn num_indices(&self) -> u32 {
-        self.indices.len() as u32
-    }
-
-    pub fn upload(&mut self, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        self.vertex_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Hopper Vertex Buffer"),
-                contents: bytemuck::cast_slice(&self.vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-
-        self.index_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Hopper Index Buffer"),
-                contents: bytemuck::cast_slice(&self.indices),
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-    }
-
-    pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        if self.vertex_buffer.is_none() {
-            self.upload(device);
-            return;
-        }
-
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
-
-        let vertex_bytes = bytemuck::cast_slice(&self.vertices);
-        let index_bytes = bytemuck::cast_slice(&self.indices);
-
-        if vb.size() >= vertex_bytes.len() as u64 && ib.size() >= index_bytes.len() as u64 {
-            queue.write_buffer(vb, 0, vertex_bytes);
-            queue.write_buffer(ib, 0, index_bytes);
-        } else {
-            self.upload(device);
-        }
-    }
-
-    pub fn vertex_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.vertex_buffer.as_ref()
-    }
-
-    pub fn index_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.index_buffer.as_ref()
-    }
-
-    pub fn clear(&mut self) {
-        self.vertices.clear();
-        self.indices.clear();
-    }
-}
+/// Type alias for backwards compatibility
+pub type HopperGeometryBuilder = GeometryBuilder<HopperConfig>;
 
 // ============================================================================
 // CHUTE - Angled slide/ramp
@@ -1367,7 +688,7 @@ impl ChuteConfig {
         pos % period < self.riffle_thickness
     }
 
-    pub fn is_solid(&self, i: usize, j: usize, k: usize) -> bool {
+    pub fn chute_is_solid(&self, i: usize, j: usize, k: usize) -> bool {
         let floor_j = self.floor_height_at(i);
         let wall_top = floor_j + self.side_wall_height;
 
@@ -1396,260 +717,20 @@ impl ChuteConfig {
     }
 }
 
-pub struct ChuteGeometryBuilder {
-    config: ChuteConfig,
-    vertices: Vec<SluiceVertex>,
-    indices: Vec<u32>,
-    vertex_buffer: Option<wgpu::Buffer>,
-    index_buffer: Option<wgpu::Buffer>,
+impl GeometryConfig for ChuteConfig {
+    fn grid_width(&self) -> usize { self.grid_width }
+    fn grid_height(&self) -> usize { self.grid_height }
+    fn grid_depth(&self) -> usize { self.grid_depth }
+    fn cell_size(&self) -> f32 { self.cell_size }
+    fn color_top(&self) -> [f32; 4] { self.color_top }
+    fn color_side(&self) -> [f32; 4] { self.color_side }
+    fn color_bottom(&self) -> [f32; 4] { self.color_bottom }
+    fn is_solid(&self, i: usize, j: usize, k: usize) -> bool { self.chute_is_solid(i, j, k) }
+    fn buffer_label(&self) -> &'static str { "Chute" }
 }
 
-impl ChuteGeometryBuilder {
-    pub fn new(config: ChuteConfig) -> Self {
-        Self {
-            config,
-            vertices: Vec::new(),
-            indices: Vec::new(),
-            vertex_buffer: None,
-            index_buffer: None,
-        }
-    }
-
-    pub fn config(&self) -> &ChuteConfig {
-        &self.config
-    }
-
-    pub fn solid_cells(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-
-        (0..depth).flat_map(move |k| {
-            (0..height).flat_map(move |j| {
-                (0..width).filter_map(move |i| {
-                    if self.config.is_solid(i, j, k) {
-                        Some((i, j, k))
-                    } else {
-                        None
-                    }
-                })
-            })
-        })
-    }
-
-    pub fn build_mesh<F>(&mut self, is_solid: F)
-    where
-        F: Fn(usize, usize, usize) -> bool,
-    {
-        self.vertices.clear();
-        self.indices.clear();
-
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-        let cs = self.config.cell_size;
-
-        let color_top = self.config.color_top;
-        let color_side = self.config.color_side;
-        let color_bottom = self.config.color_bottom;
-
-        for k in 0..depth {
-            for j in 0..height {
-                for i in 0..width {
-                    if !is_solid(i, j, k) {
-                        continue;
-                    }
-
-                    let x0 = i as f32 * cs;
-                    let x1 = (i + 1) as f32 * cs;
-                    let y0 = j as f32 * cs;
-                    let y1 = (j + 1) as f32 * cs;
-                    let z0 = k as f32 * cs;
-                    let z1 = (k + 1) as f32 * cs;
-
-                    if i == 0 || !is_solid(i - 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if i == width - 1 || !is_solid(i + 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == 0 || !is_solid(i, j - 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z1], color_bottom),
-                            SluiceVertex::new([x0, y0, z1], color_bottom),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == height - 1 || !is_solid(i, j + 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z1], color_top),
-                            SluiceVertex::new([x0, y1, z1], color_top),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if k == 0 || !is_solid(i, j, k - 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if k == depth - 1 || !is_solid(i, j, k + 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn vertices(&self) -> &[SluiceVertex] {
-        &self.vertices
-    }
-
-    pub fn indices(&self) -> &[u32] {
-        &self.indices
-    }
-
-    pub fn num_indices(&self) -> u32 {
-        self.indices.len() as u32
-    }
-
-    pub fn upload(&mut self, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        self.vertex_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Chute Vertex Buffer"),
-                contents: bytemuck::cast_slice(&self.vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-
-        self.index_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Chute Index Buffer"),
-                contents: bytemuck::cast_slice(&self.indices),
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-    }
-
-    pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        if self.vertex_buffer.is_none() {
-            self.upload(device);
-            return;
-        }
-
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
-
-        let vertex_bytes = bytemuck::cast_slice(&self.vertices);
-        let index_bytes = bytemuck::cast_slice(&self.indices);
-
-        if vb.size() >= vertex_bytes.len() as u64 && ib.size() >= index_bytes.len() as u64 {
-            queue.write_buffer(vb, 0, vertex_bytes);
-            queue.write_buffer(ib, 0, index_bytes);
-        } else {
-            self.upload(device);
-        }
-    }
-
-    pub fn vertex_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.vertex_buffer.as_ref()
-    }
-
-    pub fn index_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.index_buffer.as_ref()
-    }
-
-    pub fn clear(&mut self) {
-        self.vertices.clear();
-        self.indices.clear();
-    }
-}
+/// Type alias for backwards compatibility
+pub type ChuteGeometryBuilder = GeometryBuilder<ChuteConfig>;
 
 // ============================================================================
 // FRAME - Rectangular outline (edges only)
@@ -1686,7 +767,7 @@ impl Default for FrameConfig {
 }
 
 impl FrameConfig {
-    pub fn is_solid(&self, i: usize, j: usize, k: usize) -> bool {
+    pub fn frame_is_solid(&self, i: usize, j: usize, k: usize) -> bool {
         let bt = self.beam_thickness;
 
         // Corner check (for vertical beams)
@@ -1717,260 +798,20 @@ impl FrameConfig {
     }
 }
 
-pub struct FrameGeometryBuilder {
-    config: FrameConfig,
-    vertices: Vec<SluiceVertex>,
-    indices: Vec<u32>,
-    vertex_buffer: Option<wgpu::Buffer>,
-    index_buffer: Option<wgpu::Buffer>,
+impl GeometryConfig for FrameConfig {
+    fn grid_width(&self) -> usize { self.grid_width }
+    fn grid_height(&self) -> usize { self.grid_height }
+    fn grid_depth(&self) -> usize { self.grid_depth }
+    fn cell_size(&self) -> f32 { self.cell_size }
+    fn color_top(&self) -> [f32; 4] { self.color_top }
+    fn color_side(&self) -> [f32; 4] { self.color_side }
+    fn color_bottom(&self) -> [f32; 4] { self.color_bottom }
+    fn is_solid(&self, i: usize, j: usize, k: usize) -> bool { self.frame_is_solid(i, j, k) }
+    fn buffer_label(&self) -> &'static str { "Frame" }
 }
 
-impl FrameGeometryBuilder {
-    pub fn new(config: FrameConfig) -> Self {
-        Self {
-            config,
-            vertices: Vec::new(),
-            indices: Vec::new(),
-            vertex_buffer: None,
-            index_buffer: None,
-        }
-    }
-
-    pub fn config(&self) -> &FrameConfig {
-        &self.config
-    }
-
-    pub fn solid_cells(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-
-        (0..depth).flat_map(move |k| {
-            (0..height).flat_map(move |j| {
-                (0..width).filter_map(move |i| {
-                    if self.config.is_solid(i, j, k) {
-                        Some((i, j, k))
-                    } else {
-                        None
-                    }
-                })
-            })
-        })
-    }
-
-    pub fn build_mesh<F>(&mut self, is_solid: F)
-    where
-        F: Fn(usize, usize, usize) -> bool,
-    {
-        self.vertices.clear();
-        self.indices.clear();
-
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-        let cs = self.config.cell_size;
-
-        let color_top = self.config.color_top;
-        let color_side = self.config.color_side;
-        let color_bottom = self.config.color_bottom;
-
-        for k in 0..depth {
-            for j in 0..height {
-                for i in 0..width {
-                    if !is_solid(i, j, k) {
-                        continue;
-                    }
-
-                    let x0 = i as f32 * cs;
-                    let x1 = (i + 1) as f32 * cs;
-                    let y0 = j as f32 * cs;
-                    let y1 = (j + 1) as f32 * cs;
-                    let z0 = k as f32 * cs;
-                    let z1 = (k + 1) as f32 * cs;
-
-                    if i == 0 || !is_solid(i - 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if i == width - 1 || !is_solid(i + 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == 0 || !is_solid(i, j - 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z1], color_bottom),
-                            SluiceVertex::new([x0, y0, z1], color_bottom),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == height - 1 || !is_solid(i, j + 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z1], color_top),
-                            SluiceVertex::new([x0, y1, z1], color_top),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if k == 0 || !is_solid(i, j, k - 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if k == depth - 1 || !is_solid(i, j, k + 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn vertices(&self) -> &[SluiceVertex] {
-        &self.vertices
-    }
-
-    pub fn indices(&self) -> &[u32] {
-        &self.indices
-    }
-
-    pub fn num_indices(&self) -> u32 {
-        self.indices.len() as u32
-    }
-
-    pub fn upload(&mut self, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        self.vertex_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Frame Vertex Buffer"),
-                contents: bytemuck::cast_slice(&self.vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-
-        self.index_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Frame Index Buffer"),
-                contents: bytemuck::cast_slice(&self.indices),
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-    }
-
-    pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        if self.vertex_buffer.is_none() {
-            self.upload(device);
-            return;
-        }
-
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
-
-        let vertex_bytes = bytemuck::cast_slice(&self.vertices);
-        let index_bytes = bytemuck::cast_slice(&self.indices);
-
-        if vb.size() >= vertex_bytes.len() as u64 && ib.size() >= index_bytes.len() as u64 {
-            queue.write_buffer(vb, 0, vertex_bytes);
-            queue.write_buffer(ib, 0, index_bytes);
-        } else {
-            self.upload(device);
-        }
-    }
-
-    pub fn vertex_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.vertex_buffer.as_ref()
-    }
-
-    pub fn index_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.index_buffer.as_ref()
-    }
-
-    pub fn clear(&mut self) {
-        self.vertices.clear();
-        self.indices.clear();
-    }
-}
+/// Type alias for backwards compatibility
+pub type FrameGeometryBuilder = GeometryBuilder<FrameConfig>;
 
 // ============================================================================
 // BAFFLE - Vertical plate/wall (flow director)
@@ -2010,7 +851,7 @@ impl Default for BaffleConfig {
 }
 
 impl BaffleConfig {
-    pub fn is_solid(&self, i: usize, _j: usize, k: usize) -> bool {
+    pub fn baffle_is_solid(&self, i: usize, _j: usize, k: usize) -> bool {
         if self.orientation == 0 {
             // XY plane (perpendicular to Z) - baffle in middle of Z dimension
             let z_center = self.grid_depth / 2;
@@ -2025,260 +866,20 @@ impl BaffleConfig {
     }
 }
 
-pub struct BaffleGeometryBuilder {
-    config: BaffleConfig,
-    vertices: Vec<SluiceVertex>,
-    indices: Vec<u32>,
-    vertex_buffer: Option<wgpu::Buffer>,
-    index_buffer: Option<wgpu::Buffer>,
+impl GeometryConfig for BaffleConfig {
+    fn grid_width(&self) -> usize { self.grid_width }
+    fn grid_height(&self) -> usize { self.grid_height }
+    fn grid_depth(&self) -> usize { self.grid_depth }
+    fn cell_size(&self) -> f32 { self.cell_size }
+    fn color_top(&self) -> [f32; 4] { self.color_top }
+    fn color_side(&self) -> [f32; 4] { self.color_side }
+    fn color_bottom(&self) -> [f32; 4] { self.color_bottom }
+    fn is_solid(&self, i: usize, j: usize, k: usize) -> bool { self.baffle_is_solid(i, j, k) }
+    fn buffer_label(&self) -> &'static str { "Baffle" }
 }
 
-impl BaffleGeometryBuilder {
-    pub fn new(config: BaffleConfig) -> Self {
-        Self {
-            config,
-            vertices: Vec::new(),
-            indices: Vec::new(),
-            vertex_buffer: None,
-            index_buffer: None,
-        }
-    }
-
-    pub fn config(&self) -> &BaffleConfig {
-        &self.config
-    }
-
-    pub fn solid_cells(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-
-        (0..depth).flat_map(move |k| {
-            (0..height).flat_map(move |j| {
-                (0..width).filter_map(move |i| {
-                    if self.config.is_solid(i, j, k) {
-                        Some((i, j, k))
-                    } else {
-                        None
-                    }
-                })
-            })
-        })
-    }
-
-    pub fn build_mesh<F>(&mut self, is_solid: F)
-    where
-        F: Fn(usize, usize, usize) -> bool,
-    {
-        self.vertices.clear();
-        self.indices.clear();
-
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-        let cs = self.config.cell_size;
-
-        let color_top = self.config.color_top;
-        let color_side = self.config.color_side;
-        let color_bottom = self.config.color_bottom;
-
-        for k in 0..depth {
-            for j in 0..height {
-                for i in 0..width {
-                    if !is_solid(i, j, k) {
-                        continue;
-                    }
-
-                    let x0 = i as f32 * cs;
-                    let x1 = (i + 1) as f32 * cs;
-                    let y0 = j as f32 * cs;
-                    let y1 = (j + 1) as f32 * cs;
-                    let z0 = k as f32 * cs;
-                    let z1 = (k + 1) as f32 * cs;
-
-                    if i == 0 || !is_solid(i - 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if i == width - 1 || !is_solid(i + 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == 0 || !is_solid(i, j - 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z1], color_bottom),
-                            SluiceVertex::new([x0, y0, z1], color_bottom),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if j == height - 1 || !is_solid(i, j + 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z1], color_top),
-                            SluiceVertex::new([x0, y1, z1], color_top),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    if k == 0 || !is_solid(i, j, k - 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    if k == depth - 1 || !is_solid(i, j, k + 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn vertices(&self) -> &[SluiceVertex] {
-        &self.vertices
-    }
-
-    pub fn indices(&self) -> &[u32] {
-        &self.indices
-    }
-
-    pub fn num_indices(&self) -> u32 {
-        self.indices.len() as u32
-    }
-
-    pub fn upload(&mut self, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        self.vertex_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Baffle Vertex Buffer"),
-                contents: bytemuck::cast_slice(&self.vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-
-        self.index_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Baffle Index Buffer"),
-                contents: bytemuck::cast_slice(&self.indices),
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-    }
-
-    pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        if self.vertex_buffer.is_none() {
-            self.upload(device);
-            return;
-        }
-
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
-
-        let vertex_bytes = bytemuck::cast_slice(&self.vertices);
-        let index_bytes = bytemuck::cast_slice(&self.indices);
-
-        if vb.size() >= vertex_bytes.len() as u64 && ib.size() >= index_bytes.len() as u64 {
-            queue.write_buffer(vb, 0, vertex_bytes);
-            queue.write_buffer(ib, 0, index_bytes);
-        } else {
-            self.upload(device);
-        }
-    }
-
-    pub fn vertex_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.vertex_buffer.as_ref()
-    }
-
-    pub fn index_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.index_buffer.as_ref()
-    }
-
-    pub fn clear(&mut self) {
-        self.vertices.clear();
-        self.indices.clear();
-    }
-}
+/// Type alias for backwards compatibility
+pub type BaffleGeometryBuilder = GeometryBuilder<BaffleConfig>;
 
 // ============================================================================
 // SHAKER DECK - Angled deck with grid of holes and side walls
@@ -2385,7 +986,7 @@ impl ShakerConfig {
         dist_sq <= radius_sq
     }
 
-    pub fn is_solid(&self, i: usize, j: usize, k: usize) -> bool {
+    pub fn shaker_is_solid(&self, i: usize, j: usize, k: usize) -> bool {
         let deck_floor_j = self.floor_height_at(i);
         let deck_top = deck_floor_j + self.deck_thickness;
         let wall_top = deck_top + self.wall_height;
@@ -2443,266 +1044,20 @@ impl ShakerConfig {
     }
 }
 
-pub struct ShakerGeometryBuilder {
-    config: ShakerConfig,
-    vertices: Vec<SluiceVertex>,
-    indices: Vec<u32>,
-    vertex_buffer: Option<wgpu::Buffer>,
-    index_buffer: Option<wgpu::Buffer>,
+impl GeometryConfig for ShakerConfig {
+    fn grid_width(&self) -> usize { self.grid_width }
+    fn grid_height(&self) -> usize { self.grid_height }
+    fn grid_depth(&self) -> usize { self.grid_depth }
+    fn cell_size(&self) -> f32 { self.cell_size }
+    fn color_top(&self) -> [f32; 4] { self.color_top }
+    fn color_side(&self) -> [f32; 4] { self.color_side }
+    fn color_bottom(&self) -> [f32; 4] { self.color_bottom }
+    fn is_solid(&self, i: usize, j: usize, k: usize) -> bool { self.shaker_is_solid(i, j, k) }
+    fn buffer_label(&self) -> &'static str { "Shaker" }
 }
 
-impl ShakerGeometryBuilder {
-    pub fn new(config: ShakerConfig) -> Self {
-        Self {
-            config,
-            vertices: Vec::new(),
-            indices: Vec::new(),
-            vertex_buffer: None,
-            index_buffer: None,
-        }
-    }
-
-    pub fn config(&self) -> &ShakerConfig {
-        &self.config
-    }
-
-    pub fn solid_cells(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-
-        (0..depth).flat_map(move |k| {
-            (0..height).flat_map(move |j| {
-                (0..width).filter_map(move |i| {
-                    if self.config.is_solid(i, j, k) {
-                        Some((i, j, k))
-                    } else {
-                        None
-                    }
-                })
-            })
-        })
-    }
-
-    pub fn build_mesh<F>(&mut self, is_solid: F)
-    where
-        F: Fn(usize, usize, usize) -> bool,
-    {
-        self.vertices.clear();
-        self.indices.clear();
-
-        let width = self.config.grid_width;
-        let height = self.config.grid_height;
-        let depth = self.config.grid_depth;
-        let cs = self.config.cell_size;
-
-        let color_top = self.config.color_top;
-        let color_side = self.config.color_side;
-        let color_bottom = self.config.color_bottom;
-
-        for k in 0..depth {
-            for j in 0..height {
-                for i in 0..width {
-                    if !is_solid(i, j, k) {
-                        continue;
-                    }
-
-                    let x0 = i as f32 * cs;
-                    let x1 = (i + 1) as f32 * cs;
-                    let y0 = j as f32 * cs;
-                    let y1 = (j + 1) as f32 * cs;
-                    let z0 = k as f32 * cs;
-                    let z1 = (k + 1) as f32 * cs;
-
-                    // -X face
-                    if i == 0 || !is_solid(i - 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    // +X face
-                    if i == width - 1 || !is_solid(i + 1, j, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    // -Y face
-                    if j == 0 || !is_solid(i, j - 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z0], color_bottom),
-                            SluiceVertex::new([x1, y0, z1], color_bottom),
-                            SluiceVertex::new([x0, y0, z1], color_bottom),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    // +Y face
-                    if j == height - 1 || !is_solid(i, j + 1, k) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z0], color_top),
-                            SluiceVertex::new([x1, y1, z1], color_top),
-                            SluiceVertex::new([x0, y1, z1], color_top),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-
-                    // -Z face
-                    if k == 0 || !is_solid(i, j, k - 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z0], color_side),
-                            SluiceVertex::new([x1, y0, z0], color_side),
-                            SluiceVertex::new([x1, y1, z0], color_side),
-                            SluiceVertex::new([x0, y1, z0], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 1,
-                            base + 2,
-                            base,
-                            base + 2,
-                            base + 3,
-                        ]);
-                    }
-
-                    // +Z face
-                    if k == depth - 1 || !is_solid(i, j, k + 1) {
-                        let base = self.vertices.len() as u32;
-                        self.vertices.extend_from_slice(&[
-                            SluiceVertex::new([x0, y0, z1], color_side),
-                            SluiceVertex::new([x1, y0, z1], color_side),
-                            SluiceVertex::new([x1, y1, z1], color_side),
-                            SluiceVertex::new([x0, y1, z1], color_side),
-                        ]);
-                        self.indices.extend_from_slice(&[
-                            base,
-                            base + 2,
-                            base + 1,
-                            base,
-                            base + 3,
-                            base + 2,
-                        ]);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn vertices(&self) -> &[SluiceVertex] {
-        &self.vertices
-    }
-
-    pub fn indices(&self) -> &[u32] {
-        &self.indices
-    }
-
-    pub fn num_indices(&self) -> u32 {
-        self.indices.len() as u32
-    }
-
-    pub fn upload(&mut self, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        self.vertex_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Shaker Vertex Buffer"),
-                contents: bytemuck::cast_slice(&self.vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-
-        self.index_buffer = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Shaker Index Buffer"),
-                contents: bytemuck::cast_slice(&self.indices),
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            }),
-        );
-    }
-
-    pub fn update(&mut self, queue: &wgpu::Queue, device: &wgpu::Device) {
-        if self.vertices.is_empty() {
-            return;
-        }
-
-        if self.vertex_buffer.is_none() {
-            self.upload(device);
-            return;
-        }
-
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
-
-        let vertex_bytes = bytemuck::cast_slice(&self.vertices);
-        let index_bytes = bytemuck::cast_slice(&self.indices);
-
-        if vb.size() >= vertex_bytes.len() as u64 && ib.size() >= index_bytes.len() as u64 {
-            queue.write_buffer(vb, 0, vertex_bytes);
-            queue.write_buffer(ib, 0, index_bytes);
-        } else {
-            self.upload(device);
-        }
-    }
-
-    pub fn vertex_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.vertex_buffer.as_ref()
-    }
-
-    pub fn index_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.index_buffer.as_ref()
-    }
-
-    pub fn clear(&mut self) {
-        self.vertices.clear();
-        self.indices.clear();
-    }
-}
+/// Type alias for backwards compatibility
+pub type ShakerGeometryBuilder = GeometryBuilder<ShakerConfig>;
 
 // ============================================================================
 // TESTS

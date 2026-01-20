@@ -1,7 +1,7 @@
 //! Multi-grid simulation for washplant pieces.
 
 use crate::editor::{GutterPiece, Rotation, ShakerDeckPiece, SluicePiece};
-use crate::equipment_geometry::{BoxConfig, BoxGeometryBuilder};
+use crate::equipment_geometry::{BoxConfig, BoxGeometryBuilder, GeometryConfig};
 use crate::gpu::flip_3d::GpuFlip3D;
 use crate::sluice_geometry::SluiceVertex;
 use glam::{Mat3, Vec3};
