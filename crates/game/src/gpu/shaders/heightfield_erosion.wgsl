@@ -19,12 +19,19 @@ struct Params {
     critical_shields: f32,
     k_erosion: f32,
     max_erosion_per_step: f32,
-    _pad1: vec2<u32>,
+    debug_flags: u32,
+    debug_scale: f32,
 }
 
 // =============================================================================
 // EROSION PHYSICS CONSTANTS
 // =============================================================================
+
+// Numerical thresholds
+const MIN_LAYER_THICKNESS: f32 = 0.001;  // Minimum thickness for layer existence (meters)
+const MIN_WATER_DEPTH: f32 = 0.001;      // Minimum water depth for calculations (meters)
+const EPSILON_FINE: f32 = 0.0001;        // Fine epsilon for numerical checks
+
 // Particle sizes (median diameter, meters)
 const D50_SEDIMENT: f32 = 0.0001;    // 0.1mm fine silt
 const D50_OVERBURDEN: f32 = 0.001;   // 1mm coarse sand
@@ -45,6 +52,25 @@ const D50_STOKES_MAX: f32 = 0.0001;    // < 0.1mm: pure Stokes
 const D50_TURBULENT_MIN: f32 = 0.001;  // > 1mm: pure turbulent
 const CD_SPHERE: f32 = 0.44;           // Drag coefficient
 const MAX_SUSPENDED: f32 = 0.3;        // Max concentration (0-1)
+
+const DBG_EROSION_CELLS: u32 = 0u;
+const DBG_DEPOSITION_CELLS: u32 = 1u;
+const DBG_EROSION_MAX_MM: u32 = 2u;
+const DBG_DEPOSITION_MAX_MM: u32 = 3u;
+const DBG_EROSION_SEDIMENT: u32 = 4u;
+const DBG_EROSION_OVERBURDEN: u32 = 5u;
+const MIN_EROSION_SPEED: f32 = 0.05;
+const MIN_EROSION_SLOPE: f32 = 0.0005;
+
+// Temporal stability parameters
+const STABILITY_BUILDUP_FRAMES: f32 = 30.0;  // Frames to reach max stability (~1 second at 30fps)
+const STABILITY_MULTIPLIER: f32 = 0.5;        // Max threshold multiplier (50% increase)
+const DBG_EROSION_GRAVEL: u32 = 6u;
+const DBG_EROSION_PAYDIRT: u32 = 7u;
+const DBG_DEPOSITION_SEDIMENT: u32 = 8u;
+const DBG_DEPOSITION_OVERBURDEN: u32 = 9u;
+const DBG_DEPOSITION_GRAVEL: u32 = 10u;
+const DBG_DEPOSITION_PAYDIRT: u32 = 11u;
 
 @group(0) @binding(0) var<uniform> params: Params;
 
@@ -69,12 +95,13 @@ const MAX_SUSPENDED: f32 = 0.3;        // Max concentration (0-1)
 @group(2) @binding(3) var<storage, read_write> overburden: array<f32>;
 @group(2) @binding(4) var<storage, read_write> sediment: array<f32>;
 @group(2) @binding(5) var<storage, read_write> surface_material: array<u32>; // 0=bed,1=pay,2=gravel,3=over,4=sed
+@group(2) @binding(6) var<storage, read_write> settling_time: array<u32>; // frames since last disturbance
+@group(2) @binding(7) var<storage, read_write> debug_stats: array<atomic<u32>>;
 
 // Determine what material is exposed on the surface based on layer thicknesses
 fn compute_surface_material(idx: u32) -> u32 {
-    let min_thick = 0.001;
-    if (sediment[idx] > min_thick) { return 4u; }
-    if (overburden[idx] > min_thick) { return 3u; }
+    if (sediment[idx] > MIN_LAYER_THICKNESS) { return 4u; }
+    if (overburden[idx] > MIN_LAYER_THICKNESS) { return 3u; }
     if (gravel[idx] > min_thick) { return 2u; }
     if (paydirt[idx] > min_thick) { return 1u; }
     return 0u; // bedrock
@@ -182,6 +209,45 @@ fn get_hardness(mat: u32) -> f32 {
     }
 }
 
+fn debug_enabled() -> bool {
+    return params.debug_flags != 0u;
+}
+
+fn debug_scale_to_u32(value: f32) -> u32 {
+    let scaled = value * params.debug_scale;
+    return u32(clamp(scaled, 0.0, 4294967040.0));
+}
+
+fn debug_record_erosion(amount: f32, surface: u32) {
+    if (!debug_enabled() || amount <= 0.0) {
+        return;
+    }
+    atomicAdd(&debug_stats[DBG_EROSION_CELLS], 1u);
+    atomicMax(&debug_stats[DBG_EROSION_MAX_MM], debug_scale_to_u32(amount));
+    switch (surface) {
+        case 4u: { atomicAdd(&debug_stats[DBG_EROSION_SEDIMENT], 1u); }
+        case 3u: { atomicAdd(&debug_stats[DBG_EROSION_OVERBURDEN], 1u); }
+        case 2u: { atomicAdd(&debug_stats[DBG_EROSION_GRAVEL], 1u); }
+        case 1u: { atomicAdd(&debug_stats[DBG_EROSION_PAYDIRT], 1u); }
+        default: { }
+    }
+}
+
+fn debug_record_deposit(amount: f32, layer: u32) {
+    if (!debug_enabled() || amount <= 0.0) {
+        return;
+    }
+    atomicAdd(&debug_stats[DBG_DEPOSITION_CELLS], 1u);
+    atomicMax(&debug_stats[DBG_DEPOSITION_MAX_MM], debug_scale_to_u32(amount));
+    switch (layer) {
+        case 4u: { atomicAdd(&debug_stats[DBG_DEPOSITION_SEDIMENT], 1u); }
+        case 3u: { atomicAdd(&debug_stats[DBG_DEPOSITION_OVERBURDEN], 1u); }
+        case 2u: { atomicAdd(&debug_stats[DBG_DEPOSITION_GRAVEL], 1u); }
+        case 1u: { atomicAdd(&debug_stats[DBG_DEPOSITION_PAYDIRT], 1u); }
+        default: { }
+    }
+}
+
 // =============================================================================
 // SHIELDS STRESS EROSION MODEL
 // =============================================================================
@@ -199,7 +265,7 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = get_idx(x, z);
     let depth = water_depth[idx];
 
-    if (depth < 0.001) {
+    if (depth < MIN_WATER_DEPTH) {
         return;
     }
 
@@ -241,10 +307,14 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let settled_conc = suspended * settled_frac;
             if (settled_conc > 1e-6) {
                 let deposit_height = settled_conc * depth;
-                suspended -= settled_conc;
-                sediment[idx] += deposit_height;
-                suspended_sediment[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-                updated_surface = true;
+                // Only deposit if it's meaningful (>1mm) to prevent micro-topography oscillation
+                if (deposit_height > MIN_LAYER_THICKNESS) {
+                    debug_record_deposit(deposit_height, 4u);
+                    suspended -= settled_conc;
+                    sediment[idx] += deposit_height;
+                    suspended_sediment[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                    updated_surface = true;
+                }
             }
         }
     }
@@ -275,10 +345,13 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let settled_conc = suspended * settled_frac;
             if (settled_conc > 1e-6) {
                 let deposit_height = settled_conc * depth;
-                suspended -= settled_conc;
-                overburden[idx] += deposit_height;
-                suspended_overburden[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-                updated_surface = true;
+                if (deposit_height > MIN_LAYER_THICKNESS) {
+                    debug_record_deposit(deposit_height, 3u);
+                    suspended -= settled_conc;
+                    overburden[idx] += deposit_height;
+                    suspended_overburden[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                    updated_surface = true;
+                }
             }
         }
     }
@@ -309,10 +382,13 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let settled_conc = suspended * settled_frac;
             if (settled_conc > 1e-6) {
                 let deposit_height = settled_conc * depth;
-                suspended -= settled_conc;
-                gravel[idx] += deposit_height;
-                suspended_gravel[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-                updated_surface = true;
+                if (deposit_height > MIN_LAYER_THICKNESS) {
+                    debug_record_deposit(deposit_height, 2u);
+                    suspended -= settled_conc;
+                    gravel[idx] += deposit_height;
+                    suspended_gravel[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                    updated_surface = true;
+                }
             }
         }
     }
@@ -343,16 +419,20 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let settled_conc = suspended * settled_frac;
             if (settled_conc > 1e-6) {
                 let deposit_height = settled_conc * depth;
-                suspended -= settled_conc;
-                paydirt[idx] += deposit_height;
-                suspended_paydirt[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-                updated_surface = true;
+                if (deposit_height > MIN_LAYER_THICKNESS) {
+                    debug_record_deposit(deposit_height, 1u);
+                    suspended -= settled_conc;
+                    paydirt[idx] += deposit_height;
+                    suspended_paydirt[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                    updated_surface = true;
+                }
             }
         }
     }
 
     if (updated_surface) {
         surface_material[idx] = compute_surface_material(idx);
+        settling_time[idx] = 0u;  // Reset stability timer on new deposition
     }
 }
 
@@ -371,12 +451,19 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let had_water = depth > 0.001;
     let ground_before = get_ground_height(idx);
 
-    if (depth < 0.001) {
+    if (depth < MIN_WATER_DEPTH) {
         return;
     }
 
     let vel_x = water_velocity_x[idx];
     let vel_z = water_velocity_z[idx];
+    
+    // Skip erosion in still water (prevent oscillation from numerical water sloshing)
+    let speed = sqrt(vel_x * vel_x + vel_z * vel_z);
+    if (speed < 0.05) {  // <5cm/s is effectively still water
+        return;
+    }
+    
     let slope = get_terrain_slope(x, z);
     let u_star = shear_velocity(depth, slope, vel_x, vel_z, params.gravity);
     let tau = shear_stress(u_star, params.rho_water);
@@ -430,8 +517,15 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 params.rho_sediment,
                 params.rho_water,
             );
-            if (shields_layer > critical) {
-                let excess = (shields_layer - critical) / critical;
+            
+            // Apply temporal stability bonus
+            let time_settled = settling_time[idx];
+            let stability_progress = min(f32(time_settled) / STABILITY_BUILDUP_FRAMES, 1.0);
+            let stability_bonus = STABILITY_MULTIPLIER * stability_progress;
+            let effective_critical = critical * (1.0 + stability_bonus);
+            
+            if (shields_layer > effective_critical) {
+                let excess = (shields_layer - effective_critical) / effective_critical;
                 let erosion_rate = params.k_erosion * excess / hardness;
                 let erode_height = min(erosion_rate * params.dt, available);
                 let erode = min(erode_height, max_erosion);
@@ -455,8 +549,18 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     }
                     default: { }
                 }
+                
+                settling_time[idx] = 0u;  // Reset on erosion
+            } else {
+                // Increment stability counter (saturate at 255)
+                settling_time[idx] = min(settling_time[idx] + 1u, 255u);
             }
         }
+    }
+
+    let eroded_total = eroded_sediment + eroded_overburden + eroded_gravel + eroded_paydirt;
+    if (eroded_total > 0.0) {
+        debug_record_erosion(eroded_total, surface);
     }
 
     // Add eroded material to suspension (stored as CONCENTRATION)

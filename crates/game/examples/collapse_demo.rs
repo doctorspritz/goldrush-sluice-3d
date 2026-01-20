@@ -486,7 +486,8 @@ impl App {
             view_proj.to_cols_array_2d(),
             self.camera.position.to_array(),
             self.start_time.elapsed().as_secs_f32(),
-            true,
+            true,  // draw_water
+            false, // show_velocity
         );
 
         gpu.queue.submit(Some(encoder.finish()));

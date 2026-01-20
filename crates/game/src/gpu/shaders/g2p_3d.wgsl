@@ -13,6 +13,11 @@
 //
 // FLIP delta: Uses grid_*_old (pre-force velocities) vs grid_* (post-force)
 
+// Kernel constants
+const BSPLINE_SUPPORT_RADIUS: f32 = 1.5;  // Support range [-1.5, 1.5] for quadratic B-spline
+const EPSILON_METERS: f32 = 0.001;        // Small epsilon for numerical checks
+const GRAVITY: f32 = 9.81;                // Gravity magnitude (m/s²)
+
 struct Params {
     cell_size: f32,
     width: u32,
@@ -68,8 +73,8 @@ fn quadratic_bspline_1d(x: f32) -> f32 {
     let ax = abs(x);
     if (ax < 0.5) {
         return 0.75 - ax * ax;
-    } else if (ax < 1.5) {
-        let t = 1.5 - ax;
+    } else if (ax < BSPLINE_SUPPORT_RADIUS) {
+        let t = BSPLINE_SUPPORT_RADIUS - ax;
         return 0.5 * t * t;
     }
     return 0.0;
@@ -265,7 +270,9 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     // Normalize velocities AND C matrix by weight sum (weighted average)
     // C matrix MUST be normalized - without this, C explodes near boundaries where Σw < 1
     // NOTE: old_grid_vel uses same stencil as new_velocity, so both normalize by same weights
-    if (weight_sum.x > 0.0) {
+    // Use epsilon threshold to prevent NaN from division by near-zero weights
+    const WEIGHT_EPSILON: f32 = 1e-10;
+    if (weight_sum.x > WEIGHT_EPSILON) {
         new_velocity.x /= weight_sum.x;
         old_grid_vel.x /= weight_sum.x;
         new_c_row0 /= weight_sum.x;
@@ -273,7 +280,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
             water_velocity.x /= weight_sum.x;
         }
     }
-    if (weight_sum.y > 0.0) {
+    if (weight_sum.y > WEIGHT_EPSILON) {
         new_velocity.y /= weight_sum.y;
         old_grid_vel.y /= weight_sum.y;
         new_c_row1 /= weight_sum.y;
@@ -281,7 +288,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
             water_velocity.y /= weight_sum.y;
         }
     }
-    if (weight_sum.z > 0.0) {
+    if (weight_sum.z > WEIGHT_EPSILON) {
         new_velocity.z /= weight_sum.z;
         old_grid_vel.z /= weight_sum.z;
         new_c_row2 /= weight_sum.z;
@@ -339,22 +346,34 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         // Blend particle velocity toward water velocity (drag entrainment)
         var vel_after_drag = mix(particle_vel, water_vel, drag_blend);
 
-        // SETTLING: This is where density matters!
+        // BUOYANCY FORCE: F_buoyancy = (ρ_fluid - ρ_sediment) * V * g
+        // This creates a net downward acceleration for sediment denser than water.
+        // For particles with relative density ρ_rel (water=1.0):
+        //   a_buoyancy = (1.0 - ρ_rel) * g
+        // Negative (downward) for ρ_rel > 1.0, positive (upward) for ρ_rel < 1.0
+        //
+        // This is applied as a velocity change (impulse) over the timestep:
+        //   Δv_buoyancy = a_buoyancy * dt = (1.0 - ρ_rel) * g * dt
+        let buoyancy_accel = (1.0 - density) * GRAVITY;  // m/s²
+        let buoyancy_impulse = buoyancy_accel * params.dt;  // m/s
+        vel_after_drag.y -= buoyancy_impulse;  // Negative because Y-axis points up
+
+        // SETTLING: Use pre-computed Stokes settling velocities
         // Heavy particles sink faster, landing upstream before the flow carries them.
         // Light particles sink slowly, drifting downstream as they fall.
         //
-        // Terminal velocity in water ~ sqrt((rho_p - rho_w) * g * d / (C_d * rho_w))
-        // For settling, use (density - 1) as the driving factor.
-        // Gold (19.3): effective weight = 18.3 units → sinks FAST
-        // Sand (2.65): effective weight = 1.65 units → sinks slower (~11x slower)
-
-        let settling_velocity = sediment_params.settling_velocity * (density - 1.0);
-        if (is_gold) {
-            // Gold sinks even faster (it's dense and compact)
-            vel_after_drag.y -= settling_velocity * 2.0;
-        } else {
-            vel_after_drag.y -= settling_velocity;
-        }
+        // Stokes settling: vs = g * (rho_p - rho_f) * d^2 / (18 * mu)
+        // The settling velocities are pre-computed on CPU with physical constants.
+        // Gold: smaller particles but much denser, settling_velocity ≈ 0.1 m/s
+        // Sand/gravel: larger particles, settling_velocity ≈ 0.3-0.5 m/s
+        //
+        // Select appropriate settling velocity based on particle type (density threshold)
+        let settling_vel = select(
+            sediment_params.settling_velocity,      // Sand/gravel
+            sediment_params.gold_settling_velocity, // Gold
+            is_gold
+        );
+        vel_after_drag.y -= settling_vel;
 
         final_velocity = vel_after_drag;
     } else {
@@ -366,7 +385,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     if (is_sediment) {
         // Friction: when slow, damp velocity (creates clustering/settling)
         let speed = length(final_velocity);
-        if (speed < sediment_params.friction_threshold && speed > 0.001) {
+        if (speed < sediment_params.friction_threshold && speed > EPSILON_METERS) {
             // Smooth ramp: more friction as speed approaches zero
             let friction_factor = 1.0 - speed / sediment_params.friction_threshold;
             let friction = sediment_params.friction_strength * friction_factor;

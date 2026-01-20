@@ -14,7 +14,7 @@ struct Params {
 @group(2) @binding(0) var<storage, read_write> sediment: array<f32>;
 @group(2) @binding(1) var<storage, read_write> water_depth: array<f32>;
 
-const SCALE: f32 = 1000000.0;
+const SCALE: f32 = 100000.0;
 
 @compute @workgroup_size(16, 16)
 fn merge_particles(@builtin(global_invocation_id) id: vec3<u32>) {

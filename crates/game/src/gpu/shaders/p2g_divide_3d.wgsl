@@ -11,7 +11,7 @@
 // - divide_v: processes V velocity grid (width x (height+1) x depth)
 // - divide_w: processes W velocity grid (width x height x (depth+1))
 
-const INV_SCALE: f32 = 0.000001;
+const INV_SCALE: f32 = 0.00001;
 
 struct Params {
     cell_size: f32,

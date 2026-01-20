@@ -14,10 +14,68 @@ pub mod params;
 pub mod particle_sort;
 pub mod pressure_3d;
 pub mod readback;
+pub mod sph_3d;
+pub mod sph_dfsph;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use wgpu::SurfaceTarget;
 use winit::window::Window;
+
+/// Global flag indicating GPU device was lost
+static GPU_DEVICE_LOST: AtomicBool = AtomicBool::new(false);
+
+/// Check if the GPU device has been lost
+pub fn is_device_lost() -> bool {
+    GPU_DEVICE_LOST.load(Ordering::SeqCst)
+}
+
+/// Reset the device lost flag (call after recreating device)
+pub fn reset_device_lost() {
+    GPU_DEVICE_LOST.store(false, Ordering::SeqCst);
+}
+
+/// GPU error type for buffer operations
+#[derive(Debug)]
+pub enum GpuError {
+    DeviceLost,
+    BufferMapFailed(wgpu::BufferAsyncError),
+    ChannelDisconnected,
+}
+
+impl std::fmt::Display for GpuError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GpuError::DeviceLost => write!(f, "GPU device lost"),
+            GpuError::BufferMapFailed(e) => write!(f, "Buffer map failed: {:?}", e),
+            GpuError::ChannelDisconnected => write!(f, "Channel disconnected"),
+        }
+    }
+}
+
+impl std::error::Error for GpuError {}
+
+/// Wait for a buffer map operation to complete, returning Result instead of panicking.
+/// Use this instead of `rx.recv().unwrap().unwrap()`.
+pub fn await_buffer_map(
+    rx: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+) -> Result<(), GpuError> {
+    if is_device_lost() {
+        return Err(GpuError::DeviceLost);
+    }
+    match rx.recv() {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            log::error!("Buffer map failed: {:?}", e);
+            Err(GpuError::BufferMapFailed(e))
+        }
+        Err(_) => {
+            log::error!("Buffer map channel disconnected - possible device lost");
+            GPU_DEVICE_LOST.store(true, Ordering::SeqCst);
+            Err(GpuError::ChannelDisconnected)
+        }
+    }
+}
 
 /// Central GPU context holding device, queue, and surface
 pub struct GpuContext {
@@ -74,6 +132,17 @@ impl GpuContext {
             )
             .await
             .expect("Failed to create device");
+
+        // Set up device lost callback
+        device.on_uncaptured_error(Box::new(|error| {
+            log::error!("GPU uncaptured error: {:?}", error);
+            if matches!(error, wgpu::Error::OutOfMemory { .. }) {
+                GPU_DEVICE_LOST.store(true, Ordering::SeqCst);
+            }
+        }));
+
+        // Reset device lost flag for fresh device
+        reset_device_lost();
 
         // Configure surface
         let surface_caps = surface.get_capabilities(&adapter);

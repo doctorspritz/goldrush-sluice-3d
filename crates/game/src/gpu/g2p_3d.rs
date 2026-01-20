@@ -513,6 +513,7 @@ impl GpuG2p3D {
         particle_count: u32,
         cell_size: f32,
         dt: f32,
+        flip_ratio: f32,
         sediment_params: SedimentParams3D,
     ) -> u32 {
         let particle_count = particle_count.min(self.max_particles as u32);
@@ -526,9 +527,9 @@ impl GpuG2p3D {
             depth: self.depth,
             particle_count,
             d_inv,
-            flip_ratio: 0.99,
+            flip_ratio,
             dt,
-            max_velocity: 20.0, // Must match CPU MAX_VELOCITY in sim3d/transfer.rs
+            max_velocity: 1.0, // CFL-safe: max_vel < dx/dt = 0.01/0.0083 ≈ 1.2 m/s
             _padding: [0.0; 3],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
@@ -628,10 +629,13 @@ impl GpuG2p3D {
         let buffer_slice = buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
+            let _ = tx.send(result);
         });
         device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        if let Err(e) = super::await_buffer_map(rx) {
+            log::error!("GPU G2P readback failed: {}", e);
+            return Vec::new();
+        }
 
         let data = buffer_slice.get_mapped_range();
         let result: Vec<[f32; 4]> = bytemuck::cast_slice(&data)[..count].to_vec();

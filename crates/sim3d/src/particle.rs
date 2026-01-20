@@ -1,17 +1,23 @@
 //! 3D Particle representation for FLIP/APIC simulation.
 
 use glam::{Mat3, Vec3};
+use crate::serde_utils::{deserialize_mat3, deserialize_vec3, serialize_mat3, serialize_vec3};
+use serde::{Deserialize, Serialize};
 
 /// A single particle in the 3D FLIP simulation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Particle3D {
     /// World position
+    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub position: Vec3,
     /// Current velocity
+    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub velocity: Vec3,
     /// APIC affine velocity matrix (captures local velocity gradient)
+    #[serde(serialize_with = "serialize_mat3", deserialize_with = "deserialize_mat3")]
     pub affine_velocity: Mat3,
     /// Grid velocity at particle position from previous step (for FLIP delta)
+    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub old_grid_velocity: Vec3,
     /// Density relative to water (1.0 = water, 2.65 = sand, 19.3 = gold)
     pub density: f32,
@@ -57,8 +63,9 @@ impl Default for Particle3D {
 }
 
 /// Collection of particles.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Particles3D {
-    pub list: Vec<Particle3D>,
+    list: Vec<Particle3D>,
 }
 
 impl Particles3D {
@@ -93,6 +100,16 @@ impl Particles3D {
     /// Add a stationary sediment particle with specified density.
     pub fn spawn_sediment(&mut self, position: Vec3, density: f32) {
         self.list.push(Particle3D::sediment_at(position, density));
+    }
+
+    /// Get immutable reference to particle list.
+    pub fn list(&self) -> &[Particle3D] {
+        &self.list
+    }
+
+    /// Get mutable reference to particle list.
+    pub fn list_mut(&mut self) -> &mut Vec<Particle3D> {
+        &mut self.list
     }
 
     /// Number of particles.

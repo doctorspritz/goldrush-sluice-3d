@@ -1,0 +1,17 @@
+{
+  "name": "Test 2: P2G/G2P Velocity Transfer",
+  "description": "Particle velocity survives round-trip through grid",
+  "grid_width": 8,
+  "grid_height": 8,
+  "grid_depth": 8,
+  "cell_size": 0.1,
+  "gravity": 0.0,
+  "open_top": false,
+  "cpu_boundary_clamp": false,
+  "vorticity_epsilon": 0.0,
+  "pressure_iterations": 0,
+  "particles": [
+    { "position": [0.4, 0.4, 0.4], "velocity": [0.5, 0.0, 0.0] }
+  ],
+  "expected": "Particle moves in +X direction, velocity mostly preserved"
+}

@@ -356,13 +356,13 @@ impl App {
             self.prepare_flip_inputs();
         }
 
-        let particle_count = self.flip.particles.list.len();
+        let particle_count = self.flip.particles.list().len();
         if particle_count == 0 {
             self.frame = self.frame.wrapping_add(1);
             return;
         }
 
-        let sdf = self.flip.grid.sdf.as_slice();
+        let sdf = self.flip.grid.sdf();
         let dt_sub = dt / FLIP_SUBSTEPS as f32;
 
         if self.flip_gpu_needs_upload {
@@ -585,7 +585,7 @@ impl App {
         self.flip_affine.clear();
         self.flip_densities.clear();
 
-        for p in &self.flip.particles.list {
+        for p in self.flip.particles.list() {
             self.flip_positions.push(p.position);
             self.flip_velocities.push(p.velocity);
             self.flip_affine.push(p.affine_velocity);
@@ -596,7 +596,7 @@ impl App {
         self.flip_cell_types.clear();
         self.flip_cell_types.resize(grid_len, 0);
 
-        for (idx, &sdf_val) in self.flip.grid.sdf.iter().enumerate() {
+        for (idx, &sdf_val) in self.flip.grid.sdf().iter().enumerate() {
             if sdf_val < 0.0 {
                 self.flip_cell_types[idx] = 2;
             }
@@ -636,8 +636,8 @@ impl App {
     }
 
     fn apply_flip_readback(&mut self, count: usize) {
-        let limit = count.min(self.flip.particles.list.len());
-        for (i, p) in self.flip.particles.list.iter_mut().enumerate().take(limit) {
+        let limit = count.min(self.flip.particles.list().len());
+        for (i, p) in self.flip.particles.list_mut().iter_mut().enumerate().take(limit) {
             if i < self.flip_positions.len() {
                 p.position = self.flip_positions[i];
             }
@@ -1122,7 +1122,7 @@ impl App {
         }
 
         if let (Some(gpu_flip), Some(fluid_renderer)) = (&self.gpu_flip, &self.fluid_renderer) {
-            let active_count = self.flip.particles.list.len() as u32;
+            let active_count = self.flip.particles.list().len() as u32;
             if active_count > 0 {
                 fluid_renderer.render(
                     &gpu.device,
@@ -1441,7 +1441,7 @@ fn build_flip(deck: &DeckSpec) -> FlipSimulation3D {
                 }
                 if y < deck.height_at(x) {
                     let idx = sim.grid.cell_index(i, j, k);
-                    sim.grid.solid[idx] = true;
+                    sim.grid.solid_mut()[idx] = true;
                 }
             }
         }

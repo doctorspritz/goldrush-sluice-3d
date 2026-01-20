@@ -9,7 +9,7 @@
 use sim3d::{World, WorldParams};
 
 const CELL_SIZE: f32 = 0.5;
-const GRAVITY: f32 = 9.81;
+const GRAVITY: f32 = -9.81;
 
 /// Helper to create a simple test world
 fn create_world(width: usize, depth: usize, cell_size: f32) -> World {
@@ -365,7 +365,7 @@ fn wave_speed_matches_theory() {
         let observed_speed = (x2 - x1) / (t2 - t1);
 
         // Theoretical wave speed
-        let theoretical_speed = (GRAVITY * base_depth).sqrt();
+        let theoretical_speed = (GRAVITY.abs() * base_depth).sqrt();
 
         println!("Observed wave speed: {:.2} m/s", observed_speed);
         println!("Theoretical (sqrt(gh)): {:.2} m/s", theoretical_speed);

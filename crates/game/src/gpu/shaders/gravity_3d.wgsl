@@ -9,9 +9,13 @@ struct Params {
     depth: u32,
     extra: f32,  // gravity_dt: gravity * dt (typically -9.81 * dt)
     cell_size: f32,
+    // Bitmask for open boundaries:
+    // Bit 0 (1): -X open, Bit 1 (2): +X open
+    // Bit 2 (4): -Y open, Bit 3 (8): +Y open
+    // Bit 4 (16): -Z open, Bit 5 (32): +Z open
+    open_boundaries: u32,
     _pad0: u32,
     _pad1: u32,
-    _pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -31,18 +35,42 @@ fn v_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * (params.height + 1u) + j * params.width + i;
 }
 
-// Get cell type with proper boundary handling for sluice:
-// Both inlet and outlet are OPEN for flow-through
+// Get cell type with proper boundary handling based on open_boundaries config.
+// OPEN boundary → treat as AIR (Dirichlet p=0, flow allowed)
+// CLOSED boundary → treat as SOLID (Neumann, no penetration)
 fn get_cell_type(i: i32, j: i32, k: i32) -> u32 {
-    // CLOSED boundaries: floor and side walls
-    if (j < 0) { return CELL_SOLID; }  // Floor (closed)
-    if (k < 0) { return CELL_SOLID; }  // Side wall (closed)
-    if (u32(k) >= params.depth) { return CELL_SOLID; }  // Side wall (closed)
+    // Check open boundary flags
+    let open_neg_x = (params.open_boundaries & 1u) != 0u;
+    let open_pos_x = (params.open_boundaries & 2u) != 0u;
+    let open_neg_y = (params.open_boundaries & 4u) != 0u;
+    let open_pos_y = (params.open_boundaries & 8u) != 0u;
+    let open_neg_z = (params.open_boundaries & 16u) != 0u;
+    let open_pos_z = (params.open_boundaries & 32u) != 0u;
 
-    // OPEN boundaries: inlet, outlet, and top → treat as AIR
-    if (i < 0) { return CELL_AIR; }  // Inlet (OPEN for sluice flow!)
-    if (u32(i) >= params.width) { return CELL_AIR; }  // Outlet (OPEN!)
-    if (u32(j) >= params.height) { return CELL_AIR; }  // Top (OPEN!)
+    // -X boundary (inlet side)
+    if (i < 0) {
+        return select(CELL_SOLID, CELL_AIR, open_neg_x);
+    }
+    // +X boundary (outlet side)
+    if (u32(i) >= params.width) {
+        return select(CELL_SOLID, CELL_AIR, open_pos_x);
+    }
+    // -Y boundary (floor)
+    if (j < 0) {
+        return select(CELL_SOLID, CELL_AIR, open_neg_y);
+    }
+    // +Y boundary (ceiling/top)
+    if (u32(j) >= params.height) {
+        return select(CELL_SOLID, CELL_AIR, open_pos_y);
+    }
+    // -Z boundary (side wall)
+    if (k < 0) {
+        return select(CELL_SOLID, CELL_AIR, open_neg_z);
+    }
+    // +Z boundary (side wall)
+    if (u32(k) >= params.depth) {
+        return select(CELL_SOLID, CELL_AIR, open_pos_z);
+    }
 
     return cell_type[cell_index(u32(i), u32(j), u32(k))];
 }

@@ -257,7 +257,7 @@ impl WashplantStage {
             self.config.cell_size,
             self.config.max_particles,
         );
-        gpu_flip.upload_sdf(queue, &self.sim.grid.sdf);
+        gpu_flip.upload_sdf(queue, self.sim.grid.sdf());
         self.gpu_flip = Some(gpu_flip);
 
         // Create vertex buffer.
@@ -291,10 +291,10 @@ impl WashplantStage {
             // Prepare inputs BEFORE borrowing gpu_flip to satisfy borrow checker
             self.prepare_gpu_inputs();
 
-            let gpu_flip = self.gpu_flip.as_mut().unwrap();
-            let device = device.unwrap();
-            let queue = queue.unwrap();
-            let sdf = self.sim.grid.sdf.as_slice();
+            let gpu_flip = self.gpu_flip.as_mut().expect("GPU FLIP should be initialized");
+            let device = device.expect("Device should be provided for GPU mode");
+            let queue = queue.expect("Queue should be provided for GPU mode");
+            let sdf = self.sim.grid.sdf();
             gpu_flip.step(
                 device,
                 queue,
@@ -321,7 +321,7 @@ impl WashplantStage {
 
     /// Spawn a water particle.
     pub fn spawn_water(&mut self, position: Vec3, velocity: Vec3) {
-        if self.sim.particles.list.len() < self.config.max_particles {
+        if self.sim.particles.list().len() < self.config.max_particles {
             self.sim.spawn_particle_with_velocity(position, velocity);
             self.metrics.particles_entered += 1;
         }
@@ -329,7 +329,7 @@ impl WashplantStage {
 
     /// Spawn a sediment particle.
     pub fn spawn_sediment(&mut self, position: Vec3, velocity: Vec3, density: f32) {
-        if self.sim.particles.list.len() < self.config.max_particles {
+        if self.sim.particles.list().len() < self.config.max_particles {
             self.sim.spawn_sediment(position, velocity, density);
             self.metrics.particles_entered += 1;
         }
@@ -337,8 +337,8 @@ impl WashplantStage {
 
     /// Remove particle at index, returns its data.
     pub fn remove_particle(&mut self, idx: usize) -> Option<(Vec3, Vec3, f32)> {
-        if idx < self.sim.particles.list.len() {
-            let p = self.sim.particles.list.swap_remove(idx);
+        if idx < self.sim.particles.list().len() {
+            let p = self.sim.particles.list_mut().swap_remove(idx);
             self.metrics.particles_exited += 1;
             Some((p.position, p.velocity, p.density))
         } else {
@@ -348,7 +348,7 @@ impl WashplantStage {
 
     /// Get particle count.
     pub fn particle_count(&self) -> usize {
-        self.sim.particles.list.len()
+        self.sim.particles.list().len()
     }
 
     /// Get vertex/index buffers for rendering.
@@ -384,7 +384,7 @@ impl WashplantStage {
     }
 
     fn prepare_gpu_inputs(&mut self) {
-        let particle_count = self.sim.particles.list.len();
+        let particle_count = self.sim.particles.list().len();
         self.positions_cache.clear();
         self.velocities_cache.clear();
         self.affine_cache.clear();
@@ -394,7 +394,7 @@ impl WashplantStage {
         self.affine_cache.reserve(particle_count);
         self.densities_cache.reserve(particle_count);
 
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             self.positions_cache.push(p.position);
             self.velocities_cache.push(p.velocity);
             self.affine_cache.push(p.affine_velocity);
@@ -410,7 +410,7 @@ impl WashplantStage {
         self.cell_types_cache.clear();
         self.cell_types_cache.resize(cell_count, 0);
 
-        for (idx, &sdf_val) in grid.sdf.iter().enumerate() {
+        for (idx, &sdf_val) in grid.sdf().iter().enumerate() {
             if sdf_val < 0.0 {
                 self.cell_types_cache[idx] = 2; // Solid
             }
@@ -438,8 +438,8 @@ impl WashplantStage {
     }
 
     fn apply_gpu_results(&mut self, count: usize) {
-        let limit = count.min(self.sim.particles.list.len());
-        for (i, p) in self.sim.particles.list.iter_mut().enumerate().take(limit) {
+        let limit = count.min(self.sim.particles.list().len());
+        for (i, p) in self.sim.particles.list_mut().iter_mut().enumerate().take(limit) {
             if i < self.positions_cache.len() {
                 p.position = self.positions_cache[i];
             }
@@ -454,12 +454,12 @@ impl WashplantStage {
 
     fn update_metrics(&mut self, last_tick_ms: f32) {
         let mut sediment_particles = 0;
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             if p.is_sediment() {
                 sediment_particles += 1;
             }
         }
-        let total = self.sim.particles.list.len();
+        let total = self.sim.particles.list().len();
         self.metrics.total_particles = total;
         self.metrics.sediment_particles = sediment_particles;
         self.metrics.water_particles = total.saturating_sub(sediment_particles);

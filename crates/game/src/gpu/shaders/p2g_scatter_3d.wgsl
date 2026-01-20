@@ -9,8 +9,12 @@
 // - V velocities: stored at bottom XZ faces, width x (height+1) x depth
 // - W velocities: stored at back XY faces, width x height x (depth+1)
 
-// Fixed-point scale: 10^6 gives ±2147 range with 6 decimal digits precision
-const SCALE: f32 = 1000000.0;
+// Fixed-point scale: 10^5 gives ±21,474 range with 5 decimal digits precision
+// Reduced from 10^6 to prevent overflow with high particle concentrations (100k+)
+const SCALE: f32 = 100000.0;
+
+// Kernel constants
+const BSPLINE_SUPPORT_RADIUS: f32 = 1.5;  // Support range [-1.5, 1.5] for quadratic B-spline
 
 struct Params {
     cell_size: f32,
@@ -48,8 +52,8 @@ fn quadratic_bspline_1d(x: f32) -> f32 {
     let ax = abs(x);
     if (ax < 0.5) {
         return 0.75 - ax * ax;
-    } else if (ax < 1.5) {
-        let t = 1.5 - ax;
+    } else if (ax < BSPLINE_SUPPORT_RADIUS) {
+        let t = BSPLINE_SUPPORT_RADIUS - ax;
         return 0.5 * t * t;
     }
     return 0.0;
@@ -165,11 +169,12 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 );
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
-                let momentum_x = (vel.x + affine_vel.x) * w;
+                // Mass-weighted momentum: m * (v + C*offset) * w
+                let momentum_x = density * (vel.x + affine_vel.x) * w;
 
                 let idx = u_index(u32(ni), u32(nj), u32(nk));
                 atomicAdd(&u_sum[idx], i32(momentum_x * SCALE));
-                atomicAdd(&u_weight[idx], i32(w * SCALE));
+                atomicAdd(&u_weight[idx], i32(density * w * SCALE));
             }
         }
     }
@@ -221,11 +226,12 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 );
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
-                let momentum_y = (vel.y + affine_vel.y) * w;
+                // Mass-weighted momentum: m * (v + C*offset) * w
+                let momentum_y = density * (vel.y + affine_vel.y) * w;
 
                 let idx = v_index(u32(ni), u32(nj), u32(nk));
                 atomicAdd(&v_sum[idx], i32(momentum_y * SCALE));
-                atomicAdd(&v_weight[idx], i32(w * SCALE));
+                atomicAdd(&v_weight[idx], i32(density * w * SCALE));
             }
         }
     }
@@ -277,11 +283,12 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 );
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
-                let momentum_z = (vel.z + affine_vel.z) * w;
+                // Mass-weighted momentum: m * (v + C*offset) * w
+                let momentum_z = density * (vel.z + affine_vel.z) * w;
 
                 let idx = w_index(u32(ni), u32(nj), u32(nk));
                 atomicAdd(&w_sum[idx], i32(momentum_z * SCALE));
-                atomicAdd(&w_weight[idx], i32(w * SCALE));
+                atomicAdd(&w_weight[idx], i32(density * w * SCALE));
             }
         }
     }

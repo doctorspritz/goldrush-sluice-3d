@@ -63,9 +63,12 @@ pub struct GpuParticleSort {
     // Intermediate buffers
     cell_keys_buffer: wgpu::Buffer,
     cell_counts_buffer: wgpu::Buffer,
-    /// Cell offsets (exclusive prefix sum of cell counts) - public for cell-centric P2G
+    /// Cell offsets (exclusive prefix sum of cell counts) - used for atomic scatter
     /// Size: cell_count + 1 (extra element for end-of-last-cell lookup)
     pub cell_offsets_buffer: Arc<wgpu::Buffer>,
+    /// Cell offsets (read-only copy) - for non-atomic reads in neighbor search (FAST)
+    /// This is copied from cell_offsets_buffer after prefix sum completes
+    pub cell_offsets_read_buffer: Arc<wgpu::Buffer>,
     cell_counters_buffer: wgpu::Buffer,
     block_sums_buffer: wgpu::Buffer,
 
@@ -171,11 +174,19 @@ impl GpuParticleSort {
 
         // cell_count + 1 elements so we can look up cell_offsets[cell + 1] for the last cell
         let cell_offsets_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Cell Offsets"),
+            label: Some("Cell Offsets (Atomic)"),
             size: ((cell_count + 1) * 4) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }));
+
+        // Non-atomic copy for fast neighbor search reads
+        let cell_offsets_read_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Cell Offsets (Read)"),
+            size: ((cell_count + 1) * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         }));
 
@@ -615,6 +626,7 @@ impl GpuParticleSort {
             cell_keys_buffer,
             cell_counts_buffer,
             cell_offsets_buffer,
+            cell_offsets_read_buffer,
             cell_counters_buffer,
             block_sums_buffer,
             sort_params_buffer,
@@ -673,23 +685,16 @@ impl GpuParticleSort {
             bytemuck::bytes_of(&prefix_sum_params),
         );
 
-        // Clear intermediate buffers
-        queue.write_buffer(&self.cell_counts_buffer, 0, &vec![0u8; self.cell_count * 4]);
-        queue.write_buffer(
-            &self.cell_counters_buffer,
-            0,
-            &vec![0u8; self.cell_count * 4],
-        );
-        let num_blocks = (self.cell_count + 511) / 512;
-        queue.write_buffer(&self.block_sums_buffer, 0, &vec![0u8; num_blocks * 4]);
+        // Clear intermediate buffers using GPU-side clear (MUCH faster than CPU write)
+        // This is now done in encode() using encoder.clear_buffer()
+    }
 
-        // Set cell_offsets[cell_count] = particle_count for cell-centric P2G
-        // This allows looking up cell_offsets[idx + 1] for the last cell
-        queue.write_buffer(
-            &self.cell_offsets_buffer,
-            (self.cell_count * 4) as u64,
-            bytemuck::bytes_of(&particle_count),
-        );
+    /// Clear buffers during encode (GPU-side, no CPU transfer)
+    fn clear_buffers(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.clear_buffer(&self.cell_counts_buffer, 0, None);
+        encoder.clear_buffer(&self.cell_counters_buffer, 0, None);
+        let num_blocks = (self.cell_count + 511) / 512;
+        encoder.clear_buffer(&self.block_sums_buffer, 0, Some((num_blocks * 4) as u64));
     }
 
     /// Encode sorting passes into command encoder
@@ -702,6 +707,9 @@ impl GpuParticleSort {
         if !self.enabled || particle_count == 0 {
             return;
         }
+
+        // Clear buffers using GPU-side clear (no CPU->GPU transfer)
+        self.clear_buffers(encoder);
 
         let workgroups_particles = (particle_count + 255) / 256;
         let workgroups_cells = (self.cell_count as u32 + 511) / 512;
@@ -784,6 +792,15 @@ impl GpuParticleSort {
             pass.set_bind_group(0, &self.scatter_bind_group, &[]);
             pass.dispatch_workgroups(workgroups_particles, 1, 1);
         }
+
+        // Copy cell_offsets to read-only buffer for fast non-atomic neighbor search
+        encoder.copy_buffer_to_buffer(
+            &self.cell_offsets_buffer,
+            0,
+            &self.cell_offsets_read_buffer,
+            0,
+            ((self.cell_count + 1) * 4) as u64,
+        );
     }
 
     /// Get sorted output buffers

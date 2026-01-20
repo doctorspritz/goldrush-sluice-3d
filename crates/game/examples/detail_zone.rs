@@ -15,6 +15,8 @@
 //! - 1: Add heightfield water at cursor
 //! - 2: Add muddy water at cursor
 //! - 3: Toggle heightfield emitter
+//! - V: Toggle velocity coloring (blue=slow -> red=fast)
+//! - X: Reposition detail emitter to cursor (in focus mode)
 //! - R: Reset
 //! - ESC: Quit
 //!
@@ -26,7 +28,7 @@ use game::gpu::flip_3d::GpuFlip3D;
 use game::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder};
 use glam::{Mat3, Mat4, Vec3, Vec4};
 use sim3d::{
-    ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, Grid3D, SdfParams,
+    constants, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, Grid3D, SdfParams,
     TerrainMaterial, World,
 };
 use std::collections::HashSet;
@@ -71,17 +73,23 @@ const MAX_FLIP_PARTICLES: usize = 300_000;
 const WATER_EMIT_RATE: usize = 200;
 const SEDIMENT_EMIT_RATE: usize = 2;
 const PARTICLE_SIZE: f32 = DETAIL_SLUICE_CELL_SIZE * 0.6;
-const GANGUE_DENSITY: f32 = 2.7;
-const GOLD_DENSITY: f32 = 19.3;
+// Relative densities for FLIP particles (water=1.0)
+const GANGUE_DENSITY: f32 = constants::GANGUE_DENSITY;
+const GOLD_DENSITY: f32 = constants::GOLD_DENSITY;
+// Absolute densities for DEM mass calculation (kg/m³)
+const GANGUE_DENSITY_KGM3: f32 = constants::GANGUE_DENSITY_KGM3;
+const GOLD_DENSITY_KGM3: f32 = constants::GOLD_DENSITY_KGM3;
 const GOLD_FRACTION: f32 = 0.05;
 const GANGUE_RADIUS_CELLS: f32 = 0.12;
 const GOLD_RADIUS_CELLS: f32 = 0.02;
+const DETAIL_EMITTER_VISUAL_RADIUS: f32 = 0.05;
 
 const MOVE_SPEED: f32 = 20.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
 
 const STEPS_PER_FRAME: usize = 10; // More steps for faster filling
 const DT: f32 = 0.02;
+const DEBUG_HEIGHTFIELD_STATS: bool = true;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InteractionMode {
@@ -103,7 +111,7 @@ struct Uniforms {
     camera_pos: [f32; 3],
     particle_size: f32,
     camera_right: [f32; 3],
-    _pad0: f32,
+    show_velocity: f32, // 1.0 = velocity coloring, 0.0 = normal water blue
     camera_up: [f32; 3],
     highlight_tint: f32, // 1.0 = normal, >1.0 = brighter
 }
@@ -257,16 +265,7 @@ struct InputState {
     scroll_delta: f32,
 }
 
-struct WaterEmitter {
-    position: Vec3,
-    rate: f32, // Volume per second
-    radius: f32,
-    sediment_conc: f32,
-    overburden_conc: f32,
-    gravel_conc: f32,
-    paydirt_conc: f32,
-    enabled: bool,
-}
+use game::water_emitter::WaterEmitter;
 
 use game::gpu::heightfield::GpuHeightfield;
 
@@ -307,6 +306,7 @@ struct App {
     selected_material: u32,
     terrain_dirty: bool,
     show_water: bool,
+    show_velocity: bool, // Toggle velocity-based particle coloring
 
     // FLIP simulation
     flip_sim: FlipSimulation3D,
@@ -327,7 +327,11 @@ struct App {
     focus_bounds_min: Vec3,
     focus_bounds_max: Vec3,
     interaction_mode: InteractionMode,
+
     sluice_hovered: bool,
+    emitter_mesh: Option<Mesh>,
+    detail_emitter_mesh: Option<Mesh>,
+    detail_emitter_pos: Vec3,
 }
 
 impl App {
@@ -343,7 +347,7 @@ impl App {
             DETAIL_FLIP_GRID_Z,
             DETAIL_FLIP_CELL_SIZE,
         );
-        flip_sim.gravity = Vec3::new(0.0, -9.8, 0.0);
+        flip_sim.gravity = Vec3::new(0.0, constants::GRAVITY, 0.0);
         flip_sim.flip_ratio = 0.95;
         flip_sim.pressure_iterations = FLIP_PRESSURE_ITERS;
 
@@ -370,7 +374,7 @@ impl App {
 
         let gangue_radius = DETAIL_SLUICE_CELL_SIZE * GANGUE_RADIUS_CELLS;
         let gangue_mass =
-            GANGUE_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * gangue_radius.powi(3);
+            GANGUE_DENSITY_KGM3 * (4.0 / 3.0) * std::f32::consts::PI * gangue_radius.powi(3);
         let gangue_template = ClumpTemplate3D::generate(
             ClumpShape3D::Irregular {
                 count: 1,
@@ -383,7 +387,7 @@ impl App {
         let gangue_template_idx = dem.add_template(gangue_template);
 
         let gold_radius = DETAIL_SLUICE_CELL_SIZE * GOLD_RADIUS_CELLS;
-        let gold_mass = GOLD_DENSITY * (4.0 / 3.0) * std::f32::consts::PI * gold_radius.powi(3);
+        let gold_mass = GOLD_DENSITY_KGM3 * (4.0 / 3.0) * std::f32::consts::PI * gold_radius.powi(3);
         let gold_template = ClumpTemplate3D::generate(ClumpShape3D::Flat4, gold_radius, gold_mass);
         let gold_template_idx = dem.add_template(gold_template);
 
@@ -410,15 +414,18 @@ impl App {
             window: None,
             gpu: None,
             world,
-            emitter: WaterEmitter {
-                position: Vec3::new(center_x as f32, terrain_y + 10.0, center_z as f32),
-                rate: 750.0,
-                radius: 15.0,
-                sediment_conc: 0.15,
-                overburden_conc: 0.05,
-                gravel_conc: 0.03,
-                paydirt_conc: 0.02,
-                enabled: true,
+            emitter: {
+                let mut e = WaterEmitter::new(
+                    Vec3::new(center_x as f32, terrain_y + 10.0, center_z as f32),
+                    7500.0, // rate
+                    15.0,   // radius
+                );
+                e.sediment_conc = 0.15;
+                e.overburden_conc = 0.05;
+                e.gravel_conc = 0.03;
+                e.paydirt_conc = 0.02;
+                e.enabled = true;
+                e
             },
             sluice_config: sluice_config.clone(),
             pending_water_emits: 0,
@@ -445,6 +452,7 @@ impl App {
             selected_material: 2,
             terrain_dirty: true,
             show_water: true,
+            show_velocity: false,
 
             // FLIP
             flip_sim,
@@ -465,7 +473,15 @@ impl App {
             focus_bounds_min,
             focus_bounds_max,
             interaction_mode: InteractionMode::Dig,
+
             sluice_hovered: false,
+            emitter_mesh: None,
+            detail_emitter_mesh: None,
+            detail_emitter_pos: Vec3::new(
+                2.0 * DETAIL_FLIP_CELL_SIZE,                               // emit_x
+                0.0, // Will be computed from sluice floor
+                (DETAIL_SLUICE_DEPTH as f32 * DETAIL_FLIP_CELL_SIZE) * 0.5, // center_z
+            ),
         }
     }
 
@@ -522,18 +538,11 @@ impl App {
                         });
 
                 // Update GPU emitter and dispatch (before water sim)
-                gpu.heightfield.update_emitter(
+                // Update GPU emitter and dispatch (before water sim)
+                self.emitter.update_gpu(
+                    &gpu.heightfield,
                     &gpu.queue,
-                    self.emitter.position.x,
-                    self.emitter.position.z,
-                    self.emitter.radius,
-                    self.emitter.rate,
-                    self.emitter.sediment_conc,
-                    self.emitter.overburden_conc,
-                    self.emitter.gravel_conc,
-                    self.emitter.paydirt_conc,
                     sim_dt,
-                    self.emitter.enabled,
                 );
                 gpu.heightfield.dispatch_emitter(&mut encoder);
 
@@ -574,7 +583,7 @@ impl App {
                     self.flip_c_matrices.clear();
                     self.flip_densities.clear();
 
-                    for p in &self.flip_sim.particles.list {
+                    for p in self.flip_sim.particles.list() {
                         self.flip_positions.push(p.position);
                         self.flip_velocities.push(p.velocity);
                         self.flip_c_matrices.push(p.affine_velocity);
@@ -630,10 +639,10 @@ impl App {
                             &mut self.flip_c_matrices,
                             &self.flip_densities,
                             &self.flip_cell_types,
-                            Some(&self.flip_sim.grid.sdf),
+                            Some(self.flip_sim.grid.sdf()),
                             None, // bed_height
                             DT,   // Use same timestep as heightfield
-                            -9.8,
+                            constants::GRAVITY,
                             0.0,
                             self.flip_sim.pressure_iterations as u32,
                         );
@@ -644,7 +653,7 @@ impl App {
                     let mut max_y: f32 = f32::NEG_INFINITY;
                     let mut min_y: f32 = f32::INFINITY;
                     let mut max_vy: f32 = 0.0;
-                    for (i, p) in self.flip_sim.particles.list.iter_mut().enumerate() {
+                    for (i, p) in self.flip_sim.particles.list_mut().iter_mut().enumerate() {
                         let pos = self.flip_positions[i];
                         p.position = pos;
                         p.velocity = self.flip_velocities[i];
@@ -737,7 +746,103 @@ impl App {
                 "Heightfield water: {:.2}, sediment: {:.2} | FLIP particles: {}",
                 water, sediment, flip_count
             );
+            if DEBUG_HEIGHTFIELD_STATS {
+                if let Some(gpu) = &self.gpu {
+                    let debug = pollster::block_on(
+                        gpu.heightfield.read_debug_stats(&gpu.device, &gpu.queue),
+                    );
+                    println!(
+                        "Erosion debug: erode_cells={} deposit_cells={} max_erode={:.6}m max_deposit={:.6}m | erode(s/o/g/p)={}/{}/{}/{} deposit(s/o/g/p)={}/{}/{}/{}",
+                        debug.erosion_cells,
+                        debug.deposition_cells,
+                        debug.erosion_max_height,
+                        debug.deposition_max_height,
+                        debug.erosion_layers[0],
+                        debug.erosion_layers[1],
+                        debug.erosion_layers[2],
+                        debug.erosion_layers[3],
+                        debug.deposition_layers[0],
+                        debug.deposition_layers[1],
+                        debug.deposition_layers[2],
+                        debug.deposition_layers[3],
+                    );
+                    gpu.heightfield.reset_debug_stats(&gpu.queue);
+                }
+            }
             self.last_stats = Instant::now();
+        }
+
+        // Update Emitter Mesh if enabled (heightfield emitter)
+        if self.emitter.enabled && !self.focus_mode {
+            if let Some(gpu) = self.gpu.as_ref() {
+                let (positions, indices) = self.emitter.visualize(16);
+                let vertices: Vec<WorldVertex> = positions
+                    .iter()
+                    .map(|p| WorldVertex {
+                        position: p.to_array(),
+                        color: [0.0, 1.0, 1.0, 1.0], // Cyan
+                    })
+                    .collect();
+
+                if let Some(mesh) = self.emitter_mesh.as_mut() {
+                    mesh.update(&gpu.device, &gpu.queue, &vertices, &indices, "Emitter Mesh");
+                } else {
+                    self.emitter_mesh = Some(Mesh::new(
+                        &gpu.device,
+                        &vertices,
+                        &indices,
+                        "Emitter Mesh",
+                    ));
+                }
+            }
+        } else {
+             self.emitter_mesh = None;
+        }
+
+        // Update Detail Zone Emitter Mesh (small sphere at emission point)
+        if self.focus_mode {
+            if let Some(gpu) = self.gpu.as_ref() {
+                // Emission location matches emit_particles() logic
+                let cell_size = self.sluice_config.cell_size;
+                let emit_x = self.detail_emitter_pos.x;
+                let center_z = self.detail_emitter_pos.z;
+                let floor_y = self.sluice_floor_height(emit_x);
+                let drop_height = 2.5 * cell_size;
+                let sheet_height = 4.0 * cell_size;
+
+                // Position emitter visualization at center of emission region
+                let emitter_pos = self.flip_origin
+                    + Vec3::new(emit_x, floor_y + drop_height + sheet_height * 0.5, center_z);
+
+                let (positions, indices) =
+                    create_small_sphere(emitter_pos, DETAIL_EMITTER_VISUAL_RADIUS, 12);
+                let vertices: Vec<WorldVertex> = positions
+                    .iter()
+                    .map(|p| WorldVertex {
+                        position: p.to_array(),
+                        color: [1.0, 0.5, 0.0, 1.0], // Orange for detail emitter
+                    })
+                    .collect();
+
+                if let Some(mesh) = self.detail_emitter_mesh.as_mut() {
+                    mesh.update(
+                        &gpu.device,
+                        &gpu.queue,
+                        &vertices,
+                        &indices,
+                        "Detail Emitter Mesh",
+                    );
+                } else {
+                    self.detail_emitter_mesh = Some(Mesh::new(
+                        &gpu.device,
+                        &vertices,
+                        &indices,
+                        "Detail Emitter Mesh",
+                    ));
+                }
+            }
+        } else {
+            self.detail_emitter_mesh = None;
         }
     }
 
@@ -791,8 +896,9 @@ impl App {
         let config = &self.sluice_config;
         let cell_size = config.cell_size;
         let grid_depth = config.grid_depth as f32;
-        let emit_x = 2.0 * cell_size;
-        let center_z = grid_depth * cell_size * 0.5;
+        // Use detail_emitter_pos for emission location
+        let emit_x = self.detail_emitter_pos.x;
+        let center_z = self.detail_emitter_pos.z;
         let floor_y = self.sluice_floor_height(emit_x);
         let drop_height = 2.5 * cell_size;
         let sheet_height = 4.0 * cell_size;
@@ -863,7 +969,7 @@ impl App {
         }
 
         let sdf_params = SdfParams {
-            sdf: &self.flip_sim.grid.sdf,
+            sdf: self.flip_sim.grid.sdf(),
             grid_width: self.flip_sim.grid.width,
             grid_height: self.flip_sim.grid.height,
             grid_depth: self.flip_sim.grid.depth,
@@ -873,11 +979,11 @@ impl App {
 
         // Sync FLIP -> DEM (positions + velocities)
         for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
-            if flip_idx >= self.flip_sim.particles.list.len() {
+            if flip_idx >= self.flip_sim.particles.list().len() {
                 continue;
             }
             if let Some(clump) = self.dem.clumps.get_mut(clump_idx) {
-                let particle = &self.flip_sim.particles.list[flip_idx];
+                let particle = &self.flip_sim.particles.list()[flip_idx];
                 clump.position = particle.position;
                 clump.velocity = particle.velocity;
             }
@@ -887,11 +993,11 @@ impl App {
 
         // Sync DEM -> FLIP
         for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
-            if flip_idx >= self.flip_sim.particles.list.len() {
+            if flip_idx >= self.flip_sim.particles.list().len() {
                 continue;
             }
             if let Some(clump) = self.dem.clumps.get(clump_idx) {
-                let particle = &mut self.flip_sim.particles.list[flip_idx];
+                let particle = &mut self.flip_sim.particles.list_mut()[flip_idx];
                 particle.position = clump.position;
                 particle.velocity = clump.velocity;
             }
@@ -1233,7 +1339,7 @@ impl App {
         });
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let heightfield = GpuHeightfield::new(
+        let mut heightfield = GpuHeightfield::new(
             &device,
             self.world.width as u32,
             self.world.depth as u32,
@@ -1241,6 +1347,10 @@ impl App {
             INITIAL_HEIGHT,
             config.format,
         );
+        if DEBUG_HEIGHTFIELD_STATS {
+            heightfield.set_debug_flags(1);
+            heightfield.reset_debug_stats(&queue);
+        }
         heightfield.upload_from_world(&queue, &self.world);
 
         // ===== Particle Rendering Setup =====
@@ -1281,7 +1391,7 @@ impl App {
                     wgpu::VertexBufferLayout {
                         array_stride: 16,
                         step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![1 => Float32x3],
+                        attributes: &wgpu::vertex_attr_array![1 => Float32x4], // xyz = position, w = velocity magnitude
                     },
                 ],
                 compilation_options: Default::default(),
@@ -1374,7 +1484,7 @@ impl App {
             camera_pos: self.camera.position.to_array(),
             particle_size: PARTICLE_SIZE,
             camera_right: camera_right.to_array(),
-            _pad0: 0.0,
+            show_velocity: if self.show_velocity { 1.0 } else { 0.0 },
             camera_up: camera_up.to_array(),
             highlight_tint: 1.0, // Default, updated per-object
         };
@@ -1407,7 +1517,70 @@ impl App {
             self.camera.position.to_array(),
             self.start_time.elapsed().as_secs_f32(),
             self.show_water,
+            self.show_velocity,
         );
+
+        // Render Emitter (heightfield emitter - only when not in focus mode)
+        if let Some(mesh) = self.emitter_mesh.as_ref() {
+             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Emitter Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &frame_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &gpu.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            rpass.set_pipeline(&gpu.pipeline);
+            rpass.set_bind_group(0, &gpu.bind_group, &[]);
+            rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            rpass.draw_indexed(0..mesh.num_indices, 0, 0..1);
+        }
+
+        // Render Detail Emitter (small sphere in focus mode)
+        if let Some(mesh) = self.detail_emitter_mesh.as_ref() {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Detail Emitter Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &frame_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &gpu.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            rpass.set_pipeline(&gpu.pipeline);
+            rpass.set_bind_group(0, &gpu.bind_group, &[]);
+            rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            rpass.draw_indexed(0..mesh.num_indices, 0, 0..1);
+        }
 
         // ===== Render equipment geometry (sluice) =====
         // Always render sluice so it's visible on the 2.5D map for clicking
@@ -1452,15 +1625,16 @@ impl App {
         if self.focus_mode {
             let particle_count = self.flip_sim.particle_count();
             if particle_count > 0 {
-                // Upload particle positions (with flip_origin offset)
+                // Upload particle positions (with flip_origin offset) and velocity magnitude
                 let positions: Vec<[f32; 4]> = self
                     .flip_sim
                     .particles
-                    .list
+                    .list()
                     .iter()
                     .map(|p| {
                         let world_pos = p.position + self.flip_origin;
-                        [world_pos.x, world_pos.y, world_pos.z, 0.0]
+                        let vel_mag = p.velocity.length();
+                        [world_pos.x, world_pos.y, world_pos.z, vel_mag]
                     })
                     .collect();
                 gpu.queue.write_buffer(
@@ -1568,12 +1742,13 @@ impl ApplicationHandler for App {
                                 KeyCode::Digit2 => self.add_muddy_water_at_cursor(),
                                 KeyCode::Digit3 => {
                                     if let Some(hit) = self.raycast_terrain() {
-                                        self.emitter.position = hit;
-                                        self.emitter.enabled = true;
-                                        println!("Emitter placed at {:?}", hit);
+                                        let hf_height = self.world.ground_height(hit.x as usize, hit.z as usize);
+                                        self.emitter.place_at_cursor(hit, hf_height);
+                                        self.emitter.enabled = !self.emitter.enabled; // Toggle on/off
+                                        println!("Emitter toggle: {} at {:?}", self.emitter.enabled, self.emitter.position);
                                     } else {
-                                        self.emitter.enabled = !self.emitter.enabled;
-                                        println!("Emitter enabled: {}", self.emitter.enabled);
+                                        println!("Raycast missed terrain!");
+
                                     }
                                 }
                                 // Material selection keys
@@ -1607,6 +1782,48 @@ impl ApplicationHandler for App {
                                             InteractionMode::Dig
                                         }
                                     };
+                                }
+                                KeyCode::KeyE => {
+                                    self.emitter.enabled = !self.emitter.enabled;
+                                    println!("Emitter: {}", if self.emitter.enabled { "ON" } else { "OFF" });
+                                }
+                                KeyCode::KeyV => {
+                                    self.show_velocity = !self.show_velocity;
+                                    println!("Velocity coloring: {}", if self.show_velocity { "ON" } else { "OFF" });
+                                }
+                                KeyCode::KeyQ => {
+                                    // Reset emitter to river source
+                                    self.emitter.position.x = (WORLD_WIDTH as f32 * 0.5) * CELL_SIZE;
+                                    self.emitter.position.z = 5.0 * CELL_SIZE;
+                                    self.emitter.position.y = 12.0; // Above river start
+                                    self.emitter.radius = (WORLD_WIDTH as f32 * 0.05 * CELL_SIZE) * 0.8;
+                                    self.emitter.rate = 2.0;
+                                    self.emitter.enabled = true;
+                                    println!("Emitter reset to river source");
+                                }
+                                KeyCode::KeyX => {
+                                    // Reposition detail emitter at cursor (in focus mode)
+                                    if self.focus_mode {
+                                        if let Some(hit) = self.raycast_terrain() {
+                                            // Convert world coords to grid-local coords
+                                            let local_pos = hit - self.flip_origin;
+                                            // Clamp to valid grid bounds
+                                            let grid_max_x = DETAIL_FLIP_GRID_X as f32
+                                                * DETAIL_FLIP_CELL_SIZE;
+                                            let grid_max_z = DETAIL_FLIP_GRID_Z as f32
+                                                * DETAIL_FLIP_CELL_SIZE;
+                                            self.detail_emitter_pos.x =
+                                                local_pos.x.clamp(0.0, grid_max_x);
+                                            self.detail_emitter_pos.z =
+                                                local_pos.z.clamp(0.0, grid_max_z);
+                                            println!(
+                                                "Detail emitter moved to ({:.3}, {:.3})",
+                                                self.detail_emitter_pos.x, self.detail_emitter_pos.z
+                                            );
+                                        }
+                                    } else {
+                                        println!("X: Enter focus mode first to reposition detail emitter");
+                                    }
                                 }
                                 _ => {}
                             }
@@ -1679,20 +1896,181 @@ impl ApplicationHandler for App {
 }
 
 fn build_world() -> World {
-    use sim3d::{generate_klondike_terrain, TerrainConfig};
-
-    let config = TerrainConfig::default();
-    let mut world = generate_klondike_terrain(WORLD_WIDTH, WORLD_DEPTH, CELL_SIZE, &config);
-    let center = detail_center(&world);
-    carve_flat_pad(
-        &mut world,
-        center,
-        DETAIL_PAD_RADIUS,
-        DETAIL_PAD_FALLOFF,
-        DETAIL_PAD_HEIGHT_OFFSET,
-    );
+    let mut world = World::new(WORLD_WIDTH, WORLD_DEPTH, CELL_SIZE, 20.0);
+    
+    // ========== NOISE FUNCTIONS ==========
+    fn noise2d(x: f32, y: f32) -> f32 {
+        // Simple hash-based noise
+        let n = (x * 127.1 + y * 311.7).sin() * 43758.5453;
+        n.fract()
+    }
+    
+    fn smooth_noise(x: f32, y: f32, scale: f32) -> f32 {
+        let sx = x / scale;
+        let sy = y / scale;
+        let x0 = sx.floor();
+        let y0 = sy.floor();
+        let fx = sx - x0;
+        let fy = sy - y0;
+        
+        // Smooth interpolation
+        let u = fx * fx * (3.0 - 2.0 * fx);
+        let v = fy * fy * (3.0 - 2.0 * fy);
+        
+        let n00 = noise2d(x0, y0);
+        let n10 = noise2d(x0 + 1.0, y0);
+        let n01 = noise2d(x0, y0 + 1.0);
+        let n11 = noise2d(x0 + 1.0, y0 + 1.0);
+        
+        let nx0 = n00 + (n10 - n00) * u;
+        let nx1 = n01 + (n11 - n01) * u;
+        nx0 + (nx1 - nx0) * v
+    }
+    
+    fn fbm(x: f32, y: f32, octaves: u32) -> f32 {
+        let mut value = 0.0;
+        let mut amp = 0.5;
+        let mut freq = 1.0;
+        for _ in 0..octaves {
+            value += amp * smooth_noise(x * freq, y * freq, 1.0);
+            amp *= 0.5;
+            freq *= 2.0;
+        }
+        value
+    }
+    
+    // ========== VALLEY PARAMETERS ==========
+    let valley_width_cells = (WORLD_WIDTH as f32 * 0.35) as i32; // 35% of width is the valley
+    let river_width_cells = (WORLD_WIDTH as f32 * 0.08) as i32;  // 8% is the actual river
+    let center_x = WORLD_WIDTH as i32 / 2;
+    
+    // Ridge heights
+    let ridge_base = 18.0;
+    let valley_floor_base = 6.0;
+    
+    for z in 0..WORLD_DEPTH {
+        let zf = z as f32;
+        let z_progress = zf / WORLD_DEPTH as f32;
+        
+        // River gradient (drops 6m over length)
+        let river_gradient = z_progress * 6.0;
+        
+        // Meander - river curves side to side
+        let meander = ((zf * 0.015).sin() * 0.7 + (zf * 0.008).cos() * 0.3) 
+                    * valley_width_cells as f32 * 0.2;
+        let river_center = center_x as f32 + meander;
+        
+        // Pool-riffle sequence with varying amplitude
+        let pool_riffle = (zf * 0.04).sin() * 0.5 
+                        + (zf * 0.11).sin() * 0.25
+                        + (zf * 0.23).cos() * 0.15;
+        
+        for x in 0..WORLD_WIDTH {
+            let xf = x as f32;
+            let idx = world.idx(x, z);
+            
+            // Distance from river center (signed)
+            let dist_from_river = xf - river_center;
+            let abs_dist = dist_from_river.abs();
+            
+            // Large-scale terrain noise
+            let terrain_noise = fbm(xf * 0.02, zf * 0.02, 4);
+            let detail_noise = fbm(xf * 0.08, zf * 0.08, 3);
+            
+            // ========== BEDROCK ELEVATION ==========
+            let bedrock;
+            let mut gravel = 0.0;
+            let mut paydirt = 0.0;
+            let mut overburden = 0.0;
+            
+            if abs_dist < river_width_cells as f32 / 2.0 {
+                // === RIVER BED ===
+                // U-shaped channel with irregular bottom
+                let cross = (abs_dist / (river_width_cells as f32 / 2.0)).powi(2);
+                let channel_depth = 1.8 * (1.0 - cross);
+                
+                // Add rock outcrops and pools
+                let outcrop = if detail_noise > 0.7 { (detail_noise - 0.7) * 2.0 } else { 0.0 };
+                let pool_depth = if detail_noise < 0.25 { (0.25 - detail_noise) * 1.5 } else { 0.0 };
+                
+                bedrock = (valley_floor_base - river_gradient - channel_depth + pool_riffle + outcrop - pool_depth).max(0.5);
+                
+                // Gravel deposits in pools and behind outcrops
+                gravel = 0.15 + rand_float() * 0.2;
+                if detail_noise < 0.3 { gravel += 0.3; } // More gravel in pools
+                
+                // Paydirt in certain spots (gold bearing)
+                if detail_noise > 0.4 && detail_noise < 0.6 {
+                    paydirt = 0.1 + rand_float() * 0.15;
+                }
+                
+            } else if abs_dist < valley_width_cells as f32 / 2.0 {
+                // === VALLEY FLOOR / BANKS ===
+                let bank_t = (abs_dist - river_width_cells as f32 / 2.0) 
+                           / (valley_width_cells as f32 / 2.0 - river_width_cells as f32 / 2.0);
+                let bank_t = bank_t.clamp(0.0, 1.0);
+                
+                // Smooth transition from river to valley walls
+                let floor_elev = valley_floor_base - river_gradient * (1.0 - bank_t * 0.5);
+                let wall_rise = bank_t.powi(2) * 3.0; // Steeper near edges
+                
+                bedrock = floor_elev + wall_rise + terrain_noise * 1.5;
+                
+                // Point bars and gravel deposits on inside of bends
+                let bend_inside = dist_from_river * meander < 0.0; // Inside of meander bend
+                if bend_inside && bank_t < 0.3 {
+                    gravel = 0.3 + rand_float() * 0.4;
+                    paydirt = rand_float() * 0.2; // Gold accumulates on point bars
+                } else {
+                    gravel = (0.3 - bank_t * 0.3).max(0.0) + rand_float() * 0.1;
+                }
+                overburden = bank_t * 0.5 + detail_noise * 0.3;
+                
+            } else {
+                // === VALLEY WALLS / RIDGES ===
+                let wall_t = (abs_dist - valley_width_cells as f32 / 2.0) 
+                           / (WORLD_WIDTH as f32 / 2.0 - valley_width_cells as f32 / 2.0);
+                let wall_t = wall_t.clamp(0.0, 1.0);
+                
+                // Rising valley walls with rough texture
+                let wall_height = wall_t.sqrt() * (ridge_base - valley_floor_base);
+                bedrock = valley_floor_base + wall_height + terrain_noise * 3.0 + detail_noise * 1.0;
+                
+                // Overburden on slopes
+                let slope = wall_t.sqrt();
+                overburden = (1.0 - slope) * 2.0 + detail_noise * 0.5;
+                gravel = detail_noise * 0.2;
+            }
+            
+            world.bedrock_elevation[idx] = bedrock;
+            world.gravel_thickness[idx] = gravel;
+            world.paydirt_thickness[idx] = paydirt;
+            world.overburden_thickness[idx] = overburden;
+            world.terrain_sediment[idx] = 0.0;
+        }
+    }
+    
+    // Pre-fill river with water
+    for z in 0..WORLD_DEPTH {
+        let zf = z as f32;
+        let meander = ((zf * 0.015).sin() * 0.7 + (zf * 0.008).cos() * 0.3) 
+                    * valley_width_cells as f32 * 0.2;
+        let river_center = center_x as f32 + meander;
+        
+        for x in 0..WORLD_WIDTH {
+            let dist = (x as f32 - river_center).abs();
+            if dist < river_width_cells as f32 / 2.0 {
+                let idx = world.idx(x, z);
+                world.water_surface[idx] = world.ground_height(x, z) + 0.4;
+            }
+        }
+    }
+    
     world
 }
+
+
+
 
 fn detail_center(world: &World) -> Vec3 {
     Vec3::new(
@@ -2463,14 +2841,14 @@ fn build_water_mesh(world: &World) -> (Vec<WorldVertex>, Vec<u32>) {
     (vertices, indices)
 }
 
-// Particle shader - blue billboards
+// Particle shader - blue billboards with optional velocity coloring
 const PARTICLE_SHADER: &str = r#"
 struct Uniforms {
     view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
     particle_size: f32,
     camera_right: vec3<f32>,
-    _pad0: f32,
+    show_velocity: f32,
     camera_up: vec3<f32>,
     _pad1: f32,
 }
@@ -2481,30 +2859,63 @@ var<uniform> uniforms: Uniforms;
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    @location(1) velocity_mag: f32,
 }
 
 @vertex
 fn vs_main(
     @location(0) vertex: vec2<f32>,
-    @location(1) pos: vec3<f32>,
+    @location(1) pos_vel: vec4<f32>, // xyz = position, w = velocity magnitude
 ) -> VertexOutput {
+    let pos = pos_vel.xyz;
+    let vel_mag = pos_vel.w;
     let size = uniforms.particle_size;
     let offset_world = (uniforms.camera_right * vertex.x + uniforms.camera_up * vertex.y) * size;
     let clip_pos = uniforms.view_proj * vec4<f32>(pos + offset_world, 1.0);
-    
+
     var out: VertexOutput;
     out.position = clip_pos;
     out.uv = vertex;
+    out.velocity_mag = vel_mag;
     return out;
+}
+
+// Velocity to color mapping (blue = slow, green = medium, red = fast)
+fn velocity_color(vel_mag: f32) -> vec3<f32> {
+    // Normalize velocity to 0-1 range (assuming max ~2.0 m/s in sluice)
+    let t = clamp(vel_mag / 1.5, 0.0, 1.0);
+
+    // Blue -> Cyan -> Green -> Yellow -> Red
+    if (t < 0.25) {
+        let s = t / 0.25;
+        return mix(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 1.0, 1.0), s);
+    } else if (t < 0.5) {
+        let s = (t - 0.25) / 0.25;
+        return mix(vec3<f32>(0.0, 1.0, 1.0), vec3<f32>(0.0, 1.0, 0.0), s);
+    } else if (t < 0.75) {
+        let s = (t - 0.5) / 0.25;
+        return mix(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 1.0, 0.0), s);
+    } else {
+        let s = (t - 0.75) / 0.25;
+        return mix(vec3<f32>(1.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), s);
+    }
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let dist = length(in.uv);
     if (dist > 1.0) { discard; }
-    // Blue/Cyan water color
     let shading = 1.0 - dist * 0.4;
-    return vec4<f32>(0.0, 0.5 * shading, 1.0 * shading, 1.0); 
+
+    var color: vec3<f32>;
+    if (uniforms.show_velocity > 0.5) {
+        // Velocity-based coloring
+        color = velocity_color(in.velocity_mag) * shading;
+    } else {
+        // Default blue/cyan water color
+        color = vec3<f32>(0.0, 0.5 * shading, 1.0 * shading);
+    }
+    return vec4<f32>(color, 1.0);
 }
 "#;
 
@@ -2559,6 +2970,46 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(final_color, in.color.a);
 }
 "#;
+
+/// Create a small sphere mesh for visualization
+fn create_small_sphere(center: Vec3, radius: f32, resolution: u32) -> (Vec<Vec3>, Vec<u32>) {
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+
+    let segments = resolution;
+    let rings = resolution / 2;
+
+    for r in 0..=rings {
+        let theta = std::f32::consts::PI * r as f32 / rings as f32;
+        let y = radius * theta.cos();
+        let ring_radius = radius * theta.sin();
+
+        for s in 0..=segments {
+            let phi = 2.0 * std::f32::consts::PI * s as f32 / segments as f32;
+            let x = ring_radius * phi.cos();
+            let z = ring_radius * phi.sin();
+
+            positions.push(center + Vec3::new(x, y, z));
+        }
+    }
+
+    for r in 0..rings {
+        for s in 0..segments {
+            let cur = r * (segments + 1) + s;
+            let next = cur + segments + 1;
+
+            indices.push(cur as u32);
+            indices.push((cur + 1) as u32);
+            indices.push(next as u32);
+
+            indices.push((cur + 1) as u32);
+            indices.push((next + 1) as u32);
+            indices.push(next as u32);
+        }
+    }
+
+    (positions, indices)
+}
 
 fn main() {
     env_logger::init();

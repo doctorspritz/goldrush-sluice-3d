@@ -159,42 +159,52 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
     // Euler advection
     pos += vel * params.dt;
 
-    // SDF collision (sediment handled by DEM)
-    if (!is_sediment) {
-        let dist = sample_sdf(pos);
-        if (dist < 0.0) {
-            let normal = sdf_gradient(pos);
-            // Robust penetration clamping: don't push more than 2x cell_size per frame
-            let penetration = min(-dist + params.cell_size * 0.1, params.cell_size * 2.0);
-            pos += normal * penetration;
+    // SDF collision for ALL particles (water and sediment)
+    // Sediment also gets DEM collision for friction/inter-particle, but SDF ensures
+    // geometry penetration is handled even if DEM is disabled.
+    let dist = sample_sdf(pos);
+    if (dist < 0.0) {
+        let normal = sdf_gradient(pos);
+        // Penetration clamping: allow up to 10x cell_size to escape thin geometry
+        let penetration = min(-dist + params.cell_size * 0.1, params.cell_size * 10.0);
+        pos += normal * penetration;
 
-            let vel_into = dot(vel, normal);
-            if (vel_into < 0.0) {
-                vel -= normal * vel_into * 1.0; // Inelastic collision
-            }
+        let vel_into = dot(vel, normal);
+        if (vel_into < 0.0) {
+            vel -= normal * vel_into * 1.0; // Inelastic collision
         }
     }
 
-    // Check if particle would enter a jammed sediment cell (voxel collision)
+    // Check if particle would enter a jammed sediment cell (INTERNAL solid obstacles only)
     // Skip for sediment particles - DEM handles their collision properly
+    // Skip for boundary cells - handled by boundary clamping below
     if (!is_sediment) {
         let cell_i = i32(pos.x / params.cell_size);
         let cell_j = i32(pos.y / params.cell_size);
         let cell_k = i32(pos.z / params.cell_size);
 
-        if (is_cell_solid(cell_i, cell_j, cell_k)) {
-            // Particle is trying to enter a jammed cell - push it back
+        // Only check for INTERNAL solid cells, not boundary walls
+        // Boundary walls are handled by the clamping code below
+        let is_boundary_cell = cell_i <= 0 || cell_i >= i32(params.width) - 1 ||
+                               cell_j <= 0 || cell_j >= i32(params.height) - 1 ||
+                               cell_k <= 0 || cell_k >= i32(params.depth) - 1;
+
+        if (!is_boundary_cell && is_cell_solid(cell_i, cell_j, cell_k)) {
+            // Particle entered an INTERNAL solid cell (jammed sediment) - push to nearest fluid
             let old_pos = positions[pid].xyz;
 
             // Find the nearest non-solid cell by checking neighbors
+            // Priority: same level (dj=0) first, then upward (dj=1,2)
             var best_pos = old_pos;
             var found_valid = false;
 
-            for (var dj: i32 = 1; dj <= 2; dj++) {
+            for (var dj: i32 = 0; dj <= 2; dj++) {
                 for (var dk: i32 = -1; dk <= 1; dk++) {
                     for (var di: i32 = -1; di <= 1; di++) {
+                        if (di == 0 && dj == 0 && dk == 0) { continue; }
+
                         let test_i = cell_i + di;
-                        let test_j = cell_j + dj;  // Prefer upward
+                        let test_j = cell_j + dj;
                         let test_k = cell_k + dk;
 
                         if (!is_cell_solid(test_i, test_j, test_k)) {
@@ -222,10 +232,22 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Boundary clamping - respects open_boundaries bitmask
     // Open boundaries allow particles to exit (for transfer to adjacent grids)
+    //
+    // Grid layout (8-wide example):
+    //   Cell 0: [0.0, 0.1] - SOLID wall
+    //   Cell 1: [0.1, 0.2] - FLUID (first valid cell)
+    //   ...
+    //   Cell 6: [0.6, 0.7] - FLUID (last valid cell)
+    //   Cell 7: [0.7, 0.8] - SOLID wall
+    //
+    // Valid fluid region: cells 1 to (W-2), positions [cell_size, (W-1)*cell_size]
     let margin = params.cell_size * 0.1;
-    let max_x = f32(params.width) * params.cell_size - margin;
-    let max_y = f32(params.height) * params.cell_size - margin;
-    let max_z = f32(params.depth) * params.cell_size - margin;
+    let min_x = params.cell_size + margin;  // Just inside cell 1
+    let min_y = params.cell_size + margin;  // Just inside cell 1
+    let min_z = params.cell_size + margin;  // Just inside cell 1
+    let max_x = f32(params.width - 1u) * params.cell_size - margin;   // Just inside cell W-2
+    let max_y = f32(params.height - 1u) * params.cell_size - margin;  // Just inside cell H-2
+    let max_z = f32(params.depth - 1u) * params.cell_size - margin;   // Just inside cell D-2
 
     // Check open boundary flags
     let open_neg_x = (params.open_boundaries & 1u) != 0u;
@@ -236,14 +258,14 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
     let open_pos_z = (params.open_boundaries & 32u) != 0u;
 
     // Floor (Y min) - usually closed
-    if (pos.y < margin && !open_neg_y) {
-        pos.y = margin;
+    if (pos.y < min_y && !open_neg_y) {
+        pos.y = min_y;
         if (vel.y < 0.0) { vel.y = 0.0; }
     }
 
     // X boundaries
-    if (pos.x < margin && !open_neg_x) {
-        pos.x = margin;
+    if (pos.x < min_x && !open_neg_x) {
+        pos.x = min_x;
         if (vel.x < 0.0) { vel.x = 0.0; }
     }
     if (pos.x > max_x && !open_pos_x) {
@@ -258,8 +280,8 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     // Z boundaries
-    if (pos.z < margin && !open_neg_z) {
-        pos.z = margin;
+    if (pos.z < min_z && !open_neg_z) {
+        pos.z = min_z;
         if (vel.z < 0.0) { vel.z = 0.0; }
     }
     if (pos.z > max_z && !open_pos_z) {

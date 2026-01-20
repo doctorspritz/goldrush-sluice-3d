@@ -89,8 +89,8 @@ fn test_freefall_accuracy() -> PhysicsTest {
     let g = 9.81;
     let expected_y = y0 - 0.5 * g * t * t;
 
-    let actual_y = if !sim.particles.list.is_empty() {
-        sim.particles.list[0].position.y
+    let actual_y = if !sim.particles.list().is_empty() {
+        sim.particles.list()[0].position.y
     } else {
         return PhysicsTest::fail(
             name,
@@ -148,8 +148,8 @@ fn test_freefall_velocity() -> PhysicsTest {
     let g = 9.81;
     let expected_vy = -g * t; // Negative because falling
 
-    let actual_vy = if !sim.particles.list.is_empty() {
-        sim.particles.list[0].velocity.y
+    let actual_vy = if !sim.particles.list().is_empty() {
+        sim.particles.list()[0].velocity.y
     } else {
         return PhysicsTest::fail(
             name,
@@ -212,8 +212,8 @@ fn test_projectile_motion() -> PhysicsTest {
     let expected_x = x0 + vx0 * t;
     let expected_y = y0 + vy0 * t - 0.5 * g * t * t;
 
-    let (actual_x, actual_y) = if !sim.particles.list.is_empty() {
-        let p = &sim.particles.list[0];
+    let (actual_x, actual_y) = if !sim.particles.list().is_empty() {
+        let p = &sim.particles.list()[0];
         (p.position.x, p.position.y)
     } else {
         return PhysicsTest::fail(
@@ -274,8 +274,8 @@ fn test_energy_conservation() -> PhysicsTest {
         sim.update(dt);
     }
 
-    let (final_y, final_v) = if !sim.particles.list.is_empty() {
-        let p = &sim.particles.list[0];
+    let (final_y, final_v) = if !sim.particles.list().is_empty() {
+        let p = &sim.particles.list()[0];
         (p.position.y, p.velocity.length())
     } else {
         return PhysicsTest::fail(
@@ -344,8 +344,8 @@ fn test_solid_boundary() -> PhysicsTest {
         sim.update(dt);
     }
 
-    let final_y = if !sim.particles.list.is_empty() {
-        sim.particles.list[0].position.y
+    let final_y = if !sim.particles.list().is_empty() {
+        sim.particles.list()[0].position.y
     } else {
         return PhysicsTest::fail(
             name,
@@ -501,11 +501,11 @@ fn test_hydrostatic_equilibrium() -> PhysicsTest {
 
     // Measure average velocity - should be near zero
     let mut total_speed = 0.0;
-    for p in &sim.particles.list {
+    for p in sim.particles.list() {
         total_speed += p.velocity.length();
     }
-    let avg_speed = if !sim.particles.list.is_empty() {
-        total_speed / sim.particles.list.len() as f32
+    let avg_speed = if !sim.particles.list().is_empty() {
+        total_speed / sim.particles.list().len() as f32
     } else {
         return PhysicsTest::fail(
             name,
@@ -580,10 +580,10 @@ fn test_density_settling() -> PhysicsTest {
         sim.update(dt);
     }
 
-    // Now drop gold (19300 kg/m³) and sand (2650 kg/m³) from same height
+    // Now drop gold (density 19.3 relative to water) and sand (2.65) from same height
     let drop_y = 0.8;
-    let gold_density = 19300.0;
-    let sand_density = 2650.0;
+    let gold_density = 19.3; // Relative density (water=1.0)
+    let sand_density = 2.65; // Relative density (water=1.0)
 
     sim.spawn_sediment(Vec3::new(0.3, drop_y, 0.375), Vec3::ZERO, gold_density);
     sim.spawn_sediment(Vec3::new(0.45, drop_y, 0.375), Vec3::ZERO, sand_density);
@@ -593,13 +593,13 @@ fn test_density_settling() -> PhysicsTest {
         sim.update(dt);
     }
 
-    // Find gold and sand by density
+    // Find gold and sand by density (relative density: gold=19.3, sand=2.65)
     let mut gold_y = drop_y;
     let mut sand_y = drop_y;
-    for p in &sim.particles.list {
-        if p.density > 10000.0 {
+    for p in sim.particles.list() {
+        if p.density > 10.0 {
             gold_y = p.position.y;
-        } else if p.density > 2000.0 && p.density < 5000.0 {
+        } else if p.density > 2.0 && p.density < 5.0 {
             sand_y = p.position.y;
         }
     }
@@ -658,7 +658,7 @@ fn test_momentum_conservation() -> PhysicsTest {
     }
 
     let mut final_momentum = Vec3::ZERO;
-    for p in &sim.particles.list {
+    for p in sim.particles.list() {
         final_momentum += m * p.velocity;
     }
 

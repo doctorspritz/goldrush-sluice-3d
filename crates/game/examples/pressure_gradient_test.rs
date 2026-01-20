@@ -85,7 +85,7 @@ fn main() {
         );
         let vel = Vec3::new(0.0, 1.0, 0.0); // UPWARD velocity
         sim.spawn_particle_with_velocity(pos, vel);
-        test_particles.push(sim.particles.list.len() - 1);
+        test_particles.push(sim.particles.list().len() - 1);
     }
 
     // Also spawn some trying to go DOWN into the riffle (should be blocked)
@@ -99,7 +99,7 @@ fn main() {
         );
         let vel = Vec3::new(0.0, -1.0, 0.0); // DOWNWARD velocity (into riffle)
         sim.spawn_particle_with_velocity(pos, vel);
-        downward_particles.push(sim.particles.list.len() - 1);
+        downward_particles.push(sim.particles.list().len() - 1);
     }
 
     // Also spawn particles ABOVE the riffle to verify they're not affected
@@ -114,7 +114,7 @@ fn main() {
             );
             let vel = Vec3::new(1.0, 0.0, 0.0); // Horizontal velocity
             sim.spawn_particle_with_velocity(pos, vel);
-            above_particles.push(sim.particles.list.len() - 1);
+            above_particles.push(sim.particles.list().len() - 1);
         }
     }
 
@@ -177,15 +177,15 @@ fn main() {
     );
 
     // Prepare GPU data
-    let mut positions: Vec<Vec3> = sim.particles.list.iter().map(|p| p.position).collect();
-    let mut velocities: Vec<Vec3> = sim.particles.list.iter().map(|p| p.velocity).collect();
+    let mut positions: Vec<Vec3> = sim.particles.list().iter().map(|p| p.position).collect();
+    let mut velocities: Vec<Vec3> = sim.particles.list().iter().map(|p| p.velocity).collect();
     let mut c_matrices: Vec<Mat3> = sim
         .particles
-        .list
+        .list()
         .iter()
         .map(|p| p.affine_velocity)
         .collect();
-    let densities: Vec<f32> = sim.particles.list.iter().map(|p| p.density).collect();
+    let densities: Vec<f32> = sim.particles.list().iter().map(|p| p.density).collect();
     let bed_height: Vec<f32> = vec![0.0; GRID_WIDTH * GRID_DEPTH];
 
     // Build cell types
@@ -234,7 +234,7 @@ fn main() {
     println!("  Expected: 2 (SOLID)");
 
     // Mark fluid cells
-    for p in &sim.particles.list {
+    for p in sim.particles.list() {
         let i = (p.position.x / CELL_SIZE).floor() as i32;
         let j = (p.position.y / CELL_SIZE).floor() as i32;
         let k = (p.position.z / CELL_SIZE).floor() as i32;
@@ -255,7 +255,7 @@ fn main() {
     // Check particle positions
     println!("\nParticle positions:");
     for (idx, &p_idx) in test_particles.iter().enumerate() {
-        let p = &sim.particles.list[p_idx];
+        let p = &sim.particles.list()[p_idx];
         let cell_i = (p.position.x / CELL_SIZE).floor() as usize;
         let cell_j = (p.position.y / CELL_SIZE).floor() as usize;
         let cell_k = (p.position.z / CELL_SIZE).floor() as usize;

@@ -4,12 +4,14 @@
 //! G2P: Gather grid velocity to particles with APIC affine velocity reconstruction.
 
 use glam::{Mat3, Vec3};
+use serde::{Deserialize, Serialize};
 
 use crate::grid::Grid3D;
 use crate::kernels::{apic_d_inverse, quadratic_bspline_1d};
 use crate::particle::Particles3D;
 
-/// Pre-allocated buffers for P2G transfer (avoids allocation each frame).
+/// Particle-Grid transfer functions for 3D FLIP/APIC.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransferBuffers {
     pub u_sum: Vec<f32>,
     pub u_weight: Vec<f32>,
@@ -61,7 +63,7 @@ pub fn particles_to_grid(
     let cell_size = grid.cell_size;
     let inv_cell_size = 1.0 / cell_size;
 
-    for particle in &particles.list {
+    for particle in particles.list() {
         let pos = particle.position;
         let vel = particle.velocity;
         let c_mat = particle.affine_velocity;
@@ -254,24 +256,24 @@ pub fn particles_to_grid(
     }
 
     // Normalize: velocity = momentum / mass
-    for i in 0..grid.u.len() {
-        grid.u[i] = if buffers.u_weight[i] > 1e-10 {
+    for i in 0..grid.u().len() {
+        grid.u_mut()[i] = if buffers.u_weight[i] > 1e-10 {
             buffers.u_sum[i] / buffers.u_weight[i]
         } else {
             0.0
         };
     }
 
-    for i in 0..grid.v.len() {
-        grid.v[i] = if buffers.v_weight[i] > 1e-10 {
+    for i in 0..grid.v().len() {
+        grid.v_mut()[i] = if buffers.v_weight[i] > 1e-10 {
             buffers.v_sum[i] / buffers.v_weight[i]
         } else {
             0.0
         };
     }
 
-    for i in 0..grid.w.len() {
-        grid.w[i] = if buffers.w_weight[i] > 1e-10 {
+    for i in 0..grid.w().len() {
+        grid.w_mut()[i] = if buffers.w_weight[i] > 1e-10 {
             buffers.w_sum[i] / buffers.w_weight[i]
         } else {
             0.0
@@ -292,7 +294,7 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
     let inv_cell_size = 1.0 / cell_size;
     let d_inv = apic_d_inverse(cell_size);
 
-    for particle in &mut particles.list {
+    for particle in particles.list_mut() {
         let pos = particle.position;
         let old_vel = particle.velocity;
 
@@ -363,8 +365,8 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                     }
 
                     let idx = grid.u_index(ni as usize, nj as usize, nk as usize);
-                    let u_val = grid.u[idx];
-                    let u_old_val = grid.u_old[idx];
+                    let u_val = grid.u()[idx];
+                    let u_old_val = grid.u_old()[idx];
 
                     u_sum += u_val * w;
                     u_old_sum += u_old_val * w;
@@ -445,8 +447,8 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                     }
 
                     let idx = grid.v_index(ni as usize, nj as usize, nk as usize);
-                    let v_val = grid.v[idx];
-                    let v_old_val = grid.v_old[idx];
+                    let v_val = grid.v()[idx];
+                    let v_old_val = grid.v_old()[idx];
 
                     v_sum += v_val * w;
                     v_old_sum += v_old_val * w;
@@ -527,8 +529,8 @@ pub fn grid_to_particles(grid: &Grid3D, particles: &mut Particles3D, flip_ratio:
                     }
 
                     let idx = grid.w_index(ni as usize, nj as usize, nk as usize);
-                    let w_val = grid.w[idx];
-                    let w_old_val = grid.w_old[idx];
+                    let w_val = grid.w()[idx];
+                    let w_old_val = grid.w_old()[idx];
 
                     w_sum += w_val * w;
                     w_old_sum += w_old_val * w;
@@ -586,7 +588,7 @@ mod tests {
         let mut buffers = TransferBuffers::new(&grid);
 
         // Place particle exactly at U node (1, 0.5, 0.5)
-        particles.list.push(Particle3D::new(
+        particles.list_mut().push(Particle3D::new(
             Vec3::new(1.0, 0.5, 0.5),
             Vec3::new(1.0, 0.0, 0.0),
         ));
@@ -596,9 +598,9 @@ mod tests {
         // U at (1,0,0) should have the highest weight contribution
         let u_idx = grid.u_index(1, 0, 0);
         assert!(
-            grid.u[u_idx].abs() > 0.5,
+            grid.u()[u_idx].abs() > 0.5,
             "Expected significant U velocity at node, got {}",
-            grid.u[u_idx]
+            grid.u()[u_idx]
         );
     }
 
@@ -608,21 +610,21 @@ mod tests {
         let mut particles = Particles3D::new();
 
         // Set uniform grid velocity
-        grid.u.fill(1.0);
-        grid.v.fill(2.0);
-        grid.w.fill(3.0);
-        grid.u_old.fill(0.0);
-        grid.v_old.fill(0.0);
-        grid.w_old.fill(0.0);
+        grid.u_mut().fill(1.0);
+        grid.v_mut().fill(2.0);
+        grid.w_mut().fill(3.0);
+        grid.u_old_mut().fill(0.0);
+        grid.v_old_mut().fill(0.0);
+        grid.w_old_mut().fill(0.0);
 
         // Place particle in center
         particles
-            .list
+            .list_mut()
             .push(Particle3D::new(Vec3::new(2.0, 2.0, 2.0), Vec3::ZERO));
 
         grid_to_particles(&grid, &mut particles, 0.97);
 
-        let p = &particles.list[0];
+        let p = &particles.list()[0];
         // Should pick up grid velocity (FLIP delta = new - old = 1,2,3)
         assert!(p.velocity.x > 0.5, "Expected positive X velocity");
         assert!(p.velocity.y > 1.0, "Expected positive Y velocity");

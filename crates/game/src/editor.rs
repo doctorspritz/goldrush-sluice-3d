@@ -602,6 +602,24 @@ pub enum EditorMode {
     PlaceShakerDeck,
 }
 
+/// A test box piece for isolated physics tests
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TestBoxPiece {
+    pub id: u32,
+    #[serde(with = "vec3_serde")]
+    pub position: Vec3,
+    pub width: f32,
+    pub depth: f32,
+    pub wall_height: f32,
+}
+
+/// A test floor piece for isolated physics tests
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TestFloorPiece {
+    pub id: u32,
+    pub y: f32,
+}
+
 /// Editor layout containing all pieces
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EditorLayout {
@@ -610,12 +628,24 @@ pub struct EditorLayout {
     pub emitters: Vec<EmitterPiece>,
     #[serde(default)]
     pub shaker_decks: Vec<ShakerDeckPiece>,
-    next_id: u32,
+    #[serde(default)]
+    pub test_boxes: Vec<TestBoxPiece>,
+    #[serde(default)]
+    pub test_floors: Vec<TestFloorPiece>,
+    pub next_id: u32, // Made pub for external piece creation
 }
 
 impl EditorLayout {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            gutters: Vec::new(),
+            sluices: Vec::new(),
+            emitters: Vec::new(),
+            shaker_decks: Vec::new(),
+            test_boxes: Vec::new(),
+            test_floors: Vec::new(),
+            next_id: 0,
+        }
     }
 
     /// Create a pre-connected layout: Shaker Deck → Funnel Gutter → Sluice
@@ -692,7 +722,9 @@ impl EditorLayout {
         layout.gutters.push(gutter);
         layout.sluices.push(sluice);
         layout.emitters.push(emitter);
-
+        layout.test_boxes = Vec::new();
+        layout.test_floors = Vec::new();
+ 
         layout
     }
 
@@ -988,8 +1020,8 @@ mod tests {
         layout.gutters[0].angle_deg = 15.0;
         layout.gutters[0].rotation = Rotation::R90;
 
-        let json = serde_json::to_string(&layout).unwrap();
-        let loaded: EditorLayout = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&layout).expect("Failed to serialize editor layout");
+        let loaded: EditorLayout = serde_json::from_str(&json).expect("Failed to deserialize editor layout");
 
         assert_eq!(loaded.gutters.len(), 1);
         assert_eq!(loaded.gutters[0].angle_deg, 15.0);

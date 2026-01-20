@@ -1,9 +1,10 @@
 //! 3D MAC (Marker-and-Cell) staggered grid for incompressible fluid simulation.
 
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 
 /// Cell classification for pressure solve.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum CellType {
     /// Solid obstacle (no flow)
     Solid,
@@ -22,6 +23,7 @@ pub enum CellType {
 /// - w (Z-velocity) on XY faces at z = k * dx
 ///
 /// Pressure and cell type are stored at cell centers.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Grid3D {
     /// Number of cells in X direction
     pub width: usize,
@@ -34,45 +36,46 @@ pub struct Grid3D {
 
     /// U velocity (X-component) on left YZ faces
     /// Size: (width+1) * height * depth
-    pub u: Vec<f32>,
+    u: Vec<f32>,
 
     /// V velocity (Y-component) on bottom XZ faces
     /// Size: width * (height+1) * depth
-    pub v: Vec<f32>,
+    v: Vec<f32>,
 
     /// W velocity (Z-component) on back XY faces
     /// Size: width * height * (depth+1)
-    pub w: Vec<f32>,
+    w: Vec<f32>,
 
     /// Old U velocity (for FLIP delta)
-    pub u_old: Vec<f32>,
+    u_old: Vec<f32>,
 
     /// Old V velocity (for FLIP delta)
-    pub v_old: Vec<f32>,
+    v_old: Vec<f32>,
 
     /// Old W velocity (for FLIP delta)
-    pub w_old: Vec<f32>,
+    w_old: Vec<f32>,
 
     /// Pressure at cell centers
-    pub pressure: Vec<f32>,
+    pressure: Vec<f32>,
 
     /// Divergence at cell centers
-    pub divergence: Vec<f32>,
+    divergence: Vec<f32>,
 
     /// Cell classification (Solid/Fluid/Air)
-    pub cell_type: Vec<CellType>,
+    cell_type: Vec<CellType>,
 
     /// Permanent solid terrain
-    pub solid: Vec<bool>,
+    solid: Vec<bool>,
 
     /// Signed distance field for smooth collision
     /// Positive = outside solid, Negative = inside solid
-    pub sdf: Vec<f32>,
+    sdf: Vec<f32>,
 }
 
 impl Grid3D {
     /// Create a new grid with the given dimensions.
     pub fn new(width: usize, height: usize, depth: usize, cell_size: f32) -> Self {
+        assert!(cell_size > 0.0, "cell_size must be positive, got {}", cell_size);
         let cell_count = width * height * depth;
         let u_count = (width + 1) * height * depth;
         let v_count = width * (height + 1) * depth;
@@ -110,6 +113,118 @@ impl Grid3D {
     /// Total world size in Z direction.
     pub fn world_depth(&self) -> f32 {
         self.depth as f32 * self.cell_size
+    }
+
+    // ========== Field accessors ==========
+
+    /// Get immutable reference to U velocity field.
+    pub fn u(&self) -> &[f32] {
+        &self.u
+    }
+
+    /// Get mutable reference to U velocity field.
+    pub fn u_mut(&mut self) -> &mut [f32] {
+        &mut self.u
+    }
+
+    /// Get immutable reference to V velocity field.
+    pub fn v(&self) -> &[f32] {
+        &self.v
+    }
+
+    /// Get mutable reference to V velocity field.
+    pub fn v_mut(&mut self) -> &mut [f32] {
+        &mut self.v
+    }
+
+    /// Get immutable reference to W velocity field.
+    pub fn w(&self) -> &[f32] {
+        &self.w
+    }
+
+    /// Get mutable reference to W velocity field.
+    pub fn w_mut(&mut self) -> &mut [f32] {
+        &mut self.w
+    }
+
+    /// Get immutable reference to old U velocity field.
+    pub fn u_old(&self) -> &[f32] {
+        &self.u_old
+    }
+
+    /// Get mutable reference to old U velocity field.
+    pub fn u_old_mut(&mut self) -> &mut [f32] {
+        &mut self.u_old
+    }
+
+    /// Get immutable reference to old V velocity field.
+    pub fn v_old(&self) -> &[f32] {
+        &self.v_old
+    }
+
+    /// Get mutable reference to old V velocity field.
+    pub fn v_old_mut(&mut self) -> &mut [f32] {
+        &mut self.v_old
+    }
+
+    /// Get immutable reference to old W velocity field.
+    pub fn w_old(&self) -> &[f32] {
+        &self.w_old
+    }
+
+    /// Get mutable reference to old W velocity field.
+    pub fn w_old_mut(&mut self) -> &mut [f32] {
+        &mut self.w_old
+    }
+
+    /// Get immutable reference to pressure field.
+    pub fn pressure(&self) -> &[f32] {
+        &self.pressure
+    }
+
+    /// Get mutable reference to pressure field.
+    pub fn pressure_mut(&mut self) -> &mut [f32] {
+        &mut self.pressure
+    }
+
+    /// Get immutable reference to divergence field.
+    pub fn divergence(&self) -> &[f32] {
+        &self.divergence
+    }
+
+    /// Get mutable reference to divergence field.
+    pub fn divergence_mut(&mut self) -> &mut [f32] {
+        &mut self.divergence
+    }
+
+    /// Get immutable reference to cell type field.
+    pub fn cell_type(&self) -> &[CellType] {
+        &self.cell_type
+    }
+
+    /// Get mutable reference to cell type field.
+    pub fn cell_type_mut(&mut self) -> &mut [CellType] {
+        &mut self.cell_type
+    }
+
+    /// Get immutable reference to solid field.
+    pub fn solid(&self) -> &[bool] {
+        &self.solid
+    }
+
+    /// Get mutable reference to solid field.
+    pub fn solid_mut(&mut self) -> &mut [bool] {
+        &mut self.solid
+    }
+
+    /// Get immutable reference to SDF field.
+    pub fn sdf(&self) -> &[f32] {
+        &self.sdf
+    }
+
+    /// Get mutable reference to SDF field.
+    pub fn sdf_mut(&mut self) -> &mut [f32] {
+        &mut self.sdf
     }
 
     // ========== Index functions ==========
@@ -432,7 +547,7 @@ impl Grid3D {
         }
     }
 
-    /// Single sweep pass in given direction.
+    /// Single sweep pass in given direction using Eikonal solver.
     fn sweep_sdf(&mut self, di: i32, dj: i32, dk: i32, dx: f32) {
         let w = self.width as i32;
         let h = self.height as i32;
@@ -459,24 +574,121 @@ impl Grid3D {
                     let idx = self.cell_index(i as usize, j as usize, k as usize);
                     let val = self.sdf[idx];
 
-                    // Neighbors to check
-                    let neighbors = [(i - di, j, k), (i, j - dj, k), (i, j, k - dk)];
+                    // Get minimum neighbor distance for each axis (using both directions)
+                    // This implements proper upwind scheme for Eikonal solver
+                    let phi_x_minus = if i > 0 {
+                        self.sdf[self.cell_index((i - 1) as usize, j as usize, k as usize)]
+                    } else {
+                        f32::INFINITY
+                    };
+                    let phi_x_plus = if i < w - 1 {
+                        self.sdf[self.cell_index((i + 1) as usize, j as usize, k as usize)]
+                    } else {
+                        f32::INFINITY
+                    };
+                    let phi_x = phi_x_minus.min(phi_x_plus);
 
-                    for &(ni, nj, nk) in &neighbors {
-                        if ni >= 0 && ni < w && nj >= 0 && nj < h && nk >= 0 && nk < d {
-                            let nidx = self.cell_index(ni as usize, nj as usize, nk as usize);
-                            let nval = self.sdf[nidx];
+                    let phi_y_minus = if j > 0 {
+                        self.sdf[self.cell_index(i as usize, (j - 1) as usize, k as usize)]
+                    } else {
+                        f32::INFINITY
+                    };
+                    let phi_y_plus = if j < h - 1 {
+                        self.sdf[self.cell_index(i as usize, (j + 1) as usize, k as usize)]
+                    } else {
+                        f32::INFINITY
+                    };
+                    let phi_y = phi_y_minus.min(phi_y_plus);
 
-                            if val >= 0.0 && nval >= 0.0 {
-                                self.sdf[idx] = self.sdf[idx].min(nval + dx);
-                            } else if val < 0.0 && nval < 0.0 {
-                                self.sdf[idx] = self.sdf[idx].max(nval - dx);
-                            }
+                    let phi_z_minus = if k > 0 {
+                        self.sdf[self.cell_index(i as usize, j as usize, (k - 1) as usize)]
+                    } else {
+                        f32::INFINITY
+                    };
+                    let phi_z_plus = if k < d - 1 {
+                        self.sdf[self.cell_index(i as usize, j as usize, (k + 1) as usize)]
+                    } else {
+                        f32::INFINITY
+                    };
+                    let phi_z = phi_z_minus.min(phi_z_plus);
+
+                    if val >= 0.0 {
+                        // Outside: use Eikonal solver for positive distances
+                        if phi_x < f32::INFINITY || phi_y < f32::INFINITY || phi_z < f32::INFINITY {
+                            let new_val = self.solve_eikonal(phi_x, phi_y, phi_z, dx);
+                            self.sdf[idx] = self.sdf[idx].min(new_val);
+                        }
+                    } else if val < 0.0 {
+                        // Inside: propagate negative distances
+                        if phi_x > -f32::INFINITY || phi_y > -f32::INFINITY || phi_z > -f32::INFINITY
+                        {
+                            let new_val = -self.solve_eikonal(-phi_x, -phi_y, -phi_z, dx);
+                            self.sdf[idx] = self.sdf[idx].max(new_val);
                         }
                     }
                 }
             }
         }
+    }
+
+    /// Solve the Eikonal equation |∇φ| = 1 using upwind finite differences.
+    ///
+    /// Given minimum neighbor distances in each axis (phi_x, phi_y, phi_z),
+    /// solves for the new distance that satisfies the Eikonal equation.
+    ///
+    /// Returns the solution to:
+    /// (φ - phi_x)² + (φ - phi_y)² + (φ - phi_z)² = dx²
+    fn solve_eikonal(&self, phi_x: f32, phi_y: f32, phi_z: f32, dx: f32) -> f32 {
+        // Sort the three values: phi_a <= phi_b <= phi_c
+        let (phi_a, phi_b, phi_c) = Self::sort3(phi_x, phi_y, phi_z);
+
+        // Try 1D solution: φ = phi_a + dx
+        let mut new_val = phi_a + dx;
+
+        // Try 2D solution if 1D is too large
+        if new_val > phi_b {
+            // Solve (φ - phi_a)² + (φ - phi_b)² = dx²
+            let sum = phi_a + phi_b;
+            let diff_sq = 2.0 * dx * dx - (phi_a - phi_b).powi(2);
+            if diff_sq >= 0.0 {
+                new_val = (sum + diff_sq.sqrt()) / 2.0;
+            }
+        }
+
+        // Try 3D solution if 2D is too large
+        if new_val > phi_c {
+            // Solve (φ - phi_a)² + (φ - phi_b)² + (φ - phi_c)² = dx²
+            let sum = phi_a + phi_b + phi_c;
+            let sum_sq = phi_a * phi_a + phi_b * phi_b + phi_c * phi_c;
+            let disc = sum * sum - 3.0 * (sum_sq - dx * dx);
+            if disc >= 0.0 {
+                new_val = (sum + disc.sqrt()) / 3.0;
+            }
+        }
+
+        new_val
+    }
+
+    /// Sort three values in ascending order.
+    fn sort3(a: f32, b: f32, c: f32) -> (f32, f32, f32) {
+        let (min, mid, max) = if a <= b {
+            if b <= c {
+                (a, b, c)
+            } else if a <= c {
+                (a, c, b)
+            } else {
+                (c, a, b)
+            }
+        } else {
+            if a <= c {
+                (b, a, c)
+            } else if b <= c {
+                (b, c, a)
+            } else {
+                (c, b, a)
+            }
+        };
+        (min, mid, max)
     }
 
     /// Sample SDF at world position using trilinear interpolation.
@@ -642,5 +854,132 @@ mod tests {
         grid.set_solid(1, 2, 3);
         assert!(grid.is_solid(1, 2, 3));
         assert!(!grid.is_solid(0, 0, 0));
+    }
+
+    #[test]
+    #[should_panic(expected = "cell_size must be positive, got 0")]
+    fn test_zero_cell_size_panics() {
+        let _ = Grid3D::new(4, 4, 4, 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "cell_size must be positive, got -0.1")]
+    fn test_negative_cell_size_panics() {
+        let _ = Grid3D::new(4, 4, 4, -0.1);
+    }
+
+    #[test]
+    fn test_sdf_euclidean_distances() {
+        // Create a grid with a box obstacle
+        let mut grid = Grid3D::new(20, 20, 20, 1.0);
+
+        // Set a solid box in the center
+        // Box from (8,8,8) to (11,11,11) inclusive (4x4x4 box)
+        for i in 8..=11 {
+            for j in 8..=11 {
+                for k in 8..=11 {
+                    grid.set_solid(i, j, k);
+                }
+            }
+        }
+
+        // Compute the SDF using the fast sweeping algorithm
+        grid.compute_sdf();
+
+        // Test key property: Euclidean distance should be shorter diagonally than Manhattan
+        //
+        // Compare two paths from solid box:
+        // Path 1: (5,9,9) - goes (3,0,0) from edge at (8,9,9) - Manhattan dist = 3
+        // Path 2: (6,7,7) - goes diagonally from corner - should be less if Euclidean
+
+        let straight_path = grid.sdf[grid.cell_index(5, 9, 9)];
+        let diagonal_path = grid.sdf[grid.cell_index(6, 7, 7)];
+
+        println!("SDF values:");
+        println!("  (5,9,9) straight 3 cells in X: {:.3}", straight_path);
+        println!("  (6,7,7) diagonal path: {:.3}", diagonal_path);
+
+        // Expected for (6,7,7):
+        // Distance from (6,7,7) to nearest box corner (8,8,8): sqrt(4+1+1) = sqrt(6) ≈ 2.449
+        // With surface offset ≈ 2.949
+        // Expected for (5,9,9):
+        // Distance in X only: 3 cells from (8,9,9), with surface ≈ 3.5
+
+        let euclidean_dist_to_corner = ((8.0_f32 - 6.0).powi(2) + (8.0_f32 - 7.0).powi(2) + (8.0_f32 - 7.0).powi(2)).sqrt();
+        println!("  Euclidean distance (6,7,7) to (8,8,8): {:.3}", euclidean_dist_to_corner);
+
+        // The key test: verify diagonal is close to true Euclidean distance
+        // Allow reasonable tolerance for discretization effects
+        assert!(
+            (diagonal_path - 2.0).abs() < 1.0,
+            "Diagonal path should be approximately 2-3 units, got {:.3}",
+            diagonal_path
+        );
+
+        // Verify it's using Euclidean not Manhattan by checking
+        // that diagonal distance is significantly less than sum of offsets would suggest
+        // Manhattan from (6,7,7) would treat it as 2+1+1 = 4 steps
+        let manhattan_estimate = 4.5;
+        assert!(
+            diagonal_path < manhattan_estimate - 0.5,
+            "Diagonal should be less than Manhattan estimate ({:.3}), got {:.3}",
+            manhattan_estimate,
+            diagonal_path
+        );
+    }
+
+    #[test]
+    fn test_sort3() {
+        assert_eq!(Grid3D::sort3(1.0, 2.0, 3.0), (1.0, 2.0, 3.0));
+        assert_eq!(Grid3D::sort3(3.0, 2.0, 1.0), (1.0, 2.0, 3.0));
+        assert_eq!(Grid3D::sort3(2.0, 1.0, 3.0), (1.0, 2.0, 3.0));
+        assert_eq!(Grid3D::sort3(2.0, 3.0, 1.0), (1.0, 2.0, 3.0));
+        assert_eq!(Grid3D::sort3(1.0, 3.0, 2.0), (1.0, 2.0, 3.0));
+        assert_eq!(Grid3D::sort3(3.0, 1.0, 2.0), (1.0, 2.0, 3.0));
+        assert_eq!(Grid3D::sort3(1.0, 1.0, 1.0), (1.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn test_solve_eikonal() {
+        let grid = Grid3D::new(4, 4, 4, 1.0);
+        let dx = 1.0;
+
+        // Test 1D solution: one neighbor at 0, others at infinity
+        // φ = phi_a + dx = 0 + 1 = 1
+        let result = grid.solve_eikonal(0.0, f32::INFINITY, f32::INFINITY, dx);
+        assert!((result - 1.0).abs() < 0.001, "1D: expected 1.0, got {}", result);
+
+        // Test 2D solution: two neighbors at 0
+        // Solve (φ-0)² + (φ-0)² = dx²  =>  2φ² = dx²  =>  φ = dx/sqrt(2) ≈ 0.707
+        let result = grid.solve_eikonal(0.0, 0.0, f32::INFINITY, dx);
+        let expected_2d = dx / 2.0_f32.sqrt();
+        assert!(
+            (result - expected_2d).abs() < 0.001,
+            "2D: expected {:.3}, got {:.3}",
+            expected_2d,
+            result
+        );
+
+        // Test 3D solution: three neighbors at 0
+        // Solve (φ-0)² + (φ-0)² + (φ-0)² = dx²  =>  3φ² = dx²  =>  φ = dx/sqrt(3) ≈ 0.577
+        let result = grid.solve_eikonal(0.0, 0.0, 0.0, dx);
+        let expected_3d = dx / 3.0_f32.sqrt();
+        assert!(
+            (result - expected_3d).abs() < 0.001,
+            "3D: expected {:.3}, got {:.3}",
+            expected_3d,
+            result
+        );
+
+        // Test with non-zero neighbors: phi_a=1, phi_b=1, phi_c=inf
+        // 2D solution: (φ-1)² + (φ-1)² = 1²  =>  2(φ-1)² = 1  =>  φ-1 = 1/sqrt(2)  =>  φ = 1 + 1/sqrt(2) ≈ 1.707
+        let result = grid.solve_eikonal(1.0, 1.0, f32::INFINITY, dx);
+        let expected = 1.0 + dx / 2.0_f32.sqrt();
+        assert!(
+            (result - expected).abs() < 0.001,
+            "2D with offset: expected {:.3}, got {:.3}",
+            expected,
+            result
+        );
     }
 }

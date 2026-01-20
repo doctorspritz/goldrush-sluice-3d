@@ -501,8 +501,8 @@ impl SluiceGeometryBuilder {
             return;
         }
 
-        let vb = self.vertex_buffer.as_ref().unwrap();
-        let ib = self.index_buffer.as_ref().unwrap();
+        let vb = self.vertex_buffer.as_ref().expect("Vertex buffer should exist after upload check");
+        let ib = self.index_buffer.as_ref().expect("Index buffer should exist after upload check");
 
         let vertex_bytes = bytemuck::cast_slice(&self.vertices);
         let index_bytes = bytemuck::cast_slice(&self.indices);

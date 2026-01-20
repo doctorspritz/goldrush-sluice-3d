@@ -89,7 +89,7 @@ fn spawn_water_block(sim: &mut FlipSimulation3D, count: usize, inlet_vel: Vec3) 
 
                         // Create water particle (density = 1.0)
                         let p = Particle3D::new(Vec3::new(x, y, z), inlet_vel);
-                        sim.particles.list.push(p);
+                        sim.particles.list_mut().push(p);
                         spawned += 1;
                     }
                 }
@@ -130,7 +130,7 @@ fn main() {
 
     let initial_count = sim.particle_count();
     let initial_avg_x: f32 =
-        sim.particles.list.iter().map(|p| p.position.x).sum::<f32>() / sim.particle_count() as f32;
+        sim.particles.list().iter().map(|p| p.position.x).sum::<f32>() / sim.particle_count() as f32;
 
     println!("Initial particles: {}", initial_count);
     println!("Initial avg X: {:.3}", initial_avg_x);
@@ -193,13 +193,13 @@ fn main() {
     for frame in 0..TEST_FRAMES {
         for _ in 0..SUBSTEPS {
             // Sync particle data from CPU sim to GPU format
-            let particle_count = sim.particles.list.len();
+            let particle_count = sim.particles.list().len();
             positions.clear();
             velocities.clear();
             c_matrices.clear();
             densities.clear();
 
-            for p in &sim.particles.list {
+            for p in sim.particles.list() {
                 positions.push(p.position);
                 velocities.push(p.velocity);
                 c_matrices.push(p.affine_velocity);
@@ -225,7 +225,7 @@ fn main() {
             }
 
             // Mark fluid cells based on particle presence
-            for p in &sim.particles.list {
+            for p in sim.particles.list() {
                 let i = (p.position.x / CELL_SIZE).floor() as i32;
                 let j = (p.position.y / CELL_SIZE).floor() as i32;
                 let k = (p.position.z / CELL_SIZE).floor() as i32;
@@ -255,7 +255,7 @@ fn main() {
             );
 
             // Copy velocities back to particles and advect
-            for (idx, p) in sim.particles.list.iter_mut().enumerate() {
+            for (idx, p) in sim.particles.list_mut().iter_mut().enumerate() {
                 if idx < velocities.len() {
                     p.velocity = velocities[idx];
                     p.affine_velocity = c_matrices[idx];
@@ -304,7 +304,7 @@ fn main() {
             }
 
             // Remove out-of-bounds particles
-            sim.particles.list.retain(|p| {
+            sim.particles.list_mut().retain(|p| {
                 p.position.x > 0.0
                     && p.position.x < (w as f32 - 1.0) * CELL_SIZE
                     && p.position.y > 0.0
@@ -318,22 +318,22 @@ fn main() {
 
         // Print progress every 50 frames
         if (frame + 1) % 50 == 0 {
-            let avg_vx: f32 = if sim.particles.list.is_empty() {
+            let avg_vx: f32 = if sim.particles.list().is_empty() {
                 0.0
             } else {
-                sim.particles.list.iter().map(|p| p.velocity.x).sum::<f32>()
-                    / sim.particles.list.len() as f32
+                sim.particles.list().iter().map(|p| p.velocity.x).sum::<f32>()
+                    / sim.particles.list().len() as f32
             };
-            let avg_x: f32 = if sim.particles.list.is_empty() {
+            let avg_x: f32 = if sim.particles.list().is_empty() {
                 0.0
             } else {
-                sim.particles.list.iter().map(|p| p.position.x).sum::<f32>()
-                    / sim.particles.list.len() as f32
+                sim.particles.list().iter().map(|p| p.position.x).sum::<f32>()
+                    / sim.particles.list().len() as f32
             };
             println!(
                 "Frame {:3}: particles={:5}, avgVx={:6.3}, avgX={:6.3}",
                 frame + 1,
-                sim.particles.list.len(),
+                sim.particles.list().len(),
                 avg_vx,
                 avg_x
             );
@@ -342,17 +342,17 @@ fn main() {
 
     // Final metrics
     let final_count = sim.particle_count();
-    let final_avg_vx: f32 = if sim.particles.list.is_empty() {
+    let final_avg_vx: f32 = if sim.particles.list().is_empty() {
         0.0
     } else {
-        sim.particles.list.iter().map(|p| p.velocity.x).sum::<f32>()
-            / sim.particles.list.len() as f32
+        sim.particles.list().iter().map(|p| p.velocity.x).sum::<f32>()
+            / sim.particles.list().len() as f32
     };
-    let final_avg_x: f32 = if sim.particles.list.is_empty() {
+    let final_avg_x: f32 = if sim.particles.list().is_empty() {
         0.0
     } else {
-        sim.particles.list.iter().map(|p| p.position.x).sum::<f32>()
-            / sim.particles.list.len() as f32
+        sim.particles.list().iter().map(|p| p.position.x).sum::<f32>()
+            / sim.particles.list().len() as f32
     };
     let x_progress = final_avg_x - initial_avg_x;
     let channel_length = GRID_WIDTH as f32 * CELL_SIZE;

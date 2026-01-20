@@ -430,7 +430,7 @@ impl App {
             }
         }
 
-        let sdf = Some(self.cpu_sim.grid.sdf.clone());
+        let sdf = Some(self.cpu_sim.grid.sdf().to_vec());
         let dt = 1.0 / 60.0;
 
         let gpu = self.gpu.as_ref().unwrap();

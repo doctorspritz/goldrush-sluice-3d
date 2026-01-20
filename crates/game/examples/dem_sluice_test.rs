@@ -15,9 +15,10 @@ use std::time::Instant;
 const CELL_SIZE: f32 = 0.025; // 2.5cm cells - matches washplant_editor
 const PRESSURE_ITERS: usize = 60;
 
-// Material densities (for sediment tests)
-const SAND_DENSITY: f32 = 2650.0;
-const GOLD_DENSITY: f32 = 19300.0;
+// Material densities - relative to water (water=1.0)
+// Used for FLIP Particle3D.density
+const SAND_DENSITY: f32 = 2.65;
+const GOLD_DENSITY: f32 = 19.3;
 
 // =============================================================================
 // Geometry marking - COPIED EXACTLY from washplant_editor.rs
@@ -285,8 +286,8 @@ fn test_particle_freefall() -> TestResult {
         sim.update(dt);
     }
 
-    let final_y = if !sim.particles.list.is_empty() {
-        sim.particles.list[0].position.y
+    let final_y = if !sim.particles.list().is_empty() {
+        sim.particles.list()[0].position.y
     } else {
         0.0
     };
@@ -341,13 +342,13 @@ fn test_density_settling() -> TestResult {
         sim.update(dt);
     }
 
-    // Find particles by density (gold is much denser)
+    // Find particles by density (relative density: gold=19.3, sand=2.65)
     let mut gold_y = drop_y;
     let mut sand_y = drop_y;
-    for p in &sim.particles.list {
-        if p.density > 10000.0 {
+    for p in sim.particles.list() {
+        if p.density > 10.0 {
             gold_y = p.position.y;
-        } else if p.density > 2000.0 {
+        } else if p.density > 2.0 {
             sand_y = p.position.y;
         }
     }
@@ -433,7 +434,7 @@ fn test_sluice_floor_collision() -> TestResult {
 
     // Check no particle is inside solid
     let mut penetrations = 0;
-    for p in &sim.particles.list {
+    for p in sim.particles.list() {
         let (i, j, k) = sim.grid.world_to_cell(p.position);
         if i >= 0
             && j >= 0
@@ -522,7 +523,7 @@ fn test_gutter_flow() -> TestResult {
 
     // Track movement by measuring average X position
     let initial_avg_x: f32 =
-        sim.particles.list.iter().map(|p| p.position.x).sum::<f32>() / initial_particles as f32;
+        sim.particles.list().iter().map(|p| p.position.x).sum::<f32>() / initial_particles as f32;
 
     // Shorter simulation to see flow before particles exit
     let dt = 1.0 / 120.0;
@@ -532,7 +533,7 @@ fn test_gutter_flow() -> TestResult {
 
     let final_count = sim.particles.len();
     let final_avg_x: f32 = if final_count > 0 {
-        sim.particles.list.iter().map(|p| p.position.x).sum::<f32>() / final_count as f32
+        sim.particles.list().iter().map(|p| p.position.x).sum::<f32>() / final_count as f32
     } else {
         initial_avg_x
     };
@@ -605,7 +606,7 @@ fn test_riffle_trapping() -> TestResult {
 
     // Track initial average X
     let initial_avg_x: f32 =
-        sim.particles.list.iter().map(|p| p.position.x).sum::<f32>() / initial_particles as f32;
+        sim.particles.list().iter().map(|p| p.position.x).sum::<f32>() / initial_particles as f32;
 
     // Shorter simulation
     let dt = 1.0 / 120.0;
@@ -615,7 +616,7 @@ fn test_riffle_trapping() -> TestResult {
 
     let final_count = sim.particles.len();
     let final_avg_x: f32 = if final_count > 0 {
-        sim.particles.list.iter().map(|p| p.position.x).sum::<f32>() / final_count as f32
+        sim.particles.list().iter().map(|p| p.position.x).sum::<f32>() / final_count as f32
     } else {
         initial_avg_x + 0.1 // If all exited, they must have moved
     };

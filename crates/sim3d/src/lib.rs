@@ -36,6 +36,7 @@ pub mod heightfield;
 pub mod kernels;
 pub mod particle;
 pub mod pressure;
+pub mod serde_utils;
 pub mod terrain_generator;
 pub mod test_geometry;
 pub mod transfer;
@@ -55,23 +56,25 @@ pub use world::{ExcavationResult, TerrainMaterial, World, WorldParams};
 
 use transfer::TransferBuffers;
 
+use crate::serde_utils::{deserialize_vec3, serialize_vec3};
+use serde::{Deserialize, Serialize};
+
 /// 3D FLIP fluid simulation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FlipSimulation3D {
     /// The MAC grid for pressure and velocity
     pub grid: Grid3D,
     /// All particles in the simulation
     pub particles: Particles3D,
-
     /// Transfer buffers (pre-allocated to avoid per-frame allocation)
-    transfer_buffers: TransferBuffers,
-
+    pub transfer_buffers: TransferBuffers,
     /// Gravity vector (default: -Y)
+    #[serde(serialize_with = "serialize_vec3", deserialize_with = "deserialize_vec3")]
     pub gravity: Vec3,
     /// FLIP/PIC blend ratio (0.97 = 97% FLIP, 3% PIC)
     pub flip_ratio: f32,
     /// Number of pressure solver iterations
     pub pressure_iterations: usize,
-
     /// Current simulation frame
     pub frame: u32,
 }
@@ -79,6 +82,7 @@ pub struct FlipSimulation3D {
 impl FlipSimulation3D {
     /// Create a new simulation with the given grid dimensions.
     pub fn new(width: usize, height: usize, depth: usize, cell_size: f32) -> Self {
+        assert!(cell_size > 0.0, "cell_size must be positive, got {}", cell_size);
         let grid = Grid3D::new(width, height, depth, cell_size);
         let transfer_buffers = TransferBuffers::new(&grid);
 
@@ -161,13 +165,13 @@ impl FlipSimulation3D {
         self.grid.reset_cell_types();
 
         // Mark cells containing particles as Fluid
-        for particle in &self.particles.list {
+        for particle in self.particles.list() {
             let (i, j, k) = self.grid.world_to_cell(particle.position);
 
             if self.grid.cell_in_bounds(i, j, k) {
                 let idx = self.grid.cell_index(i as usize, j as usize, k as usize);
-                if self.grid.cell_type[idx] != CellType::Solid {
-                    self.grid.cell_type[idx] = CellType::Fluid;
+                if self.grid.cell_type()[idx] != CellType::Solid {
+                    self.grid.cell_type_mut()[idx] = CellType::Fluid;
                 }
             }
         }
@@ -178,14 +182,14 @@ impl FlipSimulation3D {
         let gravity_y = self.gravity.y * dt;
 
         // Apply to all V (vertical) velocities
-        for v in &mut self.grid.v {
+        for v in self.grid.v_mut() {
             *v += gravity_y;
         }
 
         // Apply to U (horizontal) if gravity has X component
         if self.gravity.x.abs() > 1e-6 {
             let gravity_x = self.gravity.x * dt;
-            for u in &mut self.grid.u {
+            for u in self.grid.u_mut() {
                 *u += gravity_x;
             }
         }
@@ -193,7 +197,7 @@ impl FlipSimulation3D {
         // Apply to W (depth) if gravity has Z component
         if self.gravity.z.abs() > 1e-6 {
             let gravity_z = self.gravity.z * dt;
-            for w in &mut self.grid.w {
+            for w in self.grid.w_mut() {
                 *w += gravity_z;
             }
         }
@@ -206,18 +210,18 @@ impl FlipSimulation3D {
     /// This causes the simulation to become numerically unstable.
     ///
     /// CFL condition: max_vel < dx/dt
-    /// For typical parameters (dx=0.025m, dt=1/120s): max_vel < 3 m/s
-    /// We clamp to 10 m/s to allow some headroom while staying stable.
+    /// For typical parameters (dx=0.01m, dt=1/120s): max_vel < 1.2 m/s
+    /// We clamp to 1.0 m/s for CFL < 1 safety margin.
     fn clamp_grid_velocities(&mut self) {
-        const MAX_GRID_VEL: f32 = 10.0;
+        const MAX_GRID_VEL: f32 = 1.0;
 
-        for u in &mut self.grid.u {
+        for u in self.grid.u_mut() {
             *u = u.clamp(-MAX_GRID_VEL, MAX_GRID_VEL);
         }
-        for v in &mut self.grid.v {
+        for v in self.grid.v_mut() {
             *v = v.clamp(-MAX_GRID_VEL, MAX_GRID_VEL);
         }
-        for w in &mut self.grid.w {
+        for w in self.grid.w_mut() {
             *w = w.clamp(-MAX_GRID_VEL, MAX_GRID_VEL);
         }
     }
@@ -289,7 +293,7 @@ mod tests {
         assert_eq!(sim.particle_count(), initial_count);
 
         // Particles should have fallen due to gravity
-        let avg_y: f32 = sim.particles.list.iter().map(|p| p.position.y).sum::<f32>()
+        let avg_y: f32 = sim.particles.list().iter().map(|p| p.position.y).sum::<f32>()
             / sim.particle_count() as f32;
 
         // Initial Y was around 2.25-2.75, should have fallen
@@ -310,11 +314,11 @@ mod tests {
         sim.classify_cells();
 
         let idx = sim.grid.cell_index(1, 1, 1);
-        assert_eq!(sim.grid.cell_type[idx], CellType::Fluid);
+        assert_eq!(sim.grid.cell_type()[idx], CellType::Fluid);
 
         // Empty cell should be Air
         let idx_empty = sim.grid.cell_index(3, 3, 3);
-        assert_eq!(sim.grid.cell_type[idx_empty], CellType::Air);
+        assert_eq!(sim.grid.cell_type()[idx_empty], CellType::Air);
     }
 
     #[test]
@@ -344,11 +348,23 @@ mod tests {
         // Check that particles haven't exploded
         let max_vel = sim
             .particles
-            .list
+            .list()
             .iter()
             .map(|p| p.velocity.length())
             .fold(0.0f32, f32::max);
 
         assert!(max_vel < 10.0, "Velocities exploded: max_vel = {}", max_vel);
+    }
+
+    #[test]
+    #[should_panic(expected = "cell_size must be positive, got 0")]
+    fn test_zero_cell_size_panics() {
+        let _ = FlipSimulation3D::new(4, 4, 4, 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "cell_size must be positive, got -1")]
+    fn test_negative_cell_size_panics() {
+        let _ = FlipSimulation3D::new(4, 4, 4, -1.0);
     }
 }

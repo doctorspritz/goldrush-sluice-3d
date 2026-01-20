@@ -20,7 +20,7 @@ struct AbsorptionParams {
 @group(0) @binding(5) var<storage, read_write> transfer_sediment: array<atomic<i32>>; // encoded f32 fixed point
 @group(0) @binding(6) var<storage, read_write> transfer_water: array<atomic<i32>>;    // encoded f32 fixed point
 
-const SCALE: f32 = 1000000.0;
+const SCALE: f32 = 100000.0;
 
 @compute @workgroup_size(256)
 fn absorb_particles(@builtin(global_invocation_id) id: vec3<u32>) {
