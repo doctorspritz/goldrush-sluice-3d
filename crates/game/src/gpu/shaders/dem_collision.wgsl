@@ -90,15 +90,21 @@ fn collide_spheres(
     let normal = delta / dist;
     let penetration = min_dist - dist;
     
-    // Relative velocity along normal
-    let relative_vel = vel_b - vel_a;
+    // Relative velocity along normal (A's velocity relative to B)
+    // Using vel_a - vel_b so normal_vel > 0 when A is approaching B
+    let relative_vel = vel_a - vel_b;
     let normal_vel = dot(relative_vel, normal);
-    
+
     // Spring-damper contact model
+    // Standard model: F = k*penetration + c*v_approach (both terms resist penetration)
+    // normal_vel > 0 when approaching, < 0 when separating
+    // When approaching: damping adds to spring force (resist approach)
+    // When separating: damping subtracts from spring force (resist bounce)
     let spring_force = params.stiffness * penetration;
     let damper_force = params.damping * normal_vel;
-    
-    return -normal * (spring_force - damper_force);
+
+    // Force on particle A (pushes away from B in -normal direction)
+    return -normal * (spring_force + damper_force);
 }
 
 @compute @workgroup_size(WORKGROUP_SIZE)

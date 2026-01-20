@@ -183,10 +183,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let capped_penetration = min(penetration, radius * 0.5);
             
             // Spring-damper model
+            // v_n > 0 when moving away from surface, < 0 when approaching
+            // Using -v_n as approach velocity so the formula matches dem_collision.wgsl
             let v_n = dot(vel, normal);
-            
-            // Simplified damping for now (don't have full dem_damping function on GPU yet)
-            let fn_mag = max(0.0, params.stiffness * capped_penetration - params.damping * v_n);
+            let v_approach = -v_n;  // positive when approaching surface
+
+            // Standard model: F = k*pen + c*v_approach (both terms resist penetration)
+            let fn_mag = max(0.0, params.stiffness * capped_penetration + params.damping * v_approach);
             
             // Friction
             let vt = vel - normal * v_n;
