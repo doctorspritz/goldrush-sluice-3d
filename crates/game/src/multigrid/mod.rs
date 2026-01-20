@@ -111,7 +111,7 @@ impl MultiGridSim {
         for piece in &mut self.pieces {
             let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Piece SDF Buffer"),
-                contents: bytemuck::cast_slice(&piece.sim.grid.sdf),
+                contents: bytemuck::cast_slice(&piece.sim.grid.sdf()),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             });
             piece.sdf_buffer = Some(buffer);

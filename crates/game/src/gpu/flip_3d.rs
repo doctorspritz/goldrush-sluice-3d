@@ -2302,7 +2302,7 @@ impl GpuFlip3D {
         // 3. G2P
         let sediment_params = SedimentParams3D::default();
         self.g2p
-            .upload_params(queue, particle_count, self.cell_size, dt, sediment_params);
+            .upload_params(queue, particle_count, self.cell_size, dt, 0.95, sediment_params);
         self.g2p.encode(encoder, particle_count);
 
         // 4. SDF Collision
@@ -3186,7 +3186,7 @@ impl GpuFlip3D {
         };
         let g2p_count = self
             .g2p
-            .upload_params(queue, count, self.cell_size, dt, sediment_params);
+            .upload_params(queue, count, self.cell_size, dt, 0.95, sediment_params);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D G2P Encoder"),

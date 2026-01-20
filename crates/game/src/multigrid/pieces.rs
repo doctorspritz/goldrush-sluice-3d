@@ -117,7 +117,7 @@ impl MultiGridSim {
         let sdf_buffer = device.map(|device| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Gutter SDF Buffer"),
-                contents: bytemuck::cast_slice(&sim.grid.sdf),
+                contents: bytemuck::cast_slice(&sim.grid.sdf()),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             })
         });
@@ -234,7 +234,7 @@ impl MultiGridSim {
         let sdf_buffer = device.map(|device| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Sluice SDF Buffer"),
-                contents: bytemuck::cast_slice(&sim.grid.sdf),
+                contents: bytemuck::cast_slice(&sim.grid.sdf()),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             })
         });
@@ -355,7 +355,7 @@ impl MultiGridSim {
         let sdf_buffer = device.map(|device| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Shaker Deck SDF Buffer"),
-                contents: bytemuck::cast_slice(&sim.grid.sdf),
+                contents: bytemuck::cast_slice(&sim.grid.sdf()),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             })
         });
@@ -474,7 +474,7 @@ impl MultiGridSim {
         let sdf_buffer = device.map(|device| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Equipment Box SDF Buffer"),
-                contents: bytemuck::cast_slice(&sim.grid.sdf),
+                contents: bytemuck::cast_slice(&sim.grid.sdf()),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             })
         });

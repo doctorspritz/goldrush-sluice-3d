@@ -34,7 +34,7 @@ impl MultiGridSim {
             let piece = &self.pieces[0];
             let (gw, gh, gd) = piece.grid_dims;
             let sdf_params = SdfParams {
-                sdf: &piece.sim.grid.sdf,
+                sdf: &piece.sim.grid.sdf(),
                 grid_width: gw,
                 grid_height: gh,
                 grid_depth: gd,
@@ -116,7 +116,7 @@ impl MultiGridSim {
                     let cell_count = gw * gh * gd;
                     let mut cell_types = vec![0u32; cell_count];
 
-                    for (idx, is_solid) in piece.sim.grid.solid.iter().enumerate() {
+                    for (idx, is_solid) in piece.sim.grid.solid().iter().enumerate() {
                         if *is_solid {
                             cell_types[idx] = 2; // SOLID
                         }
@@ -140,7 +140,7 @@ impl MultiGridSim {
                             }
                         }
                     }
-                    let sdf = Some(piece.sim.grid.sdf.clone());
+                    let sdf = Some(piece.sim.grid.sdf().clone());
 
                     gpu_flip.step(
                         device,
@@ -167,7 +167,7 @@ impl MultiGridSim {
                     piece.affine_vels.clear();
                     piece.densities.clear();
 
-                    for particle in &piece.sim.particles.list {
+                    for particle in piece.sim.particles.list() {
                         piece.positions.push(particle.position);
                         piece.velocities.push(particle.velocity);
                         piece.affine_vels.push(particle.affine_velocity);
@@ -504,7 +504,7 @@ impl MultiGridSim {
             for piece in &self.pieces {
                 let (gw, gh, gd) = piece.grid_dims;
                 let sdf_params = SdfParams {
-                    sdf: &piece.sim.grid.sdf,
+                    sdf: &piece.sim.grid.sdf(),
                     grid_width: gw,
                     grid_height: gh,
                     grid_depth: gd,
