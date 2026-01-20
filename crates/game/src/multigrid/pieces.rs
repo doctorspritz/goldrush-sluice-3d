@@ -7,7 +7,7 @@
 //! - Equipment boxes (test geometry)
 
 use crate::editor::{GutterPiece, Rotation, ShakerDeckPiece, SluicePiece};
-use crate::equipment_geometry::{BoxConfig, BoxGeometryBuilder};
+use crate::equipment_geometry::{BoxConfig, BoxGeometryBuilder, GeometryConfig};
 use crate::gpu::flip_3d::GpuFlip3D;
 use glam::Vec3;
 use sim3d::FlipSimulation3D;
