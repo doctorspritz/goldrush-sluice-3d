@@ -1305,7 +1305,7 @@ impl App {
 
     fn clear_water(&mut self) {
         let before = self.sim.particles.len();
-        self.sim.particles.list.retain(|p| p.is_sediment());
+        self.sim.particles.list_mut().retain(|p| p.is_sediment());
         let removed = before - self.sim.particles.len();
         self.pending_emit_water = 0;
         self.request_gpu_sync();
@@ -1314,7 +1314,7 @@ impl App {
 
     fn clear_sediment(&mut self) {
         let before = self.sim.particles.len();
-        self.sim.particles.list.retain(|p| !p.is_sediment());
+        self.sim.particles.list_mut().retain(|p| !p.is_sediment());
         let removed = before - self.sim.particles.len();
         self.pending_emit_sediment = 0;
         self.request_gpu_sync();
@@ -1323,7 +1323,7 @@ impl App {
 
     fn clear_all_particles(&mut self) {
         let removed = self.sim.particles.len();
-        self.sim.particles.list.clear();
+        self.sim.particles.list_mut().clear();
         self.pending_emit_water = 0;
         self.pending_emit_sediment = 0;
         self.request_gpu_sync();
@@ -1342,7 +1342,7 @@ impl App {
         self.bed_water_count.fill(0);
         self.bed_sediment_count.fill(0);
 
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             let i = (p.position.x / cell_size).floor() as i32;
             let k = (p.position.z / cell_size).floor() as i32;
             if i < 0 || i >= w as i32 || k < 0 || k >= d as i32 {
@@ -1441,7 +1441,7 @@ impl App {
         let mut removed = vec![0u32; column_count];
         let mut deposit_quota = deposit_quota;
         let bed_height = &self.bed_height;
-        self.sim.particles.list.retain(|p| {
+        self.sim.particles.list_mut().retain(|p| {
             if p.is_sediment() {
                 let i = (p.position.x / cell_size).floor() as i32;
                 let k = (p.position.z / cell_size).floor() as i32;
@@ -1508,7 +1508,7 @@ impl App {
         self.bed_water_vel_sum.fill(Vec3::ZERO);
         self.bed_water_count.fill(0);
 
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             if p.is_sediment() {
                 continue;
             }
@@ -1550,7 +1550,7 @@ impl App {
         let mut removed = vec![0u32; column_count];
         if deposit_quota.iter().any(|&quota| quota > 0) {
             let bed_height = &self.bed_height;
-            self.sim.particles.list.retain(|p| {
+            self.sim.particles.list_mut().retain(|p| {
                 if p.is_sediment() {
                     let i = (p.position.x / cell_size).floor() as i32;
                     let k = (p.position.z / cell_size).floor() as i32;
@@ -1706,7 +1706,7 @@ impl App {
     fn apply_gpu_results(&mut self, count: usize) {
         let limit = count.min(self.sim.particles.len());
 
-        for (idx, p) in self.sim.particles.list.iter_mut().enumerate().take(limit) {
+        for (idx, p) in self.sim.particles.list_mut().iter_mut().enumerate().take(limit) {
             if idx < self.velocities.len() {
                 p.velocity = self.velocities[idx];
                 p.affine_velocity = self.c_matrices[idx];
@@ -1733,7 +1733,7 @@ impl App {
         }
 
         let before = self.sim.particles.len();
-        self.sim.particles.list.retain(|p| p.position.x < 100.0);
+        self.sim.particles.list_mut().retain(|p| p.position.x < 100.0);
         let exited_this_frame = before - self.sim.particles.len();
         self.particles_exited += exited_this_frame as u32;
     }
@@ -2061,7 +2061,7 @@ impl App {
         let mut max_y = 0.0f32;
         let mut max_x = 0.0f32;
 
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             sum_vel += p.velocity;
             max_vel = max_vel.max(p.velocity.length());
             max_y = max_y.max(p.position.y);
@@ -2135,7 +2135,7 @@ impl App {
         let mut sediment_max_offset = f32::NEG_INFINITY;
 
         let cell_size = CELL_SIZE;
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             let i = (p.position.x / cell_size).floor() as i32;
             if i < min_i || i > max_i {
                 continue;
@@ -2291,7 +2291,7 @@ impl App {
         let mut max_y = 0.0f32;
         let mut lofted = 0u32;
 
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             if !p.is_sediment() {
                 continue;
             }
@@ -2343,7 +2343,7 @@ impl App {
         let depth = GRID_DEPTH;
         let cell_size = CELL_SIZE;
 
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             let i = (p.position.x / cell_size).floor() as i32;
             let k = (p.position.z / cell_size).floor() as i32;
             if i >= 0 && i < width as i32 && k >= 0 && k < depth as i32 {
@@ -2436,7 +2436,7 @@ impl App {
         let max_water_y = (GRID_HEIGHT as f32 - 2.0) * cell_size;
 
         // First pass: compute water surface height AND velocity per cell
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             if p.is_sediment() {
                 continue;
             }
@@ -3201,7 +3201,7 @@ impl App {
     fn build_flow_particles(&mut self) -> usize {
         self.flow_particles.clear();
 
-        let particles = &self.sim.particles.list;
+        let particles = self.sim.particles.list();
         let total = particles.len();
         if total == 0 {
             return 0;
@@ -3240,7 +3240,7 @@ impl App {
     fn build_all_particle_instances(&self) -> Vec<ParticleInstance> {
         self.sim
             .particles
-            .list
+            .list()
             .iter()
             .map(|p| {
                 let speed = p.velocity.length();
@@ -3269,7 +3269,7 @@ impl App {
         let width = GRID_WIDTH;
         let depth = GRID_DEPTH;
 
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             let speed = p.velocity.length();
             let t = (speed / 2.5).min(1.0);
 
@@ -3381,7 +3381,7 @@ impl App {
                         self.c_matrices.clear();
                         self.densities.clear();
 
-                        for p in &self.sim.particles.list {
+                        for p in self.sim.particles.list() {
                             self.positions.push(p.position);
                             self.velocities.push(p.velocity);
                             self.c_matrices.push(p.affine_velocity);
@@ -3405,7 +3405,7 @@ impl App {
                             }
                         }
 
-                        for p in &self.sim.particles.list {
+                        for p in self.sim.particles.list() {
                             if p.is_sediment() {
                                 continue;
                             }
@@ -3434,7 +3434,7 @@ impl App {
                             gpu_flip.sediment_settling_velocity = SEDIMENT_SETTLING_VELOCITY;
                             // Disabled: DruckerPragerParams replaced by friction-only in g2p_3d
                             // gpu_flip.set_drucker_prager_params(&gpu.queue, dp_params);
-                            let sdf = self.sim.grid.sdf.as_slice();
+                            let sdf = self.sim.grid.sdf();
                             let positions = &mut self.positions;
                             let velocities = &mut self.velocities;
                             let c_matrices = &mut self.c_matrices;
@@ -3522,7 +3522,7 @@ impl App {
                         if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
                             // Disabled: DruckerPragerParams replaced by friction-only in g2p_3d
                             // gpu_flip.set_drucker_prager_params(&gpu.queue, dp_params);
-                            let sdf = self.sim.grid.sdf.as_slice();
+                            let sdf = self.sim.grid.sdf();
                             let cell_types = &self.cell_types;
                             // Disabled: gpu_bed removed, always use CPU bed_height
                             let bed_height = Some(self.bed_height.as_slice());

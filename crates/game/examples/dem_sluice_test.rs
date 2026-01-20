@@ -280,8 +280,8 @@ fn test_particle_freefall() -> TestResult {
         sim.update(dt);
     }
 
-    let final_y = if !sim.particles.list.is_empty() {
-        sim.particles.list[0].position.y
+    let final_y = if !sim.particles.list().is_empty() {
+        sim.particles.list()[0].position.y
     } else {
         0.0
     };
@@ -339,7 +339,7 @@ fn test_density_settling() -> TestResult {
     // Find particles by density (relative density: gold=19.3, sand=2.65)
     let mut gold_y = drop_y;
     let mut sand_y = drop_y;
-    for p in &sim.particles.list {
+    for p in sim.particles.list() {
         if p.density > 10.0 {
             gold_y = p.position.y;
         } else if p.density > 2.0 {
@@ -424,7 +424,7 @@ fn test_sluice_floor_collision() -> TestResult {
 
     // Check no particle is inside solid
     let mut penetrations = 0;
-    for p in &sim.particles.list {
+    for p in sim.particles.list() {
         let (i, j, k) = sim.grid.world_to_cell(p.position);
         if i >= 0
             && j >= 0
@@ -509,7 +509,7 @@ fn test_gutter_flow() -> TestResult {
 
     // Track movement by measuring average X position
     let initial_avg_x: f32 =
-        sim.particles.list.iter().map(|p| p.position.x).sum::<f32>() / initial_particles as f32;
+        sim.particles.list().iter().map(|p| p.position.x).sum::<f32>() / initial_particles as f32;
 
     // Shorter simulation to see flow before particles exit
     let dt = 1.0 / 120.0;
@@ -519,7 +519,7 @@ fn test_gutter_flow() -> TestResult {
 
     let final_count = sim.particles.len();
     let final_avg_x: f32 = if final_count > 0 {
-        sim.particles.list.iter().map(|p| p.position.x).sum::<f32>() / final_count as f32
+        sim.particles.list().iter().map(|p| p.position.x).sum::<f32>() / final_count as f32
     } else {
         initial_avg_x
     };
@@ -588,7 +588,7 @@ fn test_riffle_trapping() -> TestResult {
 
     // Track initial average X
     let initial_avg_x: f32 =
-        sim.particles.list.iter().map(|p| p.position.x).sum::<f32>() / initial_particles as f32;
+        sim.particles.list().iter().map(|p| p.position.x).sum::<f32>() / initial_particles as f32;
 
     // Shorter simulation
     let dt = 1.0 / 120.0;
@@ -598,7 +598,7 @@ fn test_riffle_trapping() -> TestResult {
 
     let final_count = sim.particles.len();
     let final_avg_x: f32 = if final_count > 0 {
-        sim.particles.list.iter().map(|p| p.position.x).sum::<f32>() / final_count as f32
+        sim.particles.list().iter().map(|p| p.position.x).sum::<f32>() / final_count as f32
     } else {
         initial_avg_x + 0.1 // If all exited, they must have moved
     };

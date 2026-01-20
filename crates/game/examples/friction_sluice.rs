@@ -205,14 +205,14 @@ impl App {
         sim.grid.compute_sdf();
 
         // Debug: Check SDF values
-        let sdf_min = sim.grid.sdf.iter().cloned().fold(f32::INFINITY, f32::min);
+        let sdf_min = sim.grid.sdf().iter().cloned().fold(f32::INFINITY, f32::min);
         let sdf_max = sim
             .grid
-            .sdf
+            .sdf()
             .iter()
             .cloned()
             .fold(f32::NEG_INFINITY, f32::max);
-        let sdf_neg_count = sim.grid.sdf.iter().filter(|&&v| v < 0.0).count();
+        let sdf_neg_count = sim.grid.sdf().iter().filter(|&&v| v < 0.0).count();
         println!(
             "SDF: min={:.3}, max={:.3}, negative_count={}",
             sdf_min, sdf_max, sdf_neg_count
@@ -222,10 +222,10 @@ impl App {
             let floor_j = sluice_config.floor_height_at(sample_i);
             let idx =
                 |i: usize, j: usize, k: usize| k * GRID_WIDTH * GRID_HEIGHT + j * GRID_WIDTH + i;
-            let sdf_floor = sim.grid.sdf[idx(sample_i, floor_j, sample_k)];
-            let sdf_above = sim.grid.sdf[idx(sample_i, floor_j + 1, sample_k)];
+            let sdf_floor = sim.grid.sdf()[idx(sample_i, floor_j, sample_k)];
+            let sdf_above = sim.grid.sdf()[idx(sample_i, floor_j + 1, sample_k)];
             let sdf_below = if floor_j > 0 {
-                sim.grid.sdf[idx(sample_i, floor_j - 1, sample_k)]
+                sim.grid.sdf()[idx(sample_i, floor_j - 1, sample_k)]
             } else {
                 0.0
             };
@@ -357,7 +357,7 @@ impl App {
         let mut min_k = config.grid_depth as i32;
         let mut max_k = -1i32;
 
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             if p.density > 1.0 {
                 continue;
             }
@@ -577,7 +577,7 @@ impl App {
         self.affine_vels.clear();
         self.densities.clear();
 
-        for p in &self.sim.particles.list {
+        for p in self.sim.particles.list() {
             self.positions.push(p.position);
             self.velocities.push(p.velocity);
             self.affine_vels.push(p.affine_velocity);
@@ -589,7 +589,7 @@ impl App {
             .resize(GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH, 0);
 
         // Mark solids from SDF
-        for (idx, &sdf_val) in self.sim.grid.sdf.iter().enumerate() {
+        for (idx, &sdf_val) in self.sim.grid.sdf().iter().enumerate() {
             if sdf_val < 0.0 {
                 self.cell_types[idx] = 2; // Solid
             }
@@ -629,8 +629,8 @@ impl App {
     }
 
     fn apply_gpu_results(&mut self, count: usize) {
-        let limit = count.min(self.sim.particles.list.len());
-        for (i, p) in self.sim.particles.list.iter_mut().enumerate().take(limit) {
+        let limit = count.min(self.sim.particles.list().len());
+        for (i, p) in self.sim.particles.list_mut().iter_mut().enumerate().take(limit) {
             if i < self.positions.len() {
                 p.position = self.positions[i];
             }
@@ -659,8 +659,8 @@ impl App {
             // Sync FLIP -> DEM: update clump positions/velocities from FLIP results
             // but PRESERVE rotation, angular_velocity, and contact history
             for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
-                if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list.len() {
-                    let p = &self.sim.particles.list[flip_idx];
+                if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list().len() {
+                    let p = &self.sim.particles.list()[flip_idx];
                     let clump = &mut self.dem.clumps[clump_idx];
                     flip_vels.push(p.velocity);
                     // Take position/velocity from FLIP (which includes pressure, advection, drag, gravity)
@@ -674,7 +674,7 @@ impl App {
             // corrects velocity (bounce/friction), but does NOT integrate position
             // wet=true because gravel is in water - uses low friction so it slides
             let sdf_params = SdfParams {
-                sdf: &self.sim.grid.sdf,
+                sdf: self.sim.grid.sdf(),
                 grid_width: GRID_WIDTH,
                 grid_height: GRID_HEIGHT,
                 grid_depth: GRID_DEPTH,
@@ -686,9 +686,9 @@ impl App {
             // Sync DEM -> FLIP: copy results back + enforce back wall
             let back_wall_x = CELL_SIZE * 1.5; // Back wall boundary
             for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
-                if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list.len() {
+                if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list().len() {
                     let clump = &mut self.dem.clumps[clump_idx];
-                    let p = &mut self.sim.particles.list[flip_idx];
+                    let p = &mut self.sim.particles.list_mut()[flip_idx];
 
                     // Enforce back wall - gravel can't go behind x=back_wall_x
                     if clump.position.x < back_wall_x {
@@ -730,7 +730,7 @@ impl App {
 
         // Find which particles to delete
         let mut delete_indices: Vec<usize> = Vec::new();
-        for (i, p) in self.sim.particles.list.iter().enumerate() {
+        for (i, p) in self.sim.particles.list().iter().enumerate() {
             if !bounds_check(p) {
                 delete_indices.push(i);
             }
@@ -767,11 +767,11 @@ impl App {
             }
 
             // Delete the FLIP particle
-            self.sim.particles.list.swap_remove(del_idx);
+            self.sim.particles.list_mut().swap_remove(del_idx);
 
             // Update sediment_flip_indices: any index > del_idx needs to be decremented
             // Also, if we swap_removed, the last particle moved to del_idx
-            let last_idx = self.sim.particles.list.len(); // This is the OLD last index (before swap_remove)
+            let last_idx = self.sim.particles.list().len(); // This is the OLD last index (before swap_remove)
             for flip_idx in &mut self.sediment_flip_indices {
                 if *flip_idx == last_idx {
                     // This particle was swapped into del_idx's position
@@ -826,7 +826,7 @@ impl App {
                 self.prepare_gpu_inputs();
             }
 
-            let particle_count = self.sim.particles.list.len();
+            let particle_count = self.sim.particles.list().len();
             let next_substep = if particle_count > 0 {
                 self.gpu_sync_substep.saturating_add(1)
             } else {
@@ -838,7 +838,7 @@ impl App {
             }
 
             if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
-                let sdf = self.sim.grid.sdf.as_slice();
+                let sdf = self.sim.grid.sdf();
 
                 if self.gpu_needs_upload {
                     gpu_flip.step_no_readback(
@@ -905,7 +905,7 @@ impl App {
             self.prepare_gpu_inputs();
 
             if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
-                let sdf = self.sim.grid.sdf.as_slice();
+                let sdf = self.sim.grid.sdf();
 
                 for _ in 0..SUBSTEPS {
                     gpu_flip.step(
@@ -944,16 +944,16 @@ impl App {
             let water_count = self
                 .sim
                 .particles
-                .list
+                .list()
                 .iter()
                 .filter(|p| p.density <= 1.0)
                 .count();
-            let sediment_count = self.sim.particles.list.len() - water_count;
+            let sediment_count = self.sim.particles.list().len() - water_count;
             println!(
                 "Frame {} | FPS: {:.1} | Particles: {} (water: {}, sediment: {})",
                 self.frame,
                 self.current_fps,
-                self.sim.particles.list.len(),
+                self.sim.particles.list().len(),
                 water_count,
                 sediment_count
             );
@@ -1082,7 +1082,7 @@ impl App {
         }
 
         if let (Some(gpu_flip), Some(_)) = (&self.gpu_flip, &self.gpu) {
-            let active_count = self.sim.particles.list.len() as u32;
+            let active_count = self.sim.particles.list().len() as u32;
             if let Some(fluid_renderer) = &self.fluid_renderer {
                 fluid_renderer.render(
                     &gpu.ctx.device,
@@ -1397,7 +1397,7 @@ impl ApplicationHandler for App {
                         PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
                         PhysicalKey::Code(KeyCode::Space) => self.paused = !self.paused,
                         PhysicalKey::Code(KeyCode::KeyR) => {
-                            self.sim.particles.list.clear();
+                            self.sim.particles.list_mut().clear();
                             self.dem.clumps.clear();
                             self.sediment_flip_indices.clear();
                             self.frame = 0;

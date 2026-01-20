@@ -583,7 +583,7 @@ impl App {
                     self.flip_c_matrices.clear();
                     self.flip_densities.clear();
 
-                    for p in &self.flip_sim.particles.list {
+                    for p in self.flip_sim.particles.list() {
                         self.flip_positions.push(p.position);
                         self.flip_velocities.push(p.velocity);
                         self.flip_c_matrices.push(p.affine_velocity);
@@ -639,7 +639,7 @@ impl App {
                             &mut self.flip_c_matrices,
                             &self.flip_densities,
                             &self.flip_cell_types,
-                            Some(&self.flip_sim.grid.sdf),
+                            Some(self.flip_sim.grid.sdf()),
                             None, // bed_height
                             DT,   // Use same timestep as heightfield
                             constants::GRAVITY,
@@ -653,7 +653,7 @@ impl App {
                     let mut max_y: f32 = f32::NEG_INFINITY;
                     let mut min_y: f32 = f32::INFINITY;
                     let mut max_vy: f32 = 0.0;
-                    for (i, p) in self.flip_sim.particles.list.iter_mut().enumerate() {
+                    for (i, p) in self.flip_sim.particles.list_mut().iter_mut().enumerate() {
                         let pos = self.flip_positions[i];
                         p.position = pos;
                         p.velocity = self.flip_velocities[i];
@@ -969,7 +969,7 @@ impl App {
         }
 
         let sdf_params = SdfParams {
-            sdf: &self.flip_sim.grid.sdf,
+            sdf: self.flip_sim.grid.sdf(),
             grid_width: self.flip_sim.grid.width,
             grid_height: self.flip_sim.grid.height,
             grid_depth: self.flip_sim.grid.depth,
@@ -979,11 +979,11 @@ impl App {
 
         // Sync FLIP -> DEM (positions + velocities)
         for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
-            if flip_idx >= self.flip_sim.particles.list.len() {
+            if flip_idx >= self.flip_sim.particles.list().len() {
                 continue;
             }
             if let Some(clump) = self.dem.clumps.get_mut(clump_idx) {
-                let particle = &self.flip_sim.particles.list[flip_idx];
+                let particle = &self.flip_sim.particles.list()[flip_idx];
                 clump.position = particle.position;
                 clump.velocity = particle.velocity;
             }
@@ -993,11 +993,11 @@ impl App {
 
         // Sync DEM -> FLIP
         for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
-            if flip_idx >= self.flip_sim.particles.list.len() {
+            if flip_idx >= self.flip_sim.particles.list().len() {
                 continue;
             }
             if let Some(clump) = self.dem.clumps.get(clump_idx) {
-                let particle = &mut self.flip_sim.particles.list[flip_idx];
+                let particle = &mut self.flip_sim.particles.list_mut()[flip_idx];
                 particle.position = clump.position;
                 particle.velocity = clump.velocity;
             }
@@ -1628,7 +1628,7 @@ impl App {
                 let positions: Vec<[f32; 4]> = self
                     .flip_sim
                     .particles
-                    .list
+                    .list()
                     .iter()
                     .map(|p| {
                         let world_pos = p.position + self.flip_origin;
