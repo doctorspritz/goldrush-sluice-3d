@@ -471,65 +471,14 @@ impl ClusterSimulation3D {
         self.sdf_contacts = new_sdf_contacts;
     }
 
-    fn step_dem_internal(&mut self, dt: f32, sdf_params: Option<&SdfParams>) {
-        if self.clumps.is_empty() {
-            return;
-        }
-
-        // CRITICAL: Prevent deep SDF penetration BEFORE force calculation
-        // This stops particles from getting embedded deep in geometry, which causes
-        // force explosion even with clamped penetration depths.
-        if let Some(sdf) = sdf_params {
-            for clump in &mut self.clumps {
-                let template = &self.templates[clump.template_idx];
-                let max_allowed = template.particle_radius * 0.1; // Allow only 10% penetration
-
-                for offset in &template.local_offsets {
-                    let r = clump.rotation * *offset;
-                    let pos = clump.position + r;
-                    let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
-                        sdf.sdf,
-                        pos,
-                        sdf.grid_offset,
-                        sdf.grid_width,
-                        sdf.grid_height,
-                        sdf.grid_depth,
-                        sdf.cell_size,
-                    );
-
-                    let penetration = template.particle_radius - sdf_value;
-                    if penetration > max_allowed && sdf_normal.length_squared() > 1e-6 {
-                        let excess = penetration - max_allowed;
-                        let normal = sdf_normal.normalize();
-                        clump.position += normal * excess;
-
-                        // Zero velocity into surface
-                        let v_n = clump.velocity.dot(normal);
-                        if v_n < 0.0 {
-                            clump.velocity -= normal * v_n;
-                        }
-
-                        // CRITICAL FIX: Dampen angular velocity to prevent "drilling"
-                        // Rotation can drive particles deep into the floor. If we only fix position
-                        // but leave angular velocity, it just rotates back in, gaining energy from the
-                        // position correction (potential energy pump).
-                        clump.angular_velocity *= 0.5;
-                    }
-                }
-            }
-        }
-
-        let mut forces = vec![Vec3::ZERO; self.clumps.len()];
-        let mut torques = vec![Vec3::ZERO; self.clumps.len()];
-
-        for (idx, clump) in self.clumps.iter().enumerate() {
-            let template = &self.templates[clump.template_idx];
-            forces[idx] += self.gravity * template.mass;
-        }
-
+    /// Compute sphere-sphere collision forces using spatial hashing for O(n) detection.
+    fn compute_sphere_sphere_forces(
+        &self,
+        dt: f32,
+        forces: &mut [Vec3],
+        torques: &mut [Vec3],
+    ) -> HashMap<SphereContactKey, Vec3> {
         let mut new_sphere_contacts: HashMap<SphereContactKey, Vec3> = HashMap::new();
-        let mut new_plane_contacts: HashMap<PlaneContactKey, Vec3> = HashMap::new();
-        let mut new_sdf_contacts: HashMap<SdfContactKey, Vec3> = HashMap::new();
 
         // Spatial hashing for O(n) collision detection
         // Cell size = 2x max bounding radius so neighbors are always in adjacent cells
@@ -577,148 +526,150 @@ impl ClusterSimulation3D {
                                         continue;
                                     }
                                     checked_pairs.insert(pair);
-                                    let clump_a = &self.clumps[i];
-                                    let clump_b = &self.clumps[j];
-                                    let template_a = &self.templates[clump_a.template_idx];
-                                    let template_b = &self.templates[clump_b.template_idx];
 
-                                    let delta = clump_b.position - clump_a.position;
-                                    let max_dist =
-                                        template_a.bounding_radius + template_b.bounding_radius;
-                                    if delta.length_squared() > max_dist * max_dist {
-                                        continue;
-                                    }
-
-                                    let contact_dist =
-                                        template_a.particle_radius + template_b.particle_radius;
-                                    let contact_dist_sq = contact_dist * contact_dist;
-                                    let m_eff = (template_a.particle_mass
-                                        * template_b.particle_mass)
-                                        / (template_a.particle_mass + template_b.particle_mass);
-
-                                    let c_n =
-                                        dem_damping(self.restitution, self.normal_stiffness, m_eff);
-                                    let c_t = dem_damping(
-                                        self.restitution,
-                                        self.tangential_stiffness,
-                                        m_eff,
+                                    self.compute_clump_pair_forces(
+                                        i,
+                                        j,
+                                        dt,
+                                        forces,
+                                        torques,
+                                        &mut new_sphere_contacts,
                                     );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
-                                    for (ia, offset_a) in
-                                        template_a.local_offsets.iter().enumerate()
-                                    {
-                                        let ra = clump_a.rotation * *offset_a;
-                                        let pa = clump_a.position + ra;
-                                        let va =
-                                            clump_a.velocity + clump_a.angular_velocity.cross(ra);
+        new_sphere_contacts
+    }
 
-                                        for (ib, offset_b) in
-                                            template_b.local_offsets.iter().enumerate()
-                                        {
-                                            let rb = clump_b.rotation * *offset_b;
-                                            let pb = clump_b.position + rb;
-                                            let vb = clump_b.velocity
-                                                + clump_b.angular_velocity.cross(rb);
+    /// Compute forces between a pair of clumps.
+    fn compute_clump_pair_forces(
+        &self,
+        i: usize,
+        j: usize,
+        dt: f32,
+        forces: &mut [Vec3],
+        torques: &mut [Vec3],
+        new_sphere_contacts: &mut HashMap<SphereContactKey, Vec3>,
+    ) {
+        let clump_a = &self.clumps[i];
+        let clump_b = &self.clumps[j];
+        let template_a = &self.templates[clump_a.template_idx];
+        let template_b = &self.templates[clump_b.template_idx];
 
-                                            let diff = pb - pa;
-                                            let dist_sq = diff.length_squared();
-                                            if dist_sq >= contact_dist_sq {
-                                                continue;
-                                            }
+        let delta = clump_b.position - clump_a.position;
+        let max_dist = template_a.bounding_radius + template_b.bounding_radius;
+        if delta.length_squared() > max_dist * max_dist {
+            return;
+        }
 
-                                            let (normal, dist) = if dist_sq > 1.0e-10 {
-                                                let dist = dist_sq.sqrt();
-                                                (diff / dist, dist)
-                                            } else {
-                                                let rel = vb - va;
-                                                let fallback = if rel.length_squared() > 1.0e-10 {
-                                                    rel.normalize()
-                                                } else {
-                                                    let center =
-                                                        clump_b.position - clump_a.position;
-                                                    if center.length_squared() > 1.0e-10 {
-                                                        center.normalize()
-                                                    } else {
-                                                        Vec3::Y
-                                                    }
-                                                };
-                                                (fallback, 0.0)
-                                            };
-                                            let penetration = contact_dist - dist;
-                                            if penetration <= 0.0 {
-                                                continue;
-                                            }
+        let contact_dist = template_a.particle_radius + template_b.particle_radius;
+        let contact_dist_sq = contact_dist * contact_dist;
+        let m_eff =
+            (template_a.particle_mass * template_b.particle_mass)
+                / (template_a.particle_mass + template_b.particle_mass);
 
-                                            let rel_vel = vb - va;
-                                            let v_n = rel_vel.dot(normal);
-                                            let mut fn_mag =
-                                                self.normal_stiffness * penetration - c_n * v_n;
-                                            if fn_mag < 0.0 {
-                                                fn_mag = 0.0;
-                                            }
+        let c_n = dem_damping(self.restitution, self.normal_stiffness, m_eff);
+        let c_t = dem_damping(self.restitution, self.tangential_stiffness, m_eff);
 
-                                            let vt = rel_vel - normal * v_n;
-                                            let key = SphereContactKey { a: i, b: j, ia, ib };
-                                            let prev = self
-                                                .sphere_contacts
-                                                .get(&key)
-                                                .copied()
-                                                .unwrap_or(Vec3::ZERO);
-                                            let mut delta_t = prev + vt * dt;
+        for (ia, offset_a) in template_a.local_offsets.iter().enumerate() {
+            let ra = clump_a.rotation * *offset_a;
+            let pa = clump_a.position + ra;
+            let va = clump_a.velocity + clump_a.angular_velocity.cross(ra);
 
-                                            let mut ft =
-                                                -self.tangential_stiffness * delta_t - c_t * vt;
-                                            let max_ft = self.friction * fn_mag;
-                                            if ft.length_squared() > max_ft * max_ft {
-                                                if ft.length_squared() > 1.0e-10 {
-                                                    ft = ft.normalize() * max_ft;
-                                                } else {
-                                                    ft = Vec3::ZERO;
-                                                }
-                                                if self.tangential_stiffness > 0.0 {
-                                                    delta_t = -(ft + c_t * vt)
-                                                        / self.tangential_stiffness;
-                                                }
-                                            }
-                                            new_sphere_contacts.insert(key, delta_t);
+            for (ib, offset_b) in template_b.local_offsets.iter().enumerate() {
+                let rb = clump_b.rotation * *offset_b;
+                let pb = clump_b.position + rb;
+                let vb = clump_b.velocity + clump_b.angular_velocity.cross(rb);
 
-                                            let total = normal * fn_mag + ft;
-                                            forces[i] -= total;
-                                            forces[j] += total;
-                                            torques[i] += ra.cross(-total);
-                                            torques[j] += rb.cross(total);
+                let diff = pb - pa;
+                let dist_sq = diff.length_squared();
+                if dist_sq >= contact_dist_sq {
+                    continue;
+                }
 
-                                            if self.rolling_friction > 0.0 {
-                                                if clump_a.angular_velocity.length_squared()
-                                                    > 1.0e-8
-                                                {
-                                                    let roll =
-                                                        -clump_a.angular_velocity.normalize()
-                                                            * (self.rolling_friction
-                                                                * fn_mag
-                                                                * template_a.particle_radius);
-                                                    torques[i] += roll;
-                                                }
-                                                if clump_b.angular_velocity.length_squared()
-                                                    > 1.0e-8
-                                                {
-                                                    let roll =
-                                                        -clump_b.angular_velocity.normalize()
-                                                            * (self.rolling_friction
-                                                                * fn_mag
-                                                                * template_b.particle_radius);
-                                                    torques[j] += roll;
-                                                }
-                                            } // end rolling_friction if
-                                        } // end ib loop
-                                    } // end ia loop
-                                } // end for &j
-                            } // end if let Some
-                        } // end for dz
-                    } // end for dy
-                } // end for dx
-            } // end for &i
-        } // end for spatial_hash
+                let (normal, dist) = if dist_sq > 1.0e-10 {
+                    let dist = dist_sq.sqrt();
+                    (diff / dist, dist)
+                } else {
+                    let rel = vb - va;
+                    let fallback = if rel.length_squared() > 1.0e-10 {
+                        rel.normalize()
+                    } else {
+                        let center = clump_b.position - clump_a.position;
+                        if center.length_squared() > 1.0e-10 {
+                            center.normalize()
+                        } else {
+                            Vec3::Y
+                        }
+                    };
+                    (fallback, 0.0)
+                };
+                let penetration = contact_dist - dist;
+                if penetration <= 0.0 {
+                    continue;
+                }
+
+                let rel_vel = vb - va;
+                let v_n = rel_vel.dot(normal);
+                let mut fn_mag = self.normal_stiffness * penetration - c_n * v_n;
+                if fn_mag < 0.0 {
+                    fn_mag = 0.0;
+                }
+
+                let vt = rel_vel - normal * v_n;
+                let key = SphereContactKey { a: i, b: j, ia, ib };
+                let prev = self.sphere_contacts.get(&key).copied().unwrap_or(Vec3::ZERO);
+                let mut delta_t = prev + vt * dt;
+
+                let mut ft = -self.tangential_stiffness * delta_t - c_t * vt;
+                let max_ft = self.friction * fn_mag;
+                if ft.length_squared() > max_ft * max_ft {
+                    if ft.length_squared() > 1.0e-10 {
+                        ft = ft.normalize() * max_ft;
+                    } else {
+                        ft = Vec3::ZERO;
+                    }
+                    if self.tangential_stiffness > 0.0 {
+                        delta_t = -(ft + c_t * vt) / self.tangential_stiffness;
+                    }
+                }
+                new_sphere_contacts.insert(key, delta_t);
+
+                let total = normal * fn_mag + ft;
+                forces[i] -= total;
+                forces[j] += total;
+                torques[i] += ra.cross(-total);
+                torques[j] += rb.cross(total);
+
+                if self.rolling_friction > 0.0 {
+                    if clump_a.angular_velocity.length_squared() > 1.0e-8 {
+                        let roll = -clump_a.angular_velocity.normalize()
+                            * (self.rolling_friction * fn_mag * template_a.particle_radius);
+                        torques[i] += roll;
+                    }
+                    if clump_b.angular_velocity.length_squared() > 1.0e-8 {
+                        let roll = -clump_b.angular_velocity.normalize()
+                            * (self.rolling_friction * fn_mag * template_b.particle_radius);
+                        torques[j] += roll;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Compute boundary/plane collision forces for all particles against world bounds.
+    fn compute_boundary_forces(
+        &self,
+        dt: f32,
+        forces: &mut [Vec3],
+        torques: &mut [Vec3],
+    ) -> HashMap<PlaneContactKey, Vec3> {
+        let mut new_plane_contacts: HashMap<PlaneContactKey, Vec3> = HashMap::new();
 
         for (idx, clump) in self.clumps.iter().enumerate() {
             let template = &self.templates[clump.template_idx];
@@ -728,223 +679,169 @@ impl ClusterSimulation3D {
                 let vel = clump.velocity + clump.angular_velocity.cross(r);
                 let radius = template.particle_radius;
 
+                // X-axis bounds
                 if pos.x - radius < self.bounds_min.x {
                     let penetration = self.bounds_min.x - (pos.x - radius);
                     self.apply_plane_contact(
-                        idx,
-                        p_idx,
-                        0,
-                        -1,
-                        Vec3::X,
-                        penetration,
-                        r,
-                        vel,
-                        template.particle_mass,
-                        radius,
-                        clump.angular_velocity,
-                        dt,
-                        &mut forces,
-                        &mut torques,
-                        &mut new_plane_contacts,
+                        idx, p_idx, 0, -1, Vec3::X, penetration, r, vel,
+                        template.particle_mass, radius, clump.angular_velocity, dt,
+                        forces, torques, &mut new_plane_contacts,
                     );
                 } else if pos.x + radius > self.bounds_max.x {
                     let penetration = pos.x + radius - self.bounds_max.x;
                     self.apply_plane_contact(
-                        idx,
-                        p_idx,
-                        0,
-                        1,
-                        -Vec3::X,
-                        penetration,
-                        r,
-                        vel,
-                        template.particle_mass,
-                        radius,
-                        clump.angular_velocity,
-                        dt,
-                        &mut forces,
-                        &mut torques,
-                        &mut new_plane_contacts,
+                        idx, p_idx, 0, 1, -Vec3::X, penetration, r, vel,
+                        template.particle_mass, radius, clump.angular_velocity, dt,
+                        forces, torques, &mut new_plane_contacts,
                     );
                 }
 
+                // Y-axis bounds
                 if pos.y - radius < self.bounds_min.y {
                     let penetration = self.bounds_min.y - (pos.y - radius);
                     self.apply_plane_contact(
-                        idx,
-                        p_idx,
-                        1,
-                        -1,
-                        Vec3::Y,
-                        penetration,
-                        r,
-                        vel,
-                        template.particle_mass,
-                        radius,
-                        clump.angular_velocity,
-                        dt,
-                        &mut forces,
-                        &mut torques,
-                        &mut new_plane_contacts,
+                        idx, p_idx, 1, -1, Vec3::Y, penetration, r, vel,
+                        template.particle_mass, radius, clump.angular_velocity, dt,
+                        forces, torques, &mut new_plane_contacts,
                     );
                 } else if pos.y + radius > self.bounds_max.y {
                     let penetration = pos.y + radius - self.bounds_max.y;
                     self.apply_plane_contact(
-                        idx,
-                        p_idx,
-                        1,
-                        1,
-                        -Vec3::Y,
-                        penetration,
-                        r,
-                        vel,
-                        template.particle_mass,
-                        radius,
-                        clump.angular_velocity,
-                        dt,
-                        &mut forces,
-                        &mut torques,
-                        &mut new_plane_contacts,
+                        idx, p_idx, 1, 1, -Vec3::Y, penetration, r, vel,
+                        template.particle_mass, radius, clump.angular_velocity, dt,
+                        forces, torques, &mut new_plane_contacts,
                     );
                 }
 
+                // Z-axis bounds
                 if pos.z - radius < self.bounds_min.z {
                     let penetration = self.bounds_min.z - (pos.z - radius);
                     self.apply_plane_contact(
-                        idx,
-                        p_idx,
-                        2,
-                        -1,
-                        Vec3::Z,
-                        penetration,
-                        r,
-                        vel,
-                        template.particle_mass,
-                        radius,
-                        clump.angular_velocity,
-                        dt,
-                        &mut forces,
-                        &mut torques,
-                        &mut new_plane_contacts,
+                        idx, p_idx, 2, -1, Vec3::Z, penetration, r, vel,
+                        template.particle_mass, radius, clump.angular_velocity, dt,
+                        forces, torques, &mut new_plane_contacts,
                     );
                 } else if pos.z + radius > self.bounds_max.z {
                     let penetration = pos.z + radius - self.bounds_max.z;
                     self.apply_plane_contact(
-                        idx,
-                        p_idx,
-                        2,
-                        1,
-                        -Vec3::Z,
-                        penetration,
-                        r,
-                        vel,
-                        template.particle_mass,
-                        radius,
-                        clump.angular_velocity,
-                        dt,
-                        &mut forces,
-                        &mut torques,
-                        &mut new_plane_contacts,
+                        idx, p_idx, 2, 1, -Vec3::Z, penetration, r, vel,
+                        template.particle_mass, radius, clump.angular_velocity, dt,
+                        forces, torques, &mut new_plane_contacts,
                     );
                 }
             }
         }
 
-        // SDF collision - particles collide with solid geometry
-        if let Some(sdf) = sdf_params {
-            for (idx, clump) in self.clumps.iter().enumerate() {
-                let template = &self.templates[clump.template_idx];
-                for (p_idx, offset) in template.local_offsets.iter().enumerate() {
-                    let r = clump.rotation * *offset;
-                    let pos = clump.position + r;
-                    let vel = clump.velocity + clump.angular_velocity.cross(r);
-                    let radius = template.particle_radius;
+        new_plane_contacts
+    }
 
-                    // Sample SDF at particle position
-                    let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
-                        sdf.sdf,
-                        pos,
-                        sdf.grid_offset,
-                        sdf.grid_width,
-                        sdf.grid_height,
-                        sdf.grid_depth,
-                        sdf.cell_size,
+    /// Compute SDF collision forces - particles collide with solid geometry defined by SDF.
+    fn compute_sdf_forces(
+        &self,
+        sdf: &SdfParams,
+        dt: f32,
+        forces: &mut [Vec3],
+        torques: &mut [Vec3],
+    ) -> HashMap<SdfContactKey, Vec3> {
+        let mut new_sdf_contacts: HashMap<SdfContactKey, Vec3> = HashMap::new();
+
+        for (idx, clump) in self.clumps.iter().enumerate() {
+            let template = &self.templates[clump.template_idx];
+            for (p_idx, offset) in template.local_offsets.iter().enumerate() {
+                let r = clump.rotation * *offset;
+                let pos = clump.position + r;
+                let vel = clump.velocity + clump.angular_velocity.cross(r);
+                let radius = template.particle_radius;
+
+                // Sample SDF at particle position
+                let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
+                    sdf.sdf,
+                    pos,
+                    sdf.grid_offset,
+                    sdf.grid_width,
+                    sdf.grid_height,
+                    sdf.grid_depth,
+                    sdf.cell_size,
+                );
+
+                // Check for penetration: SDF < radius means sphere penetrates solid
+                let mut penetration = radius - sdf_value;
+                if penetration > 0.0 && sdf_normal.length_squared() > 1e-6 {
+                    let normal = sdf_normal.normalize();
+
+                    // Clamp penetration depth to prevent force explosion
+                    // Deep penetrations cause astronomical forces that make particles explode
+                    // Limit to 50% of particle radius (for 8mm particles, max 2mm penetration)
+                    let max_penetration = radius * 0.5;
+                    penetration = penetration.min(max_penetration);
+
+                    // Apply contact force using spring-damper model
+                    let v_n = vel.dot(normal);
+                    let c_n = dem_damping(
+                        self.restitution,
+                        self.normal_stiffness,
+                        template.particle_mass,
+                    );
+                    let c_t = dem_damping(
+                        self.restitution,
+                        self.tangential_stiffness,
+                        template.particle_mass,
                     );
 
-                    // Check for penetration: SDF < radius means sphere penetrates solid
-                    let mut penetration = radius - sdf_value;
-                    if penetration > 0.0 && sdf_normal.length_squared() > 1e-6 {
-                        let normal = sdf_normal.normalize();
+                    let mut fn_mag = self.normal_stiffness * penetration - c_n * v_n;
+                    if fn_mag < 0.0 {
+                        fn_mag = 0.0;
+                    }
 
-                        // CRITICAL: Clamp penetration depth to prevent force explosion
-                        // Deep penetrations cause astronomical forces that make particles explode
-                        // Limit to 50% of particle radius (for 8mm particles, max 2mm penetration)
-                        let max_penetration = radius * 0.5;
-                        penetration = penetration.min(max_penetration);
+                    // Clamp force to prevent numerical explosion from deep penetrations
+                    // Max force: particle weight * 1000 (reasonable for particle collisions)
+                    let max_force = template.particle_mass * self.gravity.length() * 1000.0;
+                    fn_mag = fn_mag.min(max_force);
 
-                        // Apply contact force using spring-damper model
-                        let v_n = vel.dot(normal);
-                        let c_n = dem_damping(
-                            self.restitution,
-                            self.normal_stiffness,
-                            template.particle_mass,
-                        );
-                        let c_t = dem_damping(
-                            self.restitution,
-                            self.tangential_stiffness,
-                            template.particle_mass,
-                        );
+                    // Tangential (friction) force
+                    let vt = vel - normal * v_n;
+                    let key = SdfContactKey {
+                        clump: idx,
+                        particle: p_idx,
+                    };
+                    let prev = self.sdf_contacts.get(&key).copied().unwrap_or(Vec3::ZERO);
+                    let mut delta_t = prev + vt * dt;
 
-                        let mut fn_mag = self.normal_stiffness * penetration - c_n * v_n;
-                        if fn_mag < 0.0 {
-                            fn_mag = 0.0;
+                    let mut ft = -self.tangential_stiffness * delta_t - c_t * vt;
+                    let max_ft = self.floor_friction * fn_mag; // Use floor friction for SDF solids
+                    if ft.length_squared() > max_ft * max_ft {
+                        if ft.length_squared() > 1.0e-10 {
+                            ft = ft.normalize() * max_ft;
+                        } else {
+                            ft = Vec3::ZERO;
                         }
-
-                        // Clamp force to prevent numerical explosion from deep penetrations
-                        // Max force: particle weight * 1000 (reasonable for particle collisions)
-                        let max_force = template.particle_mass * self.gravity.length() * 1000.0;
-                        fn_mag = fn_mag.min(max_force);
-
-                        // Tangential (friction) force
-                        let vt = vel - normal * v_n;
-                        let key = SdfContactKey {
-                            clump: idx,
-                            particle: p_idx,
-                        };
-                        let prev = self.sdf_contacts.get(&key).copied().unwrap_or(Vec3::ZERO);
-                        let mut delta_t = prev + vt * dt;
-
-                        let mut ft = -self.tangential_stiffness * delta_t - c_t * vt;
-                        let max_ft = self.floor_friction * fn_mag; // Use floor friction for SDF solids
-                        if ft.length_squared() > max_ft * max_ft {
-                            if ft.length_squared() > 1.0e-10 {
-                                ft = ft.normalize() * max_ft;
-                            } else {
-                                ft = Vec3::ZERO;
-                            }
-                            if self.tangential_stiffness > 0.0 {
-                                delta_t = -(ft + c_t * vt) / self.tangential_stiffness;
-                            }
+                        if self.tangential_stiffness > 0.0 {
+                            delta_t = -(ft + c_t * vt) / self.tangential_stiffness;
                         }
-                        new_sdf_contacts.insert(key, delta_t);
+                    }
+                    new_sdf_contacts.insert(key, delta_t);
 
-                        let total = normal * fn_mag + ft;
-                        forces[idx] += total;
-                        torques[idx] += r.cross(total);
+                    let total = normal * fn_mag + ft;
+                    forces[idx] += total;
+                    torques[idx] += r.cross(total);
 
-                        // Rolling friction
-                        if self.rolling_friction > 0.0
-                            && clump.angular_velocity.length_squared() > 1.0e-8
-                        {
-                            let roll = -clump.angular_velocity.normalize()
-                                * (self.rolling_friction * fn_mag * radius);
-                            torques[idx] += roll;
-                        }
+                    // Rolling friction
+                    if self.rolling_friction > 0.0
+                        && clump.angular_velocity.length_squared() > 1.0e-8
+                    {
+                        let roll = -clump.angular_velocity.normalize()
+                            * (self.rolling_friction * fn_mag * radius);
+                        torques[idx] += roll;
                     }
                 }
             }
         }
 
+        new_sdf_contacts
+    }
+
+    /// Integrate forces and torques into velocity and position.
+    fn integrate_motion(&mut self, dt: f32, forces: &[Vec3], torques: &[Vec3]) {
         for (idx, clump) in self.clumps.iter_mut().enumerate() {
             let template = &self.templates[clump.template_idx];
             let inv_mass = template.inv_mass();
@@ -962,50 +859,124 @@ impl ClusterSimulation3D {
             let delta = Quat::from_scaled_axis(clump.angular_velocity * dt);
             clump.rotation = (delta * clump.rotation).normalize();
         }
+    }
 
-        // Safety: clamp deep SDF penetration to avoid runaway forces.
-        if let Some(sdf) = sdf_params {
-            let max_speed = 50.0;
-            for clump in &mut self.clumps {
-                let template = &self.templates[clump.template_idx];
-                // Allow tiny numerical penetration (1% of radius) but no more
-                let max_penetration = template.particle_radius * 0.01;
-                for offset in &template.local_offsets {
-                    let r = clump.rotation * *offset;
-                    let pos = clump.position + r;
-                    let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
-                        sdf.sdf,
-                        pos,
-                        sdf.grid_offset,
-                        sdf.grid_width,
-                        sdf.grid_height,
-                        sdf.grid_depth,
-                        sdf.cell_size,
-                    );
-                    let penetration = template.particle_radius - sdf_value;
-                    if penetration > max_penetration && sdf_normal.length_squared() > 1e-6 {
-                        let normal = sdf_normal.normalize();
-                        let excess = penetration - max_penetration;
-                        clump.position += normal * excess;
-                        let v_n = clump.velocity.dot(normal);
-                        if v_n < 0.0 {
-                            clump.velocity -= normal * v_n;
-                        }
-                        // CRITICAL FIX: Dampen angular velocity here too
-                        clump.angular_velocity *= 0.5;
+    /// Safety clamp: fix deep SDF penetrations and limit max speed to avoid runaway forces.
+    fn clamp_sdf_penetration(&mut self, sdf: &SdfParams) {
+        let max_speed = 50.0;
+        for clump in &mut self.clumps {
+            let template = &self.templates[clump.template_idx];
+            // Allow tiny numerical penetration (1% of radius) but no more
+            let max_penetration = template.particle_radius * 0.01;
+            for offset in &template.local_offsets {
+                let r = clump.rotation * *offset;
+                let pos = clump.position + r;
+                let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
+                    sdf.sdf,
+                    pos,
+                    sdf.grid_offset,
+                    sdf.grid_width,
+                    sdf.grid_height,
+                    sdf.grid_depth,
+                    sdf.cell_size,
+                );
+                let penetration = template.particle_radius - sdf_value;
+                if penetration > max_penetration && sdf_normal.length_squared() > 1e-6 {
+                    let normal = sdf_normal.normalize();
+                    let excess = penetration - max_penetration;
+                    clump.position += normal * excess;
+                    let v_n = clump.velocity.dot(normal);
+                    if v_n < 0.0 {
+                        clump.velocity -= normal * v_n;
                     }
+                    // Dampen angular velocity to prevent drilling back in
+                    clump.angular_velocity *= 0.5;
                 }
-                let speed_sq = clump.velocity.length_squared();
-                if speed_sq > max_speed * max_speed {
-                    clump.velocity = clump.velocity.normalize() * max_speed;
+            }
+            let speed_sq = clump.velocity.length_squared();
+            if speed_sq > max_speed * max_speed {
+                clump.velocity = clump.velocity.normalize() * max_speed;
+            }
+        }
+    }
+
+    /// Prevent deep SDF penetration BEFORE force calculation.
+    /// This stops particles from getting embedded deep in geometry, which causes
+    /// force explosion even with clamped penetration depths.
+    fn prevent_deep_sdf_penetration(&mut self, sdf: &SdfParams) {
+        for clump in &mut self.clumps {
+            let template = &self.templates[clump.template_idx];
+            let max_allowed = template.particle_radius * 0.1; // Allow only 10% penetration
+
+            for offset in &template.local_offsets {
+                let r = clump.rotation * *offset;
+                let pos = clump.position + r;
+                let (sdf_value, sdf_normal) = sample_sdf_with_gradient(
+                    sdf.sdf,
+                    pos,
+                    sdf.grid_offset,
+                    sdf.grid_width,
+                    sdf.grid_height,
+                    sdf.grid_depth,
+                    sdf.cell_size,
+                );
+
+                let penetration = template.particle_radius - sdf_value;
+                if penetration > max_allowed && sdf_normal.length_squared() > 1e-6 {
+                    let excess = penetration - max_allowed;
+                    let normal = sdf_normal.normalize();
+                    clump.position += normal * excess;
+
+                    // Zero velocity into surface
+                    let v_n = clump.velocity.dot(normal);
+                    if v_n < 0.0 {
+                        clump.velocity -= normal * v_n;
+                    }
+
+                    // Dampen angular velocity to prevent "drilling".
+                    // Rotation can drive particles deep into the floor. If we only fix position
+                    // but leave angular velocity, it just rotates back in, gaining energy from the
+                    // position correction (potential energy pump).
+                    clump.angular_velocity *= 0.5;
                 }
             }
         }
+    }
 
-        // Disabled position corrections - spring-damper forces handle collision response.
-        // Having both causes jitter from the two systems fighting each other.
-        // self.resolve_dem_penetrations(6);
-        // self.resolve_bounds_positions();
+    fn step_dem_internal(&mut self, dt: f32, sdf_params: Option<&SdfParams>) {
+        if self.clumps.is_empty() {
+            return;
+        }
+
+        if let Some(sdf) = sdf_params {
+            self.prevent_deep_sdf_penetration(sdf);
+        }
+
+        let mut forces = vec![Vec3::ZERO; self.clumps.len()];
+        let mut torques = vec![Vec3::ZERO; self.clumps.len()];
+
+        for (idx, clump) in self.clumps.iter().enumerate() {
+            let template = &self.templates[clump.template_idx];
+            forces[idx] += self.gravity * template.mass;
+        }
+
+        let new_sphere_contacts =
+            self.compute_sphere_sphere_forces(dt, &mut forces, &mut torques);
+
+        let new_plane_contacts =
+            self.compute_boundary_forces(dt, &mut forces, &mut torques);
+
+        let new_sdf_contacts = if let Some(sdf) = sdf_params {
+            self.compute_sdf_forces(sdf, dt, &mut forces, &mut torques)
+        } else {
+            HashMap::new()
+        };
+
+        self.integrate_motion(dt, &forces, &torques);
+
+        if let Some(sdf) = sdf_params {
+            self.clamp_sdf_penetration(sdf);
+        }
 
         self.sphere_contacts = new_sphere_contacts;
         self.plane_contacts = new_plane_contacts;
