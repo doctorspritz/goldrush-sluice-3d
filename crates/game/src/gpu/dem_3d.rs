@@ -759,8 +759,8 @@ impl GpuDem3D {
             damping: 10.0,     // Default safer damping
         };
 
-        // Initialize hash table
-        let empty_hash: [u32; HASH_TABLE_SIZE as usize] = [EMPTY_SLOT; HASH_TABLE_SIZE as usize];
+        // Initialize hash table (use Vec to avoid stack overflow - 4MB array)
+        let empty_hash = vec![EMPTY_SLOT; HASH_TABLE_SIZE as usize];
         dem.queue
             .write_buffer(&dem.hash_table_buffer, 0, bytemuck::cast_slice(&empty_hash));
 
