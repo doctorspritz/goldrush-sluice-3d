@@ -105,10 +105,264 @@ struct GpuState {
     depth_view: wgpu::TextureView,
 }
 
+/// Camera state and mouse interaction handling
+struct CameraController {
+    angle: f32,
+    pitch: f32,
+    distance: f32,
+    mouse_pressed: bool,
+    last_mouse_pos: Option<(f64, f64)>,
+}
+
+impl CameraController {
+    fn new() -> Self {
+        Self {
+            angle: 0.5,
+            pitch: 0.4,
+            distance: 4.0,
+            mouse_pressed: false,
+            last_mouse_pos: None,
+        }
+    }
+
+    fn handle_mouse_press(&mut self, pressed: bool) {
+        self.mouse_pressed = pressed;
+    }
+
+    fn handle_cursor_move(&mut self, x: f64, y: f64) {
+        if self.mouse_pressed {
+            if let Some((lx, ly)) = self.last_mouse_pos {
+                let dx = x - lx;
+                let dy = y - ly;
+                self.angle -= dx as f32 * 0.01;
+                self.pitch = (self.pitch + dy as f32 * 0.01).clamp(-1.4, 1.4);
+            }
+        }
+        self.last_mouse_pos = Some((x, y));
+    }
+
+    fn handle_scroll(&mut self, delta: f32) {
+        self.distance = (self.distance - delta * 0.3).clamp(1.0, 15.0);
+    }
+
+    fn compute_view_matrix(&self, center: Vec3) -> (Vec3, Mat4) {
+        let eye = center
+            + Vec3::new(
+                self.distance * self.angle.cos() * self.pitch.cos(),
+                self.distance * self.pitch.sin(),
+                self.distance * self.angle.sin() * self.pitch.cos(),
+            );
+        let view_matrix = Mat4::look_at_rh(eye, center, Vec3::Y);
+        (eye, view_matrix)
+    }
+}
+
+/// Water and sediment emission control
+struct EmissionController {
+    water_rate: usize,
+    sediment_rate: usize,
+    pending_water: usize,
+    pending_sediment: usize,
+}
+
+impl EmissionController {
+    fn new(water_rate: usize, sediment_rate: usize) -> Self {
+        Self {
+            water_rate,
+            sediment_rate,
+            pending_water: 0,
+            pending_sediment: 0,
+        }
+    }
+
+    fn queue(&mut self, frame: u32) {
+        if frame % 2 == 0 {
+            self.pending_water = self.pending_water.saturating_add(self.water_rate);
+            self.pending_sediment = self.pending_sediment.saturating_add(self.sediment_rate);
+        }
+    }
+
+    fn take_pending(&mut self) -> (usize, usize) {
+        let water = self.pending_water;
+        let sediment = self.pending_sediment;
+        self.pending_water = 0;
+        self.pending_sediment = 0;
+        (water, sediment)
+    }
+
+    fn adjust_water_rate(&mut self, delta: i32) {
+        if delta > 0 {
+            self.water_rate = (self.water_rate + 25).min(500);
+        } else {
+            self.water_rate = self.water_rate.saturating_sub(25);
+        }
+    }
+
+    fn adjust_sediment_rate(&mut self, delta: i32) {
+        if delta > 0 {
+            self.sediment_rate = (self.sediment_rate + 10).min(200);
+        } else {
+            self.sediment_rate = self.sediment_rate.saturating_sub(10);
+        }
+    }
+
+    fn reset(&mut self) {
+        self.pending_water = 0;
+        self.pending_sediment = 0;
+    }
+}
+
+/// GPU async readback state management
+struct GpuSyncState {
+    use_async_readback: bool,
+    readback_pending: bool,
+    sync_substep: u32,
+    needs_upload: bool,
+}
+
+impl GpuSyncState {
+    fn new() -> Self {
+        Self {
+            use_async_readback: true,
+            readback_pending: false,
+            sync_substep: 0,
+            needs_upload: true,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.readback_pending = false;
+        self.sync_substep = 0;
+        self.needs_upload = true;
+    }
+
+    fn should_schedule_readback(&self, particle_count: usize) -> bool {
+        let next_substep = if particle_count > 0 {
+            self.sync_substep.saturating_add(1)
+        } else {
+            self.sync_substep
+        };
+        particle_count > 0 && next_substep >= GPU_SYNC_STRIDE
+    }
+}
+
+/// Particle tracking for sediment-FLIP mapping and tracers
+struct ParticleTracking {
+    /// FLIP particle indices that are sediment (maps to DEM clumps 1:1)
+    sediment_flip_indices: Vec<usize>,
+    /// Tracer particles for flow timing
+    tracer_particles: Vec<TracerInfo>,
+}
+
+impl ParticleTracking {
+    fn new() -> Self {
+        Self {
+            sediment_flip_indices: Vec::new(),
+            tracer_particles: Vec::new(),
+        }
+    }
+
+    fn add_sediment(&mut self, flip_idx: usize) {
+        self.sediment_flip_indices.push(flip_idx);
+    }
+
+    fn add_tracer(&mut self, index: usize, spawn_frame: u32) {
+        self.tracer_particles.push(TracerInfo { index, spawn_frame });
+        println!("Tracer spawned at frame {} (idx {})", spawn_frame, index);
+    }
+
+    fn reset(&mut self) {
+        self.sediment_flip_indices.clear();
+        self.tracer_particles.clear();
+    }
+}
+
+/// FPS and frame timing statistics
+struct TimingStats {
+    start_time: Instant,
+    last_fps_time: Instant,
+    fps_frame_count: u32,
+    current_fps: f32,
+}
+
+impl TimingStats {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            start_time: now,
+            last_fps_time: now,
+            fps_frame_count: 0,
+            current_fps: 0.0,
+        }
+    }
+
+    fn tick(&mut self) -> bool {
+        self.fps_frame_count += 1;
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_fps_time).as_secs_f32();
+        if elapsed >= 1.0 {
+            self.current_fps = self.fps_frame_count as f32 / elapsed;
+            self.fps_frame_count = 0;
+            self.last_fps_time = now;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn elapsed_secs(&self) -> f32 {
+        self.start_time.elapsed().as_secs_f32()
+    }
+}
+
+/// Particle data buffers for GPU transfer
+struct GpuTransferBuffers {
+    positions: Vec<Vec3>,
+    velocities: Vec<Vec3>,
+    affine_vels: Vec<Mat3>,
+    densities: Vec<f32>,
+    cell_types: Vec<u32>,
+}
+
+impl GpuTransferBuffers {
+    fn new() -> Self {
+        Self {
+            positions: Vec::new(),
+            velocities: Vec::new(),
+            affine_vels: Vec::new(),
+            densities: Vec::new(),
+            cell_types: Vec::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.positions.clear();
+        self.velocities.clear();
+        self.affine_vels.clear();
+        self.densities.clear();
+        self.cell_types.clear();
+    }
+
+    fn ensure_readback_len(&mut self, particle_count: usize) {
+        if self.positions.len() < particle_count {
+            self.positions.resize(particle_count, Vec3::ZERO);
+        }
+        if self.velocities.len() < particle_count {
+            self.velocities.resize(particle_count, Vec3::ZERO);
+        }
+        if self.affine_vels.len() < particle_count {
+            self.affine_vels.resize(particle_count, Mat3::ZERO);
+        }
+    }
+}
+
 struct App {
+    // Window and GPU
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
     gpu_flip: Option<GpuFlip3D>,
+
+    // Simulation
     sim: FlipSimulation3D,
     sluice_builder: SluiceGeometryBuilder,
     water_renderer: WaterHeightfieldRenderer,
@@ -116,42 +370,18 @@ struct App {
     gangue_template_idx: usize,
     gold_template_idx: usize,
 
-    // Persistent FLIP<->DEM mapping
-    // sediment_clump_idx[i] = index into dem.clumps for sediment particle i
-    // We track sediment particles separately from water
-    sediment_flip_indices: Vec<usize>, // FLIP particle indices that are sediment
-    tracer_particles: Vec<TracerInfo>,
+    // Extracted components
+    camera: CameraController,
+    emission: EmissionController,
+    gpu_sync: GpuSyncState,
+    tracking: ParticleTracking,
+    timing: TimingStats,
+    buffers: GpuTransferBuffers,
 
-    // Particle data for GPU transfer
-    positions: Vec<Vec3>,
-    velocities: Vec<Vec3>,
-    affine_vels: Vec<Mat3>,
-    densities: Vec<f32>,
-    cell_types: Vec<u32>,
-
-    // State
+    // Simple state flags
     paused: bool,
     frame: u32,
-    camera_angle: f32,
-    camera_pitch: f32,
-    camera_distance: f32,
-    mouse_pressed: bool,
-    last_mouse_pos: Option<(f64, f64)>,
-    water_emit_rate: usize,
-    sediment_emit_rate: usize,
-    use_dem: bool, // Toggle DEM on/off
-    use_async_readback: bool,
-    gpu_readback_pending: bool,
-    gpu_sync_substep: u32,
-    gpu_needs_upload: bool,
-    pending_water_emits: usize,
-    pending_sediment_emits: usize,
-
-    // Timing
-    start_time: Instant,
-    last_fps_time: Instant,
-    fps_frame_count: u32,
-    current_fps: f32,
+    use_dem: bool,
 }
 
 struct TracerInfo {
@@ -299,33 +529,15 @@ impl App {
             dem,
             gangue_template_idx,
             gold_template_idx,
-            sediment_flip_indices: Vec::new(),
-            tracer_particles: Vec::new(),
-            positions: Vec::new(),
-            velocities: Vec::new(),
-            affine_vels: Vec::new(),
-            densities: Vec::new(),
-            cell_types: Vec::new(),
+            camera: CameraController::new(),
+            emission: EmissionController::new(WATER_EMIT_RATE, SEDIMENT_EMIT_RATE),
+            gpu_sync: GpuSyncState::new(),
+            tracking: ParticleTracking::new(),
+            timing: TimingStats::new(),
+            buffers: GpuTransferBuffers::new(),
             paused: false,
             frame: 0,
-            camera_angle: 0.5,
-            camera_pitch: 0.4,
-            camera_distance: 4.0,
-            mouse_pressed: false,
-            last_mouse_pos: None,
-            water_emit_rate: WATER_EMIT_RATE,
-            sediment_emit_rate: SEDIMENT_EMIT_RATE,
-            use_dem: true, // Enable DEM by default
-            use_async_readback: true,
-            gpu_readback_pending: false,
-            gpu_sync_substep: 0,
-            gpu_needs_upload: true,
-            pending_water_emits: 0,
-            pending_sediment_emits: 0,
-            start_time: Instant::now(),
-            last_fps_time: Instant::now(),
-            fps_frame_count: 0,
-            current_fps: 0.0,
+            use_dem: true,
         }
     }
 
@@ -443,24 +655,14 @@ impl App {
     }
 
     fn queue_emissions(&mut self) {
-        if self.frame % 2 == 0 {
-            self.pending_water_emits = self
-                .pending_water_emits
-                .saturating_add(self.water_emit_rate);
-            self.pending_sediment_emits = self
-                .pending_sediment_emits
-                .saturating_add(self.sediment_emit_rate);
-        }
+        self.emission.queue(self.frame);
     }
 
     fn emit_pending_particles(&mut self) {
-        let water_count = self.pending_water_emits;
-        let sediment_count = self.pending_sediment_emits;
+        let (water_count, sediment_count) = self.emission.take_pending();
         if water_count == 0 && sediment_count == 0 {
             return;
         }
-        self.pending_water_emits = 0;
-        self.pending_sediment_emits = 0;
         self.emit_particles(water_count, sediment_count);
     }
 
@@ -539,7 +741,7 @@ impl App {
             self.dem.spawn(template_idx, pos, sediment_vel);
 
             // Record the mapping
-            self.sediment_flip_indices.push(flip_idx);
+            self.tracking.add_sediment(flip_idx);
         }
 
         if water_count > 0 && self.frame % TRACER_INTERVAL_FRAMES == 0 {
@@ -578,39 +780,36 @@ impl App {
         let idx = self.sim.particles.len();
         self.sim
             .spawn_particle_with_velocity(Vec3::new(x, y, z), init_vel);
-        self.tracer_particles.push(TracerInfo {
-            index: idx,
-            spawn_frame: self.frame,
-        });
-        println!("Tracer spawned at frame {} (idx {})", self.frame, idx);
+        self.tracking.add_tracer(idx, self.frame);
     }
 
     fn prepare_gpu_inputs(&mut self) {
-        self.positions.clear();
-        self.velocities.clear();
-        self.affine_vels.clear();
-        self.densities.clear();
+        self.buffers.positions.clear();
+        self.buffers.velocities.clear();
+        self.buffers.affine_vels.clear();
+        self.buffers.densities.clear();
 
         for p in &self.sim.particles.list {
-            self.positions.push(p.position);
-            self.velocities.push(p.velocity);
-            self.affine_vels.push(p.affine_velocity);
-            self.densities.push(p.density);
+            self.buffers.positions.push(p.position);
+            self.buffers.velocities.push(p.velocity);
+            self.buffers.affine_vels.push(p.affine_velocity);
+            self.buffers.densities.push(p.density);
         }
 
-        self.cell_types.clear();
-        self.cell_types
+        self.buffers.cell_types.clear();
+        self.buffers
+            .cell_types
             .resize(GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH, 0);
 
         // Mark solids from SDF
         for (idx, &sdf_val) in self.sim.grid.sdf.iter().enumerate() {
             if sdf_val < 0.0 {
-                self.cell_types[idx] = 2; // Solid
+                self.buffers.cell_types[idx] = 2; // Solid
             }
         }
 
         // Mark fluid cells from particles
-        for pos in &self.positions {
+        for pos in &self.buffers.positions {
             let i = (pos.x / CELL_SIZE) as i32;
             let j = (pos.y / CELL_SIZE) as i32;
             let k = (pos.z / CELL_SIZE) as i32;
@@ -623,36 +822,28 @@ impl App {
             {
                 let idx =
                     k as usize * GRID_WIDTH * GRID_HEIGHT + j as usize * GRID_WIDTH + i as usize;
-                if self.cell_types[idx] != 2 {
-                    self.cell_types[idx] = 1; // Fluid
+                if self.buffers.cell_types[idx] != 2 {
+                    self.buffers.cell_types[idx] = 1; // Fluid
                 }
             }
         }
     }
 
     fn ensure_readback_buffers_len(&mut self, particle_count: usize) {
-        if self.positions.len() < particle_count {
-            self.positions.resize(particle_count, Vec3::ZERO);
-        }
-        if self.velocities.len() < particle_count {
-            self.velocities.resize(particle_count, Vec3::ZERO);
-        }
-        if self.affine_vels.len() < particle_count {
-            self.affine_vels.resize(particle_count, Mat3::ZERO);
-        }
+        self.buffers.ensure_readback_len(particle_count);
     }
 
     fn apply_gpu_results(&mut self, count: usize) {
         let limit = count.min(self.sim.particles.list.len());
         for (i, p) in self.sim.particles.list.iter_mut().enumerate().take(limit) {
-            if i < self.positions.len() {
-                p.position = self.positions[i];
+            if i < self.buffers.positions.len() {
+                p.position = self.buffers.positions[i];
             }
-            if i < self.velocities.len() {
-                p.velocity = self.velocities[i];
+            if i < self.buffers.velocities.len() {
+                p.velocity = self.buffers.velocities[i];
             }
-            if i < self.affine_vels.len() {
-                p.affine_velocity = self.affine_vels[i];
+            if i < self.buffers.affine_vels.len() {
+                p.affine_velocity = self.buffers.affine_vels[i];
             }
         }
     }
@@ -663,7 +854,7 @@ impl App {
         // IMPORTANT: Use collision_response_only, NOT step_with_sdf
         // step_with_sdf does full physics integration (double-moves particles)
         // collision_response_only only handles collision detection + velocity correction
-        if self.use_dem && !self.sediment_flip_indices.is_empty() {
+        if self.use_dem && !self.tracking.sediment_flip_indices.is_empty() {
             // Debug: track velocities
             let mut flip_vels: Vec<Vec3> = Vec::new();
 
@@ -672,7 +863,7 @@ impl App {
 
             // Sync FLIP -> DEM: update clump positions/velocities from FLIP results
             // but PRESERVE rotation, angular_velocity, and contact history
-            for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
+            for (clump_idx, &flip_idx) in self.tracking.sediment_flip_indices.iter().enumerate() {
                 if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list.len() {
                     let p = &self.sim.particles.list[flip_idx];
                     let clump = &mut self.dem.clumps[clump_idx];
@@ -699,7 +890,7 @@ impl App {
 
             // Sync DEM -> FLIP: copy results back + enforce back wall
             let back_wall_x = CELL_SIZE * 1.5; // Back wall boundary
-            for (clump_idx, &flip_idx) in self.sediment_flip_indices.iter().enumerate() {
+            for (clump_idx, &flip_idx) in self.tracking.sediment_flip_indices.iter().enumerate() {
                 if clump_idx < self.dem.clumps.len() && flip_idx < self.sim.particles.list.len() {
                     let clump = &mut self.dem.clumps[clump_idx];
                     let p = &mut self.sim.particles.list[flip_idx];
@@ -754,6 +945,7 @@ impl App {
         for &del_idx in delete_indices.iter().rev() {
             // Check if this is a sediment particle (has corresponding DEM clump)
             if let Some(sediment_pos) = self
+                .tracking
                 .sediment_flip_indices
                 .iter()
                 .position(|&idx| idx == del_idx)
@@ -762,22 +954,23 @@ impl App {
                 if sediment_pos < self.dem.clumps.len() {
                     self.dem.clumps.swap_remove(sediment_pos);
                 }
-                self.sediment_flip_indices.swap_remove(sediment_pos);
+                self.tracking.sediment_flip_indices.swap_remove(sediment_pos);
             }
 
             if let Some(tracer_pos) = self
+                .tracking
                 .tracer_particles
                 .iter()
                 .position(|t| t.index == del_idx)
             {
-                let spawn_frame = self.tracer_particles[tracer_pos].spawn_frame;
+                let spawn_frame = self.tracking.tracer_particles[tracer_pos].spawn_frame;
                 let travel_frames = self.frame.saturating_sub(spawn_frame);
                 let travel_seconds = travel_frames as f32 / 60.0;
                 println!(
                     "Tracer exited in {:.2} s ({} frames)",
                     travel_seconds, travel_frames
                 );
-                self.tracer_particles.swap_remove(tracer_pos);
+                self.tracking.tracer_particles.swap_remove(tracer_pos);
             }
 
             // Delete the FLIP particle
@@ -786,13 +979,13 @@ impl App {
             // Update sediment_flip_indices: any index > del_idx needs to be decremented
             // Also, if we swap_removed, the last particle moved to del_idx
             let last_idx = self.sim.particles.list.len(); // This is the OLD last index (before swap_remove)
-            for flip_idx in &mut self.sediment_flip_indices {
+            for flip_idx in &mut self.tracking.sediment_flip_indices {
                 if *flip_idx == last_idx {
                     // This particle was swapped into del_idx's position
                     *flip_idx = del_idx;
                 }
             }
-            for tracer in &mut self.tracer_particles {
+            for tracer in &mut self.tracking.tracer_particles {
                 if tracer.index == last_idx {
                     tracer.index = del_idx;
                 }
@@ -809,24 +1002,24 @@ impl App {
         let dt_sub = dt / SUBSTEPS as f32;
         let flow_accel = self.flow_accel();
 
-        if self.use_async_readback {
-            if self.gpu_readback_pending {
+        if self.gpu_sync.use_async_readback {
+            if self.gpu_sync.readback_pending {
                 let readback = if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu)
                 {
                     gpu_flip.try_readback(
                         &gpu.device,
-                        &mut self.positions,
-                        &mut self.velocities,
-                        &mut self.affine_vels,
+                        &mut self.buffers.positions,
+                        &mut self.buffers.velocities,
+                        &mut self.buffers.affine_vels,
                     )
                 } else {
                     None
                 };
 
                 if let Some(count) = readback {
-                    self.gpu_readback_pending = false;
+                    self.gpu_sync.readback_pending = false;
                     self.apply_gpu_results(count);
-                    self.gpu_needs_upload = true;
+                    self.gpu_sync.needs_upload = true;
                 } else {
                     return;
                 }
@@ -834,7 +1027,7 @@ impl App {
 
             self.queue_emissions();
 
-            if self.gpu_needs_upload {
+            if self.gpu_sync.needs_upload {
                 self.emit_pending_particles();
                 self.run_dem_and_cleanup(dt);
                 self.prepare_gpu_inputs();
@@ -842,9 +1035,9 @@ impl App {
 
             let particle_count = self.sim.particles.list.len();
             let next_substep = if particle_count > 0 {
-                self.gpu_sync_substep.saturating_add(1)
+                self.gpu_sync.sync_substep.saturating_add(1)
             } else {
-                self.gpu_sync_substep
+                self.gpu_sync.sync_substep
             };
             let schedule_readback = particle_count > 0 && next_substep >= GPU_SYNC_STRIDE;
             if schedule_readback {
@@ -854,15 +1047,15 @@ impl App {
             if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
                 let sdf = self.sim.grid.sdf.as_slice();
 
-                if self.gpu_needs_upload {
+                if self.gpu_sync.needs_upload {
                     gpu_flip.step_no_readback(
                         &gpu.device,
                         &gpu.queue,
-                        &mut self.positions,
-                        &mut self.velocities,
-                        &mut self.affine_vels,
-                        &self.densities,
-                        &self.cell_types,
+                        &mut self.buffers.positions,
+                        &mut self.buffers.velocities,
+                        &mut self.buffers.affine_vels,
+                        &self.buffers.densities,
+                        &self.buffers.cell_types,
                         Some(sdf),
                         None,
                         dt_sub,
@@ -870,13 +1063,13 @@ impl App {
                         flow_accel,
                         PRESSURE_ITERS,
                     );
-                    self.gpu_needs_upload = false;
+                    self.gpu_sync.needs_upload = false;
                     for _ in 1..SUBSTEPS {
                         gpu_flip.step_in_place(
                             &gpu.device,
                             &gpu.queue,
                             particle_count as u32,
-                            &self.cell_types,
+                            &self.buffers.cell_types,
                             Some(sdf),
                             None,
                             dt_sub,
@@ -891,7 +1084,7 @@ impl App {
                             &gpu.device,
                             &gpu.queue,
                             particle_count as u32,
-                            &self.cell_types,
+                            &self.buffers.cell_types,
                             Some(sdf),
                             None,
                             dt_sub,
@@ -904,13 +1097,13 @@ impl App {
 
                 if schedule_readback {
                     if gpu_flip.request_readback(&gpu.device, &gpu.queue, particle_count) {
-                        self.gpu_readback_pending = true;
-                        self.gpu_sync_substep = 0;
+                        self.gpu_sync.readback_pending = true;
+                        self.gpu_sync.sync_substep = 0;
                     } else {
-                        self.gpu_sync_substep = next_substep;
+                        self.gpu_sync.sync_substep = next_substep;
                     }
                 } else {
-                    self.gpu_sync_substep = next_substep;
+                    self.gpu_sync.sync_substep = next_substep;
                 }
             }
         } else {
@@ -925,11 +1118,11 @@ impl App {
                     gpu_flip.step(
                         &gpu.device,
                         &gpu.queue,
-                        &mut self.positions,
-                        &mut self.velocities,
-                        &mut self.affine_vels,
-                        &self.densities,
-                        &self.cell_types,
+                        &mut self.buffers.positions,
+                        &mut self.buffers.velocities,
+                        &mut self.buffers.affine_vels,
+                        &self.buffers.densities,
+                        &self.buffers.cell_types,
                         Some(sdf),
                         None,
                         dt_sub,
@@ -938,7 +1131,7 @@ impl App {
                         PRESSURE_ITERS,
                     );
                 }
-                self.apply_gpu_results(self.positions.len());
+                self.apply_gpu_results(self.buffers.positions.len());
             }
 
             self.run_dem_and_cleanup(dt);
@@ -946,14 +1139,8 @@ impl App {
 
         self.frame += 1;
 
-        // FPS
-        self.fps_frame_count += 1;
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_fps_time).as_secs_f32();
-        if elapsed >= 1.0 {
-            self.current_fps = self.fps_frame_count as f32 / elapsed;
-            self.fps_frame_count = 0;
-            self.last_fps_time = now;
+        // FPS tracking
+        if self.timing.tick() {
 
             let water_count = self
                 .sim
@@ -977,7 +1164,7 @@ impl App {
             println!(
                 "Frame {} | FPS: {:.1} | Particles: {} (water: {}, sediment: {}) [P2G: {}]",
                 self.frame,
-                self.current_fps,
+                self.timing.current_fps,
                 self.sim.particles.list.len(),
                 water_count,
                 sediment_count,
@@ -1021,13 +1208,7 @@ impl App {
             GRID_HEIGHT as f32 * CELL_SIZE * 0.3,
             GRID_DEPTH as f32 * CELL_SIZE * 0.5,
         );
-        let eye = center
-            + Vec3::new(
-                self.camera_distance * self.camera_angle.cos() * self.camera_pitch.cos(),
-                self.camera_distance * self.camera_pitch.sin(),
-                self.camera_distance * self.camera_angle.sin() * self.camera_pitch.cos(),
-            );
-        let view_matrix = Mat4::look_at_rh(eye, center, Vec3::Y);
+        let (eye, view_matrix) = self.camera.compute_view_matrix(center);
         let aspect = gpu.config.width as f32 / gpu.config.height as f32;
         let proj_matrix = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, aspect, 0.01, 100.0);
         let view_proj = proj_matrix * view_matrix;
@@ -1041,7 +1222,7 @@ impl App {
             .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Build water mesh
-        let time = self.start_time.elapsed().as_secs_f32();
+        let time = self.timing.elapsed_secs();
 
         // Update sediment heights first (for water surface bridging over gravel)
         let sediment_particles = self
@@ -1582,30 +1763,23 @@ impl ApplicationHandler for App {
                         PhysicalKey::Code(KeyCode::KeyR) => {
                             self.sim.particles.list.clear();
                             self.dem.clumps.clear();
-                            self.sediment_flip_indices.clear();
+                            self.tracking.reset();
                             self.frame = 0;
-                            self.gpu_readback_pending = false;
-                            self.gpu_sync_substep = 0;
-                            self.gpu_needs_upload = true;
-                            self.pending_water_emits = 0;
-                            self.pending_sediment_emits = 0;
-                            self.positions.clear();
-                            self.velocities.clear();
-                            self.affine_vels.clear();
-                            self.densities.clear();
-                            self.cell_types.clear();
+                            self.gpu_sync.reset();
+                            self.emission.reset();
+                            self.buffers.clear();
                         }
                         PhysicalKey::Code(KeyCode::ArrowUp) => {
-                            self.water_emit_rate = (self.water_emit_rate + 25).min(500);
+                            self.emission.adjust_water_rate(1);
                         }
                         PhysicalKey::Code(KeyCode::ArrowDown) => {
-                            self.water_emit_rate = self.water_emit_rate.saturating_sub(25);
+                            self.emission.adjust_water_rate(-1);
                         }
                         PhysicalKey::Code(KeyCode::ArrowRight) => {
-                            self.sediment_emit_rate = (self.sediment_emit_rate + 10).min(200);
+                            self.emission.adjust_sediment_rate(1);
                         }
                         PhysicalKey::Code(KeyCode::ArrowLeft) => {
-                            self.sediment_emit_rate = self.sediment_emit_rate.saturating_sub(10);
+                            self.emission.adjust_sediment_rate(-1);
                         }
                         PhysicalKey::Code(KeyCode::KeyD) => {
                             self.use_dem = !self.use_dem;
@@ -1629,25 +1803,17 @@ impl ApplicationHandler for App {
                 button: MouseButton::Left,
                 ..
             } => {
-                self.mouse_pressed = state == ElementState::Pressed;
+                self.camera.handle_mouse_press(state == ElementState::Pressed);
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if self.mouse_pressed {
-                    if let Some((lx, ly)) = self.last_mouse_pos {
-                        let dx = position.x - lx;
-                        let dy = position.y - ly;
-                        self.camera_angle -= dx as f32 * 0.01;
-                        self.camera_pitch = (self.camera_pitch + dy as f32 * 0.01).clamp(-1.4, 1.4);
-                    }
-                }
-                self.last_mouse_pos = Some((position.x, position.y));
+                self.camera.handle_cursor_move(position.x, position.y);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let scroll = match delta {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => y,
                     winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.01,
                 };
-                self.camera_distance = (self.camera_distance - scroll * 0.3).clamp(1.0, 15.0);
+                self.camera.handle_scroll(scroll);
             }
             WindowEvent::RedrawRequested => {
                 self.update();
