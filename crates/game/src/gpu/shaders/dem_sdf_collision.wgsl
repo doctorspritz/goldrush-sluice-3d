@@ -32,9 +32,9 @@ struct SdfParams {
     pad2: f32,
 }
 
-@group(0) @binding(0) var<storage, read> particle_positions: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read> particle_velocities: array<vec4<f32>>;
-@group(0) @binding(2) var<storage, read> particle_angular_velocities: array<vec4<f32>>;
+@group(0) @binding(0) var<storage, read_write> particle_positions: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read_write> particle_velocities: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read_write> particle_angular_velocities: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read> particle_flags: array<u32>;
 @group(0) @binding(4) var<storage, read> particle_template_ids: array<u32>;
 @group(0) @binding(5) var<storage, read> particle_orientations: array<vec4<f32>>;
@@ -53,6 +53,9 @@ const WORKGROUP_SIZE = 64u;
 const PARTICLE_ACTIVE = 1u;
 const MAX_TEMPLATES = 100u;
 const MAX_SPHERES_PER_CLUMP = 100u;
+const SDF_CORRECTION_ITERS = 4u;
+const MAX_PENETRATION_FRAC = 0.5;
+const MAX_ALLOWED_PENETRATION_FRAC = 0.1;
 
 // Quaternion multiplication
 fn quat_mul_vec3(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
@@ -65,11 +68,12 @@ fn sample_sdf(idx: vec3<u32>) -> f32 {
     let h = sdf_params.grid_dims.y;
     let d = sdf_params.grid_dims.z;
     
-    if idx.x >= w || idx.y >= h || idx.z >= d {
-        return 1.0; // Far from solid outside bounds
-    }
-    
-    let index = idx.z * w * h + idx.y * w + idx.x;
+    let clamped = vec3<u32>(
+        min(idx.x, w - 1u),
+        min(idx.y, h - 1u),
+        min(idx.z, d - 1u),
+    );
+    let index = clamped.z * w * h + clamped.y * w + clamped.x;
     return sdf_buffer[index];
 }
 
@@ -121,7 +125,7 @@ fn sample_sdf_with_gradient(world_pos: vec3<f32>) -> SdfSample {
     let sdf_value = mix(c0, c1, t.z);
     
     // Proper central differences for gradient
-    let h_step = 0.5;
+    let h_step = 0.1;
     
     let gx_p = sample_sdf(vec3<u32>(clamp(p + vec3<f32>(h_step, 0.0, 0.0), vec3<f32>(0.0), vec3<f32>(gw-1.0, gh-1.0, gd-1.0))));
     let gx_m = sample_sdf(vec3<u32>(clamp(p - vec3<f32>(h_step, 0.0, 0.0), vec3<f32>(0.0), vec3<f32>(gw-1.0, gh-1.0, gd-1.0))));
@@ -137,8 +141,7 @@ fn sample_sdf_with_gradient(world_pos: vec3<f32>) -> SdfSample {
     
     var res: SdfSample;
     res.value = sdf_value;
-    // DEBUG: Force vertical gradient to test lateral instability
-    res.gradient = vec3<f32>(0.0, grad_y, 0.0);
+    res.gradient = vec3<f32>(grad_x, grad_y, grad_z);
     return res;
 }
 
@@ -154,9 +157,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if template_idx >= MAX_TEMPLATES { return; }
     
     let clump_template = templates[template_idx];
-    let clump_pos = particle_positions[particle_idx].xyz;
-    let clump_vel = particle_velocities[particle_idx].xyz;
-    let clump_ang_vel = particle_angular_velocities[particle_idx].xyz;
+    let clump_pos_w = particle_positions[particle_idx];
+    var clump_pos = clump_pos_w.xyz;
+    let clump_vel_w = particle_velocities[particle_idx];
+    let clump_ang_vel_w = particle_angular_velocities[particle_idx];
+    var clump_vel = clump_vel_w.xyz;
+    var clump_ang_vel = clump_ang_vel_w.xyz;
     let clump_orient = particle_orientations[particle_idx];
     
     var total_force = vec3<f32>(0.0);
@@ -169,18 +175,42 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         
         let local_offset = sphere_offsets[sphere_base_offset + i].xyz;
         let r = quat_mul_vec3(clump_orient, local_offset);
-        let pos = clump_pos + r;
-        let vel = clump_vel + cross(clump_ang_vel, r);
+        var pos = clump_pos + r;
+        var vel = clump_vel + cross(clump_ang_vel, r);
         let radius = clump_template.radius; // Assuming uniform sphere radius for now
-        
+
+        // Iterative correction to prevent deep penetration before force calc.
+        let max_allowed = radius * MAX_ALLOWED_PENETRATION_FRAC;
+        for (var iter = 0u; iter < SDF_CORRECTION_ITERS; iter++) {
+            let sample = sample_sdf_with_gradient(pos);
+            let penetration = radius - sample.value;
+            if penetration > max_allowed && length(sample.gradient) > 1e-6 {
+                let normal = normalize(sample.gradient);
+                let excess = penetration - max_allowed;
+                clump_pos += normal * excess;
+                pos = clump_pos + r;
+
+                let v_n = dot(clump_vel, normal);
+                if v_n < 0.0 {
+                    clump_vel -= normal * v_n;
+                }
+                clump_ang_vel *= 0.5;
+            } else {
+                break;
+            }
+        }
+
+        pos = clump_pos + r;
+        vel = clump_vel + cross(clump_ang_vel, r);
+
         let sample = sample_sdf_with_gradient(pos);
         let penetration = radius - sample.value;
-        
+
         if penetration > 0.0 && length(sample.gradient) > 1e-6 {
             let normal = normalize(sample.gradient);
-            
+
             // Limit penetration for stability
-            let capped_penetration = min(penetration, radius * 0.5);
+            let capped_penetration = min(penetration, radius * MAX_PENETRATION_FRAC);
             
             // Spring-damper model
             // v_n > 0 when moving away from surface, < 0 when approaching
@@ -211,6 +241,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
     
+    // Write back any penetration corrections.
+    particle_positions[particle_idx] = vec4<f32>(clump_pos, clump_pos_w.w);
+    particle_velocities[particle_idx] = vec4<f32>(clump_vel, clump_vel_w.w);
+    particle_angular_velocities[particle_idx] = vec4<f32>(clump_ang_vel, clump_ang_vel_w.w);
+
     // Accumulate into buffers
     forces[particle_idx] += vec4<f32>(total_force, 0.0);
     torques[particle_idx] += vec4<f32>(total_torque, 0.0);
