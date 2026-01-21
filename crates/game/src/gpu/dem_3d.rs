@@ -107,6 +107,13 @@ pub struct HashEntry {
     pub next_idx: u32,
 }
 
+/// Hash table readback snapshot for diagnostics/testing
+pub struct HashReadback {
+    pub entry_count: u32,
+    pub hash_table: Vec<u32>,
+    pub hash_entries: Vec<HashEntry>,
+}
+
 /// Contact information between two spheres
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -305,7 +312,7 @@ impl GpuDem3D {
         let hash_table_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Hash Table Buffer"),
             size: (HASH_TABLE_SIZE as u64) * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -313,7 +320,7 @@ impl GpuDem3D {
         let hash_entry_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Hash Entry Buffer"),
             size: (max_hash_entries as u64) * 8, // sizeof(HashEntry) = 8
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -357,7 +364,7 @@ impl GpuDem3D {
         let particle_counter_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Particle Counter Buffer"),
             size: 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -1062,6 +1069,12 @@ impl GpuDem3D {
         self.finish_step(encoder);
     }
 
+    /// Override hash parameters (primarily for testing and diagnostics).
+    pub fn override_hash_params(&mut self, params: HashParams) {
+        self.queue
+            .write_buffer(&self.hash_params_buffer, 0, bytemuck::bytes_of(&params));
+    }
+
     /// Apply collision response against a specific SDF (can be called multiple times for multigrid)
     pub fn apply_sdf_collision_pass(
         &mut self,
@@ -1549,5 +1562,96 @@ impl GpuDem3D {
         }
 
         final_particles
+    }
+
+    /// Read back spatial hash state (table, entries, and entry counter).
+    pub async fn readback_hash_state(&self, device: &wgpu::Device) -> HashReadback {
+        let table_len = HASH_TABLE_SIZE as usize;
+        let entry_len = (self.max_particles * 27) as usize;
+
+        let table_staging = device.create_buffer(&BufferDescriptor {
+            label: Some("Staging Hash Table"),
+            size: (table_len * std::mem::size_of::<u32>()) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let entries_staging = device.create_buffer(&BufferDescriptor {
+            label: Some("Staging Hash Entries"),
+            size: (entry_len * std::mem::size_of::<HashEntry>()) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let counter_staging = device.create_buffer(&BufferDescriptor {
+            label: Some("Staging Hash Entry Counter"),
+            size: std::mem::size_of::<u32>() as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("Hash Readback Encoder"),
+        });
+
+        encoder.copy_buffer_to_buffer(
+            &self.hash_table_buffer,
+            0,
+            &table_staging,
+            0,
+            (table_len * std::mem::size_of::<u32>()) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.hash_entry_buffer,
+            0,
+            &entries_staging,
+            0,
+            (entry_len * std::mem::size_of::<HashEntry>()) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.particle_counter_buffer,
+            0,
+            &counter_staging,
+            0,
+            std::mem::size_of::<u32>() as u64,
+        );
+
+        self.queue.submit(Some(encoder.finish()));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        table_staging.slice(..).map_async(MapMode::Read, {
+            let tx = tx.clone();
+            move |v| tx.send(("table", v)).unwrap()
+        });
+        entries_staging.slice(..).map_async(MapMode::Read, {
+            let tx = tx.clone();
+            move |v| tx.send(("entries", v)).unwrap()
+        });
+        counter_staging.slice(..).map_async(MapMode::Read, {
+            let tx = tx.clone();
+            move |v| tx.send(("counter", v)).unwrap()
+        });
+
+        device.poll(Maintain::Wait);
+
+        for _ in 0..3 {
+            let (label, result) = rx.recv().unwrap();
+            result.expect(&format!("Failed to map {} buffer", label));
+        }
+
+        let table_data = table_staging.slice(..).get_mapped_range();
+        let entries_data = entries_staging.slice(..).get_mapped_range();
+        let counter_data = counter_staging.slice(..).get_mapped_range();
+
+        let hash_table: Vec<u32> = bytemuck::cast_slice(&table_data).to_vec();
+        let hash_entries: Vec<HashEntry> = bytemuck::cast_slice(&entries_data).to_vec();
+        let entry_count = bytemuck::cast_slice::<u8, u32>(&counter_data)[0];
+
+        HashReadback {
+            entry_count,
+            hash_table,
+            hash_entries,
+        }
     }
 }
