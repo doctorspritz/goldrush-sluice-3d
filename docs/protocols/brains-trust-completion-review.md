@@ -27,6 +27,8 @@ implementation before it's merged.
 Unlike planning review (priority-tiered), completion review requires:
 - **Minimum 1 pass from each model** (Claude, Codex, Gemini)
 - No priority tiers - all completed work gets reviewed
+All passes are sequential (Claude -> Codex -> Gemini) using pass-the-parcel
+handoff; no parallel reviews.
 
 ## What Models Check
 

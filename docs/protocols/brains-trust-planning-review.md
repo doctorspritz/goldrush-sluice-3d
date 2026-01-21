@@ -6,8 +6,8 @@
 
 The Brains Trust is a pre-work quality gate that ensures task definitions are
 thoroughly vetted before implementation begins. Multiple AI models (Claude,
-Codex, Gemini) independently review and improve work definitions through
-iterative rounds of investigation, critique, and refinement.
+Codex, Gemini) review and improve work definitions through iterative rounds of
+investigation, critique, and refinement.
 
 ## Purpose
 
@@ -31,10 +31,16 @@ The depth of review scales with task criticality:
 | P2 (Medium) | 2 | Standard work gets dual verification |
 | P3+ (Low) | 1 | Simple work gets sanity check |
 
-A **round** consists of all three models (Claude, Codex, Gemini) each taking
-one pass. For P0 work, this means 15 total model passes (5 rounds × 3 models).
+A **round** consists of three sequential passes (Claude -> Codex -> Gemini).
+For P0 work, this means 15 total model passes (5 rounds × 3 models).
 
 ## Round Mechanics
+
+Each round is strictly sequential (pass-the-parcel): the next model only begins
+after the previous model finishes and hands off. There is no parallel review.
+To reduce anchoring bias, each model writes its initial "Investigate" +
+"Analyze" notes as a blind draft before reading prior rounds, then proceeds to
+"Improve" and "Vote" with full context.
 
 Each model pass follows this structure:
 
@@ -95,17 +101,22 @@ For N total votes (rounds × 3 models):
                             │  target bead priority    │
                             └────────────┬─────────────┘
                                          │
-          ┌──────────────────────────────┼──────────────────────────┐
-          │                              │                          │
-          ▼                              ▼                          ▼
-    ┌───────────┐                  ┌───────────┐              ┌───────────┐
-    │  Claude   │                  │   Codex   │              │  Gemini   │
-    │   Pass    │                  │   Pass    │              │   Pass    │
-    └─────┬─────┘                  └─────┬─────┘              └─────┬─────┘
-          │                              │                          │
-          └──────────────────────────────┼──────────────────────────┘
-                                         │
                                          ▼
+                                ┌──────────────┐
+                                │ Claude pass  │
+                                └──────┬───────┘
+                                       │
+                                       ▼
+                                ┌──────────────┐
+                                │  Codex pass  │
+                                └──────┬───────┘
+                                       │
+                                       ▼
+                                ┌──────────────┐
+                                │ Gemini pass  │
+                                └──────┬───────┘
+                                       │
+                                       ▼
                             ┌──────────────────────────┐
                             │   Record votes + notes   │
                             │   Check if more rounds   │
@@ -179,10 +190,16 @@ bd mol pour mol-brains-trust-plan --var target=<bead-id>
 
 ### Model Execution
 
-Each model pass is executed via:
+Each model pass is executed sequentially:
 - **Claude**: Native polecat session with code review molecule
 - **Codex**: `/codex` skill invocation
 - **Gemini**: MCP tool or API call (TBD based on integration)
+
+### Handoff Mechanism
+
+After each pass, the active model explicitly hooks/sling the next model
+(`gt hook sling` or equivalent `bd` notification). This handoff is the trigger;
+models should not poll for work.
 
 ### Post-Approval
 
@@ -226,7 +243,7 @@ p4 = 1  # backlog gets minimal review
 **Target**: `sluice-xyz` - "Add rate limiting to API endpoints"
 **Priority**: P1 (3 rounds)
 
-### Round 1
+### Round 1 (order: Claude -> Codex -> Gemini)
 
 **Claude**: APPROVE
 > Task is well-defined. Suggests adding note about which endpoints.
@@ -238,7 +255,7 @@ p4 = 1  # backlog gets minimal review
 **Gemini**: APPROVE
 > Agrees with Claude. Notes that middleware approach is standard.
 
-### Round 2
+### Round 2 (order: Claude -> Codex -> Gemini)
 
 **Claude**: APPROVE
 > Dep added addresses previous concern.
