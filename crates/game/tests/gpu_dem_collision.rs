@@ -5,6 +5,8 @@
 use glam::{Quat, Vec3};
 use std::sync::Arc;
 
+use game::gpu::dem_3d::{HashParams, HashReadback, EMPTY_SLOT, HASH_TABLE_SIZE};
+
 const PARTICLE_RADIUS: f32 = 0.01; // 1cm particles
 const PARTICLE_MASS: f32 = 1.0;
 const DT: f32 = 1.0 / 120.0; // 120 Hz timestep
@@ -67,6 +69,56 @@ fn init_gpu() -> Option<(Arc<wgpu::Device>, Arc<wgpu::Queue>)> {
     .ok()?;
 
     Some((Arc::new(device), Arc::new(queue)))
+}
+
+fn build_template() -> sim3d::ClumpTemplate3D {
+    sim3d::ClumpTemplate3D::generate(
+        sim3d::ClumpShape3D::Tetra,
+        PARTICLE_RADIUS,
+        PARTICLE_MASS,
+    )
+}
+
+struct HashMetrics {
+    entry_count: u32,
+    used_buckets: u32,
+    max_chain_length: u32,
+    total_chain_length: u32,
+}
+
+fn compute_hash_metrics(state: &HashReadback, max_hash_entries: u32) -> HashMetrics {
+    let mut used_buckets = 0u32;
+    let mut max_chain_length = 0u32;
+    let mut total_chain_length = 0u32;
+
+    for &head in &state.hash_table {
+        if head == EMPTY_SLOT {
+            continue;
+        }
+
+        used_buckets += 1;
+        let mut chain_len = 0u32;
+        let mut idx = head;
+        let mut guard = 0u32;
+
+        while idx != EMPTY_SLOT && idx < max_hash_entries && guard <= max_hash_entries {
+            chain_len += 1;
+            guard += 1;
+            idx = state.hash_entries[idx as usize].next_idx;
+        }
+
+        total_chain_length += chain_len;
+        if chain_len > max_chain_length {
+            max_chain_length = chain_len;
+        }
+    }
+
+    HashMetrics {
+        entry_count: state.entry_count,
+        used_buckets,
+        max_chain_length,
+        total_chain_length,
+    }
 }
 
 fn init_parity_sims(
@@ -1106,5 +1158,271 @@ fn test_gpu_dem_many_particles() {
         "Most particles should still be active (got {}/{})",
         active_count,
         particle_count
+    );
+}
+
+/// Test: Hash table overflow handling
+/// Verifies entries beyond max_hash_entries do not corrupt hash table
+#[test]
+fn test_gpu_dem_hash_overflow_handling() {
+    let (device, queue) = match init_gpu() {
+        Some(handles) => handles,
+        None => {
+            eprintln!("No compatible GPU; skipping test_gpu_dem_hash_overflow_handling");
+            return;
+        }
+    };
+
+    use game::gpu::dem_3d::GpuDem3D;
+
+    let max_particles = 64;
+    let mut gpu_dem = GpuDem3D::new(device.clone(), queue.clone(), max_particles, 4, 2048);
+    let template_id = gpu_dem.add_template(build_template());
+
+    for i in 0..max_particles {
+        let pos = Vec3::new(i as f32 * 0.02, 1.0, 0.0);
+        gpu_dem.spawn_clump(template_id, pos, Vec3::ZERO);
+    }
+
+    let max_hash_entries = max_particles * 4;
+    gpu_dem.override_hash_params(HashParams {
+        table_size: HASH_TABLE_SIZE,
+        cell_size: 0.1,
+        max_particles,
+        max_hash_entries,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Hash Overflow Test"),
+    });
+    gpu_dem.update(&mut encoder, DT);
+    queue.submit(Some(encoder.finish()));
+    device.poll(wgpu::Maintain::Wait);
+
+    let state = pollster::block_on(gpu_dem.readback_hash_state(&device));
+
+    assert!(
+        state.entry_count > max_hash_entries,
+        "Entry counter should exceed capped max_hash_entries"
+    );
+
+    for (i, &head) in state.hash_table.iter().enumerate() {
+        assert!(
+            head == EMPTY_SLOT || head < max_hash_entries,
+            "Hash table head out of range at {}: {}",
+            i,
+            head
+        );
+    }
+}
+
+/// Test: Extreme clustering in a single hash cell
+/// Verifies chain length scales with particle count
+#[test]
+fn test_gpu_dem_hash_extreme_clustering() {
+    let (device, queue) = match init_gpu() {
+        Some(handles) => handles,
+        None => {
+            eprintln!("No compatible GPU; skipping test_gpu_dem_hash_extreme_clustering");
+            return;
+        }
+    };
+
+    use game::gpu::dem_3d::GpuDem3D;
+
+    let max_particles = 128;
+    let mut gpu_dem = GpuDem3D::new(device.clone(), queue.clone(), max_particles, 4, 4096);
+    let template_id = gpu_dem.add_template(build_template());
+
+    let cluster_pos = Vec3::new(0.5, 0.5, 0.5);
+    for _ in 0..max_particles {
+        gpu_dem.spawn_clump(template_id, cluster_pos, Vec3::ZERO);
+    }
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Hash Cluster Test"),
+    });
+    gpu_dem.update(&mut encoder, DT);
+    queue.submit(Some(encoder.finish()));
+    device.poll(wgpu::Maintain::Wait);
+
+    let state = pollster::block_on(gpu_dem.readback_hash_state(&device));
+    let metrics = compute_hash_metrics(&state, max_particles * 27);
+
+    assert_eq!(
+        metrics.entry_count,
+        max_particles * 27,
+        "Entry counter should match particle count"
+    );
+    assert!(
+        metrics.max_chain_length >= max_particles,
+        "Expected chain length >= {}, got {}",
+        max_particles,
+        metrics.max_chain_length
+    );
+}
+
+/// Test: Large-scale coordinates with small cell size
+/// Ensures hashing works with large world positions without NaNs
+#[test]
+fn test_gpu_dem_hash_large_scale_coordinates() {
+    let (device, queue) = match init_gpu() {
+        Some(handles) => handles,
+        None => {
+            eprintln!("No compatible GPU; skipping test_gpu_dem_hash_large_scale_coordinates");
+            return;
+        }
+    };
+
+    use game::gpu::dem_3d::GpuDem3D;
+
+    let max_particles = 16;
+    let mut gpu_dem = GpuDem3D::new(device.clone(), queue.clone(), max_particles, 4, 1024);
+    let template_id = gpu_dem.add_template(build_template());
+
+    let base = Vec3::new(10000.0, 10000.0, 10000.0);
+    let offsets = [
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.015, 0.0, 0.0),
+        Vec3::new(0.0, 0.015, 0.0),
+        Vec3::new(0.0, 0.0, 0.015),
+    ];
+
+    for offset in offsets {
+        gpu_dem.spawn_clump(template_id, base + offset, Vec3::ZERO);
+    }
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Hash Large Scale Test"),
+    });
+    gpu_dem.update(&mut encoder, DT);
+    queue.submit(Some(encoder.finish()));
+    device.poll(wgpu::Maintain::Wait);
+
+    let particles = pollster::block_on(gpu_dem.readback(&device));
+    let mut any_velocity = false;
+    for p in &particles {
+        let vel = Vec3::from_slice(&p.velocity[..3]);
+        assert!(
+            vel.x.is_finite() && vel.y.is_finite() && vel.z.is_finite(),
+            "Velocity contains NaN/Inf at large scale"
+        );
+        if vel.length() > 0.0001 {
+            any_velocity = true;
+        }
+    }
+    assert!(
+        any_velocity,
+        "Expected collision response at large scale positions"
+    );
+
+    let state = pollster::block_on(gpu_dem.readback_hash_state(&device));
+    assert_eq!(
+        state.entry_count,
+        (particles.len() as u32) * 27,
+        "Hash entry counter should match particle count"
+    );
+}
+
+/// Test: Rapid spawning with frequent updates
+/// Ensures hash table resets correctly between frames
+#[test]
+fn test_gpu_dem_hash_rapid_spawning() {
+    let (device, queue) = match init_gpu() {
+        Some(handles) => handles,
+        None => {
+            eprintln!("No compatible GPU; skipping test_gpu_dem_hash_rapid_spawning");
+            return;
+        }
+    };
+
+    use game::gpu::dem_3d::GpuDem3D;
+
+    let max_particles = 128;
+    let mut gpu_dem = GpuDem3D::new(device.clone(), queue.clone(), max_particles, 4, 4096);
+    let template_id = gpu_dem.add_template(build_template());
+
+    let mut spawned = 0u32;
+    for batch in 0..4 {
+        for i in 0..32 {
+            let pos = Vec3::new(i as f32 * 0.05, 1.0 + batch as f32 * 0.1, 0.0);
+            gpu_dem.spawn_clump(template_id, pos, Vec3::ZERO);
+            spawned += 1;
+        }
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Hash Rapid Spawn Test"),
+        });
+        gpu_dem.update(&mut encoder, DT);
+        queue.submit(Some(encoder.finish()));
+        device.poll(wgpu::Maintain::Wait);
+
+        let state = pollster::block_on(gpu_dem.readback_hash_state(&device));
+        assert_eq!(
+            state.entry_count,
+            spawned * 27,
+            "Entry counter should match spawned count after batch {}",
+            batch
+        );
+    }
+}
+
+/// Test: Hash utilization metrics for dispersed particles
+/// Validates collision rate and chain lengths are within expected bounds
+#[test]
+fn test_gpu_dem_hash_utilization_metrics() {
+    let (device, queue) = match init_gpu() {
+        Some(handles) => handles,
+        None => {
+            eprintln!("No compatible GPU; skipping test_gpu_dem_hash_utilization_metrics");
+            return;
+        }
+    };
+
+    use game::gpu::dem_3d::GpuDem3D;
+
+    let max_particles = 256;
+    let mut gpu_dem = GpuDem3D::new(device.clone(), queue.clone(), max_particles, 4, 8192);
+    let template_id = gpu_dem.add_template(build_template());
+
+    let spacing = 1.0;
+    let mut spawned = 0u32;
+    for z in 0..4 {
+        for y in 0..8 {
+            for x in 0..8 {
+                let pos = Vec3::new(x as f32, y as f32, z as f32) * spacing;
+                gpu_dem.spawn_clump(template_id, pos, Vec3::ZERO);
+                spawned += 1;
+            }
+        }
+    }
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Hash Utilization Test"),
+    });
+    gpu_dem.update(&mut encoder, DT);
+    queue.submit(Some(encoder.finish()));
+    device.poll(wgpu::Maintain::Wait);
+
+    let state = pollster::block_on(gpu_dem.readback_hash_state(&device));
+    let metrics = compute_hash_metrics(&state, max_particles * 27);
+    let entry_count = metrics.entry_count as f32;
+    let used_buckets = metrics.used_buckets as f32;
+
+    assert_eq!(
+        metrics.entry_count,
+        spawned * 27,
+        "Entry counter should match spawned count"
+    );
+    assert!(
+        used_buckets / entry_count > 0.8,
+        "Expected low collision rate (used_buckets={}, entry_count={})",
+        metrics.used_buckets,
+        metrics.entry_count
+    );
+    assert!(
+        metrics.max_chain_length <= 4,
+        "Unexpectedly long chain length: {}",
+        metrics.max_chain_length
     );
 }
