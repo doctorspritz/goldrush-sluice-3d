@@ -58,18 +58,6 @@ const WORKGROUP_SIZE = 64u;
 const MAX_TEMPLATES = 100u;
 const PI: f32 = 3.14159265359;
 
-// Quadratic B-spline kernel (same as FLIP P2G)
-fn quadratic_bspline_1d(x: f32) -> f32 {
-    let ax = abs(x);
-    if ax < 0.5 {
-        return 0.75 - ax * ax;
-    } else if ax < 1.5 {
-        let t = 1.5 - ax;
-        return 0.5 * t * t;
-    }
-    return 0.0;
-}
-
 // MAC grid index functions
 fn u_index(i: u32, j: u32, k: u32) -> u32 {
     // U grid: (width+1) x height x depth
@@ -86,161 +74,121 @@ fn w_index(i: u32, j: u32, k: u32) -> u32 {
     return k * bridge_params.width * bridge_params.height + j * bridge_params.width + i;
 }
 
+fn sample_u_value(i: i32, j: i32, k: i32) -> f32 {
+    if i < 0 || i > i32(bridge_params.width) { return 0.0; }
+    if j < 0 || j >= i32(bridge_params.height) { return 0.0; }
+    if k < 0 || k >= i32(bridge_params.depth) { return 0.0; }
+    return grid_u[u_index(u32(i), u32(j), u32(k))];
+}
+
+fn sample_v_value(i: i32, j: i32, k: i32) -> f32 {
+    if i < 0 || i >= i32(bridge_params.width) { return 0.0; }
+    if j < 0 || j > i32(bridge_params.height) { return 0.0; }
+    if k < 0 || k >= i32(bridge_params.depth) { return 0.0; }
+    return grid_v[v_index(u32(i), u32(j), u32(k))];
+}
+
+fn sample_w_value(i: i32, j: i32, k: i32) -> f32 {
+    if i < 0 || i >= i32(bridge_params.width) { return 0.0; }
+    if j < 0 || j >= i32(bridge_params.height) { return 0.0; }
+    if k < 0 || k > i32(bridge_params.depth) { return 0.0; }
+    return grid_w[w_index(u32(i), u32(j), u32(k))];
+}
+
 // Sample U velocity at position (U is at left YZ faces: i, j+0.5, k+0.5)
 fn sample_u(pos: vec3<f32>) -> f32 {
-    let cell_size = bridge_params.cell_size;
-    let width = bridge_params.width;
-    let height = bridge_params.height;
-    let depth = bridge_params.depth;
+    let sample_pos = max(vec3<f32>(0.0), pos / bridge_params.cell_size - vec3<f32>(0.0, 0.5, 0.5));
 
-    // U sample point offset: (0, 0.5, 0.5) in cell coords
-    let u_pos = pos / cell_size - vec3<f32>(0.0, 0.5, 0.5);
-    let base = vec3<i32>(floor(u_pos));
-    let frac = u_pos - vec3<f32>(base);
+    let base_x = i32(floor(sample_pos.x));
+    let base_y = i32(floor(sample_pos.y));
+    let base_z = i32(floor(sample_pos.z));
 
-    // Precompute 1D weights for -1, 0, +1 offsets
-    let wx = array<f32, 3>(
-        quadratic_bspline_1d(frac.x + 1.0),
-        quadratic_bspline_1d(frac.x),
-        quadratic_bspline_1d(frac.x - 1.0)
-    );
-    let wy = array<f32, 3>(
-        quadratic_bspline_1d(frac.y + 1.0),
-        quadratic_bspline_1d(frac.y),
-        quadratic_bspline_1d(frac.y - 1.0)
-    );
-    let wz = array<f32, 3>(
-        quadratic_bspline_1d(frac.z + 1.0),
-        quadratic_bspline_1d(frac.z),
-        quadratic_bspline_1d(frac.z - 1.0)
-    );
+    let fx = sample_pos.x - f32(base_x);
+    let fy = sample_pos.y - f32(base_y);
+    let fz = sample_pos.z - f32(base_z);
 
-    var result = 0.0;
-    for (var dk: i32 = -1; dk <= 1; dk++) {
-        let nk = base.z + dk;
-        if nk < 0 || nk >= i32(depth) { continue; }
-        let w_z = wz[dk + 1];
+    let v000 = sample_u_value(base_x, base_y, base_z);
+    let v100 = sample_u_value(base_x + 1, base_y, base_z);
+    let v010 = sample_u_value(base_x, base_y + 1, base_z);
+    let v110 = sample_u_value(base_x + 1, base_y + 1, base_z);
+    let v001 = sample_u_value(base_x, base_y, base_z + 1);
+    let v101 = sample_u_value(base_x + 1, base_y, base_z + 1);
+    let v011 = sample_u_value(base_x, base_y + 1, base_z + 1);
+    let v111 = sample_u_value(base_x + 1, base_y + 1, base_z + 1);
 
-        for (var dj: i32 = -1; dj <= 1; dj++) {
-            let nj = base.y + dj;
-            if nj < 0 || nj >= i32(height) { continue; }
-            let w_yz = w_z * wy[dj + 1];
+    let v00 = mix(v000, v100, fx);
+    let v10 = mix(v010, v110, fx);
+    let v01 = mix(v001, v101, fx);
+    let v11 = mix(v011, v111, fx);
 
-            for (var di: i32 = -1; di <= 1; di++) {
-                let ni = base.x + di;
-                if ni < 0 || ni > i32(width) { continue; }  // U grid has width+1
-                let weight = w_yz * wx[di + 1];
+    let v0 = mix(v00, v10, fy);
+    let v1 = mix(v01, v11, fy);
 
-                let idx = u_index(u32(ni), u32(nj), u32(nk));
-                result += grid_u[idx] * weight;
-            }
-        }
-    }
-    return result;
+    return mix(v0, v1, fz);
 }
 
 // Sample V velocity at position (V is at bottom XZ faces: i+0.5, j, k+0.5)
 fn sample_v(pos: vec3<f32>) -> f32 {
-    let cell_size = bridge_params.cell_size;
-    let width = bridge_params.width;
-    let height = bridge_params.height;
-    let depth = bridge_params.depth;
+    let sample_pos = max(vec3<f32>(0.0), pos / bridge_params.cell_size - vec3<f32>(0.5, 0.0, 0.5));
 
-    // V sample point offset: (0.5, 0, 0.5) in cell coords
-    let v_pos = pos / cell_size - vec3<f32>(0.5, 0.0, 0.5);
-    let base = vec3<i32>(floor(v_pos));
-    let frac = v_pos - vec3<f32>(base);
+    let base_x = i32(floor(sample_pos.x));
+    let base_y = i32(floor(sample_pos.y));
+    let base_z = i32(floor(sample_pos.z));
 
-    let wx = array<f32, 3>(
-        quadratic_bspline_1d(frac.x + 1.0),
-        quadratic_bspline_1d(frac.x),
-        quadratic_bspline_1d(frac.x - 1.0)
-    );
-    let wy = array<f32, 3>(
-        quadratic_bspline_1d(frac.y + 1.0),
-        quadratic_bspline_1d(frac.y),
-        quadratic_bspline_1d(frac.y - 1.0)
-    );
-    let wz = array<f32, 3>(
-        quadratic_bspline_1d(frac.z + 1.0),
-        quadratic_bspline_1d(frac.z),
-        quadratic_bspline_1d(frac.z - 1.0)
-    );
+    let fx = sample_pos.x - f32(base_x);
+    let fy = sample_pos.y - f32(base_y);
+    let fz = sample_pos.z - f32(base_z);
 
-    var result = 0.0;
-    for (var dk: i32 = -1; dk <= 1; dk++) {
-        let nk = base.z + dk;
-        if nk < 0 || nk >= i32(depth) { continue; }
-        let w_z = wz[dk + 1];
+    let v000 = sample_v_value(base_x, base_y, base_z);
+    let v100 = sample_v_value(base_x + 1, base_y, base_z);
+    let v010 = sample_v_value(base_x, base_y + 1, base_z);
+    let v110 = sample_v_value(base_x + 1, base_y + 1, base_z);
+    let v001 = sample_v_value(base_x, base_y, base_z + 1);
+    let v101 = sample_v_value(base_x + 1, base_y, base_z + 1);
+    let v011 = sample_v_value(base_x, base_y + 1, base_z + 1);
+    let v111 = sample_v_value(base_x + 1, base_y + 1, base_z + 1);
 
-        for (var dj: i32 = -1; dj <= 1; dj++) {
-            let nj = base.y + dj;
-            if nj < 0 || nj > i32(height) { continue; }  // V grid has height+1
-            let w_yz = w_z * wy[dj + 1];
+    let v00 = mix(v000, v100, fx);
+    let v10 = mix(v010, v110, fx);
+    let v01 = mix(v001, v101, fx);
+    let v11 = mix(v011, v111, fx);
 
-            for (var di: i32 = -1; di <= 1; di++) {
-                let ni = base.x + di;
-                if ni < 0 || ni >= i32(width) { continue; }
-                let weight = w_yz * wx[di + 1];
+    let v0 = mix(v00, v10, fy);
+    let v1 = mix(v01, v11, fy);
 
-                let idx = v_index(u32(ni), u32(nj), u32(nk));
-                result += grid_v[idx] * weight;
-            }
-        }
-    }
-    return result;
+    return mix(v0, v1, fz);
 }
 
 // Sample W velocity at position (W is at back XY faces: i+0.5, j+0.5, k)
 fn sample_w(pos: vec3<f32>) -> f32 {
-    let cell_size = bridge_params.cell_size;
-    let width = bridge_params.width;
-    let height = bridge_params.height;
-    let depth = bridge_params.depth;
+    let sample_pos = max(vec3<f32>(0.0), pos / bridge_params.cell_size - vec3<f32>(0.5, 0.5, 0.0));
 
-    // W sample point offset: (0.5, 0.5, 0) in cell coords
-    let w_pos = pos / cell_size - vec3<f32>(0.5, 0.5, 0.0);
-    let base = vec3<i32>(floor(w_pos));
-    let frac = w_pos - vec3<f32>(base);
+    let base_x = i32(floor(sample_pos.x));
+    let base_y = i32(floor(sample_pos.y));
+    let base_z = i32(floor(sample_pos.z));
 
-    let wx = array<f32, 3>(
-        quadratic_bspline_1d(frac.x + 1.0),
-        quadratic_bspline_1d(frac.x),
-        quadratic_bspline_1d(frac.x - 1.0)
-    );
-    let wy = array<f32, 3>(
-        quadratic_bspline_1d(frac.y + 1.0),
-        quadratic_bspline_1d(frac.y),
-        quadratic_bspline_1d(frac.y - 1.0)
-    );
-    let wz = array<f32, 3>(
-        quadratic_bspline_1d(frac.z + 1.0),
-        quadratic_bspline_1d(frac.z),
-        quadratic_bspline_1d(frac.z - 1.0)
-    );
+    let fx = sample_pos.x - f32(base_x);
+    let fy = sample_pos.y - f32(base_y);
+    let fz = sample_pos.z - f32(base_z);
 
-    var result = 0.0;
-    for (var dk: i32 = -1; dk <= 1; dk++) {
-        let nk = base.z + dk;
-        if nk < 0 || nk > i32(depth) { continue; }  // W grid has depth+1
-        let w_z = wz[dk + 1];
+    let v000 = sample_w_value(base_x, base_y, base_z);
+    let v100 = sample_w_value(base_x + 1, base_y, base_z);
+    let v010 = sample_w_value(base_x, base_y + 1, base_z);
+    let v110 = sample_w_value(base_x + 1, base_y + 1, base_z);
+    let v001 = sample_w_value(base_x, base_y, base_z + 1);
+    let v101 = sample_w_value(base_x + 1, base_y, base_z + 1);
+    let v011 = sample_w_value(base_x, base_y + 1, base_z + 1);
+    let v111 = sample_w_value(base_x + 1, base_y + 1, base_z + 1);
 
-        for (var dj: i32 = -1; dj <= 1; dj++) {
-            let nj = base.y + dj;
-            if nj < 0 || nj >= i32(height) { continue; }
-            let w_yz = w_z * wy[dj + 1];
+    let v00 = mix(v000, v100, fx);
+    let v10 = mix(v010, v110, fx);
+    let v01 = mix(v001, v101, fx);
+    let v11 = mix(v011, v111, fx);
 
-            for (var di: i32 = -1; di <= 1; di++) {
-                let ni = base.x + di;
-                if ni < 0 || ni >= i32(width) { continue; }
-                let weight = w_yz * wx[di + 1];
+    let v0 = mix(v00, v10, fy);
+    let v1 = mix(v01, v11, fy);
 
-                let idx = w_index(u32(ni), u32(nj), u32(nk));
-                result += grid_w[idx] * weight;
-            }
-        }
-    }
-    return result;
+    return mix(v0, v1, fz);
 }
 
 // Sample full velocity vector at position
