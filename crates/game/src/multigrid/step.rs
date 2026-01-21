@@ -140,7 +140,7 @@ impl MultiGridSim {
                             }
                         }
                     }
-                    let sdf = Some(piece.sim.grid.sdf().clone());
+                    let sdf = Some(piece.sim.grid.sdf());
 
                     gpu_flip.step(
                         device,

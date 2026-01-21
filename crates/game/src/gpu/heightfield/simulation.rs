@@ -2,40 +2,6 @@
 
 use super::pipelines::{CoreBindGroups, SimulationPipelines};
 
-/// Dispatch all simulation compute passes.
-pub fn dispatch_simulation(
-    encoder: &mut wgpu::CommandEncoder,
-    pipelines: &SimulationPipelines,
-    bind_groups: &CoreBindGroups,
-    width: u32,
-    depth: u32,
-    suspended_sediment_buffer: &wgpu::Buffer,
-    suspended_sediment_next_buffer: &wgpu::Buffer,
-    suspended_overburden_buffer: &wgpu::Buffer,
-    suspended_overburden_next_buffer: &wgpu::Buffer,
-    suspended_gravel_buffer: &wgpu::Buffer,
-    suspended_gravel_next_buffer: &wgpu::Buffer,
-    suspended_paydirt_buffer: &wgpu::Buffer,
-    suspended_paydirt_next_buffer: &wgpu::Buffer,
-) {
-    dispatch_simulation_tile(
-        encoder,
-        pipelines,
-        bind_groups,
-        width,
-        depth,
-        width,
-        depth,
-        suspended_sediment_buffer,
-        suspended_sediment_next_buffer,
-        suspended_overburden_buffer,
-        suspended_overburden_next_buffer,
-        suspended_gravel_buffer,
-        suspended_gravel_next_buffer,
-        suspended_paydirt_buffer,
-        suspended_paydirt_next_buffer,
-    );
-}
 
 /// Dispatch simulation for a specific tile region.
 #[allow(clippy::too_many_arguments)]

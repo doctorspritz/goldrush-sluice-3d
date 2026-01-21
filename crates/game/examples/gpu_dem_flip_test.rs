@@ -29,11 +29,14 @@ fn main() {
     }))
     .expect("Failed to find adapter");
 
+    let mut required_limits = wgpu::Limits::default();
+    required_limits.max_storage_buffers_per_shader_stage = 16;
+
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("DEM-FLIP Test Device"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
+            required_limits,
             ..Default::default()
         },
         None,

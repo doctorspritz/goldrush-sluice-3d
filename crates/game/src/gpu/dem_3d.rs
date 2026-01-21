@@ -169,7 +169,9 @@ pub struct GpuDem3D {
     velocity_buffer: Buffer,
     angular_velocity_buffer: Buffer,
     pub(crate) orientation_buffer: Buffer,
+    #[allow(dead_code)]
     radius_buffer: Buffer,
+    #[allow(dead_code)]
     mass_buffer: Buffer,
     pub(crate) template_id_buffer: Buffer,
     flags_buffer: Buffer,
@@ -185,6 +187,7 @@ pub struct GpuDem3D {
     hash_params_buffer: Buffer,
 
     // Collision response
+    #[allow(dead_code)]
     contact_buffer: Buffer,
     force_buffer: Buffer,
     torque_buffer: Buffer,
@@ -212,6 +215,7 @@ pub struct GpuDem3D {
     clear_params_buffer: Buffer,
 
     // SDF Collision
+    #[allow(dead_code)]
     sdf_buffer: Option<Buffer>,
     sdf_params_buffer: Buffer,
     sdf_collision_pipeline: ComputePipeline,
@@ -360,7 +364,7 @@ impl GpuDem3D {
 
         let hash_params_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Hash Params Buffer"),
-            size: 20,
+            size: 32, // Aligned to 32 bytes (struct is 16)
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -382,7 +386,7 @@ impl GpuDem3D {
         // Clear params buffer for hash table clearing
         let clear_params_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Clear Params Buffer"),
-            size: 16, // ClearParams struct (table_size: u32 + padding)
+            size: 32, // Aligned to 32 bytes (struct is 16)
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -749,7 +753,7 @@ impl GpuDem3D {
 
         let sdf_params_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM SDF Params Buffer"),
-            size: std::mem::size_of::<GpuSdfParams>() as u64,
+            size: 64, // Aligned to 64 bytes (struct is 48)
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });

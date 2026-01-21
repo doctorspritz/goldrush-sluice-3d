@@ -86,6 +86,7 @@ pub struct GpuG2p3D {
     // Particle buffers (positions public for density projection)
     pub positions_buffer: Arc<wgpu::Buffer>,
     pub(crate) velocities_buffer: Arc<wgpu::Buffer>,
+    #[allow(dead_code)]
     densities_buffer: Arc<wgpu::Buffer>,
     // C matrix columns (output)
     c_col0_buffer: Arc<wgpu::Buffer>,

@@ -15,6 +15,7 @@ pub struct DemRenderer {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
+    #[allow(dead_code)]
     uniform_bind_group_layout: wgpu::BindGroupLayout,
     dem_bind_group_layout: wgpu::BindGroupLayout,
 }

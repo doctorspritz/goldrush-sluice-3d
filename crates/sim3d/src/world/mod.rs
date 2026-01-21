@@ -192,8 +192,11 @@ pub struct FineRegion {
 
     // Working buffers
     collapse_deltas: Vec<f32>,
+    #[allow(dead_code)]
     advection_mass_buffer: Vec<f32>,
+    #[allow(dead_code)]
     advection_delta_buffer: Vec<f32>,
+    #[allow(dead_code)]
     advection_outflow_buffer: Vec<f32>,
 }
 
@@ -463,7 +466,7 @@ impl FineRegion {
         let mut delta_overburden = vec![0.0; width * depth];
         let mut delta_paydirt = vec![0.0; width * depth];
 
-        let bed_slope = |x: usize, z: usize, this: &FineRegion| -> f32 {
+        let _bed_slope = |x: usize, z: usize, this: &FineRegion| -> f32 {
             let h_here = this.ground_height(x, z);
             let slope_x = if x > 0 && x < this.width - 1 {
                 let h_left = this.ground_height(x - 1, z);

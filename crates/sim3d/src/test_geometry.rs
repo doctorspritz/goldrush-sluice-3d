@@ -121,7 +121,7 @@ impl TestBox {
         let in_interior_x = local.x.abs() < inner_x;
         let in_interior_z = local.z.abs() < inner_z;
         let above_floor = local.y > floor_top;
-        let below_ceiling = local.y < self.wall_height; // Open top, but walls have height
+        let _below_ceiling = local.y < self.wall_height; // Open top, but walls have height
 
         // Distance to inner surfaces (positive = in open space)
         let dist_to_floor = local.y - floor_top;

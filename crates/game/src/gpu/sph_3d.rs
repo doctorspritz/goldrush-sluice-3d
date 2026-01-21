@@ -66,7 +66,7 @@ impl SphParams {
     pub fn new(num_particles: u32, h: f32, dt: f32, grid_dims: [u32; 3]) -> Self {
         use std::f32::consts::PI;
 
-        let h2 = h * h;
+        let _h2 = h * h;
         let h3 = h * h * h;
         let h6 = h3 * h3;
         let h9 = h6 * h3;
@@ -122,6 +122,7 @@ pub struct GpuSph3D {
 
     // Pipelines
     predict_hash_pipeline: wgpu::ComputePipeline,
+    #[allow(dead_code)]
     build_offsets_pipeline: wgpu::ComputePipeline,
     density_dii_pipeline: wgpu::ComputePipeline,
     sum_dij_pipeline: wgpu::ComputePipeline,
@@ -138,6 +139,7 @@ pub struct GpuSph3D {
     bf_sum_dij_pipeline: wgpu::ComputePipeline,
     bf_update_pressure_pipeline: wgpu::ComputePipeline,
     bf_apply_pressure_pipeline: wgpu::ComputePipeline,
+    #[allow(dead_code)]
     bf_boundary_pipeline: wgpu::ComputePipeline,
 
     // Bind groups
@@ -146,6 +148,7 @@ pub struct GpuSph3D {
 
     // Limits
     max_particles: u32,
+    #[allow(dead_code)]
     num_particles_capacity: u32, // Max particles the buffers can hold
     num_cells: u32,
 

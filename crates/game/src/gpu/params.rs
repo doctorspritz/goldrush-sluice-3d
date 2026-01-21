@@ -199,7 +199,7 @@ pub(crate) struct SedimentPressureParams3D {
 }
 
 impl SedimentPressureParams3D {
-    pub fn new(
+    pub fn _new(
         width: u32,
         height: u32,
         depth: u32,
@@ -236,7 +236,7 @@ pub(crate) struct DensityErrorParams3D {
 }
 
 impl DensityErrorParams3D {
-    pub fn new(
+    pub fn _new(
         width: u32,
         height: u32,
         depth: u32,
@@ -272,7 +272,7 @@ pub(crate) struct DensityPositionGridParams3D {
 }
 
 impl DensityPositionGridParams3D {
-    pub fn new(width: u32, height: u32, depth: u32, dt: f32, strength: f32) -> Self {
+    pub fn _new(width: u32, height: u32, depth: u32, dt: f32, strength: f32) -> Self {
         Self {
             width,
             height,
@@ -301,7 +301,7 @@ pub(crate) struct DensityCorrectParams3D {
 }
 
 impl DensityCorrectParams3D {
-    pub fn new(
+    pub fn _new(
         width: u32,
         height: u32,
         depth: u32,
@@ -341,7 +341,7 @@ pub(crate) struct SdfCollisionParams3D {
 }
 
 impl SdfCollisionParams3D {
-    pub fn new(
+    pub fn _new(
         width: u32,
         height: u32,
         depth: u32,

@@ -100,8 +100,11 @@ pub struct GpuFlip3D {
     flow_params_buffer: wgpu::Buffer,
 
     // Vorticity confinement
+    #[allow(dead_code)]
     vorticity_x_buffer: wgpu::Buffer,
+    #[allow(dead_code)]
     vorticity_y_buffer: wgpu::Buffer,
+    #[allow(dead_code)]
     vorticity_z_buffer: wgpu::Buffer,
     vorticity_mag_buffer: wgpu::Buffer,
     vorticity_compute_pipeline: wgpu::ComputePipeline,
@@ -114,12 +117,14 @@ pub struct GpuFlip3D {
     vort_confine_params_buffer: wgpu::Buffer,
 
     // Sediment fraction (cell-centered)
+    #[allow(dead_code)]
     sediment_fraction_buffer: wgpu::Buffer,
     sediment_fraction_pipeline: wgpu::ComputePipeline,
     sediment_fraction_bind_group: wgpu::BindGroup,
     sediment_fraction_params_buffer: wgpu::Buffer,
 
     // Sediment pressure (Drucker-Prager)
+    #[allow(dead_code)]
     sediment_pressure_buffer: wgpu::Buffer,
     sediment_pressure_pipeline: wgpu::ComputePipeline,
     sediment_pressure_bind_group: wgpu::BindGroup,
@@ -146,14 +151,19 @@ pub struct GpuFlip3D {
 
 
     // Sediment density projection (granular packing)
+    #[allow(dead_code)]
     sediment_cell_type_pipeline: wgpu::ComputePipeline,
+    #[allow(dead_code)]
     sediment_cell_type_bind_group: wgpu::BindGroup,
     sediment_cell_type_params_buffer: wgpu::Buffer,
 
     // Density projection (volume preservation)
     density_error_buffer: wgpu::Buffer,
+    #[allow(dead_code)]
     position_delta_x_buffer: wgpu::Buffer,
+    #[allow(dead_code)]
     position_delta_y_buffer: wgpu::Buffer,
+    #[allow(dead_code)]
     position_delta_z_buffer: wgpu::Buffer,
     density_error_pipeline: wgpu::ComputePipeline,
     density_error_bind_group: wgpu::BindGroup,

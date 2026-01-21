@@ -1,6 +1,5 @@
 use glam::{Vec2, Vec3};
 use super::gpu::heightfield::GpuHeightfield;
-use sim3d::World;
 
 /// Emitter for adding water to the heightfield simulation.
 pub struct WaterEmitter {

@@ -1127,39 +1127,7 @@ impl ClusterSimulation3D {
         }
     }
 
-    fn resolve_bounds_positions(&mut self) {
-        for clump in &mut self.clumps {
-            let template = &self.templates[clump.template_idx];
-            let mut min = Vec3::splat(f32::MAX);
-            let mut max = Vec3::splat(f32::MIN);
-            for offset in &template.local_offsets {
-                let pos = clump.particle_world_position(*offset);
-                min = min.min(pos);
-                max = max.max(pos);
-            }
-            let r = Vec3::splat(template.particle_radius);
-            min -= r;
-            max += r;
 
-            if min.x < self.bounds_min.x {
-                clump.position.x += self.bounds_min.x - min.x;
-            } else if max.x > self.bounds_max.x {
-                clump.position.x += self.bounds_max.x - max.x;
-            }
-
-            if min.y < self.bounds_min.y {
-                clump.position.y += self.bounds_min.y - min.y;
-            } else if max.y > self.bounds_max.y {
-                clump.position.y += self.bounds_max.y - max.y;
-            }
-
-            if min.z < self.bounds_min.z {
-                clump.position.z += self.bounds_min.z - min.z;
-            } else if max.z > self.bounds_max.z {
-                clump.position.z += self.bounds_max.z - max.z;
-            }
-        }
-    }
 
     fn resolve_bounds(&mut self, dt: f32) {
         for clump in &mut self.clumps {

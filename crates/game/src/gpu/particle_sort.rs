@@ -41,15 +41,23 @@ pub struct GpuParticleSort {
     width: u32,
     height: u32,
     depth: u32,
+    #[allow(dead_code)]
     max_particles: usize,
+    #[allow(dead_code)]
     cell_count: usize,
 
     // Input buffers (shared with FLIP)
+    #[allow(dead_code)]
     in_positions_buffer: Arc<wgpu::Buffer>,
+    #[allow(dead_code)]
     in_velocities_buffer: Arc<wgpu::Buffer>,
+    #[allow(dead_code)]
     in_densities_buffer: Arc<wgpu::Buffer>,
+    #[allow(dead_code)]
     in_c_col0_buffer: Arc<wgpu::Buffer>,
+    #[allow(dead_code)]
     in_c_col1_buffer: Arc<wgpu::Buffer>,
+    #[allow(dead_code)]
     in_c_col2_buffer: Arc<wgpu::Buffer>,
 
     // Output buffers (sorted particles)
@@ -61,7 +69,9 @@ pub struct GpuParticleSort {
     pub out_c_col2_buffer: Arc<wgpu::Buffer>,
 
     // Intermediate buffers
+    #[allow(dead_code)]
     cell_keys_buffer: wgpu::Buffer,
+    #[allow(dead_code)]
     cell_counts_buffer: wgpu::Buffer,
     /// Cell offsets (exclusive prefix sum of cell counts) - used for atomic scatter
     /// Size: cell_count + 1 (extra element for end-of-last-cell lookup)

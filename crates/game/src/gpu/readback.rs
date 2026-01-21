@@ -246,7 +246,7 @@ impl ReadbackSlot {
     }
 
     /// Returns true if a readback is currently pending.
-    pub fn is_pending(&self) -> bool {
+    pub fn _is_pending(&self) -> bool {
         self.pending
     }
 }

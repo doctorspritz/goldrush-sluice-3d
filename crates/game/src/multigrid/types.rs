@@ -52,11 +52,15 @@ pub(crate) struct PieceTransfer {
     pub capture_max: Vec3,
 
     /// Injection position (in to_piece's sim-space).
+    #[allow(dead_code)]
     pub inject_pos: Vec3,
+    #[allow(dead_code)]
     pub inject_vel: Vec3,
 
     /// Particles in transit (position, velocity, density).
+    #[allow(dead_code)]
     pub transit_queue: Vec<(Vec3, Vec3, f32)>,
+    #[allow(dead_code)]
     pub transit_time: f32,
 }
 

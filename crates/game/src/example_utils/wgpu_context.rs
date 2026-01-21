@@ -4,8 +4,8 @@ use winit::window::Window;
 pub struct WgpuContext {
     pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    pub device: Arc<wgpu::Device>,
+    pub queue: Arc<wgpu::Queue>,
     pub surface: wgpu::Surface<'static>,
     pub config: wgpu::SurfaceConfiguration,
 }
@@ -46,6 +46,9 @@ impl WgpuContext {
             )
             .await
             .expect("Failed to create device and queue");
+
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
 
         let caps = surface.get_capabilities(&adapter);
         let format = caps

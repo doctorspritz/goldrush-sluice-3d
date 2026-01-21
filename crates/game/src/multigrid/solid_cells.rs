@@ -5,7 +5,7 @@
 //! - Sluices (with riffles)
 //! - Shaker decks (with perforated grate)
 
-use crate::editor::{GutterPiece, Rotation, ShakerDeckPiece, SluicePiece};
+use crate::editor::{GutterPiece, ShakerDeckPiece, SluicePiece};
 use sim3d::FlipSimulation3D;
 
 use super::MultiGridSim;
