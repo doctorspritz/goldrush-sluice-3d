@@ -162,6 +162,8 @@ fn main() {
             dt,
             5.0,    // drag_coefficient - how strongly particles follow water
             1000.0, // density_water - kg/m³
+            0.01,   // bed_friction_coefficient (Shields criterion)
+            0.045,  // critical_shields (incipient motion)
         );
 
         // 3. DEM finish step (integration)

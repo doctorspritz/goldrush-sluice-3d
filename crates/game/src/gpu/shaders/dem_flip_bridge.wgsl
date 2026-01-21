@@ -44,13 +44,17 @@ struct BridgeParams {
     dt: f32,
     drag_coefficient: f32,
     density_water: f32,
+    bed_friction_coefficient: f32,
+    critical_shields: f32,
     _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
     gravity: vec4<f32>,
     // DEM particle range
     dem_particle_count: u32,
-    _pad1: u32,
-    _pad2: u32,
     _pad3: u32,
+    _pad4: u32,
+    _pad5: u32,
 }
 
 const PARTICLE_ACTIVE = 1u;
@@ -286,17 +290,38 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let volume = (4.0 / 3.0) * PI * radius * radius * radius;
     let particle_density = mass / volume;
 
-    // 3. Drag force: F_drag = C_d * (rho_water / rho_particle) * (v_water - v_particle)
+    // 3. Shields criterion: only entrain when shear stress exceeds critical Shields.
+    let diameter = radius * 2.0;
+    let rho_diff = particle_density - bridge_params.density_water;
+    let g = length(bridge_params.gravity.xyz);
+    var theta = 0.0;
+    if rho_diff > 0.0 && diameter > 1e-6 && g > 0.0 {
+        let fluid_speed = length(water_vel);
+        let tau = bridge_params.bed_friction_coefficient * bridge_params.density_water * fluid_speed * fluid_speed;
+        theta = tau / (rho_diff * g * diameter);
+    }
+
+    var entrainment_factor = 1.0;
+    if bridge_params.critical_shields > 0.0 {
+        entrainment_factor = 0.0;
+        if theta > bridge_params.critical_shields {
+            let excess_shields = (theta - bridge_params.critical_shields)
+                / max(bridge_params.critical_shields, 0.001);
+            entrainment_factor = min(excess_shields, 1.0);
+        }
+    }
+
+    // 4. Drag force: F_drag = C_d * (rho_water / rho_particle) * (v_water - v_particle)
     // Higher drag coefficient = particle follows water more closely
     // Divide by particle density so heavier particles are less affected
     let drag_factor = bridge_params.drag_coefficient * bridge_params.density_water / particle_density;
-    let drag_force = relative_vel * drag_factor * mass;  // Force = factor * mass * relative_vel
+    let drag_force = relative_vel * drag_factor * mass * entrainment_factor;
 
-    // 4. Buoyancy force (separate from gravity per issue go-oqa)
+    // 5. Buoyancy force (separate from gravity per issue go-oqa)
     // F_buoyancy = rho_water * V * g (upward when submerged)
     let buoyancy_force = bridge_params.density_water * volume * (-bridge_params.gravity.xyz);
 
-    // 5. Accumulate forces to DEM force buffer
+    // 6. Accumulate forces to DEM force buffer
     // Note: Gravity is applied in dem_integration.wgsl, so we only add drag + buoyancy here
     let total_force = drag_force + buoyancy_force;
 

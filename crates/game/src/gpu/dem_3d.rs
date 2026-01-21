@@ -134,13 +134,17 @@ pub struct BridgeParams {
     pub dt: f32,
     pub drag_coefficient: f32,
     pub density_water: f32,
+    pub bed_friction_coefficient: f32,
+    pub critical_shields: f32,
     pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
     pub gravity: [f32; 4],
     // DEM particle range
     pub dem_particle_count: u32,
-    pub _pad1: u32,
-    pub _pad2: u32,
     pub _pad3: u32,
+    pub _pad4: u32,
+    pub _pad5: u32,
 }
 
 /// GPU DEM simulator
@@ -1166,6 +1170,8 @@ impl GpuDem3D {
     /// * `dt` - Time step
     /// * `drag_coefficient` - Drag coefficient (higher = more drag, typical 1.0-10.0)
     /// * `density_water` - Water density in kg/m³ (typically 1000.0)
+    /// * `bed_friction_coefficient` - Bed friction coefficient for Shields criterion
+    /// * `critical_shields` - Critical Shields parameter for entrainment
     pub fn apply_flip_coupling(
         &self,
         encoder: &mut CommandEncoder,
@@ -1179,6 +1185,8 @@ impl GpuDem3D {
         dt: f32,
         drag_coefficient: f32,
         density_water: f32,
+        bed_friction_coefficient: f32,
+        critical_shields: f32,
     ) {
         if self.particle_count() == 0 {
             return;
@@ -1193,12 +1201,16 @@ impl GpuDem3D {
             dt,
             drag_coefficient,
             density_water,
+            bed_friction_coefficient,
+            critical_shields,
             _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
             gravity: [0.0, -9.81, 0.0, 0.0],
             dem_particle_count: self.num_active_particles,
-            _pad1: 0,
-            _pad2: 0,
             _pad3: 0,
+            _pad4: 0,
+            _pad5: 0,
         };
         self.queue
             .write_buffer(&self.bridge_params_buffer, 0, bytemuck::bytes_of(&params));
