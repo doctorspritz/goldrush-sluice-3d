@@ -2,187 +2,334 @@
 //!
 //! Handles momentum transfer between DEM particles and FLIP fluid.
 //! Applies drag forces from fluid to particles and vice versa.
+//!
+//! Grid layout (MAC staggered):
+//! - U velocities: stored at left YZ faces, (width+1) x height x depth
+//! - V velocities: stored at bottom XZ faces, width x (height+1) x depth
+//! - W velocities: stored at back XY faces, width x height x (depth+1)
 
-@group(0) @binding(0) var<storage, read_write> dem_positions: array<vec3<f32>>;
-@group(0) @binding(1) var<storage, read_write> dem_velocities: array<vec3<f32>>;
-@group(0) @binding(2) var<storage, read> dem_masses: array<f32>>;
-@group(0) @binding(3) var<storage, read> dem_radii: array<f32>>;
-@group(0) @binding(4) var<storage, read> dem_template_ids: array<u32>>;
-@group(0) @binding(5) var<storage, read> dem_flags: array<u32>>;
+// DEM particle data (SoA layout matching dem_3d.rs)
+@group(0) @binding(0) var<storage, read> dem_positions: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read_write> dem_velocities: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> dem_flags: array<u32>;
+@group(0) @binding(3) var<storage, read> dem_template_ids: array<u32>;
+@group(0) @binding(4) var<storage, read> templates: array<GpuClumpTemplate>;
 
-// FLIP grid data (MAC grid)
-@group(0) @binding(6) var<storage, read> grid_u: array<array<f32>>; // X-velocity faces
-@group(0) @binding(7) var<storage, read> grid_v: array<array<f32>>; // Y-velocity faces
-@group(0) @binding(8) var<storage, read> grid_w: array<array<f32>>; // Z-velocity faces
-@group(0) @binding(9) var<storage, read_write> grid_u_next: array<array<f32>>;
-@group(0) @binding(10) var<storage, read_write> grid_v_next: array<array<f32>>;
-@group(0) @binding(11) var<storage, read_write> grid_w_next: array<array<f32>>;
+// FLIP grid data (MAC grid - flat arrays)
+@group(0) @binding(5) var<storage, read> grid_u: array<f32>;  // (width+1) x height x depth
+@group(0) @binding(6) var<storage, read> grid_v: array<f32>;  // width x (height+1) x depth
+@group(0) @binding(7) var<storage, read> grid_w: array<f32>;  // width x height x (depth+1)
 
-@group(0) @binding(12) var<uniform> flip_params: FlipParams;
-@group(0) @binding(13) var<uniform> dem_params: DemParams;
+// Force accumulation buffer (written to DEM force buffer for integration)
+@group(0) @binding(8) var<storage, read_write> dem_forces: array<vec4<f32>>;
 
-struct FlipParams {
+// Parameters
+@group(0) @binding(9) var<uniform> bridge_params: BridgeParams;
+
+struct GpuClumpTemplate {
+    sphere_count: u32,
+    mass: f32,
+    radius: f32,
+    _pad0: f32,
+    inertia_inv: mat3x3<f32>,
+}
+
+struct BridgeParams {
+    // FLIP grid dimensions
     width: u32,
     height: u32,
     depth: u32,
     cell_size: f32,
+    // Physics parameters
     dt: f32,
-}
-
-struct DemParams {
     drag_coefficient: f32,
     density_water: f32,
-    gravity: vec3<f32>,
-    dt: f32,
+    bed_friction_coefficient: f32,
+    critical_shields: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+    gravity: vec4<f32>,
+    // DEM particle range
     dem_particle_count: u32,
-    dem_particle_start: u32, // Offset in particle arrays
+    _pad3: u32,
+    _pad4: u32,
+    _pad5: u32,
 }
 
 const PARTICLE_ACTIVE = 1u;
 const WORKGROUP_SIZE = 64u;
+const MAX_TEMPLATES = 100u;
+const PI: f32 = 3.14159265359;
 
-// Cubic B-spline kernel (same as FLIP)
-fn bspline_weight(x: f32) -> f32 {
+// Quadratic B-spline kernel (same as FLIP P2G)
+fn quadratic_bspline_1d(x: f32) -> f32 {
     let ax = abs(x);
-    if ax >= 2.0 {
-        return 0.0;
-    } else if ax >= 1.0 {
-        let w = 2.0 - ax;
-        return w * w * w * 0.5;
-    } else {
-        let w = 1.0 - ax;
-        return (1.5 * w * w - 0.75) * w + 0.25;
+    if ax < 0.5 {
+        return 0.75 - ax * ax;
+    } else if ax < 1.5 {
+        let t = 1.5 - ax;
+        return 0.5 * t * t;
     }
+    return 0.0;
 }
 
-// Sample grid velocity at particle position (trilinear interpolation)
+// MAC grid index functions
+fn u_index(i: u32, j: u32, k: u32) -> u32 {
+    // U grid: (width+1) x height x depth
+    return k * (bridge_params.width + 1u) * bridge_params.height + j * (bridge_params.width + 1u) + i;
+}
+
+fn v_index(i: u32, j: u32, k: u32) -> u32 {
+    // V grid: width x (height+1) x depth
+    return k * bridge_params.width * (bridge_params.height + 1u) + j * bridge_params.width + i;
+}
+
+fn w_index(i: u32, j: u32, k: u32) -> u32 {
+    // W grid: width x height x (depth+1)
+    return k * bridge_params.width * bridge_params.height + j * bridge_params.width + i;
+}
+
+// Sample U velocity at position (U is at left YZ faces: i, j+0.5, k+0.5)
+fn sample_u(pos: vec3<f32>) -> f32 {
+    let cell_size = bridge_params.cell_size;
+    let width = bridge_params.width;
+    let height = bridge_params.height;
+    let depth = bridge_params.depth;
+
+    // U sample point offset: (0, 0.5, 0.5) in cell coords
+    let u_pos = pos / cell_size - vec3<f32>(0.0, 0.5, 0.5);
+    let base = vec3<i32>(floor(u_pos));
+    let frac = u_pos - vec3<f32>(base);
+
+    // Precompute 1D weights for -1, 0, +1 offsets
+    let wx = array<f32, 3>(
+        quadratic_bspline_1d(frac.x + 1.0),
+        quadratic_bspline_1d(frac.x),
+        quadratic_bspline_1d(frac.x - 1.0)
+    );
+    let wy = array<f32, 3>(
+        quadratic_bspline_1d(frac.y + 1.0),
+        quadratic_bspline_1d(frac.y),
+        quadratic_bspline_1d(frac.y - 1.0)
+    );
+    let wz = array<f32, 3>(
+        quadratic_bspline_1d(frac.z + 1.0),
+        quadratic_bspline_1d(frac.z),
+        quadratic_bspline_1d(frac.z - 1.0)
+    );
+
+    var result = 0.0;
+    for (var dk: i32 = -1; dk <= 1; dk++) {
+        let nk = base.z + dk;
+        if nk < 0 || nk >= i32(depth) { continue; }
+        let w_z = wz[dk + 1];
+
+        for (var dj: i32 = -1; dj <= 1; dj++) {
+            let nj = base.y + dj;
+            if nj < 0 || nj >= i32(height) { continue; }
+            let w_yz = w_z * wy[dj + 1];
+
+            for (var di: i32 = -1; di <= 1; di++) {
+                let ni = base.x + di;
+                if ni < 0 || ni > i32(width) { continue; }  // U grid has width+1
+                let weight = w_yz * wx[di + 1];
+
+                let idx = u_index(u32(ni), u32(nj), u32(nk));
+                result += grid_u[idx] * weight;
+            }
+        }
+    }
+    return result;
+}
+
+// Sample V velocity at position (V is at bottom XZ faces: i+0.5, j, k+0.5)
+fn sample_v(pos: vec3<f32>) -> f32 {
+    let cell_size = bridge_params.cell_size;
+    let width = bridge_params.width;
+    let height = bridge_params.height;
+    let depth = bridge_params.depth;
+
+    // V sample point offset: (0.5, 0, 0.5) in cell coords
+    let v_pos = pos / cell_size - vec3<f32>(0.5, 0.0, 0.5);
+    let base = vec3<i32>(floor(v_pos));
+    let frac = v_pos - vec3<f32>(base);
+
+    let wx = array<f32, 3>(
+        quadratic_bspline_1d(frac.x + 1.0),
+        quadratic_bspline_1d(frac.x),
+        quadratic_bspline_1d(frac.x - 1.0)
+    );
+    let wy = array<f32, 3>(
+        quadratic_bspline_1d(frac.y + 1.0),
+        quadratic_bspline_1d(frac.y),
+        quadratic_bspline_1d(frac.y - 1.0)
+    );
+    let wz = array<f32, 3>(
+        quadratic_bspline_1d(frac.z + 1.0),
+        quadratic_bspline_1d(frac.z),
+        quadratic_bspline_1d(frac.z - 1.0)
+    );
+
+    var result = 0.0;
+    for (var dk: i32 = -1; dk <= 1; dk++) {
+        let nk = base.z + dk;
+        if nk < 0 || nk >= i32(depth) { continue; }
+        let w_z = wz[dk + 1];
+
+        for (var dj: i32 = -1; dj <= 1; dj++) {
+            let nj = base.y + dj;
+            if nj < 0 || nj > i32(height) { continue; }  // V grid has height+1
+            let w_yz = w_z * wy[dj + 1];
+
+            for (var di: i32 = -1; di <= 1; di++) {
+                let ni = base.x + di;
+                if ni < 0 || ni >= i32(width) { continue; }
+                let weight = w_yz * wx[di + 1];
+
+                let idx = v_index(u32(ni), u32(nj), u32(nk));
+                result += grid_v[idx] * weight;
+            }
+        }
+    }
+    return result;
+}
+
+// Sample W velocity at position (W is at back XY faces: i+0.5, j+0.5, k)
+fn sample_w(pos: vec3<f32>) -> f32 {
+    let cell_size = bridge_params.cell_size;
+    let width = bridge_params.width;
+    let height = bridge_params.height;
+    let depth = bridge_params.depth;
+
+    // W sample point offset: (0.5, 0.5, 0) in cell coords
+    let w_pos = pos / cell_size - vec3<f32>(0.5, 0.5, 0.0);
+    let base = vec3<i32>(floor(w_pos));
+    let frac = w_pos - vec3<f32>(base);
+
+    let wx = array<f32, 3>(
+        quadratic_bspline_1d(frac.x + 1.0),
+        quadratic_bspline_1d(frac.x),
+        quadratic_bspline_1d(frac.x - 1.0)
+    );
+    let wy = array<f32, 3>(
+        quadratic_bspline_1d(frac.y + 1.0),
+        quadratic_bspline_1d(frac.y),
+        quadratic_bspline_1d(frac.y - 1.0)
+    );
+    let wz = array<f32, 3>(
+        quadratic_bspline_1d(frac.z + 1.0),
+        quadratic_bspline_1d(frac.z),
+        quadratic_bspline_1d(frac.z - 1.0)
+    );
+
+    var result = 0.0;
+    for (var dk: i32 = -1; dk <= 1; dk++) {
+        let nk = base.z + dk;
+        if nk < 0 || nk > i32(depth) { continue; }  // W grid has depth+1
+        let w_z = wz[dk + 1];
+
+        for (var dj: i32 = -1; dj <= 1; dj++) {
+            let nj = base.y + dj;
+            if nj < 0 || nj >= i32(height) { continue; }
+            let w_yz = w_z * wy[dj + 1];
+
+            for (var di: i32 = -1; di <= 1; di++) {
+                let ni = base.x + di;
+                if ni < 0 || ni >= i32(width) { continue; }
+                let weight = w_yz * wx[di + 1];
+
+                let idx = w_index(u32(ni), u32(nj), u32(nk));
+                result += grid_w[idx] * weight;
+            }
+        }
+    }
+    return result;
+}
+
+// Sample full velocity vector at position
 fn sample_grid_velocity(pos: vec3<f32>) -> vec3<f32> {
-    let cell_pos = pos / flip_params.cell_size - vec3<f32>(0.5, 0.5, 0.5);
-    let cell = vec3<i32>(floor(cell_pos));
-    let frac = cell_pos - vec3<f32>(f32(cell.x), f32(cell.y), f32(cell.z));
-    
-    // Clamp to grid bounds
-    let clamped_cell = clamp(cell, vec3<i32>(0, 0, 0), 
-                                     vec3<i32>(i32(flip_params.width) - 1, 
-                                                 i32(flip_params.height) - 1, 
-                                                 i32(flip_params.depth) - 1));
-    
-    // Compute weights
-    let wx0 = bspline_weight(frac.x);
-    let wx1 = bspline_weight(1.0 - frac.x);
-    let wy0 = bspline_weight(frac.y);
-    let wy1 = bspline_weight(1.0 - frac.y);
-    let wz0 = bspline_weight(frac.z);
-    let wz1 = bspline_weight(1.0 - frac.z);
-    
-    var vel = vec3<f32>(0.0, 0.0, 0.0);
-    
-    // Trilinear interpolation
-    for dz in 0u..=2u {
-        for dy in 0u..=2u {
-            for dx in 0u..=2u {
-                let sample_cell = clamped_cell + vec3<i32>(i32(dx) - 1, i32(dy) - 1, i32(dz) - 1);
-                
-                if sample_cell.x >= 0 && sample_cell.x < i32(flip_params.width) &&
-                   sample_cell.y >= 0 && sample_cell.y < i32(flip_params.height) &&
-                   sample_cell.z >= 0 && sample_cell.z < i32(flip_params.depth) {
-                    
-                    let idx = u32(sample_cell.z) * flip_params.width * flip_params.height +
-                              u32(sample_cell.y) * flip_params.width +
-                              u32(sample_cell.x);
-                    
-                    let weight = wx0 * wx1 * wy0 * wy1 * wz0 * wz1;
-                    vel.x += grid_u[sample_cell.z][sample_cell.y][sample_cell.x] * weight;
-                    vel.y += grid_v[sample_cell.z][sample_cell.y][sample_cell.x + 1] * weight; // Offset for v faces
-                    vel.z += grid_w[sample_cell.z][sample_cell.y + 1][sample_cell.x] * weight; // Offset for w faces
-                }
-            }
-        }
-    }
-    
-    return vel;
-}
-
-// Scatter force to grid (same as P2G)
-fn scatter_force(pos: vec3<f32>, force: vec3<f32>, mass: f32) {
-    let cell_pos = pos / flip_params.cell_size - vec3<f32>(0.5, 0.5, 0.5);
-    let cell = vec3<i32>(floor(cell_pos));
-    let frac = cell_pos - vec3<f32>(f32(cell.x), f32(cell.y), f32(cell.z));
-    
-    let wx0 = bspline_weight(frac.x);
-    let wx1 = bspline_weight(1.0 - frac.x);
-    let wy0 = bspline_weight(frac.y);
-    let wy1 = bspline_weight(1.0 - frac.y);
-    let wz0 = bspline_weight(frac.z);
-    let wz1 = bspline_weight(1.0 - frac.z);
-    
-    for dz in 0u..=2u {
-        for dy in 0u..=2u {
-            for dx in 0u..=2u {
-                let sample_cell = cell + vec3<i32>(i32(dx) - 1, i32(dy) - 1, i32(dz) - 1);
-                
-                if sample_cell.x >= 0 && sample_cell.x < i32(flip_params.width) &&
-                   sample_cell.y >= 0 && sample_cell.y < i32(flip_params.height) &&
-                   sample_cell.z >= 0 && sample_cell.z < i32(flip_params.depth) {
-                    
-                    let idx = u32(sample_cell.z) * flip_params.width * flip_params.height +
-                              u32(sample_cell.y) * flip_params.width +
-                              u32(sample_cell.x);
-                    
-                    let weight = wx0 * wx1 * wy0 * wy1 * wz0 * wz1;
-                    
-                    // Add momentum contribution (force * dt = momentum)
-                    let momentum = force * flip_params.dt * mass;
-                    
-                    // Atomic operations for grid update
-                    atomicAdd(&grid_u_next[sample_cell.z][sample_cell.y][sample_cell.x], momentum.x * weight);
-                    atomicAdd(&grid_v_next[sample_cell.z][sample_cell.y][sample_cell.x + 1], momentum.y * weight);
-                    atomicAdd(&grid_w_next[sample_cell.z][sample_cell.y + 1][sample_cell.x], momentum.z * weight);
-                }
-            }
-        }
-    }
+    return vec3<f32>(sample_u(pos), sample_v(pos), sample_w(pos));
 }
 
 @compute @workgroup_size(WORKGROUP_SIZE)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
-    if idx >= dem_params.dem_particle_count { return; }
-    
-    let particle_idx = dem_params.dem_particle_start + idx;
-    let flags = dem_flags[particle_idx];
-    
+    if idx >= bridge_params.dem_particle_count { return; }
+
+    let flags = dem_flags[idx];
     if (flags & PARTICLE_ACTIVE) == 0u { return; }
-    
-    let pos = dem_positions[particle_idx];
-    let vel = dem_velocities[particle_idx];
-    let mass = dem_masses[particle_idx];
-    let radius = dem_radii[particle_idx];
-    let template_id = dem_template_ids[particle_idx];
-    
-    // 1. Apply FLIP forces to DEM particle
+
+    let template_idx = dem_template_ids[idx];
+    if template_idx >= MAX_TEMPLATES { return; }
+
+    let mass = templates[template_idx].mass;
+    let radius = templates[template_idx].radius;
+    if mass <= 0.0 || radius <= 0.0 { return; }
+
+    let pos = dem_positions[idx].xyz;
+    let vel = dem_velocities[idx].xyz;
+
+    // Check if particle is within FLIP grid bounds
+    let grid_max = vec3<f32>(
+        f32(bridge_params.width) * bridge_params.cell_size,
+        f32(bridge_params.height) * bridge_params.cell_size,
+        f32(bridge_params.depth) * bridge_params.cell_size
+    );
+    if pos.x < 0.0 || pos.x >= grid_max.x ||
+       pos.y < 0.0 || pos.y >= grid_max.y ||
+       pos.z < 0.0 || pos.z >= grid_max.z {
+        return;  // Outside fluid domain
+    }
+
+    // 1. Sample fluid velocity at particle position
     let water_vel = sample_grid_velocity(pos);
     let relative_vel = water_vel - vel;
-    
-    // Drag force (heavier particles affected less)
-    let density_ratio = mass / (4.0/3.0 * 3.14159 * radius * radius * radius); // Approx density
-    let drag_factor = dem_params.drag_coefficient / density_ratio;
-    let drag_force = relative_vel * drag_factor;
-    
-    // Buoyancy (reduced gravity)
-    let gravity_force = dem_params.gravity * mass * (1.0 - dem_params.density_water / density_ratio);
-    
-    // Update DEM particle velocity
-    let total_force = drag_force + gravity_force;
-    let accel = total_force / mass;
-    dem_velocities[particle_idx] = vel + accel * dem_params.dt;
-    
-    // 2. Apply DEM reaction forces to FLIP grid
-    // For single spheres, use sphere radius
-    // For multi-sphere clumps, we'd need to track contacts from collision shader
-    // For now, just apply equal and opposite reaction force
-    let reaction_force = -drag_force * mass; // Reaction on fluid
-    
-    // Scatter reaction force to grid
-    scatter_force(pos, reaction_force, mass);
+
+    // 2. Compute particle density from mass and radius
+    let volume = (4.0 / 3.0) * PI * radius * radius * radius;
+    let particle_density = mass / volume;
+
+    // 3. Shields criterion: only entrain when shear stress exceeds critical Shields.
+    let diameter = radius * 2.0;
+    let rho_diff = particle_density - bridge_params.density_water;
+    let g = length(bridge_params.gravity.xyz);
+    var theta = 0.0;
+    if rho_diff > 0.0 && diameter > 1e-6 && g > 0.0 {
+        let fluid_speed = length(water_vel);
+        let tau = bridge_params.bed_friction_coefficient * bridge_params.density_water * fluid_speed * fluid_speed;
+        theta = tau / (rho_diff * g * diameter);
+    }
+
+    var entrainment_factor = 1.0;
+    if bridge_params.critical_shields > 0.0 {
+        entrainment_factor = 0.0;
+        if theta > bridge_params.critical_shields {
+            let excess_shields = (theta - bridge_params.critical_shields)
+                / max(bridge_params.critical_shields, 0.001);
+            entrainment_factor = min(excess_shields, 1.0);
+        }
+    }
+
+    // 4. Drag force: F_drag = C_d * (rho_water / rho_particle) * (v_water - v_particle)
+    // Higher drag coefficient = particle follows water more closely
+    // Divide by particle density so heavier particles are less affected
+    let drag_factor = bridge_params.drag_coefficient * bridge_params.density_water / particle_density;
+    let drag_force = relative_vel * drag_factor * mass * entrainment_factor;
+
+    // 5. Buoyancy force (separate from gravity per issue go-oqa)
+    // F_buoyancy = rho_water * V * g (upward when submerged)
+    let buoyancy_force = bridge_params.density_water * volume * (-bridge_params.gravity.xyz);
+
+    // 6. Accumulate forces to DEM force buffer
+    // Note: Gravity is applied in dem_integration.wgsl, so we only add drag + buoyancy here
+    let total_force = drag_force + buoyancy_force;
+
+    // Add to existing forces (may have contact forces from DEM collision)
+    let existing_force = dem_forces[idx].xyz;
+    dem_forces[idx] = vec4<f32>(existing_force + total_force, 0.0);
+
+    // Note: Two-way coupling (reaction force on fluid) would require atomic writes
+    // to the FLIP grid, which is handled separately in a dedicated scatter pass.
+    // This shader focuses on the DEM side of the coupling.
 }

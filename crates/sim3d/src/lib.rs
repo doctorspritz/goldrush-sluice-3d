@@ -43,7 +43,8 @@ pub mod transfer;
 pub mod world;
 
 pub use clump::{
-    Clump3D, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, IrregularStyle3D, SdfParams,
+    Clump3D, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FluidParams, FluidVelocityField,
+    IrregularStyle3D, SdfParams,
 };
 pub use glam::{Mat3, Vec3};
 pub use grid::{CellType, Grid3D};

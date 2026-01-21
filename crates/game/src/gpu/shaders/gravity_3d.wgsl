@@ -7,7 +7,7 @@ struct Params {
     width: u32,
     height: u32,
     depth: u32,
-    gravity_dt: f32,  // gravity * dt (typically -9.81 * dt)
+    extra: f32,  // gravity_dt: gravity * dt (typically -9.81 * dt)
     cell_size: f32,
     // Bitmask for open boundaries:
     // Bit 0 (1): -X open, Bit 1 (2): +X open
@@ -105,5 +105,5 @@ fn apply_gravity(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Apply gravity to V faces adjacent to at least one fluid cell
     let idx = v_index(i, j, k);
-    grid_v[idx] += params.gravity_dt;
+    grid_v[idx] += params.extra;
 }

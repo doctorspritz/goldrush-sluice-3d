@@ -8,7 +8,7 @@ struct Params {
     width: u32,
     height: u32,
     depth: u32,
-    flow_accel_dt: f32,  // flow_accel * dt (e.g., 2.0 * dt for sluice)
+    value: f32,  // flow_accel * dt (e.g., 2.0 * dt for sluice)
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -66,6 +66,6 @@ fn apply_flow(@builtin(global_invocation_id) id: vec3<u32>) {
     // water pooled behind riffles with no downstream push.
     if (left_type == CELL_FLUID || right_type == CELL_FLUID) {
         let idx = u_index(i, j, k);
-        grid_u[idx] += params.flow_accel_dt;
+        grid_u[idx] += params.value;
     }
 }

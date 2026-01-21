@@ -107,6 +107,13 @@ pub struct HashEntry {
     pub next_idx: u32,
 }
 
+/// Hash table readback snapshot for diagnostics/testing
+pub struct HashReadback {
+    pub entry_count: u32,
+    pub hash_table: Vec<u32>,
+    pub hash_entries: Vec<HashEntry>,
+}
+
 /// Contact information between two spheres
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -119,6 +126,32 @@ pub struct GpuContact {
     pub penetration: f32, // Penetration depth (m)
     pub normal_vel: f32,  // Relative velocity along normal
     pub _pad: [f32; 2],
+}
+
+/// DEM-FLIP bridge parameters for coupling shader
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct BridgeParams {
+    // FLIP grid dimensions
+    pub width: u32,
+    pub height: u32,
+    pub depth: u32,
+    pub cell_size: f32,
+    // Physics parameters
+    pub dt: f32,
+    pub drag_coefficient: f32,
+    pub density_water: f32,
+    pub bed_friction_coefficient: f32,
+    pub critical_shields: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
+    pub gravity: [f32; 4],
+    // DEM particle range
+    pub dem_particle_count: u32,
+    pub _pad3: u32,
+    pub _pad4: u32,
+    pub _pad5: u32,
 }
 
 /// GPU DEM simulator
@@ -183,6 +216,11 @@ pub struct GpuDem3D {
     sdf_params_buffer: Buffer,
     sdf_collision_pipeline: ComputePipeline,
     sdf_collision_bind_group_layout: BindGroupLayout,
+
+    // DEM-FLIP Bridge (fluid coupling)
+    bridge_pipeline: ComputePipeline,
+    bridge_bind_group_layout: BindGroupLayout,
+    bridge_params_buffer: Buffer,
 }
 
 impl GpuDem3D {
@@ -278,7 +316,7 @@ impl GpuDem3D {
         let hash_table_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Hash Table Buffer"),
             size: (HASH_TABLE_SIZE as u64) * 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -286,7 +324,7 @@ impl GpuDem3D {
         let hash_entry_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Hash Entry Buffer"),
             size: (max_hash_entries as u64) * 8, // sizeof(HashEntry) = 8
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -330,7 +368,7 @@ impl GpuDem3D {
         let particle_counter_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("DEM Particle Counter Buffer"),
             size: 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -564,7 +602,7 @@ impl GpuDem3D {
                         binding: 0,
                         visibility: ShaderStages::COMPUTE,
                         ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: true },
+                            ty: BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
@@ -574,7 +612,7 @@ impl GpuDem3D {
                         binding: 1,
                         visibility: ShaderStages::COMPUTE,
                         ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: true },
+                            ty: BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
@@ -584,7 +622,7 @@ impl GpuDem3D {
                         binding: 2,
                         visibility: ShaderStages::COMPUTE,
                         ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: true },
+                            ty: BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
@@ -716,6 +754,149 @@ impl GpuDem3D {
             mapped_at_creation: false,
         });
 
+        // DEM-FLIP Bridge pipeline
+        let bridge_shader =
+            device.create_shader_module(include_wgsl!("shaders/dem_flip_bridge.wgsl"));
+
+        let bridge_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("DEM-FLIP Bridge Bind Group Layout"),
+                entries: &[
+                    // binding 0: dem_positions (read)
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 1: dem_velocities (read_write - for debug, could be read)
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 2: dem_flags (read)
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 3: dem_template_ids (read)
+                    BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 4: templates (read)
+                    BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 5: grid_u (read)
+                    BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 6: grid_v (read)
+                    BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 7: grid_w (read)
+                    BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 8: dem_forces (read_write)
+                    BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 9: bridge_params (uniform)
+                    BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let bridge_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("DEM-FLIP Bridge Pipeline Layout"),
+            bind_group_layouts: &[&bridge_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let bridge_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: Some("DEM-FLIP Bridge Pipeline"),
+            layout: Some(&bridge_pipeline_layout),
+            module: &bridge_shader,
+            entry_point: Some("main"),
+            compilation_options: PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
+        let bridge_params_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("DEM-FLIP Bridge Params Buffer"),
+            size: std::mem::size_of::<BridgeParams>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let dem = Self {
             device,
             queue,
@@ -755,12 +936,15 @@ impl GpuDem3D {
             sdf_params_buffer,
             sdf_collision_pipeline,
             sdf_collision_bind_group_layout,
+            bridge_pipeline,
+            bridge_bind_group_layout,
+            bridge_params_buffer,
             stiffness: 1000.0, // Default safer stiffness
             damping: 10.0,     // Default safer damping
         };
 
-        // Initialize hash table
-        let empty_hash: [u32; HASH_TABLE_SIZE as usize] = [EMPTY_SLOT; HASH_TABLE_SIZE as usize];
+        // Initialize hash table (use Vec to avoid stack overflow - 4MB array)
+        let empty_hash = vec![EMPTY_SLOT; HASH_TABLE_SIZE as usize];
         dem.queue
             .write_buffer(&dem.hash_table_buffer, 0, bytemuck::cast_slice(&empty_hash));
 
@@ -889,6 +1073,12 @@ impl GpuDem3D {
         self.finish_step(encoder);
     }
 
+    /// Override hash parameters (primarily for testing and diagnostics).
+    pub fn override_hash_params(&mut self, params: HashParams) {
+        self.queue
+            .write_buffer(&self.hash_params_buffer, 0, bytemuck::bytes_of(&params));
+    }
+
     /// Apply collision response against a specific SDF (can be called multiple times for multigrid)
     pub fn apply_sdf_collision_pass(
         &mut self,
@@ -971,6 +1161,128 @@ impl GpuDem3D {
             timestamp_writes: None,
         });
         pass.set_pipeline(&self.sdf_collision_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(workgroup_count_x, 1, 1);
+    }
+
+    /// Apply DEM-FLIP bridge coupling pass
+    ///
+    /// This samples FLIP grid velocities at DEM particle positions and applies
+    /// drag and buoyancy forces. Must be called between prepare_step() and finish_step()
+    /// so that forces are integrated properly.
+    ///
+    /// # Arguments
+    /// * `encoder` - Command encoder
+    /// * `grid_u` - FLIP grid U velocity buffer (width+1 x height x depth)
+    /// * `grid_v` - FLIP grid V velocity buffer (width x height+1 x depth)
+    /// * `grid_w` - FLIP grid W velocity buffer (width x height x depth+1)
+    /// * `grid_width` - FLIP grid width
+    /// * `grid_height` - FLIP grid height
+    /// * `grid_depth` - FLIP grid depth
+    /// * `cell_size` - FLIP cell size in meters
+    /// * `dt` - Time step
+    /// * `drag_coefficient` - Drag coefficient (higher = more drag, typical 1.0-10.0)
+    /// * `density_water` - Water density in kg/m³ (typically 1000.0)
+    /// * `bed_friction_coefficient` - Bed friction coefficient for Shields criterion
+    /// * `critical_shields` - Critical Shields parameter for entrainment
+    pub fn apply_flip_coupling(
+        &self,
+        encoder: &mut CommandEncoder,
+        grid_u: &Buffer,
+        grid_v: &Buffer,
+        grid_w: &Buffer,
+        grid_width: u32,
+        grid_height: u32,
+        grid_depth: u32,
+        cell_size: f32,
+        dt: f32,
+        drag_coefficient: f32,
+        density_water: f32,
+        bed_friction_coefficient: f32,
+        critical_shields: f32,
+    ) {
+        if self.particle_count() == 0 {
+            return;
+        }
+
+        // Update bridge parameters
+        let params = BridgeParams {
+            width: grid_width,
+            height: grid_height,
+            depth: grid_depth,
+            cell_size,
+            dt,
+            drag_coefficient,
+            density_water,
+            bed_friction_coefficient,
+            critical_shields,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
+            gravity: [0.0, -9.81, 0.0, 0.0],
+            dem_particle_count: self.num_active_particles,
+            _pad3: 0,
+            _pad4: 0,
+            _pad5: 0,
+        };
+        self.queue
+            .write_buffer(&self.bridge_params_buffer, 0, bytemuck::bytes_of(&params));
+
+        // Create bind group for this pass
+        let bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("DEM-FLIP Bridge Bind Group"),
+            layout: &self.bridge_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: self.position_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: self.velocity_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: self.flags_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: self.template_id_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: self.template_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: grid_u.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: grid_v.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: grid_w.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 8,
+                    resource: self.force_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 9,
+                    resource: self.bridge_params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let workgroup_count_x = (self.num_active_particles + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+            label: Some("DEM-FLIP Bridge"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.bridge_pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups(workgroup_count_x, 1, 1);
     }
@@ -1122,6 +1434,15 @@ impl GpuDem3D {
         Some(idx)
     }
 
+    pub fn set_angular_velocity(&self, particle_idx: u32, angular_velocity: glam::Vec3) {
+        let data = [angular_velocity.x, angular_velocity.y, angular_velocity.z, 0.0];
+        self.queue.write_buffer(
+            &self.angular_velocity_buffer,
+            (particle_idx as u64) * 16,
+            bytemuck::cast_slice(&[data]),
+        );
+    }
+
     /// Update particle properties from template (radius, mass)
     fn update_particle_from_template(&mut self, _particle_idx: u32, _template_id: u32) {
         // No-op: Template data is read directly on GPU now.
@@ -1253,5 +1574,96 @@ impl GpuDem3D {
         }
 
         final_particles
+    }
+
+    /// Read back spatial hash state (table, entries, and entry counter).
+    pub async fn readback_hash_state(&self, device: &wgpu::Device) -> HashReadback {
+        let table_len = HASH_TABLE_SIZE as usize;
+        let entry_len = (self.max_particles * 27) as usize;
+
+        let table_staging = device.create_buffer(&BufferDescriptor {
+            label: Some("Staging Hash Table"),
+            size: (table_len * std::mem::size_of::<u32>()) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let entries_staging = device.create_buffer(&BufferDescriptor {
+            label: Some("Staging Hash Entries"),
+            size: (entry_len * std::mem::size_of::<HashEntry>()) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let counter_staging = device.create_buffer(&BufferDescriptor {
+            label: Some("Staging Hash Entry Counter"),
+            size: std::mem::size_of::<u32>() as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("Hash Readback Encoder"),
+        });
+
+        encoder.copy_buffer_to_buffer(
+            &self.hash_table_buffer,
+            0,
+            &table_staging,
+            0,
+            (table_len * std::mem::size_of::<u32>()) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.hash_entry_buffer,
+            0,
+            &entries_staging,
+            0,
+            (entry_len * std::mem::size_of::<HashEntry>()) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.particle_counter_buffer,
+            0,
+            &counter_staging,
+            0,
+            std::mem::size_of::<u32>() as u64,
+        );
+
+        self.queue.submit(Some(encoder.finish()));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        table_staging.slice(..).map_async(MapMode::Read, {
+            let tx = tx.clone();
+            move |v| tx.send(("table", v)).unwrap()
+        });
+        entries_staging.slice(..).map_async(MapMode::Read, {
+            let tx = tx.clone();
+            move |v| tx.send(("entries", v)).unwrap()
+        });
+        counter_staging.slice(..).map_async(MapMode::Read, {
+            let tx = tx.clone();
+            move |v| tx.send(("counter", v)).unwrap()
+        });
+
+        device.poll(Maintain::Wait);
+
+        for _ in 0..3 {
+            let (label, result) = rx.recv().unwrap();
+            result.expect(&format!("Failed to map {} buffer", label));
+        }
+
+        let table_data = table_staging.slice(..).get_mapped_range();
+        let entries_data = entries_staging.slice(..).get_mapped_range();
+        let counter_data = counter_staging.slice(..).get_mapped_range();
+
+        let hash_table: Vec<u32> = bytemuck::cast_slice(&table_data).to_vec();
+        let hash_entries: Vec<HashEntry> = bytemuck::cast_slice(&entries_data).to_vec();
+        let entry_count = bytemuck::cast_slice::<u8, u32>(&counter_data)[0];
+
+        HashReadback {
+            entry_count,
+            hash_table,
+            hash_entries,
+        }
     }
 }

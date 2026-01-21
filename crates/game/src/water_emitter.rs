@@ -63,8 +63,6 @@ impl WaterEmitter {
             self.overburden_conc,
             self.gravel_conc,
             self.paydirt_conc,
-            self.velocity.x, // Passing velocity X
-            self.velocity.y, // Passing velocity Z (stored in Vec2.y)
             dt,
             self.enabled,
         );

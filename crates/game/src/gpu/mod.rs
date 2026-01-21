@@ -10,8 +10,10 @@ pub mod heightfield;
 pub mod mgpcg;
 pub mod p2g_3d;
 pub mod p2g_cell_centric_3d;
+pub mod params;
 pub mod particle_sort;
 pub mod pressure_3d;
+pub mod readback;
 pub mod sph_3d;
 pub mod sph_dfsph;
 

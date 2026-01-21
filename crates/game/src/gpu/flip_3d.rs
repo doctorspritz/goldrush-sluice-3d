@@ -10,451 +10,23 @@
 use super::g2p_3d::{GpuG2p3D, SedimentParams3D};
 use super::p2g_3d::GpuP2g3D;
 use super::p2g_cell_centric_3d::GpuP2gCellCentric3D;
+use super::params::{
+    BcParams3D, DensityCorrectParams3D, DensityErrorParams3D, DensityPositionGridParams3D,
+    FlowParams3D, GravelObstacleParams3D, GravityParams3D, PorosityDragParams3D,
+    SdfCollisionParams3D, SedimentCellTypeParams3D, SedimentFractionParams3D,
+    SedimentPressureParams3D, VortConfineParams3D, VorticityParams3D,
+};
 use super::particle_sort::GpuParticleSort;
 use super::pressure_3d::GpuPressure3D;
+use super::readback::{ReadbackMode, ReadbackSlot};
 
-use bytemuck::{Pod, Zeroable};
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+// Re-export GravelObstacle for public API
+pub use super::params::GravelObstacle;
+
 const GRAVEL_OBSTACLE_MAX: u32 = 2048;
-
-
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-pub struct GravelObstacle {
-    pub position: [f32; 3],
-    pub radius: f32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct GravelObstacleParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    obstacle_count: u32,
-    cell_size: f32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
-}
-
-/// Gravity application parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct GravityParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    gravity_dt: f32,
-    cell_size: f32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
-}
-
-/// Flow acceleration parameters (for sluice downstream flow)
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct FlowParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    flow_accel_dt: f32, // flow_accel * dt
-}
-
-/// Vorticity computation parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct VorticityParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    cell_size: f32,
-}
-
-/// Vorticity confinement parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct VortConfineParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    epsilon_h_dt: f32, // epsilon * h * dt
-}
-
-/// Sediment fraction parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct SedimentFractionParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    rest_particles: f32,
-}
-
-/// Sediment pressure parameters (for Drucker-Prager)
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct SedimentPressureParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    _pad0: u32,
-    cell_size: f32,
-    particle_mass: f32,
-    gravity: f32,
-    buoyancy_factor: f32,
-}
-
-/// Porosity drag parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct PorosityDragParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    drag_dt: f32,
-}
-
-/// Boundary condition parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct BcParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    _pad: u32,
-}
-
-
-
-/// Sediment cell type builder parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct SedimentCellTypeParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    _pad0: u32,
-}
-
-/// Density error parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct DensityErrorParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    rest_density: f32,
-    dt: f32,
-    surface_clamp: u32,
-    _pad2: u32,
-    _pad3: u32,
-}
-
-/// Density position grid parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct DensityPositionGridParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    dt: f32,
-    strength: f32,  // Amplification factor for position corrections
-    _pad1: u32,
-    _pad2: u32,
-    _pad3: u32,
-}
-
-/// Density correct parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct DensityCorrectParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    particle_count: u32,
-    cell_size: f32,
-    damping: f32, // Damp velocities during position correction to kill jitter energy
-    _pad2: u32,
-    _pad3: u32,
-}
-
-
-/// SDF collision parameters
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct SdfCollisionParams3D {
-    width: u32,
-    height: u32,
-    depth: u32,
-    particle_count: u32,
-    cell_size: f32,
-    dt: f32,
-    /// Bitmask for open boundaries (particles can exit without clamping):
-    /// Bit 0 (1): -X open, Bit 1 (2): +X open
-    /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
-    /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
-    open_boundaries: u32,
-    _pad0: u32,
-}
-
-#[derive(Copy, Clone)]
-enum ReadbackMode {
-    None,
-    Sync,
-    Async,
-}
-
-struct ReadbackSlot {
-    positions_staging: wgpu::Buffer,
-    velocities_staging: wgpu::Buffer,
-    c_col0_staging: wgpu::Buffer,
-    c_col1_staging: wgpu::Buffer,
-    c_col2_staging: wgpu::Buffer,
-    capacity: usize,
-    count: usize,
-    pending: bool,
-    positions_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
-    velocities_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
-    c_col0_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
-    c_col1_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
-    c_col2_rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
-}
-
-impl ReadbackSlot {
-    fn new(device: &wgpu::Device, max_particles: usize) -> Self {
-        let buffer_size = (max_particles * std::mem::size_of::<[f32; 4]>()) as u64;
-        Self {
-            positions_staging: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Readback Positions Staging"),
-                size: buffer_size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            velocities_staging: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Readback Velocities Staging"),
-                size: buffer_size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            c_col0_staging: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Readback C Col0 Staging"),
-                size: buffer_size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            c_col1_staging: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Readback C Col1 Staging"),
-                size: buffer_size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            c_col2_staging: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Readback C Col2 Staging"),
-                size: buffer_size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            capacity: max_particles,
-            count: 0,
-            pending: false,
-            positions_rx: None,
-            velocities_rx: None,
-            c_col0_rx: None,
-            c_col1_rx: None,
-            c_col2_rx: None,
-        }
-    }
-
-    fn schedule(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        positions: &wgpu::Buffer,
-        velocities: &wgpu::Buffer,
-        c_col0: &wgpu::Buffer,
-        c_col1: &wgpu::Buffer,
-        c_col2: &wgpu::Buffer,
-        count: usize,
-    ) -> bool {
-        if self.pending {
-            return false;
-        }
-
-        let count = count.min(self.capacity);
-        if count == 0 {
-            return false;
-        }
-
-        let byte_size = (count * std::mem::size_of::<[f32; 4]>()) as u64;
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Readback Copy Encoder"),
-        });
-        encoder.copy_buffer_to_buffer(positions, 0, &self.positions_staging, 0, byte_size);
-        encoder.copy_buffer_to_buffer(velocities, 0, &self.velocities_staging, 0, byte_size);
-        encoder.copy_buffer_to_buffer(c_col0, 0, &self.c_col0_staging, 0, byte_size);
-        encoder.copy_buffer_to_buffer(c_col1, 0, &self.c_col1_staging, 0, byte_size);
-        encoder.copy_buffer_to_buffer(c_col2, 0, &self.c_col2_staging, 0, byte_size);
-        queue.submit(std::iter::once(encoder.finish()));
-
-        self.count = count;
-        self.pending = true;
-
-        let (tx, rx) = mpsc::channel();
-        self.positions_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = tx.send(result);
-            });
-        self.positions_rx = Some(rx);
-
-        let (tx, rx) = mpsc::channel();
-        self.velocities_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = tx.send(result);
-            });
-        self.velocities_rx = Some(rx);
-
-        let (tx, rx) = mpsc::channel();
-        self.c_col0_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = tx.send(result);
-            });
-        self.c_col0_rx = Some(rx);
-
-        let (tx, rx) = mpsc::channel();
-        self.c_col1_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = tx.send(result);
-            });
-        self.c_col1_rx = Some(rx);
-
-        let (tx, rx) = mpsc::channel();
-        self.c_col2_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = tx.send(result);
-            });
-        self.c_col2_rx = Some(rx);
-
-        true
-    }
-
-    fn try_read(
-        &mut self,
-        positions_out: &mut [glam::Vec3],
-        velocities_out: &mut [glam::Vec3],
-        c_matrices_out: &mut [glam::Mat3],
-    ) -> Option<usize> {
-        if !self.pending {
-            return None;
-        }
-
-        let mut failed = false;
-        let mut all_ready = true;
-        for rx in [
-            &mut self.positions_rx,
-            &mut self.velocities_rx,
-            &mut self.c_col0_rx,
-            &mut self.c_col1_rx,
-            &mut self.c_col2_rx,
-        ] {
-            if let Some(receiver) = rx {
-                match receiver.try_recv() {
-                    Ok(Ok(())) => {
-                        *rx = None;
-                    }
-                    Ok(Err(_)) => {
-                        failed = true;
-                        *rx = None;
-                    }
-                    Err(mpsc::TryRecvError::Empty) => {
-                        all_ready = false;
-                    }
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        failed = true;
-                        *rx = None;
-                    }
-                }
-            }
-        }
-
-        if failed {
-            self.pending = false;
-            self.positions_staging.unmap();
-            self.velocities_staging.unmap();
-            self.c_col0_staging.unmap();
-            self.c_col1_staging.unmap();
-            self.c_col2_staging.unmap();
-            return None;
-        }
-
-        if !all_ready {
-            return None;
-        }
-
-        let count = self
-            .count
-            .min(positions_out.len())
-            .min(velocities_out.len())
-            .min(c_matrices_out.len());
-
-        {
-            let data = self.positions_staging.slice(..).get_mapped_range();
-            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-            for i in 0..count {
-                positions_out[i] = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-            }
-        }
-        self.positions_staging.unmap();
-
-        {
-            let data = self.velocities_staging.slice(..).get_mapped_range();
-            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-            for i in 0..count {
-                velocities_out[i] = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-            }
-        }
-        self.velocities_staging.unmap();
-
-        {
-            let data = self.c_col0_staging.slice(..).get_mapped_range();
-            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-            for i in 0..count {
-                c_matrices_out[i].x_axis = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-            }
-        }
-        self.c_col0_staging.unmap();
-
-        {
-            let data = self.c_col1_staging.slice(..).get_mapped_range();
-            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-            for i in 0..count {
-                c_matrices_out[i].y_axis = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-            }
-        }
-        self.c_col1_staging.unmap();
-
-        {
-            let data = self.c_col2_staging.slice(..).get_mapped_range();
-            let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-            for i in 0..count {
-                c_matrices_out[i].z_axis = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-            }
-        }
-        self.c_col2_staging.unmap();
-
-        self.pending = false;
-        self.count = 0;
-        Some(count)
-    }
-}
 
 /// GPU-accelerated 3D FLIP simulation
 pub struct GpuFlip3D {
@@ -2657,16 +2229,13 @@ impl GpuFlip3D {
             return;
         }
 
-        let params = GravelObstacleParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            obstacle_count: self.gravel_obstacle_count,
-            cell_size: self.cell_size,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
-        };
+        let params = GravelObstacleParams3D::new(
+            self.width,
+            self.height,
+            self.depth,
+            self.gravel_obstacle_count,
+            self.cell_size,
+        );
         queue.write_buffer(
             &self.gravel_obstacle_params_buffer,
             0,
@@ -2733,7 +2302,7 @@ impl GpuFlip3D {
         // 3. G2P
         let sediment_params = SedimentParams3D::default();
         self.g2p
-            .upload_params(queue, particle_count, self.cell_size, dt, sediment_params);
+            .upload_params(queue, particle_count, self.cell_size, dt, 0.95, sediment_params);
         self.g2p.encode(encoder, particle_count);
 
         // 4. SDF Collision
@@ -2908,18 +2477,28 @@ impl GpuFlip3D {
         &self.p2g.particle_count_buffer
     }
 
+    /// Get the U velocity grid buffer (MAC staggered: width+1 x height x depth)
+    pub fn grid_u_buffer(&self) -> &wgpu::Buffer {
+        &self.p2g.grid_u_buffer
+    }
+
+    /// Get the V velocity grid buffer (MAC staggered: width x height+1 x depth)
+    pub fn grid_v_buffer(&self) -> &wgpu::Buffer {
+        &self.p2g.grid_v_buffer
+    }
+
+    /// Get the W velocity grid buffer (MAC staggered: width x height x depth+1)
+    pub fn grid_w_buffer(&self) -> &wgpu::Buffer {
+        &self.p2g.grid_w_buffer
+    }
+
     fn upload_bc_and_cell_types(&self, queue: &wgpu::Queue, cell_types: &[u32]) {
         // Upload cell types FIRST (needed for BC enforcement)
         self.pressure
             .upload_cell_types(queue, cell_types, self.cell_size, self.open_boundaries);
 
         // Upload BC params
-        let bc_params = BcParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            _pad: 0,
-        };
+        let bc_params = BcParams3D::new(self.width, self.height, self.depth);
         queue.write_buffer(&self.bc_params_buffer, 0, bytemuck::bytes_of(&bc_params));
     }
 
@@ -3233,12 +2812,12 @@ impl GpuFlip3D {
             queue.submit(std::iter::once(encoder.finish()));
         }
 
-        let sediment_fraction_params = SedimentFractionParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            rest_particles: self.sediment_rest_particles,
-        };
+        let sediment_fraction_params = SedimentFractionParams3D::new(
+            self.width,
+            self.height,
+            self.depth,
+            self.sediment_rest_particles,
+        );
         queue.write_buffer(
             &self.sediment_fraction_params_buffer,
             0,
@@ -3341,16 +2920,13 @@ impl GpuFlip3D {
 
         // 4. Apply gravity
 
-        let gravity_params = GravityParams3D {
-            width: self.width,
-            height: self.height,
-            depth: self.depth,
-            gravity_dt: gravity * dt,
-            cell_size: self.cell_size,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
-        };
+        let gravity_params = GravityParams3D::new(
+            self.width,
+            self.height,
+            self.depth,
+            gravity * dt, // gravity_dt
+            self.cell_size,
+        );
         queue.write_buffer(
             &self.gravity_params_buffer,
             0,
@@ -3378,12 +2954,12 @@ impl GpuFlip3D {
         // 5. Apply flow acceleration (for sluice downstream flow)
         // This MUST happen before pressure solve so the solver can account for the flow!
         if flow_accel.abs() > 0.0001 {
-            let flow_params = FlowParams3D {
-                width: self.width,
-                height: self.height,
-                depth: self.depth,
-                flow_accel_dt: flow_accel * dt,
-            };
+            let flow_params = FlowParams3D::new(
+                self.width,
+                self.height,
+                self.depth,
+                flow_accel * dt, // flow_accel_dt
+            );
             queue.write_buffer(
                 &self.flow_params_buffer,
                 0,
@@ -3405,12 +2981,12 @@ impl GpuFlip3D {
 
         // 6. Vorticity confinement (adds rotational energy)
         if self.vorticity_epsilon > 0.0 {
-            let vort_params = VorticityParams3D {
-                width: self.width,
-                height: self.height,
-                depth: self.depth,
-                cell_size: self.cell_size,
-            };
+            let vort_params = VorticityParams3D::new(
+                self.width,
+                self.height,
+                self.depth,
+                self.cell_size,
+            );
             queue.write_buffer(
                 &self.vorticity_params_buffer,
                 0,
@@ -3430,12 +3006,12 @@ impl GpuFlip3D {
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
 
-            let confine_params = VortConfineParams3D {
-                width: self.width,
-                height: self.height,
-                depth: self.depth,
-                epsilon_h_dt: self.vorticity_epsilon * self.cell_size * dt,
-            };
+            let confine_params = VortConfineParams3D::new(
+                self.width,
+                self.height,
+                self.depth,
+                self.vorticity_epsilon * self.cell_size * dt, // epsilon_h_dt
+            );
             queue.write_buffer(
                 &self.vort_confine_params_buffer,
                 0,
@@ -3554,12 +3130,12 @@ impl GpuFlip3D {
         queue.submit(std::iter::once(pressure_encoder.finish()));
 
         if self.sediment_porosity_drag > 0.0 {
-            let drag_params = PorosityDragParams3D {
-                width: self.width,
-                height: self.height,
-                depth: self.depth,
-                drag_dt: self.sediment_porosity_drag * dt,
-            };
+            let drag_params = PorosityDragParams3D::new(
+                self.width,
+                self.height,
+                self.depth,
+                self.sediment_porosity_drag * dt, // drag_dt
+            );
             queue.write_buffer(
                 &self.porosity_drag_params_buffer,
                 0,
@@ -3625,7 +3201,7 @@ impl GpuFlip3D {
         };
         let g2p_count = self
             .g2p
-            .upload_params(queue, count, self.cell_size, dt, sediment_params);
+            .upload_params(queue, count, self.cell_size, dt, 0.95, sediment_params);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D G2P Encoder"),
@@ -3635,12 +3211,11 @@ impl GpuFlip3D {
 
         // ========== Sediment Density Projection (Granular Packing) ==========
         if self.sediment_rest_particles > 0.0 {
-            let sediment_cell_params = SedimentCellTypeParams3D {
-                width: self.width,
-                height: self.height,
-                depth: self.depth,
-                _pad0: 0,
-            };
+            let sediment_cell_params = SedimentCellTypeParams3D::new(
+                self.width,
+                self.height,
+                self.depth,
+            );
             queue.write_buffer(
                 &self.sediment_cell_type_params_buffer,
                 0,

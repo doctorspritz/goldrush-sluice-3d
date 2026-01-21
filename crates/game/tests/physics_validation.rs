@@ -496,8 +496,10 @@ impl SimpleRng {
 // ============================================================================
 
 fn load_scenario(path: &str) -> ScenarioConfig {
-    ScenarioConfig::load_json(Path::new(path)).unwrap_or_else(|e| {
-        panic!("Failed to load scenario '{}': {}", path, e);
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let full_path = manifest_dir.join("../..").join(path);
+    ScenarioConfig::load_json(&full_path).unwrap_or_else(|e| {
+        panic!("Failed to load scenario '{}': {}", full_path.display(), e);
     })
 }
 

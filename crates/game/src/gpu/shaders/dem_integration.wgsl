@@ -54,6 +54,35 @@ fn quat_normalize(q: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(0.0, 0.0, 0.0, 1.0);
 }
 
+fn quat_to_mat3(q: vec4<f32>) -> mat3x3<f32> {
+    let x = q.x;
+    let y = q.y;
+    let z = q.z;
+    let w = q.w;
+
+    let x2 = x + x;
+    let y2 = y + y;
+    let z2 = z + z;
+
+    let xx = x * x2;
+    let xy = x * y2;
+    let xz = x * z2;
+
+    let yy = y * y2;
+    let yz = y * z2;
+    let zz = z * z2;
+
+    let wx = w * x2;
+    let wy = w * y2;
+    let wz = w * z2;
+
+    return mat3x3<f32>(
+        vec3<f32>(1.0 - (yy + zz), xy + wz, xz - wy),
+        vec3<f32>(xy - wz, 1.0 - (xx + zz), yz + wx),
+        vec3<f32>(xz + wy, yz - wx, 1.0 - (xx + yy))
+    );
+}
+
 @compute @workgroup_size(WORKGROUP_SIZE)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let particle_idx = global_id.x;
@@ -97,13 +126,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Angular motion
     let torque = torques[particle_idx].xyz;
-    let radius = templates[template_idx].radius;
-    
-    // Moment of inertia for solid sphere: 2/5 * M * R^2
-    let inertia = 0.4 * mass * radius * radius;
-    let safe_inertia = max(inertia, 1e-6);
-    
-    let ang_accel = torque / safe_inertia;
+    let orient = quat_normalize(particle_orientations[particle_idx]);
+    let rot = quat_to_mat3(orient);
+    let inertia_inv_local = templates[template_idx].inertia_inv;
+    let inertia_inv_world = rot * inertia_inv_local * transpose(rot);
+    let ang_accel = inertia_inv_world * torque;
     
     // Update angular velocity with damping
     let damping = 0.99; // Simple rotational drag

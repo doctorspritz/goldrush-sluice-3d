@@ -6,7 +6,7 @@ struct Params {
     width: u32,
     height: u32,
     depth: u32,
-    drag_dt: f32,
+    value: f32,  // drag_dt
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -39,7 +39,7 @@ fn sediment_at(i: i32, j: i32, k: i32) -> f32 {
 }
 
 fn drag_factor(fraction: f32) -> f32 {
-    let drag = clamp(fraction * params.drag_dt, 0.0, 0.95);
+    let drag = clamp(fraction * params.value, 0.0, 0.95);
     return 1.0 - drag;
 }
 
