@@ -145,8 +145,46 @@ impl GridCellSizeScalarParams3D {
 // Type Aliases for Semantic Clarity
 // =============================================================================
 
-/// Boundary condition parameters (uses GridParams3D).
-pub(crate) type BcParams3D = GridParams3D;
+/// Boundary condition parameters (32 bytes).
+///
+/// Matches layout in `enforce_bc_3d.wgsl`:
+/// struct Params {
+///     width: u32,
+///     height: u32,
+///     depth: u32,
+///     open_boundaries: u32,
+///     slip_factor: f32,
+///     _pad0: u32,
+///     _pad1: u32,
+///     _pad2: u32,
+/// }
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub(crate) struct BcParams3D {
+    pub width: u32,
+    pub height: u32,
+    pub depth: u32,
+    pub open_boundaries: u32,
+    pub slip_factor: f32,
+    pub _pad0: u32,
+    pub _pad1: u32,
+    pub _pad2: u32,
+}
+
+impl BcParams3D {
+    pub fn new(width: u32, height: u32, depth: u32, open_boundaries: u32, slip_factor: f32) -> Self {
+        Self {
+            width,
+            height,
+            depth,
+            open_boundaries,
+            slip_factor,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+        }
+    }
+}
 
 /// Sediment cell type builder parameters (uses GridParams3D).
 pub(crate) type SedimentCellTypeParams3D = GridParams3D;

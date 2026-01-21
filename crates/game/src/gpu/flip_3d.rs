@@ -463,7 +463,7 @@ impl GpuFlip3D {
 
         let gravity_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Gravity Params 3D"),
-            size: std::mem::size_of::<GravityParams3D>() as u64,
+            size: 32, // Aligned to 32 bytes (struct is 24)
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -574,7 +574,7 @@ impl GpuFlip3D {
 
         let flow_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Flow Params 3D"),
-            size: std::mem::size_of::<FlowParams3D>() as u64,
+            size: 16, // Aligned to 16 bytes (struct is 16)
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -2508,7 +2508,16 @@ impl GpuFlip3D {
             .upload_cell_types(queue, cell_types, self.cell_size, self.open_boundaries);
 
         // Upload BC params
-        let bc_params = BcParams3D::new(self.width, self.height, self.depth);
+        // Use full-slip (1.0) or partial-slip (e.g. 0.0 for no-slip)
+        // For now using 1.0 (free slip) to match previous behavior, or tune as needed.
+        let slip_factor = 1.0; 
+        let bc_params = BcParams3D::new(
+            self.width,
+            self.height,
+            self.depth,
+            self.open_boundaries,
+            slip_factor,
+        );
         queue.write_buffer(&self.bc_params_buffer, 0, bytemuck::bytes_of(&bc_params));
     }
 

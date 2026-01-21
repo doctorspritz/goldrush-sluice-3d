@@ -18,6 +18,10 @@ struct GridParams3D {
     height: u32,
     depth: u32,
     inv_cell_size: f32,
+    open_boundaries: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 /// Parameters for pressure solver
@@ -543,6 +547,10 @@ impl GpuPressure3D {
             height: self.height,
             depth: self.depth,
             inv_cell_size: 1.0 / cell_size,
+            open_boundaries,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
         };
         queue.write_buffer(
             &self.grid_params_buffer,
