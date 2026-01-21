@@ -9,6 +9,7 @@ mod buffers;
 mod mesh;
 mod pipelines;
 mod rendering;
+mod sdf;
 mod simulation;
 mod sync;
 mod tools;
@@ -17,7 +18,7 @@ pub use buffers::{GeologyBuffers, WaterBuffers};
 pub use mesh::{GridMesh, GridVertex};
 pub use pipelines::{
     BridgeMergeResources, CoreBindGroups, EmitterResources, MaterialToolResources,
-    SimulationPipelines,
+    SimulationPipelines, SdfResources,
 };
 pub use rendering::{RenderResources, RenderUniforms};
 
@@ -44,6 +45,7 @@ pub struct GpuHeightfield {
     pub emitter: EmitterResources,
     pub material_tool: MaterialToolResources,
     pub bridge: BridgeMergeResources,
+    sdf: SdfResources,
 
     // Params Buffer
     pub params_buffer: wgpu::Buffer,
@@ -119,6 +121,7 @@ impl GpuHeightfield {
         let emitter = pipelines::create_emitter_resources(device, &water);
         let material_tool = pipelines::create_material_tool_resources(device, &geology);
         let bridge = pipelines::create_bridge_merge_resources(device, &params_layout, &water_layout);
+        let sdf = pipelines::create_sdf_resources(device, &terrain_layout);
 
         // Create rendering resources
         let render = rendering::create_render_resources(device, format, &geology, &water);
@@ -158,6 +161,7 @@ impl GpuHeightfield {
             emitter,
             material_tool,
             bridge,
+            sdf,
             params_buffer,
             render,
             mesh,
@@ -234,6 +238,36 @@ impl GpuHeightfield {
             origin_z,
             tile_width,
             tile_depth,
+        );
+    }
+
+    pub fn update_sdf_params(&self, queue: &wgpu::Queue, grid_height: u32) {
+        sdf::update_sdf_params(
+            queue,
+            &self.sdf,
+            self.width,
+            self.depth,
+            grid_height,
+            self.cell_size,
+        );
+    }
+
+    pub fn dispatch_sdf(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        sdf_buffer: &wgpu::Buffer,
+        grid_height: u32,
+    ) {
+        sdf::dispatch_sdf(
+            device,
+            encoder,
+            &self.sdf,
+            &self.bind_groups,
+            sdf_buffer,
+            self.width,
+            self.depth,
+            grid_height,
         );
     }
 

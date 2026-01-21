@@ -38,6 +38,14 @@ pub struct BridgeMergeResources {
     pub bg_layout: wgpu::BindGroupLayout,
 }
 
+/// Heightfield-to-SDF pipeline resources.
+pub struct SdfResources {
+    pub pipeline: wgpu::ComputePipeline,
+    pub params_buffer: wgpu::Buffer,
+    pub params_bind_group: wgpu::BindGroup,
+    pub output_layout: wgpu::BindGroupLayout,
+}
+
 /// Core bind groups for simulation.
 pub struct CoreBindGroups {
     pub params: wgpu::BindGroup,
@@ -111,6 +119,22 @@ pub fn create_terrain_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             storage_entry(4, false), // sediment
             storage_entry(5, false), // surface_material
         ],
+    })
+}
+
+fn create_sdf_params_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Heightfield SDF Params Layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
     })
 }
 
@@ -460,5 +484,61 @@ pub fn create_bridge_merge_resources(
         pipeline,
         bind_group: None,
         bg_layout,
+    }
+}
+
+pub fn create_sdf_resources(
+    device: &wgpu::Device,
+    terrain_layout: &wgpu::BindGroupLayout,
+) -> SdfResources {
+    let params_layout = create_sdf_params_layout(device);
+    let output_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Heightfield SDF Output Layout"),
+        entries: &[storage_entry(0, false)],
+    });
+
+    let sdf_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Heightfield SDF Shader"),
+        source: wgpu::ShaderSource::Wgsl(
+            include_str!("../shaders/heightfield_sdf_3d.wgsl").into(),
+        ),
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Heightfield SDF Pipeline Layout"),
+        bind_group_layouts: &[&params_layout, terrain_layout, &output_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("Heightfield SDF Pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &sdf_shader,
+        entry_point: Some("heightfield_to_sdf"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Heightfield SDF Params"),
+        size: std::mem::size_of::<[u32; 8]>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let params_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Heightfield SDF Params Bind Group"),
+        layout: &params_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: params_buffer.as_entire_binding(),
+        }],
+    });
+
+    SdfResources {
+        pipeline,
+        params_buffer,
+        params_bind_group,
+        output_layout,
     }
 }
