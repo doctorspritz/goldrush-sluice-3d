@@ -186,6 +186,35 @@ impl BcParams3D {
     }
 }
 
+/// Fluid cell expansion parameters (16 bytes).
+///
+/// Matches layout in `fluid_cell_expand_3d.wgsl`:
+/// struct Params {
+///     width: u32,
+///     height: u32,
+///     depth: u32,
+///     open_boundaries: u32,
+/// }
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub(crate) struct FluidCellExpandParams3D {
+    pub width: u32,
+    pub height: u32,
+    pub depth: u32,
+    pub open_boundaries: u32,
+}
+
+impl FluidCellExpandParams3D {
+    pub fn new(width: u32, height: u32, depth: u32, open_boundaries: u32) -> Self {
+        Self {
+            width,
+            height,
+            depth,
+            open_boundaries,
+        }
+    }
+}
+
 /// Sediment cell type builder parameters (uses GridParams3D).
 pub(crate) type SedimentCellTypeParams3D = GridParams3D;
 
@@ -518,6 +547,16 @@ mod tests {
         assert_eq!(
             *layout.offsets.get("cell_size").unwrap(),
             offset_of!(GravityParams3D, cell_size) as u32
+        );
+    }
+
+    #[test]
+    fn fluid_cell_expand_params_layout_matches_wgsl() {
+        let layout = wgsl_struct_layout("fluid_cell_expand_3d.wgsl", "Params");
+        assert_eq!(layout.size as usize, size_of::<FluidCellExpandParams3D>());
+        assert_eq!(
+            *layout.offsets.get("open_boundaries").unwrap(),
+            offset_of!(FluidCellExpandParams3D, open_boundaries) as u32
         );
     }
 }

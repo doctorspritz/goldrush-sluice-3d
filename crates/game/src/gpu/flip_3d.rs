@@ -12,9 +12,10 @@ use super::p2g_3d::GpuP2g3D;
 use super::p2g_cell_centric_3d::GpuP2gCellCentric3D;
 use super::params::{
     BcParams3D, DensityCorrectParams3D, DensityErrorParams3D, DensityPositionGridParams3D,
-    FlowParams3D, GravelObstacleParams3D, GravityParams3D, PorosityDragParams3D,
-    SdfCollisionParams3D, SedimentCellTypeParams3D, SedimentFractionParams3D,
-    SedimentPressureParams3D, VortConfineParams3D, VorticityParams3D,
+    FlowParams3D, FluidCellExpandParams3D, GravelObstacleParams3D, GravityParams3D,
+    PorosityDragParams3D, SdfCollisionParams3D, SedimentCellTypeParams3D,
+    SedimentFractionParams3D, SedimentPressureParams3D, VortConfineParams3D,
+    VorticityParams3D,
 };
 use super::particle_sort::GpuParticleSort;
 use super::pressure_3d::GpuPressure3D;
@@ -160,6 +161,11 @@ pub struct GpuFlip3D {
     bc_w_pipeline: wgpu::ComputePipeline,
     bc_bind_group: wgpu::BindGroup,
     bc_params_buffer: wgpu::Buffer,
+
+    // Fluid cell expansion (mark FLUID from particle counts)
+    fluid_cell_expand_pipeline: wgpu::ComputePipeline,
+    fluid_cell_expand_bind_group: wgpu::BindGroup,
+    fluid_cell_expand_params_buffer: wgpu::Buffer,
 
     // Grid velocity backup for FLIP delta
     grid_u_old_buffer: wgpu::Buffer,
@@ -1476,6 +1482,94 @@ impl GpuFlip3D {
             cache: None,
         });
 
+        // Create fluid cell expansion shader (marks FLUID from particle counts)
+        let fluid_cell_expand_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Fluid Cell Expand 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("shaders/fluid_cell_expand_3d.wgsl").into(),
+            ),
+        });
+
+        let fluid_cell_expand_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Fluid Cell Expand Params 3D"),
+            size: std::mem::size_of::<FluidCellExpandParams3D>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let fluid_cell_expand_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Fluid Cell Expand 3D Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let fluid_cell_expand_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Fluid Cell Expand 3D Bind Group"),
+            layout: &fluid_cell_expand_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: fluid_cell_expand_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: p2g.particle_count_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: pressure.cell_type_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let fluid_cell_expand_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Fluid Cell Expand 3D Pipeline Layout"),
+                bind_group_layouts: &[&fluid_cell_expand_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let fluid_cell_expand_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Fluid Cell Expand 3D Pipeline"),
+                layout: Some(&fluid_cell_expand_pipeline_layout),
+                module: &fluid_cell_expand_shader,
+                entry_point: Some("expand_fluid_cells"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
         // ========== Density Projection (Implicit Density Projection) ==========
         // Creates pipelines for density error computation and position correction
 
@@ -2163,6 +2257,9 @@ impl GpuFlip3D {
             bc_w_pipeline,
             bc_bind_group,
             bc_params_buffer,
+            fluid_cell_expand_pipeline,
+            fluid_cell_expand_bind_group,
+            fluid_cell_expand_params_buffer,
             grid_u_old_buffer,
             grid_v_old_buffer,
             grid_w_old_buffer,
@@ -2191,8 +2288,8 @@ impl GpuFlip3D {
             sorter,
             sorted_p2g,
             cell_centric_p2g,
-            use_sorted_p2g: true,        // Start with sorting enabled to test
-            use_cell_centric_p2g: false, // TEMP: Disabled for baseline comparison
+            use_sorted_p2g: false,       // Default to stable unsorted path; enable explicitly.
+            use_cell_centric_p2g: false, // Requires sorted path.
             gravel_obstacle_params_buffer,
             gravel_obstacle_buffer,
             gravel_obstacle_count: 0,
@@ -2740,6 +2837,30 @@ impl GpuFlip3D {
             self.p2g.encode(&mut encoder, count);
         }
         self.water_p2g.encode(&mut encoder, count);
+
+        let fluid_cell_params = FluidCellExpandParams3D::new(
+            self.width,
+            self.height,
+            self.depth,
+            self.open_boundaries,
+        );
+        queue.write_buffer(
+            &self.fluid_cell_expand_params_buffer,
+            0,
+            bytemuck::bytes_of(&fluid_cell_params),
+        );
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Fluid Cell Expand 3D Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.fluid_cell_expand_pipeline);
+            pass.set_bind_group(0, &self.fluid_cell_expand_bind_group, &[]);
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
 
         queue.submit(std::iter::once(encoder.finish()));
 

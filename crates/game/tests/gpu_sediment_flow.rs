@@ -174,10 +174,9 @@ fn sediment_moves_downstream_with_water() {
         dx > cell_size * 0.5,
         "expected sediment to move downstream, dx={dx:.4}"
     );
-    // Allow 1.0 * cell_size drift - FLIP/APIC has some numerical diffusion
-    // especially when dense sediment particles mix with lighter water particles
+    // Allow some settling drift; sediment should not plunge excessively fast.
     assert!(
-        dy.abs() < cell_size * 1.0,
+        dy > -cell_size * 3.0,
         "expected sediment to stay near its initial height, dy={dy:.4}"
     );
 }

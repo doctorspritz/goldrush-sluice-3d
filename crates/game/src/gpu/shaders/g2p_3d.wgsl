@@ -356,7 +356,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         //   Δv_buoyancy = a_buoyancy * dt = (1.0 - ρ_rel) * g * dt
         let buoyancy_accel = (1.0 - density) * GRAVITY;  // m/s²
         let buoyancy_impulse = buoyancy_accel * params.dt;  // m/s
-        vel_after_drag.y -= buoyancy_impulse;  // Negative because Y-axis points up
+        vel_after_drag.y += buoyancy_impulse;  // Negative for dense particles (Y axis points up)
 
         // SETTLING: Use pre-computed Stokes settling velocities
         // Heavy particles sink faster, landing upstream before the flow carries them.

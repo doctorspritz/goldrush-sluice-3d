@@ -1249,7 +1249,15 @@ impl App {
 
         // Update uniforms
         let aspect = gpu.ctx.config.width as f32 / gpu.ctx.config.height as f32;
-        let (eye, view_proj) = self.camera.compute_view_matrix(aspect);
+        let eye = self.camera.target
+            + Vec3::new(
+                self.camera.distance * self.camera.angle.cos() * self.camera.pitch.cos(),
+                self.camera.distance * self.camera.pitch.sin(),
+                self.camera.distance * self.camera.angle.sin() * self.camera.pitch.cos(),
+            );
+        let view_matrix = Mat4::look_at_rh(eye, self.camera.target, Vec3::Y);
+        let proj_matrix = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, aspect, 0.01, 100.0);
+        let view_proj = proj_matrix * view_matrix;
 
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
@@ -1287,8 +1295,8 @@ impl App {
         let (floor_surface_left, floor_surface_right, total_width) = {
             let config = self.sluice_builder.config();
             (
-                (config.floor_height_left + 1) as f32 * config.cell_size, // Top of floor cell
-                (config.floor_height_right + 1) as f32 * config.cell_size, // Top of floor cell
+                (config.floor_height_left + 1) as f32 * config.cell_size,
+                (config.floor_height_right + 1) as f32 * config.cell_size,
                 config.grid_width as f32 * config.cell_size,
             )
         };
@@ -1308,26 +1316,29 @@ impl App {
             );
         }
 
-        // Build sediment instances from DEM clumps
-        let sediment_instances: Vec<SedimentInstance> = self
-            .dem
-            .clumps
-            .iter()
-            .map(|clump| {
-                let template = &self.dem.templates[clump.template_idx];
-                let color = if clump.template_idx == self.gold_template_idx {
-                    GOLD_COLOR
-                } else {
-                    GANGUE_COLOR
-                };
-                SedimentInstance {
-                    position: clump.position.to_array(),
-                    scale: template.particle_radius,
-                    rotation: clump.rotation.to_array(),
-                    color,
-                }
-            })
-            .collect();
+        let use_gpu_dem = self.gpu_dem.is_some();
+        let sediment_instances = if use_gpu_dem {
+            Vec::new()
+        } else {
+            self.dem
+                .clumps
+                .iter()
+                .map(|clump| {
+                    let template = &self.dem.templates[clump.template_idx];
+                    let color = if clump.template_idx == self.gold_template_idx {
+                        GOLD_COLOR
+                    } else {
+                        GANGUE_COLOR
+                    };
+                    SedimentInstance {
+                        position: clump.position.to_array(),
+                        scale: template.particle_radius,
+                        rotation: clump.rotation.to_array(),
+                        color,
+                    }
+                })
+                .collect()
+        };
 
         if !sediment_instances.is_empty() {
             gpu.ctx.queue.write_buffer(
@@ -1337,231 +1348,76 @@ impl App {
             );
         }
 
-                let mut encoder = gpu.ctx.device.create_command_encoder(&Default::default());
-
-                {
-
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-
-                        label: Some("Render Pass"),
-
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-
-                            view: &view,
-
-                            resolve_target: None,
-
-                            ops: wgpu::Operations {
-
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-
-                                    r: 0.1,
-
-                                    g: 0.1,
-
-                                    b: 0.15,
-
-                                    a: 1.0,
-
-                                }),
-
-                                store: wgpu::StoreOp::Store,
-
-                            },
-
-                        })],
-
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-
-                            view: &gpu.depth_view,
-
-                            depth_ops: Some(wgpu::Operations {
-
-                                load: wgpu::LoadOp::Clear(1.0),
-
-                                store: wgpu::StoreOp::Store,
-
-                            }),
-
-                            stencil_ops: None,
-
+        let mut encoder = gpu.ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.15,
+                            a: 1.0,
                         }),
-
-                        ..Default::default()
-
-                    });
-
-        
-
-                    pass.set_bind_group(0, &gpu.uniform_bind_group, &[]);
-
-        
-
-                    // Draw sluice
-
-                    pass.set_pipeline(&gpu.sluice_pipeline);
-
-                    pass.set_vertex_buffer(0, gpu.sluice_vertex_buffer.slice(..));
-
-                    pass.set_index_buffer(gpu.sluice_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-
-                    pass.draw_indexed(0..self.sluice_builder.indices().len() as u32, 0, 0..1);
-
-        
-
-                    // Draw water
-
-                    if !water_vertices.is_empty() {
-
-                        pass.set_pipeline(&gpu.water_pipeline);
-
-                        pass.set_vertex_buffer(0, gpu.water_vertex_buffer.slice(..));
-
-                        pass.draw(0..water_vertices.len() as u32, 0..1);
-
-                    }
-
-        
-
-                    // If we have GPU DEM, we need to drop this pass before the DEM pass starts
-
-                    if self.gpu_dem.is_some() {
-
-                        drop(pass);
-
-                        
-
-                        if let (Some(gpu_dem), Some(dem_renderer)) = (&self.gpu_dem, &self.dem_renderer) {
-
-                            let eye = self.camera.target
-
-                                + Vec3::new(
-
-                                    self.camera.distance * self.camera.angle.cos() * self.camera.pitch.cos(),
-
-                                    self.camera.distance * self.camera.pitch.sin(),
-
-                                    self.camera.distance * self.camera.angle.sin() * self.camera.pitch.cos(),
-
-                                );
-
-                            let view_matrix = Mat4::look_at_rh(eye, self.camera.target, Vec3::Y);
-
-                            let aspect = gpu.ctx.config.width as f32 / gpu.ctx.config.height as f32;
-
-                            let proj_matrix = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, aspect, 0.01, 100.0);
-
-        
-
-                            dem_renderer.render(
-
-                                &gpu.ctx.device,
-
-                                &gpu.ctx.queue,
-
-                                &mut encoder,
-
-                                &view,
-
-                                &gpu.depth_view,
-
-                                gpu_dem,
-
-                                view_matrix.to_cols_array_2d(),
-
-                                proj_matrix.to_cols_array_2d(),
-
-                                eye.to_array(),
-
-                            );
-
-                        }
-
-                    } else {
-
-                        // Fallback to CPU sediment rendering
-
-                        let sediment_instances: Vec<SedimentInstance> = self
-
-                            .dem
-
-                            .clumps
-
-                            .iter()
-
-                            .map(|clump| {
-
-                                let template = &self.dem.templates[clump.template_idx];
-
-                                let color = if clump.template_idx == self.gold_template_idx {
-
-                                    GOLD_COLOR
-
-                                } else {
-
-                                    GANGUE_COLOR
-
-                                };
-
-                                SedimentInstance {
-
-                                    position: clump.position.to_array(),
-
-                                    scale: template.particle_radius,
-
-                                    rotation: clump.rotation.to_array(),
-
-                                    color,
-
-                                }
-
-                            })
-
-                            .collect();
-
-        
-
-                        if !sediment_instances.is_empty() {
-
-                            gpu.ctx.queue.write_buffer(
-
-                                &gpu.sediment_instance_buffer,
-
-                                0,
-
-                                bytemuck::cast_slice(&sediment_instances),
-
-                            );
-
-                            
-
-                            pass.set_pipeline(&gpu.sediment_pipeline);
-
-                            pass.set_vertex_buffer(0, gpu.rock_mesh_vertex_buffer.slice(..));
-
-                            pass.set_vertex_buffer(1, gpu.sediment_instance_buffer.slice(..));
-
-                            pass.draw(
-
-                                0..gpu.rock_mesh_vertex_count,
-
-                                0..sediment_instances.len() as u32,
-
-                            );
-
-                        }
-
-                    }
-
-                }
-
-        
-
-                gpu.ctx.queue.submit(std::iter::once(encoder.finish()));
-
-                output.present();
-
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &gpu.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+
+            pass.set_bind_group(0, &gpu.uniform_bind_group, &[]);
+
+            // Draw sluice
+            pass.set_pipeline(&gpu.sluice_pipeline);
+            pass.set_vertex_buffer(0, gpu.sluice_vertex_buffer.slice(..));
+            pass.set_index_buffer(gpu.sluice_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..self.sluice_builder.indices().len() as u32, 0, 0..1);
+
+            // Draw water
+            if !water_vertices.is_empty() {
+                pass.set_pipeline(&gpu.water_pipeline);
+                pass.set_vertex_buffer(0, gpu.water_vertex_buffer.slice(..));
+                pass.draw(0..water_vertices.len() as u32, 0..1);
             }
+
+            if !use_gpu_dem && !sediment_instances.is_empty() {
+                pass.set_pipeline(&gpu.sediment_pipeline);
+                pass.set_vertex_buffer(0, gpu.rock_mesh_vertex_buffer.slice(..));
+                pass.set_vertex_buffer(1, gpu.sediment_instance_buffer.slice(..));
+                pass.draw(0..gpu.rock_mesh_vertex_count, 0..sediment_instances.len() as u32);
+            }
+        }
+
+        if let (Some(gpu_dem), Some(dem_renderer)) = (&self.gpu_dem, &self.dem_renderer) {
+            dem_renderer.render(
+                &gpu.ctx.device,
+                &gpu.ctx.queue,
+                &mut encoder,
+                &view,
+                &gpu.depth_view,
+                gpu_dem,
+                view_matrix.to_cols_array_2d(),
+                proj_matrix.to_cols_array_2d(),
+                eye.to_array(),
+            );
+        }
+
+        gpu.ctx.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+    }
 
     fn init_gpu(&mut self, window: Arc<Window>) {
         let ctx = pollster::block_on(WgpuContext::init(window.clone()));
