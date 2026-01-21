@@ -2,13 +2,31 @@
 // Validates GPU-based collision detection, spatial hashing, and physics integration
 // for the GpuDem3D system
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use std::sync::Arc;
 
 const PARTICLE_RADIUS: f32 = 0.01; // 1cm particles
 const PARTICLE_MASS: f32 = 1.0;
 const DT: f32 = 1.0 / 120.0; // 120 Hz timestep
 const GRAVITY: f32 = -9.81;
+const PARITY_DT: f32 = 1.0 / 240.0; // Smaller timestep for tighter GPU/CPU parity
+const POSITION_EPS: f32 = 0.01; // 1cm position tolerance
+const VELOCITY_EPS: f32 = 0.05; // 5cm/s velocity tolerance
+const ANGULAR_REL_EPS: f32 = 0.07; // 7% angular velocity tolerance
+const GPU_FRICTION: f32 = 0.5;
+
+fn dem_damping(restitution: f32, stiffness: f32, mass: f32) -> f32 {
+    if stiffness <= 0.0 || mass <= 0.0 {
+        return 0.0;
+    }
+    let e = restitution.clamp(0.0, 0.999);
+    if e <= 0.0 {
+        return 2.0 * (stiffness * mass).sqrt();
+    }
+    let ln_e = e.ln();
+    let zeta = -ln_e / (std::f32::consts::PI * std::f32::consts::PI + ln_e * ln_e).sqrt();
+    2.0 * zeta * (stiffness * mass).sqrt()
+}
 
 /// Initialize GPU device and queue for tests
 /// Returns None if no compatible GPU is available
@@ -49,6 +67,81 @@ fn init_gpu() -> Option<(Arc<wgpu::Device>, Arc<wgpu::Queue>)> {
     .ok()?;
 
     Some((Arc::new(device), Arc::new(queue)))
+}
+
+fn init_parity_sims(
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
+    template: sim3d::ClumpTemplate3D,
+) -> (
+    game::gpu::dem_3d::GpuDem3D,
+    sim3d::clump::ClusterSimulation3D,
+    u32,
+    usize,
+) {
+    use game::gpu::dem_3d::GpuDem3D;
+    use sim3d::clump::ClusterSimulation3D;
+
+    let mut gpu_dem = GpuDem3D::new(device, queue, 100, 10, 1000);
+    let mut cpu_sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
+    cpu_sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
+    cpu_sim.normal_stiffness = 1000.0;
+    cpu_sim.tangential_stiffness = 0.0;
+    cpu_sim.restitution = 0.0;
+    cpu_sim.friction = GPU_FRICTION;
+    cpu_sim.floor_friction = GPU_FRICTION;
+
+    let damping = dem_damping(cpu_sim.restitution, cpu_sim.normal_stiffness, template.mass);
+    gpu_dem.stiffness = cpu_sim.normal_stiffness;
+    gpu_dem.damping = damping;
+
+    let gpu_template_id = gpu_dem.add_template(template.clone());
+    let cpu_template_id = cpu_sim.add_template(template);
+
+    (gpu_dem, cpu_sim, gpu_template_id, cpu_template_id)
+}
+
+fn count_sphere_contacts(
+    particles: &[game::gpu::dem_3d::GpuDemParticle],
+    template: &sim3d::ClumpTemplate3D,
+) -> usize {
+    let radius = template.particle_radius;
+    let radius_sq = (radius + radius).powi(2);
+    let mut contacts = 0;
+
+    for i in 0..particles.len() {
+        let pos_i = Vec3::from_slice(&particles[i].position[..3]);
+        let orient_i = Quat::from_xyzw(
+            particles[i].orientation[0],
+            particles[i].orientation[1],
+            particles[i].orientation[2],
+            particles[i].orientation[3],
+        )
+        .normalize();
+
+        for j in (i + 1)..particles.len() {
+            let pos_j = Vec3::from_slice(&particles[j].position[..3]);
+            let orient_j = Quat::from_xyzw(
+                particles[j].orientation[0],
+                particles[j].orientation[1],
+                particles[j].orientation[2],
+                particles[j].orientation[3],
+            )
+            .normalize();
+
+            for offset_i in &template.local_offsets {
+                let sphere_i = pos_i + orient_i * *offset_i;
+                for offset_j in &template.local_offsets {
+                    let sphere_j = pos_j + orient_j * *offset_j;
+                    if (sphere_i - sphere_j).length_squared() < radius_sq {
+                        contacts += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    contacts
 }
 
 /// Test 1: GPU DEM initialization and particle spawning
@@ -705,20 +798,12 @@ fn test_gpu_dem_vs_cpu_reference() {
         }
     };
 
-    use game::gpu::dem_3d::GpuDem3D;
-    use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D};
+    use sim3d::clump::{ClumpShape3D, ClumpTemplate3D};
 
-    // Setup GPU simulation
-    let mut gpu_dem = GpuDem3D::new(device.clone(), queue.clone(), 100, 10, 1000);
-
-    // Setup CPU simulation
-    let mut cpu_sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
-    cpu_sim.gravity = Vec3::new(0.0, GRAVITY, 0.0);
-
-    // Create identical templates
+    // Create identical template
     let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
-    let gpu_template_id = gpu_dem.add_template(template.clone());
-    let cpu_template_id = cpu_sim.add_template(template);
+    let (mut gpu_dem, mut cpu_sim, gpu_template_id, cpu_template_id) =
+        init_parity_sims(device.clone(), queue.clone(), template);
 
     // Spawn identical particles (single falling particle)
     let start_pos = Vec3::new(5.0, 2.0, 5.0);
@@ -726,17 +811,17 @@ fn test_gpu_dem_vs_cpu_reference() {
     cpu_sim.spawn(cpu_template_id, start_pos, Vec3::ZERO);
 
     // Run both simulations for same duration
-    let steps = 60;
+    let steps = 20;
     for _ in 0..steps {
         // GPU
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("GPU vs CPU Test"),
         });
-        gpu_dem.update(&mut encoder, DT);
+        gpu_dem.update(&mut encoder, PARITY_DT);
         queue.submit(Some(encoder.finish()));
 
         // CPU
-        cpu_sim.step(DT);
+        cpu_sim.step(PARITY_DT);
     }
 
     device.poll(wgpu::Maintain::Wait);
@@ -754,20 +839,20 @@ fn test_gpu_dem_vs_cpu_reference() {
     println!("GPU velocity: {:?}", gpu_vel);
     println!("CPU velocity: {:?}", cpu_vel);
 
-    // Positions should be reasonably similar (allowing for implementation differences)
+    // Positions should be tightly matched for gravity-only motion
     let pos_diff = (gpu_pos - cpu_pos).length();
     let vel_diff = (gpu_vel - cpu_vel).length();
 
-    // Allow for some difference due to different collision handling
-    // GPU uses spring-damper, CPU may use different model
     assert!(
-        pos_diff < 1.0,
-        "Position difference should be < 1m (got {:.4}m)",
+        pos_diff < POSITION_EPS,
+        "Position difference should be < {:.4}m (got {:.4}m)",
+        POSITION_EPS,
         pos_diff
     );
     assert!(
-        vel_diff < 5.0,
-        "Velocity difference should be < 5m/s (got {:.4}m/s)",
+        vel_diff < VELOCITY_EPS,
+        "Velocity difference should be < {:.4}m/s (got {:.4}m/s)",
+        VELOCITY_EPS,
         vel_diff
     );
 
@@ -782,7 +867,153 @@ fn test_gpu_dem_vs_cpu_reference() {
     );
 }
 
-/// Test 10: GPU DEM performance with many particles
+/// Test 10: GPU DEM parameter parity with CPU simulation
+#[test]
+fn test_gpu_dem_cpu_parameter_parity() {
+    let (device, queue) = match init_gpu() {
+        Some(handles) => handles,
+        None => {
+            eprintln!("No compatible GPU; skipping test_gpu_dem_cpu_parameter_parity");
+            return;
+        }
+    };
+
+    use sim3d::clump::{ClumpShape3D, ClumpTemplate3D};
+
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
+    let template_mass = template.mass;
+    let (gpu_dem, cpu_sim, _gpu_template_id, _cpu_template_id) =
+        init_parity_sims(device, queue, template);
+
+    let expected_damping =
+        dem_damping(cpu_sim.restitution, cpu_sim.normal_stiffness, template_mass);
+
+    assert!(
+        (gpu_dem.stiffness - cpu_sim.normal_stiffness).abs() < 1.0e-4,
+        "Stiffness should match (gpu={}, cpu={})",
+        gpu_dem.stiffness,
+        cpu_sim.normal_stiffness
+    );
+    assert!(
+        (gpu_dem.damping - expected_damping).abs() < 1.0e-3,
+        "Damping should match (gpu={}, expected={})",
+        gpu_dem.damping,
+        expected_damping
+    );
+    assert!(
+        (cpu_sim.friction - GPU_FRICTION).abs() < 1.0e-6,
+        "CPU friction should match GPU friction (cpu={})",
+        cpu_sim.friction
+    );
+    assert!(
+        (cpu_sim.floor_friction - GPU_FRICTION).abs() < 1.0e-6,
+        "CPU floor friction should match GPU friction (cpu={})",
+        cpu_sim.floor_friction
+    );
+}
+
+/// Test 11: GPU DEM angular velocity parity
+#[test]
+fn test_gpu_dem_cpu_angular_velocity_parity() {
+    let (device, queue) = match init_gpu() {
+        Some(handles) => handles,
+        None => {
+            eprintln!("No compatible GPU; skipping test_gpu_dem_cpu_angular_velocity_parity");
+            return;
+        }
+    };
+
+    use sim3d::clump::{ClumpShape3D, ClumpTemplate3D};
+
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Rod3, PARTICLE_RADIUS, PARTICLE_MASS);
+    let (mut gpu_dem, mut cpu_sim, gpu_template_id, cpu_template_id) =
+        init_parity_sims(device.clone(), queue.clone(), template);
+
+    let start_pos = Vec3::new(5.0, 2.0, 5.0);
+    let start_ang_vel = Vec3::new(0.0, 12.0, 0.0);
+
+    gpu_dem.spawn_clump(gpu_template_id, start_pos, Vec3::ZERO);
+    let cpu_idx = cpu_sim.spawn(cpu_template_id, start_pos, Vec3::ZERO);
+    cpu_sim.clumps[cpu_idx].angular_velocity = start_ang_vel;
+    gpu_dem.set_angular_velocity(0, start_ang_vel);
+
+    let steps = 5;
+    for _ in 0..steps {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("GPU vs CPU Angular Velocity Test"),
+        });
+        gpu_dem.update(&mut encoder, PARITY_DT);
+        queue.submit(Some(encoder.finish()));
+        cpu_sim.step(PARITY_DT);
+    }
+
+    device.poll(wgpu::Maintain::Wait);
+
+    let gpu_particles = pollster::block_on(gpu_dem.readback(&device));
+    let gpu_ang_vel = Vec3::from_slice(&gpu_particles[0].angular_velocity[..3]);
+    let cpu_ang_vel = cpu_sim.clumps[0].angular_velocity;
+
+    let diff = (gpu_ang_vel - cpu_ang_vel).length();
+    let denom = cpu_ang_vel.length().max(1.0e-6);
+    let rel = diff / denom;
+
+    assert!(
+        rel < ANGULAR_REL_EPS,
+        "Angular velocity relative error should be < {:.4} (got {:.4})",
+        ANGULAR_REL_EPS,
+        rel
+    );
+}
+
+/// Test 12: GPU DEM contact count parity
+#[test]
+fn test_gpu_dem_cpu_contact_count_parity() {
+    let (device, queue) = match init_gpu() {
+        Some(handles) => handles,
+        None => {
+            eprintln!("No compatible GPU; skipping test_gpu_dem_cpu_contact_count_parity");
+            return;
+        }
+    };
+
+    use sim3d::clump::{ClumpShape3D, ClumpTemplate3D};
+
+    let template = ClumpTemplate3D::generate(ClumpShape3D::Tetra, PARTICLE_RADIUS, PARTICLE_MASS);
+    let (mut gpu_dem, mut cpu_sim, gpu_template_id, cpu_template_id) =
+        init_parity_sims(device.clone(), queue.clone(), template.clone());
+
+    let separation = PARTICLE_RADIUS * 0.5;
+    let pos_a = Vec3::new(-separation, 0.5, 0.0);
+    let pos_b = Vec3::new(separation, 0.5, 0.0);
+
+    gpu_dem.spawn_clump(gpu_template_id, pos_a, Vec3::ZERO);
+    gpu_dem.spawn_clump(gpu_template_id, pos_b, Vec3::ZERO);
+    cpu_sim.spawn(cpu_template_id, pos_a, Vec3::ZERO);
+    cpu_sim.spawn(cpu_template_id, pos_b, Vec3::ZERO);
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("GPU vs CPU Contact Count Test"),
+    });
+    gpu_dem.update(&mut encoder, PARITY_DT);
+    queue.submit(Some(encoder.finish()));
+    cpu_sim.step(PARITY_DT);
+
+    device.poll(wgpu::Maintain::Wait);
+
+    let gpu_particles = pollster::block_on(gpu_dem.readback(&device));
+    let gpu_contacts = count_sphere_contacts(&gpu_particles, &template);
+    let cpu_contacts = cpu_sim.sphere_contact_count();
+
+    let diff = (gpu_contacts as isize - cpu_contacts as isize).abs();
+    assert!(
+        diff <= 2,
+        "Contact count difference should be <= 2 (gpu={}, cpu={})",
+        gpu_contacts,
+        cpu_contacts
+    );
+}
+
+/// Test 13: GPU DEM performance with many particles
 /// Verifies the system handles larger particle counts without issues
 #[test]
 fn test_gpu_dem_many_particles() {

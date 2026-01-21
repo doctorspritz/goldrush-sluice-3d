@@ -1409,6 +1409,15 @@ impl GpuDem3D {
         Some(idx)
     }
 
+    pub fn set_angular_velocity(&self, particle_idx: u32, angular_velocity: glam::Vec3) {
+        let data = [angular_velocity.x, angular_velocity.y, angular_velocity.z, 0.0];
+        self.queue.write_buffer(
+            &self.angular_velocity_buffer,
+            (particle_idx as u64) * 16,
+            bytemuck::cast_slice(&[data]),
+        );
+    }
+
     /// Update particle properties from template (radius, mass)
     fn update_particle_from_template(&mut self, _particle_idx: u32, _template_id: u32) {
         // No-op: Template data is read directly on GPU now.
