@@ -50,7 +50,7 @@ pub struct GpuClumpTemplate {
     pub sphere_count: u32, // Number of spheres in this clump
     pub mass: f32,         // Total mass of clump
     pub radius: f32,       // Bounding sphere radius
-    pub _pad0: f32,
+    pub particle_radius: f32, // Radius of each sphere in clump
     pub inertia_inv: [[f32; 4]; 3], // Inverse inertia tensor (16-byte aligned columns)
 }
 
@@ -133,14 +133,18 @@ pub struct BridgeParams {
     // Physics parameters
     pub dt: f32,
     pub drag_coefficient: f32,
+    pub lift_coefficient: f32,
+    pub critical_shields: f32,
     pub density_water: f32,
+    pub bed_friction_coefficient: f32,
     pub _pad0: f32,
+    pub _pad1: f32,
     pub gravity: [f32; 4],
     // DEM particle range
     pub dem_particle_count: u32,
-    pub _pad1: u32,
     pub _pad2: u32,
     pub _pad3: u32,
+    pub _pad4: u32,
 }
 
 /// GPU DEM simulator
@@ -1151,8 +1155,8 @@ impl GpuDem3D {
     /// Apply DEM-FLIP bridge coupling pass
     ///
     /// This samples FLIP grid velocities at DEM particle positions and applies
-    /// drag and buoyancy forces. Must be called between prepare_step() and finish_step()
-    /// so that forces are integrated properly.
+    /// Shields-stress-gated drag, lift, and buoyancy forces. Must be called
+    /// between prepare_step() and finish_step() so that forces are integrated properly.
     ///
     /// # Arguments
     /// * `encoder` - Command encoder
@@ -1164,7 +1168,10 @@ impl GpuDem3D {
     /// * `grid_depth` - FLIP grid depth
     /// * `cell_size` - FLIP cell size in meters
     /// * `dt` - Time step
-    /// * `drag_coefficient` - Drag coefficient (higher = more drag, typical 1.0-10.0)
+    /// * `drag_coefficient` - Drag coefficient (Cd, typically ~0.47 for spheres)
+    /// * `lift_coefficient` - Lift coefficient (Cl, typically ~0.2 near bed)
+    /// * `critical_shields` - Critical Shields parameter (theta_cr, ~0.045)
+    /// * `bed_friction_coefficient` - Bed friction coefficient (Cf, ~0.01)
     /// * `density_water` - Water density in kg/m³ (typically 1000.0)
     pub fn apply_flip_coupling(
         &self,
@@ -1178,6 +1185,9 @@ impl GpuDem3D {
         cell_size: f32,
         dt: f32,
         drag_coefficient: f32,
+        lift_coefficient: f32,
+        critical_shields: f32,
+        bed_friction_coefficient: f32,
         density_water: f32,
     ) {
         if self.particle_count() == 0 {
@@ -1192,13 +1202,17 @@ impl GpuDem3D {
             cell_size,
             dt,
             drag_coefficient,
+            lift_coefficient,
+            critical_shields,
             density_water,
+            bed_friction_coefficient,
             _pad0: 0.0,
+            _pad1: 0.0,
             gravity: [0.0, -9.81, 0.0, 0.0],
             dem_particle_count: self.num_active_particles,
-            _pad1: 0,
             _pad2: 0,
             _pad3: 0,
+            _pad4: 0,
         };
         self.queue
             .write_buffer(&self.bridge_params_buffer, 0, bytemuck::bytes_of(&params));
@@ -1273,7 +1287,7 @@ impl GpuDem3D {
             sphere_count: template.local_offsets.len() as u32,
             mass: template.mass,
             radius: template.bounding_radius,
-            _pad0: 0.0,
+            particle_radius: template.particle_radius,
             inertia_inv: [
                 [
                     template.inertia_inv_local.x_axis.x,

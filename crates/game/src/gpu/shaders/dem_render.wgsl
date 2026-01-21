@@ -18,7 +18,7 @@ struct GpuClumpTemplate {
     sphere_count: u32,
     mass: f32,
     radius: f32,
-    pad0: f32,
+    particle_radius: f32,
     inertia_inv: mat3x3<f32>,
 }
 

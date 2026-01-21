@@ -160,7 +160,10 @@ fn main() {
             GRID_DEPTH,
             CELL_SIZE,
             dt,
-            5.0,    // drag_coefficient - how strongly particles follow water
+            0.47,   // drag_coefficient (Cd) - sphere default
+            0.2,    // lift_coefficient (Cl)
+            0.045,  // critical_shields (theta_cr)
+            0.01,   // bed_friction_coefficient (Cf)
             1000.0, // density_water - kg/m³
         );
 
