@@ -1,0 +1,345 @@
+description = """
+Multi-model consensus on task planning before work begins.
+
+The Brains Trust ensures task definitions are thoroughly vetted before
+implementation. Three AI models (Claude, Codex, Gemini) review and improve
+work definitions through priority-tiered rounds of investigation and critique.
+
+## Priority Tiers
+
+| Priority | Rounds | Total Passes |
+|----------|--------|--------------|
+| P0       | 5      | 15           |
+| P1       | 3      | 9            |
+| P2       | 2      | 6            |
+| P3+      | 1      | 3            |
+
+## Round Activities
+
+Each model pass:
+1. Investigates the target bead and related context
+2. Analyzes for gaps, missing deps, ambiguities
+3. Files new beads for discovered prerequisites
+4. Adjusts dependencies as needed
+5. Votes: APPROVE, REVISE, or BLOCK
+
+## Consensus Rules
+
+- ≥2/3 APPROVE → Work is trust-approved
+- <2/3 APPROVE, no BLOCK majority → Return for refinement
+- 1/3+ BLOCK → Escalate to Overseer
+
+## Variables
+
+| Variable | Description |
+|----------|-------------|
+| target   | The bead ID to review |
+
+## Important
+
+This molecule is orchestrated by Mayor. Individual model passes are
+delegated to the appropriate execution environment (polecat, codex, gemini).
+"""
+formula = "mol-brains-trust-plan"
+type = "workflow"
+version = 1
+
+[[steps]]
+id = "init-assessment"
+title = "Initialize trust assessment"
+description = """
+Create the tracking bead and determine review depth.
+
+**1. Read the target bead:**
+```bash
+bd show {{target}}
+```
+
+**2. Determine priority tier and rounds:**
+- P0 → 5 rounds (15 model passes)
+- P1 → 3 rounds (9 model passes)
+- P2 → 2 rounds (6 model passes)
+- P3+ → 1 round (3 model passes)
+
+**3. Create assessment tracking bead:**
+```bash
+bd create --type=trust-assessment \
+  --title="Trust Review: $(bd show {{target}} --json | jq -r '.[0].title')" \
+  --priority=1 \
+  --description="Brains Trust planning review for {{target}}.
+
+Target: {{target}}
+Priority: <priority from target>
+Total Rounds: <from tier>
+Current Round: 1
+
+Votes:
+(none yet)"
+```
+
+**4. Record the assessment bead ID for subsequent steps.**
+
+**Exit criteria:** Assessment bead created, rounds determined."""
+
+[[steps]]
+id = "round-claude"
+title = "Claude review pass"
+needs = ["init-assessment"]
+description = """
+Claude investigates and votes on the target bead.
+
+**1. Read target bead fully:**
+```bash
+bd show {{target}} --long
+```
+
+**2. Investigate context:**
+- Check files/code mentioned in description
+- Review parent epic (if any)
+- Check existing dependencies
+- Look for related beads
+
+**3. Analyze for issues:**
+- Is the task well-defined?
+- Are acceptance criteria clear?
+- Are there missing dependencies?
+- Are there unstated assumptions?
+- Is scope appropriate?
+
+**4. Take action (if needed):**
+```bash
+# File prerequisite beads
+bd create --type=task --title="<prerequisite>" \
+  --description="Discovered during trust review of {{target}}."
+
+# Add missing dependencies
+bd dep add {{target}} <prerequisite-id>
+```
+
+**5. Record vote:**
+Update assessment bead with Claude's vote:
+- APPROVE: Ready for implementation
+- REVISE: Needs changes but not blocked
+- BLOCK: Cannot proceed until prerequisites complete
+
+```bash
+bd update <assessment-id> --notes "Round X - Claude: <VOTE>
+Notes: <analysis notes>"
+```
+
+**Exit criteria:** Vote recorded, any prerequisites filed."""
+
+[[steps]]
+id = "round-codex"
+title = "Codex review pass"
+needs = ["round-claude"]
+description = """
+Codex investigates and votes on the target bead.
+
+**1. Invoke Codex for review:**
+```bash
+/codex review {{target}} --mode=planning
+```
+
+Or via skill:
+- Ask Codex to review the bead description
+- Have Codex check for implementation feasibility
+- Get Codex's assessment of scope and dependencies
+
+**2. Codex should:**
+- Read target bead and context
+- Check for technical feasibility
+- Identify missing technical prerequisites
+- Suggest dependency adjustments
+
+**3. File any discoveries:**
+```bash
+# If Codex identifies prerequisite work
+bd create --type=task --title="<prerequisite>" \
+  --description="Identified by Codex during trust review of {{target}}."
+
+bd dep add {{target}} <prerequisite-id>
+```
+
+**4. Record Codex vote:**
+```bash
+bd update <assessment-id> --notes "Round X - Codex: <VOTE>
+Notes: <Codex analysis>"
+```
+
+**Exit criteria:** Codex vote recorded."""
+
+[[steps]]
+id = "round-gemini"
+title = "Gemini review pass"
+needs = ["round-codex"]
+description = """
+Gemini investigates and votes on the target bead.
+
+**1. Invoke Gemini for review:**
+(Integration TBD - MCP tool or API call)
+
+**2. Gemini should:**
+- Review the target bead from fresh perspective
+- Cross-check against Claude/Codex findings
+- Identify any remaining gaps
+- Provide independent assessment
+
+**3. File any discoveries:**
+```bash
+# If Gemini identifies additional prerequisites
+bd create --type=task --title="<prerequisite>" \
+  --description="Identified by Gemini during trust review of {{target}}."
+
+bd dep add {{target}} <prerequisite-id>
+```
+
+**4. Record Gemini vote:**
+```bash
+bd update <assessment-id> --notes "Round X - Gemini: <VOTE>
+Notes: <Gemini analysis>"
+```
+
+**Exit criteria:** Gemini vote recorded, round complete."""
+
+[[steps]]
+id = "check-rounds"
+title = "Check if more rounds needed"
+needs = ["round-gemini"]
+description = """
+Determine if another round is needed based on priority tier.
+
+**1. Read current round count from assessment bead:**
+```bash
+bd show <assessment-id>
+```
+
+**2. Check if more rounds needed:**
+Based on target priority:
+- P0: need 5 rounds total
+- P1: need 3 rounds total
+- P2: need 2 rounds total
+- P3+: need 1 round total
+
+**3. If more rounds needed:**
+- Increment current_round in assessment notes
+- Loop back to round-claude step
+
+**4. If all rounds complete:**
+- Proceed to consensus-check step
+
+**Exit criteria:** Decision made on continuing or proceeding to consensus."""
+
+[[steps]]
+id = "consensus-check"
+title = "Check consensus and determine outcome"
+needs = ["check-rounds"]
+description = """
+Tally votes and determine the outcome.
+
+**1. Count all votes from assessment bead:**
+Parse the notes for all recorded votes across all rounds.
+
+**2. Calculate consensus:**
+```
+Total votes = rounds × 3
+APPROVE_count = count of APPROVE votes
+REVISE_count = count of REVISE votes
+BLOCK_count = count of BLOCK votes
+ABSTAIN_count = count of ABSTAIN/timeout votes
+
+Approval rate = APPROVE_count / (Total - ABSTAIN_count)
+Block rate = BLOCK_count / (Total - ABSTAIN_count)
+```
+
+**3. Determine outcome:**
+
+| Condition | Outcome |
+|-----------|---------|
+| Approval rate ≥ 67% | APPROVED |
+| Block rate ≥ 34% | DEADLOCK → Escalate |
+| Otherwise | REVISE → Return to Mayor |
+
+**4. Record outcome:**
+```bash
+bd update <assessment-id> --status=<approved|rejected|escalated> \
+  --notes "CONSENSUS: <outcome>
+Votes: APPROVE=X, REVISE=Y, BLOCK=Z
+Approval rate: X%"
+```
+
+**Exit criteria:** Consensus determined and recorded."""
+
+[[steps]]
+id = "apply-outcome"
+title = "Apply consensus outcome"
+needs = ["consensus-check"]
+description = """
+Take action based on consensus result.
+
+**If APPROVED:**
+```bash
+# Mark target as trust-approved
+bd update {{target}} --label trust-approved
+
+# Close assessment as successful
+bd close <assessment-id> --reason="Trust approved with X% consensus"
+
+# Notify Mayor that work is ready for dispatch
+gt mail send mayor/ -s "Trust Approved: {{target}}" \
+  -m "Brains Trust approved {{target}} for implementation.
+Consensus: X% approval across Y rounds."
+```
+
+**If DEADLOCK:**
+```bash
+# Mark assessment as escalated
+bd update <assessment-id> --status=escalated
+
+# Escalate to Overseer
+gt mail send overseer/ -s "Trust Deadlock: {{target}}" \
+  -m "Brains Trust deadlocked on {{target}}.
+Block rate: X%
+Assessment: <assessment-id>
+Human review needed."
+```
+
+**If REVISE:**
+```bash
+# Mark assessment as needing revision
+bd close <assessment-id> --reason="Needs revision - X% approval insufficient"
+
+# Return to Mayor for refinement
+gt mail send mayor/ -s "Trust Revise: {{target}}" \
+  -m "Brains Trust requires revisions to {{target}}.
+Issues identified:
+<summary of REVISE/BLOCK notes>
+
+Assessment: <assessment-id>"
+```
+
+**Exit criteria:** Outcome applied, appropriate parties notified."""
+
+[[steps]]
+id = "cleanup"
+title = "Cleanup and sync"
+needs = ["apply-outcome"]
+description = """
+Final sync and cleanup.
+
+**1. Sync all beads:**
+```bash
+bd sync
+```
+
+**2. Verify state:**
+- Assessment bead is closed (or escalated)
+- Target bead has appropriate label
+- All filed prerequisites are linked
+
+**Exit criteria:** All changes synced, molecule complete."""
+
+[vars]
+[vars.target]
+description = "The bead ID to review"
+required = true
