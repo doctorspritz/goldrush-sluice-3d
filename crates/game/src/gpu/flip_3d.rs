@@ -28,6 +28,13 @@ pub use super::params::GravelObstacle;
 
 const GRAVEL_OBSTACLE_MAX: u32 = 2048;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PhysicsDiagnostics {
+    pub fluid_cell_count: u32,
+    pub max_divergence: f32,
+    pub avg_pressure: f32,
+}
+
 /// GPU-accelerated 3D FLIP simulation
 pub struct GpuFlip3D {
     // Grid dimensions
@@ -40,10 +47,20 @@ pub struct GpuFlip3D {
     /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
     /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
     pub open_boundaries: u32,
+    /// FLIP blend ratio (1.0 = FLIP, 0.0 = PIC).
+    pub flip_ratio: f32,
+    /// Slip factor for tangential velocities at solid boundaries.
+    /// 1.0 = free-slip, 0.0 = no-slip.
+    pub slip_factor: f32,
     /// Vorticity confinement strength (default 0.05, range 0.0-0.25)
     pub vorticity_epsilon: f32,
+    /// Enable/disable density projection (volume preservation).
+    pub density_projection_enabled: bool,
     /// Target water particles per cell for density projection.
     pub water_rest_particles: f32,
+    /// Legacy alias for water rest particles used by tests/examples.
+    /// If > 0.0, this overrides water_rest_particles.
+    pub water_rest_density: f32,
     /// Clamp crowded surface cells (air neighbors) during density projection.
     pub density_surface_clamp: bool,
     pub density_projection_strength: f32,
@@ -2079,8 +2096,12 @@ impl GpuFlip3D {
             depth,
             cell_size,
             open_boundaries: 0, // All boundaries closed by default
+            flip_ratio: 0.95,
+            slip_factor: 1.0,
             vorticity_epsilon: 0.05,
+            density_projection_enabled: true,
             water_rest_particles: 8.0,
+            water_rest_density: 0.0,
             density_surface_clamp: true,
             density_projection_strength: 1.0,  // Restore default strength
             volume_iterations: 40,
@@ -2185,6 +2206,20 @@ impl GpuFlip3D {
             readback_slots,
             readback_cursor: 0,
         }
+    }
+
+    /// Configure parameters for hydrostatic equilibrium validation tests.
+    pub fn configure_for_hydrostatic_equilibrium(&mut self) {
+        self.flip_ratio = 0.0; // PIC for maximum damping.
+        self.vorticity_epsilon = 0.0;
+        self.open_boundaries = 8; // Open +Y for free surface.
+        self.slip_factor = 0.0; // No-slip boundary damping.
+        self.density_projection_enabled = true;
+        self.water_rest_particles = 8.0;
+        self.water_rest_density = 0.0;
+        self.density_surface_clamp = true;
+        self.density_projection_strength = 1.0;
+        self.volume_iterations = 80;
     }
 
     /// Upload SDF data to GPU.
@@ -2311,8 +2346,14 @@ impl GpuFlip3D {
 
         // 3. G2P
         let sediment_params = SedimentParams3D::default();
-        self.g2p
-            .upload_params(queue, particle_count, self.cell_size, dt, 0.95, sediment_params);
+        self.g2p.upload_params(
+            queue,
+            particle_count,
+            self.cell_size,
+            dt,
+            self.flip_ratio,
+            sediment_params,
+        );
         self.g2p.encode(encoder, particle_count);
 
         // 4. SDF Collision
@@ -2507,10 +2548,8 @@ impl GpuFlip3D {
         self.pressure
             .upload_cell_types(queue, cell_types, self.cell_size, self.open_boundaries);
 
-        // Upload BC params
-        // Use full-slip (1.0) or partial-slip (e.g. 0.0 for no-slip)
-        // For now using 1.0 (free slip) to match previous behavior, or tune as needed.
-        let slip_factor = 1.0; 
+        // Upload BC params (slip factor is configurable on the GpuFlip3D instance).
+        let slip_factor = self.slip_factor;
         let bc_params = BcParams3D::new(
             self.width,
             self.height,
@@ -2706,13 +2745,18 @@ impl GpuFlip3D {
 
         // ========== Density Projection (Volume Preservation) ==========
         // After P2G, before G2P: correct particle positions based on density error
-        if self.water_rest_particles > 0.0 {
+        let rest_density = if self.water_rest_density > 0.0 {
+            self.water_rest_density
+        } else {
+            self.water_rest_particles
+        };
+        if self.density_projection_enabled && rest_density > 0.0 {
             // 1. Compute density error from particle count
             let density_error_params = DensityErrorParams3D {
                 width: self.width,
                 height: self.height,
                 depth: self.depth,
-                rest_density: self.water_rest_particles,
+                rest_density,
                 dt,
                 surface_clamp: if self.density_surface_clamp { 1 } else { 0 },
                 _pad2: 0,
@@ -2945,6 +2989,7 @@ impl GpuFlip3D {
             self.depth,
             gravity * dt, // gravity_dt
             self.cell_size,
+            self.open_boundaries,
         );
         queue.write_buffer(
             &self.gravity_params_buffer,
@@ -3220,7 +3265,7 @@ impl GpuFlip3D {
         };
         let g2p_count = self
             .g2p
-            .upload_params(queue, count, self.cell_size, dt, 0.95, sediment_params);
+            .upload_params(queue, count, self.cell_size, dt, self.flip_ratio, sediment_params);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D G2P Encoder"),
@@ -3535,6 +3580,190 @@ impl GpuFlip3D {
             output[..count].copy_from_slice(&slice[..count]);
         }
         staging.unmap();
+    }
+
+    pub fn read_physics_diagnostics(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> PhysicsDiagnostics {
+        let cell_count = (self.width * self.height * self.depth) as usize;
+        if cell_count == 0 {
+            return PhysicsDiagnostics::default();
+        }
+
+        let byte_size = (cell_count * std::mem::size_of::<u32>()) as u64;
+        let cell_type_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Cell Type Staging (Physics Diagnostics)"),
+            size: byte_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let divergence_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Divergence Staging (Physics Diagnostics)"),
+            size: byte_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let pressure_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pressure Staging (Physics Diagnostics)"),
+            size: byte_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Physics Diagnostics Readback"),
+        });
+        encoder.copy_buffer_to_buffer(
+            &self.pressure.cell_type_buffer,
+            0,
+            &cell_type_staging,
+            0,
+            byte_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.pressure.divergence_buffer,
+            0,
+            &divergence_staging,
+            0,
+            byte_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            &self.pressure.pressure_buffer,
+            0,
+            &pressure_staging,
+            0,
+            byte_size,
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let ct_slice = cell_type_staging.slice(..);
+        let div_slice = divergence_staging.slice(..);
+        let pressure_slice = pressure_staging.slice(..);
+
+        let (ct_tx, ct_rx) = std::sync::mpsc::channel();
+        let (div_tx, div_rx) = std::sync::mpsc::channel();
+        let (pressure_tx, pressure_rx) = std::sync::mpsc::channel();
+
+        ct_slice.map_async(wgpu::MapMode::Read, move |r| {
+            ct_tx.send(r).unwrap();
+        });
+        div_slice.map_async(wgpu::MapMode::Read, move |r| {
+            div_tx.send(r).unwrap();
+        });
+        pressure_slice.map_async(wgpu::MapMode::Read, move |r| {
+            pressure_tx.send(r).unwrap();
+        });
+
+        device.poll(wgpu::Maintain::Wait);
+        ct_rx.recv().unwrap().unwrap();
+        div_rx.recv().unwrap().unwrap();
+        pressure_rx.recv().unwrap().unwrap();
+
+        let ct_data = ct_slice.get_mapped_range();
+        let div_data = div_slice.get_mapped_range();
+        let pressure_data = pressure_slice.get_mapped_range();
+
+        let cell_types: &[u32] = bytemuck::cast_slice(&ct_data);
+        let divergence: &[f32] = bytemuck::cast_slice(&div_data);
+        let pressure: &[f32] = bytemuck::cast_slice(&pressure_data);
+
+        let mut fluid_count = 0u32;
+        let mut max_divergence = 0.0f32;
+        let mut pressure_sum = 0.0f32;
+
+        for i in 0..cell_count {
+            if cell_types[i] == 1 {
+                fluid_count += 1;
+                let div = divergence[i].abs();
+                if div > max_divergence {
+                    max_divergence = div;
+                }
+                pressure_sum += pressure[i];
+            }
+        }
+
+        let avg_pressure = if fluid_count > 0 {
+            pressure_sum / fluid_count as f32
+        } else {
+            0.0
+        };
+
+        drop(ct_data);
+        drop(div_data);
+        drop(pressure_data);
+        cell_type_staging.unmap();
+        divergence_staging.unmap();
+        pressure_staging.unmap();
+
+        PhysicsDiagnostics {
+            fluid_cell_count: fluid_count,
+            max_divergence,
+            avg_pressure,
+        }
+    }
+
+    pub fn compute_post_correction_divergence(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> f32 {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Post-Correction Divergence"),
+        });
+        self.pressure.encode_divergence_only(&mut encoder);
+        queue.submit(std::iter::once(encoder.finish()));
+        self.read_divergence_max(device, queue)
+    }
+
+    fn read_divergence_max(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> f32 {
+        let cell_count = (self.width * self.height * self.depth) as usize;
+        if cell_count == 0 {
+            return 0.0;
+        }
+
+        let byte_size = (cell_count * std::mem::size_of::<f32>()) as u64;
+        let divergence_staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Divergence Staging (Diagnostics)"),
+            size: byte_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Divergence Readback"),
+        });
+        encoder.copy_buffer_to_buffer(
+            &self.pressure.divergence_buffer,
+            0,
+            &divergence_staging,
+            0,
+            byte_size,
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let div_slice = divergence_staging.slice(..);
+        let (div_tx, div_rx) = std::sync::mpsc::channel();
+        div_slice.map_async(wgpu::MapMode::Read, move |r| {
+            div_tx.send(r).unwrap();
+        });
+        device.poll(wgpu::Maintain::Wait);
+        div_rx.recv().unwrap().unwrap();
+
+        let div_data = div_slice.get_mapped_range();
+        let divergence: &[f32] = bytemuck::cast_slice(&div_data);
+        let mut max_divergence = 0.0f32;
+        for value in divergence {
+            let div = value.abs();
+            if div > max_divergence {
+                max_divergence = div;
+            }
+        }
+
+        drop(div_data);
+        divergence_staging.unmap();
+        max_divergence
     }
 
     /// Print density projection diagnostics (volume preservation metrics).

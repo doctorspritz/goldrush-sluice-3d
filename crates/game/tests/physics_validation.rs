@@ -166,7 +166,7 @@ impl TestHarness {
         let (width, height, depth) = self.grid_dims;
 
         SdfParams {
-            sdf: &sim.grid.sdf,
+            sdf: sim.grid.sdf(),
             grid_width: width,
             grid_height: height,
             grid_depth: depth,
@@ -227,7 +227,7 @@ impl TestHarness {
                 let sim = self.flip_sim.as_ref().expect("FLIP sim not initialized");
                 let (width, height, depth) = self.grid_dims;
                 let sdf_params = SdfParams {
-                    sdf: &sim.grid.sdf,
+                    sdf: sim.grid.sdf(),
                     grid_width: width,
                     grid_height: height,
                     grid_depth: depth,
@@ -243,7 +243,7 @@ impl TestHarness {
                     // Sample SDF at different heights
                     for j in 0..10 {
                         let idx = sim.grid.cell_index(width / 2, j, depth / 2);
-                        let sdf_val = sim.grid.sdf[idx];
+                        let sdf_val = sim.grid.sdf()[idx];
                         let world_y = self.grid_offset.y + j as f32 * self.cell_size;
                         println!("  j={:2}, world_y={:.4}, sdf={:+.4}", j, world_y, sdf_val);
                     }
@@ -283,8 +283,8 @@ impl TestHarness {
         for j in 1..sim.grid.height {
             let idx_prev = sim.grid.cell_index(width / 2, j - 1, depth / 2);
             let idx_curr = sim.grid.cell_index(width / 2, j, depth / 2);
-            let sdf_prev = sim.grid.sdf[idx_prev];
-            let sdf_curr = sim.grid.sdf[idx_curr];
+            let sdf_prev = sim.grid.sdf()[idx_prev];
+            let sdf_curr = sim.grid.sdf()[idx_curr];
 
             if sdf_prev < 0.0 && sdf_curr >= 0.0 {
                 // Interpolate to find zero crossing
@@ -606,7 +606,7 @@ fn test_dem_floor_collision() {
         let idx = grid_k * harness.grid_dims.0 * harness.grid_dims.1
             + grid_j * harness.grid_dims.0
             + grid_i;
-        let sdf_val = sim.grid.sdf[idx];
+        let sdf_val = sim.grid.sdf()[idx];
         println!("SDF at spawn position: {:.4}", sdf_val);
     }
 

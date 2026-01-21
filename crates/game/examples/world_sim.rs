@@ -332,21 +332,7 @@ impl App {
         if self.last_stats.elapsed() > Duration::from_secs(2) {
             if let Some(gpu) = &self.gpu {
                 if DEBUG_HEIGHTFIELD_STATS {
-                    let debug = pollster::block_on(
-                        gpu.heightfield.read_debug_stats(&gpu.device, &gpu.queue),
-                    );
-                    println!(
-                        "Erosion: cells={} max={:.4}m | Depo: cells={} max={:.4}m | layers=[{:.4},{:.4},{:.4},{:.4}]",
-                        debug.erosion_cells,
-                        debug.erosion_max_height,
-                        debug.deposition_cells,
-                        debug.deposition_max_height,
-                        debug.deposition_layers[0],
-                        debug.deposition_layers[1],
-                        debug.deposition_layers[2],
-                        debug.deposition_layers[3],
-                    );
-                    gpu.heightfield.reset_debug_stats(&gpu.queue);
+                    println!("Heightfield debug stats are unavailable in the current build.");
                 }
             }
             self.last_stats = Instant::now();
@@ -628,8 +614,7 @@ impl App {
             config.format,
         );
         if DEBUG_HEIGHTFIELD_STATS {
-            heightfield.set_debug_flags(1);
-            heightfield.reset_debug_stats(&queue);
+            println!("Heightfield debug stats are unavailable in the current build.");
         }
         heightfield.upload_from_world(&queue, &self.world);
 
@@ -699,7 +684,6 @@ impl App {
             self.camera.position.to_array(),
             self.start_time.elapsed().as_secs_f32(),
             self.show_water,
-            self.show_velocity,
         );
 
         // Render emitter sphere

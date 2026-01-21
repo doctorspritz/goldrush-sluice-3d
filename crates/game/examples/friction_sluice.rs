@@ -930,8 +930,8 @@ impl App {
             if self.frame % 50 == 0 {
                 if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
                     gpu_flip.print_density_projection_diagnostics(
-                        &gpu.device,
-                        &gpu.queue,
+                        &gpu.ctx.device,
+                        &gpu.ctx.queue,
                         dt,
                         8.0, // water_rest
                     );

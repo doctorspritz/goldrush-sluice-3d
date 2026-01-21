@@ -78,6 +78,8 @@ pub fn create_render_resources(
             render_storage_entry(10, wgpu::ShaderStages::VERTEX),   // suspended_overburden
             render_storage_entry(11, wgpu::ShaderStages::VERTEX),   // suspended_gravel
             render_storage_entry(12, wgpu::ShaderStages::VERTEX),   // suspended_paydirt
+            render_storage_entry(13, wgpu::ShaderStages::VERTEX),   // water_velocity_x
+            render_storage_entry(14, wgpu::ShaderStages::VERTEX),   // water_velocity_z
         ],
     });
 
@@ -98,6 +100,8 @@ pub fn create_render_resources(
             wgpu::BindGroupEntry { binding: 10, resource: water.suspended_overburden.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 11, resource: water.suspended_gravel.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 12, resource: water.suspended_paydirt.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 13, resource: water.velocity_x.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 14, resource: water.velocity_z.as_entire_binding() },
         ],
     });
 

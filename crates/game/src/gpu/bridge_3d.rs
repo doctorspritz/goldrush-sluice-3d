@@ -4,21 +4,11 @@ use bytemuck::{Pod, Zeroable};
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct EmitterParams3D {
-    pos: [f32; 3],
-    radius: f32,
-    vel: [f32; 3],
-    spread: f32,
-    count: u32,
-    density: f32,
-    time: f32,
-    max_particles: u32,
-    // Grid params for density checking
-    grid_width: u32,
-    grid_height: u32,
-    grid_depth: u32,
-    cell_size: f32,
-    max_ppc: f32,
-    _pad: [u32; 3],
+    pos_radius: [f32; 4],
+    vel_spread: [f32; 4],
+    counts0: [u32; 4],
+    counts1: [u32; 4],
+    misc0: [f32; 4],
 }
 
 #[repr(C)]
@@ -399,20 +389,11 @@ impl GpuBridge3D {
         }
 
         let params = EmitterParams3D {
-            pos,
-            radius,
-            vel,
-            spread,
-            count,
-            density,
-            time,
-            max_particles: self.max_particles as u32,
-            grid_width: flip.width,
-            grid_height: flip.height,
-            grid_depth: flip.depth,
-            cell_size: flip.cell_size,
-            max_ppc: 8.0,  // Target rest density
-            _pad: [0; 3],
+            pos_radius: [pos[0], pos[1], pos[2], radius],
+            vel_spread: [vel[0], vel[1], vel[2], spread],
+            counts0: [count, self.max_particles as u32, flip.width, flip.height],
+            counts1: [flip.depth, 0, 0, 0],
+            misc0: [density, time, flip.cell_size, 8.0],
         };
         queue.write_buffer(&self.emitter_params_buffer, 0, bytemuck::bytes_of(&params));
 

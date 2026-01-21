@@ -38,6 +38,8 @@ pub fn create_storage_buffer_u32(
     })
 }
 
+const DEBUG_STATS_COUNT: u32 = 16;
+
 /// Holds all geology-related buffers.
 pub struct GeologyBuffers {
     pub bedrock: wgpu::Buffer,
@@ -46,6 +48,8 @@ pub struct GeologyBuffers {
     pub overburden: wgpu::Buffer,
     pub sediment: wgpu::Buffer,
     pub surface_material: wgpu::Buffer,
+    pub settling_time: wgpu::Buffer,
+    pub debug_stats: wgpu::Buffer,
 }
 
 impl GeologyBuffers {
@@ -55,7 +59,12 @@ impl GeologyBuffers {
         let gravel = create_storage_buffer(device, "Gravel Buffer", width, depth, initial_height * 0.05);
         let overburden = create_storage_buffer(device, "Overburden Buffer", width, depth, initial_height * 0.2);
         let sediment = create_storage_buffer(device, "Sediment Buffer", width, depth, 0.0);
-        let surface_material = create_storage_buffer_u32(device, "Surface Material Buffer", width, depth, 4);
+        let surface_material =
+            create_storage_buffer_u32(device, "Surface Material Buffer", width, depth, 4);
+        let settling_time =
+            create_storage_buffer_u32(device, "Settling Time Buffer", width, depth, 0);
+        let debug_stats =
+            create_storage_buffer_u32(device, "Debug Stats Buffer", DEBUG_STATS_COUNT, 1, 0);
 
         Self {
             bedrock,
@@ -64,6 +73,8 @@ impl GeologyBuffers {
             overburden,
             sediment,
             surface_material,
+            settling_time,
+            debug_stats,
         }
     }
 }

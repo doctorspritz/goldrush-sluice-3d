@@ -110,6 +110,8 @@ pub fn create_terrain_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             storage_entry(3, false), // overburden
             storage_entry(4, false), // sediment
             storage_entry(5, false), // surface_material
+            storage_entry(6, false), // settling_time
+            storage_entry(7, false), // debug_stats
         ],
     })
 }
@@ -174,6 +176,8 @@ pub fn create_terrain_bind_group(
             wgpu::BindGroupEntry { binding: 3, resource: geology.overburden.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 4, resource: geology.sediment.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 5, resource: geology.surface_material.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 6, resource: geology.settling_time.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 7, resource: geology.debug_stats.as_entire_binding() },
         ],
     })
 }
@@ -263,6 +267,8 @@ pub fn create_emitter_resources(
             storage_entry(3, false),
             storage_entry(4, false),
             storage_entry(5, false),
+            storage_entry(6, false),
+            storage_entry(7, false),
         ],
     });
 
@@ -276,6 +282,8 @@ pub fn create_emitter_resources(
             wgpu::BindGroupEntry { binding: 3, resource: water.suspended_overburden.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 4, resource: water.suspended_gravel.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 5, resource: water.suspended_paydirt.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 6, resource: water.velocity_x.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 7, resource: water.velocity_z.as_entire_binding() },
         ],
     });
 

@@ -1,5 +1,4 @@
-use game::editor::{EditorLayout, TestFloorPiece};
-use game::scenario::{Scenario, SimulationState};
+use game::editor::{EditorLayout, ScenarioConfig, TestFloorPiece};
 use glam::Vec3;
 use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D};
 use std::path::Path;
@@ -46,17 +45,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let scenario_1 = Scenario {
-        layout,
-        state: Some(SimulationState {
-            flips: Vec::new(),
-            dem: Some(dem_sim),
-        }),
-        name: "DEM: Floor Collision".to_string(),
-        description: "Particles fall from height and settle on a floor".to_string(),
-        camera_target: Some(Vec3::new(0.0, 0.3, 0.0)),
-        camera_distance: Some(1.5),
-    };
+    let mut scenario_1 = ScenarioConfig::from_layout(layout);
+    scenario_1.name = Some("DEM: Floor Collision".to_string());
+    scenario_1.description = Some("Particles fall from height and settle on a floor".to_string());
 
     scenario_1.save_json(&scenarios_dir.join("dem_floor_collision.json"))?;
     println!("Generated dem_floor_collision.json");
@@ -90,17 +81,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         dem_sim_2.spawn(sand_idx_2, pos, vel);
     }
 
-    let scenario_2 = Scenario {
-        layout: layout_2,
-        state: Some(SimulationState {
-            flips: Vec::new(),
-            dem: Some(dem_sim_2),
-        }),
-        name: "DEM: Wall Collision".to_string(),
-        description: "Particles reflect off walls in a box".to_string(),
-        camera_target: Some(Vec3::new(0.0, 0.15, 0.0)),
-        camera_distance: Some(1.0),
-    };
+    let mut scenario_2 = ScenarioConfig::from_layout(layout_2);
+    scenario_2.name = Some("DEM: Wall Collision".to_string());
+    scenario_2.description = Some("Particles reflect off walls in a box".to_string());
     scenario_2.save_json(&scenarios_dir.join("dem_wall_collision.json"))?;
     println!("Generated dem_wall_collision.json");
 
@@ -149,17 +132,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let scenario_3 = Scenario {
-        layout: layout_3,
-        state: Some(SimulationState {
-            flips: Vec::new(),
-            dem: Some(dem_sim_3),
-        }),
-        name: "DEM: Density Separation".to_string(),
-        description: "Mixed gold and sand dropped into box".to_string(),
-        camera_target: Some(Vec3::new(0.0, 0.2, 0.0)),
-        camera_distance: Some(1.0),
-    };
+    let mut scenario_3 = ScenarioConfig::from_layout(layout_3);
+    scenario_3.name = Some("DEM: Density Separation".to_string());
+    scenario_3.description = Some("Mixed gold and sand dropped into box".to_string());
     scenario_3.save_json(&scenarios_dir.join("dem_density_separation.json"))?;
     println!("Generated dem_density_separation.json");
 
@@ -189,17 +164,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         dem_sim_4.spawn(sand_idx_4, pos, Vec3::ZERO);
     }
 
-    let scenario_4 = Scenario {
-        layout: layout_4,
-        state: Some(SimulationState {
-            flips: Vec::new(),
-            dem: Some(dem_sim_4),
-        }),
-        name: "DEM: Settling Time".to_string(),
-        description: "50 particles dropped into box, should all come to rest".to_string(),
-        camera_target: Some(Vec3::new(0.0, 0.15, 0.0)),
-        camera_distance: Some(1.2),
-    };
+    let mut scenario_4 = ScenarioConfig::from_layout(layout_4);
+    scenario_4.name = Some("DEM: Settling Time".to_string());
+    scenario_4.description = Some("50 particles dropped into box, should all come to rest".to_string());
     scenario_4.save_json(&scenarios_dir.join("dem_settling_time.json"))?;
     println!("Generated dem_settling_time.json");
 

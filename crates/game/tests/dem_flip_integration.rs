@@ -141,7 +141,7 @@ fn test_dem_collides_with_gutter_sdf() {
     // Count solid cells to verify geometry was created
     let solid_count = flip_sim
         .grid
-        .cell_type
+        .cell_type()
         .iter()
         .filter(|&&t| t == CellType::Solid)
         .count();
@@ -186,7 +186,7 @@ fn test_dem_collides_with_gutter_sdf() {
 
     // Create SDF params from FLIP grid
     let sdf_params = SdfParams {
-        sdf: &flip_sim.grid.sdf,
+        sdf: flip_sim.grid.sdf(),
         grid_width,
         grid_height,
         grid_depth,
@@ -331,7 +331,7 @@ fn test_gold_settles_faster_than_sand_in_water() {
 
     // Create SDF params
     let sdf_params = SdfParams {
-        sdf: &flip_sim.grid.sdf,
+        sdf: flip_sim.grid.sdf(),
         grid_width,
         grid_height,
         grid_depth,
@@ -477,7 +477,7 @@ fn test_flip_and_dem_together() {
         }
     }
 
-    let water_count = flip_sim.particles.list.len();
+    let water_count = flip_sim.particles.list().len();
     println!("Spawned {} water particles", water_count);
 
     // Spawn a single DEM clump IN THE WATER to test coupling
@@ -493,7 +493,7 @@ fn test_flip_and_dem_together() {
 
     // Create SDF params
     let sdf_params = SdfParams {
-        sdf: &flip_sim.grid.sdf,
+        sdf: flip_sim.grid.sdf(),
         grid_width,
         grid_height,
         grid_depth,
@@ -505,7 +505,7 @@ fn test_flip_and_dem_together() {
     let num_steps = 120; // 2 seconds
     for step in 0..num_steps {
         // Step FLIP (simplified - just advect particles by velocity for this test)
-        for particle in &mut flip_sim.particles.list {
+        for particle in flip_sim.particles.list_mut() {
             particle.position += particle.velocity * DT;
             particle.velocity.y += GRAVITY * DT;
         }
@@ -517,7 +517,7 @@ fn test_flip_and_dem_together() {
         dem_sim.step_with_sdf(DT, &sdf_params);
 
         if step % 30 == 0 {
-            let water_count = flip_sim.particles.list.len();
+            let water_count = flip_sim.particles.list().len();
             let clump_count = dem_sim.clumps.len();
             let clump_avg_y: f32 = clump_indices
                 .iter()
@@ -538,7 +538,7 @@ fn test_flip_and_dem_together() {
 
     // Verify both systems ran without crashing
     assert!(
-        !flip_sim.particles.list.is_empty(),
+        !flip_sim.particles.list().is_empty(),
         "Water particles disappeared"
     );
     assert!(!dem_sim.clumps.is_empty(), "DEM clumps disappeared");

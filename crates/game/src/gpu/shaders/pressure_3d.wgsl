@@ -17,6 +17,8 @@ struct Params {
     omega: f32,  // SOR relaxation factor (typically 1.5-1.9 for 3D)
     h_sq: f32,   // cell_size^2, needed to scale divergence in Poisson equation
     open_boundaries: u32,  // Bitmask: 1=-X, 2=+X, 4=-Y, 8=+Y, 16=-Z, 32=+Z
+    _pad0: u32,
+    _pad1: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> pressure: array<f32>;

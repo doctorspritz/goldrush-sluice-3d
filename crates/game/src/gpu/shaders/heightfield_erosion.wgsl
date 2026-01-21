@@ -102,8 +102,8 @@ const DBG_DEPOSITION_PAYDIRT: u32 = 11u;
 fn compute_surface_material(idx: u32) -> u32 {
     if (sediment[idx] > MIN_LAYER_THICKNESS) { return 4u; }
     if (overburden[idx] > MIN_LAYER_THICKNESS) { return 3u; }
-    if (gravel[idx] > min_thick) { return 2u; }
-    if (paydirt[idx] > min_thick) { return 1u; }
+    if (gravel[idx] > MIN_LAYER_THICKNESS) { return 2u; }
+    if (paydirt[idx] > MIN_LAYER_THICKNESS) { return 1u; }
     return 0u; // bedrock
 }
 

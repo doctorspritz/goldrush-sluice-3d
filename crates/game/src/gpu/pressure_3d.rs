@@ -34,6 +34,8 @@ struct PressureParams3D {
     omega: f32, // SOR relaxation factor (1.5-1.9)
     h_sq: f32,  // cell_size^2, for Poisson equation scaling
     open_boundaries: u32, // Bitmask: 1=-X, 2=+X, 4=-Y, 8=+Y, 16=-Z, 32=+Z
+    _pad0: u32,
+    _pad1: u32,
 }
 
 /// GPU-based pressure solver for 3D FLIP
@@ -569,6 +571,8 @@ impl GpuPressure3D {
             omega: 1.5, // More stable relaxation factor (was 1.85)
             h_sq: cell_size * cell_size, // Poisson equation needs dx²
             open_boundaries,
+            _pad0: 0,
+            _pad1: 0,
         };
         queue.write_buffer(
             &self.pressure_params_buffer,
@@ -656,6 +660,21 @@ impl GpuPressure3D {
         }
     }
 
+    /// Encode just the divergence pass (no pressure iterations or gradient apply).
+    pub fn encode_divergence_only(&self, encoder: &mut wgpu::CommandEncoder) {
+        let workgroups_x = self.width.div_ceil(8);
+        let workgroups_y = self.height.div_ceil(8);
+        let workgroups_z = self.depth.div_ceil(4);
+
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("Divergence 3D Pass (Diagnostics)"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.divergence_pipeline);
+        pass.set_bind_group(0, &self.divergence_bind_group, &[]);
+        pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+    }
+
     /// Clear the pressure buffer (needed before density projection)
     pub fn clear_pressure(&self, queue: &wgpu::Queue) {
         let cell_count = (self.width * self.height * self.depth) as usize;
@@ -696,5 +715,90 @@ impl GpuPressure3D {
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::mem::{offset_of, size_of};
+    use std::path::Path;
+
+    struct WgslLayout {
+        size: u32,
+        offsets: HashMap<String, u32>,
+    }
+
+    fn wgsl_struct_layout(shader: &str, struct_name: &str) -> WgslLayout {
+        let shader_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gpu/shaders").join(shader);
+        let source = fs::read_to_string(&shader_path)
+            .unwrap_or_else(|e| panic!("Failed to read {:?}: {e}", shader_path));
+        let module = naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("Failed to parse {:?}: {}", shader_path, e.emit_to_string(&source)));
+
+        let mut layouter = naga::proc::Layouter::default();
+        let gctx = naga::proc::GlobalCtx {
+            types: &module.types,
+            constants: &module.constants,
+            overrides: &module.overrides,
+            global_expressions: &module.global_expressions,
+        };
+        layouter
+            .update(gctx)
+            .unwrap_or_else(|e| panic!("Failed to compute layout for {:?}: {e}", shader_path));
+
+        let (handle, ty) = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some(struct_name))
+            .unwrap_or_else(|| panic!("Struct {struct_name} not found in {:?}", shader_path));
+
+        let members = match &ty.inner {
+            naga::TypeInner::Struct { members, .. } => members,
+            _ => panic!("Type {struct_name} is not a struct in {:?}", shader_path),
+        };
+
+        let mut offsets = HashMap::new();
+        for member in members {
+            if let Some(name) = &member.name {
+                offsets.insert(name.clone(), member.offset);
+            }
+        }
+
+        WgslLayout {
+            size: layouter[handle].size,
+            offsets,
+        }
+    }
+
+    #[test]
+    fn grid_params_layout_matches_wgsl() {
+        let layout = wgsl_struct_layout("divergence_3d.wgsl", "Params");
+        assert_eq!(layout.size as usize, size_of::<GridParams3D>());
+        assert_eq!(
+            *layout.offsets.get("open_boundaries").unwrap(),
+            offset_of!(GridParams3D, open_boundaries) as u32
+        );
+        assert_eq!(
+            *layout.offsets.get("inv_cell_size").unwrap(),
+            offset_of!(GridParams3D, inv_cell_size) as u32
+        );
+    }
+
+    #[test]
+    fn pressure_params_layout_matches_wgsl() {
+        let layout = wgsl_struct_layout("pressure_3d.wgsl", "Params");
+        assert_eq!(layout.size as usize, size_of::<PressureParams3D>());
+        assert_eq!(
+            *layout.offsets.get("open_boundaries").unwrap(),
+            offset_of!(PressureParams3D, open_boundaries) as u32
+        );
+        assert_eq!(
+            *layout.offsets.get("h_sq").unwrap(),
+            offset_of!(PressureParams3D, h_sq) as u32
+        );
     }
 }
