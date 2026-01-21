@@ -186,7 +186,7 @@ impl BcParams3D {
     }
 }
 
-/// Fluid cell expansion parameters (16 bytes).
+/// Fluid cell expansion parameters (32 bytes).
 ///
 /// Matches layout in `fluid_cell_expand_3d.wgsl`:
 /// struct Params {
@@ -194,6 +194,10 @@ impl BcParams3D {
 ///     height: u32,
 ///     depth: u32,
 ///     open_boundaries: u32,
+///     min_neighbors: u32,
+///     _pad0: u32,
+///     _pad1: u32,
+///     _pad2: u32,
 /// }
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -202,15 +206,29 @@ pub(crate) struct FluidCellExpandParams3D {
     pub height: u32,
     pub depth: u32,
     pub open_boundaries: u32,
+    pub min_neighbors: u32,
+    pub _pad0: u32,
+    pub _pad1: u32,
+    pub _pad2: u32,
 }
 
 impl FluidCellExpandParams3D {
-    pub fn new(width: u32, height: u32, depth: u32, open_boundaries: u32) -> Self {
+    pub fn new(
+        width: u32,
+        height: u32,
+        depth: u32,
+        open_boundaries: u32,
+        min_neighbors: u32,
+    ) -> Self {
         Self {
             width,
             height,
             depth,
             open_boundaries,
+            min_neighbors: min_neighbors.clamp(1, 6),
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
         }
     }
 }
@@ -557,6 +575,10 @@ mod tests {
         assert_eq!(
             *layout.offsets.get("open_boundaries").unwrap(),
             offset_of!(FluidCellExpandParams3D, open_boundaries) as u32
+        );
+        assert_eq!(
+            *layout.offsets.get("min_neighbors").unwrap(),
+            offset_of!(FluidCellExpandParams3D, min_neighbors) as u32
         );
     }
 }

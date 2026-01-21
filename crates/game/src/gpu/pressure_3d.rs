@@ -9,6 +9,7 @@
 //! 3. Apply pressure gradient: u -= ∇p
 
 use bytemuck::{Pod, Zeroable};
+use wgpu::util::DeviceExt;
 
 /// Parameters for divergence/gradient shaders
 #[repr(C)]
@@ -48,6 +49,7 @@ pub struct GpuPressure3D {
     pub pressure_buffer: wgpu::Buffer,
     pub divergence_buffer: wgpu::Buffer,
     pub cell_type_buffer: wgpu::Buffer, // Public so gravity shader can use it
+    pressure_backup_buffer: wgpu::Buffer,
 
     // Parameters
     grid_params_buffer: wgpu::Buffer,
@@ -99,12 +101,17 @@ impl GpuPressure3D {
         });
 
         // Create buffers
-        let pressure_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let pressure_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Pressure 3D"),
-            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            contents: &vec![0u8; cell_count * std::mem::size_of::<f32>()],
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
+        });
+        let pressure_backup_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pressure 3D Backup"),
+            size: (cell_count * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -515,6 +522,7 @@ impl GpuPressure3D {
             pressure_buffer,
             divergence_buffer,
             cell_type_buffer,
+            pressure_backup_buffer,
             grid_params_buffer,
             pressure_params_buffer,
             divergence_pipeline,
@@ -539,10 +547,6 @@ impl GpuPressure3D {
     ) {
         queue.write_buffer(&self.cell_type_buffer, 0, bytemuck::cast_slice(cell_types));
 
-        // Clear pressure
-        let cell_count = (self.width * self.height * self.depth) as usize;
-        queue.write_buffer(&self.pressure_buffer, 0, &vec![0u8; cell_count * 4]);
-
         // Upload grid params
         let grid_params = GridParams3D {
             width: self.width,
@@ -563,12 +567,14 @@ impl GpuPressure3D {
         // Upload pressure params
         // NOTE: For 3D grids, optimal SOR omega is approximately:
         //   omega = 2 / (1 + sin(π/N)) where N is largest grid dimension
-        // For N=200, omega ≈ 1.97. Using 1.85 for stability.
+        let max_dim = self.width.max(self.height).max(self.depth) as f32;
+        let omega = 2.0 / (1.0 + (std::f32::consts::PI / max_dim).sin());
+        let omega = omega.clamp(1.0, 1.95);
         let pressure_params = PressureParams3D {
             width: self.width,
             height: self.height,
             depth: self.depth,
-            omega: 1.5, // More stable relaxation factor (was 1.85)
+            omega,
             h_sq: cell_size * cell_size, // Poisson equation needs dx²
             open_boundaries,
             _pad0: 0,
@@ -658,6 +664,31 @@ impl GpuPressure3D {
             let workgroups_w_z = (self.depth + 1).div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_w_z);
         }
+    }
+
+    /// Encode two pressure solves but preserve the first pressure field for diagnostics.
+    pub fn encode_with_pressure_restore(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        iterations: u32,
+    ) {
+        self.encode(encoder, iterations);
+        let byte_size = (self.width * self.height * self.depth * std::mem::size_of::<f32>() as u32) as u64;
+        encoder.copy_buffer_to_buffer(
+            &self.pressure_buffer,
+            0,
+            &self.pressure_backup_buffer,
+            0,
+            byte_size,
+        );
+        self.encode(encoder, iterations);
+        encoder.copy_buffer_to_buffer(
+            &self.pressure_backup_buffer,
+            0,
+            &self.pressure_buffer,
+            0,
+            byte_size,
+        );
     }
 
     /// Encode just the divergence pass (no pressure iterations or gradient apply).

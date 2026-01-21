@@ -16,6 +16,11 @@ struct Params {
     // Bit 2 (4): -Y open, Bit 3 (8): +Y open
     // Bit 4 (16): -Z open, Bit 5 (32): +Z open
     open_boundaries: u32,
+    // Minimum neighbors with particles to expand into empty cell
+    min_neighbors: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -25,9 +30,6 @@ struct Params {
 const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
 const CELL_SOLID: u32 = 2u;
-
-// Minimum neighbors with particles to expand into empty cell
-const MIN_NEIGHBORS_FOR_EXPANSION: u32 = 3u;
 
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
@@ -62,9 +64,13 @@ fn is_domain_boundary(i: u32, j: u32, k: u32) -> bool {
            k == 0u || k == params.depth - 1u;
 }
 
-// Check if a boundary cell should be SOLID based on open_boundaries config.
-// OPEN boundaries are treated as AIR, CLOSED boundaries as SOLID.
-fn is_boundary_solid(i: u32, j: u32, k: u32) -> bool {
+// Check if a boundary cell should be forced AIR based on open_boundaries config.
+// OPEN boundaries are treated as AIR even if particles exist.
+fn is_boundary_forced_air(i: u32, j: u32, k: u32) -> bool {
+    if (!is_domain_boundary(i, j, k)) {
+        return false;
+    }
+
     // Extract open boundary flags
     let open_neg_x = (params.open_boundaries & 1u) != 0u;
     let open_pos_x = (params.open_boundaries & 2u) != 0u;
@@ -73,16 +79,15 @@ fn is_boundary_solid(i: u32, j: u32, k: u32) -> bool {
     let open_neg_z = (params.open_boundaries & 16u) != 0u;
     let open_pos_z = (params.open_boundaries & 32u) != 0u;
 
-    // Check each boundary and return false (not solid) if it's open
-    if (i == 0u && open_neg_x) { return false; }
-    if (i == params.width - 1u && open_pos_x) { return false; }
-    if (j == 0u && open_neg_y) { return false; }
-    if (j == params.height - 1u && open_pos_y) { return false; }
-    if (k == 0u && open_neg_z) { return false; }
-    if (k == params.depth - 1u && open_pos_z) { return false; }
+    // Force air on open boundaries.
+    if (i == 0u && open_neg_x) { return true; }
+    if (i == params.width - 1u && open_pos_x) { return true; }
+    if (j == 0u && open_neg_y) { return true; }
+    if (j == params.height - 1u && open_pos_y) { return true; }
+    if (k == 0u && open_neg_z) { return true; }
+    if (k == params.depth - 1u && open_pos_z) { return true; }
 
-    // If we reach here and it's a boundary, it's a closed boundary -> SOLID
-    return is_domain_boundary(i, j, k);
+    return false;
 }
 
 @compute @workgroup_size(8, 8, 4)
@@ -98,18 +103,16 @@ fn expand_fluid_cells(@builtin(global_invocation_id) id: vec3<u32>) {
     let idx = cell_index(i, j, k);
     let current_type = cell_type[idx];
 
-    // Boundary cells are SOLID only if they're CLOSED boundaries.
-    // OPEN boundaries allow particles to flow through (treated as AIR).
-    if (is_boundary_solid(i, j, k)) {
-        cell_type[idx] = CELL_SOLID;
-        return;
-    }
-
     // CRITICAL: SDF-marked SOLID cells stay SOLID regardless of particles.
     // This ensures pressure solver sees obstacles correctly.
     // Particles inside solid regions (from numerical errors) are handled by collision,
     // not by making the cell FLUID which would hide the obstacle from pressure.
     if (current_type == CELL_SOLID) {
+        return;
+    }
+
+    if (is_boundary_forced_air(i, j, k)) {
+        cell_type[idx] = CELL_AIR;
         return;
     }
 
@@ -123,7 +126,7 @@ fn expand_fluid_cells(@builtin(global_invocation_id) id: vec3<u32>) {
     // Empty non-solid cell: mark FLUID if surrounded by enough neighbors with particles
     // This prevents gaps at the fluid surface that cause volume collapse
     let neighbor_count = count_neighbors_with_particles(i32(i), i32(j), i32(k));
-    if (neighbor_count >= MIN_NEIGHBORS_FOR_EXPANSION) {
+    if (neighbor_count >= params.min_neighbors) {
         cell_type[idx] = CELL_FLUID;
     } else {
         cell_type[idx] = CELL_AIR;

@@ -53,6 +53,8 @@ pub struct GpuFlip3D {
     /// Slip factor for tangential velocities at solid boundaries.
     /// 1.0 = free-slip, 0.0 = no-slip.
     pub slip_factor: f32,
+    /// Minimum neighbors with particles required to expand fluid cells.
+    pub fluid_cell_expand_min_neighbors: u32,
     /// Vorticity confinement strength (default 0.05, range 0.0-0.25)
     pub vorticity_epsilon: f32,
     /// Enable/disable density projection (volume preservation).
@@ -2192,6 +2194,7 @@ impl GpuFlip3D {
             open_boundaries: 0, // All boundaries closed by default
             flip_ratio: 0.95,
             slip_factor: 1.0,
+            fluid_cell_expand_min_neighbors: 1,
             vorticity_epsilon: 0.05,
             density_projection_enabled: true,
             water_rest_particles: 8.0,
@@ -2843,6 +2846,7 @@ impl GpuFlip3D {
             self.height,
             self.depth,
             self.open_boundaries,
+            self.fluid_cell_expand_min_neighbors,
         );
         queue.write_buffer(
             &self.fluid_cell_expand_params_buffer,
@@ -3310,9 +3314,53 @@ impl GpuFlip3D {
         let mut pressure_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D Pressure Encoder"),
         });
-        self.pressure.encode(&mut pressure_encoder, pressure_iterations);
+        self.pressure
+            .encode_with_pressure_restore(&mut pressure_encoder, pressure_iterations);
 
         queue.submit(std::iter::once(pressure_encoder.finish()));
+
+        // Re-apply boundary conditions after pressure gradient to clamp boundary velocities.
+        let mut bc_post_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("FLIP 3D BC Post-Pressure Encoder"),
+        });
+        {
+            let mut pass = bc_post_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("BC U 3D Post-Pressure Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.bc_u_pipeline);
+            pass.set_bind_group(0, &self.bc_bind_group, &[]);
+            let workgroups_x = (self.width + 1).div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+        {
+            let mut pass = bc_post_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("BC V 3D Post-Pressure Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.bc_v_pipeline);
+            pass.set_bind_group(0, &self.bc_bind_group, &[]);
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = (self.height + 1).div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+        {
+            let mut pass = bc_post_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("BC W 3D Post-Pressure Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.bc_w_pipeline);
+            pass.set_bind_group(0, &self.bc_bind_group, &[]);
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = (self.depth + 1).div_ceil(8);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+
+        queue.submit(std::iter::once(bc_post_encoder.finish()));
 
         if self.sediment_porosity_drag > 0.0 {
             let drag_params = PorosityDragParams3D::new(
