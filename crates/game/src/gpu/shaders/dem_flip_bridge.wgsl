@@ -26,6 +26,11 @@
 // Parameters
 @group(0) @binding(9) var<uniform> bridge_params: BridgeParams;
 
+// Reaction impulse accumulation buffers (atomic fixed-point velocity deltas)
+@group(0) @binding(10) var<storage, read_write> reaction_u: array<atomic<i32>>;
+@group(0) @binding(11) var<storage, read_write> reaction_v: array<atomic<i32>>;
+@group(0) @binding(12) var<storage, read_write> reaction_w: array<atomic<i32>>;
+
 struct GpuClumpTemplate {
     sphere_count: u32,
     mass: f32,
@@ -57,6 +62,7 @@ const PARTICLE_ACTIVE = 1u;
 const WORKGROUP_SIZE = 64u;
 const MAX_TEMPLATES = 100u;
 const PI: f32 = 3.14159265359;
+const SCALE: f32 = 100000.0;
 
 // Quadratic B-spline kernel (same as FLIP P2G)
 fn quadratic_bspline_1d(x: f32) -> f32 {
@@ -248,6 +254,153 @@ fn sample_grid_velocity(pos: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(sample_u(pos), sample_v(pos), sample_w(pos));
 }
 
+fn scatter_reaction_u(pos: vec3<f32>, delta_v: f32) {
+    let cell_size = bridge_params.cell_size;
+    let width = bridge_params.width;
+    let height = bridge_params.height;
+    let depth = bridge_params.depth;
+
+    let u_pos = pos / cell_size - vec3<f32>(0.0, 0.5, 0.5);
+    let base = vec3<i32>(floor(u_pos));
+    let frac = u_pos - vec3<f32>(base);
+
+    let wx = array<f32, 3>(
+        quadratic_bspline_1d(frac.x + 1.0),
+        quadratic_bspline_1d(frac.x),
+        quadratic_bspline_1d(frac.x - 1.0)
+    );
+    let wy = array<f32, 3>(
+        quadratic_bspline_1d(frac.y + 1.0),
+        quadratic_bspline_1d(frac.y),
+        quadratic_bspline_1d(frac.y - 1.0)
+    );
+    let wz = array<f32, 3>(
+        quadratic_bspline_1d(frac.z + 1.0),
+        quadratic_bspline_1d(frac.z),
+        quadratic_bspline_1d(frac.z - 1.0)
+    );
+
+    for (var dk: i32 = -1; dk <= 1; dk++) {
+        let nk = base.z + dk;
+        if nk < 0 || nk >= i32(depth) { continue; }
+        let w_z = wz[dk + 1];
+
+        for (var dj: i32 = -1; dj <= 1; dj++) {
+            let nj = base.y + dj;
+            if nj < 0 || nj >= i32(height) { continue; }
+            let w_yz = w_z * wy[dj + 1];
+
+            for (var di: i32 = -1; di <= 1; di++) {
+                let ni = base.x + di;
+                if ni < 0 || ni > i32(width) { continue; }
+                let weight = w_yz * wx[di + 1];
+                if weight <= 0.0 { continue; }
+
+                let idx = u_index(u32(ni), u32(nj), u32(nk));
+                atomicAdd(&reaction_u[idx], i32(delta_v * weight * SCALE));
+            }
+        }
+    }
+}
+
+fn scatter_reaction_v(pos: vec3<f32>, delta_v: f32) {
+    let cell_size = bridge_params.cell_size;
+    let width = bridge_params.width;
+    let height = bridge_params.height;
+    let depth = bridge_params.depth;
+
+    let v_pos = pos / cell_size - vec3<f32>(0.5, 0.0, 0.5);
+    let base = vec3<i32>(floor(v_pos));
+    let frac = v_pos - vec3<f32>(base);
+
+    let wx = array<f32, 3>(
+        quadratic_bspline_1d(frac.x + 1.0),
+        quadratic_bspline_1d(frac.x),
+        quadratic_bspline_1d(frac.x - 1.0)
+    );
+    let wy = array<f32, 3>(
+        quadratic_bspline_1d(frac.y + 1.0),
+        quadratic_bspline_1d(frac.y),
+        quadratic_bspline_1d(frac.y - 1.0)
+    );
+    let wz = array<f32, 3>(
+        quadratic_bspline_1d(frac.z + 1.0),
+        quadratic_bspline_1d(frac.z),
+        quadratic_bspline_1d(frac.z - 1.0)
+    );
+
+    for (var dk: i32 = -1; dk <= 1; dk++) {
+        let nk = base.z + dk;
+        if nk < 0 || nk >= i32(depth) { continue; }
+        let w_z = wz[dk + 1];
+
+        for (var dj: i32 = -1; dj <= 1; dj++) {
+            let nj = base.y + dj;
+            if nj < 0 || nj > i32(height) { continue; }
+            let w_yz = w_z * wy[dj + 1];
+
+            for (var di: i32 = -1; di <= 1; di++) {
+                let ni = base.x + di;
+                if ni < 0 || ni >= i32(width) { continue; }
+                let weight = w_yz * wx[di + 1];
+                if weight <= 0.0 { continue; }
+
+                let idx = v_index(u32(ni), u32(nj), u32(nk));
+                atomicAdd(&reaction_v[idx], i32(delta_v * weight * SCALE));
+            }
+        }
+    }
+}
+
+fn scatter_reaction_w(pos: vec3<f32>, delta_v: f32) {
+    let cell_size = bridge_params.cell_size;
+    let width = bridge_params.width;
+    let height = bridge_params.height;
+    let depth = bridge_params.depth;
+
+    let w_pos = pos / cell_size - vec3<f32>(0.5, 0.5, 0.0);
+    let base = vec3<i32>(floor(w_pos));
+    let frac = w_pos - vec3<f32>(base);
+
+    let wx = array<f32, 3>(
+        quadratic_bspline_1d(frac.x + 1.0),
+        quadratic_bspline_1d(frac.x),
+        quadratic_bspline_1d(frac.x - 1.0)
+    );
+    let wy = array<f32, 3>(
+        quadratic_bspline_1d(frac.y + 1.0),
+        quadratic_bspline_1d(frac.y),
+        quadratic_bspline_1d(frac.y - 1.0)
+    );
+    let wz = array<f32, 3>(
+        quadratic_bspline_1d(frac.z + 1.0),
+        quadratic_bspline_1d(frac.z),
+        quadratic_bspline_1d(frac.z - 1.0)
+    );
+
+    for (var dk: i32 = -1; dk <= 1; dk++) {
+        let nk = base.z + dk;
+        if nk < 0 || nk > i32(depth) { continue; }
+        let w_z = wz[dk + 1];
+
+        for (var dj: i32 = -1; dj <= 1; dj++) {
+            let nj = base.y + dj;
+            if nj < 0 || nj >= i32(height) { continue; }
+            let w_yz = w_z * wy[dj + 1];
+
+            for (var di: i32 = -1; di <= 1; di++) {
+                let ni = base.x + di;
+                if ni < 0 || ni >= i32(width) { continue; }
+                let weight = w_yz * wx[di + 1];
+                if weight <= 0.0 { continue; }
+
+                let idx = w_index(u32(ni), u32(nj), u32(nk));
+                atomicAdd(&reaction_w[idx], i32(delta_v * weight * SCALE));
+            }
+        }
+    }
+}
+
 @compute @workgroup_size(WORKGROUP_SIZE)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
@@ -304,7 +457,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let existing_force = dem_forces[idx].xyz;
     dem_forces[idx] = vec4<f32>(existing_force + total_force, 0.0);
 
-    // Note: Two-way coupling (reaction force on fluid) would require atomic writes
-    // to the FLIP grid, which is handled separately in a dedicated scatter pass.
-    // This shader focuses on the DEM side of the coupling.
+    let cell_volume = bridge_params.cell_size * bridge_params.cell_size * bridge_params.cell_size;
+    let fluid_mass = max(bridge_params.density_water * cell_volume, 1e-6);
+    let delta_v = (-total_force * bridge_params.dt) / fluid_mass;
+
+    scatter_reaction_u(pos, delta_v.x);
+    scatter_reaction_v(pos, delta_v.y);
+    scatter_reaction_w(pos, delta_v.z);
 }

@@ -143,6 +143,15 @@ pub struct BridgeParams {
     pub _pad3: u32,
 }
 
+struct ReactionBuffers {
+    width: u32,
+    height: u32,
+    depth: u32,
+    u_buffer: Buffer,
+    v_buffer: Buffer,
+    w_buffer: Buffer,
+}
+
 /// GPU DEM simulator
 pub struct GpuDem3D {
     device: Arc<Device>,
@@ -210,6 +219,11 @@ pub struct GpuDem3D {
     bridge_pipeline: ComputePipeline,
     bridge_bind_group_layout: BindGroupLayout,
     bridge_params_buffer: Buffer,
+    reaction_apply_pipeline_u: ComputePipeline,
+    reaction_apply_pipeline_v: ComputePipeline,
+    reaction_apply_pipeline_w: ComputePipeline,
+    reaction_apply_bind_group_layout: BindGroupLayout,
+    reaction_buffers: Option<ReactionBuffers>,
 }
 
 impl GpuDem3D {
@@ -861,6 +875,39 @@ impl GpuDem3D {
                         },
                         count: None,
                     },
+                    // binding 10: reaction_u (read_write)
+                    BindGroupLayoutEntry {
+                        binding: 10,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 11: reaction_v (read_write)
+                    BindGroupLayoutEntry {
+                        binding: 11,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 12: reaction_w (read_write)
+                    BindGroupLayoutEntry {
+                        binding: 12,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -885,6 +932,83 @@ impl GpuDem3D {
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
+        let reaction_apply_shader =
+            device.create_shader_module(include_wgsl!("shaders/dem_flip_reaction_apply_3d.wgsl"));
+
+        let reaction_apply_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("DEM-FLIP Reaction Apply Bind Group Layout"),
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let reaction_apply_pipeline_layout =
+            device.create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: Some("DEM-FLIP Reaction Apply Pipeline Layout"),
+                bind_group_layouts: &[&reaction_apply_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let reaction_apply_pipeline_u =
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some("DEM-FLIP Reaction Apply U Pipeline"),
+                layout: Some(&reaction_apply_pipeline_layout),
+                module: &reaction_apply_shader,
+                entry_point: Some("apply_u"),
+                compilation_options: PipelineCompilationOptions::default(),
+                cache: None,
+            });
+
+        let reaction_apply_pipeline_v =
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some("DEM-FLIP Reaction Apply V Pipeline"),
+                layout: Some(&reaction_apply_pipeline_layout),
+                module: &reaction_apply_shader,
+                entry_point: Some("apply_v"),
+                compilation_options: PipelineCompilationOptions::default(),
+                cache: None,
+            });
+
+        let reaction_apply_pipeline_w =
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some("DEM-FLIP Reaction Apply W Pipeline"),
+                layout: Some(&reaction_apply_pipeline_layout),
+                module: &reaction_apply_shader,
+                entry_point: Some("apply_w"),
+                compilation_options: PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
         let dem = Self {
             device,
@@ -928,6 +1052,11 @@ impl GpuDem3D {
             bridge_pipeline,
             bridge_bind_group_layout,
             bridge_params_buffer,
+            reaction_apply_pipeline_u,
+            reaction_apply_pipeline_v,
+            reaction_apply_pipeline_w,
+            reaction_apply_bind_group_layout,
+            reaction_buffers: None,
             stiffness: 1000.0, // Default safer stiffness
             damping: 10.0,     // Default safer damping
         };
@@ -1151,8 +1280,9 @@ impl GpuDem3D {
     /// Apply DEM-FLIP bridge coupling pass
     ///
     /// This samples FLIP grid velocities at DEM particle positions and applies
-    /// drag and buoyancy forces. Must be called between prepare_step() and finish_step()
-    /// so that forces are integrated properly.
+    /// drag and buoyancy forces while applying the reaction impulse to the FLIP grid.
+    /// Must be called between prepare_step() and finish_step() so that forces are
+    /// integrated properly.
     ///
     /// # Arguments
     /// * `encoder` - Command encoder
@@ -1167,7 +1297,7 @@ impl GpuDem3D {
     /// * `drag_coefficient` - Drag coefficient (higher = more drag, typical 1.0-10.0)
     /// * `density_water` - Water density in kg/m³ (typically 1000.0)
     pub fn apply_flip_coupling(
-        &self,
+        &mut self,
         encoder: &mut CommandEncoder,
         grid_u: &Buffer,
         grid_v: &Buffer,
@@ -1183,6 +1313,12 @@ impl GpuDem3D {
         if self.particle_count() == 0 {
             return;
         }
+
+        self.ensure_reaction_buffers(grid_width, grid_height, grid_depth);
+        let reaction_buffers = self
+            .reaction_buffers
+            .as_ref()
+            .expect("Reaction buffers should be initialized");
 
         // Update bridge parameters
         let params = BridgeParams {
@@ -1248,6 +1384,18 @@ impl GpuDem3D {
                     binding: 9,
                     resource: self.bridge_params_buffer.as_entire_binding(),
                 },
+                BindGroupEntry {
+                    binding: 10,
+                    resource: reaction_buffers.u_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 11,
+                    resource: reaction_buffers.v_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 12,
+                    resource: reaction_buffers.w_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -1260,6 +1408,154 @@ impl GpuDem3D {
         pass.set_pipeline(&self.bridge_pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups(workgroup_count_x, 1, 1);
+
+        let apply_u_bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("DEM-FLIP Reaction Apply U Bind Group"),
+            layout: &self.reaction_apply_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: grid_u.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: reaction_buffers.u_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: self.bridge_params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let apply_v_bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("DEM-FLIP Reaction Apply V Bind Group"),
+            layout: &self.reaction_apply_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: grid_v.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: reaction_buffers.v_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: self.bridge_params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let apply_w_bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("DEM-FLIP Reaction Apply W Bind Group"),
+            layout: &self.reaction_apply_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: grid_w.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: reaction_buffers.w_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: self.bridge_params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        {
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("DEM-FLIP Reaction Apply U"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.reaction_apply_pipeline_u);
+            pass.set_bind_group(0, &apply_u_bind_group, &[]);
+            let workgroups_x = (grid_width + 1).div_ceil(8);
+            let workgroups_y = grid_height.div_ceil(8);
+            let workgroups_z = grid_depth.div_ceil(4);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+
+        {
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("DEM-FLIP Reaction Apply V"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.reaction_apply_pipeline_v);
+            pass.set_bind_group(0, &apply_v_bind_group, &[]);
+            let workgroups_x = grid_width.div_ceil(8);
+            let workgroups_y = (grid_height + 1).div_ceil(8);
+            let workgroups_z = grid_depth.div_ceil(4);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+
+        {
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("DEM-FLIP Reaction Apply W"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.reaction_apply_pipeline_w);
+            pass.set_bind_group(0, &apply_w_bind_group, &[]);
+            let workgroups_x = grid_width.div_ceil(8);
+            let workgroups_y = grid_height.div_ceil(8);
+            let workgroups_z = (grid_depth + 1).div_ceil(4);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+    }
+
+    fn ensure_reaction_buffers(&mut self, grid_width: u32, grid_height: u32, grid_depth: u32) {
+        let needs_resize = self
+            .reaction_buffers
+            .as_ref()
+            .map_or(true, |buffers| {
+                buffers.width != grid_width
+                    || buffers.height != grid_height
+                    || buffers.depth != grid_depth
+            });
+
+        if needs_resize {
+            let u_size = ((grid_width + 1) * grid_height * grid_depth) as usize;
+            let v_size = (grid_width * (grid_height + 1) * grid_depth) as usize;
+            let w_size = (grid_width * grid_height * (grid_depth + 1)) as usize;
+
+            let u_buffer = self.device.create_buffer(&BufferDescriptor {
+                label: Some("DEM-FLIP Reaction U"),
+                size: (u_size * std::mem::size_of::<i32>()) as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let v_buffer = self.device.create_buffer(&BufferDescriptor {
+                label: Some("DEM-FLIP Reaction V"),
+                size: (v_size * std::mem::size_of::<i32>()) as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let w_buffer = self.device.create_buffer(&BufferDescriptor {
+                label: Some("DEM-FLIP Reaction W"),
+                size: (w_size * std::mem::size_of::<i32>()) as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            self.queue
+                .write_buffer(&u_buffer, 0, &vec![0u8; u_size * 4]);
+            self.queue
+                .write_buffer(&v_buffer, 0, &vec![0u8; v_size * 4]);
+            self.queue
+                .write_buffer(&w_buffer, 0, &vec![0u8; w_size * 4]);
+
+            self.reaction_buffers = Some(ReactionBuffers {
+                width: grid_width,
+                height: grid_height,
+                depth: grid_depth,
+                u_buffer,
+                v_buffer,
+                w_buffer,
+            });
+        }
     }
 
     /// Get current particle count
