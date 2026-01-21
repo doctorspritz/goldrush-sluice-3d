@@ -9,6 +9,7 @@
 //! - 1: Add water at cursor
 //! - 2: Add muddy water at cursor
 //! - R: Reset world
+//! - V: Toggle velocity coloring
 //! - ESC: Quit
 //!
 //! Run: cargo run --example world_test --release
@@ -238,6 +239,7 @@ struct App {
     window_size: (u32, u32),
     selected_material: u32, // 0=sediment, 1=overburden, 2=gravel
     terrain_dirty: bool,    // Rebuild terrain mesh only when true
+    show_velocity: bool,    // Toggle velocity-based water coloring
     emitter_mesh: Option<Mesh>,
 }
 
@@ -275,6 +277,7 @@ impl App {
             window_size: (1280, 720),
             selected_material: 2, // Default to gravel (most useful for building)
             terrain_dirty: true,  // Build initial terrain mesh
+            show_velocity: false, // Velocity coloring off by default
             emitter_mesh: None,
         }
     }
@@ -728,8 +731,8 @@ impl App {
             view_proj.to_cols_array_2d(),
             self.camera.position.to_array(),
             self.start_time.elapsed().as_secs_f32(),
-            true,  // draw_water
-            false, // show_velocity
+            true, // draw_water
+            self.show_velocity,
         );
 
         // Render Emitter
@@ -848,6 +851,10 @@ impl ApplicationHandler for App {
                                 KeyCode::KeyT => {
                                     self.selected_material = 0; // Sediment (T for terrain/sediment)
                                     println!("Selected material: Sediment");
+                                }
+                                KeyCode::KeyV => {
+                                    self.show_velocity = !self.show_velocity;
+                                    println!("Velocity coloring: {}", if self.show_velocity { "ON" } else { "OFF" });
                                 }
                                 _ => {}
                             }

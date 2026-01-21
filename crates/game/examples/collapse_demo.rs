@@ -11,6 +11,7 @@
 //! - 2: Add dirt/overburden pile at cursor
 //! - 3: Add gravel pile at cursor
 //! - C: Toggle continuous collapse simulation
+//! - V: Toggle velocity coloring
 //! - R: Reset to flat terrain
 //! - ESC: Quit
 //!
@@ -122,6 +123,7 @@ struct App {
     start_time: Instant,
     window_size: (u32, u32),
     collapse_enabled: bool,
+    show_velocity: bool,
     pile_count: u32,
 }
 
@@ -155,6 +157,7 @@ impl App {
             start_time: Instant::now(),
             window_size: (1280, 720),
             collapse_enabled: false, // Start paused so you can see piles form
+            show_velocity: false,    // Velocity coloring off by default
             pile_count: 0,
         }
     }
@@ -486,8 +489,8 @@ impl App {
             view_proj.to_cols_array_2d(),
             self.camera.position.to_array(),
             self.start_time.elapsed().as_secs_f32(),
-            true,  // draw_water
-            false, // show_velocity
+            true, // draw_water
+            self.show_velocity,
         );
 
         gpu.queue.submit(Some(encoder.finish()));
@@ -590,6 +593,13 @@ impl ApplicationHandler for App {
                                     println!(
                                         "Collapse simulation: {}",
                                         if self.collapse_enabled { "ON" } else { "OFF" }
+                                    );
+                                }
+                                KeyCode::KeyV => {
+                                    self.show_velocity = !self.show_velocity;
+                                    println!(
+                                        "Velocity coloring: {}",
+                                        if self.show_velocity { "ON" } else { "OFF" }
                                     );
                                 }
                                 KeyCode::Digit1 => self.add_pile_at_cursor(0), // Sediment
