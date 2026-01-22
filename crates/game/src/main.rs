@@ -644,6 +644,7 @@ struct App {
     tracking: ParticleTracking,
     timing: TimingStats,
     buffers: GpuTransferBuffers,
+    flow_metrics: FlowMetricsBuffers,
 
     // Simple state flags
     paused: bool,
@@ -670,6 +671,20 @@ struct FlowMetrics {
     flow_rate_m3min: f32,
     sample_x_min: f32,
     sample_x_max: f32,
+}
+
+struct FlowMetricsBuffers {
+    max_depth_cells: Vec<i32>,
+    depths: Vec<f32>,
+}
+
+impl FlowMetricsBuffers {
+    fn new() -> Self {
+        Self {
+            max_depth_cells: Vec::new(),
+            depths: Vec::new(),
+        }
+    }
 }
 
 impl App {
@@ -829,6 +844,7 @@ impl App {
             tracking: ParticleTracking::new(),
             timing: TimingStats::new(),
             buffers: GpuTransferBuffers::new(),
+            flow_metrics: FlowMetricsBuffers::new(),
             paused: false,
             frame: 0,
             use_dem: config.use_dem,
@@ -860,7 +876,7 @@ impl App {
         9.81 * slope
     }
 
-    fn compute_flow_metrics(&self) -> FlowMetrics {
+    fn compute_flow_metrics(&mut self) -> FlowMetrics {
         let config = self.sluice_builder.config();
         let cell_size = config.cell_size;
         let sample_x_min = 6.0 * cell_size;
@@ -875,14 +891,24 @@ impl App {
         let i_max = i_max.clamp(0, (config.grid_width as i32 - 1).max(0));
         let i_count = (i_max - i_min + 1).max(0) as usize;
         let depth_count = config.grid_depth.max(1);
-        let mut max_depth_cells = vec![-1i32; i_count * depth_count];
+        let required_len = i_count * depth_count;
+        let (flow_metrics, sim) = (&mut self.flow_metrics, &self.sim);
+        if flow_metrics.max_depth_cells.len() != required_len {
+            flow_metrics
+                .max_depth_cells
+                .resize(required_len, -1);
+        }
+        flow_metrics.max_depth_cells.fill(-1);
+        flow_metrics.depths.clear();
+        flow_metrics.depths.reserve(required_len);
+        let max_depth_cells = &mut flow_metrics.max_depth_cells;
 
         let mut vel_sum = 0.0f32;
         let mut vel_count = 0usize;
         let mut min_k = config.grid_depth as i32;
         let mut max_k = -1i32;
 
-        for p in self.sim.particles.list() {
+        for p in sim.particles.list() {
             if p.density > 1.0 {
                 continue;
             }
@@ -911,8 +937,8 @@ impl App {
             }
         }
 
-        let mut depths: Vec<f32> = Vec::new();
-        for depth_cells in max_depth_cells {
+        let depths = &mut flow_metrics.depths;
+        for &depth_cells in max_depth_cells.iter() {
             if depth_cells > 0 {
                 depths.push(depth_cells as f32 * cell_size);
             }
@@ -921,10 +947,18 @@ impl App {
         let (depth_p50, depth_p90) = if depths.is_empty() {
             (0.0, 0.0)
         } else {
-            depths.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             let mid_idx = depths.len() / 2;
             let p90_idx = ((depths.len() as f32 - 1.0) * 0.9).round() as usize;
-            (depths[mid_idx], depths[p90_idx.min(depths.len() - 1)])
+            let p90_idx = p90_idx.min(depths.len() - 1);
+            let (_, mid, _) = depths.select_nth_unstable_by(mid_idx, |a, b| a.total_cmp(b));
+            let depth_p50 = *mid;
+            if p90_idx == mid_idx {
+                (depth_p50, depth_p50)
+            } else {
+                let (_, p90, _) =
+                    depths.select_nth_unstable_by(p90_idx, |a, b| a.total_cmp(b));
+                (depth_p50, *p90)
+            }
         };
         let vel_mean = if vel_count > 0 {
             vel_sum / vel_count as f32
