@@ -10,6 +10,13 @@ which rustc
 rustc -vV
 ```
 
+If you use `direnv`, run `direnv allow` in the repo so `.envrc` prepends the rustup toolchain to `PATH`.
+Otherwise, prepend the rustup toolchain before checking `rustc`:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
 If `arch`/`uname -m` report `x86_64` (or `sysctl.proc_translated` is `1`), the shell is under Rosetta.
 If `which rustc` resolves to `/usr/local/bin/rustc` (Homebrew x86_64), prefer the rustup-managed toolchain:
 
