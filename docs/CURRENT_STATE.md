@@ -1,10 +1,13 @@
 # Current System State
 
 **Date:** 2026-01-10
-**Primary Example:** `friction_sluice`
+**Primary Example:** `washplant_editor` (canonical)
 **Branch:** `master`
 
 ---
+
+**Note:** Metrics and parameter snapshots below were captured from the now-archived
+`friction_sluice` example. Treat them as historical reference only.
 
 ## Working Components
 
@@ -103,7 +106,7 @@
 
 ---
 
-## Key Parameters (friction_sluice)
+## Key Parameters (friction_sluice, archived)
 
 | Parameter | Value | Status |
 |-----------|-------|--------|
@@ -129,7 +132,8 @@ crates/
       mgpcg.rs        # Multigrid pressure solver
       shaders/        # WGSL compute shaders
     examples/
-      friction_sluice.rs  # PRIMARY TEST EXAMPLE
+      washplant_editor.rs  # Canonical example (sluice editor)
+      world_sim.rs         # Canonical example (world)
   sim3d/              # 3D simulation library
     src/
       lib.rs          # Entry point
@@ -143,7 +147,7 @@ docs/
 
 ---
 
-## Runtime Observations (friction_sluice, 8 second run)
+## Runtime Observations (friction_sluice, archived; 8 second run)
 
 ```
 Frame 1   | FPS: 1.0  | Particles: 205 (water: 203, sediment: 2)

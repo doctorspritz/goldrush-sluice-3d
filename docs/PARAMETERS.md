@@ -5,6 +5,9 @@
 
 ---
 
+**Note:** The parameter tables below reference the now-archived `friction_sluice`
+example. Canonical examples are `washplant_editor` and `world_sim`.
+
 ## Legend
 
 | Status | Meaning |
@@ -15,7 +18,7 @@
 
 ---
 
-## Grid Parameters (friction_sluice)
+## Grid Parameters (friction_sluice, archived)
 
 | Parameter | Value | File:Line | Purpose | Status |
 |-----------|-------|-----------|---------|--------|
@@ -27,7 +30,7 @@
 
 ---
 
-## Simulation Parameters (friction_sluice)
+## Simulation Parameters (friction_sluice, archived)
 
 | Parameter | Value | File:Line | Purpose | Status |
 |-----------|-------|-----------|---------|--------|
@@ -38,7 +41,7 @@
 
 ---
 
-## Emission Parameters (friction_sluice)
+## Emission Parameters (friction_sluice, archived)
 
 | Parameter | Value | File:Line | Purpose | Status |
 |-----------|-------|-----------|---------|--------|
@@ -49,7 +52,7 @@
 
 ---
 
-## Sediment Material Parameters (friction_sluice)
+## Sediment Material Parameters (friction_sluice, archived)
 
 | Parameter | Value | File:Line | Purpose | Status |
 |-----------|-------|-----------|---------|--------|
