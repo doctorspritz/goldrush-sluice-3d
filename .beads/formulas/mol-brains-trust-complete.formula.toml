@@ -1,0 +1,302 @@
+description = """
+Multi-model review after work is marked done.
+
+The Brains Trust verifies the implementation before merge. Three AI models
+(Claude, Codex, Gemini) review the completed work in sequence, file gaps, and
+vote to close or revise.
+
+## Minimum Review
+
+- 1 round only (3 passes total)
+- Sequential passes: Claude -> Codex -> Gemini
+- No priority tiers - all completed work gets reviewed
+
+## Consensus Rules
+
+- >=2/3 APPROVE -> trust-complete
+- <2/3 APPROVE, no BLOCK majority -> revise
+- >=1/3 BLOCK -> escalate to Overseer
+
+## Variables
+
+| Variable | Description |
+|----------|-------------|
+| target   | The bead ID to review |
+
+## Important
+
+This molecule is orchestrated by Mayor or Refinery. Individual model passes are
+executed in their respective environments. The completion review is a merge gate.
+"""
+formula = "mol-brains-trust-complete"
+type = "workflow"
+version = 1
+
+[[steps]]
+id = "init-assessment"
+title = "Initialize completion assessment"
+description = """
+Create the tracking bead and capture review context.
+
+**1. Read the target bead:**
+```bash
+bd show {{target}}
+```
+
+**2. Create assessment tracking bead:**
+```bash
+bd create --type=trust-assessment \
+  --title="Completion Review: $(bd show {{target}} --json | jq -r '.[0].title')" \
+  --priority=1 \
+  --description="Brains Trust completion review for {{target}}.
+
+Target: {{target}}
+Review Type: completion
+Status: in_progress
+
+Votes:
+(none yet)"
+```
+
+**3. Record the assessment bead ID for subsequent steps.**
+
+**Exit criteria:** Assessment bead created."""
+
+[[steps]]
+id = "collect-context"
+title = "Collect implementation context"
+needs = ["init-assessment"]
+description = """
+Gather the artifacts needed for review.
+
+**1. Locate the plan and acceptance criteria:**
+- Check `plans/<id>.md` if present
+- Read the target bead description for acceptance criteria
+
+**2. Inspect code changes:**
+```bash
+# Example: compare against main
+git status
+git log --oneline -5
+git diff origin/main...HEAD
+```
+
+**3. Check tests:**
+- Verify CI status if available
+- Run relevant tests if feasible
+
+**Exit criteria:** Review artifacts identified and ready."""
+
+[[steps]]
+id = "round-claude"
+title = "Claude review pass"
+needs = ["collect-context"]
+description = """
+Claude investigates and votes on the completed work.
+
+**1. Review context:**
+- Target bead + acceptance criteria
+- Plan file (if present)
+- Code diff and tests
+
+**2. Analyze for issues:**
+- Implementation correctness vs plan
+- Bugs or regressions
+- Missing tests or docs
+- Codebase consistency
+
+**3. File issues if needed:**
+```bash
+bd create --type=bug --title="Post-review: <issue>" \
+  --description="Found during completion review of {{target}}."
+
+bd dep add {{target}} <gap-bead-id>
+```
+
+**4. Record vote:**
+```bash
+bd update <assessment-id> --notes "Claude: <VOTE>
+Notes: <analysis notes>"
+```
+
+**Exit criteria:** Claude vote recorded, gaps filed."""
+
+[[steps]]
+id = "round-codex"
+title = "Codex review pass"
+needs = ["round-claude"]
+description = """
+Codex investigates and votes on the completed work.
+
+**1. Invoke Codex for review:**
+```bash
+/codex review {{target}} --mode=completion
+```
+
+**2. Codex should:**
+- Verify implementation matches requirements
+- Check for technical regressions
+- Review tests and coverage
+
+**3. File issues if needed:**
+```bash
+bd create --type=bug --title="Post-review: <issue>" \
+  --description="Identified by Codex during completion review of {{target}}."
+
+bd dep add {{target}} <gap-bead-id>
+```
+
+**4. Record Codex vote:**
+```bash
+bd update <assessment-id> --notes "Codex: <VOTE>
+Notes: <Codex analysis>"
+```
+
+**Exit criteria:** Codex vote recorded."""
+
+[[steps]]
+id = "round-gemini"
+title = "Gemini review pass"
+needs = ["round-codex"]
+description = """
+Gemini investigates and votes on the completed work.
+
+**1. Invoke Gemini for review:**
+(Integration TBD - MCP tool or API call)
+
+**2. Gemini should:**
+- Independently review the implementation
+- Cross-check prior findings
+- Identify remaining gaps
+
+**3. File issues if needed:**
+```bash
+bd create --type=bug --title="Post-review: <issue>" \
+  --description="Identified by Gemini during completion review of {{target}}."
+
+bd dep add {{target}} <gap-bead-id>
+```
+
+**4. Record Gemini vote:**
+```bash
+bd update <assessment-id> --notes "Gemini: <VOTE>
+Notes: <Gemini analysis>"
+```
+
+**Exit criteria:** Gemini vote recorded, round complete."""
+
+[[steps]]
+id = "consensus-check"
+title = "Check consensus and determine outcome"
+needs = ["round-gemini"]
+description = """
+Tally votes and determine the outcome.
+
+**1. Count votes from assessment bead.**
+
+**2. Calculate consensus:**
+```
+Total votes = 3
+APPROVE_count = count of APPROVE votes
+REVISE_count = count of REVISE votes
+BLOCK_count = count of BLOCK votes
+ABSTAIN_count = count of ABSTAIN votes
+
+Approval rate = APPROVE_count / (Total - ABSTAIN_count)
+Block rate = BLOCK_count / (Total - ABSTAIN_count)
+```
+
+**3. Determine outcome:**
+
+| Condition | Outcome |
+|-----------|---------|
+| Approval rate >= 67% | APPROVED |
+| Block rate >= 34% | DEADLOCK -> Escalate |
+| Otherwise | REVISE |
+
+**4. Record outcome:**
+```bash
+bd update <assessment-id> --status=<approved|rejected|escalated> \
+  --notes "CONSENSUS: <outcome>
+Votes: APPROVE=X, REVISE=Y, BLOCK=Z
+Approval rate: X%"
+```
+
+**Exit criteria:** Consensus determined and recorded."""
+
+[[steps]]
+id = "apply-outcome"
+title = "Apply consensus outcome"
+needs = ["consensus-check"]
+description = """
+Take action based on consensus result.
+
+**If APPROVED:**
+```bash
+# Mark target as trust-complete
+bd update {{target}} --label trust-complete
+
+# Close target if not already closed
+bd close {{target}} --reason="Completion review approved"
+
+# Close assessment
+bd close <assessment-id> --reason="Trust complete"
+
+# Notify Mayor/Refinery
+gt mail send mayor/ -s "Completion Review Approved: {{target}}" \
+  -m "Brains Trust approved completion review for {{target}}.
+Assessment: <assessment-id>"
+```
+
+**If REVISE:**
+```bash
+# Keep target open and mark for fixes
+bd update {{target}} --status=blocked --notes "Completion review requires fixes"
+
+# Close assessment
+bd close <assessment-id> --reason="Completion review found issues"
+
+# Notify Mayor
+gt mail send mayor/ -s "Completion Review Requires Fixes: {{target}}" \
+  -m "Completion review found issues for {{target}}.
+Assessment: <assessment-id>
+Filed gaps: <gap-bead-ids>"
+```
+
+**If DEADLOCK:**
+```bash
+# Mark assessment escalated
+bd update <assessment-id> --status=escalated
+
+# Escalate to Overseer
+gt mail send overseer/ -s "Completion Review Deadlock: {{target}}" \
+  -m "Brains Trust deadlocked on completion review for {{target}}.
+Assessment: <assessment-id>
+Human review needed."
+```
+
+**Exit criteria:** Outcome applied and notifications sent."""
+
+[[steps]]
+id = "cleanup"
+title = "Cleanup and sync"
+needs = ["apply-outcome"]
+description = """
+Final sync and cleanup.
+
+**1. Sync all beads:**
+```bash
+bd sync
+```
+
+**2. Verify state:**
+- Assessment bead closed or escalated
+- Target bead has correct label/state
+- Filed gaps are linked as dependencies
+
+**Exit criteria:** All changes synced, molecule complete."""
+
+[vars]
+[vars.target]
+description = "The bead ID to review"
+required = true
