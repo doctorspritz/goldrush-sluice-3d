@@ -5,10 +5,10 @@
 //! - 512 particles (8x8x8 region, 1 per cell)
 //! - flip_ratio = 0.95 (FLIP mode)
 //! - density_projection_enabled = false
-//! - pressure_iterations = 20
+//! - pressure_iterations = 100
 //! - Adaptive velocity damping
 //!
-//! Expected: Water spreads and settles to ~27% of initial height
+//! Expected: Water spreads and settles to ~13% of initial height (>=10% acceptable)
 //! Max velocity drops below 0.03 m/s
 //!
 //! Controls: SPACE=pause, R=reset, Mouse=rotate, Scroll=zoom
@@ -46,7 +46,7 @@ const MAX_PARTICLES: usize = WATER_CELLS * PARTICLES_PER_CELL + 1000;
 
 // Physics constants from test
 const FLIP_RATIO: f32 = 0.95;
-const PRESSURE_ITERATIONS: u32 = 20;
+const PRESSURE_ITERATIONS: u32 = 100;
 const SETTLED_VELOCITY_THRESHOLD: f32 = 0.03;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -251,13 +251,15 @@ impl App {
         }
 
         self.initial_count = self.positions.len();
-        self.initial_height = (WATER_MAX_Y - WATER_MIN_Y) as f32 * CELL_SIZE;
+        let min_y = self.positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+        let max_y = self.positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+        self.initial_height = max_y - min_y;
         self.frame = 0;
         self.sim_time = 0.0;
 
         println!("\n=== RESET ===");
         println!("Particles: {} ({} per cell, matching test)", self.initial_count, PARTICLES_PER_CELL);
-        println!("Initial height: {:.3}m ({} cells)", self.initial_height, WATER_MAX_Y - WATER_MIN_Y);
+        println!("Initial height (bbox): {:.3}m ({} cells region)", self.initial_height, WATER_MAX_Y - WATER_MIN_Y);
     }
 }
 
@@ -457,7 +459,7 @@ impl ApplicationHandler for App {
         println!("");
         println!("EXPECTED BEHAVIOR:");
         println!("  - Water column spreads and flattens");
-        println!("  - Settles to ~27% of initial height");
+        println!("  - Settles to ~13% of initial height (>=10% acceptable)");
         println!("  - Max velocity drops below {} m/s", SETTLED_VELOCITY_THRESHOLD);
         println!("");
         println!("Controls: SPACE=pause, R=reset, Mouse drag=rotate, Scroll=zoom");
