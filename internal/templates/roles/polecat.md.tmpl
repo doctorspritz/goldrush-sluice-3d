@@ -165,6 +165,16 @@ need to adjust your approach. Check mail periodically.
 
 ---
 
+## Beads Recovery (When .beads Goes Missing)
+
+If `bd` errors mention missing `.beads` files (common after accidental deletion),
+restore the tracked beads files and retry:
+
+```bash
+git restore .beads
+# or: git checkout -- .beads
+```
+
 ## Implementation Workflow
 
 ### 1. Understand the Task
