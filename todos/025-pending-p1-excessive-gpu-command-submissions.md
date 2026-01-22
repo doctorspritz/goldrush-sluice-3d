@@ -67,7 +67,7 @@ Option A - Batch related passes together.
 
 ## Acceptance Criteria
 
-- [ ] Reduce queue.submit() calls from 35+ to <10 per frame
+- [x] Reduce queue.submit() calls from 35+ to <10 per frame
 - [ ] Profile showing reduced CPU-GPU sync overhead
 - [ ] No visual regressions
 - [ ] Frame time improvement measurable
@@ -77,6 +77,7 @@ Option A - Batch related passes together.
 | Date | Action | Learnings |
 |------|--------|-----------|
 | 2026-01-19 | Created | Found by performance-oracle agent |
+| 2026-01-22 | Batched run_gpu_passes into 3 submits | Pre-pressure, pressure/BC/drag, and G2P/SDF grouped |
 
 ## Resources
 
