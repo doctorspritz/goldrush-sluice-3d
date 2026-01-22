@@ -707,9 +707,8 @@ impl GpuPressure3D {
     }
 
     /// Clear the pressure buffer (needed before density projection)
-    pub fn clear_pressure(&self, queue: &wgpu::Queue) {
-        let cell_count = (self.width * self.height * self.depth) as usize;
-        queue.write_buffer(&self.pressure_buffer, 0, &vec![0u8; cell_count * 4]);
+    pub fn clear_pressure(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.clear_buffer(&self.pressure_buffer, 0, None);
     }
 
     /// Encode just the pressure iterations (no divergence compute, no gradient apply)

@@ -2926,13 +2926,12 @@ impl GpuFlip3D {
             );
             queue.submit(std::iter::once(encoder.finish()));
 
-            // Clear pressure before solving
-            self.pressure.clear_pressure(queue);
-
             // 3. Solve pressure with density error as RHS
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Density Pressure 3D Encoder"),
             });
+            // Clear pressure before solving
+            self.pressure.clear_pressure(&mut encoder);
             self.pressure.encode_iterations_only(&mut encoder, self.volume_iterations);
             queue.submit(std::iter::once(encoder.finish()));
 
@@ -3523,11 +3522,10 @@ impl GpuFlip3D {
             }
             queue.submit(std::iter::once(encoder.finish()));
 
-            self.pressure.clear_pressure(queue);
-
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Sediment Density Pressure 3D Encoder"),
             });
+            self.pressure.clear_pressure(&mut encoder);
             let sediment_iterations = 15;
             self.pressure.encode_iterations_only(&mut encoder, sediment_iterations);
             queue.submit(std::iter::once(encoder.finish()));

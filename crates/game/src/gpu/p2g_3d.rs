@@ -806,27 +806,24 @@ impl GpuP2g3D {
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
 
-        self.clear_accumulators(queue);
+        // Accumulators are cleared on the GPU in encode().
     }
 
-    fn clear_accumulators(&self, queue: &wgpu::Queue) {
-        let u_size = ((self.width + 1) * self.height * self.depth) as usize;
-        let v_size = (self.width * (self.height + 1) * self.depth) as usize;
-        let w_size = (self.width * self.height * (self.depth + 1)) as usize;
-        let cell_count = (self.width * self.height * self.depth) as usize;
-
-        queue.write_buffer(&self.u_sum_buffer, 0, &vec![0u8; u_size * 4]);
-        queue.write_buffer(&self.u_weight_buffer, 0, &vec![0u8; u_size * 4]);
-        queue.write_buffer(&self.v_sum_buffer, 0, &vec![0u8; v_size * 4]);
-        queue.write_buffer(&self.v_weight_buffer, 0, &vec![0u8; v_size * 4]);
-        queue.write_buffer(&self.w_sum_buffer, 0, &vec![0u8; w_size * 4]);
-        queue.write_buffer(&self.w_weight_buffer, 0, &vec![0u8; w_size * 4]);
-        queue.write_buffer(&self.particle_count_buffer, 0, &vec![0u8; cell_count * 4]);
-        queue.write_buffer(&self.sediment_count_buffer, 0, &vec![0u8; cell_count * 4]);
+    fn clear_accumulators(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.clear_buffer(&self.u_sum_buffer, 0, None);
+        encoder.clear_buffer(&self.u_weight_buffer, 0, None);
+        encoder.clear_buffer(&self.v_sum_buffer, 0, None);
+        encoder.clear_buffer(&self.v_weight_buffer, 0, None);
+        encoder.clear_buffer(&self.w_sum_buffer, 0, None);
+        encoder.clear_buffer(&self.w_weight_buffer, 0, None);
+        encoder.clear_buffer(&self.particle_count_buffer, 0, None);
+        encoder.clear_buffer(&self.sediment_count_buffer, 0, None);
     }
 
     /// Encode P2G compute passes into command encoder
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, particle_count: u32) {
+        self.clear_accumulators(encoder);
+
         // Scatter pass
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
