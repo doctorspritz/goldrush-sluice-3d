@@ -59,6 +59,8 @@ pub struct GpuFlip3D {
     pub vorticity_epsilon: f32,
     /// Enable/disable density projection (volume preservation).
     pub density_projection_enabled: bool,
+    /// Preserve the first pressure field for diagnostics (runs the pressure solve twice).
+    pub pressure_diagnostics_enabled: bool,
     /// Target water particles per cell for density projection.
     pub water_rest_particles: f32,
     /// Legacy alias for water rest particles used by tests/examples.
@@ -2197,6 +2199,7 @@ impl GpuFlip3D {
             fluid_cell_expand_min_neighbors: 1,
             vorticity_epsilon: 0.05,
             density_projection_enabled: true,
+            pressure_diagnostics_enabled: false,
             water_rest_particles: 8.0,
             water_rest_density: 0.0,
             density_surface_clamp: true,
@@ -3314,8 +3317,13 @@ impl GpuFlip3D {
         let mut pressure_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FLIP 3D Pressure Encoder"),
         });
-        self.pressure
-            .encode_with_pressure_restore(&mut pressure_encoder, pressure_iterations);
+        if self.pressure_diagnostics_enabled {
+            self.pressure
+                .encode_with_pressure_restore(&mut pressure_encoder, pressure_iterations);
+        } else {
+            self.pressure
+                .encode(&mut pressure_encoder, pressure_iterations);
+        }
 
         queue.submit(std::iter::once(pressure_encoder.finish()));
 
