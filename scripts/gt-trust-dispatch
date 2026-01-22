@@ -1,0 +1,573 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+try:
+    import tomllib  # Python 3.11+
+except Exception:  # pragma: no cover - fallback only
+    tomllib = None
+
+DEFAULT_MODELS = ["claude", "codex", "gemini"]
+DEFAULT_ROUNDS = {"p0": 5, "p1": 3, "p2": 2, "p3": 1, "p4": 1}
+DEFAULT_TIMEOUT_MINUTES = 30
+DEFAULT_RETRY_COUNT = 1
+DEFAULT_RETRY_BACKOFF_SECONDS = 300
+DEFAULT_POLL_SECONDS = 30
+DEFAULT_CONSENSUS_THRESHOLD = 0.67
+DEFAULT_DEADLOCK_THRESHOLD = 0.34
+
+VOTE_RE = re.compile(
+    r"^BT_VOTE\\s+round=(?P<round>\\d+)\\s+model=(?P<model>\\w+)\\s+"
+    r"vote=(?P<vote>\\w+)\\s+reason=\"(?P<reason>.*?)\"\\s+"
+    r"timeout=(?P<timeout>true|false)\\s+retry=(?P<retry>\\d+)\\s*$",
+    re.IGNORECASE,
+)
+
+
+def run_cmd(args, cwd=None, check=True):
+    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    if check and result.returncode != 0:
+        raise RuntimeError(
+            "Command failed: {}\nstdout: {}\nstderr: {}".format(
+                " ".join(args), result.stdout.strip(), result.stderr.strip()
+            )
+        )
+    return result
+
+
+def repo_root():
+    try:
+        result = run_cmd(["git", "rev-parse", "--show-toplevel"], check=True)
+        root = result.stdout.strip()
+        return root or os.getcwd()
+    except Exception:
+        return os.getcwd()
+
+
+def load_config(root, path=None):
+    if not path:
+        path = os.path.join(root, "config", "brains_trust.toml")
+    if not tomllib or not os.path.exists(path):
+        return {}
+    with open(path, "rb") as fh:
+        data = tomllib.load(fh)
+    return data.get("brains_trust", {})
+
+
+def bd_show(bead_id, cwd):
+    result = run_cmd(["bd", "show", bead_id, "--json"], cwd=cwd)
+    data = json.loads(result.stdout)
+    if not data:
+        raise RuntimeError("bd show returned no data for {}".format(bead_id))
+    return data[0]
+
+
+def bd_update_notes(bead_id, addition, cwd):
+    bead = bd_show(bead_id, cwd)
+    existing = bead.get("notes") or ""
+    if existing.strip():
+        new_notes = existing.rstrip() + "\n" + addition
+    else:
+        new_notes = addition
+    run_cmd(["bd", "update", bead_id, "--notes", new_notes], cwd=cwd)
+
+
+def parse_votes(notes_text):
+    votes = {}
+    if not notes_text:
+        return votes
+    for line in notes_text.splitlines():
+        line = line.strip()
+        match = VOTE_RE.match(line)
+        if not match:
+            continue
+        vote_info = match.groupdict()
+        round_num = int(vote_info["round"])
+        model = vote_info["model"].lower()
+        vote = vote_info["vote"].upper()
+        votes[(round_num, model)] = {
+            "vote": vote,
+            "reason": vote_info.get("reason", ""),
+            "timeout": vote_info.get("timeout", "false") == "true",
+            "retry": int(vote_info.get("retry", "0")),
+        }
+    return votes
+
+
+def determine_rounds(priority, rounds_override, rounds_map):
+    if rounds_override is not None:
+        return rounds_override
+    if priority is None:
+        return rounds_map.get("p2", 2)
+    key = "p{}".format(priority)
+    if key in rounds_map:
+        return rounds_map[key]
+    return rounds_map.get("p3", 1)
+
+
+def ensure_assessment(
+    target,
+    mode,
+    rounds,
+    priority,
+    cwd,
+    assessment_id=None,
+):
+    if assessment_id:
+        return assessment_id
+    target_info = bd_show(target, cwd)
+    title = target_info.get("title", target)
+    if mode == "complete":
+        desc = "\n".join(
+            [
+                "Brains Trust completion review for {}.".format(target),
+                "",
+                "Target: {}".format(target),
+                "Review Type: completion",
+                "Status: in_progress",
+                "",
+                "Votes:",
+                "(none yet)",
+            ]
+        )
+        assessment_title = "Completion Review: {}".format(title)
+    else:
+        desc = "\n".join(
+            [
+                "Brains Trust planning review for {}.".format(target),
+                "",
+                "Target: {}".format(target),
+                "Priority: P{}".format(priority if priority is not None else "?"),
+                "Total Rounds: {}".format(rounds),
+                "Current Round: 1",
+                "",
+                "Votes:",
+                "(none yet)",
+            ]
+        )
+        assessment_title = "Trust Review: {}".format(title)
+    result = run_cmd(
+        [
+            "bd",
+            "create",
+            "--type",
+            "trust-assessment",
+            "--title",
+            assessment_title,
+            "--priority",
+            "1",
+            "--description",
+            desc,
+            "--silent",
+        ],
+        cwd=cwd,
+    )
+    assessment_id = result.stdout.strip()
+    if not assessment_id:
+        raise RuntimeError("Failed to create assessment bead")
+    run_cmd(["bd", "update", assessment_id, "--status", "in_progress"], cwd=cwd)
+    return assessment_id
+
+
+def resolve_rig(root, target_id, override=None):
+    if override:
+        return override
+    prefix = target_id.split("-", 1)[0]
+    if prefix == "hq":
+        return "mayor"
+    return os.path.basename(root)
+
+
+def dispatch_pass(
+    assessment_id,
+    target_id,
+    mode,
+    round_num,
+    model,
+    rig,
+    attempt,
+    append_cmd,
+    cwd,
+):
+    mode_label = "planning" if mode == "plan" else "completion"
+    subject = "Brains Trust: {} pass ({})".format(model.capitalize(), mode)
+    message = (
+        "Review target={target} round={round_num} mode={mode}.\n\n"
+        "Append your vote to the assessment notes using:\n"
+        "  {append_cmd} 'BT_VOTE round={round_num} model={model} "
+        "vote=APPROVE|REVISE|BLOCK|ABSTAIN reason=\"<short>\" "
+        "timeout=false retry={attempt}'\n\n"
+        "Then add optional notes below that line (same append command).\n"
+        "Do NOT overwrite existing notes."
+    ).format(
+        target=target_id,
+        round_num=round_num,
+        mode=mode_label,
+        append_cmd=append_cmd,
+        model=model,
+        attempt=attempt,
+    )
+    cmd = ["gt", "sling", assessment_id, rig, "-s", subject, "-m", message]
+    if model and model != "claude":
+        cmd += ["--agent", model]
+    run_cmd(cmd, cwd=cwd)
+
+
+def wait_for_vote(assessment_id, round_num, model, timeout_seconds, poll_seconds, cwd):
+    start = time.time()
+    while True:
+        bead = bd_show(assessment_id, cwd)
+        votes = parse_votes(bead.get("notes", ""))
+        if (round_num, model) in votes:
+            return votes[(round_num, model)]
+        if time.time() - start >= timeout_seconds:
+            return None
+        time.sleep(poll_seconds)
+
+
+def tally_votes(votes, total_expected):
+    counts = {"APPROVE": 0, "REVISE": 0, "BLOCK": 0, "ABSTAIN": 0}
+    for vote in votes.values():
+        kind = vote["vote"].upper()
+        if kind not in counts:
+            continue
+        counts[kind] += 1
+    abstain = counts["ABSTAIN"]
+    effective_total = max(total_expected - abstain, 0)
+    approval_rate = counts["APPROVE"] / effective_total if effective_total else 0.0
+    block_rate = counts["BLOCK"] / effective_total if effective_total else 0.0
+    return counts, approval_rate, block_rate, effective_total
+
+
+def mail_send(recipient, subject, body, cwd):
+    run_cmd(["gt", "mail", "send", recipient, "-s", subject, "-m", body], cwd=cwd)
+
+
+def run_dispatch(args):
+    root = repo_root()
+    config = load_config(root, args.config)
+
+    models = args.models or config.get("models") or DEFAULT_MODELS
+    if isinstance(models, str):
+        models = [m.strip() for m in models.split(",") if m.strip()]
+    models = [m.lower() for m in models]
+
+    rounds_map = DEFAULT_ROUNDS.copy()
+    config_rounds = config.get("rounds") or {}
+    for key, value in config_rounds.items():
+        rounds_map[key.lower()] = int(value)
+
+    consensus_threshold = args.consensus_threshold
+    if consensus_threshold is None:
+        consensus_threshold = float(config.get("consensus_threshold", DEFAULT_CONSENSUS_THRESHOLD))
+
+    deadlock_threshold = args.deadlock_threshold
+    if deadlock_threshold is None:
+        deadlock_threshold = float(config.get("deadlock_threshold", DEFAULT_DEADLOCK_THRESHOLD))
+
+    timeout_minutes = args.timeout_minutes
+    if timeout_minutes is None:
+        timeout_minutes = int(config.get("timeout_minutes", DEFAULT_TIMEOUT_MINUTES))
+
+    retry_count = args.retry_count
+    if retry_count is None:
+        retry_count = int(config.get("retry_count", DEFAULT_RETRY_COUNT))
+
+    retry_backoff = args.retry_backoff_seconds
+    if retry_backoff is None:
+        retry_backoff = int(config.get("retry_backoff_seconds", DEFAULT_RETRY_BACKOFF_SECONDS))
+
+    poll_seconds = args.poll_seconds
+    if poll_seconds is None:
+        poll_seconds = int(config.get("poll_seconds", DEFAULT_POLL_SECONDS))
+
+    target_info = bd_show(args.target, root)
+    priority = target_info.get("priority")
+    if isinstance(priority, str):
+        priority = priority.lstrip("Pp")
+        priority = int(priority) if priority.isdigit() else None
+
+    if args.mode == "complete":
+        rounds = 1
+    else:
+        rounds = determine_rounds(priority, args.rounds, rounds_map)
+
+    assessment_id = ensure_assessment(
+        args.target,
+        args.mode,
+        rounds,
+        priority,
+        root,
+        assessment_id=args.assessment,
+    )
+
+    rig = resolve_rig(root, args.target, args.rig)
+    append_cmd = os.path.join(root, "scripts", "gt-trust-dispatch") + " append-note {}".format(
+        assessment_id
+    )
+
+    timeout_seconds = timeout_minutes * 60
+
+    for round_num in range(1, rounds + 1):
+        for model in models:
+            votes = parse_votes(bd_show(assessment_id, root).get("notes", ""))
+            if (round_num, model) in votes:
+                continue
+
+            attempt = 0
+            vote_info = None
+            while attempt <= retry_count and vote_info is None:
+                try:
+                    dispatch_pass(
+                        assessment_id,
+                        args.target,
+                        args.mode,
+                        round_num,
+                        model,
+                        rig,
+                        attempt,
+                        append_cmd,
+                        root,
+                    )
+                except Exception as exc:
+                    if attempt >= retry_count:
+                        vote_info = {
+                            "vote": "ABSTAIN",
+                            "reason": "dispatch error",
+                            "timeout": False,
+                            "retry": attempt,
+                        }
+                        break
+                    attempt += 1
+                    time.sleep(retry_backoff)
+                    continue
+
+                vote_info = wait_for_vote(
+                    assessment_id,
+                    round_num,
+                    model,
+                    timeout_seconds,
+                    poll_seconds,
+                    root,
+                )
+
+                if vote_info is None:
+                    if attempt >= retry_count:
+                        vote_info = {
+                            "vote": "ABSTAIN",
+                            "reason": "timeout",
+                            "timeout": True,
+                            "retry": attempt,
+                        }
+                        break
+                    attempt += 1
+                    time.sleep(retry_backoff)
+
+            if vote_info and vote_info["vote"] == "ABSTAIN":
+                vote_line = (
+                    "BT_VOTE round={round_num} model={model} vote=ABSTAIN "
+                    "reason=\"{reason}\" timeout={timeout} retry={retry}"
+                ).format(
+                    round_num=round_num,
+                    model=model,
+                    reason=vote_info["reason"],
+                    timeout=str(vote_info["timeout"]).lower(),
+                    retry=vote_info["retry"],
+                )
+                bd_update_notes(assessment_id, vote_line, root)
+
+    bead = bd_show(assessment_id, root)
+    votes = parse_votes(bead.get("notes", ""))
+    total_expected = rounds * len(models)
+    counts, approval_rate, block_rate, effective_total = tally_votes(votes, total_expected)
+
+    outcome = "REVISE"
+    if effective_total == 0:
+        outcome = "DEADLOCK"
+    elif approval_rate >= consensus_threshold:
+        outcome = "APPROVED"
+    elif block_rate >= deadlock_threshold:
+        outcome = "DEADLOCK"
+
+    approval_pct = round(approval_rate * 100, 1)
+    consensus_line = (
+        "CONSENSUS: {outcome}\nVotes: APPROVE={approve}, REVISE={revise}, "
+        "BLOCK={block}, ABSTAIN={abstain}\nApproval rate: {approval}%"
+    ).format(
+        outcome=outcome,
+        approve=counts["APPROVE"],
+        revise=counts["REVISE"],
+        block=counts["BLOCK"],
+        abstain=counts["ABSTAIN"],
+        approval=approval_pct,
+    )
+    bd_update_notes(assessment_id, consensus_line, root)
+
+    if outcome == "APPROVED":
+        if args.mode == "complete":
+            run_cmd(["bd", "update", args.target, "--add-label", "trust-complete"], cwd=root)
+            run_cmd(["bd", "close", args.target, "--reason", "Completion review approved"], cwd=root)
+            run_cmd(["bd", "close", assessment_id, "--reason", "Trust complete"], cwd=root)
+            mail_send(
+                args.notify_mayor,
+                "Completion Review Approved: {}".format(args.target),
+                "Brains Trust approved completion review for {}.\nAssessment: {}".format(
+                    args.target, assessment_id
+                ),
+                root,
+            )
+        else:
+            run_cmd(["bd", "update", args.target, "--add-label", "trust-approved"], cwd=root)
+            run_cmd(
+                [
+                    "bd",
+                    "update",
+                    assessment_id,
+                    "--status",
+                    "approved",
+                ],
+                cwd=root,
+            )
+            run_cmd(
+                [
+                    "bd",
+                    "close",
+                    assessment_id,
+                    "--reason",
+                    "Trust approved with {}% consensus".format(approval_pct),
+                ],
+                cwd=root,
+            )
+            mail_send(
+                args.notify_mayor,
+                "Trust Approved: {}".format(args.target),
+                "Brains Trust approved {} for implementation.\nConsensus: {}% approval across {} rounds.\nAssessment: {}".format(
+                    args.target, approval_pct, rounds, assessment_id
+                ),
+                root,
+            )
+    elif outcome == "DEADLOCK":
+        run_cmd(["bd", "update", assessment_id, "--status", "escalated"], cwd=root)
+        mail_send(
+            args.notify_overseer,
+            "Trust Deadlock: {}".format(args.target),
+            "Brains Trust deadlocked on {}.\nBlocks: {}\nAbstain: {}\nAssessment: {}".format(
+                args.target, counts["BLOCK"], counts["ABSTAIN"], assessment_id
+            ),
+            root,
+        )
+        mail_send(
+            args.notify_mayor,
+            "Trust Deadlock: {}".format(args.target),
+            "Brains Trust deadlocked on {}.\nBlocks: {}\nAbstain: {}\nAssessment: {}".format(
+                args.target, counts["BLOCK"], counts["ABSTAIN"], assessment_id
+            ),
+            root,
+        )
+    else:
+        if args.mode == "complete":
+            run_cmd(
+                [
+                    "bd",
+                    "update",
+                    args.target,
+                    "--status",
+                    "blocked",
+                    "--notes",
+                    "Completion review requires fixes",
+                ],
+                cwd=root,
+            )
+            run_cmd(
+                [
+                    "bd",
+                    "close",
+                    assessment_id,
+                    "--reason",
+                    "Completion review found issues",
+                ],
+                cwd=root,
+            )
+            mail_send(
+                args.notify_mayor,
+                "Completion Review Requires Fixes: {}".format(args.target),
+                "Completion review found issues for {}.\nAssessment: {}".format(
+                    args.target, assessment_id
+                ),
+                root,
+            )
+        else:
+            run_cmd(
+                [
+                    "bd",
+                    "close",
+                    assessment_id,
+                    "--reason",
+                    "Needs revision - {}% approval insufficient".format(approval_pct),
+                ],
+                cwd=root,
+            )
+            mail_send(
+                args.notify_mayor,
+                "Trust Revise: {}".format(args.target),
+                "Brains Trust requires revisions to {}.\nAssessment: {}".format(
+                    args.target, assessment_id
+                ),
+                root,
+            )
+
+    run_cmd(["bd", "sync"], cwd=root)
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(description="Brains Trust dispatcher")
+    parser.add_argument("--mode", choices=["plan", "complete"], default="plan")
+    parser.add_argument("--target", help="Target bead ID")
+    parser.add_argument("--assessment", help="Existing assessment bead ID to resume")
+    parser.add_argument("--rig", help="Override rig for dispatch")
+    parser.add_argument("--models", help="Comma-separated model list")
+    parser.add_argument("--rounds", type=int, help="Override round count (planning only)")
+    parser.add_argument("--timeout-minutes", type=int)
+    parser.add_argument("--retry-count", type=int)
+    parser.add_argument("--retry-backoff-seconds", type=int)
+    parser.add_argument("--poll-seconds", type=int)
+    parser.add_argument("--consensus-threshold", type=float)
+    parser.add_argument("--deadlock-threshold", type=float)
+    parser.add_argument("--config", help="Path to brains_trust.toml")
+    parser.add_argument("--notify-mayor", default="mayor/")
+    parser.add_argument("--notify-overseer", default="overseer/")
+    return parser.parse_args(argv)
+
+
+def main(argv):
+    if len(argv) > 0 and argv[0] == "append-note":
+        if len(argv) < 3:
+            print("Usage: gt-trust-dispatch append-note <bead-id> <note>|-", file=sys.stderr)
+            return 1
+        bead_id = argv[1]
+        note_arg = argv[2]
+        note = note_arg
+        if note_arg == "-":
+            note = sys.stdin.read().strip()
+        root = repo_root()
+        bd_update_notes(bead_id, note, root)
+        return 0
+
+    args = parse_args(argv)
+    if not args.target:
+        print("--target is required", file=sys.stderr)
+        return 2
+
+    if args.models:
+        args.models = [m.strip() for m in args.models.split(",") if m.strip()]
+    run_dispatch(args)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

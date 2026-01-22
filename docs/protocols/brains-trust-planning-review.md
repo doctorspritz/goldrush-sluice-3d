@@ -186,6 +186,9 @@ Mayor triggers review when:
 ```bash
 # Mayor dispatches review
 bd mol pour mol-brains-trust-plan --var target=<bead-id>
+
+# Dispatcher script (automates all rounds and model handoffs)
+scripts/gt-trust-dispatch --mode plan --target <bead-id>
 ```
 
 ### Model Execution
@@ -194,6 +197,14 @@ Each model pass is executed sequentially:
 - **Claude**: Native polecat session with code review molecule
 - **Codex**: `/codex` skill invocation
 - **Gemini**: MCP tool or API call (TBD based on integration)
+
+Each pass completes by appending a machine-readable vote line to the
+assessment bead notes. Use the dispatcher helper to append without
+overwriting existing notes:
+```bash
+scripts/gt-trust-dispatch append-note <assessment-id> \
+  'BT_VOTE round=<n> model=<claude|codex|gemini> vote=<APPROVE|REVISE|BLOCK|ABSTAIN> reason="<short>" timeout=<true|false> retry=<0|1>'
+```
 
 ### Handoff Mechanism
 

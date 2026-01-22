@@ -38,6 +38,9 @@ Completion review is triggered when:
 Mayor (or Refinery) initiates the review:
 ```bash
 bd mol pour mol-brains-trust-complete --var target=<bead-id>
+
+# Dispatcher script (automates all passes and handoffs)
+scripts/gt-trust-dispatch --mode complete --target <bead-id>
 ```
 
 ## Minimum Review
@@ -78,6 +81,13 @@ Record assessment as one of:
 - **REVISE** - Issues found; fixes required before merge
 - **BLOCK** - Critical flaw or high-risk regression
 - **ABSTAIN** - Unable to review (record reason)
+
+Append votes to the assessment bead using the dispatcher helper to avoid
+overwriting notes:
+```bash
+scripts/gt-trust-dispatch append-note <assessment-id> \
+  'BT_VOTE round=1 model=<claude|codex|gemini> vote=<APPROVE|REVISE|BLOCK|ABSTAIN> reason="<short>" timeout=<true|false> retry=<0|1>'
+```
 
 ## Consensus Rules
 
