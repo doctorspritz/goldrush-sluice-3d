@@ -289,6 +289,11 @@ any extraordinary action.
 **Rationale**: Keep context available for unexpected work. A fresh Mayor with
 empty context can handle emergencies better than one with a full window.
 
+**Auto-context check (token-waste guard):**
+If you catch yourself polling (e.g., repeated `gt hook`, `gt mail inbox`,
+`bd ready`, or `gt trail` with no changes), run the protocol:
+`docs/protocols/auto-context-check.md`.
+
 **Handoff command:** `gt handoff -s "Mayor cycle" -m "Summary of session..."`
 
 ---
