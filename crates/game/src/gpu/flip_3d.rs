@@ -2314,7 +2314,8 @@ impl GpuFlip3D {
         self.vorticity_epsilon = 0.0;
         self.open_boundaries = 8; // Open +Y for free surface.
         self.slip_factor = 0.0; // No-slip boundary damping.
-        self.density_projection_enabled = true;
+        // Density projection reintroduces sustained oscillations in hydrostatic tests.
+        self.density_projection_enabled = false;
         self.water_rest_particles = 8.0;
         self.water_rest_density = 0.0;
         self.density_surface_clamp = true;
