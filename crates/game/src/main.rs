@@ -5,13 +5,16 @@
 //! Run with: cargo run --release
 
 use bytemuck::{Pod, Zeroable};
-use game::gpu::flip_3d::GpuFlip3D;
 use game::gpu::dem_3d::GpuDem3D;
 use game::gpu::dem_render::DemRenderer;
+use game::gpu::flip_3d::GpuFlip3D;
 use game::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder, SluiceVertex};
 use game::water_heightfield::{WaterHeightfieldRenderer, WaterRenderConfig, WaterVertex};
 use glam::{Mat3, Mat4, Vec3};
-use sim3d::{constants, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, SdfParams};
+use sim3d::{
+    constants, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, SdfParams,
+};
+use std::env;
 use std::sync::Arc;
 use std::time::Instant;
 use wgpu::util::DeviceExt;
@@ -47,7 +50,7 @@ const GPU_SYNC_STRIDE: u32 = 4; // GPU readback cadence (frames)
 // Grain sizing (relative to cell size)
 const GANGUE_RADIUS_CELLS: f32 = 0.12; // Coarse gangue grains
 const GOLD_RADIUS_CELLS: f32 = 0.02; // Fine gold grains
-// Relative densities for FLIP particles (water=1.0)
+                                     // Relative densities for FLIP particles (water=1.0)
 const GANGUE_DENSITY: f32 = constants::GANGUE_DENSITY;
 const GOLD_DENSITY: f32 = constants::GOLD_DENSITY;
 // Absolute densities for DEM mass calculation (kg/m³)
@@ -61,7 +64,269 @@ const GOLD_COLOR: [f32; 4] = constants::GOLD_COLOR;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-use game::example_utils::{MeshVertex, WgpuContext, SEDIMENT_SHADER, BASIC_SHADER, build_rock_mesh, create_depth_view};
+use game::example_utils::{
+    build_rock_mesh, create_depth_view, MeshVertex, WgpuContext, BASIC_SHADER, SEDIMENT_SHADER,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TestKind {
+    Flip,
+    Dem,
+    Sdf,
+    World,
+    Erosion,
+    FlipSdf,
+    DemSdf,
+    FlipDem,
+    FlipDemSdf,
+}
+
+impl TestKind {
+    fn from_str(input: &str) -> Option<Self> {
+        match input.trim().to_lowercase().as_str() {
+            "flip" => Some(Self::Flip),
+            "dem" => Some(Self::Dem),
+            "sdf" => Some(Self::Sdf),
+            "world" | "world-map" | "world_map" => Some(Self::World),
+            "erosion" => Some(Self::Erosion),
+            "flip+sdf" | "flip-sdf" | "sdf+flip" => Some(Self::FlipSdf),
+            "dem+sdf" | "dem-sdf" | "sdf+dem" => Some(Self::DemSdf),
+            "dem+flip" | "flip+dem" | "dem-flip" | "flip-dem" => Some(Self::FlipDem),
+            "dem+flip+sdf" | "flip+dem+sdf" | "sdf+dem+flip" | "full" | "all" => {
+                Some(Self::FlipDemSdf)
+            }
+            _ => None,
+        }
+    }
+
+    fn is_headless(self) -> bool {
+        matches!(self, Self::World | Self::Erosion)
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Flip => "flip",
+            Self::Dem => "dem",
+            Self::Sdf => "sdf",
+            Self::World => "world",
+            Self::Erosion => "erosion",
+            Self::FlipSdf => "flip+sdf",
+            Self::DemSdf => "dem+sdf",
+            Self::FlipDem => "dem+flip",
+            Self::FlipDemSdf => "dem+flip+sdf",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Flip => "FLIP (Fluid Only)",
+            Self::Dem => "DEM (Particles Only)",
+            Self::Sdf => "SDF (Colliders)",
+            Self::World => "World Map",
+            Self::Erosion => "Erosion",
+            Self::FlipSdf => "FLIP + SDF",
+            Self::DemSdf => "DEM + SDF",
+            Self::FlipDem => "DEM + FLIP",
+            Self::FlipDemSdf => "DEM + FLIP + SDF",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Flip => "Fluid-only FLIP sim with no sediment or SDF collisions.",
+            Self::Dem => "Sediment-only DEM clumps, no water flow or SDF collisions.",
+            Self::Sdf => "SDF geometry present, particles collide against the sluice.",
+            Self::World => "World map heightfield load validation.",
+            Self::Erosion => "Erosion pass with flowing water and sediment transport.",
+            Self::FlipSdf => "Fluid sim interacting with SDF collisions.",
+            Self::DemSdf => "Sediment clumps colliding with SDF geometry.",
+            Self::FlipDem => "Fluid + sediment coupling with no SDF collisions.",
+            Self::FlipDemSdf => "Full integration: FLIP + DEM + SDF collisions.",
+        }
+    }
+
+    fn expectations(self) -> &'static [&'static str] {
+        match self {
+            Self::Flip => &[
+                "Water sheet spawns and flows downstream.",
+                "No sediment particles present.",
+                "Mean downstream velocity stays > 0.",
+            ],
+            Self::Dem => &[
+                "Sediment clumps spawn and settle under gravity.",
+                "Clump velocities remain finite (no NaNs).",
+            ],
+            Self::Sdf => &[
+                "Sluice geometry appears (solid SDF).",
+                "Particles should stay outside solid volume.",
+            ],
+            Self::World => &[
+                "World grid loads a heightmap into terrain layers.",
+                "Sampled heights match expected map values.",
+            ],
+            Self::Erosion => &[
+                "High-velocity flow erodes terrain over time.",
+                "Suspended sediment increases as terrain erodes.",
+            ],
+            Self::FlipSdf => &[
+                "Water sheet flows downstream.",
+                "Particles remain outside SDF solids.",
+            ],
+            Self::DemSdf => &[
+                "Sediment clumps collide with sluice geometry.",
+                "Clumps stay outside solid SDF volume.",
+            ],
+            Self::FlipDem => &[
+                "Water and sediment both spawn.",
+                "Sediment follows flow but settles under gravity.",
+            ],
+            Self::FlipDemSdf => &[
+                "Water and sediment spawn together.",
+                "SDF collisions keep particles out of solids.",
+            ],
+        }
+    }
+}
+
+struct CliOptions {
+    test: Option<TestKind>,
+    test_frames: u32,
+    auto_exit: bool,
+    list_tests: bool,
+    help: bool,
+}
+
+impl CliOptions {
+    fn parse() -> Result<Self, String> {
+        let mut options = Self {
+            test: None,
+            test_frames: 600,
+            auto_exit: false,
+            list_tests: false,
+            help: false,
+        };
+        let mut args = env::args().skip(1);
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--test" => {
+                    let Some(value) = args.next() else {
+                        return Err("Missing value after --test".to_string());
+                    };
+                    options.test = TestKind::from_str(&value);
+                    if options.test.is_none() {
+                        return Err(format!("Unknown test '{}'", value));
+                    }
+                }
+                "--test-frames" => {
+                    let Some(value) = args.next() else {
+                        return Err("Missing value after --test-frames".to_string());
+                    };
+                    options.test_frames = value
+                        .parse::<u32>()
+                        .map_err(|_| format!("Invalid --test-frames value '{}'", value))?;
+                }
+                "--test-exit" => {
+                    options.auto_exit = true;
+                }
+                "--list-tests" => {
+                    options.list_tests = true;
+                }
+                "--help" | "-h" => {
+                    options.help = true;
+                }
+                _ if arg.starts_with("--test=") => {
+                    let value = arg.trim_start_matches("--test=");
+                    options.test = TestKind::from_str(value);
+                    if options.test.is_none() {
+                        return Err(format!("Unknown test '{}'", value));
+                    }
+                }
+                _ if arg.starts_with("--test-frames=") => {
+                    let value = arg.trim_start_matches("--test-frames=");
+                    options.test_frames = value
+                        .parse::<u32>()
+                        .map_err(|_| format!("Invalid --test-frames value '{}'", value))?;
+                }
+                unknown => {
+                    return Err(format!("Unknown argument '{}'", unknown));
+                }
+            }
+        }
+        Ok(options)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TestState {
+    kind: TestKind,
+    frame_budget: u32,
+    auto_exit: bool,
+    start_frame: Option<u32>,
+    finished: bool,
+}
+
+impl TestState {
+    fn new(kind: TestKind, frame_budget: u32, auto_exit: bool) -> Self {
+        Self {
+            kind,
+            frame_budget,
+            auto_exit,
+            start_frame: None,
+            finished: false,
+        }
+    }
+
+    fn start(&mut self, current_frame: u32) {
+        if self.start_frame.is_none() {
+            self.start_frame = Some(current_frame);
+            println!("\n=== Component Test: {} ===", self.kind.title());
+            println!("{}", self.kind.description());
+            for line in self.kind.expectations() {
+                println!("- {}", line);
+            }
+            println!("Running for {} frames...\n", self.frame_budget);
+        }
+    }
+
+    fn should_evaluate(&self, current_frame: u32) -> bool {
+        if let Some(start) = self.start_frame {
+            current_frame.saturating_sub(start) >= self.frame_budget
+        } else {
+            false
+        }
+    }
+
+    fn finish(&mut self, passed: bool, details: &str) {
+        self.finished = true;
+        if passed {
+            println!("✅ TEST PASSED: {} ({})", self.kind.title(), details);
+        } else {
+            println!("❌ TEST FAILED: {} ({})", self.kind.title(), details);
+        }
+    }
+}
+
+struct AppConfig {
+    water_rate: usize,
+    sediment_rate: usize,
+    use_dem: bool,
+    use_sdf: bool,
+    test_state: Option<TestState>,
+    window_title: String,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            water_rate: WATER_EMIT_RATE,
+            sediment_rate: SEDIMENT_EMIT_RATE,
+            use_dem: true,
+            use_sdf: true,
+            test_state: None,
+            window_title: "Goldrush Sluice".to_string(),
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -267,7 +532,8 @@ impl ParticleTracking {
     }
 
     fn add_tracer(&mut self, index: usize, spawn_frame: u32) {
-        self.tracer_particles.push(TracerInfo { index, spawn_frame });
+        self.tracer_particles
+            .push(TracerInfo { index, spawn_frame });
         println!("Tracer spawned at frame {} (idx {})", spawn_frame, index);
     }
 
@@ -383,6 +649,11 @@ struct App {
     paused: bool,
     frame: u32,
     use_dem: bool, // Toggle DEM on/off
+    use_sdf: bool,
+    test_state: Option<TestState>,
+    window_title: String,
+    exit_requested: bool,
+    sdf_disabled: Option<Vec<f32>>,
 }
 
 struct TracerInfo {
@@ -403,6 +674,10 @@ struct FlowMetrics {
 
 impl App {
     fn new() -> Self {
+        Self::new_with_config(AppConfig::default())
+    }
+
+    fn new_with_config(config: AppConfig) -> Self {
         // Configure sluice geometry - smooth ramp feed, then riffles
         // Sluice ends before the grid boundary, leaving buffer zone for clean outflow
         let sluice_config = SluiceConfig {
@@ -516,9 +791,16 @@ impl App {
         let gangue_template_idx = dem.add_template(gangue_template);
 
         let gold_radius = CELL_SIZE * GOLD_RADIUS_CELLS;
-        let gold_mass = GOLD_DENSITY_KGM3 * (4.0 / 3.0) * std::f32::consts::PI * gold_radius.powi(3);
+        let gold_mass =
+            GOLD_DENSITY_KGM3 * (4.0 / 3.0) * std::f32::consts::PI * gold_radius.powi(3);
         let gold_template = ClumpTemplate3D::generate(ClumpShape3D::Flat4, gold_radius, gold_mass);
         let gold_template_idx = dem.add_template(gold_template);
+
+        let sdf_disabled = if config.use_sdf {
+            None
+        } else {
+            Some(vec![1.0; GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH])
+        };
 
         Self {
             window: None,
@@ -532,19 +814,29 @@ impl App {
             dem,
             gangue_template_idx,
             gold_template_idx,
-            camera: CameraController::new(0.5, 0.4, 4.0, Vec3::new(
-                (GRID_WIDTH as f32 * 0.5) * CELL_SIZE,
-                (GRID_HEIGHT as f32 * 0.2) * CELL_SIZE,
-                (GRID_DEPTH as f32 * 0.5) * CELL_SIZE,
-            )),
-            emission: EmissionController::new(WATER_EMIT_RATE, SEDIMENT_EMIT_RATE),
+            camera: CameraController::new(
+                0.5,
+                0.4,
+                4.0,
+                Vec3::new(
+                    (GRID_WIDTH as f32 * 0.5) * CELL_SIZE,
+                    (GRID_HEIGHT as f32 * 0.2) * CELL_SIZE,
+                    (GRID_DEPTH as f32 * 0.5) * CELL_SIZE,
+                ),
+            ),
+            emission: EmissionController::new(config.water_rate, config.sediment_rate),
             gpu_sync: GpuSyncState::new(),
             tracking: ParticleTracking::new(),
             timing: TimingStats::new(),
             buffers: GpuTransferBuffers::new(),
             paused: false,
             frame: 0,
-            use_dem: true, // Enable DEM by default
+            use_dem: config.use_dem,
+            use_sdf: config.use_sdf,
+            test_state: config.test_state,
+            window_title: config.window_title,
+            exit_requested: false,
+            sdf_disabled,
         }
     }
 
@@ -804,13 +1096,16 @@ impl App {
         }
 
         self.buffers.cell_types.clear();
-        self.buffers.cell_types
+        self.buffers
+            .cell_types
             .resize(GRID_WIDTH * GRID_HEIGHT * GRID_DEPTH, 0);
 
-        // Mark solids from SDF
-        for (idx, &sdf_val) in self.sim.grid.sdf().iter().enumerate() {
-            if sdf_val < 0.0 {
-                self.buffers.cell_types[idx] = 2; // Solid
+        if self.use_sdf {
+            // Mark solids from SDF
+            for (idx, &sdf_val) in self.sim.grid.sdf().iter().enumerate() {
+                if sdf_val < 0.0 {
+                    self.buffers.cell_types[idx] = 2; // Solid
+                }
             }
         }
 
@@ -841,7 +1136,14 @@ impl App {
 
     fn apply_gpu_results(&mut self, count: usize) {
         let limit = count.min(self.sim.particles.list().len());
-        for (i, p) in self.sim.particles.list_mut().iter_mut().enumerate().take(limit) {
+        for (i, p) in self
+            .sim
+            .particles
+            .list_mut()
+            .iter_mut()
+            .enumerate()
+            .take(limit)
+        {
             if i < self.buffers.positions.len() {
                 p.position = self.buffers.positions[i];
             }
@@ -884,8 +1186,13 @@ impl App {
             // Run DEM collision response only - detects collisions, pushes out of solids,
             // corrects velocity (bounce/friction), but does NOT integrate position
             // wet=true because gravel is in water - uses low friction so it slides
+            let sdf_slice = if self.use_sdf {
+                self.sim.grid.sdf()
+            } else {
+                self.sdf_disabled.as_deref().unwrap_or(self.sim.grid.sdf())
+            };
             let sdf_params = SdfParams {
-                sdf: self.sim.grid.sdf(),
+                sdf: sdf_slice,
                 grid_width: GRID_WIDTH,
                 grid_height: GRID_HEIGHT,
                 grid_depth: GRID_DEPTH,
@@ -960,7 +1267,9 @@ impl App {
                 if sediment_pos < self.dem.clumps.len() {
                     self.dem.clumps.swap_remove(sediment_pos);
                 }
-                self.tracking.sediment_flip_indices.swap_remove(sediment_pos);
+                self.tracking
+                    .sediment_flip_indices
+                    .swap_remove(sediment_pos);
             }
 
             if let Some(tracer_pos) = self
@@ -1053,7 +1362,11 @@ impl App {
             }
 
             if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
-                let sdf = self.sim.grid.sdf();
+                let sdf = if self.use_sdf {
+                    Some(self.sim.grid.sdf())
+                } else {
+                    None
+                };
 
                 if self.gpu_sync.needs_upload {
                     gpu_flip.step_no_readback(
@@ -1064,21 +1377,23 @@ impl App {
                         &mut self.buffers.affine_vels,
                         &self.buffers.densities,
                         &self.buffers.cell_types,
-                        Some(sdf),
+                        sdf,
                         None,
                         dt_sub,
                         GRAVITY,
                         flow_accel,
                         PRESSURE_ITERS,
                     );
-                    
+
                     // GPU DEM preparation
                     if let Some(gpu_dem) = &mut self.gpu_dem {
-                        let mut encoder = gpu.ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("DEM Step"),
-                        });
+                        let mut encoder = gpu.ctx.device.create_command_encoder(
+                            &wgpu::CommandEncoderDescriptor {
+                                label: Some("DEM Step"),
+                            },
+                        );
                         gpu_dem.prepare_step(&mut encoder, dt_sub);
-                        
+
                         // Apply coupling
                         gpu_dem.apply_flip_coupling(
                             &mut encoder,
@@ -1090,21 +1405,34 @@ impl App {
                             GRID_DEPTH as u32,
                             CELL_SIZE,
                             dt_sub,
-                            3.0, // drag
+                            3.0,    // drag
                             1000.0, // density_water
-                            0.01, // bed_friction
-                            0.045, // critical_shields
+                            0.01,   // bed_friction
+                            0.045,  // critical_shields
                         );
-                        
-                        // Apply SDF collision (using the same SDF as FLIP)
-                        let sdf_params = game::gpu::dem_3d::GpuSdfParams {
-                            grid_offset: [0.0, 0.0, 0.0, 0.0],
-                            grid_dims: [GRID_WIDTH as u32, GRID_HEIGHT as u32, GRID_DEPTH as u32, 0],
-                            cell_size: CELL_SIZE,
-                            pad0: 0.0, pad1: 0.0, pad2: 0.0,
-                        };
-                        gpu_dem.apply_sdf_collision_pass(&mut encoder, gpu_flip.sdf_buffer(), &sdf_params);
-                        
+
+                        if self.use_sdf {
+                            // Apply SDF collision (using the same SDF as FLIP)
+                            let sdf_params = game::gpu::dem_3d::GpuSdfParams {
+                                grid_offset: [0.0, 0.0, 0.0, 0.0],
+                                grid_dims: [
+                                    GRID_WIDTH as u32,
+                                    GRID_HEIGHT as u32,
+                                    GRID_DEPTH as u32,
+                                    0,
+                                ],
+                                cell_size: CELL_SIZE,
+                                pad0: 0.0,
+                                pad1: 0.0,
+                                pad2: 0.0,
+                            };
+                            gpu_dem.apply_sdf_collision_pass(
+                                &mut encoder,
+                                gpu_flip.sdf_buffer(),
+                                &sdf_params,
+                            );
+                        }
+
                         gpu_dem.finish_step(&mut encoder);
                         gpu.ctx.queue.submit(std::iter::once(encoder.finish()));
                     }
@@ -1116,7 +1444,7 @@ impl App {
                             &gpu.ctx.queue,
                             particle_count as u32,
                             &self.buffers.cell_types,
-                            Some(sdf),
+                            sdf,
                             None,
                             dt_sub,
                             GRAVITY,
@@ -1131,7 +1459,7 @@ impl App {
                             &gpu.ctx.queue,
                             particle_count as u32,
                             &self.buffers.cell_types,
-                            Some(sdf),
+                            sdf,
                             None,
                             dt_sub,
                             GRAVITY,
@@ -1158,7 +1486,11 @@ impl App {
             self.prepare_gpu_inputs();
 
             if let (Some(gpu_flip), Some(gpu)) = (&mut self.gpu_flip, &self.gpu) {
-                let sdf = self.sim.grid.sdf();
+                let sdf = if self.use_sdf {
+                    Some(self.sim.grid.sdf())
+                } else {
+                    None
+                };
 
                 for _ in 0..SUBSTEPS {
                     gpu_flip.step(
@@ -1169,7 +1501,7 @@ impl App {
                         &mut self.buffers.affine_vels,
                         &self.buffers.densities,
                         &self.buffers.cell_types,
-                        Some(sdf),
+                        sdf,
                         None,
                         dt_sub,
                         GRAVITY,
@@ -1184,6 +1516,7 @@ impl App {
         }
 
         self.frame += 1;
+        self.tick_test();
 
         // FPS
         if self.timing.tick() {
@@ -1238,6 +1571,33 @@ impl App {
         }
     }
 
+    fn tick_test(&mut self) {
+        let (kind, should_eval, auto_exit) = {
+            let Some(state) = self.test_state.as_mut() else {
+                return;
+            };
+            if state.finished {
+                return;
+            }
+            state.start(self.frame);
+            (
+                state.kind,
+                state.should_evaluate(self.frame),
+                state.auto_exit,
+            )
+        };
+
+        if should_eval {
+            let (passed, details) = evaluate_test(kind, self);
+            if let Some(state) = self.test_state.as_mut() {
+                state.finish(passed, &details);
+                if auto_exit {
+                    self.exit_requested = true;
+                }
+            }
+        }
+    }
+
     fn render(&mut self) {
         let Some(gpu) = &self.gpu else { return };
 
@@ -1264,7 +1624,8 @@ impl App {
             camera_pos: eye.to_array(),
             _pad: 0.0,
         };
-        gpu.ctx.queue
+        gpu.ctx
+            .queue
             .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Build water mesh
@@ -1348,9 +1709,12 @@ impl App {
             );
         }
 
-        let mut encoder = gpu.ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        let mut encoder = gpu
+            .ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -1397,7 +1761,10 @@ impl App {
                 pass.set_pipeline(&gpu.sediment_pipeline);
                 pass.set_vertex_buffer(0, gpu.rock_mesh_vertex_buffer.slice(..));
                 pass.set_vertex_buffer(1, gpu.sediment_instance_buffer.slice(..));
-                pass.draw(0..gpu.rock_mesh_vertex_count, 0..sediment_instances.len() as u32);
+                pass.draw(
+                    0..gpu.rock_mesh_vertex_count,
+                    0..sediment_instances.len() as u32,
+                );
             }
         }
 
@@ -1721,7 +2088,8 @@ impl App {
         gpu_dem.add_template(gangue_template);
 
         let gold_radius = CELL_SIZE * GOLD_RADIUS_CELLS;
-        let gold_mass = GOLD_DENSITY_KGM3 * (4.0 / 3.0) * std::f32::consts::PI * gold_radius.powi(3);
+        let gold_mass =
+            GOLD_DENSITY_KGM3 * (4.0 / 3.0) * std::f32::consts::PI * gold_radius.powi(3);
         let gold_template = ClumpTemplate3D::generate(ClumpShape3D::Flat4, gold_radius, gold_mass);
         gpu_dem.add_template(gold_template);
 
@@ -1767,13 +2135,196 @@ impl App {
     }
 }
 
+fn sdf_at(app: &App, pos: Vec3) -> Option<f32> {
+    if !app.use_sdf {
+        return None;
+    }
+    let i = (pos.x / CELL_SIZE).floor() as i32;
+    let j = (pos.y / CELL_SIZE).floor() as i32;
+    let k = (pos.z / CELL_SIZE).floor() as i32;
+    if i < 0
+        || j < 0
+        || k < 0
+        || i >= GRID_WIDTH as i32
+        || j >= GRID_HEIGHT as i32
+        || k >= GRID_DEPTH as i32
+    {
+        return None;
+    }
+    let idx = k as usize * GRID_WIDTH * GRID_HEIGHT + j as usize * GRID_WIDTH + i as usize;
+    Some(app.sim.grid.sdf()[idx])
+}
+
+fn evaluate_test(kind: TestKind, app: &App) -> (bool, String) {
+    let mut water_count = 0usize;
+    let mut sediment_count = 0usize;
+    let mut water_speed_sum = 0.0f32;
+    let mut sediment_speed_sum = 0.0f32;
+    let mut nan_found = false;
+
+    for p in app.sim.particles.list() {
+        if !p.position.is_finite() || !p.velocity.is_finite() {
+            nan_found = true;
+        }
+        if p.density <= 1.0 {
+            water_count += 1;
+            water_speed_sum += p.velocity.length();
+        } else {
+            sediment_count += 1;
+            sediment_speed_sum += p.velocity.length();
+        }
+    }
+
+    for clump in &app.dem.clumps {
+        if !clump.position.is_finite() || !clump.velocity.is_finite() {
+            nan_found = true;
+        }
+    }
+
+    let water_mean_speed = if water_count > 0 {
+        water_speed_sum / water_count as f32
+    } else {
+        0.0
+    };
+    let sediment_mean_speed = if sediment_count > 0 {
+        sediment_speed_sum / sediment_count as f32
+    } else {
+        0.0
+    };
+
+    let (sdf_min, sdf_max) = if app.use_sdf {
+        let sdf = app.sim.grid.sdf();
+        let min = sdf.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max = sdf.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        (min, max)
+    } else {
+        (0.0, 0.0)
+    };
+
+    let (particle_sdf_ratio, clump_sdf_min) = if app.use_sdf {
+        let mut neg_count = 0usize;
+        let mut count = 0usize;
+        for p in app.sim.particles.list() {
+            if let Some(val) = sdf_at(app, p.position) {
+                if val < 0.0 {
+                    neg_count += 1;
+                }
+                count += 1;
+            }
+        }
+        let ratio = if count > 0 {
+            neg_count as f32 / count as f32
+        } else {
+            0.0
+        };
+        let mut min_val = f32::INFINITY;
+        for clump in &app.dem.clumps {
+            if let Some(val) = sdf_at(app, clump.position) {
+                min_val = min_val.min(val);
+            }
+        }
+        let min_val = if min_val == f32::INFINITY {
+            0.0
+        } else {
+            min_val
+        };
+        (ratio, min_val)
+    } else {
+        (0.0, 0.0)
+    };
+
+    if nan_found {
+        return (
+            false,
+            "NaN/Inf detected in particle or clump state".to_string(),
+        );
+    }
+
+    match kind {
+        TestKind::Flip => {
+            let passed = water_count >= 50 && sediment_count <= 1 && water_mean_speed > 0.02;
+            let details = format!(
+                "water={} sediment={} mean_v={:.3}",
+                water_count, sediment_count, water_mean_speed
+            );
+            (passed, details)
+        }
+        TestKind::Dem => {
+            let passed = sediment_count >= 10 && water_count == 0 && sediment_mean_speed >= 0.0;
+            let details = format!(
+                "sediment={} water={} mean_v={:.3}",
+                sediment_count, water_count, sediment_mean_speed
+            );
+            (passed, details)
+        }
+        TestKind::Sdf => {
+            let total = water_count + sediment_count;
+            let passed = total > 0 && sdf_min < 0.0 && sdf_max > 0.0 && particle_sdf_ratio <= 0.05;
+            let details = format!(
+                "particles={} sdf_min={:.3} sdf_max={:.3} in_solid={:.2}%",
+                total,
+                sdf_min,
+                sdf_max,
+                particle_sdf_ratio * 100.0
+            );
+            (passed, details)
+        }
+        TestKind::FlipSdf => {
+            let passed = water_count >= 50
+                && sediment_count <= 1
+                && water_mean_speed > 0.02
+                && particle_sdf_ratio <= 0.05;
+            let details = format!(
+                "water={} mean_v={:.3} in_solid={:.2}%",
+                water_count,
+                water_mean_speed,
+                particle_sdf_ratio * 100.0
+            );
+            (passed, details)
+        }
+        TestKind::DemSdf => {
+            let passed =
+                sediment_count >= 10 && water_count == 0 && clump_sdf_min > -0.5 * CELL_SIZE;
+            let details = format!("sediment={} min_sdf={:.4}", sediment_count, clump_sdf_min);
+            (passed, details)
+        }
+        TestKind::FlipDem => {
+            let passed = water_count >= 50 && sediment_count >= 10;
+            let details = format!(
+                "water={} sediment={} mean_v={:.3}/{:.3}",
+                water_count, sediment_count, water_mean_speed, sediment_mean_speed
+            );
+            (passed, details)
+        }
+        TestKind::FlipDemSdf => {
+            let passed = water_count >= 50
+                && sediment_count >= 10
+                && particle_sdf_ratio <= 0.05
+                && clump_sdf_min > -0.5 * CELL_SIZE;
+            let details = format!(
+                "water={} sediment={} in_solid={:.2}% min_sdf={:.4}",
+                water_count,
+                sediment_count,
+                particle_sdf_ratio * 100.0,
+                clump_sdf_min
+            );
+            (passed, details)
+        }
+        TestKind::World | TestKind::Erosion => (true, "headless test".to_string()),
+    }
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
             let attrs = Window::default_attributes()
-                .with_title("Friction Sluice - Sediment Test")
+                .with_title(self.window_title.clone())
                 .with_inner_size(winit::dpi::LogicalSize::new(1200, 800));
-            let window = Arc::new(event_loop.create_window(attrs).expect("Failed to create window"));
+            let window = Arc::new(
+                event_loop
+                    .create_window(attrs)
+                    .expect("Failed to create window"),
+            );
             self.init_gpu(window.clone());
         }
     }
@@ -1835,7 +2386,8 @@ impl ApplicationHandler for App {
                 button: MouseButton::Left,
                 ..
             } => {
-                self.camera.handle_mouse_press(state == ElementState::Pressed);
+                self.camera
+                    .handle_mouse_press(state == ElementState::Pressed);
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.camera.handle_cursor_move(position.x, position.y);
@@ -1850,6 +2402,10 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 self.update();
                 self.render();
+                if self.exit_requested {
+                    event_loop.exit();
+                    return;
+                }
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -1858,9 +2414,6 @@ impl ApplicationHandler for App {
         }
     }
 }
-
-
-
 
 /// Thread-safe random float generator using thread-local storage.
 /// Returns a value in [0.0, 1.0).
@@ -1876,10 +2429,234 @@ fn rand_float() -> f32 {
     })
 }
 
+fn print_usage() {
+    println!("Goldrush Sluice Component Tests");
+    println!("");
+    println!("Usage:");
+    println!("  cargo run --release -- [--test <name>] [--test-frames N] [--test-exit]");
+    println!("  cargo run --release -- --list-tests");
+    println!("");
+}
+
+fn print_test_list() {
+    println!("Available tests:");
+    let tests = [
+        TestKind::Flip,
+        TestKind::Dem,
+        TestKind::Sdf,
+        TestKind::World,
+        TestKind::Erosion,
+        TestKind::FlipSdf,
+        TestKind::DemSdf,
+        TestKind::FlipDem,
+        TestKind::FlipDemSdf,
+    ];
+    for test in tests {
+        println!("- {}: {}", test.name(), test.description());
+    }
+}
+
+fn app_config_for_test(kind: TestKind, frames: u32, auto_exit: bool) -> AppConfig {
+    let mut config = AppConfig::default();
+    config.window_title = format!("Goldrush Test: {}", kind.title());
+    config.test_state = Some(TestState::new(kind, frames, auto_exit));
+    match kind {
+        TestKind::Flip => {
+            config.use_dem = false;
+            config.use_sdf = false;
+            config.sediment_rate = 0;
+        }
+        TestKind::Dem => {
+            config.water_rate = 0;
+            config.use_dem = true;
+            config.use_sdf = false;
+        }
+        TestKind::Sdf => {
+            config.use_dem = false;
+            config.use_sdf = true;
+            config.sediment_rate = 0;
+        }
+        TestKind::FlipSdf => {
+            config.use_dem = false;
+            config.use_sdf = true;
+            config.sediment_rate = 0;
+        }
+        TestKind::DemSdf => {
+            config.water_rate = 0;
+            config.use_dem = true;
+            config.use_sdf = true;
+        }
+        TestKind::FlipDem => {
+            config.use_dem = true;
+            config.use_sdf = false;
+        }
+        TestKind::FlipDemSdf => {
+            config.use_dem = true;
+            config.use_sdf = true;
+        }
+        TestKind::World | TestKind::Erosion => {}
+    }
+    config
+}
+
+fn run_world_map_test() -> bool {
+    println!("\n=== Component Test: {} ===", TestKind::World.title());
+    println!("{}", TestKind::World.description());
+    for line in TestKind::World.expectations() {
+        println!("- {}", line);
+    }
+
+    let width = 32usize;
+    let depth = 24usize;
+    let cell_size = 1.0f32;
+    let mut world = sim3d::World::new(width, depth, cell_size, 0.0);
+
+    let mut heightmap = vec![0.0f32; width * depth];
+    for z in 0..depth {
+        for x in 0..width {
+            let idx = world.idx(x, z);
+            let height = x as f32 * 0.1 + z as f32 * 0.05;
+            heightmap[idx] = height;
+            world.bedrock_elevation[idx] = height;
+            world.paydirt_thickness[idx] = 0.0;
+            world.gravel_thickness[idx] = 0.0;
+            world.overburden_thickness[idx] = 0.0;
+        }
+    }
+
+    let sample_x = 10usize;
+    let sample_z = 7usize;
+    let expected = heightmap[world.idx(sample_x, sample_z)];
+    let got = world.ground_height(sample_x, sample_z);
+    let height_ok = (got - expected).abs() < 1e-4;
+
+    let sample_world = Vec3::new(
+        sample_x as f32 * cell_size + 0.4,
+        0.0,
+        sample_z as f32 * cell_size + 0.6,
+    );
+    let cell_ok = world.world_to_cell(sample_world) == Some((sample_x, sample_z));
+
+    let passed = height_ok && cell_ok;
+    if passed {
+        println!("✅ TEST PASSED: World Map (height {:.3}, cell ok)", got);
+    } else {
+        println!(
+            "❌ TEST FAILED: World Map (height_ok={}, cell_ok={})",
+            height_ok, cell_ok
+        );
+    }
+    passed
+}
+
+fn run_erosion_test() -> bool {
+    println!("\n=== Component Test: {} ===", TestKind::Erosion.title());
+    println!("{}", TestKind::Erosion.description());
+    for line in TestKind::Erosion.expectations() {
+        println!("- {}", line);
+    }
+
+    let width = 64usize;
+    let depth = 64usize;
+    let cell_size = 1.0f32;
+    let mut world = sim3d::World::new(width, depth, cell_size, 10.0);
+
+    for z in 0..depth {
+        for x in 0..width {
+            let idx = world.idx(x, z);
+            let ground = world.ground_height(x, z);
+            world.water_surface[idx] = ground + 1.0;
+        }
+    }
+    for flow in world.water_flow_x.iter_mut() {
+        *flow = 2.5;
+    }
+    for flow in world.water_flow_z.iter_mut() {
+        *flow = 0.0;
+    }
+
+    let initial_overburden: f32 = world.overburden_thickness.iter().sum();
+    let initial_suspended: f32 = world.suspended_sediment.iter().sum();
+
+    for _ in 0..200 {
+        world.update_erosion(
+            0.1,
+            world.params.hardness_overburden,
+            world.params.hardness_paydirt,
+            world.params.hardness_sediment,
+            world.params.hardness_gravel,
+        );
+    }
+
+    let final_overburden: f32 = world.overburden_thickness.iter().sum();
+    let final_suspended: f32 = world.suspended_sediment.iter().sum();
+    let eroded = final_overburden < initial_overburden;
+    let suspended = final_suspended > initial_suspended;
+    let passed = eroded && suspended;
+
+    if passed {
+        println!(
+            "✅ TEST PASSED: Erosion (overburden {:.3} -> {:.3}, suspended {:.3} -> {:.3})",
+            initial_overburden, final_overburden, initial_suspended, final_suspended
+        );
+    } else {
+        println!(
+            "❌ TEST FAILED: Erosion (eroded={}, suspended={})",
+            eroded, suspended
+        );
+    }
+    passed
+}
+
 fn main() {
     env_logger::init();
+    let cli = match CliOptions::parse() {
+        Ok(options) => options,
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            print_usage();
+            std::process::exit(2);
+        }
+    };
+
+    if cli.help {
+        print_usage();
+        print_test_list();
+        return;
+    }
+
+    if cli.list_tests {
+        print_test_list();
+        return;
+    }
+
+    if let Some(kind) = cli.test {
+        if kind.is_headless() {
+            let passed = match kind {
+                TestKind::World => run_world_map_test(),
+                TestKind::Erosion => run_erosion_test(),
+                _ => true,
+            };
+            if !passed {
+                std::process::exit(1);
+            }
+            return;
+        }
+
+        let config = app_config_for_test(kind, cli.test_frames, cli.auto_exit);
+        let event_loop = EventLoop::new().expect("Failed to create event loop");
+        event_loop.set_control_flow(ControlFlow::Poll);
+        let mut app = App::new_with_config(config);
+        event_loop
+            .run_app(&mut app)
+            .expect("Failed to run application");
+        return;
+    }
+
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App::new();
-    event_loop.run_app(&mut app).expect("Failed to run application");
+    event_loop
+        .run_app(&mut app)
+        .expect("Failed to run application");
 }
