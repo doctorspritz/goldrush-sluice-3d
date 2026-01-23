@@ -200,7 +200,6 @@ fn test_p2g_handles_all_velocity_components() {
 
     let mut sim = GpuFlip3D::new(&device, width, height, depth, cell_size, max_particles);
     sim.vorticity_epsilon = 0.0;
-    sim.flip_ratio = 1.0;
     sim.open_boundaries = 1 | 2; // Open +/-X for advection tests.
     sim.water_rest_particles = 0.0;
 
@@ -278,7 +277,6 @@ fn test_g2p_transfers_velocity_to_particles() {
 
     let mut sim = GpuFlip3D::new(&device, width, height, depth, cell_size, max_particles);
     sim.vorticity_epsilon = 0.0;
-    sim.flip_ratio = 1.0;
     sim.open_boundaries = 1 | 2; // Open +/-X for momentum test.
     sim.water_rest_particles = 0.0;
 
@@ -362,7 +360,6 @@ fn test_g2p_computes_affine_velocity_matrix() {
 
     let mut sim = GpuFlip3D::new(&device, width, height, depth, cell_size, max_particles);
     sim.vorticity_epsilon = 0.0;
-    sim.flip_ratio = 1.0;
     sim.open_boundaries = 1 | 2; // Open +/-X for flow acceleration.
     sim.water_rest_particles = 0.0;
 

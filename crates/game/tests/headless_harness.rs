@@ -155,8 +155,7 @@ impl FlipAdapter {
         sim.sediment_vorticity_lift = 0.0;
         sim.sediment_settling_velocity = 0.0;
         sim.sediment_porosity_drag = 0.0;
-        // Use FLIP mode to preserve volume (PIC mode causes numerical diffusion)
-        sim.flip_ratio = 0.95;
+        // Use default FLIP blend to preserve volume (PIC causes numerical diffusion)
         // Enable no-slip boundary conditions for hydrostatic equilibrium
         sim.slip_factor = 0.0;
         // Open boundary at top (+Y) for free surface
@@ -1000,7 +999,9 @@ fn test_flip_divergence_free() {
 
     let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
     flip.vorticity_epsilon = 0.0; // Disable vorticity for pure pressure test
-    flip.water_rest_density = 1.0; // Test uses 1 particle per cell
+    flip.water_rest_particles = 1.0; // Test uses 1 particle per cell
+    flip.density_projection_strength = 1.0;
+    flip.volume_iterations = 40;
 
     // Create a block of particles in the middle (hydrostatic scenario)
     let mut positions = Vec::new();
@@ -1106,13 +1107,12 @@ fn test_flip_hydrostatic_pressure() {
 
     let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
     flip.vorticity_epsilon = 0.0;
-    flip.water_rest_density = 1.0; // Test uses 1 particle per cell
     flip.open_boundaries = 0; // Closed domain
-    // Use FLIP mode for better volume preservation
-    flip.flip_ratio = 0.95;
     flip.slip_factor = 0.0;
     // Disable density projection - it causes particle clumping in practice
-    flip.density_projection_enabled = false;
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     // Create 8-cell tall column (0.4m)
     let mut positions = Vec::new();
@@ -1265,8 +1265,10 @@ fn test_flip_static_half_fill() {
     let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
     flip.vorticity_epsilon = 0.0;
     flip.open_boundaries = 0; // Closed domain - let top be open via cell types
-    flip.water_rest_density = 1.0; // Test uses 1 particle per cell
-    flip.density_projection_enabled = false; // Disable - causes particle clumping
+    // Disable density projection - causes particle clumping
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     // Cell types: floor (y=0) and walls (x,z boundaries) are SOLID
     // TOP (y=HEIGHT-1) is NOT solid - open to air
@@ -1421,8 +1423,10 @@ fn test_flip_particle_conservation() {
     let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
     flip.vorticity_epsilon = 0.0;
     flip.open_boundaries = 0; // Closed domain
-    flip.water_rest_density = 1.0; // Test uses 1 particle per cell
-    flip.density_projection_enabled = false; // Disable - causes particle clumping
+    // Disable density projection - causes particle clumping
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     // Create particles
     let mut positions = Vec::new();
@@ -1698,11 +1702,12 @@ fn test_flip_long_settling() {
 
     let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
     flip.vorticity_epsilon = 0.0;
-    flip.water_rest_density = 1.0;
     flip.open_boundaries = 0;
-    flip.flip_ratio = 0.95; // FLIP mode - preserves energy better
     flip.slip_factor = 0.0;
-    flip.density_projection_enabled = false; // OFF - causes collapse when enabled
+    // Disable density projection - causes collapse when enabled
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     // Create 8-cell tall column
     let mut positions = Vec::new();
@@ -2000,11 +2005,12 @@ fn test_flip_sdf_box_volume() {
     // Create FLIP solver
     let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
     flip.vorticity_epsilon = 0.0;
-    flip.water_rest_density = 8.0; // 8 particles per cell for good resolution
     flip.open_boundaries = 0; // Closed domain - SDF handles boundaries
-    flip.flip_ratio = 0.95;
     flip.slip_factor = 0.0;
-    flip.density_projection_enabled = false;
+    // Disable density projection for SDF box stability
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     // Create a thick-walled box using TestBox
     // Box is centered at grid center, raised above floor
@@ -2298,11 +2304,12 @@ fn test_flip_sdf_box_filling() {
     // Create FLIP solver
     let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
     flip.vorticity_epsilon = 0.0;
-    flip.water_rest_density = 8.0;
     flip.open_boundaries = 0;
-    flip.flip_ratio = 0.95;
     flip.slip_factor = 0.0;
-    flip.density_projection_enabled = false;
+    // Disable density projection for SDF filling stability
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     // Create SDF box - same as volume test but taller
     let box_center = Vec3::new(
@@ -2560,10 +2567,11 @@ fn test_momentum_conservation_single_step() {
     let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
     flip.vorticity_epsilon = 0.0;
     flip.open_boundaries = 0; // Closed domain
-    flip.water_rest_density = 1.0;
-    flip.density_projection_enabled = false;
-    flip.flip_ratio = 0.95;
     flip.slip_factor = 0.0;
+    // Disable density projection for pure momentum accounting
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     // Create particles with some initial velocity
     let mut positions = Vec::new();
@@ -2679,10 +2687,11 @@ fn test_momentum_conservation_multi_step() {
     let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
     flip.vorticity_epsilon = 0.0;
     flip.open_boundaries = 0; // Closed domain
-    flip.water_rest_density = 1.0;
-    flip.density_projection_enabled = false;
-    flip.flip_ratio = 0.95;
     flip.slip_factor = 0.0;
+    // Disable density projection for pure momentum accounting
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     // Create particles
     let mut positions = Vec::new();
@@ -2800,10 +2809,11 @@ fn test_energy_conservation() {
     let mut flip = GpuFlip3D::new(&device, WIDTH, HEIGHT, DEPTH, CELL_SIZE, MAX_PARTICLES);
     flip.vorticity_epsilon = 0.0;
     flip.open_boundaries = 0; // Closed domain
-    flip.water_rest_density = 1.0;
-    flip.density_projection_enabled = false;
-    flip.flip_ratio = 0.95;
     flip.slip_factor = 0.0;
+    // Disable density projection to isolate energy behavior
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     // Create particles at rest (no initial velocity)
     let mut positions = Vec::new();

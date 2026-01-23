@@ -84,7 +84,9 @@ fn test_stationary_particle_stays_put() {
     let mut flip = GpuFlip3D::new(&device, W as u32, H as u32, D as u32, CELL, 100);
     flip.vorticity_epsilon = 0.0;
     flip.open_boundaries = 0;
-    flip.density_projection_enabled = false;
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     let mut positions = vec![Vec3::new(0.4, 0.4, 0.4)];
     let mut velocities = vec![Vec3::ZERO];
@@ -146,7 +148,9 @@ fn test_particle_advects_with_velocity() {
     let mut flip = GpuFlip3D::new(&device, W as u32, H as u32, D as u32, CELL, 100);
     flip.vorticity_epsilon = 0.0;
     flip.open_boundaries = 0;
-    flip.density_projection_enabled = false;
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     let mut positions = vec![Vec3::new(0.4, 0.4, 0.4)];
     let mut velocities = vec![Vec3::new(0.5, 0.0, 0.0)]; // Move in +X
@@ -239,7 +243,9 @@ fn test_gravity_accelerates_particle() {
     let mut flip = GpuFlip3D::new(&device, W as u32, H as u32, D as u32, CELL, 100);
     flip.vorticity_epsilon = 0.0;
     flip.open_boundaries = 0;
-    flip.density_projection_enabled = false;
+    flip.water_rest_particles = 0.0;
+    flip.density_projection_strength = 0.0;
+    flip.volume_iterations = 0;
 
     // Start high in domain so particle can fall
     let mut positions = vec![Vec3::new(0.4, 0.6, 0.4)];
@@ -332,7 +338,9 @@ fn test_particle_count_conservation() {
     let mut flip = GpuFlip3D::new(&device, W as u32, H as u32, D as u32, CELL, 1000);
     flip.vorticity_epsilon = 0.0;
     flip.open_boundaries = 0;
-    flip.density_projection_enabled = true;
+    flip.water_rest_particles = 8.0;
+    flip.density_projection_strength = 1.0;
+    flip.volume_iterations = 40;
 
     // Fill region [2,2,2] to [6,6,6] = 4x4x4 = 64 particles
     let mut positions = Vec::new();
@@ -428,7 +436,9 @@ fn test_no_nan_output() {
     let mut flip = GpuFlip3D::new(&device, W as u32, H as u32, D as u32, CELL, 1000);
     flip.vorticity_epsilon = 0.0;
     flip.open_boundaries = 0;
-    flip.density_projection_enabled = true;
+    flip.water_rest_particles = 8.0;
+    flip.density_projection_strength = 1.0;
+    flip.volume_iterations = 40;
 
     let mut positions = Vec::new();
     let mut velocities = Vec::new();
@@ -516,7 +526,9 @@ fn test_particles_settle() {
     let mut flip = GpuFlip3D::new(&device, W as u32, H as u32, D as u32, CELL, 3000);
     flip.vorticity_epsilon = 0.0;
     flip.open_boundaries = 0;
-    flip.density_projection_enabled = true;
+    flip.water_rest_particles = 8.0;
+    flip.density_projection_strength = 1.0;
+    flip.volume_iterations = 40;
 
     // Fill region [1,1,1] to [9,5,9] = 8x4x8 = 256 particles
     let mut positions = Vec::new();

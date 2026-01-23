@@ -131,7 +131,6 @@ fn run_simulation(
     flip.sediment_vorticity_lift = 0.0;
     flip.sediment_settling_velocity = 0.0;
     flip.sediment_porosity_drag = 0.0;
-    flip.flip_ratio = 0.95;
     flip.slip_factor = 0.0;
     flip.open_boundaries = 8; // +Y open for free surface
 

@@ -157,10 +157,12 @@ fn test_dam_break_scenario() {
     flip.sediment_vorticity_lift = 0.0;
     flip.sediment_settling_velocity = 0.0;
     flip.sediment_porosity_drag = 0.0;
-    flip.flip_ratio = 0.95; // FLIP mode for volume conservation
     flip.slip_factor = 0.0; // No-slip walls
     flip.open_boundaries = 8; // +Y open (free surface)
-    flip.density_projection_enabled = true;
+    // Density projection defaults (volume preservation)
+    flip.water_rest_particles = 8.0;
+    flip.density_projection_strength = 1.0;
+    flip.volume_iterations = 40;
 
     // Setup boundary conditions
     let mut cell_types = vec![0u32; W * H * D];
@@ -345,14 +347,13 @@ fn test_hydrostatic_column() {
 
     // Create FLIP simulation optimized for hydrostatic equilibrium
     let mut flip = GpuFlip3D::new(&device, W as u32, H as u32, D as u32, CELL, 2000);
+    flip.configure_for_hydrostatic_equilibrium(); // PIC + density projection tuned for settling
     flip.vorticity_epsilon = 0.0;
     flip.sediment_vorticity_lift = 0.0;
     flip.sediment_settling_velocity = 0.0;
     flip.sediment_porosity_drag = 0.0;
-    flip.flip_ratio = 0.0; // PIC mode for maximum damping in equilibrium test
-    flip.slip_factor = 0.0; // No-slip walls
-    flip.open_boundaries = 8; // +Y open (free surface)
-    flip.density_projection_enabled = true;
+    // Match prior density projection defaults
+    flip.volume_iterations = 40;
 
     // Setup boundary conditions
     let mut cell_types = vec![0u32; W * H * D];
@@ -571,10 +572,12 @@ fn test_sediment_settling() {
     flip.sediment_vorticity_lift = 0.0;
     flip.sediment_settling_velocity = 0.0;
     flip.sediment_porosity_drag = 0.0;
-    flip.flip_ratio = 0.95; // FLIP mode
     flip.slip_factor = 0.0;
     flip.open_boundaries = 8; // +Y open
-    flip.density_projection_enabled = true;
+    // Density projection defaults (volume preservation)
+    flip.water_rest_particles = 8.0;
+    flip.density_projection_strength = 1.0;
+    flip.volume_iterations = 40;
 
     // Setup boundary conditions
     let mut cell_types = vec![0u32; W * H * D];
