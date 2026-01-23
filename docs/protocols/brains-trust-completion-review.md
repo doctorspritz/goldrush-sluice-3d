@@ -56,6 +56,7 @@ Each model pass follows this structure:
 
 ### 1. Investigate (Read Phase)
 - Read the target bead (title, description, acceptance criteria)
+- Sync local state (git + bd) and record a state stamp
 - Review the plan file (`plans/<id>.md`) if it exists
 - Inspect the code changes (diff, PR, or branch)
 - Review test results or run relevant tests
@@ -78,6 +79,12 @@ Record assessment as one of:
 - **REVISE** - Issues found; fixes required before merge
 - **BLOCK** - Critical flaw or high-risk regression
 - **ABSTAIN** - Unable to review (record reason)
+
+## State Synchronization & Verification
+
+All reviewers must follow the shared standard for syncing state and backing
+claims with reproducible commands. See:
+- [State Synchronization and Verification Standards](./state-synchronization-and-verification.md)
 
 ## Consensus Rules
 

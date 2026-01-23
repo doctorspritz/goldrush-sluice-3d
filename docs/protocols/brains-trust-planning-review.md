@@ -46,6 +46,7 @@ Each model pass follows this structure:
 
 ### 1. Investigate (Read Phase)
 - Read the bead being reviewed (title, description, existing deps)
+- Sync local state (git + bd) and record a state stamp
 - Check related code/files mentioned in the bead
 - Review any parent epic or blocking dependencies
 - Understand the broader context
@@ -70,6 +71,12 @@ Record assessment as one of:
 - **APPROVE** - Ready for implementation
 - **REVISE** - Needs changes before proceeding
 - **BLOCK** - Cannot proceed until prerequisites complete
+
+## State Synchronization & Verification
+
+All reviewers must follow the shared standard for syncing state and backing
+claims with reproducible commands. See:
+- [State Synchronization and Verification Standards](./state-synchronization-and-verification.md)
 
 ## Consensus Rules
 
