@@ -21,6 +21,7 @@ use super::particle_sort::GpuParticleSort;
 use super::pressure_3d::GpuPressure3D;
 use super::readback::{ReadbackMode, ReadbackSlot};
 
+use std::hash::Hasher;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
@@ -28,6 +29,22 @@ use wgpu::util::DeviceExt;
 pub use super::params::GravelObstacle;
 
 const GRAVEL_OBSTACLE_MAX: u32 = 2048;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CellTypesStamp {
+    hash: u64,
+    cell_size_bits: u32,
+    open_boundaries: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BcParamsStamp {
+    width: u32,
+    height: u32,
+    depth: u32,
+    open_boundaries: u32,
+    slip_factor_bits: u32,
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PhysicsDiagnostics {
@@ -219,6 +236,12 @@ pub struct GpuFlip3D {
     gravel_obstacle_count: u32,
     gravel_porosity_pipeline: wgpu::ComputePipeline,
     gravel_porosity_bind_group: wgpu::BindGroup,
+
+    // Upload caching
+    last_cell_types_stamp: Option<CellTypesStamp>,
+    last_bc_params_stamp: Option<BcParamsStamp>,
+    gravel_obstacles_hash: Option<u64>,
+    gravel_obstacles_dirty: bool,
 
     // Particle sorting for cache coherence
     sorter: GpuParticleSort,
@@ -2299,6 +2322,10 @@ impl GpuFlip3D {
             gravel_obstacle_params_buffer,
             gravel_obstacle_buffer,
             gravel_obstacle_count: 0,
+            last_cell_types_stamp: None,
+            last_bc_params_stamp: None,
+            gravel_obstacles_hash: None,
+            gravel_obstacles_dirty: false,
             sdf_collision_pipeline,
             sdf_collision_bind_group,
             sdf_collision_params_buffer,
@@ -2358,10 +2385,34 @@ impl GpuFlip3D {
         self.sdf_uploaded = true;
     }
 
+    fn hash_pod_slice<T: bytemuck::Pod>(items: &[T]) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write(bytemuck::cast_slice(items));
+        hasher.finish()
+    }
+
+    fn cell_types_stamp(&self, cell_types: &[u32]) -> CellTypesStamp {
+        CellTypesStamp {
+            hash: Self::hash_pod_slice(cell_types),
+            cell_size_bits: self.cell_size.to_bits(),
+            open_boundaries: self.open_boundaries,
+        }
+    }
+
     pub fn upload_gravel_obstacles(&mut self, queue: &wgpu::Queue, obstacles: &[GravelObstacle]) {
         let count = obstacles.len().min(GRAVEL_OBSTACLE_MAX as usize);
         if count == 0 {
+            if self.gravel_obstacle_count != 0 {
+                self.gravel_obstacles_dirty = true;
+            }
             self.gravel_obstacle_count = 0;
+            self.gravel_obstacles_hash = None;
+            return;
+        }
+        let obstacles_hash = Self::hash_pod_slice(&obstacles[..count]);
+        if self.gravel_obstacle_count == count as u32
+            && self.gravel_obstacles_hash == Some(obstacles_hash)
+        {
             return;
         }
         queue.write_buffer(
@@ -2370,10 +2421,21 @@ impl GpuFlip3D {
             bytemuck::cast_slice(&obstacles[..count]),
         );
         self.gravel_obstacle_count = count as u32;
+        self.gravel_obstacles_hash = Some(obstacles_hash);
+        self.gravel_obstacles_dirty = true;
     }
 
-    fn apply_gravel_obstacles(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    fn apply_gravel_obstacles(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        cell_types_uploaded: bool,
+    ) {
         if self.gravel_obstacle_count == 0 {
+            self.gravel_obstacles_dirty = false;
+            return;
+        }
+        if !cell_types_uploaded && !self.gravel_obstacles_dirty {
             return;
         }
 
@@ -2406,6 +2468,7 @@ impl GpuFlip3D {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
         queue.submit(std::iter::once(encoder.finish()));
+        self.gravel_obstacles_dirty = false;
     }
 
     /// Run one simulation step (sync readback).
@@ -2646,10 +2709,19 @@ impl GpuFlip3D {
         &self.p2g.grid_w_buffer
     }
 
-    fn upload_bc_and_cell_types(&self, queue: &wgpu::Queue, cell_types: &[u32]) {
+    fn upload_bc_and_cell_types(&mut self, queue: &wgpu::Queue, cell_types: &[u32]) -> bool {
         // Upload cell types FIRST (needed for BC enforcement)
-        self.pressure
-            .upload_cell_types(queue, cell_types, self.cell_size, self.open_boundaries);
+        let stamp = self.cell_types_stamp(cell_types);
+        let force_cell_types_upload = self.gravel_obstacles_dirty;
+        let cell_types_changed = self
+            .last_cell_types_stamp
+            .map_or(true, |prev| prev != stamp);
+        let cell_types_uploaded = cell_types_changed || force_cell_types_upload;
+        if cell_types_uploaded {
+            self.pressure
+                .upload_cell_types(queue, cell_types, self.cell_size, self.open_boundaries);
+            self.last_cell_types_stamp = Some(stamp);
+        }
 
         // Upload BC params (slip factor is configurable on the GpuFlip3D instance).
         let slip_factor = self.slip_factor;
@@ -2660,7 +2732,22 @@ impl GpuFlip3D {
             self.open_boundaries,
             slip_factor,
         );
-        queue.write_buffer(&self.bc_params_buffer, 0, bytemuck::bytes_of(&bc_params));
+        let bc_stamp = BcParamsStamp {
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+            open_boundaries: self.open_boundaries,
+            slip_factor_bits: slip_factor.to_bits(),
+        };
+        if self
+            .last_bc_params_stamp
+            .map_or(true, |prev| prev != bc_stamp)
+        {
+            queue.write_buffer(&self.bc_params_buffer, 0, bytemuck::bytes_of(&bc_params));
+            self.last_bc_params_stamp = Some(bc_stamp);
+        }
+
+        cell_types_uploaded
     }
 
     fn schedule_readback(
@@ -2712,8 +2799,8 @@ impl GpuFlip3D {
             return;
         }
 
-        self.upload_bc_and_cell_types(queue, cell_types);
-        self.apply_gravel_obstacles(device, queue);
+        let cell_types_uploaded = self.upload_bc_and_cell_types(queue, cell_types);
+        self.apply_gravel_obstacles(device, queue, cell_types_uploaded);
         self.p2g.prepare(queue, particle_count, self.cell_size);
 
         let _ = self.run_gpu_passes(
@@ -3670,8 +3757,8 @@ impl GpuFlip3D {
             return false;
         }
 
-        self.upload_bc_and_cell_types(queue, cell_types);
-        self.apply_gravel_obstacles(device, queue);
+        let cell_types_uploaded = self.upload_bc_and_cell_types(queue, cell_types);
+        self.apply_gravel_obstacles(device, queue, cell_types_uploaded);
 
         // 1. Upload particles and run P2G
         let count = self.p2g.upload_particles(
