@@ -268,12 +268,12 @@ impl CliOptions {
                     let Some(value) = args.next() else {
                         return Err("Missing value after --quality".to_string());
                     };
-                    options.quality = QualityLevel::from_str(&value).ok_or_else(|| {
+                    options.quality = Some(QualityLevel::from_str(&value).ok_or_else(|| {
                         format!(
                             "Unknown --quality value '{}'. Use low, medium, or high.",
                             value
                         )
-                    })?;
+                    })?);
                 }
                 "--pressure-iters" => {
                     let Some(value) = args.next() else {
@@ -299,12 +299,12 @@ impl CliOptions {
                 }
                 _ if arg.starts_with("--quality=") => {
                     let value = arg.trim_start_matches("--quality=");
-                    options.quality = QualityLevel::from_str(value).ok_or_else(|| {
+                    options.quality = Some(QualityLevel::from_str(value).ok_or_else(|| {
                         format!(
                             "Unknown --quality value '{}'. Use low, medium, or high.",
                             value
                         )
-                    })?;
+                    })?);
                 }
                 _ if arg.starts_with("--pressure-iters=") => {
                     let value = arg.trim_start_matches("--pressure-iters=");
