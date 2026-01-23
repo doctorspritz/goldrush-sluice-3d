@@ -23,7 +23,7 @@ mod types;
 pub use constants::SIM_CELL_SIZE;
 pub use types::{MultiGridSim, PieceKind, PieceSimulation};
 
-use constants::{DEM_CLUMP_RADIUS, DEM_GOLD_DENSITY, DEM_SAND_DENSITY};
+use constants::{DEM_CLUMP_RADIUS, DEM_GOLD_DENSITY, DEM_SAND_DENSITY, SIM_PRESSURE_ITERS};
 use glam::Vec3;
 use sim3d::clump::{ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D};
 use wgpu::util::DeviceExt;
@@ -75,6 +75,7 @@ impl MultiGridSim {
             pieces: Vec::new(),
             transfers: Vec::new(),
             frame: 0,
+            pressure_iters: SIM_PRESSURE_ITERS,
             dem_sim,
             gpu_dem: None,
             gold_template_idx,
@@ -85,6 +86,14 @@ impl MultiGridSim {
             test_sdf_offset: Vec3::ZERO,
             gpu_test_sdf_buffer: None,
             test_mesh: None,
+        }
+    }
+
+    /// Update pressure iterations for existing and future pieces.
+    pub fn set_pressure_iters(&mut self, iters: usize) {
+        self.pressure_iters = iters;
+        for piece in &mut self.pieces {
+            piece.sim.pressure_iterations = iters;
         }
     }
 

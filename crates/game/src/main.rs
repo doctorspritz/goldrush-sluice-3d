@@ -37,7 +37,7 @@ const MAX_PARTICLES: usize = 300_000;
 
 // Simulation
 const GRAVITY: f32 = constants::GRAVITY;
-const PRESSURE_ITERS: u32 = 120;
+const DEFAULT_PRESSURE_ITERS: u32 = 80;
 const SUBSTEPS: u32 = 4; // CFL safety: max_vel < cell_size / dt_sub = 0.01 / 0.004 = 2.5 m/s
 const TRACER_INTERVAL_FRAMES: u32 = 300; // 5s at 60 FPS
 const TRACER_COUNT: u32 = 3;
@@ -188,12 +188,40 @@ impl TestKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QualityLevel {
+    Low,
+    Medium,
+    High,
+}
+
+impl QualityLevel {
+    fn from_str(input: &str) -> Option<Self> {
+        match input.trim().to_lowercase().as_str() {
+            "low" | "fast" => Some(Self::Low),
+            "medium" | "med" | "default" => Some(Self::Medium),
+            "high" | "hq" => Some(Self::High),
+            _ => None,
+        }
+    }
+
+    fn pressure_iters(self) -> u32 {
+        match self {
+            Self::Low => 40,
+            Self::Medium => DEFAULT_PRESSURE_ITERS,
+            Self::High => 120,
+        }
+    }
+}
+
 struct CliOptions {
     test: Option<TestKind>,
     test_frames: u32,
     auto_exit: bool,
     list_tests: bool,
     help: bool,
+    quality: Option<QualityLevel>,
+    pressure_iters: Option<u32>,
 }
 
 impl CliOptions {
@@ -204,6 +232,8 @@ impl CliOptions {
             auto_exit: false,
             list_tests: false,
             help: false,
+            quality: None,
+            pressure_iters: None,
         };
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -234,6 +264,26 @@ impl CliOptions {
                 "--help" | "-h" => {
                     options.help = true;
                 }
+                "--quality" => {
+                    let Some(value) = args.next() else {
+                        return Err("Missing value after --quality".to_string());
+                    };
+                    options.quality = QualityLevel::from_str(&value).ok_or_else(|| {
+                        format!(
+                            "Unknown --quality value '{}'. Use low, medium, or high.",
+                            value
+                        )
+                    })?;
+                }
+                "--pressure-iters" => {
+                    let Some(value) = args.next() else {
+                        return Err("Missing value after --pressure-iters".to_string());
+                    };
+                    let iters = value
+                        .parse::<u32>()
+                        .map_err(|_| format!("Invalid --pressure-iters value '{}'", value))?;
+                    options.pressure_iters = Some(iters);
+                }
                 _ if arg.starts_with("--test=") => {
                     let value = arg.trim_start_matches("--test=");
                     options.test = TestKind::from_str(value);
@@ -246,6 +296,22 @@ impl CliOptions {
                     options.test_frames = value
                         .parse::<u32>()
                         .map_err(|_| format!("Invalid --test-frames value '{}'", value))?;
+                }
+                _ if arg.starts_with("--quality=") => {
+                    let value = arg.trim_start_matches("--quality=");
+                    options.quality = QualityLevel::from_str(value).ok_or_else(|| {
+                        format!(
+                            "Unknown --quality value '{}'. Use low, medium, or high.",
+                            value
+                        )
+                    })?;
+                }
+                _ if arg.starts_with("--pressure-iters=") => {
+                    let value = arg.trim_start_matches("--pressure-iters=");
+                    let iters = value
+                        .parse::<u32>()
+                        .map_err(|_| format!("Invalid --pressure-iters value '{}'", value))?;
+                    options.pressure_iters = Some(iters);
                 }
                 unknown => {
                     return Err(format!("Unknown argument '{}'", unknown));
@@ -313,6 +379,7 @@ struct AppConfig {
     use_sdf: bool,
     test_state: Option<TestState>,
     window_title: String,
+    pressure_iters: u32,
 }
 
 impl Default for AppConfig {
@@ -324,6 +391,7 @@ impl Default for AppConfig {
             use_sdf: true,
             test_state: None,
             window_title: "Goldrush Sluice".to_string(),
+            pressure_iters: DEFAULT_PRESSURE_ITERS,
         }
     }
 }
@@ -654,6 +722,7 @@ struct App {
     test_state: Option<TestState>,
     window_title: String,
     exit_requested: bool,
+    pressure_iters: u32,
     sdf_disabled: Option<Vec<f32>>,
 }
 
@@ -720,7 +789,7 @@ impl App {
 
         // Create simulation
         let mut sim = FlipSimulation3D::new(GRID_WIDTH, GRID_HEIGHT, GRID_DEPTH, CELL_SIZE);
-        sim.pressure_iterations = PRESSURE_ITERS as usize;
+        sim.pressure_iterations = config.pressure_iters as usize;
 
         // Mark solid cells from sluice geometry
         let mut solid_count = 0;
@@ -852,6 +921,7 @@ impl App {
             test_state: config.test_state,
             window_title: config.window_title,
             exit_requested: false,
+            pressure_iters: config.pressure_iters,
             sdf_disabled,
         }
     }
@@ -1416,7 +1486,7 @@ impl App {
                         dt_sub,
                         GRAVITY,
                         flow_accel,
-                        PRESSURE_ITERS,
+                        self.pressure_iters,
                     );
 
                     // GPU DEM preparation
@@ -1483,7 +1553,7 @@ impl App {
                             dt_sub,
                             GRAVITY,
                             flow_accel,
-                            PRESSURE_ITERS,
+                            self.pressure_iters,
                         );
                     }
                 } else {
@@ -1498,7 +1568,7 @@ impl App {
                             dt_sub,
                             GRAVITY,
                             flow_accel,
-                            PRESSURE_ITERS,
+                            self.pressure_iters,
                         );
                     }
                 }
@@ -1540,7 +1610,7 @@ impl App {
                         dt_sub,
                         GRAVITY,
                         flow_accel,
-                        PRESSURE_ITERS,
+                        self.pressure_iters,
                     );
                 }
                 self.apply_gpu_results(self.buffers.positions.len());
@@ -2467,7 +2537,8 @@ fn print_usage() {
     println!("Goldrush Sluice Component Tests");
     println!("");
     println!("Usage:");
-    println!("  cargo run --release -- [--test <name>] [--test-frames N] [--test-exit]");
+    println!("  cargo run --release -- [--quality <low|medium|high>] [--pressure-iters N]");
+    println!("                           [--test <name>] [--test-frames N] [--test-exit]");
     println!("  cargo run --release -- --list-tests");
     println!("");
 }
@@ -2531,6 +2602,14 @@ fn app_config_for_test(kind: TestKind, frames: u32, auto_exit: bool) -> AppConfi
         TestKind::World | TestKind::Erosion => {}
     }
     config
+}
+
+fn apply_pressure_settings(config: &mut AppConfig, cli: &CliOptions) {
+    if let Some(iters) = cli.pressure_iters {
+        config.pressure_iters = iters;
+    } else if let Some(quality) = cli.quality {
+        config.pressure_iters = quality.pressure_iters();
+    }
 }
 
 fn run_world_map_test() -> bool {
@@ -2677,7 +2756,8 @@ fn main() {
             return;
         }
 
-        let config = app_config_for_test(kind, cli.test_frames, cli.auto_exit);
+        let mut config = app_config_for_test(kind, cli.test_frames, cli.auto_exit);
+        apply_pressure_settings(&mut config, &cli);
         let event_loop = EventLoop::new().expect("Failed to create event loop");
         event_loop.set_control_flow(ControlFlow::Poll);
         let mut app = App::new_with_config(config);
@@ -2687,9 +2767,11 @@ fn main() {
         return;
     }
 
+    let mut config = AppConfig::default();
+    apply_pressure_settings(&mut config, &cli);
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = App::new();
+    let mut app = App::new_with_config(config);
     event_loop
         .run_app(&mut app)
         .expect("Failed to run application");

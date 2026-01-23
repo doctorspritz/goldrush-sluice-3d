@@ -9,7 +9,7 @@ use glam::{Mat3, Vec3};
 use sim3d::clump::SdfParams;
 
 use super::constants::{
-    rand_float, DEM_DRAG_COEFF, DEM_WATER_DENSITY, SIM_CELL_SIZE, SIM_GRAVITY, SIM_PRESSURE_ITERS,
+    rand_float, DEM_DRAG_COEFF, DEM_WATER_DENSITY, SIM_CELL_SIZE, SIM_GRAVITY,
 };
 use super::MultiGridSim;
 
@@ -155,7 +155,7 @@ impl MultiGridSim {
                         dt,
                         SIM_GRAVITY,
                         0.0,
-                        SIM_PRESSURE_ITERS as u32,
+                        self.pressure_iters as u32,
                     );
                 }
                 _ => {

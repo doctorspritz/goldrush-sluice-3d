@@ -3,8 +3,8 @@
 /// Cell size for the simulation grid (2.5cm cells).
 pub const SIM_CELL_SIZE: f32 = 0.025;
 
-/// Number of pressure solver iterations for density projection convergence.
-pub const SIM_PRESSURE_ITERS: usize = 120;
+/// Default pressure solver iterations for density projection convergence.
+pub const SIM_PRESSURE_ITERS: usize = 80;
 
 /// Gravitational acceleration (m/s²).
 pub const SIM_GRAVITY: f32 = -9.8;

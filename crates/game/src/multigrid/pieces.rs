@@ -13,7 +13,7 @@ use glam::Vec3;
 use sim3d::FlipSimulation3D;
 use wgpu::util::DeviceExt;
 
-use super::constants::{SIM_CELL_SIZE, SIM_PRESSURE_ITERS};
+use super::constants::SIM_CELL_SIZE;
 use super::types::{MultiGridSim, PieceKind, PieceSimulation};
 
 impl MultiGridSim {
@@ -77,7 +77,7 @@ impl MultiGridSim {
         );
 
         let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
-        sim.pressure_iterations = SIM_PRESSURE_ITERS;
+        sim.pressure_iterations = self.pressure_iters;
 
         // Mark gutter solid cells (in local grid space)
         // Use max_width for centering so both inlet and outlet widths fit
@@ -195,7 +195,7 @@ impl MultiGridSim {
         );
 
         let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
-        sim.pressure_iterations = SIM_PRESSURE_ITERS;
+        sim.pressure_iterations = self.pressure_iters;
 
         // Mark sluice solid cells
         let sluice_local = SluicePiece {
@@ -313,7 +313,7 @@ impl MultiGridSim {
         );
 
         let mut sim = FlipSimulation3D::new(width, height, depth, cell_size);
-        sim.pressure_iterations = SIM_PRESSURE_ITERS;
+        sim.pressure_iterations = self.pressure_iters;
 
         // Mark shaker deck solid cells (walls only - grid is porous)
         let deck_local = ShakerDeckPiece {
@@ -428,7 +428,7 @@ impl MultiGridSim {
     ) -> usize {
         let cell_size = SIM_CELL_SIZE;
         let mut sim = FlipSimulation3D::new(grid_width, grid_height, grid_depth, cell_size);
-        sim.pressure_iterations = SIM_PRESSURE_ITERS;
+        sim.pressure_iterations = self.pressure_iters;
 
         let mut box_builder = BoxGeometryBuilder::new(BoxConfig {
             grid_width,

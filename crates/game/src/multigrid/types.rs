@@ -69,6 +69,7 @@ pub struct MultiGridSim {
     pub pieces: Vec<PieceSimulation>,
     pub(crate) transfers: Vec<PieceTransfer>,
     pub(crate) frame: u32,
+    pub pressure_iters: usize,
 
     // DEM simulation (global, not per-piece)
     pub dem_sim: ClusterSimulation3D,

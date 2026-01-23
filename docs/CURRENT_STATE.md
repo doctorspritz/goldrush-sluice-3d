@@ -15,7 +15,7 @@
 - **Status:** WORKING
 - **Files:** `crates/game/src/gpu/flip_3d.rs`, `crates/sim3d/`
 - **Metrics:** 22-24 FPS at ~11k particles, scales to 300k max
-- **Notes:** MGPCG pressure solver with 120 iterations, 2 substeps
+- **Notes:** MGPCG pressure solver with 80 iterations (default), 2 substeps
 
 ### 2. Water Physics
 - **Status:** WORKING
@@ -111,7 +111,7 @@
 | Parameter | Value | Status |
 |-----------|-------|--------|
 | CELL_SIZE | 0.01 | LOCKED |
-| PRESSURE_ITERS | 120 | LOCKED |
+| PRESSURE_ITERS | 80 | TUNABLE (quality) |
 | SUBSTEPS | 2 | LOCKED |
 | GRAVITY | -9.8 | LOCKED |
 | WATER_EMIT_RATE | 200 | TUNABLE |
