@@ -31,6 +31,8 @@ pub const HYDROSTATIC_PRESSURE_TOLERANCE: f32 = 0.20;
 /// Minimum floor height for particles (solid boundary)
 /// Particles should never penetrate below this.
 pub const MIN_FLOOR_Y: f32 = 0.025; // Half cell above floor
+// Keep in sync with BED_HEIGHT_CELLS in hydrostatic_visual.rs.
+pub const HYDROSTATIC_BED_HEIGHT_CELLS: u32 = 1;
 
 pub const CELL_FLUID: u32 = 1;
 pub const CELL_SOLID: u32 = 2;
@@ -473,12 +475,28 @@ pub fn run_scenario(backend: Backend, scenario_type: ScenarioType, steps: usize,
         Backend::Dfsph => Box::new(DfsphAdapter::new(&device, &config, dt)),
     };
 
+    let hydrostatic = matches!(
+        scenario_type,
+        ScenarioType::HydrostaticEquilibrium | ScenarioType::HydrostaticEquilibriumLarge
+    );
+    let bed_height_cells = if hydrostatic {
+        HYDROSTATIC_BED_HEIGHT_CELLS
+    } else {
+        1
+    };
+
     let mut cell_types = vec![CELL_FLUID; (config.width * config.height * config.depth) as usize];
-    // Solid boundary box
+    // Solid boundary box + explicit bed thickness for hydrostatic scenarios
     for z in 0..config.depth {
         for y in 0..config.height {
             for x in 0..config.width {
-                if x == 0 || x == config.width - 1 || y == 0 || y == config.height - 1 || z == 0 || z == config.depth - 1 {
+                let at_x_edge = x == 0 || x == config.width - 1;
+                let at_z_edge = z == 0 || z == config.depth - 1;
+                let at_floor = y < bed_height_cells;
+                let at_ceiling = y == config.height - 1;
+                let closed_ceiling = !hydrostatic;
+
+                if at_x_edge || at_z_edge || at_floor || (closed_ceiling && at_ceiling) {
                     let idx = (z * config.width * config.height + y * config.width + x) as usize;
                     cell_types[idx] = CELL_SOLID;
                 }
@@ -519,7 +537,7 @@ pub fn run_scenario(backend: Backend, scenario_type: ScenarioType, steps: usize,
             // Block of particles resting on floor with 8 particles per cell (Zhu & Bridson recommendation)
             // Matching flip_component_tests setup: 8 cells wide/deep, 4 cells high
             let start_x = 1;
-            let start_y = 1; // On floor (y=1 is first fluid cell)
+            let start_y = bed_height_cells as usize; // First fluid cell above bed
             let start_z = 1;
             let size_xz = 8;
             let size_y = 4; // 4 cells high (less potential energy = less oscillation during settling)
@@ -552,7 +570,7 @@ pub fn run_scenario(backend: Backend, scenario_type: ScenarioType, steps: usize,
         ScenarioType::HydrostaticEquilibriumLarge => {
             // Larger block of particles (16x16x16)
             let start_x = 1;
-            let start_y = 1;
+            let start_y = bed_height_cells as usize;
             let start_z = 1;
             let size = 16;
              for x in 0..size {
