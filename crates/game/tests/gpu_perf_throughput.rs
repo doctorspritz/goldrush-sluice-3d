@@ -232,3 +232,174 @@ fn gpu_flip_particle_step_throughput_at_scale() {
          particles={particle_count} ms_per_step={ms_per_step:.4}. Fix the sim, not the number."
     );
 }
+
+/// PERF (HEAVY, explicit-run): GPU FLIP particle-step throughput at the project's 1M-particle
+/// target on a large 160x96x96 grid.
+///
+/// Marked `#[ignore]` so it does NOT slow normal `cargo test` / CI: allocating ~1M particles
+/// on a >1M-cell grid plus warmup + 100 timed steps takes meaningful GPU time and memory.
+/// Run it explicitly:
+///   cargo test -p game --release --test gpu_perf_throughput \
+///       gpu_flip_throughput_at_1m_particles -- --ignored --nocapture
+///
+/// MEMORY NOTE: if 1M particles do not fit in this machine's GPU memory, REDUCE
+/// `max_particles`/`target_particles` to the largest count that allocates, update the
+/// documented number here, and report the real achieved count. As written this targets
+/// 1,000,000 live particles; the grid interior (158*94*94 ~= 1.4M cells) is sized so a ~80%
+/// deterministic fill at 1 particle/cell reaches the 1M cap without overflowing it.
+///
+/// Gates are identical to the sibling test (all particles finite, diagnostics finite) plus a
+/// conservative throughput floor. Fix the sim, not the number.
+#[test]
+#[ignore = "heavy 1M-particle perf test; run explicitly with --ignored"]
+fn gpu_flip_throughput_at_1m_particles() {
+    let (device, queue) = match init_device_queue() {
+        Some(handles) => handles,
+        None => {
+            eprintln!("No compatible GPU adapter found; skipping 1M GPU perf throughput test.");
+            return;
+        }
+    };
+
+    let width = 160u32;
+    let height = 96u32;
+    let depth = 96u32;
+    let cell_size = 0.05f32;
+    let target_particles = 1_000_000usize;
+    let max_particles = 1_050_000usize; // small headroom above target
+
+    let mut sim = GpuFlip3D::new(&device, width, height, depth, cell_size, max_particles);
+    sim.vorticity_epsilon = 0.0;
+
+    let cell_types = build_cell_types(width, height, depth);
+
+    // Fill interior cells with 1 particle each via a deterministic ~80% mask, capped at the
+    // 1M target. 160*80*80 interior gives more than enough cells to reach 1M at 1/cell.
+    let mut positions: Vec<Vec3> = Vec::new();
+    let mut velocities: Vec<Vec3> = Vec::new();
+    let mut densities: Vec<f32> = Vec::new();
+    let mut c_matrices: Vec<Mat3> = Vec::new();
+
+    'fill: for z in 1..(depth - 1) {
+        for y in 1..(height - 1) {
+            for x in 1..(width - 1) {
+                // ~80% deterministic fill.
+                if (x.wrapping_mul(7) ^ y.wrapping_mul(13) ^ z.wrapping_mul(17)) % 5 < 4 {
+                    let jitter = 0.4;
+                    positions.push(Vec3::new(
+                        (x as f32 + jitter) * cell_size,
+                        (y as f32 + jitter) * cell_size,
+                        (z as f32 + jitter) * cell_size,
+                    ));
+                    velocities.push(Vec3::ZERO);
+                    densities.push(1.0);
+                    c_matrices.push(Mat3::ZERO);
+                    if positions.len() >= target_particles {
+                        break 'fill;
+                    }
+                }
+            }
+        }
+    }
+
+    let particle_count = positions.len();
+    println!("=== GPU FLIP 1M perf: seeded {particle_count} particles on {width}x{height}x{depth} ===");
+    assert!(
+        particle_count >= 900_000,
+        "1M perf test should reach ~1M particles; got {particle_count} (grid too small or fill too sparse)"
+    );
+
+    let dt = 1.0 / 60.0;
+    let gravity = -9.81f32;
+    let flow_accel = 0.0f32;
+    let pressure_iterations = 40u32;
+
+    // Warmup.
+    for _ in 0..15 {
+        sim.step_no_readback(
+            &device,
+            &queue,
+            &mut positions,
+            &mut velocities,
+            &mut c_matrices,
+            &densities,
+            &cell_types,
+            None,
+            None,
+            dt,
+            gravity,
+            flow_accel,
+            pressure_iterations,
+        );
+    }
+    device.poll(wgpu::Maintain::Wait);
+
+    // Timed steady-state stepping (GPU-only, no readback stall).
+    let n = 100usize;
+    let t0 = Instant::now();
+    for _ in 0..n {
+        sim.step_no_readback(
+            &device,
+            &queue,
+            &mut positions,
+            &mut velocities,
+            &mut c_matrices,
+            &densities,
+            &cell_types,
+            None,
+            None,
+            dt,
+            gravity,
+            flow_accel,
+            pressure_iterations,
+        );
+    }
+    device.poll(wgpu::Maintain::Wait);
+    let elapsed = t0.elapsed();
+
+    let secs = elapsed.as_secs_f64();
+    let ms_per_step = secs * 1000.0 / n as f64;
+    let fps = 1000.0 / ms_per_step;
+    let particle_steps_per_sec = particle_count as f64 * n as f64 / secs;
+
+    println!("=== GPU FLIP 1M perf ({width}x{height}x{depth}, {particle_count} particles) ===");
+    println!("steps={n} elapsed={secs:.3}s ms_per_step={ms_per_step:.4} fps={fps:.2}");
+    println!("particle_steps_per_sec={particle_steps_per_sec:.3e}");
+
+    // Validity gate: read back once; ensure the sim did not blow up.
+    sim.step(
+        &device,
+        &queue,
+        &mut positions,
+        &mut velocities,
+        &mut c_matrices,
+        &densities,
+        &cell_types,
+        None,
+        None,
+        dt,
+        gravity,
+        flow_accel,
+        pressure_iterations,
+    );
+    let finite = positions.iter().filter(|p| p.is_finite()).count();
+    println!("finite particles after run: {finite}/{particle_count}");
+    assert!(
+        positions.iter().all(|p| p.is_finite()),
+        "non-finite particle positions after 1M run: {finite}/{particle_count} finite"
+    );
+    let diag = sim.read_physics_diagnostics(&device, &queue);
+    assert!(
+        diag.max_divergence.is_finite() && diag.avg_pressure.is_finite(),
+        "physics diagnostics non-finite: max_div={} avg_p={}",
+        diag.max_divergence,
+        diag.avg_pressure
+    );
+
+    // Conservative throughput floor (heavy-scale starting baseline; re-baseline on target GPU).
+    assert!(
+        particle_steps_per_sec > 1.0e6,
+        "GPU FLIP 1M throughput below floor: {particle_steps_per_sec:.3e} particle-steps/s (<1.0e6). \
+         particles={particle_count} ms_per_step={ms_per_step:.4}. Fix the sim, not the number."
+    );
+}

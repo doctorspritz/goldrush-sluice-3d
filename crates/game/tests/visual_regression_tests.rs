@@ -496,9 +496,14 @@ fn test_render_settled_box() {
 
     let (gpu_flip, particle_count) = setup_flip_simulation(&device, &queue, particles);
 
-    // Set up camera to see the settled box
-    let eye = Vec3::new(2.0, 2.0, 5.0);
-    let center = Vec3::new(3.2, 1.5, 3.2);
+    // Set up camera to see the settled box.
+    // The particle cloud spans cells x 4..12, y 1..5, z 4..12 at cell_size 0.1, so its
+    // center of mass is roughly (0.8, 0.3, 0.8). The previous camera looked at
+    // (3.2, 1.5, 3.2) — far from the cloud — so the box was never in frame (the test
+    // passed spuriously against an empty reference). Point the target at the cloud center
+    // and pull the eye back/up so the whole box is visible.
+    let center = Vec3::new(0.8, 0.3, 0.8);
+    let eye = Vec3::new(0.8, 1.2, 2.6);
     let up = Vec3::Y;
     let view = create_camera_view(eye, center, up);
     let proj = create_camera_proj(
