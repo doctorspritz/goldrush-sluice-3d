@@ -353,7 +353,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let c_paydirt = vec3<f32>(0.70, 0.55, 0.20);    // Gold-brown (bright)
     let c_gravel = vec3<f32>(0.50, 0.50, 0.55);     // Blue-grey stone
     let c_overburden = vec3<f32>(0.40, 0.28, 0.15); // Rich brown dirt
-    let c_sediment = vec3<f32>(0.90, 0.80, 0.55);   // Bright tan/sand
+    let c_sediment = vec3<f32>(0.72, 0.62, 0.40);   // Natural sand (toned down from bright tan to cut the washed-out look)
 
     // SURFACE MATERIAL tells us what was deposited on top
     // Sample from the nearest grid cell (no interpolation for discrete material type)
@@ -424,8 +424,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let light_dir = normalize(vec3<f32>(0.4, 0.9, 0.25));
     let n = normalize(in.normal);
     let diffuse = max(dot(n, light_dir), 0.0);
-    let ambient = 0.35;
-    let lighting = ambient + diffuse * 0.65;
+    let ambient = 0.28;
+    let lighting = ambient + diffuse * 0.72;
 
     // Slope-based darkening (steeper = darker)
     let slope = 1.0 - n.y;
@@ -679,7 +679,7 @@ fn fs_water(in: WaterVertexOutput) -> @location(0) vec4<f32> {
     
     // Base color - clean water
     let deep_color = vec3<f32>(0.1, 0.2, 0.5);
-    let shallow_color = vec3<f32>(0.3, 0.5, 0.8);
+    let shallow_color = vec3<f32>(0.18, 0.40, 0.68);
     let foam_color = vec3<f32>(0.9, 0.95, 1.0);
 
     // Muddy sediment colors
@@ -734,12 +734,12 @@ fn fs_water(in: WaterVertexOutput) -> @location(0) vec4<f32> {
     var foam_factor = 1.0 - smoothstep(0.0, foam_reach, in.depth);
     foam_factor = foam_factor * (0.5 + 0.5 * foam_noise); // Soften and break up the line
     
-    let water_color = mix(final_water_base, foam_color, foam_factor * 0.3); // Dial down foam intensity
+    let water_color = mix(final_water_base, foam_color, foam_factor * 0.18); // Dial down foam intensity (less white wash)
     
     // Opacity: Smooth fade-in at shorelines
     // alpha_fade goes from 0.0 at depth 0.0 to 1.0 at depth 0.1
     let alpha_fade = smoothstep(0.0, 0.1, in.depth);
-    let alpha_base = alpha_fade * clamp(in.depth * 0.5 + 0.3, 0.0, 0.85);
+    let alpha_base = alpha_fade * clamp(in.depth * 0.5 + 0.45, 0.0, 0.90);
     var alpha = max(alpha_base, foam_factor * 0.4); // Foam is less opaque
 
     // Muddy water is more opaque
@@ -748,13 +748,13 @@ fn fs_water(in: WaterVertexOutput) -> @location(0) vec4<f32> {
     // Combine - reduce fresnel/sky reflection for muddy water
     let sky_color = vec3<f32>(0.8, 0.9, 1.0);
     let effective_fresnel = fresnel * (1.0 - sediment_factor * 0.7); // Muddy water less reflective
-    let final_color = mix(water_color, sky_color, effective_fresnel * 0.4) + specular * (1.0 - sediment_factor * 0.5);
+    let final_color = mix(water_color, sky_color, effective_fresnel * 0.25) + specular * (1.0 - sediment_factor * 0.5);
 
     // If camera is underwater, reduce opacity so terrain remains visible.
     if (uniforms.camera_pos.y < in.world_pos.y) {
         alpha *= 0.25;
     }
 
-    let final_alpha = clamp(alpha + effective_fresnel * 0.2 + specular * 0.3, 0.0, 0.85);
+    let final_alpha = clamp(alpha + effective_fresnel * 0.2 + specular * 0.3, 0.0, 0.92);
     return vec4<f32>(final_color, final_alpha);
 }
