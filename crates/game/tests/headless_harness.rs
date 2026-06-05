@@ -1037,6 +1037,9 @@ fn test_flip_divergence_free() {
         }
     }
 
+    // Capture the solver's actual post-gradient grid divergence each step.
+    flip.pressure_diagnostics_enabled = true;
+
     // Run simulation
     for step in 0..STEPS {
         flip.step(
@@ -1065,25 +1068,27 @@ fn test_flip_divergence_free() {
     // Read back physics diagnostics (pre-correction divergence = RHS of Poisson)
     let diag = flip.read_physics_diagnostics(&device, &queue);
 
-    // Compute post-correction divergence (re-runs divergence shader on corrected velocities)
-    let post_div = flip.compute_post_correction_divergence(&device, &queue);
-    let post_diag = flip.read_physics_diagnostics(&device, &queue);
+    // Post-correction divergence = the GRID divergence captured right after the
+    // pressure gradient + post-pressure BC during the last step. Do NOT measure it
+    // here via compute_post_correction_divergence: by this point G2P has swapped the
+    // grid velocity buffers, so a fresh measurement reads the stale pre-pressure RHS
+    // (~0.67), not the corrected field (~1e-5). See last_post_pressure_divergence.
+    let post_div = flip.last_post_pressure_divergence;
 
     println!("\n=== FLIP Divergence Test Results ===");
     println!("Fluid cells: {}", diag.fluid_cell_count);
     println!("Pre-correction divergence (RHS): {:.6}", diag.max_divergence);
-    println!("Post-correction divergence: {:.6}", post_diag.max_divergence);
+    println!("Post-correction divergence (captured post-gradient): {:.6}", post_div);
     println!("Threshold: {}", MAX_DIVERGENCE_THRESHOLD);
 
-    // STRICT ASSERTION - test POST-correction divergence
-    // This is the actual test: after pressure gradient is applied, velocity should be divergence-free
+    // STRICT ASSERTION - the pressure solve must drive grid divergence to ~0.
     assert!(
-        post_diag.max_divergence < MAX_DIVERGENCE_THRESHOLD,
+        post_div < MAX_DIVERGENCE_THRESHOLD,
         "DIVERGENCE TEST FAILED!\n\
          Post-correction divergence {:.6} exceeds threshold {}\n\
          The pressure solve is NOT enforcing incompressibility.\n\
          FIX THE PRESSURE SOLVER, do not change the threshold.",
-        post_diag.max_divergence, MAX_DIVERGENCE_THRESHOLD
+        post_div, MAX_DIVERGENCE_THRESHOLD
     );
 }
 
