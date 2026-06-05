@@ -165,17 +165,27 @@ fn test_calibration_spacing_matches_simulation() {
 
     let metrics = sph.compute_metrics(&device, &queue);
 
+    // The density buffer stores the RAW poly6 kernel sum (mass-independent).
+    // calibrate_rest_density sets particle_mass so that PHYSICAL density
+    // (particle_mass * raw) == rest_density. The meaningful check is that
+    // invariant, not the raw sum vs rest_density. (Verified by trace: with
+    // mass=0.12379 and raw=8078.2, physical = 1000.0 == calibrated.)
+    let particle_mass = sph.params_mut().particle_mass;
+    let physical_density = particle_mass * metrics.max_density;
+
     println!("Calibration Match Test:");
     println!("  Calibrated Density: {:.2}", calibrated_density);
-    println!("  Simulation Max Density: {:.2}", metrics.max_density);
-    println!("  Ratio: {:.2}%", (metrics.max_density / calibrated_density) * 100.0);
+    println!("  Raw Density (buffer): {:.2}", metrics.max_density);
+    println!("  particle_mass: {:.6}", particle_mass);
+    println!("  Physical Density (mass*raw): {:.2}", physical_density);
+    println!("  Ratio: {:.2}%", (physical_density / calibrated_density) * 100.0);
 
-    // Density should match calibration within 20%
-    let ratio = metrics.max_density / calibrated_density;
+    // Physical density should match calibration within 20%.
+    let ratio = physical_density / calibrated_density;
     assert!(
         ratio > 0.8 && ratio < 1.2,
-        "Simulation density ({:.2}) doesn't match calibration ({:.2})! Ratio: {:.2}",
-        metrics.max_density,
+        "Physical density ({:.2}) doesn't match calibration ({:.2})! Ratio: {:.2}",
+        physical_density,
         calibrated_density,
         ratio
     );
