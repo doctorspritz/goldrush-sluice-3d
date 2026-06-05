@@ -251,6 +251,11 @@ pub struct ClusterSimulation3D {
     /// Rolling friction when wet (lower)
     pub wet_rolling_friction: f32,
     pub use_dem: bool,
+    /// DEM substeps per step(). Default 8. Stiff stacked contacts (e.g. a pile of
+    /// dense + light clumps) need more substeps to resolve without numerical
+    /// bouncing; under-resolution produces spurious energy that looks like
+    /// density separation but is an artifact (see test_dem_density_separation).
+    pub substeps: usize,
     pub bounds_min: Vec3,
     pub bounds_max: Vec3,
     sphere_contacts: HashMap<SphereContactKey, Vec3>,
@@ -273,6 +278,7 @@ impl ClusterSimulation3D {
             rolling_friction: 0.02,
             wet_rolling_friction: 0.002, // Very low rolling friction when wet
             use_dem: true,
+            substeps: 8,
             bounds_min,
             bounds_max,
             sphere_contacts: HashMap::new(),
@@ -312,7 +318,7 @@ impl ClusterSimulation3D {
     pub fn step(&mut self, dt: f32) {
         // Use substeps for stability. With stiffness k=6000 and mass m=0.025kg,
         // critical timestep is ~0.004s. Using 4 substeps gives sub_dt ~0.004s.
-        let substeps = 8;
+        let substeps = self.substeps.max(1);
         let sub_dt = dt / substeps as f32;
 
         for _ in 0..substeps {
