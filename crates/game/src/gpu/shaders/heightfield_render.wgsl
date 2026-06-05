@@ -447,6 +447,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let spec = pow(max(dot(n, half_dir), 0.0), spec_power) * spec_strength;
     lit_color = lit_color + vec3<f32>(spec);
 
+    // Underwater wet-tint: where water covers this terrain cell, darken and
+    // blue-shift the terrain so what shows through the semi-transparent shallow
+    // water reads as a wet bed instead of bare grid-aligned stone detail.
+    let uw_depth = get_water_depth(gxi, gzi);
+    let underwater = smoothstep(0.0, 0.25, uw_depth);
+    let wet_tint = vec3<f32>(0.10, 0.20, 0.30);
+    lit_color = mix(lit_color, lit_color * 0.5 + wet_tint, underwater);
+
     // Distance fog - tuned for the 512m x 512m world (~724m diagonal).
     // Previously fog_start=25/fog_end=120 washed nearly all distant terrain to
     // near-white; push the range out to world scale and lower blend strength so

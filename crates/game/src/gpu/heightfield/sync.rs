@@ -101,42 +101,69 @@ pub async fn download_to_world(
 ) {
     let size = (width * depth) as usize * std::mem::size_of::<f32>();
 
-    let read_buffer = |buffer: &wgpu::Buffer| -> Vec<f32> {
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Staging"),
-            size: size as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+    // Batch all 10 buffer reads into a SINGLE command submission and a SINGLE
+    // device.poll(Wait). Previously each read_buffer() did its own submit + poll,
+    // i.e. 10 full GPU stalls per frame; this collapses that to one.
+    let src_buffers: [&wgpu::Buffer; 10] = [
+        &geology.bedrock,
+        &geology.paydirt,
+        &geology.gravel,
+        &geology.overburden,
+        &geology.sediment,
+        &water.depth,
+        &water.suspended_sediment,
+        &water.suspended_overburden,
+        &water.suspended_gravel,
+        &water.suspended_paydirt,
+    ];
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, size as u64);
-        queue.submit(Some(encoder.finish()));
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let stagings: Vec<wgpu::Buffer> = src_buffers
+        .iter()
+        .map(|buffer| {
+            let staging = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Staging"),
+                size: size as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, size as u64);
+            staging
+        })
+        .collect();
+    queue.submit(Some(encoder.finish()));
 
-        let slice = staging.slice(..);
+    // Kick off all map_async requests, then wait once.
+    let mut receivers = Vec::with_capacity(stagings.len());
+    for staging in &stagings {
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
-        device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
+        staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
+        receivers.push(rx);
+    }
+    device.poll(wgpu::Maintain::Wait);
 
-        let data = slice.get_mapped_range();
-        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+    let mut results: Vec<Vec<f32>> = Vec::with_capacity(stagings.len());
+    for (staging, rx) in stagings.iter().zip(receivers) {
+        rx.recv().unwrap().unwrap();
+        let data = staging.slice(..).get_mapped_range();
+        results.push(bytemuck::cast_slice(&data).to_vec());
         drop(data);
         staging.unmap();
-        result
-    };
+    }
 
-    let bedrock = read_buffer(&geology.bedrock);
-    let paydirt = read_buffer(&geology.paydirt);
-    let gravel = read_buffer(&geology.gravel);
-    let overburden = read_buffer(&geology.overburden);
-    let sediment = read_buffer(&geology.sediment);
-
-    let water_depth = read_buffer(&water.depth);
-    let suspended_sediment = read_buffer(&water.suspended_sediment);
-    let suspended_overburden = read_buffer(&water.suspended_overburden);
-    let suspended_gravel = read_buffer(&water.suspended_gravel);
-    let suspended_paydirt = read_buffer(&water.suspended_paydirt);
+    let mut it = results.into_iter();
+    let bedrock = it.next().unwrap();
+    let paydirt = it.next().unwrap();
+    let gravel = it.next().unwrap();
+    let overburden = it.next().unwrap();
+    let sediment = it.next().unwrap();
+    let water_depth = it.next().unwrap();
+    let suspended_sediment = it.next().unwrap();
+    let suspended_overburden = it.next().unwrap();
+    let suspended_gravel = it.next().unwrap();
+    let suspended_paydirt = it.next().unwrap();
 
     world.bedrock_elevation = bedrock;
     world.paydirt_thickness = paydirt;
