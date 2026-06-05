@@ -424,6 +424,7 @@ impl GpuHeightfield {
         camera_pos: [f32; 3],
         time: f32,
         draw_water: bool,
+        show_velocity: bool,
     ) {
         rendering::render(
             encoder,
@@ -439,6 +440,7 @@ impl GpuHeightfield {
             camera_pos,
             time,
             draw_water,
+            show_velocity,
         );
     }
 

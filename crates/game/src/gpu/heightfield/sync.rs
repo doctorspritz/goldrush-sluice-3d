@@ -24,8 +24,29 @@ pub fn upload_from_world(
     queue.write_buffer(&geology.overburden, 0, bytemuck::cast_slice(&world.overburden_thickness));
     queue.write_buffer(&geology.sediment, 0, bytemuck::cast_slice(&world.terrain_sediment));
 
-    // Water - calculate depth from surface
+    // Seed surface_material so terrain shows real geology colors before any
+    // erosion/collapse pass runs (those only recompute changed cells).
+    // Priority MUST match compute_surface_material() in heightfield_collapse.wgsl:49
+    // and heightfield_erosion.wgsl:102.  4=sediment 3=overburden 2=gravel 1=paydirt 0=bedrock
     let count = (width * depth) as usize;
+    let mut surface_mat = vec![0u32; count];
+    let min_thick = 0.001f32;
+    for i in 0..count {
+        surface_mat[i] = if world.terrain_sediment[i] > min_thick {
+            4u32
+        } else if world.overburden_thickness[i] > min_thick {
+            3u32
+        } else if world.gravel_thickness[i] > min_thick {
+            2u32
+        } else if world.paydirt_thickness[i] > min_thick {
+            1u32
+        } else {
+            0u32
+        };
+    }
+    queue.write_buffer(&geology.surface_material, 0, bytemuck::cast_slice(&surface_mat));
+
+    // Water - calculate depth from surface
     let mut depth_data = vec![0.0f32; count];
 
     for i in 0..count {

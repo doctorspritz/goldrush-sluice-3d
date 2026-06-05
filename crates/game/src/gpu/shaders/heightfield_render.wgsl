@@ -447,12 +447,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let spec = pow(max(dot(n, half_dir), 0.0), spec_power) * spec_strength;
     lit_color = lit_color + vec3<f32>(spec);
 
-    // Distance fog
-    let fog_color = vec3<f32>(0.7, 0.75, 0.85);
-    let fog_start = 25.0;
-    let fog_end = 120.0;
+    // Distance fog - tuned for the 512m x 512m world (~724m diagonal).
+    // Previously fog_start=25/fog_end=120 washed nearly all distant terrain to
+    // near-white; push the range out to world scale and lower blend strength so
+    // material color stays visible across the terrain.
+    let fog_color = vec3<f32>(0.55, 0.60, 0.70);
+    let fog_start = 120.0;
+    let fog_end = 600.0;
     let fog_factor = smoothstep(fog_start, fog_end, dist_to_camera);
-    lit_color = mix(lit_color, fog_color, fog_factor * 0.55);
+    lit_color = mix(lit_color, fog_color, fog_factor * 0.30);
 
     return vec4<f32>(lit_color, 1.0);
 }
