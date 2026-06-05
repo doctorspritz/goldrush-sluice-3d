@@ -41,7 +41,7 @@ struct SedimentParams {
     gold_drag_multiplier: f32,
     gold_settling_velocity: f32,
     gold_flake_lift: f32,
-    _pad0: f32,
+    gravity: f32,
     _pad1: f32,
 }
 
@@ -354,7 +354,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         //
         // This is applied as a velocity change (impulse) over the timestep:
         //   Δv_buoyancy = a_buoyancy * dt = (1.0 - ρ_rel) * g * dt
-        let buoyancy_accel = (1.0 - density) * GRAVITY;  // m/s²
+        let buoyancy_accel = (1.0 - density) * sediment_params.gravity;  // m/s²
         let buoyancy_impulse = buoyancy_accel * params.dt;  // m/s
         vel_after_drag.y += buoyancy_impulse;  // Negative for dense particles (Y axis points up)
 

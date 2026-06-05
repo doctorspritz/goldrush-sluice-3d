@@ -3437,7 +3437,8 @@ impl GpuFlip3D {
             gold_drag_multiplier: self.gold_drag_multiplier,
             gold_settling_velocity: self.gold_settling_velocity,
             gold_flake_lift: self.gold_flake_lift,
-            _pad: [0.0; 2],
+            gravity: gravity.abs(),
+            _pad: [0.0; 1],
         };
         let g2p_count = self
             .g2p

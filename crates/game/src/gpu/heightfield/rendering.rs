@@ -12,7 +12,7 @@ pub struct RenderUniforms {
     pub grid_width: u32,
     pub grid_depth: u32,
     pub time: f32,
-    pub _pad: u32,
+    pub show_velocity: f32, // was: pub _pad: u32  (1.0 = velocity coloring on)
 }
 
 /// Rendering resources for heightfield visualization.
@@ -212,6 +212,7 @@ pub fn render(
     camera_pos: [f32; 3],
     time: f32,
     draw_water: bool,
+    show_velocity: bool,
 ) {
     let uniforms = RenderUniforms {
         view_proj,
@@ -220,7 +221,7 @@ pub fn render(
         grid_width: width,
         grid_depth: depth,
         time,
-        _pad: 0,
+        show_velocity: if show_velocity { 1.0 } else { 0.0 },
     };
     queue.write_buffer(&render.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 

@@ -289,6 +289,97 @@ struct GpuState {
     sluice_index_count: u32,
 }
 
+/// On-screen egui HUD layer: owns the egui context, the winit input bridge,
+/// and the wgpu renderer (pipeline + texture atlas). Created in `init_gpu`
+/// once device/queue/config/window exist. Transplanted from world_sim.rs.
+struct EguiLayer {
+    ctx: egui::Context,
+    state: egui_winit::State,
+    renderer: egui_wgpu::Renderer,
+}
+
+/// Plain data snapshot filled from `App` fields each frame, then handed to
+/// the HUD builder. Keeps the egui closure free of borrows on `App`.
+struct HudState {
+    mode: String,
+    material: String,
+    tool: String,
+    water_on: bool,
+    velocity_on: bool,
+    emitter_on: bool,
+    fps: f32,
+}
+
+/// Build the on-screen HUD: a top-left status panel (mode / material / tool /
+/// water / emitter / FPS) plus a top-right "? Controls" help panel. Each status
+/// line and the help entry carry hover tooltips describing the relevant controls.
+/// Adapted from world_sim.rs to detail_zone's real controls and state.
+fn build_hud_ui(ctx: &egui::Context, hud: &HudState) {
+    egui::Area::new(egui::Id::new("hud_top_left"))
+        .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 8.0))
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(format!("Mode: {}", hud.mode))
+                        .strong()
+                        .size(16.0),
+                )
+                .on_hover_text(
+                    "World = free-fly navigation over the 2.5D terrain map.\n\
+                     Sluice (focus) = zoomed FLIP detail view of the sluice.\n\
+                     F or Middle-click toggles focus.",
+                );
+                ui.label(format!("Interaction: {}", hud.tool)).on_hover_text(
+                    "P toggles Dig / Pointer.\n\
+                     Dig: left-click adds water / digs terrain.\n\
+                     Pointer: hover highlights the sluice, click to focus.",
+                );
+                ui.label(format!("Material: {}", hud.material)).on_hover_text(
+                    "Active terrain material.\n\
+                     G = Gravel, O = Overburden, T = Sediment",
+                );
+                ui.label(format!(
+                    "Water: {}   Velocity: {}   Emitter: {}",
+                    if hud.water_on { "ON" } else { "OFF" },
+                    if hud.velocity_on { "ON" } else { "OFF" },
+                    if hud.emitter_on { "ON" } else { "OFF" },
+                ))
+                .on_hover_text(
+                    "H toggles water visibility.\n\
+                     V toggles velocity coloring (blue=slow -> red=fast).\n\
+                     E toggles the heightfield emitter on/off.",
+                );
+                ui.label(egui::RichText::new(format!("FPS: {:.0}", hud.fps)).monospace())
+                    .on_hover_text("Frames per second (smoothed).");
+            });
+        });
+
+    egui::Area::new(egui::Id::new("hud_top_right"))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                let help = ui.button("? Controls");
+                help.on_hover_text(
+                    "WASD: move camera\n\
+                     Space / Shift: up / down\n\
+                     Right-drag: look around\n\
+                     P: toggle Pointer / Dig mode\n\
+                     F / Middle-click: toggle sluice focus\n\
+                     Left-click (Dig): add water / dig terrain\n\
+                     Left-click (Pointer, on sluice): focus\n\
+                     G / O / T: material (Gravel / Overburden / Sediment)\n\
+                     H: toggle water    V: toggle velocity coloring\n\
+                     E: toggle emitter    3: place emitter at cursor\n\
+                     1: add water    2: add muddy water\n\
+                     X: reposition detail emitter (focus mode)\n\
+                     Q: reset emitter to river source\n\
+                     R: reset world    Esc: quit",
+                );
+                ui.small("hover for controls");
+            });
+        });
+}
+
 struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
@@ -332,6 +423,8 @@ struct App {
     emitter_mesh: Option<Mesh>,
     detail_emitter_mesh: Option<Mesh>,
     detail_emitter_pos: Vec3,
+    egui: Option<EguiLayer>,
+    fps: f32,
 }
 
 impl App {
@@ -482,6 +575,8 @@ impl App {
                 0.0, // Will be computed from sluice floor
                 (DETAIL_SLUICE_DEPTH as f32 * DETAIL_FLIP_CELL_SIZE) * 0.5, // center_z
             ),
+            egui: None,
+            fps: 0.0,
         }
     }
 
@@ -1413,6 +1508,29 @@ impl App {
         let (sluice_vertex_buffer, sluice_index_buffer, sluice_index_count) =
             create_sluice_buffers(&device, &self.sluice_vertices, &self.sluice_indices);
 
+        // --- egui HUD layer (transplanted from world_sim.rs) ---
+        // Created AFTER device/queue/config exist. Uses the exact surface
+        // `config.format` so the HUD pipeline matches the swapchain. No depth
+        // (HUD is a 2D overlay), 1 msaa sample, no dither.
+        {
+            let ctx = egui::Context::default();
+            let viewport_id = ctx.viewport_id();
+            let egui_state = egui_winit::State::new(
+                ctx.clone(),
+                viewport_id,
+                window.as_ref(),
+                Some(window.scale_factor() as f32),
+                None,
+                None,
+            );
+            let egui_renderer = egui_wgpu::Renderer::new(&device, config.format, None, 1, false);
+            self.egui = Some(EguiLayer {
+                ctx,
+                state: egui_state,
+                renderer: egui_renderer,
+            });
+        }
+
         self.gpu = Some(GpuState {
             surface,
             device,
@@ -1458,6 +1576,16 @@ impl App {
         let dt = (now - self.last_frame).as_secs_f32().min(0.1);
         self.last_frame = now;
 
+        // Smoothed FPS for the HUD.
+        if dt > 0.0 {
+            let inst_fps = 1.0 / dt;
+            self.fps = if self.fps <= 0.0 {
+                inst_fps
+            } else {
+                self.fps * 0.9 + inst_fps * 0.1
+            };
+        }
+
         self.update(dt);
 
         let view = self.camera.view_matrix();
@@ -1477,6 +1605,31 @@ impl App {
             highlight_tint: 1.0, // Default, updated per-object
         };
 
+        // Build the HUD snapshot before borrowing gpu mutably.
+        let hud = HudState {
+            mode: if self.focus_mode {
+                "Sluice (focus)".into()
+            } else {
+                "World".into()
+            },
+            material: match self.selected_material {
+                2 => "Gravel",
+                1 => "Overburden",
+                _ => "Sediment",
+            }
+            .into(),
+            tool: match self.interaction_mode {
+                InteractionMode::Dig => "Dig".into(),
+                InteractionMode::Pointer => "Pointer".into(),
+            },
+            water_on: self.show_water,
+            velocity_on: self.show_velocity,
+            emitter_on: self.emitter.enabled,
+            fps: self.fps,
+        };
+
+        // Split the borrows: take egui out by reference disjointly from gpu.
+        let egui = self.egui.as_mut();
         let Some(gpu) = self.gpu.as_mut() else { return };
 
         // Only rebuild terrain mesh when it changes (expensive with side faces)
@@ -1505,7 +1658,7 @@ impl App {
             self.camera.position.to_array(),
             self.start_time.elapsed().as_secs_f32(),
             self.show_water,
-            // TODO: show_velocity not yet supported in heightfield module
+            self.show_velocity,
         );
 
         // Render Emitter (heightfield emitter - only when not in focus mode)
@@ -1667,7 +1820,66 @@ impl App {
             }
         }
 
-        gpu.queue.submit(std::iter::once(encoder.finish()));
+        // --- egui HUD pass: drawn AFTER the scene, into the SAME frame_view ---
+        // LoadOp::Load preserves the terrain/water/emitter/sluice already rendered.
+        // No depth attachment: the HUD is a 2D overlay. Transplanted from world_sim.rs.
+        let mut egui_cmd_bufs: Vec<wgpu::CommandBuffer> = Vec::new();
+        if let Some(egui) = egui {
+            let raw_input = egui.state.take_egui_input(window.as_ref());
+            let full_output = egui.ctx.run(raw_input, |ctx| build_hud_ui(ctx, &hud));
+            egui.state
+                .handle_platform_output(window.as_ref(), full_output.platform_output);
+
+            let tris = egui
+                .ctx
+                .tessellate(full_output.shapes, full_output.pixels_per_point);
+
+            for (id, delta) in &full_output.textures_delta.set {
+                egui.renderer
+                    .update_texture(&gpu.device, &gpu.queue, *id, delta);
+            }
+
+            let screen = egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [gpu.config.width, gpu.config.height],
+                pixels_per_point: full_output.pixels_per_point,
+            };
+
+            egui_cmd_bufs =
+                egui.renderer
+                    .update_buffers(&gpu.device, &gpu.queue, &mut encoder, &tris, &screen);
+
+            {
+                let mut rpass = encoder
+                    .begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("egui HUD"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &frame_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    })
+                    .forget_lifetime();
+                egui.renderer.render(&mut rpass, &tris, &screen);
+            }
+
+            for id in &full_output.textures_delta.free {
+                egui.renderer.free_texture(id);
+            }
+        }
+
+        // Submit any egui-generated command buffers (texture uploads) BEFORE
+        // the main encoder, then the main encoder (scene + HUD render pass).
+        gpu.queue.submit(
+            egui_cmd_bufs
+                .into_iter()
+                .chain(std::iter::once(encoder.finish())),
+        );
         output.present();
         window.request_redraw();
     }
@@ -1688,6 +1900,22 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        // Feed the event to egui first so the HUD gets hover/click state and
+        // tooltips work. If egui consumed it (pointer/keyboard over a widget),
+        // skip the game's own input handling so digging/look don't fire through
+        // the HUD. RedrawRequested must still reach render(), so never swallow it.
+        if !matches!(event, WindowEvent::RedrawRequested) {
+            if let (Some(egui), Some(win)) = (self.egui.as_mut(), self.window.as_ref()) {
+                let resp = egui.state.on_window_event(win.as_ref(), &event);
+                if resp.repaint {
+                    win.request_redraw();
+                }
+                if resp.consumed {
+                    return;
+                }
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -2999,8 +3227,538 @@ fn create_small_sphere(center: Vec3, radius: f32, resolution: u32) -> (Vec<Vec3>
     (positions, indices)
 }
 
+// =========================================================================
+// Headless screenshot mode (transplanted from world_sim.rs run_headless_screenshot)
+// =========================================================================
+
+const SHOT_WIDTH: u32 = 1024;
+const SHOT_HEIGHT: u32 = 768;
+
+/// Write RGBA8 pixels to a PNG file.
+fn save_png(path: &std::path::Path, pixels: &[u8], width: u32, height: u32) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|e| format!("Failed to create file: {}", e))?;
+    let mut encoder = png::Encoder::new(file, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|e| format!("Failed to write PNG header: {}", e))?;
+    writer
+        .write_image_data(pixels)
+        .map_err(|e| format!("Failed to write PNG data: {}", e))?;
+    Ok(())
+}
+
+/// Parse `--screenshot <PATH>` and `--frames <N>` from argv (default 120 frames).
+fn parse_screenshot_args() -> Option<(std::path::PathBuf, u32)> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut path: Option<std::path::PathBuf> = None;
+    let mut frames: u32 = 120;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--screenshot" => {
+                let v = args
+                    .get(i + 1)
+                    .expect("--screenshot requires a PATH argument");
+                path = Some(std::path::PathBuf::from(v));
+                i += 2;
+            }
+            "--frames" => {
+                let v = args.get(i + 1).expect("--frames requires an N argument");
+                frames = v.parse().expect("--frames must be a positive integer");
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+    path.map(|p| (p, frames))
+}
+
+/// Run the detail-zone simulation in WORLD mode fully offscreen for `frames`
+/// frames and write a 1024x768 PNG (terrain + water + emitter + sluice + egui HUD).
+/// Mirrors world_sim's run_headless_screenshot, adapted to detail_zone's types.
+/// Starts in WORLD mode (focus_mode = false) so terrain + HUD are visible; FLIP
+/// particles only render in focus mode, so they are intentionally skipped here.
+fn run_headless_screenshot(path: &std::path::Path, frames: u32) {
+    let width = SHOT_WIDTH;
+    let height = SHOT_HEIGHT;
+
+    // --- Build CPU world + emitter, mirroring App::new() ---
+    let mut app = App::new();
+    app.focus_mode = false; // World mode for the screenshot.
+    app.window_size = (width, height);
+
+    // --- Create a surface-less device/queue ---
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::PRIMARY,
+        ..Default::default()
+    });
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    }))
+    .expect("No GPU adapter available for headless screenshot");
+
+    let mut limits = wgpu::Limits::default();
+    limits.max_storage_buffers_per_shader_stage = 16;
+    limits.max_storage_buffer_binding_size = 256 * 1024 * 1024;
+
+    let (device, queue) = pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some("Headless Screenshot Device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: limits,
+            memory_hints: wgpu::MemoryHints::Performance,
+        },
+        None,
+    ))
+    .expect("Failed to create headless device");
+
+    // Offscreen render format (sRGB).
+    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+    // --- Color target texture (RENDER_ATTACHMENT + COPY_SRC for readback) ---
+    let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Screenshot Color Texture"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // --- Depth texture ---
+    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Screenshot Depth Texture"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // --- Equipment/emitter pipeline (mirrors init_gpu()'s SHADER pipeline) ---
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Screenshot Shader"),
+        source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+    });
+    let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Screenshot Uniforms"),
+        size: std::mem::size_of::<Uniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Screenshot Bind Group Layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Screenshot Bind Group"),
+        layout: &bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buffer.as_entire_binding(),
+        }],
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Screenshot Pipeline Layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+    // SluiceVertex and WorldVertex share an identical layout (pos[3]+color[4]),
+    // so this pipeline draws both the sluice mesh and the emitter mesh.
+    let equipment_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Screenshot Equipment Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[SluiceVertex::buffer_layout()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    // --- GPU heightfield, mirroring init_gpu() ---
+    let heightfield = GpuHeightfield::new(
+        &device,
+        app.world.width as u32,
+        app.world.depth as u32,
+        app.world.cell_size,
+        INITIAL_HEIGHT,
+        format,
+    );
+    heightfield.upload_from_world(&queue, &app.world);
+
+    // Sluice buffers for the equipment overlay.
+    let (sluice_vertex_buffer, sluice_index_buffer, sluice_index_count) =
+        create_sluice_buffers(&device, &app.sluice_vertices, &app.sluice_indices);
+
+    // Drive the heightfield sim offscreen for `frames` frames (mirrors the
+    // heightfield portion of App::update(); FLIP is focus-only and skipped).
+    println!("Running {} simulation frames offscreen...", frames);
+    for frame in 0..frames {
+        for _ in 0..STEPS_PER_FRAME {
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Headless Sim Encoder"),
+            });
+            app.emitter.update_gpu(&heightfield, &queue, DT);
+            heightfield.dispatch_emitter(&mut encoder);
+            heightfield.update_params(&queue, DT);
+            heightfield.dispatch(&mut encoder, DT);
+            queue.submit(Some(encoder.finish()));
+        }
+        pollster::block_on(heightfield.download_to_world(&device, &queue, &mut app.world));
+        if frame % 30 == 0 || frame == frames - 1 {
+            println!("  frame {}/{}", frame + 1, frames);
+        }
+    }
+
+    // Build the heightfield emitter visualization mesh for the final render.
+    let emitter_mesh = if app.emitter.enabled {
+        let (positions, indices) = app.emitter.visualize(16);
+        let vertices: Vec<WorldVertex> = positions
+            .iter()
+            .map(|p| WorldVertex {
+                position: p.to_array(),
+                color: [0.0, 1.0, 1.0, 1.0],
+            })
+            .collect();
+        Some(Mesh::new(&device, &vertices, &indices, "Screenshot Emitter Mesh"))
+    } else {
+        None
+    };
+
+    // --- Render one frame to the offscreen texture (mirrors App::render()) ---
+    let aspect = width as f32 / height as f32;
+    let proj = Mat4::perspective_rh(60.0_f32.to_radians(), aspect, 0.1, 500.0);
+    let view = app.camera.view_matrix();
+    let view_proj = proj * view;
+    let camera_forward = app.camera.forward();
+    let camera_right = camera_forward.cross(Vec3::Y).normalize();
+    let camera_up = camera_right.cross(camera_forward).normalize();
+
+    let uniforms = Uniforms {
+        view_proj: view_proj.to_cols_array_2d(),
+        camera_pos: app.camera.position.to_array(),
+        particle_size: PARTICLE_SIZE,
+        camera_right: camera_right.to_array(),
+        show_velocity: if app.show_velocity { 1.0 } else { 0.0 },
+        camera_up: camera_up.to_array(),
+        highlight_tint: 1.0,
+    };
+    queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Screenshot Render Encoder"),
+    });
+
+    // Heightfield (terrain + water) — clears the color + depth attachments.
+    heightfield.render(
+        &mut encoder,
+        &color_view,
+        &depth_view,
+        &queue,
+        view_proj.to_cols_array_2d(),
+        app.camera.position.to_array(),
+        app.start_time.elapsed().as_secs_f32(),
+        app.show_water,
+        app.show_velocity,
+    );
+
+    // Emitter sphere overlay.
+    if let Some(mesh) = emitter_mesh.as_ref() {
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Screenshot Emitter Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &color_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        rpass.set_pipeline(&equipment_pipeline);
+        rpass.set_bind_group(0, &bind_group, &[]);
+        rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+        rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        rpass.draw_indexed(0..mesh.num_indices, 0, 0..1);
+    }
+
+    // Sluice equipment overlay.
+    if sluice_index_count > 0 {
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Screenshot Equipment Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &color_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        rpass.set_pipeline(&equipment_pipeline);
+        rpass.set_bind_group(0, &bind_group, &[]);
+        rpass.set_vertex_buffer(0, sluice_vertex_buffer.slice(..));
+        rpass.set_index_buffer(sluice_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        rpass.draw_indexed(0..sluice_index_count, 0, 0..1);
+    }
+
+    // --- egui HUD overlay (headless) ---
+    // No winit window, so drive egui directly with a synthetic RawInput
+    // (full-screen rect, 1.0 ppp). The twice-run warmup trick is required: a
+    // fresh egui Context emits zero shapes on frame 0, and the font atlas
+    // texture delta arrives on the first pass.
+    let egui_cmd_bufs: Vec<wgpu::CommandBuffer> = {
+        let ctx = egui::Context::default();
+        ctx.set_pixels_per_point(1.0);
+        let mut egui_renderer = egui_wgpu::Renderer::new(&device, format, None, 1, false);
+
+        let hud = HudState {
+            mode: "World".into(),
+            material: match app.selected_material {
+                2 => "Gravel",
+                1 => "Overburden",
+                _ => "Sediment",
+            }
+            .into(),
+            tool: match app.interaction_mode {
+                InteractionMode::Dig => "Dig".into(),
+                InteractionMode::Pointer => "Pointer".into(),
+            },
+            water_on: app.show_water,
+            velocity_on: app.show_velocity,
+            emitter_on: app.emitter.enabled,
+            fps: 0.0,
+        };
+
+        let make_input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(width as f32, height as f32),
+            )),
+            ..Default::default()
+        };
+
+        // Warmup pass: emits the font-atlas texture delta (must be applied).
+        let warmup = ctx.run(make_input(), |ctx| build_hud_ui(ctx, &hud));
+        for (id, delta) in &warmup.textures_delta.set {
+            egui_renderer.update_texture(&device, &queue, *id, delta);
+        }
+        // Real pass: produces the actual geometry.
+        let full_output = ctx.run(make_input(), |ctx| build_hud_ui(ctx, &hud));
+        let tris = ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+
+        // Evidence: report the egui geometry actually emitted.
+        let total_vertices: usize = tris
+            .iter()
+            .map(|p| match &p.primitive {
+                egui::epaint::Primitive::Mesh(m) => m.vertices.len(),
+                _ => 0,
+            })
+            .sum();
+        let total_indices: usize = tris
+            .iter()
+            .map(|p| match &p.primitive {
+                egui::epaint::Primitive::Mesh(m) => m.indices.len(),
+                _ => 0,
+            })
+            .sum();
+        println!(
+            "egui HUD geometry: {} clipped primitives, {} vertices, {} indices",
+            tris.len(),
+            total_vertices,
+            total_indices
+        );
+
+        for (id, delta) in &full_output.textures_delta.set {
+            egui_renderer.update_texture(&device, &queue, *id, delta);
+        }
+
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [width, height],
+            pixels_per_point: full_output.pixels_per_point,
+        };
+        let cmd_bufs = egui_renderer.update_buffers(&device, &queue, &mut encoder, &tris, &screen);
+
+        {
+            let mut rpass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Screenshot egui HUD"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &color_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                })
+                .forget_lifetime();
+            egui_renderer.render(&mut rpass, &tris, &screen);
+        }
+
+        for id in &full_output.textures_delta.free {
+            egui_renderer.free_texture(id);
+        }
+
+        cmd_bufs
+    };
+
+    // --- Copy color texture to a staging buffer ---
+    let bytes_per_pixel = 4u32;
+    let unpadded_bytes_per_row = width * bytes_per_pixel;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+    let buffer_size = (padded_bytes_per_row * height) as u64;
+
+    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Screenshot Staging Buffer"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    encoder.copy_texture_to_buffer(
+        wgpu::ImageCopyTexture {
+            texture: &color_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::ImageCopyBuffer {
+            buffer: &staging_buffer,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    // egui texture-upload command buffers run before the encoder's egui render
+    // pass, which runs before the texture->buffer copy.
+    queue.submit(
+        egui_cmd_bufs
+            .into_iter()
+            .chain(std::iter::once(encoder.finish())),
+    );
+
+    // --- Map and read back pixels ---
+    let buffer_slice = staging_buffer.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+        tx.send(result).unwrap();
+    });
+    device.poll(wgpu::Maintain::Wait);
+    rx.recv().unwrap().unwrap();
+
+    let data = buffer_slice.get_mapped_range();
+    let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
+    for row in 0..height {
+        let row_start = (row * padded_bytes_per_row) as usize;
+        let row_end = row_start + unpadded_bytes_per_row as usize;
+        pixels.extend_from_slice(&data[row_start..row_end]);
+    }
+    drop(data);
+    staging_buffer.unmap();
+
+    save_png(path, &pixels, width, height).expect("Failed to save screenshot PNG");
+    println!(
+        "Screenshot written: {} ({}x{})",
+        path.display(),
+        width,
+        height
+    );
+}
+
 fn main() {
     env_logger::init();
+
+    // Headless screenshot mode: run offscreen, write PNG, then exit.
+    if let Some((path, frames)) = parse_screenshot_args() {
+        run_headless_screenshot(&path, frames);
+        return;
+    }
+
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App::new();

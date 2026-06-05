@@ -56,7 +56,11 @@ pub struct SedimentParams3D {
     pub gold_settling_velocity: f32,
     /// Upward bias for flaky gold near the surface (m/s^2).
     pub gold_flake_lift: f32,
-    pub _pad: [f32; 2],
+    /// Gravity magnitude (m/s²) used for sediment buoyancy. Defaults to 9.81;
+    /// driven from the runtime gravity in `step` so passing gravity=0 actually
+    /// disables sediment sinking (previously buoyancy used a hardcoded const).
+    pub gravity: f32,
+    pub _pad: [f32; 1],
 }
 
 impl Default for SedimentParams3D {
@@ -72,7 +76,8 @@ impl Default for SedimentParams3D {
             gold_drag_multiplier: 1.0,
             gold_settling_velocity: 0.0,
             gold_flake_lift: 0.0,
-            _pad: [0.0; 2],
+            gravity: 9.81, // preserve prior buoyancy behavior by default
+            _pad: [0.0; 1],
         }
     }
 }
