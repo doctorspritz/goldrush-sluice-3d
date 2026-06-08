@@ -61,6 +61,13 @@ pub struct GpuFlip3D {
     pub density_projection_enabled: bool,
     /// Preserve the first pressure field for diagnostics (runs the pressure solve twice).
     pub pressure_diagnostics_enabled: bool,
+    /// Max |divergence| of the grid velocity field measured right after the
+    /// pressure gradient + post-pressure BC (i.e. the pressure solve's actual
+    /// output). Only updated when `pressure_diagnostics_enabled`. This is the
+    /// correct "post-correction divergence": measuring after G2P instead reads a
+    /// swapped grid buffer and reports the pre-pressure RHS (~0.67), not the
+    /// corrected field (~1e-5).
+    pub last_post_pressure_divergence: f32,
     /// Target water particles per cell for density projection.
     pub water_rest_particles: f32,
     /// Legacy alias for water rest particles used by tests/examples.
@@ -2198,8 +2205,14 @@ impl GpuFlip3D {
             slip_factor: 1.0,
             fluid_cell_expand_min_neighbors: 1,
             vorticity_epsilon: 0.05,
-            density_projection_enabled: true,
+            // Disabled: density projection fights the pressure-supported hydrostatic
+            // equilibrium, injecting upward energy (open-top columns inflate, velocity
+            // pins at the clamp). The grid pressure solve alone enforces
+            // incompressibility (vol_err 0%). Re-enable only if dynamic flow shows
+            // particle clumping/voids that the pressure solve can't resolve.
+            density_projection_enabled: false,
             pressure_diagnostics_enabled: false,
+            last_post_pressure_divergence: 0.0,
             water_rest_particles: 8.0,
             water_rest_density: 0.0,
             density_surface_clamp: true,
@@ -2317,7 +2330,7 @@ impl GpuFlip3D {
         self.vorticity_epsilon = 0.0;
         self.open_boundaries = 8; // Open +Y for free surface.
         self.slip_factor = 0.0; // No-slip boundary damping.
-        self.density_projection_enabled = true;
+        self.density_projection_enabled = false; // see default; it breaks equilibrium
         self.water_rest_particles = 8.0;
         self.water_rest_density = 0.0;
         self.density_surface_clamp = true;
@@ -3368,6 +3381,14 @@ impl GpuFlip3D {
         }
 
         queue.submit(std::iter::once(bc_post_encoder.finish()));
+
+        // Capture the solver's actual output divergence here, BEFORE G2P swaps the
+        // grid velocity buffers (which would make a later measurement read the
+        // stale pre-pressure field). Gated so the readback only costs when asked.
+        if self.pressure_diagnostics_enabled {
+            self.last_post_pressure_divergence =
+                self.compute_post_correction_divergence(device, queue);
+        }
 
         if self.sediment_porosity_drag > 0.0 {
             let drag_params = PorosityDragParams3D::new(
