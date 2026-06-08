@@ -160,7 +160,7 @@ fn test_dam_break_scenario() {
     flip.flip_ratio = 0.95; // FLIP mode for volume conservation
     flip.slip_factor = 0.0; // No-slip walls
     flip.open_boundaries = 8; // +Y open (free surface)
-    flip.density_projection_enabled = true;
+    flip.density_projection_enabled = false; // fights spreading; pressure solve handles incompressibility
 
     // Setup boundary conditions
     let mut cell_types = vec![0u32; W * H * D];

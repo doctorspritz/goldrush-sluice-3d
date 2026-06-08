@@ -2205,7 +2205,12 @@ impl GpuFlip3D {
             slip_factor: 1.0,
             fluid_cell_expand_min_neighbors: 1,
             vorticity_epsilon: 0.05,
-            density_projection_enabled: true,
+            // Disabled: density projection fights the pressure-supported hydrostatic
+            // equilibrium, injecting upward energy (open-top columns inflate, velocity
+            // pins at the clamp). The grid pressure solve alone enforces
+            // incompressibility (vol_err 0%). Re-enable only if dynamic flow shows
+            // particle clumping/voids that the pressure solve can't resolve.
+            density_projection_enabled: false,
             pressure_diagnostics_enabled: false,
             last_post_pressure_divergence: 0.0,
             water_rest_particles: 8.0,
@@ -2325,7 +2330,7 @@ impl GpuFlip3D {
         self.vorticity_epsilon = 0.0;
         self.open_boundaries = 8; // Open +Y for free surface.
         self.slip_factor = 0.0; // No-slip boundary damping.
-        self.density_projection_enabled = true;
+        self.density_projection_enabled = false; // see default; it breaks equilibrium
         self.water_rest_particles = 8.0;
         self.water_rest_density = 0.0;
         self.density_surface_clamp = true;
