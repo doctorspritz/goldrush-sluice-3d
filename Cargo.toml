@@ -3,6 +3,9 @@ resolver = "2"
 members = [
   "crates/sim3d",
   "crates/game",
+  "crates/mining-sim",
+  "crates/mining",
+  "crates/mining-physics",
 ]
 
 default-members = [
@@ -13,3 +16,9 @@ default-members = [
 glam = "0.27"
 serde = { version = "1.0", features = ["derive"] }
 bytemuck = { version = "1.14", features = ["derive"] }
+
+[profile.playable]
+inherits = "release"
+opt-level = 2
+codegen-units = 16
+lto = false

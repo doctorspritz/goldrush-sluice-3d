@@ -2,13 +2,27 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main, master]
   pull_request:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  mining:
+    name: Direct-control mining
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +stable fmt --package mining --package mining-sim --check
+      - run: cargo +stable test -p mining-sim --release --locked
+      - run: cargo +stable check -p mining --all-targets --locked
+      - run: cargo +stable clippy -p mining-sim -p mining --all-targets --no-deps --locked -- -D warnings
+
   build:
     name: Build
     runs-on: ubuntu-latest

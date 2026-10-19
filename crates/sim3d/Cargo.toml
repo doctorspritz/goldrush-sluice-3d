@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-glam = { workspace = true }
+glam = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
 bytemuck = { workspace = true }
 noise = "0.9"

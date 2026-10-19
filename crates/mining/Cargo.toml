@@ -1,0 +1,18 @@
+[package]
+name = "mining"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+
+[dependencies]
+mining-sim = { path = "../mining-sim" }
+mining-physics = { path = "../mining-physics" }
+bevy = { version = "=0.17.3", default-features = false, features = [
+  "std", "async_executor", "multi_threaded", "bevy_asset", "bevy_color",
+  "bevy_core_pipeline", "bevy_gizmos", "bevy_image", "bevy_mesh", "bevy_light",
+  "bevy_camera", "bevy_pbr", "bevy_render", "bevy_shader", "bevy_text",
+  "bevy_ui", "bevy_ui_render", "bevy_sprite", "bevy_sprite_render",
+  "bevy_window", "bevy_winit", "default_font", "png", "tonemapping_luts",
+  "zstd_rust", "x11"
+] }
+serde_json = "1.0"

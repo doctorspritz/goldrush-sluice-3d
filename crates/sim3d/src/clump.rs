@@ -164,6 +164,15 @@ struct SdfContactKey {
     particle: usize,
 }
 
+/// Serializable contact springs for coupled solvers. Keeping these with a save
+/// avoids replacing static friction by a fresh contact after restoring a shift.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct ContactHistory3D {
+    pub spheres: Vec<(usize, usize, usize, usize, Vec3)>,
+    pub planes: Vec<(usize, usize, u8, i8, Vec3)>,
+    pub sdf: Vec<(usize, usize, Vec3)>,
+}
+
 /// Parameters for SDF collision
 pub struct SdfParams<'a> {
     pub sdf: &'a [f32],
@@ -307,6 +316,40 @@ impl ClusterSimulation3D {
         self.sphere_contacts
             .keys()
             .any(|k| (k.a == i && k.b == j) || (k.a == j && k.b == i))
+    }
+
+    pub fn contact_history(&self) -> ContactHistory3D {
+        ContactHistory3D {
+            spheres: self.sphere_contacts.iter().map(|(k,v)|(k.a,k.b,k.ia,k.ib,*v)).collect(),
+            planes: self.plane_contacts.iter().map(|(k,v)|(k.clump,k.particle,k.axis,k.side,*v)).collect(),
+            sdf: self.sdf_contacts.iter().map(|(k,v)|(k.clump,k.particle,*v)).collect(),
+        }
+    }
+
+    pub fn restore_contact_history(&mut self, state: &ContactHistory3D) {
+        self.sphere_contacts = state.spheres.iter().map(|&(a,b,ia,ib,v)|(SphereContactKey{a,b,ia,ib},v)).collect();
+        self.plane_contacts = state.planes.iter().map(|&(clump,particle,axis,side,v)|(PlaneContactKey{clump,particle,axis,side},v)).collect();
+        self.sdf_contacts = state.sdf.iter().map(|&(clump,particle,v)|(SdfContactKey{clump,particle},v)).collect();
+    }
+
+    /// Remove an exited grain without assigning its contact springs to the
+    /// grain swapped in from the end of the array.
+    pub fn remove_clump(&mut self, index: usize) {
+        let last = self.clumps.len() - 1;
+        self.clumps.swap_remove(index);
+        let remap = |i: usize| if i == last { index } else { i };
+        self.sphere_contacts = self.sphere_contacts.drain().filter_map(|(mut k,v)| {
+            if k.a == index || k.b == index { return None; }
+            k.a = remap(k.a); k.b = remap(k.b); Some((k,v))
+        }).collect();
+        self.plane_contacts = self.plane_contacts.drain().filter_map(|(mut k,v)| {
+            if k.clump == index { return None; }
+            k.clump = remap(k.clump); Some((k,v))
+        }).collect();
+        self.sdf_contacts = self.sdf_contacts.drain().filter_map(|(mut k,v)| {
+            if k.clump == index { return None; }
+            k.clump = remap(k.clump); Some((k,v))
+        }).collect();
     }
 
     pub fn step(&mut self, dt: f32) {
