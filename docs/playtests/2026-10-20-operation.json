@@ -1,0 +1,12 @@
+{
+  "complete": true,
+  "delivered_m3": 0.5599999912736893,
+  "excavated_m3": 0.5599999912736894,
+  "gold_lost_g": 0.0,
+  "gold_recovered_g": 8.207496815755661,
+  "ledger_error_g": 7.275957614183426e-12,
+  "processed_m3": 0.5599999912736904,
+  "simulated_seconds": 133.06667360663414,
+  "tailings_m3": 0.4002401156322416,
+  "water_used_m3": 0.6501000308780931
+}

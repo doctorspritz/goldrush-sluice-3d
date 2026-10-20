@@ -1,6 +1,7 @@
 use crate::app::{bvec, Game, GameCamera};
 use bevy::{
     asset::RenderAssetUsages,
+    camera::visibility::NoFrustumCulling,
     core_pipeline::tonemapping::Tonemapping,
     light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap},
     mesh::{Indices, PrimitiveTopology},
@@ -38,8 +39,6 @@ pub(crate) struct TerrainChunk {
 }
 #[derive(Component)]
 pub(crate) struct WaterSurface;
-#[derive(Component)]
-pub(crate) struct SluiceWater;
 #[derive(Clone, Copy)]
 enum Mount {
     Chassis,
@@ -176,6 +175,7 @@ pub fn setup(
     ));
     commands.spawn((
         Camera3d::default(),
+        bevy::render::view::NoIndirectDrawing,
         Tonemapping::TonyMcMapface,
         Transform::from_xyz(28.0, 6.0, 17.0).looking_at(Vec3::new(19.0, 1.5, 18.0), Vec3::Y),
         DistanceFog {
@@ -248,20 +248,12 @@ pub fn setup(
         Transform::default(),
         WaterSurface,
     ));
-    let clear_water = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.23, 0.47, 0.43, 0.38),
-        alpha_mode: AlphaMode::Blend,
-        perceptual_roughness: 0.13,
-        reflectance: 0.65,
-        cull_mode: None,
-        ..default()
-    });
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.01, 0.01, 0.01))),
-        MeshMaterial3d(clear_water),
+        Mesh3d(meshes.add(Rectangle::new(1.0, 1.0))),
         Transform::default(),
-        Visibility::Hidden,
-        SluiceWater,
+        crate::water::WaterSplats::default(),
+        // Instance positions are world-space, beyond the seed quad's bounds.
+        NoFrustumCulling,
     ));
     // Larger silhouettes conceal the finite claim edge without expanding simulation cost.
     let hill_mat = material(&mut materials, Color::srgb(0.24, 0.31, 0.23), 1.0, 0.0);
@@ -1030,91 +1022,10 @@ pub fn sync_terrain(
     }
 }
 
-pub fn sync_sluice_water(
-    game: Res<Game>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut water: Query<(&Mesh3d, &mut Visibility), With<SluiceWater>>,
-) {
-    let Ok((handle, mut visible)) = water.single_mut() else {
-        return;
-    };
-    let Some(placement) = game.session.sluice.placement else {
-        *visible = Visibility::Hidden;
-        return;
-    };
-    let sluice = &game.session.sluice;
-    *visible = if sluice.water.is_empty() {
-        Visibility::Hidden
-    } else {
-        Visibility::Visible
-    };
-    if sluice.water.is_empty() {
-        return;
-    }
-    // Reconstruct the surface from actual FLIP water, with no scripted waves or
-    // inferred Manning depth. Dry cells have no triangles, including after stop.
-    const NX: usize = 86;
-    const NZ: usize = 20;
-    let dx = LENGTH / (NX - 1) as f32;
-    let dz = CHANNEL_WIDTH / (NZ - 1) as f32;
-    let mut heights = vec![f32::NEG_INFINITY; NX * NZ];
-    for p in &sluice.water {
-        let local = sluice.grid_to_local(p.position);
-        let ix = (local.x / dx).round() as i32;
-        let iz = ((local.z + CHANNEL_WIDTH * 0.5) / dz).round() as i32;
-        if ix >= 0 && ix < NX as i32 && iz >= 0 && iz < NZ as i32 {
-            let i = iz as usize * NX + ix as usize;
-            heights[i] = heights[i].max(local.y + 0.005);
-        }
-    }
-    let mut pos = Vec::with_capacity(NX * NZ);
-    let mut normals = Vec::with_capacity(NX * NZ);
-    let mut indices = Vec::new();
-    for z in 0..NZ {
-        for x in 0..NX {
-            let i = z * NX + x;
-            let h = if heights[i].is_finite() {
-                heights[i]
-            } else {
-                0.0
-            };
-            let world = placement.to_world(SVec::new(
-                x as f32 * dx,
-                h,
-                z as f32 * dz - CHANNEL_WIDTH * 0.5,
-            ));
-            pos.push(world.to_array());
-            normals.push([0.0, 1.0, 0.0]);
-            if x + 1 < NX
-                && z + 1 < NZ
-                && [i, i + 1, i + NX, i + NX + 1]
-                    .iter()
-                    .all(|j| heights[*j].is_finite())
-            {
-                let i = i as u32;
-                indices.extend_from_slice(&[
-                    i,
-                    i + NX as u32,
-                    i + 1,
-                    i + 1,
-                    i + NX as u32,
-                    i + NX as u32 + 1,
-                ]);
-            }
-        }
-    }
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_indices(Indices::U32(indices));
-    if let Some(m) = meshes.get_mut(&handle.0) {
-        *m = mesh;
-    }
-}
-
+#[allow(
+    clippy::type_complexity,
+    reason = "Bevy ParamSet expresses overlapping component access"
+)]
 pub fn sync_machine(
     game: Res<Game>,
     mut sets: ParamSet<(
@@ -1252,6 +1163,10 @@ pub fn sync_plant(
     }
 }
 
+#[allow(
+    clippy::type_complexity,
+    reason = "Bevy ParamSet expresses overlapping component access"
+)]
 pub fn sync_material(
     game: Res<Game>,
     p: Res<Palette>,

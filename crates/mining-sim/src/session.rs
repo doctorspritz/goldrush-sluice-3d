@@ -51,6 +51,7 @@ pub struct Controls {
     pub machine: MachineInput,
 }
 
+#[derive(Clone)]
 pub struct Session {
     pub site: Site,
     pub machine: Excavator,
@@ -120,6 +121,21 @@ impl Session {
             self.player.yaw.cos() * self.player.pitch.cos(),
         )
     }
+    /// Preview and commit share all placement checks, including player reach
+    /// and the requirement to drain/clean an existing active installation.
+    pub fn validate_placement(&self, placement: Placement) -> Result<(), String> {
+        if self.paused {
+            return Err("Resume the shift first".into());
+        }
+        if self.player.mode != ControlMode::OnFoot {
+            return Err("Exit the excavator to place equipment".into());
+        }
+        if self.player.position.distance(placement.inlet) > 9.0 {
+            return Err("Move closer to the placement".into());
+        }
+        self.sluice
+            .validate_relocation(placement, &self.site, self.machine.position)
+    }
     pub fn on_action(&mut self, a: Action) -> Result<(), String> {
         if self.paused {
             return Err("Resume the shift first".into());
@@ -173,15 +189,11 @@ impl Session {
                     Err("Enter the excavator to operate its engine".into())
                 }
             }
-            Action::Place(p) => {
-                if self.player.mode != ControlMode::OnFoot {
-                    Err("Exit the excavator to place equipment".into())
-                } else if self.player.position.distance(p.inlet) > 9.0 {
-                    Err("Move closer to the placement".into())
-                } else {
-                    self.sluice.relocate(p, &self.site, self.machine.position)
-                }
-            }
+            Action::Place(p) => self.validate_placement(p).and_then(|()| {
+                self.sluice.relocate(p, &self.site, self.machine.position)?;
+                self.message = "Sluice installed. P starts the pump; O starts the feed.".into();
+                Ok(())
+            }),
             Action::TogglePump | Action::ToggleFeed | Action::Cleanup => {
                 if !self.near_plant() || self.player.mode != ControlMode::OnFoot {
                     Err("Walk to the processing plant".into())
@@ -242,6 +254,38 @@ impl Session {
         };
         if let Err(ref message) = result {
             self.message = message.clone();
+        } else {
+            match a {
+                Action::EnterExit => {
+                    self.message = if self.player.mode == ControlMode::Excavator {
+                        "Cab controls: R/F boom, T/G stick, Y/H curl. Hold Space to cut; J pours the bucket.".into()
+                    } else {
+                        "Back on foot. Walk to the hopper to operate the plant.".into()
+                    }
+                }
+                Action::Engine => {
+                    self.message = if self.machine.engine_on {
+                        "Engine started".into()
+                    } else {
+                        "Engine stopped".into()
+                    }
+                }
+                Action::TogglePump => {
+                    self.message = if self.sluice.pump_on {
+                        "Pump on. Let the sluice fill, then open the feed with O.".into()
+                    } else {
+                        "Pump off. Stop feed and let moving material settle before cleanup.".into()
+                    }
+                }
+                Action::ToggleFeed => {
+                    self.message = if self.sluice.feed_on {
+                        "Feed open. Your hopper material is entering the sluice.".into()
+                    } else {
+                        "Feed stopped. Leave water running to flush the remaining gangue.".into()
+                    }
+                }
+                _ => {}
+            }
         }
         result
     }
@@ -355,8 +399,9 @@ impl Session {
         } else {
             0.0
         };
-        let fraction = if requested > 0.0 {
-            actual / requested
+        let expected = self.sluice.flow_m3s * dt;
+        let fraction = if expected > 0.0 {
+            actual / expected
         } else {
             0.0
         };

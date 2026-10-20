@@ -133,13 +133,13 @@ impl Hydraulics {
         a.suspended_gravel = next();
         a.suspended_paydirt = next();
         a.settling_time = times;
-        for i in 0..WIDTH * WIDTH {
+        for (i, &water_depth) in depth.iter().enumerate() {
             w.water_surface[i] = w.bedrock_elevation[i]
                 + w.paydirt_thickness[i]
                 + w.gravel_thickness[i]
                 + w.overburden_thickness[i]
                 + w.terrain_sediment[i]
-                + depth[i];
+                + water_depth;
             w.suspended_sediment[i] = a.suspended_sediment[i]
                 + a.suspended_overburden[i]
                 + a.suspended_gravel[i]
@@ -155,7 +155,7 @@ impl Hydraulics {
         if a.suspended_gold_g.is_empty() {
             a.suspended_gold_g = vec![0.0; WIDTH * WIDTH];
         }
-        for i in 0..WIDTH * WIDTH {
+        for (i, &water_depth) in depth.iter().enumerate() {
             let change = w.paydirt_thickness[i] - previous_paydirt[i];
             if change < 0.0 && previous_paydirt[i] > 0.0 {
                 let moved =
@@ -163,7 +163,7 @@ impl Hydraulics {
                 s.site.gold_g[i] -= moved;
                 a.suspended_gold_g[i] += moved;
             } else if change > 0.0 {
-                let suspended = previous_suspended.get(i).copied().unwrap_or(0.0) * depth[i];
+                let suspended = previous_suspended.get(i).copied().unwrap_or(0.0) * water_depth;
                 let fraction = (change / (suspended + change).max(1e-9)).clamp(0.0, 1.0) as f64;
                 let moved = a.suspended_gold_g[i] * fraction;
                 a.suspended_gold_g[i] -= moved;
@@ -172,7 +172,7 @@ impl Hydraulics {
         }
         // Conservative upwind transfer using the actual solver flux and depth.
         let old = a.suspended_gold_g.clone();
-        for i in 0..WIDTH * WIDTH {
+        for (i, &water_depth) in depth.iter().enumerate() {
             let x = i % WIDTH;
             let z = i / WIDTH;
             let mut out = Vec::with_capacity(4);
@@ -190,7 +190,7 @@ impl Hydraulics {
             }
             let total = out.iter().map(|(_, q)| *q as f64).sum::<f64>();
             let fraction = (total * dt as f64
-                / (depth[i] as f64 * (CELL * CELL) as f64).max(1e-12))
+                / (water_depth as f64 * (CELL * CELL) as f64).max(1e-12))
             .clamp(0.0, 1.0);
             let budget = old[i] * fraction;
             a.suspended_gold_g[i] -= budget;

@@ -38,6 +38,19 @@ pub fn mesh(s: &Sluice) -> (Vec<[f32; 3]>, Vec<u32>) {
                     .to_array()
             })
             .collect(),
-        b.indices().to_vec(),
+        // The legacy builder winds its Z faces inward. Repair those faces,
+        // then account for the reflected (downstream, up, right) world basis.
+        b.indices()
+            .chunks_exact(3)
+            .flat_map(|t| {
+                let v = |i: u32| Vec3::from_array(b.vertices()[i as usize].position);
+                let normal = (v(t[1]) - v(t[0])).cross(v(t[2]) - v(t[0]));
+                if normal.z.abs() > 1e-8 {
+                    [t[0], t[1], t[2]]
+                } else {
+                    [t[0], t[2], t[1]]
+                }
+            })
+            .collect(),
     )
 }

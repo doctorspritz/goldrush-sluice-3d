@@ -2214,7 +2214,7 @@ impl GpuFlip3D {
             sediment_drag_coefficient: 6.0, // Moderate drag - particles entrain in flow
             gold_density_threshold: 10.0,
             gold_drag_multiplier: 1.0,
-            gold_settling_velocity: 0.02,
+            gold_settling_velocity: 0.15,
             gold_flake_lift: 0.0,
             sediment_porosity_drag: 3.0,
             positions_buffer,

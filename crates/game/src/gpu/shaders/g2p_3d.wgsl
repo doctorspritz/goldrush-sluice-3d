@@ -33,7 +33,7 @@ struct Params {
 struct SedimentParams {
     settling_velocity: f32,     // How fast sediment falls (m/s)
     friction_threshold: f32,    // Speed below which friction kicks in (m/s)
-    friction_strength: f32,     // How much to damp when slow (0-1 per frame)
+    friction_strength: f32,     // Damping fraction at 60 Hz; converted to exponential decay
     vorticity_lift: f32,        // How much vorticity suspends sediment
     vorticity_threshold: f32,   // Minimum vorticity to lift
     drag_coefficient: f32,      // Rate at which particle approaches water velocity (1/s)
@@ -315,67 +315,26 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     var final_velocity: vec3<f32>;
 
     if (is_sediment) {
-        // ========== DRAG-BASED ENTRAINMENT MODEL ==========
-        // Sediment is pulled toward water velocity by drag,
-        // while gravity (reduced by buoyancy) pulls it down.
-        // When water flows fast: drag wins → entrainment
-        // When water is slow: gravity wins → settling
-
-        let water_vel = water_velocity;  // Water-only velocity from grid
-        let particle_vel = old_particle_vel;
-
-        // CORRECTED DRAG MODEL FOR SETTLING
-        // The goal: heavy particles settle upstream, light particles wash downstream.
-        //
-        // Key insight: in a sluice, SETTLING happens while particles are in the water
-        // column, not after they hit the floor. Heavy particles sink fast and land
-        // upstream; light particles drift downstream as they slowly sink.
-        //
-        // Problem with 1/density drag scaling: once particles hit the floor, heavy
-        // particles slide (low drag) while light particles stick (high drag). WRONG!
-        //
-        // Fix: use UNIFORM drag for all particles. The separation happens during
-        // settling through the water column, not during floor sliding.
-
-        var drag_rate = sediment_params.drag_coefficient;  // Same drag for all!
-        if (is_gold) {
-            drag_rate *= sediment_params.gold_drag_multiplier;
-        }
-        let drag_blend = min(drag_rate * params.dt, 0.9);
-
-        // Blend particle velocity toward water velocity (drag entrainment)
-        var vel_after_drag = mix(particle_vel, water_vel, drag_blend);
-
-        // BUOYANCY FORCE: F_buoyancy = (ρ_fluid - ρ_sediment) * V * g
-        // This creates a net downward acceleration for sediment denser than water.
-        // For particles with relative density ρ_rel (water=1.0):
-        //   a_buoyancy = (1.0 - ρ_rel) * g
-        // Negative (downward) for ρ_rel > 1.0, positive (upward) for ρ_rel < 1.0
-        //
-        // This is applied as a velocity change (impulse) over the timestep:
-        //   Δv_buoyancy = a_buoyancy * dt = (1.0 - ρ_rel) * g * dt
-        let buoyancy_accel = (1.0 - density) * sediment_params.gravity;  // m/s²
-        let buoyancy_impulse = buoyancy_accel * params.dt;  // m/s
-        vel_after_drag.y += buoyancy_impulse;  // Negative for dense particles (Y axis points up)
-
-        // SETTLING: Use pre-computed Stokes settling velocities
-        // Heavy particles sink faster, landing upstream before the flow carries them.
-        // Light particles sink slowly, drifting downstream as they fall.
-        //
-        // Stokes settling: vs = g * (rho_p - rho_f) * d^2 / (18 * mu)
-        // The settling velocities are pre-computed on CPU with physical constants.
-        // Gold: smaller particles but much denser, settling_velocity ≈ 0.1 m/s
-        // Sand/gravel: larger particles, settling_velocity ≈ 0.3-0.5 m/s
-        //
-        // Select appropriate settling velocity based on particle type (density threshold)
-        let settling_vel = select(
-            sediment_params.settling_velocity,      // Sand/gravel
-            sediment_params.gold_settling_velocity, // Gold
+        // Exact integration of dv/dt = k * (water_velocity - v) - g_eff Y.
+        // Archimedes: (weight - buoyancy) / mass = g * (1 - rho_water/rho_solid).
+        // Multiplying gravity by relative density omitted the particle's mass.
+        let submerged_gravity = sediment_params.gravity * max(0.0, 1.0 - 1.0 / density);
+        let terminal_slip = select(
+            sediment_params.settling_velocity,
+            sediment_params.gold_settling_velocity,
             is_gold
         );
-        vel_after_drag.y -= settling_vel;
-
-        final_velocity = vel_after_drag;
+        var drag_rate = max(sediment_params.drag_coefficient, 0.0001);
+        // A prescribed terminal velocity sets the relaxation time; it must not
+        // be subtracted every substep (which made sinking scale with tick rate).
+        if (terminal_slip > 0.0 && submerged_gravity > 0.0) {
+            drag_rate = submerged_gravity / terminal_slip;
+        }
+        if (is_gold) {
+            drag_rate *= max(sediment_params.gold_drag_multiplier, 0.0001);
+        }
+        let equilibrium = water_velocity - vec3<f32>(0.0, submerged_gravity / drag_rate, 0.0);
+        final_velocity = mix(old_particle_vel, equilibrium, 1.0 - exp(-drag_rate * params.dt));
     } else {
         // Water: full FLIP/PIC blend
         final_velocity = params.flip_ratio * flip_velocity + (1.0 - params.flip_ratio) * pic_velocity;
@@ -390,7 +349,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
             let friction_factor = 1.0 - speed / sediment_params.friction_threshold;
             let friction = sediment_params.friction_strength * friction_factor;
             // Apply friction uniformly - drag model handles entrainment
-            final_velocity *= 1.0 - friction;
+            final_velocity *= pow(max(1.0 - friction, 0.0001), params.dt * 60.0);
         }
 
         // Vorticity lift: turbulence can suspend particles

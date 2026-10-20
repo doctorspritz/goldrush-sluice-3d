@@ -3123,6 +3123,7 @@ name = "mining"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bytemuck",
  "mining-physics",
  "mining-sim",
  "serde_json",

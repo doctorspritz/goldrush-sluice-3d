@@ -3,6 +3,7 @@ use bevy::{
     prelude::*,
     window::PrimaryWindow,
 };
+use mining_physics::worker::Command;
 use mining_sim::{
     session::Controls, Action, ControlMode, MachineInput, Placement, Session, Vec3 as SimVec3,
 };
@@ -14,6 +15,10 @@ pub struct Game {
     pub controls: Controls,
     pub placement: Option<Placement>,
     pub help: bool,
+    pub pending: Vec<Command>,
+    pub look_delta: [f32; 2],
+    pub snapshot_id: u64,
+    pub step_ms: f64,
     pub placement_error: Option<String>,
 }
 impl Default for Game {
@@ -23,8 +28,31 @@ impl Default for Game {
             controls: Controls::default(),
             placement: None,
             help: false,
+            pending: Vec::new(),
+            look_delta: [0.0; 2],
+            snapshot_id: 0,
+            step_ms: 0.0,
             placement_error: None,
         }
+    }
+}
+impl Game {
+    pub fn command(&mut self, command: Command) {
+        if self.pending.len() < 256 {
+            self.pending.push(command);
+        } else {
+            self.session.message = "Simulation is busy; wait before issuing more commands".into();
+        }
+    }
+    pub fn action(&mut self, action: Action) -> Result<(), String> {
+        if self.pending.len() >= 256 {
+            return Err("Simulation is busy".into());
+        }
+        if let Action::Place(p) = action {
+            self.session.validate_placement(p)?;
+        }
+        self.command(Command::Action(action));
+        Ok(())
     }
 }
 pub fn bvec(v: SimVec3) -> Vec3 {
@@ -36,19 +64,29 @@ pub fn svec(v: Vec3) -> SimVec3 {
 #[derive(Component)]
 pub struct GameCamera;
 
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PlayerInput<'w> {
+    keys: Res<'w, ButtonInput<KeyCode>>,
+    mouse: Res<'w, ButtonInput<MouseButton>>,
+    motion: Res<'w, AccumulatedMouseMotion>,
+    scroll: Res<'w, AccumulatedMouseScroll>,
+}
+
 pub fn input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    motion: Res<AccumulatedMouseMotion>,
-    scroll: Res<AccumulatedMouseScroll>,
+    input: PlayerInput,
     mut game: ResMut<Game>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
     mut exit: MessageWriter<AppExit>,
     validation: Res<crate::validation::Validation>,
-    mut hydraulics: NonSendMut<mining_physics::Hydraulics>,
 ) {
-    if validation.active() {
+    let PlayerInput {
+        keys,
+        mouse,
+        motion,
+        scroll,
+    } = input;
+    if validation.automated() {
         return;
     }
     if keys.just_pressed(KeyCode::Escape) {
@@ -56,6 +94,8 @@ pub fn input(
             game.placement = None;
         } else {
             game.session.paused = !game.session.paused;
+            let paused = game.session.paused;
+            game.command(Command::Pause(paused));
         }
     }
     if keys.just_pressed(KeyCode::F1) {
@@ -65,41 +105,35 @@ pub fn input(
         exit.write(AppExit::Success);
     }
     if keys.just_pressed(KeyCode::F5) {
-        game.session.message = match save(&game.session) {
-            Ok(_) => "Shift saved. F9 restores this shift.".into(),
-            Err(e) => format!("Save failed: {e}"),
-        };
+        game.command(Command::Save(save_path()));
     }
     if keys.just_pressed(KeyCode::F9) {
-        match load() {
-            Ok(mut s) => {
-                s.site.revision = game.session.site.revision + 1;
-                game.session = s;
-                hydraulics.restore();
-                game.placement = None;
-            }
-            Err(e) => game.session.message = format!("Load failed: {e}"),
-        }
+        game.command(Command::Load(save_path()));
+        game.placement = None;
     }
     if game.session.paused {
         game.controls = Controls::default();
         return;
     }
     if mouse.pressed(MouseButton::Right) {
-        game.session.player.yaw -= motion.delta.x * 0.004;
-        game.session.player.pitch =
-            (game.session.player.pitch - motion.delta.y * 0.003).clamp(-1.30, 1.10);
+        let yaw = -motion.delta.x * 0.004;
+        let pitch = (game.session.player.pitch - motion.delta.y * 0.003).clamp(-1.30, 1.10)
+            - game.session.player.pitch;
+        game.session.player.yaw += yaw;
+        game.session.player.pitch += pitch;
+        game.look_delta[0] += yaw;
+        game.look_delta[1] += pitch;
     }
     let axis=|plus:KeyCode,minus:KeyCode| if keys.pressed(plus){1.0}else{0.0}-if keys.pressed(minus){1.0}else{0.0};
     let foot = game.session.player.mode == ControlMode::OnFoot;
     if keys.just_pressed(KeyCode::Tab) || (foot && keys.just_pressed(KeyCode::KeyE)) {
-        let _ = game.session.on_action(Action::EnterExit);
+        let _ = game.action(Action::EnterExit);
     }
     if keys.just_pressed(KeyCode::KeyV) {
-        let _ = game.session.on_action(Action::Camera);
+        let _ = game.action(Action::Camera);
     }
     if keys.just_pressed(KeyCode::KeyI) {
-        let _ = game.session.on_action(Action::Engine);
+        let _ = game.action(Action::Engine);
     }
     if keys.just_pressed(KeyCode::KeyB) && foot {
         if game.placement.is_some() {
@@ -154,11 +188,9 @@ pub fn input(
                 }
             }
         }
-        game.placement_error = p
-            .validate(&game.session.site, game.session.machine.position)
-            .err();
+        game.placement_error = game.session.validate_placement(p).err();
         if mouse.just_pressed(MouseButton::Left) {
-            match game.session.on_action(Action::Place(p)) {
+            match game.action(Action::Place(p)) {
                 Ok(()) => {
                     game.placement = None;
                     game.session.message =
@@ -180,13 +212,13 @@ pub fn input(
                 .site
                 .raycast(origin, game.session.look_direction(), 3.0)
             {
-                let _ = game.session.on_action(Action::Dig(p));
+                let _ = game.action(Action::Dig(p));
             } else {
                 game.session.message = "Look down at reachable ground to use the shovel".into();
             }
         }
         if keys.just_pressed(KeyCode::KeyJ) {
-            let _ = game.session.on_action(Action::DumpHand);
+            let _ = game.action(Action::DumpHand);
         }
         for (key, action) in [
             (KeyCode::KeyP, Action::TogglePump),
@@ -194,21 +226,21 @@ pub fn input(
             (KeyCode::KeyC, Action::Cleanup),
         ] {
             if keys.just_pressed(key) {
-                let _ = game.session.on_action(action);
+                let _ = game.action(action);
             }
         }
         if game.session.near_plant() {
             if keys.just_pressed(KeyCode::ArrowUp) {
-                game.session.sluice.flow_m3s = (game.session.sluice.flow_m3s + 0.002).min(0.120);
+                game.command(Command::Water(0.002));
             }
             if keys.just_pressed(KeyCode::ArrowDown) {
-                game.session.sluice.flow_m3s = (game.session.sluice.flow_m3s - 0.002).max(0.001);
+                game.command(Command::Water(-0.002));
             }
             if keys.just_pressed(KeyCode::ArrowRight) {
-                game.session.sluice.feed_m3s = (game.session.sluice.feed_m3s + 0.001).min(0.02);
+                game.command(Command::Feed(0.001));
             }
             if keys.just_pressed(KeyCode::ArrowLeft) {
-                game.session.sluice.feed_m3s = (game.session.sluice.feed_m3s - 0.001).max(0.001);
+                game.command(Command::Feed(-0.001));
             }
         }
     }
@@ -283,26 +315,4 @@ pub fn save_path() -> PathBuf {
                     .join("sluice-moose/first-bend.json")
             }
         })
-}
-pub fn save(session: &Session) -> Result<PathBuf, String> {
-    use std::io::Write;
-    let path = save_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let temporary = path.with_extension("json.tmp");
-    let mut f = std::fs::File::create(&temporary).map_err(|e| e.to_string())?;
-    f.write_all(session.save_json()?.as_bytes())
-        .map_err(|e| e.to_string())?;
-    f.sync_all().map_err(|e| e.to_string())?;
-    std::fs::rename(temporary, &path).map_err(|e| e.to_string())?;
-    Ok(path)
-}
-pub fn load() -> Result<Session, String> {
-    let path = save_path();
-    let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
-    if metadata.len() > 8_000_000 {
-        return Err("Save file is too large".into());
-    }
-    Session::load_json(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)
 }

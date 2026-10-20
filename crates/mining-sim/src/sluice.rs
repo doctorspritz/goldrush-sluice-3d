@@ -10,7 +10,10 @@ pub const PARCEL_VOLUME: f64 = 0.002;
 pub const MAX_GRAINS: usize = 4096;
 pub const FLUID_CELL: f32 = 0.02;
 pub const WATER_PARTICLE_M3: f64 = (FLUID_CELL * FLUID_CELL * FLUID_CELL / 8.0) as f64;
-pub const MAX_WATER_PARTICLES: usize = 160_000;
+// At 8 particles per 2 cm cell, 160k particles held only 0.16 m³:
+// less than a primed riffled channel. Reserve 0.4 m³ so the inlet cannot
+// throttle solely because the dry sluice has not reached its outlet yet.
+pub const MAX_WATER_PARTICLES: usize = 400_000;
 
 /// Original FLIP/APIC state, in the local simulation grid. Kept in the save,
 /// rather than recreated when a camera changes or a shift is restored.
@@ -306,11 +309,21 @@ impl Sluice {
         self.cleanups += 1;
         Ok(m)
     }
-    pub fn relocate(&mut self, p: Placement, site: &Site, machine: Vec3) -> Result<(), String> {
+    pub fn validate_relocation(
+        &self,
+        p: Placement,
+        site: &Site,
+        machine: Vec3,
+    ) -> Result<(), String> {
         if self.pump_on || !self.grains.is_empty() || !self.water.is_empty() {
-            return Err("Stop the pump and clean the mats before moving the sluice".into());
+            return Err(
+                "Stop the pump, let water drain and clean the mats before moving the sluice".into(),
+            );
         }
-        p.validate(site, machine)?;
+        p.validate(site, machine)
+    }
+    pub fn relocate(&mut self, p: Placement, site: &Site, machine: Vec3) -> Result<(), String> {
+        self.validate_relocation(p, site, machine)?;
         self.placement = Some(p);
         Ok(())
     }

@@ -306,6 +306,10 @@ pub fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
         .with_children(|parent|{parent.spawn((Text::new("SHIFT PAUSED\n\nEsc to return to the claim\nF5 save shift  •  F9 restore shift\nCtrl + Q to quit"),TextFont{font_size:24.0,..default()},TextColor(cream),TextLayout::new_with_justify(Justify::Center)));});
 }
 
+#[allow(
+    clippy::type_complexity,
+    reason = "Bevy ParamSet expresses overlapping component access"
+)]
 pub fn update(
     game: Res<Game>,
     mut text: Query<(&HudText, &mut Text)>,

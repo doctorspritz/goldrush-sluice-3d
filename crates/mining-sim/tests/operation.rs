@@ -7,6 +7,10 @@ fn close(a: f64, b: f64, tolerance: f64) {
     assert!((a - b).abs() < tolerance, "{a} != {b}");
 }
 #[test]
+#[allow(
+    clippy::field_reassign_with_default,
+    reason = "Sluice has private persistence fields and public operating controls"
+)]
 fn dry_or_missing_water_cannot_process_free_material() {
     let mut s = Sluice::default();
     s.placement = Some(Placement::suggested(&Site::new()));
@@ -204,4 +208,75 @@ fn material_splitting_and_hopper_overflow_preserve_all_components() {
     collected.add(hopper.hopper);
     collected.add(overflow);
     close(collected.mass_kg(), input.mass_kg(), 1e-7);
+}
+
+#[test]
+fn complete_live_fluid_save_larger_than_eight_megabytes_restores() {
+    use glam::Mat3;
+    use mining_sim::{
+        sluice::{WaterParticle, WATER_PARTICLE_M3},
+        storage,
+    };
+    let mut session = Session::new();
+    session.sluice.placement = Some(Placement::suggested(&session.site));
+    session.sluice.water = vec![
+        WaterParticle {
+            position: Vec3::new(0.4, 0.8, 0.3),
+            velocity: Vec3::new(0.2, 0.0, 0.0),
+            affine: Mat3::ZERO,
+        };
+        120_000
+    ];
+    session.sluice.water_used_m3 = session.sluice.water.len() as f64 * WATER_PARTICLE_M3;
+    let path = std::env::temp_dir().join(format!("sluice-live-fluid-{}.json", std::process::id()));
+    storage::save(&session, &path).unwrap();
+    assert!(std::fs::metadata(&path).unwrap().len() > 8_000_000);
+    let restored = storage::load(&path).unwrap();
+    assert_eq!(restored.sluice.water.len(), session.sluice.water.len());
+    assert_eq!(
+        restored.sluice.water[119_999].position,
+        session.sluice.water[119_999].position
+    );
+    assert_eq!(
+        restored.sluice.water[119_999].affine,
+        session.sluice.water[119_999].affine
+    );
+    close(
+        restored.sluice.water_used_m3,
+        session.sluice.water_used_m3,
+        1e-12,
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn placement_preview_and_commit_agree_for_reach_and_running_equipment() {
+    let mut s = Session::new();
+    let p = Placement::suggested(&s.site);
+    s.player.position = Vec3::new(28.0, 0.35, 28.0);
+    assert!(s.validate_placement(p).is_err());
+    assert!(s.on_action(Action::Place(p)).is_err());
+    assert!(s.sluice.placement.is_none());
+    s.player.position = Vec3::new(14.6, 0.35, 15.0);
+    assert!(s.validate_placement(p).is_ok());
+    s.on_action(Action::Place(p)).unwrap();
+    s.on_action(Action::TogglePump).unwrap();
+    let before = s.sluice.placement.unwrap();
+    assert!(s.validate_placement(p).is_err());
+    assert!(s.on_action(Action::Place(p)).is_err());
+    assert_eq!(s.sluice.placement.unwrap().inlet, before.inlet);
+}
+
+#[test]
+fn invalid_live_state_cannot_overwrite_last_good_save() {
+    use mining_sim::storage;
+    let mut s = Session::new();
+    let path = std::env::temp_dir().join(format!("sluice-last-good-{}.json", std::process::id()));
+    storage::save(&s, &path).unwrap();
+    let original = std::fs::read(&path).unwrap();
+    s.machine.boom = 999.0;
+    assert!(storage::save(&s, &path).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert!(storage::load(&path).is_ok());
+    std::fs::remove_file(path).unwrap();
 }

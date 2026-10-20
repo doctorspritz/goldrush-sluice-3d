@@ -6,6 +6,7 @@ pub const WIDTH: usize = 128;
 pub const CELL: f32 = 0.25;
 pub const EXTENT: f32 = WIDTH as f32 * CELL;
 
+#[derive(Clone)]
 pub struct Site {
     pub world: World,
     pub gold_g: Vec<f64>,

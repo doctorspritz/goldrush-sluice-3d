@@ -66,7 +66,7 @@ fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
         }
     }
     assert_eq!(s.site.hydraulic.steps, 120);
-    assert!(s.sluice.solver_steps >= 1440);
+    assert!(s.sluice.solver_steps >= 360 * mining_physics::FLIP_SUBSTEPS as u64);
     assert!(
         s.sluice.water.iter().any(|p| p.position.x > 0.4),
         "original FLIP advection must move inlet water downstream"
@@ -85,6 +85,13 @@ fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
         .iter()
         .zip(initial_layers)
         .any(|(a, b)| (a - b).abs() > 0.0001));
+    assert!(
+        s.sluice
+            .water
+            .iter()
+            .any(|p| p.velocity.length_squared() > 1e-4),
+        "water must retain velocity from the original FLIP/PIC update"
+    );
     assert!(!s.sluice.grains.is_empty());
     assert!(s.site.hydraulic.valid() && s.sluice.valid());
     let water = s.sluice.water.len() as f64 * WATER_PARTICLE_M3

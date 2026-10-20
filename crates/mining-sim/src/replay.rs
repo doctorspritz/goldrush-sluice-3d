@@ -2,7 +2,7 @@
 //! joint axes as a player; it never injects material or teleports equipment.
 use crate::{session::Controls, Action, ControlMode, MachineInput, Placement, Session, Vec3};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct OperatorReplay {
     pub phase: u32,
     pub ticks: u32,
@@ -34,6 +34,9 @@ impl OperatorReplay {
             }
             1 => {
                 self.command(s, Action::EnterExit);
+                if s.player.third_person {
+                    self.command(s, Action::Camera);
+                }
                 self.next();
             }
             2 | 10 => {
@@ -57,6 +60,9 @@ impl OperatorReplay {
                 }
             }
             5 | 13 => {
+                if self.ticks == 1 && !s.player.third_person {
+                    self.command(s, Action::Camera);
+                }
                 controls.machine.dump = true;
                 if self.ticks >= 100 {
                     self.next();
@@ -209,6 +215,9 @@ pub fn replay_receipt(s: &Session, r: &OperatorReplay) -> Result<String, String>
     }
     if s.sluice.concentrate.gold_g < crate::session::GOLD_TARGET_G {
         return Err("The first-gold objective was not reached".into());
+    }
+    if s.sluice.water_returned_m3 < 0.01 {
+        return Err("Water did not flow through the sluice back to terrain".into());
     }
     if s.sluice.tailings.volume() < 0.1 {
         return Err("Gangue did not leave the plant".into());

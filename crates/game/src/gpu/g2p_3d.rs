@@ -38,21 +38,20 @@ pub struct SedimentParams3D {
     pub settling_velocity: f32,
     /// Speed below which friction kicks in (m/s). Typical: 0.1
     pub friction_threshold: f32,
-    /// How much to damp when slow (0-1 per frame). Typical: 0.3-0.5
+    /// Damping fraction at 60 Hz; integrated with exponential decay.
     pub friction_strength: f32,
     /// How much vorticity suspends sediment. Typical: 1.0-2.0
     pub vorticity_lift: f32,
     /// Minimum vorticity to lift. Typical: 1.0-5.0
     pub vorticity_threshold: f32,
-    /// Rate at which particle velocity approaches water velocity (1/s).
-    /// Higher = more entrainment. Typical: 5.0-20.0
-    /// Scaled by 1/density so heavier particles entrain less.
+    /// Fallback relaxation rate (1/s) when no terminal settling speed is set.
+    /// With a terminal speed, the shader derives the rate from submerged gravity.
     pub drag_coefficient: f32,
     /// Density threshold for gold particles.
     pub gold_density_threshold: f32,
     /// Drag multiplier applied to gold (fine gold entrains more).
     pub gold_drag_multiplier: f32,
-    /// Settling velocity used for gold-specific lift (m/s).
+    /// Gold terminal settling speed in still water (m/s).
     pub gold_settling_velocity: f32,
     /// Upward bias for flaky gold near the surface (m/s^2).
     pub gold_flake_lift: f32,
@@ -66,9 +65,9 @@ pub struct SedimentParams3D {
 impl Default for SedimentParams3D {
     fn default() -> Self {
         Self {
-            settling_velocity: 0.0,     // No settling - pure fluid
+            settling_velocity: 0.0,     // No prescribed terminal speed; use fallback drag
             friction_threshold: 0.0,    // No friction threshold
-            friction_strength: 0.0,     // No friction - sediment = colored water
+            friction_strength: 0.0,     // No heuristic low-speed damping
             vorticity_lift: 0.0,        // Not needed with no settling
             vorticity_threshold: 999.0, // Never triggers
             drag_coefficient: 10.0,     // Moderate drag - particles entrain in flow

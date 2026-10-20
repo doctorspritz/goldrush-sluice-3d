@@ -3,6 +3,7 @@
 //! device presents their readback. No dependency upgrade or shader rewrite is needed.
 pub mod geometry;
 mod terrain;
+pub mod worker;
 use game::gpu::{flip_3d::GpuFlip3D, heightfield::GpuHeightfield};
 use glam::{Mat3, Vec3};
 use mining_sim::{
@@ -12,6 +13,10 @@ use mining_sim::{
 use sim3d::{
     constants, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, SdfParams,
 };
+
+// G2P clamps velocity to 1 m/s. At dx=0.02, two substeps give a maximum
+// advective CFL of 0.417, below 0.5, without four full GPU round trips per tick.
+pub const FLIP_SUBSTEPS: u32 = 2;
 
 pub struct Hydraulics {
     device: wgpu::Device,
@@ -131,6 +136,10 @@ impl Hydraulics {
             FLUID_CELL,
             MAX_WATER_PARTICLES + mining_sim::sluice::MAX_GRAINS,
         );
+        // CPU DEM owns solid friction. Do not add the shader's heuristic
+        // low-speed damping or extra turbulence lift to those same contacts.
+        flip.sediment_friction_strength = 0.0;
+        flip.sediment_vorticity_lift = 0.0;
         flip.open_boundaries = 2 | 8; // downstream +X outlet and free surface +Y
         let dem = ClusterSimulation3D::new(
             Vec3::ZERO,
@@ -245,10 +254,10 @@ impl Hydraulics {
             l.dem.restore_contact_history(&s.sluice.contacts);
             l.restoring_contacts = false;
         }
-        let substeps = 4;
+        let substeps = FLIP_SUBSTEPS;
         for _ in 0..substeps {
             let dt = FIXED_DT / substeps as f32;
-            l.flip.step(
+            if !l.flip.step_async(
                 &self.device,
                 &self.queue,
                 &mut pos,
@@ -262,7 +271,19 @@ impl Hydraulics {
                 constants::GRAVITY,
                 0.0,
                 80,
-            );
+            ) {
+                return Err("Original FLIP readback queue is full".into());
+            }
+            // The existing async slot copies positions, velocity and all three
+            // APIC columns together. One fence replaces six separate downloads;
+            // CPU DEM still receives the exact result of every FLIP substep.
+            self.device.poll(wgpu::Maintain::Wait);
+            if l.flip
+                .try_readback(&self.device, &mut pos, &mut vel, &mut affine)
+                != Some(pos.len())
+            {
+                return Err("Original FLIP readback failed".into());
+            }
             for (i, c) in l.dem.clumps.iter_mut().enumerate() {
                 c.position = pos[nw + i];
                 c.velocity = vel[nw + i];
@@ -284,7 +305,7 @@ impl Hydraulics {
             }
             s.sluice.solver_steps += 1;
         }
-        if pos.iter().chain(&vel).any(|p| !p.is_finite()) {
+        if pos.iter().chain(&vel).any(|p| !p.is_finite()) || affine.iter().any(|c| !c.is_finite()) {
             return Err("Non-finite original solver output".into());
         }
         for (i, p) in s.sluice.water.iter_mut().enumerate() {

@@ -5,6 +5,7 @@ pub mod replay;
 pub mod session;
 pub mod site;
 pub mod sluice;
+pub mod storage;
 
 pub use glam::Vec3;
 pub use machine::{Excavator, MachineInput};
