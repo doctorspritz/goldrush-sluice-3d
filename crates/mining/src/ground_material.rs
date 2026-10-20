@@ -211,7 +211,7 @@ mod tests {
         let material = material(&mut images);
         let image = images.get(&material.normal_map_texture.unwrap()).unwrap();
         assert_eq!(image.texture_descriptor.format, TextureFormat::Rgba8Unorm);
-        for pixel in image.data.as_ref().unwrap().chunks_exact(4) {
+        for pixel in image.data.as_ref().unwrap().as_chunks::<4>().0 {
             let normal =
                 Vec3::new(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32) / 127.5 - Vec3::ONE;
             assert!(normal.is_finite());
