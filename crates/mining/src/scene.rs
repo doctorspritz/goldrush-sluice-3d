@@ -1,7 +1,6 @@
 use crate::app::{bvec, Game, GameCamera};
 use bevy::{
     asset::RenderAssetUsages,
-    camera::visibility::NoFrustumCulling,
     core_pipeline::tonemapping::Tonemapping,
     light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap},
     mesh::{Indices, PrimitiveTopology},
@@ -174,8 +173,13 @@ pub fn setup(
         .build(),
     ));
     commands.spawn((
-        Camera3d::default(),
-        bevy::render::view::NoIndirectDrawing,
+        Camera3d {
+            depth_texture_usages: (bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT
+                | bevy::render::render_resource::TextureUsages::TEXTURE_BINDING)
+                .into(),
+            ..default()
+        },
+        Msaa::Off,
         Tonemapping::TonyMcMapface,
         Transform::from_xyz(28.0, 6.0, 17.0).looking_at(Vec3::new(19.0, 1.5, 18.0), Vec3::Y),
         DistanceFog {
@@ -247,13 +251,6 @@ pub fn setup(
         MeshMaterial3d(p.water.clone()),
         Transform::default(),
         WaterSurface,
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(Rectangle::new(1.0, 1.0))),
-        Transform::default(),
-        crate::water::WaterSplats::default(),
-        // Instance positions are world-space, beyond the seed quad's bounds.
-        NoFrustumCulling,
     ));
     // Larger silhouettes conceal the finite claim edge without expanding simulation cost.
     let hill_mat = material(&mut materials, Color::srgb(0.24, 0.31, 0.23), 1.0, 0.0);
@@ -1253,9 +1250,7 @@ impl SluiceTop {
 
 pub fn guides(game: Res<Game>, mut gizmos: Gizmos) {
     if let Some(p) = game.placement {
-        let valid = p
-            .validate(&game.session.site, game.session.machine.position)
-            .is_ok();
+        let valid = game.session.validate_placement(p).is_ok();
         let color = if valid {
             Color::srgb(0.45, 0.95, 0.55)
         } else {
@@ -1297,16 +1292,6 @@ pub fn guides(game: Res<Game>, mut gizmos: Gizmos) {
                 0.22,
                 Color::srgb(1.0, 0.75, 0.30),
             );
-        }
-    }
-    if let Some(p) = game.session.sluice.placement {
-        let sluice = &game.session.sluice;
-        let stride = (sluice.water.len() / 100).max(1);
-        for particle in sluice.water.iter().step_by(stride) {
-            let from = p.to_world(sluice.grid_to_local(particle.position));
-            let to =
-                p.to_world(sluice.grid_to_local(particle.position + particle.velocity * 0.035));
-            gizmos.line(bvec(from), bvec(to), Color::srgba(0.65, 0.87, 0.90, 0.6));
         }
     }
 }

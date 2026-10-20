@@ -1,7 +1,7 @@
 use bevy::{
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
     prelude::*,
-    window::PrimaryWindow,
+    window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 use mining_physics::worker::Command;
 use mining_sim::{
@@ -14,7 +14,10 @@ pub struct Game {
     pub session: Session,
     pub controls: Controls,
     pub placement: Option<Placement>,
+    pub demo: bool,
     pub help: bool,
+    pub mouse_captured: bool,
+    pub control_pulse: Controls,
     pub pending: Vec<Command>,
     pub look_delta: [f32; 2],
     pub snapshot_id: u64,
@@ -27,7 +30,10 @@ impl Default for Game {
             session: Session::new(),
             controls: Controls::default(),
             placement: None,
+            demo: false,
             help: false,
+            mouse_captured: false,
+            control_pulse: Controls::default(),
             pending: Vec::new(),
             look_delta: [0.0; 2],
             snapshot_id: 0,
@@ -37,6 +43,66 @@ impl Default for Game {
     }
 }
 impl Game {
+    pub fn restart(&mut self, demo: bool) {
+        self.stop_controls();
+        self.pending.clear();
+        self.look_delta = [0.0; 2];
+        self.mouse_captured = false;
+        self.help = false;
+        self.placement = None;
+        self.demo = demo;
+        self.session = if demo {
+            crate::demo::session().expect("Validated demo")
+        } else {
+            Session::new()
+        };
+        self.snapshot_id += 1;
+        self.command(Command::Reset(Box::new(self.session.clone())));
+    }
+    pub fn stop_controls(&mut self) {
+        self.controls = Controls::default();
+        self.control_pulse = Controls::default();
+    }
+    pub fn latch_controls(&mut self, controls: Controls) {
+        let axis = |current: f32, pending: &mut f32| {
+            if current != 0.0 {
+                *pending = current;
+            }
+        };
+        let p = &mut self.control_pulse;
+        axis(controls.walk, &mut p.walk);
+        axis(controls.strafe, &mut p.strafe);
+        p.sprint |= controls.sprint;
+        axis(controls.machine.drive, &mut p.machine.drive);
+        axis(controls.machine.steer, &mut p.machine.steer);
+        axis(controls.machine.swing, &mut p.machine.swing);
+        axis(controls.machine.boom, &mut p.machine.boom);
+        axis(controls.machine.stick, &mut p.machine.stick);
+        axis(controls.machine.curl, &mut p.machine.curl);
+        p.machine.cut |= controls.machine.cut;
+        p.machine.dump |= controls.machine.dump;
+        self.controls = controls;
+    }
+    pub fn take_controls(&mut self) -> Controls {
+        let pulse = std::mem::take(&mut self.control_pulse);
+        let choose = |current, pending| if current != 0.0 { current } else { pending };
+        let c = self.controls;
+        Controls {
+            walk: choose(c.walk, pulse.walk),
+            strafe: choose(c.strafe, pulse.strafe),
+            sprint: c.sprint || pulse.sprint,
+            machine: MachineInput {
+                drive: choose(c.machine.drive, pulse.machine.drive),
+                steer: choose(c.machine.steer, pulse.machine.steer),
+                swing: choose(c.machine.swing, pulse.machine.swing),
+                boom: choose(c.machine.boom, pulse.machine.boom),
+                stick: choose(c.machine.stick, pulse.machine.stick),
+                curl: choose(c.machine.curl, pulse.machine.curl),
+                cut: c.machine.cut || pulse.machine.cut,
+                dump: c.machine.dump || pulse.machine.dump,
+            },
+        }
+    }
     pub fn command(&mut self, command: Command) {
         if self.pending.len() < 256 {
             self.pending.push(command);
@@ -65,11 +131,12 @@ pub fn svec(v: Vec3) -> SimVec3 {
 pub struct GameCamera;
 
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct PlayerInput<'w> {
+pub struct PlayerInput<'w, 's> {
     keys: Res<'w, ButtonInput<KeyCode>>,
     mouse: Res<'w, ButtonInput<MouseButton>>,
     motion: Res<'w, AccumulatedMouseMotion>,
     scroll: Res<'w, AccumulatedMouseScroll>,
+    ui: Query<'w, 's, &'static Interaction, With<Button>>,
 }
 
 pub fn input(
@@ -85,13 +152,26 @@ pub fn input(
         mouse,
         motion,
         scroll,
+        ui,
     } = input;
-    if validation.automated() {
+    if validation.automated() && !validation.input_check {
+        return;
+    }
+    // Synthetic native checks feed only their own ECS inputs. They run without
+    // desktop focus; normal play always keeps the actual window-focus gate.
+    if !validation.input_check && !windows.single().is_ok_and(|w| w.focused) {
+        game.mouse_captured = false;
+        game.stop_controls();
         return;
     }
     if keys.just_pressed(KeyCode::Escape) {
-        if game.placement.is_some() {
-            game.placement = None;
+        game.stop_controls();
+        if game.placement.take().is_some() {
+            game.mouse_captured = false;
+        } else if game.help {
+            game.help = false;
+        } else if game.mouse_captured {
+            game.mouse_captured = false;
         } else {
             game.session.paused = !game.session.paused;
             let paused = game.session.paused;
@@ -100,22 +180,33 @@ pub fn input(
     }
     if keys.just_pressed(KeyCode::F1) {
         game.help = !game.help;
+        game.mouse_captured = false;
     }
     if keys.pressed(KeyCode::ControlLeft) && keys.just_pressed(KeyCode::KeyQ) {
         exit.write(AppExit::Success);
     }
     if keys.just_pressed(KeyCode::F5) {
-        game.command(Command::Save(save_path()));
+        let path = active_save_path(game.demo);
+        game.command(Command::Save(path));
     }
     if keys.just_pressed(KeyCode::F9) {
-        game.command(Command::Load(save_path()));
+        let path = active_save_path(game.demo);
+        game.command(Command::Load(path));
         game.placement = None;
     }
-    if game.session.paused {
-        game.controls = Controls::default();
+    if game.session.paused || game.help {
+        game.stop_controls();
         return;
     }
-    if mouse.pressed(MouseButton::Right) {
+    let over_ui = ui.iter().any(|i| *i != Interaction::None);
+    let capture_click = !game.mouse_captured
+        && game.placement.is_none()
+        && mouse.just_pressed(MouseButton::Left)
+        && !over_ui;
+    if capture_click {
+        game.mouse_captured = true;
+    }
+    if (game.mouse_captured || mouse.pressed(MouseButton::Right)) && !over_ui {
         let yaw = -motion.delta.x * 0.004;
         let pitch = (game.session.player.pitch - motion.delta.y * 0.003).clamp(-1.30, 1.10)
             - game.session.player.pitch;
@@ -139,6 +230,7 @@ pub fn input(
         if game.placement.is_some() {
             game.placement = None;
         } else {
+            game.mouse_captured = false;
             game.placement = Some(
                 game.session
                     .sluice
@@ -164,7 +256,10 @@ pub fn input(
             p.slope_deg = (p.slope_deg + scroll.delta.y.signum() * 0.5).clamp(3.0, 12.0);
         }
         if let (Ok(window), Ok((camera, transform))) = (windows.single(), camera.single()) {
-            if let Some(cursor) = window.cursor_position() {
+            if let Some(cursor) = window
+                .cursor_position()
+                .filter(|_| motion.delta != Vec2::ZERO)
+            {
                 if let Ok(ray) = camera.viewport_to_world(transform, cursor) {
                     if let Some(hit) =
                         game.session
@@ -189,7 +284,7 @@ pub fn input(
             }
         }
         game.placement_error = game.session.validate_placement(p).err();
-        if mouse.just_pressed(MouseButton::Left) {
+        if mouse.just_pressed(MouseButton::Left) && !over_ui {
             match game.action(Action::Place(p)) {
                 Ok(()) => {
                     game.placement = None;
@@ -205,7 +300,7 @@ pub fn input(
             game.placement = Some(p);
         }
     } else if foot {
-        if mouse.just_pressed(MouseButton::Left) {
+        if mouse.just_pressed(MouseButton::Left) && !capture_click && !over_ui {
             let origin = game.session.player.position + SimVec3::Y * 1.5;
             if let Some(p) = game
                 .session
@@ -244,22 +339,48 @@ pub fn input(
             }
         }
     }
-    game.controls = Controls {
+    game.latch_controls(Controls {
         walk: axis(KeyCode::KeyW, KeyCode::KeyS),
         strafe: axis(KeyCode::KeyD, KeyCode::KeyA),
         sprint: keys.pressed(KeyCode::ShiftLeft),
-        machine: MachineInput {
-            drive: axis(KeyCode::KeyW, KeyCode::KeyS),
-            steer: axis(KeyCode::KeyD, KeyCode::KeyA),
-            swing: axis(KeyCode::KeyE, KeyCode::KeyQ),
-            boom: axis(KeyCode::KeyR, KeyCode::KeyF),
-            stick: axis(KeyCode::KeyT, KeyCode::KeyG),
-            curl: axis(KeyCode::KeyY, KeyCode::KeyH),
-            cut: keys.pressed(KeyCode::Space),
-            dump: keys.pressed(KeyCode::KeyJ),
+        machine: if foot {
+            MachineInput::default()
+        } else {
+            MachineInput {
+                drive: axis(KeyCode::KeyW, KeyCode::KeyS),
+                steer: axis(KeyCode::KeyA, KeyCode::KeyD),
+                swing: axis(KeyCode::KeyQ, KeyCode::KeyE),
+                boom: axis(KeyCode::KeyR, KeyCode::KeyF),
+                stick: axis(KeyCode::KeyT, KeyCode::KeyG),
+                curl: axis(KeyCode::KeyY, KeyCode::KeyH),
+                cut: keys.pressed(KeyCode::Space)
+                    || (mouse.pressed(MouseButton::Left) && !capture_click && !over_ui),
+                dump: keys.pressed(KeyCode::KeyJ),
+            }
         },
-    };
+    });
 }
+pub fn cursor(
+    mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
+    game: Res<Game>,
+    validation: Res<crate::validation::Validation>,
+) {
+    for (window, mut cursor) in &mut windows {
+        let capture = game.mouse_captured
+            && window.focused
+            && !game.session.paused
+            && !game.help
+            && game.placement.is_none()
+            && !validation.automated();
+        cursor.grab_mode = if capture {
+            CursorGrabMode::Locked
+        } else {
+            CursorGrabMode::None
+        };
+        cursor.visible = !capture;
+    }
+}
+
 pub fn camera(
     mut camera: Query<&mut Transform, With<GameCamera>>,
     game: Res<Game>,
@@ -315,4 +436,252 @@ pub fn save_path() -> PathBuf {
                     .join("sluice-moose/first-bend.json")
             }
         })
+}
+
+fn active_save_path(demo: bool) -> PathBuf {
+    let path = save_path();
+    if demo && std::env::var_os("SLUICE_SAVE_PATH").is_none() {
+        path.with_file_name("flowing-demo.json")
+    } else {
+        path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::validation::Validation;
+    fn input_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<Game>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .init_resource::<AccumulatedMouseScroll>()
+            .insert_resource(Validation::default())
+            .add_message::<AppExit>()
+            .add_systems(Update, (input, cursor).chain());
+        app.world_mut().spawn((
+            Window {
+                focused: true,
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        app
+    }
+    fn press(app: &mut App, key: KeyCode) {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(key);
+    }
+    fn clear_edges(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .clear();
+        app.world_mut()
+            .resource_mut::<AccumulatedMouseMotion>()
+            .delta = Vec2::ZERO;
+    }
+    #[test]
+    fn real_input_path_captures_mouse_turns_right_and_escape_releases() {
+        let mut app = input_app();
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        assert!(app.world().resource::<Game>().mouse_captured);
+        {
+            let cursor = app
+                .world_mut()
+                .query::<&CursorOptions>()
+                .single(app.world())
+                .unwrap();
+            assert!(!cursor.visible && cursor.grab_mode == CursorGrabMode::Locked);
+        }
+
+        assert!(
+            app.world().resource::<Game>().pending.is_empty(),
+            "capture click must not dig"
+        );
+        clear_edges(&mut app);
+        let right = *Transform::default()
+            .looking_to(
+                bvec(app.world().resource::<Game>().session.look_direction()),
+                Vec3::Y,
+            )
+            .right();
+        app.world_mut()
+            .resource_mut::<AccumulatedMouseMotion>()
+            .delta = Vec2::new(30.0, 10.0);
+        app.update();
+        let game = app.world().resource::<Game>();
+        assert!(
+            bvec(game.session.look_direction()).dot(right) > 0.10,
+            "right mouse motion must turn toward camera screen-right"
+        );
+        assert!(game.session.player.pitch < -0.12);
+        press(&mut app, KeyCode::Escape);
+        app.update();
+        assert!(!app.world().resource::<Game>().mouse_captured);
+        assert!(!app.world().resource::<Game>().session.paused);
+        let cursor = app
+            .world_mut()
+            .query::<&CursorOptions>()
+            .single(app.world())
+            .unwrap();
+        assert!(cursor.visible && cursor.grab_mode == CursorGrabMode::None);
+    }
+    #[test]
+    fn short_taps_survive_a_busy_worker_but_help_and_focus_loss_stop_input() {
+        let mut app = input_app();
+        press(&mut app, KeyCode::KeyW);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::KeyW);
+        clear_edges(&mut app);
+        app.update();
+        assert_eq!(
+            app.world_mut().resource_mut::<Game>().take_controls().walk,
+            1.0
+        );
+        assert_eq!(
+            app.world_mut().resource_mut::<Game>().take_controls().walk,
+            0.0
+        );
+        press(&mut app, KeyCode::F1);
+        press(&mut app, KeyCode::KeyW);
+        app.update();
+        assert!(app.world().resource::<Game>().help);
+        assert_eq!(
+            app.world_mut().resource_mut::<Game>().take_controls().walk,
+            0.0
+        );
+        clear_edges(&mut app);
+        app.world_mut().resource_mut::<Game>().help = false;
+        let mut query = app.world_mut().query::<&mut Window>();
+        query.single_mut(app.world_mut()).unwrap().focused = false;
+        app.update();
+        assert_eq!(
+            app.world_mut().resource_mut::<Game>().take_controls().walk,
+            0.0
+        );
+        assert!(!app.world().resource::<Game>().mouse_captured);
+    }
+    #[test]
+    fn cab_keys_reach_the_machine_and_ui_clicks_do_not_mine() {
+        let mut app = input_app();
+        app.world_mut()
+            .resource_mut::<Game>()
+            .session
+            .on_action(Action::EnterExit)
+            .unwrap();
+        for key in [
+            KeyCode::KeyW,
+            KeyCode::KeyD,
+            KeyCode::KeyE,
+            KeyCode::KeyR,
+            KeyCode::KeyT,
+            KeyCode::KeyY,
+            KeyCode::Space,
+            KeyCode::KeyJ,
+        ] {
+            press(&mut app, key);
+        }
+        app.update();
+        let input = app
+            .world_mut()
+            .resource_mut::<Game>()
+            .take_controls()
+            .machine;
+        assert_eq!(
+            [
+                input.drive,
+                input.steer,
+                input.swing,
+                input.boom,
+                input.stick,
+                input.curl
+            ],
+            [1., -1., -1., 1., 1., 1.]
+        );
+        assert!(input.cut && input.dump);
+        {
+            let mut game = app.world_mut().resource_mut::<Game>();
+            let right = *Transform::default()
+                .looking_to(bvec(game.session.look_direction()), Vec3::Y)
+                .right();
+            game.session.step(Controls {
+                machine: input,
+                ..default()
+            });
+            assert!(
+                bvec(game.session.machine.forward()).dot(right) > 0.,
+                "D turns toward screen-right"
+            );
+            assert!(
+                bvec(game.session.machine.arm().forward).dot(right) > 0.,
+                "E swings toward screen-right"
+            );
+        }
+
+        app.world_mut().spawn((Button, Interaction::Pressed));
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        assert!(!app.world().resource::<Game>().mouse_captured);
+    }
+}
+
+#[cfg(test)]
+mod screen_direction_tests {
+    use super::*;
+    #[test]
+    fn d_strafes_toward_camera_right_across_headings() {
+        for yaw in [0.0, 0.7, -1.57, 2.8] {
+            let mut app = App::new();
+            app.init_resource::<Game>()
+                .init_resource::<ButtonInput<KeyCode>>()
+                .init_resource::<ButtonInput<MouseButton>>()
+                .init_resource::<AccumulatedMouseMotion>()
+                .init_resource::<AccumulatedMouseScroll>()
+                .init_resource::<crate::validation::Validation>()
+                .add_message::<AppExit>()
+                .add_systems(Update, input);
+            app.world_mut().spawn((
+                Window {
+                    focused: true,
+                    ..default()
+                },
+                PrimaryWindow,
+            ));
+            let (start, right) = {
+                let mut game = app.world_mut().resource_mut::<Game>();
+                game.session.player.yaw = yaw;
+                game.session.player.position =
+                    SimVec3::new(24., game.session.site.height(24., 16.), 16.);
+                let start = game.session.player.position;
+                let right = *Transform::default()
+                    .looking_to(bvec(game.session.look_direction()), Vec3::Y)
+                    .right();
+                (start, right)
+            };
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyD);
+            app.update();
+            let mut game = app.world_mut().resource_mut::<Game>();
+            let controls = game.take_controls();
+            game.session.step(controls);
+            assert!(
+                bvec(game.session.player.position - start).dot(right) > 0.035,
+                "yaw={yaw}: D must move right in the actual view"
+            );
+        }
+    }
 }

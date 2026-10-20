@@ -16,6 +16,7 @@ pub enum Command {
     Feed(f32),
     Save(PathBuf),
     Load(PathBuf),
+    Reset(Box<Session>),
 }
 
 #[derive(Default)]
@@ -46,10 +47,14 @@ pub struct Worker {
 
 impl Worker {
     pub fn new() -> Result<Self, String> {
-        Self::spawn(Hydraulics::new)
+        Self::with_session(Session::new())
+    }
+    pub fn with_session(session: Session) -> Result<Self, String> {
+        Self::spawn(Hydraulics::new, session)
     }
     fn spawn<T: Solver + 'static>(
         create: impl FnOnce() -> Result<T, String> + Send + 'static,
+        mut session: Session,
     ) -> Result<Self, String> {
         let (tx, requests) = mpsc::sync_channel::<Work>(2);
         let (replies, rx) = mpsc::sync_channel(1);
@@ -58,7 +63,6 @@ impl Worker {
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut solver = create()?;
-                    let mut session = Session::new();
                     let mut replay = None;
                     if replies
                         .send(Ok(snapshot(0, &session, &replay, 0.0, None)))
@@ -198,6 +202,11 @@ fn apply(session: &mut Session, solver: &mut impl Solver, commands: Vec<Command>
             Command::Action(action) => {
                 let _ = session.on_action(action);
             }
+            Command::Reset(mut replacement) => {
+                replacement.site.revision = session.site.revision + 1;
+                *session = *replacement;
+                solver.restore();
+            }
             Command::Pause(paused) => session.paused = paused,
             Command::Water(delta) if session.near_plant() => {
                 session.sluice.flow_m3s = (session.sluice.flow_m3s + delta).clamp(0.001, 0.120)
@@ -248,7 +257,7 @@ mod tests {
     }
     #[test]
     fn slow_steps_are_bounded_and_pause_save_load_are_ordered() {
-        let mut worker = Worker::spawn(|| Ok(SlowSolver)).unwrap();
+        let mut worker = Worker::spawn(|| Ok(SlowSolver), Session::new()).unwrap();
         receive(&mut worker);
         let path = std::env::temp_dir().join(format!("sluice-worker-{}.json", std::process::id()));
         worker

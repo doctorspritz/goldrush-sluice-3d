@@ -280,3 +280,27 @@ fn invalid_live_state_cannot_overwrite_last_good_save() {
     assert!(storage::load(&path).is_ok());
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn walking_into_equipment_slides_along_it_without_entering_collision() {
+    let mut s = Session::new();
+    s.player.position = Vec3::new(21.0, s.site.height(21.0, 17.0), 17.0);
+    s.player.yaw = -std::f32::consts::FRAC_PI_2;
+    for _ in 0..30 {
+        s.step(mining_sim::session::Controls {
+            walk: 1.0,
+            strafe: 1.0,
+            ..Default::default()
+        });
+        let horizontal = Vec3::new(
+            s.player.position.x - s.machine.position.x,
+            0.0,
+            s.player.position.z - s.machine.position.z,
+        );
+        assert!(horizontal.length() >= 1.899);
+    }
+    assert!(
+        s.player.position.z < 16.4,
+        "blocked X motion should not cancel free Z motion"
+    );
+}

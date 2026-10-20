@@ -4,24 +4,30 @@ A Rust mining game and a collection of fluid/granular simulation experiments.
 
 ## First Bend prototype
 
-The direct-control slice now completes a verified first shift with the original solvers. Development resumed on 20 October after the previous recovery checkpoint. Builds use one compiler job by default; the game uses one bounded simulation worker and limited Bevy task pools. Operation, native timing and limitations are recorded in [the playtest report](docs/playtests/2026-10-20.md).
+The direct-control slice now completes a verified first shift with the original solvers. Development resumed on 20 October after the previous recovery checkpoint. Builds use one compiler job by default; the game uses one bounded simulation worker and limited Bevy task pools. The latest [flowing-demo and controls report](docs/playtests/2026-10-20-flowing-demo.md) records the new default scene and blended water. The earlier complete mining shift is recorded in [the first-shift report](docs/playtests/2026-10-20.md).
 
 ## First Bend controls and loop
 
-Walk to the excavator, operate its joints to cut a finite paydirt bank, swing a loaded bucket over the hopper, place a sluice, wash the load and lift the mats. The first shift's goal is **5 grams of recovered gold**.
+The demo app opens beside an installed sluice with real water and finite paydirt already flowing. Its bundled shift was warmed by the original solvers for 28 simulated seconds; it still has about 0.73 m³ in the hopper. Use **Demo** to restart that view, **New shift** to begin with an untouched claim, and the visible **Help / Pause** buttons.
+
+For a fresh mining shift, walk to the excavator, cut finite paydirt, swing a loaded bucket over the hopper, place a sluice, wash and lift the mats. The first shift's goal is **5 grams of recovered gold**.
 
 On this Mac, double-click **Play First Bend.command**, or run:
 
 ```bash
 ./scripts/play-mining.sh
+# Start the full mining loop instead of the running demo:
+./scripts/play-mining.sh --new-shift
 ```
+
+Click the scene to capture the mouse, then move it to look around. The capture click does not dig. **Esc** frees the pointer for the toolbar; Esc again pauses. Right-drag also looks while the pointer is free. WASD, mouse motion and Q/E cab swing follow the camera's screen directions. Short taps are buffered until the worker accepts them, and help/focus loss stop movement.
 
 Requires a native GPU, Cargo and Rust **1.88 or newer**. The launcher uses an installed nightly toolchain when available, otherwise stable. It builds the Bevy executable in the `playable` profile with one compiler job. `SLUICE_BUILD_JOBS` overrides that limit.
 
 | Control | On foot | In the excavator |
 |---|---|---|
 | WASD | Walk | Drive / turn tracks |
-| Right mouse drag | Look | Look / orbit |
+| Mouse after capture / right-drag | Look | Look / orbit |
 | Shift | Run | — |
 | E / Tab | Enter nearby cab | Tab exits |
 | V | First / third person | Cab / external view |
@@ -31,12 +37,12 @@ Requires a native GPU, Cargo and Rust **1.88 or newer**. The launcher uses an in
 | R / F | — | Raise / lower boom |
 | T / G | — | Extend / tuck stick |
 | Y / H | — | Curl / open bucket |
-| Space | — | Cut soil at the bucket edge |
+| Space / left mouse held | Shovel on click | Cut soil at the bucket edge |
 | I | — | Toggle engine |
 
 At the plant: **B** previews a sluice. Point near the hopper outlet to snap its inlet; **R/Q** rotate, **[/]** or the wheel adjust slope, left-click confirms, Esc cancels. The preview rejects unsupported, overlapping, out-of-claim and disconnected placements. Walk to the plant and use **P** for the pump, **O** for feed, arrows to change water/feed rates, and **C** to lift the mats after stopping both.
 
-**F1** controls, **F5** save, **F9** restore, **Esc** pause, **Ctrl+Q** quit. macOS saves to `~/Library/Application Support/Sluice Moose/first-bend.json`. `SLUICE_SAVE_PATH` overrides this for isolated tests. Invalid saves are rejected before changing the current shift.
+**F1** controls, **F5** save, **F9** restore, **Esc** release mouse / pause, **Ctrl+Q** quit. macOS saves to `~/Library/Application Support/Sluice Moose/first-bend.json`. The flowing demo saves separately as `flowing-demo.json` in the same directory. `SLUICE_SAVE_PATH` overrides either path for isolated tests. Invalid saves are rejected before changing the current shift.
 
 ## Scope and physics
 
@@ -79,7 +85,17 @@ To inspect an existing live shift without replaying the excavation:
 ./scripts/play-mining.sh --load /tmp/first-bend-validation-save.json --capture /tmp/live-sluice.png
 ```
 
-The capture uses actual saved particle state, writes a timing receipt and closes its window. Sluice water renders as GPU-instanced sphere splats, including detached droplets, with curved depth for occlusion. One batch and reusable buffers cap rendering at 65,536 sampled blobs while every particle remains in the original solver and save. The final standalone live-shift check averaged 49.6 FPS; the earlier full-operation timing used the previous water presentation. Terrain flow continues to use the original GPU heightfield simulation.
+The capture uses actual saved particle state, writes a timing receipt and closes its window. Sluice water renders the actual FLIP particles into a nearest-depth buffer, applies two separable bilateral smoothing iterations and shades one continuous surface. Bilateral upsampling removes the half-resolution buffer's blocky shading. Scene depth keeps the water behind equipment; detached spray remains separate. Reusable buffers cap rendering at 65,536 sampled particles while every particle stays in the original solver/save. Terrain flow continues to use the original GPU heightfield simulation.
+
+To exercise the native keyboard/mouse and toolbar handlers, including cab controls and live F5/F9:
+
+```bash
+SLUICE_SAVE_PATH=/tmp/first-bend-controls-save.json ./scripts/play-mining.sh \
+  --check-controls /tmp/first-bend-controls.json --capture /tmp/flowing-demo.png
+```
+
+These are synthetic Bevy inputs in the native app, not OS key injection. The scripted check runs without desktop focus or mouse capture, writes a receipt for each checked behaviour, captures the running demo and exits. Normal-play focus/cursor handling is covered separately by the input-system regressions. The demo fixture is regenerated with `mining-physics/examples/make_demo.rs`; its source and procedure are documented under `crates/mining/assets/demo/`.
+
 
 Build a locally signed macOS application (fonts and scene assets are embedded):
 

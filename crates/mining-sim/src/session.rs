@@ -91,7 +91,7 @@ impl Session {
             yaw: -std::f32::consts::FRAC_PI_2,
             pitch: -0.12,
             mode: ControlMode::OnFoot,
-            third_person: true,
+            third_person: false,
             hand: Material::default(),
             tool_swing: 0.0,
         };
@@ -347,15 +347,24 @@ impl Session {
             self.player.position = self.machine.position + Vec3::Y * 1.9;
         } else {
             let forward = Vec3::new(self.player.yaw.sin(), 0.0, self.player.yaw.cos());
-            let right = Vec3::new(self.player.yaw.cos(), 0.0, -self.player.yaw.sin());
+            // Bevy looks along local -Z: screen-right is forward × up.
+            let right = forward.cross(Vec3::Y);
             let speed = if input.sprint { 4.2 } else { 2.4 };
             let delta =
                 (forward * input.walk + right * input.strafe).clamp_length_max(1.0) * speed * dt;
             let current = self.player.position;
-            let next = current + delta;
-            if self.walkable(next) && (self.site.height(next.x, next.z) - current.y).abs() < 0.45 {
-                self.player.position = Vec3::new(next.x, self.site.height(next.x, next.z), next.z);
+            // Resolve each horizontal axis independently so a blocked diagonal
+            // slides along equipment instead of cancelling all walking.
+            let mut position = current;
+            for offset in [Vec3::X * delta.x, Vec3::Z * delta.z] {
+                let next = position + offset;
+                if self.walkable(next)
+                    && (self.site.height(next.x, next.z) - position.y).abs() < 0.45
+                {
+                    position = Vec3::new(next.x, self.site.height(next.x, next.z), next.z);
+                }
             }
+            self.player.position = position;
         }
         let top = Sluice::hopper_top(&self.site);
         let mut impacts = Vec::new();

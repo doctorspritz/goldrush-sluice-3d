@@ -12,6 +12,8 @@ use std::{collections::HashSet, path::PathBuf, time::Instant};
 #[derive(Resource)]
 pub struct Validation {
     pub directory: Option<PathBuf>,
+    pub input_check: bool,
+    pub input_complete: bool,
     capture: Option<PathBuf>,
     load_path: Option<PathBuf>,
     pub replay: OperatorReplay,
@@ -50,6 +52,8 @@ impl Default for Validation {
         }
         Self {
             directory,
+            input_check: std::env::args().any(|a| a == "--check-controls"),
+            input_complete: false,
             capture,
             load_path,
             replay: OperatorReplay::default(),
@@ -72,7 +76,7 @@ impl Default for Validation {
 }
 impl Validation {
     pub fn automated(&self) -> bool {
-        self.active() || self.capture.is_some()
+        self.active() || self.capture.is_some() || self.input_check
     }
     pub fn ready(&self) -> bool {
         self.frames >= 180
@@ -97,9 +101,14 @@ pub fn update(
     mut game: ResMut<Game>,
     mut v: ResMut<Validation>,
     time: Res<Time<Real>>,
+    water: Res<crate::water::WaterSplats>,
     mut exit: MessageWriter<AppExit>,
 ) {
     v.frames += 1;
+    if v.automated() && crate::water::surface_failed(&water) {
+        v.failure = Some("Water render pipeline failed".into());
+    }
+
     if v.frames == 1 {
         if let Some(path) = v.load_path.clone() {
             game.command(Command::Load(path));
@@ -133,9 +142,10 @@ pub fn update(
         v.wash_seconds = (started.elapsed().as_secs_f64(), game.session.sim_time - sim);
     }
     if let Some(path) = v.capture.clone() {
-        let capture_frame = if v.load_path.is_some() { 1050 } else { 180 };
+        // Keep the deadline stable while a native check switches demo/shift.
+        let capture_frame = 1050;
         let final_frame = capture_frame + 60;
-        if v.frames > 300 {
+        if v.frames > if v.input_check { 900 } else { 300 } {
             v.frame_ms.push(time.delta_secs_f64() * 1000.0);
         }
         if v.frames == capture_frame {
@@ -147,7 +157,14 @@ pub fn update(
                 .observe(save_to_disk(path.clone()));
         }
         if v.frames > final_frame {
-            if v.load_path.is_some() && !v.saved {
+            if v.input_check && !v.input_complete {
+                eprintln!("Native input checks did not complete");
+                exit.write(AppExit::error());
+            } else if !game.session.sluice.water.is_empty() && !crate::water::surface_ready(&water)
+            {
+                eprintln!("Water surface was not rendered");
+                exit.write(AppExit::error());
+            } else if v.load_path.is_some() && !v.saved {
                 eprintln!("Capture did not restore the requested live shift");
                 exit.write(AppExit::error());
             } else {
@@ -166,10 +183,12 @@ pub fn update(
                                 - 0.002
                     })
                     .count();
-                let report = serde_json::json!({"scenario":if v.load_path.is_some() { "live saved shift" } else { "initial scene" },
+                let report = serde_json::json!({"scenario":if v.load_path.is_some() { "live saved shift" } else if game.demo { "flowing demo" } else { "initial scene" },
                     "mean_fps":if mean > 0.0 { Some(1000.0/mean) } else { None },
                     "frames":v.frame_ms.len(), "save_restored":v.saved,
-                    "water_rendering":"GPU-instanced sphere splats",
+                    "water_rendering":"particle depth + bilateral surface",
+                    "fluid_surface_ready":crate::water::surface_ready(&water),
+                    "input_check_passed":if v.input_check { Some(v.input_complete) } else { None },
                     "water_particles":game.session.sluice.water.len(),
                     "sampled_splats":crate::water::visible_count(&game.session.sluice),
                     "particles_below_floor":below_floor,

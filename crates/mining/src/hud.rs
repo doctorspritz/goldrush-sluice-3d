@@ -4,6 +4,7 @@ use mining_sim::{session::GOLD_TARGET_G, ControlMode};
 
 #[derive(Component)]
 pub enum HudText {
+    Scene,
     Mode,
     Numbers,
     Objective,
@@ -88,7 +89,7 @@ pub fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
         39.0,
         70.0,
         amber,
-        None,
+        Some(HudText::Scene),
     );
     text(
         &mut commands,
@@ -99,6 +100,44 @@ pub fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
         muted,
         Some(HudText::Mode),
     );
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(20),
+                top: px(146),
+                column_gap: px(6),
+                ..default()
+            },
+            ZIndex(5),
+        ))
+        .with_children(|row| {
+            for (label, action) in [
+                ("Demo", HudButton::Demo),
+                ("New shift", HudButton::NewShift),
+                ("Help", HudButton::Help),
+                ("Pause", HudButton::Pause),
+            ] {
+                row.spawn((
+                    Button,
+                    action,
+                    Node {
+                        padding: UiRect::axes(px(12), px(9)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.04, 0.10, 0.10, 0.95)),
+                ))
+                .with_child((
+                    Text::new(label),
+                    TextFont {
+                        font_size: 13.0,
+                        ..default()
+                    },
+                    TextColor(cream),
+                    ButtonLabel(action),
+                ));
+            }
+        });
     // Right rail: readable work order and a gold target, separate from controls.
     commands
         .spawn((
@@ -231,7 +270,9 @@ pub fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
                 HudText::Context,
             ));
             parent.spawn((
-                Text::new("V camera   /   F1 controls   /   F5 save   /   F9 load   /   Esc pause"),
+                Text::new(
+                    "V camera   /   F1 help   /   F5 save   /   F9 load   /   Esc mouse / pause",
+                ),
                 TextFont {
                     font_size: 11.0,
                     ..default()
@@ -281,9 +322,9 @@ pub fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
             Node {
                 position_type: PositionType::Absolute,
                 left: px(20),
-                top: px(150),
+                top: px(196),
                 width: px(530),
-                height: px(430),
+                height: px(500),
                 padding: UiRect::all(px(24)),
                 display: Display::None,
                 ..default()
@@ -323,10 +364,12 @@ pub fn update(
     let foot = s.player.mode == ControlMode::OnFoot;
     for (role, mut text) in &mut text {
         text.0=match role {
+            HudText::Scene=>if game.demo {"FLOWING SLUICE  /  LIVE PAYDIRT".into()} else {"FIRST BEND  /  YOUR FIRST CLAIM".into()},
             HudText::Mode=>format!("{}  /  {}",if foot{"ON FOOT"}else{"EXCAVATOR"},if s.player.third_person{"EXTERNAL VIEW"}else{"FIRST PERSON"}),
             HudText::Numbers=>format!("{:.2} g",s.sluice.concentrate.gold_g),
             HudText::Objective=>{
-                if s.sluice.concentrate.gold_g>=GOLD_TARGET_G {format!("FIRST GOLD RECOVERED\n\n{:.2} g from your claim.\nKeep digging, or save your shift.",s.sluice.concentrate.gold_g)}
+                if game.demo { "FLOWING DEMO\n\nPaydirt and water are flowing.\nP pump · O feed · arrows set rates.\nNew shift starts a fresh claim.".into() }
+                else if s.sluice.concentrate.gold_g>=GOLD_TARGET_G {format!("FIRST GOLD RECOVERED\n\n{:.2} g from your claim.\nKeep digging, or save your shift.",s.sluice.concentrate.gold_g)}
                 else if s.sluice.placement.is_none(){"01   BUILD YOUR SETUP\n\nWalk to the yellow hopper.\nB previews the sluice; click to place.".into()}
                 else if s.site.excavated.volume()<0.01{"02   BREAK GROUND\n\nEnter the excavator. Lower the\nbucket into the bank and hold Space.".into()}
                 else if s.delivered_m3<0.01{"03   FEED THE HOPPER\n\nLift the full bucket, swing left,\nand hold J over the hopper.".into()}
@@ -338,14 +381,18 @@ pub fn update(
             HudText::Context=>{
                 if let Some(p)=game.placement {
                     format!("SLUICE  {:.1}°   ·   {}\nR / Q rotate   ·   [ / ] slope   ·   Click build   ·   Esc cancel",p.slope_deg,game.placement_error.as_deref().unwrap_or("Ready to connect"))
+                }else if foot && s.near_plant() && s.sluice.placement.is_some() {
+                    "Click to look · Esc frees mouse · P water · O feed · Up / Down water rate · Left / Right feed rate · C lift mats when stopped".into()
                 }else if foot {
-                    format!("WASD walk   ·   Right-drag look   ·   E / Tab cab   ·   B place   ·   Shovel: click   ·   Hand bucket: {:.0}%",s.player.hand.volume()/mining_sim::session::HAND_CAPACITY*100.0)
+                    format!("WASD walk   ·   Click to capture mouse / shovel   ·   Esc release   ·   E / Tab cab   ·   B place   ·   Shovel: click   ·   Hand bucket: {:.0}%",s.player.hand.volume()/mining_sim::session::HAND_CAPACITY*100.0)
                 }else{
                     format!("WASD tracks   ·   Q / E swing   ·   R / F boom   ·   T / G stick   ·   Y / H curl   ·   Space cut   ·   J dump   |   Bucket {:.0}%",s.machine.bucket.volume()/mining_sim::machine::BUCKET_CAPACITY*100.0)
                 }
             },
             HudText::Message=>s.message.clone(),
-            HudText::Help=>"OPERATING THE CLAIM\n\nON FOOT\nWASD walk · Shift run · Right-drag look\nE / Tab enter cab · Left-click shovel · J pour\nB sluice preview · R / Q rotate · [ / ] slope\n\nIN THE EXCAVATOR\nWASD tracks · Q / E swing the upper body\nR / F raise / lower boom · T / G extend / tuck stick\nY / H curl / open bucket · Space cut · J dump\nTab leave cab · I engine · V first / third person\n\nAT THE PLANT\nP pump · O feed · C lift mats when stopped\nUp / Down water flow · Left / Right feed rate\n\nF5 save · F9 restore · Esc pause · F1 close help".into(),
+            HudText::Help=>"OPERATING THE CLAIM\n\nON FOOT\nWASD walk · Shift run · Click captures mouse
+Move mouse to look · Esc releases it
+Right-drag also looks while the cursor is free\nE / Tab enter cab · Left-click shovel · J pour\nB sluice preview · R / Q rotate · [ / ] slope\n\nIN THE EXCAVATOR\nWASD tracks · Q / E swing the upper body\nR / F raise / lower boom · T / G extend / tuck stick\nY / H curl / open bucket · Space / left-click cut · J dump\nTab leave cab · I engine · V first / third person\n\nAT THE PLANT\nP pump · O feed · C lift mats when stopped\nUp / Down water flow · Left / Right feed rate\n\nF5 save · F9 restore · Esc mouse / pause · F1 help".into(),
         };
     }
     for mut node in &mut panels.p0() {
@@ -365,5 +412,57 @@ pub fn update(
     for mut node in &mut panels.p2() {
         node.width =
             percent((s.sluice.concentrate.gold_g / GOLD_TARGET_G * 100.0).clamp(0.0, 100.0) as f32);
+    }
+}
+
+#[derive(Component, Clone, Copy)]
+pub enum HudButton {
+    Demo,
+    NewShift,
+    Help,
+    Pause,
+}
+#[derive(Component)]
+pub struct ButtonLabel(HudButton);
+pub fn buttons(
+    mut game: ResMut<Game>,
+    mut buttons: Query<(&Interaction, &HudButton, &mut BackgroundColor), Changed<Interaction>>,
+    mut labels: Query<(&ButtonLabel, &mut Text)>,
+) {
+    for (interaction, action, mut background) in &mut buttons {
+        background.0 = if *interaction == Interaction::Hovered {
+            Color::srgb(0.16, 0.28, 0.26)
+        } else {
+            Color::srgb(0.04, 0.10, 0.10)
+        };
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        match action {
+            HudButton::Demo => game.restart(true),
+            HudButton::NewShift => game.restart(false),
+            HudButton::Help => {
+                game.help = !game.help;
+                game.mouse_captured = false;
+                game.stop_controls();
+            }
+            HudButton::Pause => {
+                let paused = !game.session.paused;
+                game.session.paused = paused;
+                game.mouse_captured = false;
+                game.stop_controls();
+                game.command(mining_physics::worker::Command::Pause(paused));
+            }
+        }
+    }
+    for (label, mut text) in &mut labels {
+        if matches!(label.0, HudButton::Pause) {
+            text.0 = if game.session.paused {
+                "Resume"
+            } else {
+                "Pause"
+            }
+            .into();
+        }
     }
 }

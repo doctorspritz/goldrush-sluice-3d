@@ -1,85 +1,47 @@
-//! Instanced sphere splats from live FLIP particles, following Bevy 0.17's
-//! custom_shader_instancing render-command pattern. No per-particle entities.
-use bevy::pbr::SetMeshViewBindingArrayBindGroup;
+//! Screen-space fluid from the authoritative FLIP particles: nearest particle
+//! depth, edge-preserving smoothing, then one shaded surface. Render-only buffers
+//! are bounded/reused; neither the particle state nor terrain flow is modified.
 use bevy::{
-    core_pipeline::core_3d::Transparent3d,
-    ecs::{
-        query::QueryItem,
-        system::{lifetimeless::*, SystemParamItem},
-    },
-    mesh::{MeshVertexBufferLayoutRef, VertexBufferLayout},
-    pbr::{
-        MeshPipeline, MeshPipelineKey, RenderMeshInstances, SetMeshBindGroup, SetMeshViewBindGroup,
-    },
+    core_pipeline::core_3d::graph::{Core3d, Node3d},
+    ecs::query::QueryItem,
     prelude::*,
     render::{
-        extract_component::{ExtractComponent, ExtractComponentPlugin},
-        mesh::{allocator::MeshAllocator, RenderMesh, RenderMeshBufferInfo},
-        render_asset::RenderAssets,
-        render_phase::{
-            AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand,
-            RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewSortedRenderPhases,
+        camera::ExtractedCamera,
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        render_graph::{
+            NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
         },
-        render_resource::*,
-        renderer::RenderDevice,
-        sync_world::MainEntity,
-        view::ExtractedView,
+        render_resource::{
+            binding_types::{texture_2d, texture_depth_2d, uniform_buffer},
+            *,
+        },
+        renderer::{RenderContext, RenderDevice, RenderQueue},
+        view::{ExtractedView, ViewDepthTexture, ViewTarget},
         Render, RenderApp, RenderStartup, RenderSystems,
     },
 };
 use bytemuck::{Pod, Zeroable};
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    Arc,
+};
 
-use std::sync::Arc;
-
-const SHADER_PATH: &str = "embedded://mining/water_splats.wgsl";
-// Rendering LOD only: every particle remains in the authoritative solver/save.
 const MAX_SPLATS: usize = 65_536;
-
-#[derive(Component, Clone)]
+#[derive(Resource, Clone, ExtractResource)]
 pub struct WaterSplats {
     revision: u64,
     data: Arc<Vec<InstanceData>>,
+    health: Arc<AtomicU8>,
 }
-
 impl Default for WaterSplats {
     fn default() -> Self {
         Self {
-            revision: 0,
+            revision: u64::MAX,
             data: Arc::new(Vec::new()),
+            health: Arc::new(AtomicU8::new(0)),
         }
     }
 }
-
-impl ExtractComponent for WaterSplats {
-    type QueryData = &'static WaterSplats;
-    type QueryFilter = ();
-    type Out = Self;
-
-    fn extract_component(item: QueryItem<'_, '_, Self::QueryData>) -> Option<Self> {
-        Some(item.clone())
-    }
-}
-
-pub struct WaterSplatPlugin;
-
-impl Plugin for WaterSplatPlugin {
-    fn build(&self, app: &mut App) {
-        bevy::asset::embedded_asset!(app, "water_splats.wgsl");
-        app.add_plugins(ExtractComponentPlugin::<WaterSplats>::default());
-        app.sub_app_mut(RenderApp)
-            .add_render_command::<Transparent3d, DrawCustom>()
-            .init_resource::<SpecializedMeshPipelines<CustomPipeline>>()
-            .add_systems(RenderStartup, init_custom_pipeline)
-            .add_systems(
-                Render,
-                (
-                    queue_custom.in_set(RenderSystems::QueueMeshes),
-                    prepare_instance_buffers.in_set(RenderSystems::PrepareResources),
-                ),
-            );
-    }
-}
-
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 struct InstanceData {
@@ -87,246 +49,439 @@ struct InstanceData {
     velocity: [f32; 4],
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Bevy render queue resources are independent system parameters"
-)]
-fn queue_custom(
-    transparent_3d_draw_functions: Res<DrawFunctions<Transparent3d>>,
-    custom_pipeline: Res<CustomPipeline>,
-    mut pipelines: ResMut<SpecializedMeshPipelines<CustomPipeline>>,
-    pipeline_cache: Res<PipelineCache>,
-    meshes: Res<RenderAssets<RenderMesh>>,
-    render_mesh_instances: Res<RenderMeshInstances>,
-    material_meshes: Query<(Entity, &MainEntity), With<WaterSplats>>,
-    mut transparent_render_phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
-    views: Query<(&ExtractedView, &Msaa)>,
-) {
-    let draw_custom = transparent_3d_draw_functions.read().id::<DrawCustom>();
-
-    for (view, msaa) in &views {
-        let Some(transparent_phase) = transparent_render_phases.get_mut(&view.retained_view_entity)
-        else {
-            continue;
-        };
-
-        let msaa_key = MeshPipelineKey::from_msaa_samples(msaa.samples());
-
-        let view_key = msaa_key | MeshPipelineKey::from_hdr(view.hdr);
-        let rangefinder = view.rangefinder3d();
-        for (entity, main_entity) in &material_meshes {
-            let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(*main_entity)
-            else {
-                continue;
-            };
-            let Some(mesh) = meshes.get(mesh_instance.mesh_asset_id) else {
-                continue;
-            };
-            let key =
-                view_key | MeshPipelineKey::from_primitive_topology(mesh.primitive_topology());
-            let pipeline = pipelines
-                .specialize(&pipeline_cache, &custom_pipeline, key, &mesh.layout)
-                .unwrap();
-            transparent_phase.add(Transparent3d {
-                entity: (entity, *main_entity),
-                pipeline,
-                draw_function: draw_custom,
-                distance: rangefinder.distance_translation(&mesh_instance.translation),
-                batch_range: 0..1,
-                extra_index: PhaseItemExtraIndex::None,
-                indexed: true,
-            });
-        }
+pub struct WaterSplatPlugin;
+impl Plugin for WaterSplatPlugin {
+    fn build(&self, app: &mut App) {
+        bevy::asset::embedded_asset!(app, "water_depth.wgsl");
+        bevy::asset::embedded_asset!(app, "water_blur.wgsl");
+        bevy::asset::embedded_asset!(app, "water_compose.wgsl");
+        app.init_resource::<WaterSplats>()
+            .add_plugins(ExtractResourcePlugin::<WaterSplats>::default());
+        app.sub_app_mut(RenderApp)
+            .add_systems(RenderStartup, init_pipelines)
+            .add_systems(
+                Render,
+                (prepare_particles, prepare_views).in_set(RenderSystems::PrepareResources),
+            )
+            .add_render_graph_node::<ViewNodeRunner<FluidNode>>(Core3d, FluidLabel)
+            .add_render_graph_edges(
+                Core3d,
+                (
+                    Node3d::Tonemapping,
+                    FluidLabel,
+                    Node3d::EndMainPassPostProcessing,
+                ),
+            );
     }
 }
-
-#[derive(Component)]
-struct InstanceBuffer {
+#[derive(Resource)]
+struct ParticleBuffer {
     buffer: Buffer,
-    length: usize,
     capacity: usize,
+    count: u32,
     revision: u64,
 }
-
-fn prepare_instance_buffers(
-    mut commands: Commands,
-    mut query: Query<(Entity, &WaterSplats, Option<&mut InstanceBuffer>)>,
-    render_device: Res<RenderDevice>,
-    render_queue: Res<bevy::render::renderer::RenderQueue>,
-) {
-    for (entity, data, existing) in &mut query {
-        if let Some(mut buffer) = existing {
-            if buffer.revision == data.revision {
-                continue;
-            }
-            if buffer.capacity >= data.data.len() {
-                if !data.data.is_empty() {
-                    render_queue.write_buffer(&buffer.buffer, 0, bytemuck::cast_slice(&data.data));
-                }
-                buffer.length = data.data.len();
-                buffer.revision = data.revision;
-                continue;
-            }
-        }
-        let capacity = data.data.len().max(1).next_power_of_two();
-        let buffer = render_device.create_buffer(&BufferDescriptor {
-            label: Some("FLIP water splats"),
-            size: (capacity * size_of::<InstanceData>()) as u64,
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        if !data.data.is_empty() {
-            render_queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&data.data));
-        }
-        commands.entity(entity).insert(InstanceBuffer {
-            buffer,
-            length: data.data.len(),
-            capacity,
-            revision: data.revision,
-        });
-    }
+#[derive(Clone, ShaderType)]
+struct FluidUniforms {
+    clip_from_world: Mat4,
+    world_from_view: Mat4,
+    view_from_clip: Mat4,
+    view_from_world: Mat4,
+    viewport: Vec4,
 }
-
+#[derive(Component)]
+struct FluidTargets {
+    size: UVec2,
+    raw: TextureView,
+    ping: TextureView,
+    pong: TextureView,
+    depth: TextureView,
+    uniform: UniformBuffer<FluidUniforms>,
+}
 #[derive(Resource)]
-struct CustomPipeline {
-    shader: Handle<Shader>,
-    mesh_pipeline: MeshPipeline,
+struct FluidPipelines {
+    particles: BindGroupLayout,
+    blur: BindGroupLayout,
+    compose: BindGroupLayout,
+    depth_id: CachedRenderPipelineId,
+    blur_x: CachedRenderPipelineId,
+    blur_y: CachedRenderPipelineId,
+    compose_id: CachedRenderPipelineId,
 }
-
-fn init_custom_pipeline(
+fn init_pipelines(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    mesh_pipeline: Res<MeshPipeline>,
+    device: Res<RenderDevice>,
+    assets: Res<AssetServer>,
+    cache: Res<PipelineCache>,
 ) {
-    commands.insert_resource(CustomPipeline {
-        shader: asset_server.load(SHADER_PATH),
-        mesh_pipeline: mesh_pipeline.clone(),
+    let storage = BindGroupLayoutEntry {
+        binding: 0,
+        visibility: ShaderStages::VERTEX,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    };
+    let particles = device.create_bind_group_layout(
+        "fluid particles",
+        &BindGroupLayoutEntries::with_indices(
+            ShaderStages::VERTEX_FRAGMENT,
+            ((0, storage), (1, uniform_buffer::<FluidUniforms>(false))),
+        ),
+    );
+    let blur = device.create_bind_group_layout(
+        "fluid smoothing",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                uniform_buffer::<FluidUniforms>(false),
+            ),
+        ),
+    );
+    let compose = device.create_bind_group_layout(
+        "fluid composite",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_depth_2d(),
+                uniform_buffer::<FluidUniforms>(false),
+            ),
+        ),
+    );
+    let make = |shader: Handle<Shader>,
+                layout: &BindGroupLayout,
+                vertex: &'static str,
+                fragment: &'static str,
+                format,
+                depth| {
+        cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some(format!("water {fragment}").into()),
+            layout: vec![layout.clone()],
+            vertex: VertexState {
+                shader: shader.clone(),
+                entry_point: Some(vertex.into()),
+                ..default()
+            },
+            fragment: Some(FragmentState {
+                shader,
+                entry_point: Some(fragment.into()),
+                targets: vec![Some(ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+                ..default()
+            }),
+            depth_stencil: depth,
+            ..default()
+        })
+    };
+    let depth_shader = assets.load("embedded://mining/water_depth.wgsl");
+    let blur_shader = assets.load("embedded://mining/water_blur.wgsl");
+    let compose_shader = assets.load("embedded://mining/water_compose.wgsl");
+    let depth_id = make(
+        depth_shader,
+        &particles,
+        "particle_vertex",
+        "particle_depth",
+        TextureFormat::R32Float,
+        Some(DepthStencilState {
+            format: TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: CompareFunction::GreaterEqual,
+            stencil: default(),
+            bias: default(),
+        }),
+    );
+    let blur_x = make(
+        blur_shader.clone(),
+        &blur,
+        "fullscreen",
+        "blur_x",
+        TextureFormat::R32Float,
+        None,
+    );
+    let blur_y = make(
+        blur_shader,
+        &blur,
+        "fullscreen",
+        "blur_y",
+        TextureFormat::R32Float,
+        None,
+    );
+    let compose_id = make(
+        compose_shader,
+        &compose,
+        "fullscreen",
+        "compose",
+        TextureFormat::bevy_default(),
+        None,
+    );
+    commands.insert_resource(FluidPipelines {
+        particles,
+        blur,
+        compose,
+        depth_id,
+        blur_x,
+        blur_y,
+        compose_id,
     });
 }
-
-impl SpecializedMeshPipeline for CustomPipeline {
-    type Key = MeshPipelineKey;
-
-    fn specialize(
-        &self,
-        key: Self::Key,
-        layout: &MeshVertexBufferLayoutRef,
-    ) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
-        let mut descriptor = self.mesh_pipeline.specialize(key, layout)?;
-
-        descriptor.vertex.shader = self.shader.clone();
-        descriptor.vertex.buffers.push(VertexBufferLayout {
-            array_stride: size_of::<InstanceData>() as u64,
-            step_mode: VertexStepMode::Instance,
-            attributes: vec![
-                VertexAttribute {
-                    format: VertexFormat::Float32x4,
-                    offset: 0,
-                    shader_location: 3, // shader locations 0-2 are taken up by Position, Normal and UV attributes
-                },
-                VertexAttribute {
-                    format: VertexFormat::Float32x4,
-                    offset: VertexFormat::Float32x4.size(),
-                    shader_location: 4,
-                },
-            ],
+fn prepare_particles(
+    mut commands: Commands,
+    data: Res<WaterSplats>,
+    existing: Option<ResMut<ParticleBuffer>>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+) {
+    if let Some(mut buffer) = existing {
+        if buffer.revision == data.revision {
+            return;
+        }
+        if buffer.capacity >= data.data.len() {
+            if !data.data.is_empty() {
+                queue.write_buffer(&buffer.buffer, 0, bytemuck::cast_slice(&data.data));
+            }
+            buffer.revision = data.revision;
+            buffer.count = data.data.len() as u32;
+            return;
+        }
+    }
+    let capacity = data.data.len().max(1).next_power_of_two();
+    let buffer = device.create_buffer(&BufferDescriptor {
+        label: Some("fluid render particles"),
+        size: (capacity * size_of::<InstanceData>()) as u64,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    if !data.data.is_empty() {
+        queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&data.data));
+    }
+    commands.insert_resource(ParticleBuffer {
+        buffer,
+        capacity,
+        count: data.data.len() as u32,
+        revision: data.revision,
+    });
+}
+fn prepare_views(
+    mut commands: Commands,
+    mut views: Query<(
+        Entity,
+        &ExtractedCamera,
+        &ExtractedView,
+        Option<&mut FluidTargets>,
+    )>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+) {
+    for (entity, camera, view, existing) in &mut views {
+        let Some(full) = camera.physical_target_size else {
+            continue;
+        };
+        if full.x == 0 || full.y == 0 {
+            continue;
+        }
+        let size = (full + UVec2::ONE) / 2;
+        let world_from_view = view.world_from_view.to_matrix();
+        let uniforms = FluidUniforms {
+            clip_from_world: view.clip_from_view * world_from_view.inverse(),
+            world_from_view,
+            view_from_clip: view.clip_from_view.inverse(),
+            view_from_world: world_from_view.inverse(),
+            viewport: Vec4::new(full.x as f32, full.y as f32, 0.045, 0.0),
+        };
+        if let Some(mut target) = existing {
+            if target.size == size {
+                target.uniform.set(uniforms);
+                target.uniform.write_buffer(&device, &queue);
+                continue;
+            }
+        }
+        let texture = |label, format| {
+            device
+                .create_texture(&TextureDescriptor {
+                    label: Some(label),
+                    size: Extent3d {
+                        width: size.x,
+                        height: size.y,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: TextureDimension::D2,
+                    format,
+                    usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&TextureViewDescriptor::default())
+        };
+        let mut uniform = UniformBuffer::from(uniforms);
+        uniform.write_buffer(&device, &queue);
+        commands.entity(entity).insert(FluidTargets {
+            size,
+            raw: texture("fluid raw depth", TextureFormat::R32Float),
+            ping: texture("fluid blur ping", TextureFormat::R32Float),
+            pong: texture("fluid blur pong", TextureFormat::R32Float),
+            depth: texture("fluid depth test", TextureFormat::Depth32Float),
+            uniform,
         });
-        descriptor.fragment.as_mut().unwrap().shader = self.shader.clone();
-        // Sphere impostors write their real curved depth. This makes intersecting
-        // splats merge without per-particle sorting or alpha overdraw through walls.
-        descriptor.primitive.cull_mode = None;
-        if let Some(depth) = &mut descriptor.depth_stencil {
-            depth.depth_write_enabled = true;
-        }
-        for target in descriptor
-            .fragment
-            .as_mut()
-            .unwrap()
-            .targets
-            .iter_mut()
-            .flatten()
-        {
-            target.blend = None;
-        }
-        Ok(descriptor)
     }
 }
-
-type DrawCustom = (
-    SetItemPipeline,
-    SetMeshViewBindGroup<0>,
-    SetMeshViewBindingArrayBindGroup<1>,
-    SetMeshBindGroup<2>,
-    DrawMeshInstanced,
-);
-
-struct DrawMeshInstanced;
-
-impl<P: PhaseItem> RenderCommand<P> for DrawMeshInstanced {
-    type Param = (
-        SRes<RenderAssets<RenderMesh>>,
-        SRes<RenderMeshInstances>,
-        SRes<MeshAllocator>,
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+struct FluidLabel;
+#[derive(Default)]
+struct FluidNode;
+impl ViewNode for FluidNode {
+    type ViewQuery = (
+        &'static ViewTarget,
+        &'static ViewDepthTexture,
+        &'static FluidTargets,
     );
-    type ViewQuery = ();
-    type ItemQuery = Read<InstanceBuffer>;
-
-    #[inline]
-    fn render<'w>(
-        item: &P,
-        _view: (),
-        instance_buffer: Option<&'w InstanceBuffer>,
-        (meshes, render_mesh_instances, mesh_allocator): SystemParamItem<'w, '_, Self::Param>,
-        pass: &mut TrackedRenderPass<'w>,
-    ) -> RenderCommandResult {
-        // A borrow check workaround.
-        let mesh_allocator = mesh_allocator.into_inner();
-
-        let Some(mesh_instance) = render_mesh_instances.render_mesh_queue_data(item.main_entity())
-        else {
-            return RenderCommandResult::Skip;
+    fn run(
+        &self,
+        _: &mut RenderGraphContext,
+        context: &mut RenderContext,
+        (view, scene_depth, target): QueryItem<Self::ViewQuery>,
+        world: &World,
+    ) -> Result<(), NodeRunError> {
+        let Some(particles) = world.get_resource::<ParticleBuffer>() else {
+            return Ok(());
         };
-        let Some(gpu_mesh) = meshes.into_inner().get(mesh_instance.mesh_asset_id) else {
-            return RenderCommandResult::Skip;
-        };
-        let Some(instance_buffer) = instance_buffer else {
-            return RenderCommandResult::Skip;
-        };
-        let Some(vertex_buffer_slice) =
-            mesh_allocator.mesh_vertex_slice(&mesh_instance.mesh_asset_id)
-        else {
-            return RenderCommandResult::Skip;
-        };
-
-        pass.set_vertex_buffer(0, vertex_buffer_slice.buffer.slice(..));
-        pass.set_vertex_buffer(1, instance_buffer.buffer.slice(..));
-
-        match &gpu_mesh.buffer_info {
-            RenderMeshBufferInfo::Indexed {
-                index_format,
-                count,
-            } => {
-                let Some(index_buffer_slice) =
-                    mesh_allocator.mesh_index_slice(&mesh_instance.mesh_asset_id)
-                else {
-                    return RenderCommandResult::Skip;
-                };
-
-                pass.set_index_buffer(index_buffer_slice.buffer.slice(..), 0, *index_format);
-                pass.draw_indexed(
-                    index_buffer_slice.range.start..(index_buffer_slice.range.start + count),
-                    vertex_buffer_slice.range.start as i32,
-                    0..instance_buffer.length as u32,
-                );
-            }
-            RenderMeshBufferInfo::NonIndexed => {
-                pass.draw(vertex_buffer_slice.range, 0..instance_buffer.length as u32);
+        if particles.count == 0 {
+            return Ok(());
+        }
+        let settings = world.resource::<FluidPipelines>();
+        let cache = world.resource::<PipelineCache>();
+        let health = &world.resource::<WaterSplats>().health;
+        for id in [
+            settings.depth_id,
+            settings.blur_x,
+            settings.blur_y,
+            settings.compose_id,
+        ] {
+            if let CachedPipelineState::Err(error) = cache.get_render_pipeline_state(id) {
+                if health.swap(2, Ordering::AcqRel) != 2 {
+                    eprintln!("WATER RENDER FAILED: {error}");
+                }
+                return Ok(());
             }
         }
-        RenderCommandResult::Success
+        let (Some(depth), Some(blur_x), Some(blur_y), Some(compose)) = (
+            cache.get_render_pipeline(settings.depth_id),
+            cache.get_render_pipeline(settings.blur_x),
+            cache.get_render_pipeline(settings.blur_y),
+            cache.get_render_pipeline(settings.compose_id),
+        ) else {
+            return Ok(());
+        };
+        let Some(uniform) = target.uniform.binding() else {
+            return Ok(());
+        };
+        let device = context.render_device();
+        let particle_group = device.create_bind_group(
+            "fluid depth inputs",
+            &settings.particles,
+            &BindGroupEntries::sequential((particles.buffer.as_entire_binding(), uniform.clone())),
+        );
+        let blur_group = |texture: &TextureView| {
+            device.create_bind_group(
+                "fluid blur inputs",
+                &settings.blur,
+                &BindGroupEntries::sequential((texture, uniform.clone())),
+            )
+        };
+        let raw_group = blur_group(&target.raw);
+        let ping_group = blur_group(&target.ping);
+        let pong_group = blur_group(&target.pong);
+        let post = view.post_process_write();
+        let compose_group = device.create_bind_group(
+            "fluid compose inputs",
+            &settings.compose,
+            &BindGroupEntries::sequential((post.source, &target.pong, scene_depth.view(), uniform)),
+        );
+        let color = |view| {
+            Some(RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Default::default()),
+                    store: StoreOp::Store,
+                },
+            })
+        };
+        {
+            let mut pass = context
+                .command_encoder()
+                .begin_render_pass(&RenderPassDescriptor {
+                    label: Some("fluid particle depth"),
+                    color_attachments: &[color(&target.raw)],
+                    depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                        view: &target.depth,
+                        depth_ops: Some(Operations {
+                            load: LoadOp::Clear(0.0),
+                            store: StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            pass.set_pipeline(depth);
+            pass.set_bind_group(0, &particle_group, &[]);
+            pass.draw(0..6, 0..particles.count);
+        }
+        // Two separable bilateral iterations smooth shared fluid normals, without
+        // averaging across a depth jump or expanding water into empty pixels.
+        for (pipeline, group, output) in [
+            (blur_x, &raw_group, &target.ping),
+            (blur_y, &ping_group, &target.pong),
+            (blur_x, &pong_group, &target.ping),
+            (blur_y, &ping_group, &target.pong),
+        ] {
+            let mut pass = context
+                .command_encoder()
+                .begin_render_pass(&RenderPassDescriptor {
+                    label: Some("fluid bilateral smoothing"),
+                    color_attachments: &[color(output)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        {
+            let mut pass = context
+                .command_encoder()
+                .begin_render_pass(&RenderPassDescriptor {
+                    label: Some("fluid continuous surface"),
+                    color_attachments: &[color(post.destination)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            pass.set_pipeline(compose);
+            pass.set_bind_group(0, &compose_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        health.store(1, Ordering::Release);
+        Ok(())
     }
 }
-
+pub fn surface_ready(splats: &WaterSplats) -> bool {
+    splats.health.load(Ordering::Acquire) == 1
+}
+pub fn surface_failed(splats: &WaterSplats) -> bool {
+    splats.health.load(Ordering::Acquire) == 2
+}
 /// Build world-space splats from the exact live FLIP state, including detached
 /// droplets. A deterministic stride bounds upload/fragment cost at high volumes.
 pub fn visible_count(sluice: &mining_sim::Sluice) -> usize {
@@ -334,15 +489,11 @@ pub fn visible_count(sluice: &mining_sim::Sluice) -> usize {
     sluice.water.len().div_ceil(stride)
 }
 
-pub fn sync(game: Res<crate::app::Game>, mut query: Query<&mut WaterSplats>) {
-    let Ok(mut splats) = query.single_mut() else {
-        return;
-    };
-    if splats.revision == game.snapshot_id {
-        return;
+pub fn sync(game: Res<crate::app::Game>, mut splats: ResMut<WaterSplats>) {
+    if splats.revision != game.snapshot_id {
+        splats.revision = game.snapshot_id;
+        splats.data = Arc::new(instances(&game.session.sluice));
     }
-    splats.revision = game.snapshot_id;
-    splats.data = Arc::new(instances(&game.session.sluice));
 }
 
 fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {

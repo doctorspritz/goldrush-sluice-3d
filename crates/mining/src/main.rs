@@ -1,4 +1,6 @@
 mod app;
+mod control_check;
+mod demo;
 mod hud;
 mod runtime;
 mod scene;
@@ -10,6 +12,14 @@ use bevy::{prelude::*, window::WindowResolution};
 fn main() -> AppExit {
     // Keep Bevy's compute/IO pools bounded as well as the single solver worker.
     use bevy::app::{TaskPoolOptions, TaskPoolPlugin};
+    let (session, demo) = demo::initial();
+    let game = app::Game {
+        session,
+        demo,
+        ..default()
+    };
+    let runtime =
+        runtime::Runtime::new(game.session.clone()).expect("Simulation worker must start");
     App::new()
         .add_plugins(
             DefaultPlugins
@@ -27,15 +37,20 @@ fn main() -> AppExit {
                 }),
         )
         .add_plugins(water::WaterSplatPlugin)
-        .init_resource::<app::Game>()
-        .insert_non_send_resource(runtime::Runtime::new().expect("Simulation worker must start"))
+        .insert_resource(game)
+        .insert_non_send_resource(runtime)
         .init_resource::<validation::Validation>()
+        .insert_resource(control_check::Check::from_args())
         .add_systems(Startup, (scene::setup, hud::setup))
         .add_systems(
             Update,
             (
                 runtime::receive,
+                control_check::inject,
+                hud::buttons,
                 app::input,
+                app::cursor,
+                control_check::observe,
                 app::camera,
                 scene::sync_machine,
                 scene::sync_terrain,

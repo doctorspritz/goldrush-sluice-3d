@@ -40,9 +40,9 @@ fn acknowledge(
 }
 
 impl Runtime {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(session: mining_sim::Session) -> Result<Self, String> {
         Ok(Self {
-            worker: Worker::new()?,
+            worker: Worker::with_session(session)?,
             next_tick: Instant::now(),
             failed: false,
             sequence: 1,
@@ -121,7 +121,7 @@ pub fn dispatch(
     }
     let work = Work {
         sequence: runtime.sequence,
-        controls: game.controls,
+        controls: game.take_controls(),
         commands: std::mem::take(&mut game.pending),
         look_delta: std::mem::take(&mut game.look_delta),
         advance: !validation.active() || validation.ready(),

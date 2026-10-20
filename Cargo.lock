@@ -3124,6 +3124,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bytemuck",
+ "flate2",
  "mining-physics",
  "mining-sim",
  "serde_json",
