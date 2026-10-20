@@ -41,6 +41,7 @@ struct PressureParams3D {
 
 /// GPU-based pressure solver for 3D FLIP
 pub struct GpuPressure3D {
+    pub compact_iterations: bool,
     width: u32,
     height: u32,
     depth: u32,
@@ -516,6 +517,7 @@ impl GpuPressure3D {
             });
 
         Self {
+            compact_iterations: true,
             width,
             height,
             depth,
@@ -604,30 +606,7 @@ impl GpuPressure3D {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
-        // Red-Black Gauss-Seidel iterations
-        for _ in 0..iterations {
-            // Red pass
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Pressure Red 3D Pass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.pressure_red_pipeline);
-                pass.set_bind_group(0, &self.pressure_bind_group, &[]);
-                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-            }
-
-            // Black pass
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Pressure Black 3D Pass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.pressure_black_pipeline);
-                pass.set_bind_group(0, &self.pressure_bind_group, &[]);
-                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-            }
-        }
+        self.encode_iterations_only(encoder, iterations);
 
         // Apply pressure gradient to U
         {
@@ -721,6 +700,22 @@ impl GpuPressure3D {
         let workgroups_y = self.height.div_ceil(8);
         let workgroups_z = self.depth.div_ceil(4);
 
+        if self.compact_iterations {
+            // Dispatches in a compute pass execute in order. Keep all red/black
+            // sweeps and their storage dependencies, without 2*N pass encoders.
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Ordered red/black pressure sweeps"),
+                timestamp_writes: None,
+            });
+            pass.set_bind_group(0, &self.pressure_bind_group, &[]);
+            for _ in 0..iterations {
+                pass.set_pipeline(&self.pressure_red_pipeline);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+                pass.set_pipeline(&self.pressure_black_pipeline);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+            return;
+        }
         // Red-Black Gauss-Seidel iterations
         for _ in 0..iterations {
             // Red pass

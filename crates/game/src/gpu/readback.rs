@@ -32,14 +32,20 @@ impl StagingBuffer {
         }
     }
 
-    fn copy_from(&self, encoder: &mut wgpu::CommandEncoder, src: &wgpu::Buffer, byte_size: u64) {
-        encoder.copy_buffer_to_buffer(src, 0, &self.buffer, 0, byte_size);
+    fn copy_from(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &wgpu::Buffer,
+        first_byte: u64,
+        byte_size: u64,
+    ) {
+        encoder.copy_buffer_to_buffer(src, first_byte, &self.buffer, 0, byte_size);
     }
 
-    fn start_map(&mut self) {
+    fn start_map(&mut self, bytes: u64) {
         let (tx, rx) = mpsc::channel();
         self.buffer
-            .slice(..)
+            .slice(..bytes)
             .map_async(wgpu::MapMode::Read, move |result| {
                 let _ = tx.send(result);
             });
@@ -69,7 +75,7 @@ impl StagingBuffer {
     }
 
     fn read_vec3(&self, out: &mut [glam::Vec3], count: usize) {
-        let data = self.buffer.slice(..).get_mapped_range();
+        let data = self.buffer.slice(..(count * 16) as u64).get_mapped_range();
         let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
         for i in 0..count {
             out[i] = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
@@ -82,7 +88,7 @@ impl StagingBuffer {
         count: usize,
         axis: fn(&mut glam::Mat3) -> &mut glam::Vec3,
     ) {
-        let data = self.buffer.slice(..).get_mapped_range();
+        let data = self.buffer.slice(..(count * 16) as u64).get_mapped_range();
         let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
         for i in 0..count {
             *axis(&mut out[i]) = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
@@ -142,13 +148,17 @@ impl ReadbackSlot {
         c_col0: &wgpu::Buffer,
         c_col1: &wgpu::Buffer,
         c_col2: &wgpu::Buffer,
+        first: usize,
         count: usize,
     ) -> bool {
         if self.pending {
             return false;
         }
 
-        let count = count.min(self.capacity);
+        if first >= self.capacity {
+            return false;
+        }
+        let count = count.min(self.capacity - first);
         if count == 0 {
             return false;
         }
@@ -158,22 +168,27 @@ impl ReadbackSlot {
             label: Some("Readback Copy Encoder"),
         });
 
-        self.positions.copy_from(&mut encoder, positions, byte_size);
-        self.velocities.copy_from(&mut encoder, velocities, byte_size);
-        self.c_col0.copy_from(&mut encoder, c_col0, byte_size);
-        self.c_col1.copy_from(&mut encoder, c_col1, byte_size);
-        self.c_col2.copy_from(&mut encoder, c_col2, byte_size);
+        self.positions
+            .copy_from(&mut encoder, positions, (first * 16) as u64, byte_size);
+        self.velocities
+            .copy_from(&mut encoder, velocities, (first * 16) as u64, byte_size);
+        self.c_col0
+            .copy_from(&mut encoder, c_col0, (first * 16) as u64, byte_size);
+        self.c_col1
+            .copy_from(&mut encoder, c_col1, (first * 16) as u64, byte_size);
+        self.c_col2
+            .copy_from(&mut encoder, c_col2, (first * 16) as u64, byte_size);
 
         queue.submit(std::iter::once(encoder.finish()));
 
         self.count = count;
         self.pending = true;
 
-        self.positions.start_map();
-        self.velocities.start_map();
-        self.c_col0.start_map();
-        self.c_col1.start_map();
-        self.c_col2.start_map();
+        self.positions.start_map(byte_size);
+        self.velocities.start_map(byte_size);
+        self.c_col0.start_map(byte_size);
+        self.c_col1.start_map(byte_size);
+        self.c_col2.start_map(byte_size);
 
         true
     }

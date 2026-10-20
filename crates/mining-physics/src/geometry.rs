@@ -15,7 +15,13 @@ pub fn config(s: &Sluice) -> SluiceConfig {
         riffle_spacing: if original { 32 } else { 19 },
         riffle_height: if original { 3 } else { 2 },
         riffle_thickness: 2,
-        riffle_start_x: if original { 40 } else { 27 },
+        riffle_start_x: if !s.riffles_enabled {
+            usize::MAX
+        } else if original {
+            40
+        } else {
+            27
+        },
         riffle_end_pad: 12,
         wall_margin: 8,
         exit_width_fraction: 1.0,

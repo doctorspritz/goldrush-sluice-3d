@@ -28,7 +28,7 @@ struct Params {
 
 @group(0) @binding(0) var<uniform> params: Params;
 // Sorted particle data
-@group(0) @binding(1) var<storage, read> positions: array<vec3<f32>>;
+@group(0) @binding(1) var<storage, read> positions: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> velocities: array<vec3<f32>>;
 @group(0) @binding(3) var<storage, read> c_col0: array<vec3<f32>>;
 @group(0) @binding(4) var<storage, read> c_col1: array<vec3<f32>>;
@@ -126,9 +126,10 @@ fn scatter_u(@builtin(global_invocation_id) id: vec3<u32>) {
                     let pid = start + p;
                     if (pid >= params.particle_count) { break; }
 
-                    let pos = positions[pid];
+                    let pos = positions[pid].xyz;
                     let vel = velocities[pid];
                     let density = densities[pid];
+                    let mass_weight = density * select(positions[pid].w, 1.0, positions[pid].w <= 0.0);
 
                     // Skip sediment if not included
                     if (density > 1.0 && params.include_sediment == 0u) {
@@ -148,10 +149,10 @@ fn scatter_u(@builtin(global_invocation_id) id: vec3<u32>) {
                         // APIC: momentum = (vel + C * offset) * weight
                         let offset = node_pos - pos;
                         let affine_vel = c_mat_mul(pid, offset);
-                        let momentum_x = (vel.x + affine_vel.x) * w;
+                        let momentum_x = (vel.x + affine_vel.x) * (w * mass_weight);
 
                         momentum_sum += momentum_x;
-                        weight_sum += w;
+                        weight_sum += w * mass_weight;
                     }
                 }
             }
@@ -208,9 +209,10 @@ fn scatter_v(@builtin(global_invocation_id) id: vec3<u32>) {
                     let pid = start + p;
                     if (pid >= params.particle_count) { break; }
 
-                    let pos = positions[pid];
+                    let pos = positions[pid].xyz;
                     let vel = velocities[pid];
                     let density = densities[pid];
+                    let mass_weight = density * select(positions[pid].w, 1.0, positions[pid].w <= 0.0);
 
                     if (density > 1.0 && params.include_sediment == 0u) {
                         continue;
@@ -227,10 +229,10 @@ fn scatter_v(@builtin(global_invocation_id) id: vec3<u32>) {
                     if (w > 0.0) {
                         let offset = node_pos - pos;
                         let affine_vel = c_mat_mul(pid, offset);
-                        let momentum_y = (vel.y + affine_vel.y) * w;
+                        let momentum_y = (vel.y + affine_vel.y) * (w * mass_weight);
 
                         momentum_sum += momentum_y;
-                        weight_sum += w;
+                        weight_sum += w * mass_weight;
                     }
                 }
             }
@@ -286,9 +288,10 @@ fn scatter_w(@builtin(global_invocation_id) id: vec3<u32>) {
                     let pid = start + p;
                     if (pid >= params.particle_count) { break; }
 
-                    let pos = positions[pid];
+                    let pos = positions[pid].xyz;
                     let vel = velocities[pid];
                     let density = densities[pid];
+                    let mass_weight = density * select(positions[pid].w, 1.0, positions[pid].w <= 0.0);
 
                     if (density > 1.0 && params.include_sediment == 0u) {
                         continue;
@@ -305,10 +308,10 @@ fn scatter_w(@builtin(global_invocation_id) id: vec3<u32>) {
                     if (w > 0.0) {
                         let offset = node_pos - pos;
                         let affine_vel = c_mat_mul(pid, offset);
-                        let momentum_z = (vel.z + affine_vel.z) * w;
+                        let momentum_z = (vel.z + affine_vel.z) * (w * mass_weight);
 
                         momentum_sum += momentum_z;
-                        weight_sum += w;
+                        weight_sum += w * mass_weight;
                     }
                 }
             }

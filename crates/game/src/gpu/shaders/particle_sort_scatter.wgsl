@@ -26,7 +26,7 @@ struct Params {
 @group(0) @binding(3) var<storage, read_write> cell_counters: array<atomic<u32>>;
 
 // Input particle arrays
-@group(0) @binding(4) var<storage, read> in_positions: array<vec3<f32>>;
+@group(0) @binding(4) var<storage, read> in_positions: array<vec4<f32>>;
 @group(0) @binding(5) var<storage, read> in_velocities: array<vec3<f32>>;
 @group(0) @binding(6) var<storage, read> in_densities: array<f32>;
 @group(0) @binding(7) var<storage, read> in_c_col0: array<vec3<f32>>;
@@ -34,7 +34,7 @@ struct Params {
 @group(0) @binding(9) var<storage, read> in_c_col2: array<vec3<f32>>;
 
 // Output particle arrays (sorted)
-@group(0) @binding(10) var<storage, read_write> out_positions: array<vec3<f32>>;
+@group(0) @binding(10) var<storage, read_write> out_positions: array<vec4<f32>>;
 @group(0) @binding(11) var<storage, read_write> out_velocities: array<vec3<f32>>;
 @group(0) @binding(12) var<storage, read_write> out_densities: array<f32>;
 @group(0) @binding(13) var<storage, read_write> out_c_col0: array<vec3<f32>>;

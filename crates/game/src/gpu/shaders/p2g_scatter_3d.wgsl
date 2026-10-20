@@ -28,7 +28,7 @@ struct Params {
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> positions: array<vec3<f32>>;
+@group(0) @binding(1) var<storage, read> positions: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> velocities: array<vec3<f32>>;
 // C matrix stored as 3 ROWS (c_col0 = row 0, etc.)
 // This naming is historical; they're actually rows from the staggered APIC reconstruction
@@ -97,9 +97,10 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    let pos = positions[id.x];
+    let pos = positions[id.x].xyz;
     let vel = velocities[id.x];
     let density = densities[id.x];
+    let mass_weight = density * select(positions[id.x].w, 1.0, positions[id.x].w <= 0.0);
     if (density > 1.0 && params.include_sediment == 0u) {
         return;
     }
@@ -170,11 +171,11 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
                 // Mass-weighted momentum: m * (v + C*offset) * w
-                let momentum_x = density * (vel.x + affine_vel.x) * w;
+                let momentum_x = mass_weight * (vel.x + affine_vel.x) * w;
 
                 let idx = u_index(u32(ni), u32(nj), u32(nk));
                 atomicAdd(&u_sum[idx], i32(momentum_x * SCALE));
-                atomicAdd(&u_weight[idx], i32(density * w * SCALE));
+                atomicAdd(&u_weight[idx], i32(mass_weight * w * SCALE));
             }
         }
     }
@@ -227,11 +228,11 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
                 // Mass-weighted momentum: m * (v + C*offset) * w
-                let momentum_y = density * (vel.y + affine_vel.y) * w;
+                let momentum_y = mass_weight * (vel.y + affine_vel.y) * w;
 
                 let idx = v_index(u32(ni), u32(nj), u32(nk));
                 atomicAdd(&v_sum[idx], i32(momentum_y * SCALE));
-                atomicAdd(&v_weight[idx], i32(density * w * SCALE));
+                atomicAdd(&v_weight[idx], i32(mass_weight * w * SCALE));
             }
         }
     }
@@ -284,11 +285,11 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
                 // Mass-weighted momentum: m * (v + C*offset) * w
-                let momentum_z = density * (vel.z + affine_vel.z) * w;
+                let momentum_z = mass_weight * (vel.z + affine_vel.z) * w;
 
                 let idx = w_index(u32(ni), u32(nj), u32(nk));
                 atomicAdd(&w_sum[idx], i32(momentum_z * SCALE));
-                atomicAdd(&w_weight[idx], i32(density * w * SCALE));
+                atomicAdd(&w_weight[idx], i32(mass_weight * w * SCALE));
             }
         }
     }

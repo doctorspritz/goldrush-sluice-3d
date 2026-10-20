@@ -415,26 +415,46 @@ impl ClusterSimulation3D {
     /// # Arguments
     /// * `wet` - If true, uses wet friction (much lower) for sliding gravel in water
     pub fn collision_response_only(&mut self, dt: f32, sdf_params: &SdfParams, wet: bool) {
+        self.collision_response_local(dt, sdf_params, |_| wet);
+    }
+
+    /// Coupled callers supply local immersion, rather than wetting the entire
+    /// channel merely because water exists somewhere in it.
+    pub fn collision_response_with_wetness(
+        &mut self,
+        dt: f32,
+        sdf_params: &SdfParams,
+        wet: &[bool],
+    ) {
+        assert_eq!(wet.len(), self.clumps.len());
+        self.collision_response_local(dt, sdf_params, |i| wet[i]);
+    }
+
+    fn collision_response_local(
+        &mut self,
+        dt: f32,
+        sdf_params: &SdfParams,
+        wet: impl Fn(usize) -> bool,
+    ) {
         if self.clumps.is_empty() {
             return;
         }
-
-        // Select friction coefficients based on wetness
-        let friction = if wet {
-            self.wet_friction
-        } else {
-            self.floor_friction
-        };
-        let rolling_friction = if wet {
-            self.wet_rolling_friction
-        } else {
-            self.rolling_friction
-        };
 
         let mut new_sdf_contacts: HashMap<SdfContactKey, Vec3> = HashMap::new();
 
         // SDF collision detection and response
         for (idx, clump) in self.clumps.iter_mut().enumerate() {
+            let friction = if wet(idx) {
+                self.wet_friction
+            } else {
+                self.floor_friction
+            };
+            let rolling_friction = if wet(idx) {
+                self.wet_rolling_friction
+            } else {
+                self.rolling_friction
+            };
+
             let template = &self.templates[clump.template_idx];
 
             for (p_idx, offset) in template.local_offsets.iter().enumerate() {
@@ -1099,70 +1119,109 @@ impl ClusterSimulation3D {
     }
 
     fn resolve_dem_penetrations(&mut self, iterations: usize) {
-        let slop = 0.001;
         let percent = 0.75;
         let count = self.clumps.len();
 
         for _ in 0..iterations {
-            for i in 0..count {
-                for j in (i + 1)..count {
-                    let (left, right) = self.clumps.split_at_mut(j);
-                    let clump_a = &mut left[i];
-                    let clump_b = &mut right[0];
-                    let template_a = &self.templates[clump_a.template_idx];
-                    let template_b = &self.templates[clump_b.template_idx];
-
-                    let delta = clump_b.position - clump_a.position;
-                    let max_dist = template_a.bounding_radius + template_b.bounding_radius;
-                    if delta.length_squared() > max_dist * max_dist {
-                        continue;
+            let mut pairs = Vec::new();
+            if count <= 64 {
+                for i in 0..count {
+                    for j in i + 1..count {
+                        pairs.push((i, j));
                     }
-
-                    let contact_dist = template_a.particle_radius + template_b.particle_radius;
-                    let contact_dist_sq = contact_dist * contact_dist;
-                    let inv_mass_a = template_a.inv_mass();
-                    let inv_mass_b = template_b.inv_mass();
-                    let inv_mass_sum = inv_mass_a + inv_mass_b;
-                    if inv_mass_sum <= 0.0 {
-                        continue;
-                    }
-
-                    for offset_a in &template_a.local_offsets {
-                        let ra = clump_a.rotation * *offset_a;
-                        let pa = clump_a.position + ra;
-                        for offset_b in &template_b.local_offsets {
-                            let rb = clump_b.rotation * *offset_b;
-                            let pb = clump_b.position + rb;
-                            let diff = pb - pa;
-                            let dist_sq = diff.length_squared();
-
-                            if dist_sq >= contact_dist_sq {
-                                continue;
+                }
+            } else {
+                let diameter = self
+                    .templates
+                    .iter()
+                    .map(|t| t.bounding_radius * 2.0)
+                    .fold(0.001_f32, f32::max);
+                let mut cells: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
+                for (i, c) in self.clumps.iter().enumerate() {
+                    let p = (c.position / diameter).floor().as_ivec3();
+                    cells.entry((p.x, p.y, p.z)).or_default().push(i);
+                }
+                for (i, c) in self.clumps.iter().enumerate() {
+                    let p = (c.position / diameter).floor().as_ivec3();
+                    for x in -1..=1 {
+                        for y in -1..=1 {
+                            for z in -1..=1 {
+                                if let Some(indices) = cells.get(&(p.x + x, p.y + y, p.z + z)) {
+                                    for &j in indices {
+                                        if j > i {
+                                            pairs.push((i, j));
+                                        }
+                                    }
+                                }
                             }
+                        }
+                    }
+                }
+                pairs.sort_unstable();
+            }
+            for (i, j) in pairs {
+                let (left, right) = self.clumps.split_at_mut(j);
+                let clump_a = &mut left[i];
+                let clump_b = &mut right[0];
+                let template_a = &self.templates[clump_a.template_idx];
+                let template_b = &self.templates[clump_b.template_idx];
 
-                            let (normal, dist) = if dist_sq > 1.0e-10 {
-                                let dist = dist_sq.sqrt();
-                                (diff / dist, dist)
+                let delta = clump_b.position - clump_a.position;
+                let max_dist = template_a.bounding_radius + template_b.bounding_radius;
+                if delta.length_squared() > max_dist * max_dist {
+                    continue;
+                }
+
+                let contact_dist = template_a.particle_radius + template_b.particle_radius;
+                let contact_dist_sq = contact_dist * contact_dist;
+                let slop = (contact_dist * 0.02).min(0.0005);
+                let inv_mass_a = template_a.inv_mass();
+                let inv_mass_b = template_b.inv_mass();
+                let inv_mass_sum = inv_mass_a + inv_mass_b;
+                if inv_mass_sum <= 0.0 {
+                    continue;
+                }
+
+                for offset_a in &template_a.local_offsets {
+                    let ra = clump_a.rotation * *offset_a;
+                    let pa = clump_a.position + ra;
+                    for offset_b in &template_b.local_offsets {
+                        let rb = clump_b.rotation * *offset_b;
+                        let pb = clump_b.position + rb;
+                        let diff = pb - pa;
+                        let dist_sq = diff.length_squared();
+
+                        if dist_sq >= contact_dist_sq {
+                            continue;
+                        }
+
+                        let (normal, dist) = if dist_sq > 1.0e-10 {
+                            let dist = dist_sq.sqrt();
+                            (diff / dist, dist)
+                        } else {
+                            let center = clump_b.position - clump_a.position;
+                            let fallback = if center.length_squared() > 1.0e-10 {
+                                center.normalize()
                             } else {
-                                let center = clump_b.position - clump_a.position;
-                                let fallback = if center.length_squared() > 1.0e-10 {
-                                    center.normalize()
-                                } else {
-                                    Vec3::Y
-                                };
-                                (fallback, 0.0)
+                                Vec3::Y
                             };
-                            let penetration = contact_dist - dist;
-                            if penetration <= 0.0 {
-                                continue;
-                            }
-                            let correction_mag =
-                                (penetration - slop).max(0.0) * percent / inv_mass_sum;
-                            if correction_mag > 0.0 {
-                                let correction = normal * correction_mag;
-                                clump_a.position -= correction * inv_mass_a;
-                                clump_b.position += correction * inv_mass_b;
-                            }
+                            (fallback, 0.0)
+                        };
+                        let penetration = contact_dist - dist;
+                        if penetration <= 0.0 {
+                            continue;
+                        }
+                        let closing = (clump_b.velocity - clump_a.velocity).dot(normal);
+                        if closing < 0.0 {
+                            let impulse = normal * (-closing / inv_mass_sum);
+                            clump_a.velocity -= impulse * inv_mass_a;
+                            clump_b.velocity += impulse * inv_mass_b;
+                        }
+                        let correction_mag = (penetration - slop).max(0.0) * percent / inv_mass_sum;
+                        if correction_mag > 0.0 {
+                            let correction = normal * correction_mag;
+                            clump_a.position -= correction * inv_mass_a;
+                            clump_b.position += correction * inv_mass_b;
                         }
                     }
                 }
@@ -2446,6 +2505,48 @@ mod tests {
 
         // Without penetration, position should be unchanged
         assert!((pos_before - pos_after).length() < 0.01);
+    }
+
+    #[test]
+    fn coupled_contacts_preserve_momentum_with_spatial_neighbours() {
+        let run = |count: usize| {
+            let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(100.0));
+            let a = sim.add_template(ClumpTemplate3D::generate(
+                ClumpShape3D::Irregular {
+                    count: 1,
+                    seed: 0,
+                    style: super::IrregularStyle3D::Round,
+                },
+                0.001,
+                0.002,
+            ));
+            let b = sim.add_template(ClumpTemplate3D::generate(
+                ClumpShape3D::Irregular {
+                    count: 1,
+                    seed: 0,
+                    style: super::IrregularStyle3D::Round,
+                },
+                0.001,
+                0.004,
+            ));
+            sim.spawn(a, Vec3::new(1.0, 1.0, 1.0), Vec3::X);
+            sim.spawn(b, Vec3::new(1.0015, 1.0, 1.0), -Vec3::X);
+            for i in 2..count {
+                sim.spawn(a, Vec3::new(10.0 + i as f32 * 0.1, 1.0, 1.0), Vec3::ZERO);
+            }
+            sim.resolve_dem_penetrations(2);
+            let momentum = sim.clumps[0].velocity * 0.002 + sim.clumps[1].velocity * 0.004;
+            assert!((momentum - Vec3::new(-0.002, 0.0, 0.0)).length() < 1e-8);
+            assert!((sim.clumps[1].velocity - sim.clumps[0].velocity).x >= -1e-6);
+            assert!((sim.clumps[1].position - sim.clumps[0].position).length() > 0.0019);
+            [
+                sim.clumps[0].position,
+                sim.clumps[1].position,
+                sim.clumps[0].velocity,
+                sim.clumps[1].velocity,
+            ]
+        };
+        assert_eq!(run(2), run(65));
     }
 
     #[test]

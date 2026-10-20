@@ -9,7 +9,7 @@ use bevy::{
 use mining_sim::{
     site::{CELL, WIDTH},
     sluice::{HOPPER_X, HOPPER_Z},
-    ControlMode, GrainKind, Site, Vec3 as SVec,
+    ControlMode, Site, Vec3 as SVec,
 };
 
 #[derive(Resource)]
@@ -69,15 +69,13 @@ pub(crate) struct HopperFill;
 #[derive(Component)]
 pub(crate) struct TailingsPile;
 #[derive(Component)]
-pub(crate) struct ParcelVisual {
-    index: usize,
-}
-#[derive(Component)]
 pub(crate) struct FallingVisual {
     index: usize,
 }
 #[derive(Resource, Default)]
-pub(crate) struct PlantRevision(Option<(SVec, f32, f32, mining_sim::sluice::HydraulicProfile)>);
+pub(crate) struct PlantRevision(
+    Option<(SVec, f32, f32, mining_sim::sluice::HydraulicProfile, bool)>,
+);
 
 fn material(
     materials: &mut Assets<StandardMaterial>,
@@ -971,15 +969,6 @@ fn equipment(commands: &mut Commands, meshes: &mut Assets<Mesh>, p: &Palette, si
     ] {
         cylinder_between(commands, p, a, b, 0.055, p.dark.clone());
     }
-    for i in 0..320 {
-        commands.spawn((
-            Mesh3d(p.sphere.clone()),
-            MeshMaterial3d(p.sand.clone()),
-            Transform::default(),
-            Visibility::Hidden,
-            ParcelVisual { index: i },
-        ));
-    }
     for i in 0..100 {
         commands.spawn((
             Mesh3d(p.sphere.clone()),
@@ -1114,11 +1103,15 @@ pub fn sync_plant(
     mut meshes: ResMut<Assets<Mesh>>,
     existing: Query<Entity, With<SluiceVisual>>,
 ) {
-    let key = game
-        .session
-        .sluice
-        .placement
-        .map(|p| (p.inlet, p.yaw, p.slope_deg, game.session.sluice.profile));
+    let key = game.session.sluice.placement.map(|p| {
+        (
+            p.inlet,
+            p.yaw,
+            p.slope_deg,
+            game.session.sluice.profile,
+            game.session.sluice.riffles_enabled,
+        )
+    });
     if revision.0 == key {
         return;
     }
@@ -1167,16 +1160,9 @@ pub fn sync_plant(
 )]
 pub fn sync_material(
     game: Res<Game>,
-    p: Res<Palette>,
     mut sets: ParamSet<(
         Query<(&mut Transform, &mut Visibility), With<HopperFill>>,
         Query<(&mut Transform, &mut Visibility), With<TailingsPile>>,
-        Query<(
-            &ParcelVisual,
-            &mut Transform,
-            &mut Visibility,
-            &mut MeshMaterial3d<StandardMaterial>,
-        )>,
         Query<(&FallingVisual, &mut Transform, &mut Visibility)>,
     )>,
 ) {
@@ -1209,29 +1195,7 @@ pub fn sync_material(
             Visibility::Hidden
         };
     }
-    for (parcel, mut t, mut v, mut mat) in &mut sets.p2() {
-        let index = parcel.index;
-        if let (Some(g), Some(placement)) = (s.sluice.grains.get(index), s.sluice.placement) {
-            *v = Visibility::Visible;
-            let size = match g.kind {
-                GrainKind::Gold => 0.012,
-                GrainKind::Sand => 0.016,
-                GrainKind::Gravel => 0.023,
-            };
-            *t = Transform::from_translation(
-                bvec(placement.to_world(s.sluice.grid_to_local(g.position))) + Vec3::Y * size * 0.5,
-            )
-            .with_scale(Vec3::new(size, size * 0.65, size));
-            mat.0 = match g.kind {
-                GrainKind::Gold => p.gold.clone(),
-                GrainKind::Sand => p.dirt.clone(),
-                GrainKind::Gravel => p.sand.clone(),
-            };
-        } else {
-            *v = Visibility::Hidden;
-        }
-    }
-    for (parcel, mut t, mut v) in &mut sets.p3() {
+    for (parcel, mut t, mut v) in &mut sets.p2() {
         if let Some(load) = s.falling.get(parcel.index) {
             let size = (load.material.volume() as f32).cbrt() * 0.65;
             *v = Visibility::Visible;

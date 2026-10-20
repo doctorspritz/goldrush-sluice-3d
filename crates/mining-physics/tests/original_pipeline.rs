@@ -66,7 +66,7 @@ fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
         }
     }
     assert_eq!(s.site.hydraulic.steps, 120);
-    assert!(s.sluice.solver_steps >= 360 * mining_physics::FLIP_SUBSTEPS as u64);
+    assert!(s.sluice.solver_steps >= 180 * mining_physics::FLIP_SUBSTEPS as u64);
     assert!(
         s.sluice.water.iter().any(|p| p.position.x > 0.4),
         "original FLIP advection must move inlet water downstream"

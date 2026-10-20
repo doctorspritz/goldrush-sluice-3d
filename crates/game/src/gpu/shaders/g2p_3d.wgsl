@@ -27,7 +27,10 @@ struct Params {
     d_inv: f32,          // APIC D inverse = 4/dx^2
     flip_ratio: f32,     // FLIP blend ratio (0.97 for water)
     dt: f32,             // Time step for velocity clamping
-    max_velocity: f32,   // Safety clamp (2000.0)
+    max_velocity: f32,   // CFL-derived safety clamp
+    diameter_offset: u32,
+    _pad0: u32,
+    _pad1: u32,
 }
 
 struct SedimentParams {
@@ -67,6 +70,7 @@ struct SedimentParams {
 @group(0) @binding(15) var<storage, read> water_grid_u: array<f32>;
 @group(0) @binding(16) var<storage, read> water_grid_v: array<f32>;
 @group(0) @binding(17) var<storage, read> water_grid_w: array<f32>;
+
 
 // Quadratic B-spline kernel (1D)
 fn quadratic_bspline_1d(x: f32) -> f32 {
@@ -333,8 +337,18 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         if (is_gold) {
             drag_rate *= max(sediment_params.gold_drag_multiplier, 0.0001);
         }
+        let diameter = densities[params.diameter_offset + id.x];
+        if abs(diameter) > 0. {
+            // Ferguson-Church form, natural grain constants C1=18, C2=1.
+            // Diameter controls drag; representative parcel volume does not.
+            let d = abs(diameter); let relative = max(density-1.,0.);
+            let terminal = relative * sediment_params.gravity * d*d /
+                (18e-6 + sqrt(0.75 * relative * sediment_params.gravity * d*d*d));
+            drag_rate = submerged_gravity / max(terminal,0.00001);
+        }
         let equilibrium = water_velocity - vec3<f32>(0.0, submerged_gravity / drag_rate, 0.0);
         final_velocity = mix(old_particle_vel, equilibrium, 1.0 - exp(-drag_rate * params.dt));
+        if diameter < 0. { final_velocity = old_particle_vel - vec3(0.,sediment_params.gravity * params.dt,0.); }
     } else {
         // Water: full FLIP/PIC blend
         final_velocity = params.flip_ratio * flip_velocity + (1.0 - params.flip_ratio) * pic_velocity;

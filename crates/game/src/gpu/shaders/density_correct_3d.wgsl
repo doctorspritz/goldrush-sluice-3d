@@ -176,7 +176,9 @@ fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    // Apply density correction to ALL particles (including sediment)
+    if densities[pid] > 1.0 { return; }
+    // Volume repair applies to carrier water; DEM owns solid packing.
+    // Previously applied density correction to ALL particles (including sediment)
     // so they get pushed apart like water does.
     // Previously skipped sediment: if (densities[pid] > SEDIMENT_DENSITY_THRESHOLD) { return; }
 
@@ -201,7 +203,7 @@ fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
     let delta = vec3<f32>(delta_x, delta_y, delta_z) * correction_scale;
 
     let corrected = pos + delta;
-    positions[pid] = vec4<f32>(corrected, 1.0);
+    positions[pid] = vec4<f32>(corrected, positions[pid].w);
 
     // Damp velocities slightly during position correction to bleed off jitter energy
     // and help the simulation reach a stable rest state.

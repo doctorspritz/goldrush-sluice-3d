@@ -26,14 +26,14 @@ mod tests {
     #[test]
     fn bundled_demo_has_real_flow_finite_paydirt_and_balanced_ledger() {
         let s = super::session().unwrap();
-        assert!(s.sluice.water.len() > 100_000);
+        assert!(s.sluice.water.len() > 10_000 && s.sluice.granular_packets);
         assert_eq!(
             s.sluice.profile,
             mining_sim::sluice::HydraulicProfile::OriginalDemo
         );
         assert!(s.sluice.pump_on && s.sluice.feed_on);
         assert!(s.sluice.hopper.volume() > 0.4 && s.sluice.hopper.volume() < 0.85);
-        assert!(s.sluice.water_returned_m3 > 0.005 && s.sluice.tailings.volume() > 0.001);
+        assert!(s.sluice.water_returned_m3 > 0.005 && s.sluice.tailings.volume() > 0.0001);
         assert!(!s.sluice.grains.is_empty());
         assert!((s.accounted_gold() - s.initial_gold_g).abs() < 1e-7);
         let (volume, positions) = (

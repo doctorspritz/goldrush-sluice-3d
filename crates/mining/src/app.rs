@@ -332,10 +332,10 @@ pub fn input(
                 game.command(Command::Water(-0.002));
             }
             if keys.just_pressed(KeyCode::ArrowRight) {
-                game.command(Command::Feed(0.001));
+                game.command(Command::Feed(0.0001));
             }
             if keys.just_pressed(KeyCode::ArrowLeft) {
-                game.command(Command::Feed(-0.001));
+                game.command(Command::Feed(-0.0001));
             }
         }
     }

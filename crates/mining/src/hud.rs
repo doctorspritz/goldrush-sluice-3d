@@ -376,7 +376,7 @@ pub fn update(
                 else if s.sluice.processed_m3<0.01{"04   START WASHING\n\nWalk to the sluice. P starts water,\nO opens the feed gate.".into()}
                 else{format!("05   LIFT THE MATS\n\nStop feed with O, let it clear,\nstop water with P, then C to collect.\nTarget: {GOLD_TARGET_G:.0} g")}
             },
-            HudText::Clock=>format!("Hopper  {:.3} / 0.850 m³\nWater  {}  ·  {:.0} L/s\nFeed  {}  ·  {:.0} L/s\nShift  {:02}:{:02}",s.sluice.hopper.volume(),if s.sluice.pump_on{"ON"}else{"OFF"},s.sluice.flow_m3s*1000.0,
+            HudText::Clock=>format!("Hopper  {:.3} / 0.850 m³\nWater  {}  ·  {:.0} L/s\nFeed  {}  ·  {:.1} L/s\nShift  {:02}:{:02}",s.sluice.hopper.volume(),if s.sluice.pump_on{"ON"}else{"OFF"},s.sluice.flow_m3s*1000.0,
                 if s.sluice.feed_on{"ON"}else{"OFF"},s.sluice.feed_m3s*1000.0,s.sim_time as u64/60,s.sim_time as u64%60),
             HudText::Context=>{
                 if let Some(p)=game.placement {

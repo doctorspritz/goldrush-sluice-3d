@@ -1,4 +1,4 @@
-struct Uniforms { clip_from_world: mat4x4<f32>, world_from_view: mat4x4<f32>, view_from_clip: mat4x4<f32>, view_from_world: mat4x4<f32>, viewport: vec4<f32> };
+struct Uniforms { clip_from_world: mat4x4<f32>, world_from_view: mat4x4<f32>, view_from_clip: mat4x4<f32>, view_from_world: mat4x4<f32>, viewport: vec4<f32>, sediment: vec4<f32> };
 struct Screen { @builtin(position) position: vec4<f32> };
 @vertex fn fullscreen(@builtin(vertex_index) id: u32) -> Screen { var s: Screen; let xy = vec2(f32((id << 1u) & 2u), f32(id & 2u)); s.position = vec4(xy * 2.0 - 1.0, 0.0, 1.0); return s; }
 @group(0) @binding(0) var scene: texture_2d<f32>;
@@ -55,6 +55,13 @@ fn view_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     let half_vector = normalize(light + normalize(u.world_from_view[3].xyz-world.xyz));
     let specular = pow(max(dot(normal,half_vector),0.),72.) * 0.38;
     let sky = mix(vec3(0.21,0.36,0.43),vec3(0.62,0.76,0.82),clamp(normal.y*0.5+0.5,0.,1.));
-    let body = mix(original.rgb,vec3(0.035,0.18,0.18),0.68);
+    let opaque_view = u.view_from_clip * vec4(q.x/u.viewport.x*2.-1.,1.-q.y/u.viewport.y*2.,opaque,1.);
+    var thickness = 0.04;
+    if opaque>0. && abs(opaque_view.w)>0.00001 { thickness=clamp(-opaque_view.z/opaque_view.w-depth,0.,0.5); }
+    let concentration=u.sediment.x;
+    let extinction=vec3(4.,2.,0.9)+vec3(45.,80.,120.)*concentration*30.;
+    let transmission=exp(-extinction*thickness);
+    let scattering=mix(vec3(0.035,0.18,0.18),vec3(0.22,0.13,0.055),clamp(concentration*20.,0.,1.));
+    let body=original.rgb*transmission+scattering*(vec3(1.)-transmission);
     return vec4(mix(original.rgb,mix(body,sky,fresnel)+vec3(specular),clamp(sample.y,0.,1.)),original.a);
 }

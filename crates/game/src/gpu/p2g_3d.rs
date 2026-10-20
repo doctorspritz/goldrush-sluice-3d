@@ -36,6 +36,7 @@ struct P2gParams3D {
 
 /// GPU-based Particle-to-Grid transfer for 3D simulation
 pub struct GpuP2g3D {
+    pub volume_weights: Vec<f32>,
     width: u32,
     height: u32,
     depth: u32,
@@ -686,6 +687,7 @@ impl GpuP2g3D {
         });
 
         Self {
+            volume_weights: Vec::new(),
             width,
             height,
             depth,
@@ -738,7 +740,8 @@ impl GpuP2g3D {
         let positions_padded: Vec<[f32; 4]> = positions
             .iter()
             .take(particle_count as usize)
-            .map(|p| [p.x, p.y, p.z, 0.0])
+            .enumerate()
+            .map(|(i,p)| [p.x, p.y, p.z, self.volume_weights.get(i).copied().unwrap_or(1.0)])
             .collect();
 
         let velocities_padded: Vec<[f32; 4]> = velocities

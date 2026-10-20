@@ -1,6 +1,7 @@
 //! Adapter around the existing simulation, not a second fluid model. The original
 //! wgpu 23 compute device owns the FLIP/APIC and heightfield solvers; Bevy's wgpu 26
-//! device presents their readback. No dependency upgrade or shader rewrite is needed.
+//! device presents bounded snapshots. Original stages are retained, with momentum,
+//! sediment coupling and GPU scheduling corrections.
 pub mod geometry;
 mod terrain;
 pub mod worker;
@@ -14,10 +15,21 @@ use sim3d::{
     constants, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, SdfParams,
 };
 
-// Original standalone demo cadence: 1 cm cells, four substeps, CFL <= 0.417.
+// New granular shifts use 120 Hz FLIP/DEM, four substeps per 30 Hz fluid update.
+// The 1 cm grid, pressure iterations and original FLIP/APIC solver are retained.
 pub const FLIP_SUBSTEPS: u32 = 4;
 
+#[derive(Clone, Copy, Default, Debug)]
+pub struct StepTimings {
+    pub fluid_ms: f64,
+    pub prepare_ms: f64,
+    pub dem_ms: f64,
+    pub finish_ms: f64,
+    pub terrain_ms: f64,
+}
+
 pub struct Hydraulics {
+    pub timings: StepTimings,
     device: wgpu::Device,
     queue: wgpu::Queue,
     terrain: GpuHeightfield,
@@ -29,10 +41,16 @@ struct LocalSluice {
     flip: GpuFlip3D,
     grid: sim3d::Grid3D,
     cell_types: Vec<u32>,
+    base_cell_types: Vec<u32>,
+    water_cells: Vec<u32>,
+    bed_fraction: Vec<f32>,
+    free_templates: Vec<usize>,
     dem: ClusterSimulation3D,
     slope: f32,
     profile: HydraulicProfile,
     restoring_contacts: bool,
+    riffles_enabled: bool,
+    cleanups: u32,
 }
 impl Hydraulics {
     pub fn new() -> Result<Self, String> {
@@ -71,6 +89,7 @@ impl Hydraulics {
         );
         println!("PHYSICS: original FLIP/APIC + CPU DEM + GPU SWE/erosion/transport/collapse on {adapter_name}");
         Ok(Self {
+            timings: StepTimings::default(),
             device,
             queue,
             terrain,
@@ -93,12 +112,24 @@ impl Hydraulics {
             self.upload_terrain(s);
             self.terrain_loaded = true;
         }
-        self.step_sluice(s)?;
+        self.timings = StepTimings::default();
+        let interval = if s.sluice.granular_packets {
+            FIXED_DT * 2.0
+        } else {
+            FIXED_DT
+        };
+        s.sluice.fluid_clock += FIXED_DT;
+        if s.sluice.fluid_clock + 1e-6 >= interval {
+            s.sluice.fluid_clock = (s.sluice.fluid_clock - interval).max(0.0);
+            self.step_sluice(s, interval)?;
+        }
         s.site.hydraulic.clock += FIXED_DT;
         if s.site.hydraulic.clock >= 0.0499 {
             let dt = s.site.hydraulic.clock;
             s.site.hydraulic.clock = 0.0;
+            let started = std::time::Instant::now();
             self.step_terrain(s, dt)?;
+            self.timings.terrain_ms = started.elapsed().as_secs_f64() * 1000.0;
         }
         Ok(())
     }
@@ -107,11 +138,12 @@ impl Hydraulics {
             self.sluice = None;
             return;
         };
-        if self
-            .sluice
-            .as_ref()
-            .is_some_and(|l| l.slope == p.slope_deg && l.profile == s.sluice.profile)
-        {
+        if self.sluice.as_ref().is_some_and(|l| {
+            l.slope == p.slope_deg
+                && l.profile == s.sluice.profile
+                && l.riffles_enabled == s.sluice.riffles_enabled
+                && l.cleanups == s.sluice.cleanups
+        }) {
             return;
         }
         let config = geometry::config(&s.sluice);
@@ -130,7 +162,7 @@ impl Hydraulics {
             .solid()
             .iter()
             .map(|v| if *v { 2 } else { 0 })
-            .collect();
+            .collect::<Vec<_>>();
         let mut flip = GpuFlip3D::new(
             &self.device,
             simulation_width as u32,
@@ -160,15 +192,22 @@ impl Hydraulics {
         );
         self.sluice = Some(LocalSluice {
             flip,
+            riffles_enabled: s.sluice.riffles_enabled,
+            cleanups: s.sluice.cleanups,
             grid: sim.grid,
-            cell_types,
+            cell_types: cell_types.clone(),
+            water_cells: vec![0; cell_types.len()],
+            bed_fraction: vec![0.0; cell_types.len()],
+            free_templates: Vec::new(),
+            base_cell_types: cell_types,
             dem,
             slope: p.slope_deg,
             profile,
             restoring_contacts: true,
         });
     }
-    fn step_sluice(&mut self, s: &mut Session) -> Result<(), String> {
+    fn step_sluice(&mut self, s: &mut Session, fluid_dt: f32) -> Result<(), String> {
+        let prepared = std::time::Instant::now();
         self.local(s);
         let Some(l) = &mut self.sluice else {
             return Ok(());
@@ -261,13 +300,17 @@ impl Hydraulics {
         // removal below uses the same swap operation on both arrays.
         while l.dem.clumps.len() < s.sluice.grains.len() {
             let g = &s.sluice.grains[l.dem.clumps.len()];
-            let radius = g.diameter_m * 0.5;
+            let radius = g.collision_radius();
             let density = if g.kind == GrainKind::Gold {
                 constants::GOLD_DENSITY_KGM3
             } else {
                 constants::GANGUE_DENSITY_KGM3
             };
-            let mass = 4.0 / 3.0 * std::f32::consts::PI * radius.powi(3) * density;
+            let mass = if g.volume_resolved {
+                g.mass_kg().max(1e-12)
+            } else {
+                4.0 / 3.0 * std::f32::consts::PI * radius.powi(3) * density
+            };
             let template = ClumpTemplate3D::generate(
                 ClumpShape3D::Irregular {
                     count: 1,
@@ -277,12 +320,112 @@ impl Hydraulics {
                 radius,
                 mass,
             );
-            let ti = l.dem.add_template(template);
+            let ti = if let Some(index) = l.free_templates.pop() {
+                l.dem.templates[index] = template;
+                index
+            } else {
+                l.dem.add_template(template)
+            };
             let ci = l.dem.spawn(ti, g.position, g.velocity);
             l.dem.clumps[ci].rotation = g.rotation;
             l.dem.clumps[ci].angular_velocity = g.angular_velocity;
         }
-        l.dem.clumps.truncate(s.sluice.grains.len());
+        while l.dem.clumps.len() > s.sluice.grains.len() {
+            let i = l.dem.clumps.len() - 1;
+            l.free_templates.push(l.dem.clumps[i].template_idx);
+            l.dem.remove_clump(i);
+        }
+        // Volume/mass and bed feedback are independent of the physical grain
+        // diameter used for drag. Legacy parcels retain their previous weights.
+        let mut weights = vec![1.0; nw];
+        weights.extend(s.sluice.grains.iter().map(|g| {
+            if g.volume_resolved {
+                (g.solid_volume() / particle_m3) as f32
+            } else {
+                1.0
+            }
+        }));
+        l.flip.set_particle_volumes(weights);
+        l.water_cells.fill(0);
+        l.bed_fraction.fill(0.0);
+        l.cell_types.copy_from_slice(&l.base_cell_types);
+        let index = |p: Vec3| -> Option<usize> {
+            let cell = (p / dx).floor().as_ivec3();
+            if cell.min_element() < 0
+                || cell.x >= l.grid.width as i32
+                || cell.y >= l.grid.height as i32
+                || cell.z >= l.grid.depth as i32
+            {
+                None
+            } else {
+                Some(
+                    cell.z as usize * l.grid.width * l.grid.height
+                        + cell.y as usize * l.grid.width
+                        + cell.x as usize,
+                )
+            }
+        };
+        for water in &s.sluice.water {
+            if let Some(i) = index(water.position) {
+                l.water_cells[i] += 1;
+            }
+        }
+        let mut diameters = Vec::with_capacity(s.sluice.grains.len());
+        let mut wetness = Vec::with_capacity(s.sluice.grains.len());
+        for g in &s.sluice.grains {
+            let mut wet = false;
+            for x in -1..=1 {
+                for y in -1..=1 {
+                    for z in -1..=1 {
+                        if let Some(i) =
+                            index(g.position + Vec3::new(x as f32, y as f32, z as f32) * dx)
+                        {
+                            wet |= l.water_cells[i] > 0;
+                        }
+                    }
+                }
+            }
+            wetness.push(wet);
+            diameters.push(if !g.volume_resolved {
+                0.0
+            } else if wet {
+                g.diameter_m
+            } else {
+                -g.diameter_m
+            });
+            if g.volume_resolved && g.resting {
+                let offsets = [-0.6, 0.0, 0.6];
+                let samples: Vec<Vec3> = offsets
+                    .into_iter()
+                    .flat_map(|x| {
+                        offsets
+                            .into_iter()
+                            .flat_map(move |y| offsets.into_iter().map(move |z| Vec3::new(x, y, z)))
+                    })
+                    .filter(|p| p.length_squared() <= 1.0)
+                    .collect();
+                for offset in &samples {
+                    if let Some(i) = index(g.position + *offset * g.collision_radius()) {
+                        l.bed_fraction[i] +=
+                            (g.solid_volume() / samples.len() as f64 / (dx * dx * dx) as f64)
+                                as f32;
+                    }
+                }
+            }
+        }
+        if s.sluice.granular_packets {
+            for (i, fraction) in l.bed_fraction.iter_mut().enumerate() {
+                *fraction = fraction.clamp(0.0, 0.65);
+                if *fraction >= 0.58 {
+                    l.cell_types[i] = 2;
+                }
+            }
+            l.flip.sediment_rest_particles = -1.0;
+            l.flip.sediment_porosity_drag = 150.0 * 1e-6 / 0.003_f32.powi(2);
+            l.flip
+                .upload_sediment_fraction(&self.queue, &l.bed_fraction);
+        }
+        l.flip.upload_grain_diameters(&self.queue, nw, &diameters);
         if l.restoring_contacts {
             l.dem.restore_contact_history(&s.sluice.contacts);
             l.restoring_contacts = false;
@@ -290,40 +433,75 @@ impl Hydraulics {
         let substeps = profile.substeps();
         // This slope-derived drive was present in the old demo and missing
         // from the playable adapter. Preserve its behaviour explicitly.
-        let flow_accel = if profile == HydraulicProfile::OriginalDemo {
+        let flow_accel = if profile == HydraulicProfile::OriginalDemo && !s.sluice.granular_packets
+        {
             constants::GRAVITY.abs() * (s.sluice.floor_cells() - 4) as f32 * dx / profile.length()
         } else {
             0.0
         };
-        for _ in 0..substeps {
-            let dt = FIXED_DT / substeps as f32;
-            if !l.flip.step_async(
-                &self.device,
-                &self.queue,
-                &mut pos,
-                &mut vel,
-                &mut affine,
-                &density,
-                &l.cell_types,
-                Some(l.grid.sdf()),
-                None,
-                dt,
-                constants::GRAVITY,
-                flow_accel,
-                80,
-            ) {
-                return Err("Original FLIP readback queue is full".into());
+        self.timings.prepare_ms = prepared.elapsed().as_secs_f64() * 1000.0;
+        for substep in 0..substeps {
+            let fluid_started = std::time::Instant::now();
+            let dt = fluid_dt / substeps as f32;
+            if substep == 0 {
+                l.flip.step_no_readback(
+                    &self.device,
+                    &self.queue,
+                    &mut pos,
+                    &mut vel,
+                    &mut affine,
+                    &density,
+                    &l.cell_types,
+                    Some(l.grid.sdf()),
+                    None,
+                    dt,
+                    constants::GRAVITY,
+                    flow_accel,
+                    80,
+                );
+            } else {
+                l.flip.upload_particle_range(
+                    &self.queue,
+                    nw,
+                    &pos[nw..],
+                    &vel[nw..],
+                    &affine[nw..],
+                );
+                l.flip.step_in_place(
+                    &self.device,
+                    &self.queue,
+                    pos.len() as u32,
+                    &l.cell_types,
+                    Some(l.grid.sdf()),
+                    None,
+                    dt,
+                    constants::GRAVITY,
+                    flow_accel,
+                    80,
+                );
             }
-            // The existing async slot copies positions, velocity and all three
-            // APIC columns together. One fence replaces six separate downloads;
-            // CPU DEM still receives the exact result of every FLIP substep.
-            self.device.poll(wgpu::Maintain::Wait);
-            if l.flip
-                .try_readback(&self.device, &mut pos, &mut vel, &mut affine)
-                != Some(pos.len())
-            {
-                return Err("Original FLIP readback failed".into());
+            let first = if substep + 1 == substeps { 0 } else { nw };
+            let count = pos.len() - first;
+            if count > 0 {
+                if !l
+                    .flip
+                    .request_particle_range(&self.device, &self.queue, first, count)
+                {
+                    return Err("Original FLIP readback queue is full".into());
+                }
+                self.device.poll(wgpu::Maintain::Wait);
+                if l.flip.try_readback(
+                    &self.device,
+                    &mut pos[first..],
+                    &mut vel[first..],
+                    &mut affine[first..],
+                ) != Some(count)
+                {
+                    return Err("Original FLIP range readback failed".into());
+                }
             }
+            self.timings.fluid_ms += fluid_started.elapsed().as_secs_f64() * 1000.0;
+            let dem_started = std::time::Instant::now();
             for (i, c) in l.dem.clumps.iter_mut().enumerate() {
                 c.position = pos[nw + i];
                 c.velocity = vel[nw + i];
@@ -337,14 +515,15 @@ impl Hydraulics {
                 grid_offset: Vec3::ZERO,
             };
             // Advection and gravity already happened in FLIP. Apply contacts only.
-            l.dem
-                .collision_response_only(dt, &sdf, !s.sluice.water.is_empty());
+            l.dem.collision_response_with_wetness(dt, &sdf, &wetness);
             for (i, c) in l.dem.clumps.iter().enumerate() {
                 pos[nw + i] = c.position;
                 vel[nw + i] = c.velocity;
             }
+            self.timings.dem_ms += dem_started.elapsed().as_secs_f64() * 1000.0;
             s.sluice.solver_steps += 1;
         }
+        let finished = std::time::Instant::now();
         if pos.iter().chain(&vel).any(|p| !p.is_finite()) || affine.iter().any(|c| !c.is_finite()) {
             return Err("Non-finite original solver output".into());
         }
@@ -359,7 +538,8 @@ impl Hydraulics {
             g.affine = affine[nw + i];
             g.rotation = l.dem.clumps[i].rotation;
             g.angular_velocity = l.dem.clumps[i].angular_velocity;
-            g.resting = g.velocity.length_squared() < 0.0004;
+            g.resting = g.velocity.length_squared() < 0.0009
+                && l.grid.sample_sdf(g.position) <= g.collision_radius() + 0.003;
         }
         let in_domain = |p: Vec3| {
             p.x >= 0.0
@@ -381,10 +561,12 @@ impl Hydraulics {
                 s.sluice
                     .tailings
                     .add(s.sluice.grains.swap_remove(i).material);
+                l.free_templates.push(l.dem.clumps[i].template_idx);
                 l.dem.remove_clump(i);
             }
         }
         s.sluice.contacts = l.dem.contact_history();
+        self.timings.finish_ms = finished.elapsed().as_secs_f64() * 1000.0;
         // Cleanup empties the domain after the fluid drains. It never changes
         // retention probabilities or grants a target yield.
         Ok(())

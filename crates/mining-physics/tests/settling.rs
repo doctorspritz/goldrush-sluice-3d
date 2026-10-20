@@ -20,7 +20,7 @@ fn terminal_settling_is_independent_of_substep_count() {
         None,
     ))
     .unwrap();
-    let run = |dt: f32, steps: usize| {
+    let run = |dt: f32, steps: usize, diameters: [f32; 3]| {
         let buffer = |label, bytes: &[u8]| {
             Arc::new(
                 device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -60,6 +60,7 @@ fn terminal_settling_is_independent_of_substep_count() {
             &device, 8, 8, 8, 3, position, velocity, c0, c1, c2, density, &grid, &grid, &grid,
             &grid, &grid, &grid, &grid, &grid, &grid, &grid,
         );
+        solver.upload_grain_diameters(&queue, 0, &diameters);
         let params = SedimentParams3D {
             settling_velocity: 0.05,
             gold_settling_velocity: 0.15,
@@ -76,8 +77,8 @@ fn terminal_settling_is_independent_of_substep_count() {
         solver.download(&device, &queue, 3, &mut velocities, &mut affine);
         velocities
     };
-    let at_120 = run(1.0 / 120.0, 30);
-    let at_240 = run(1.0 / 240.0, 60);
+    let at_120 = run(1.0 / 120.0, 30, [0.0; 3]);
+    let at_240 = run(1.0 / 240.0, 60, [0.0; 3]);
     for (a, b) in at_120.iter().take(2).zip(at_240) {
         assert!(
             (*a - b).length() < 2e-6,
@@ -97,5 +98,33 @@ fn terminal_settling_is_independent_of_substep_count() {
         "water must retain the original FLIP/PIC update"
     );
     assert!((at_240[2].x - 0.25 * 0.95f32.powi(60)).abs() < 1e-5);
+    let small = run(1.0 / 120.0, 120, [0.0005, 0.0005, 0.0]);
+    let small_fine = run(1.0 / 240.0, 240, [0.0005, 0.0005, 0.0]);
+    let coarse = run(1.0 / 120.0, 120, [0.001, 0.001, 0.0]);
+    for i in 0..2 {
+        assert!(
+            (small[i] - small_fine[i]).length() < 1e-5,
+            "physical grain slip depends on dt"
+        );
+        assert!(coarse[i].y < small[i].y, "larger grain must settle faster");
+        let relative = if i == 0 { 1.65_f32 } else { 18.3 };
+        let d = 0.0005_f32;
+        let expected =
+            relative * 9.81 * d * d / (18e-6 + (0.75 * relative * 9.81 * d * d * d).sqrt());
+        assert!(
+            (small[i].y + expected).abs() < 1e-4,
+            "size/density settling mismatch"
+        );
+    }
+    assert!(
+        small[1].y < small[0].y,
+        "same-sized gold must settle faster than quartz"
+    );
+    let dry = run(1.0 / 120.0, 12, [-0.001, -0.001, 0.0]);
+    assert!(
+        (dry[0].y + 0.981).abs() < 1e-5 && (dry[1].y + 0.981).abs() < 1e-5,
+        "dry grains must free-fall without buoyancy"
+    );
+    println!("Physical G2P: 0.5mm={small:?}; 1mm={coarse:?}; dry={dry:?}");
     println!("Actual G2P terminal speeds: 120Hz={at_120:?}; 240Hz={at_240:?}");
 }

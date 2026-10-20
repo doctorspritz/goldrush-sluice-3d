@@ -212,7 +212,7 @@ fn apply(session: &mut Session, solver: &mut impl Solver, commands: Vec<Command>
                 session.sluice.flow_m3s = (session.sluice.flow_m3s + delta).clamp(0.001, 0.120)
             }
             Command::Feed(delta) if session.near_plant() => {
-                session.sluice.feed_m3s = (session.sluice.feed_m3s + delta).clamp(0.001, 0.02)
+                session.sluice.feed_m3s = (session.sluice.feed_m3s + delta).clamp(0.00001, 0.02)
             }
             Command::Water(_) | Command::Feed(_) => {}
             Command::Save(path) => {

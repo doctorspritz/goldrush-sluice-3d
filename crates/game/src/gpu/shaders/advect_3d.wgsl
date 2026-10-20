@@ -13,7 +13,7 @@ struct Params {
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read_write> positions: array<vec3<f32>>;
+@group(0) @binding(1) var<storage, read_write> positions: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> velocities: array<vec3<f32>>;
 // Density correction deltas (vec4 for alignment, only xyz used)
 @group(0) @binding(3) var<storage, read> position_deltas: array<vec4<f32>>;
@@ -25,7 +25,7 @@ fn advect(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let idx = id.x;
-    var pos = positions[idx];
+    var pos = positions[idx].xyz;
     let vel = velocities[idx];
 
     // Euler integration
@@ -39,5 +39,5 @@ fn advect(@builtin(global_invocation_id) id: vec3<u32>) {
         pos.z += delta.z;
     }
 
-    positions[idx] = pos;
+    positions[idx] = vec4<f32>(pos, positions[idx].w);
 }

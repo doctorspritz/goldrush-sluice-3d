@@ -6,7 +6,7 @@ pub const LENGTH: f32 = 1.5;
 pub const CHANNEL_WIDTH: f32 = 0.38;
 pub const HOPPER_X: f32 = 14.6;
 pub const HOPPER_Z: f32 = 17.0;
-pub const PARCEL_VOLUME: f64 = 0.002;
+pub const PARCEL_VOLUME: f64 = 0.000002; // 2 mL weighted parcels, not 2-litre lumps
 pub const MAX_GRAINS: usize = 4096;
 pub const FLUID_CELL: f32 = 0.01;
 pub const WATER_PARTICLE_M3: f64 = (FLUID_CELL * FLUID_CELL * FLUID_CELL / 8.0) as f64;
@@ -165,6 +165,8 @@ pub enum GrainKind {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Grain {
+    #[serde(default)]
+    pub volume_resolved: bool,
     pub kind: GrainKind,
     pub position: Vec3,
     pub velocity: Vec3,
@@ -176,10 +178,37 @@ pub struct Grain {
     pub angular_velocity: Vec3,
 }
 
+impl Grain {
+    pub fn solid_volume(&self) -> f64 {
+        self.material.volume() + self.material.gold_g * 0.001 / 19_300.0
+    }
+    pub fn collision_radius(&self) -> f32 {
+        let physical = self.diameter_m * 0.5;
+        if !self.volume_resolved {
+            return physical;
+        }
+        // Coarse DEM parcel: packed volume controls excluded space; the
+        // physical grain diameter separately controls settling and rendering.
+        physical
+            .max((self.solid_volume() * 3.0 / (4.0 * std::f64::consts::PI * 0.60)).cbrt() as f32)
+    }
+    pub fn mass_kg(&self) -> f32 {
+        (self.material.volume() * 2_650.0 + self.material.gold_g * 0.001) as f32
+    }
+}
+fn riffles_present() -> bool {
+    true
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Sluice {
     #[serde(default)]
     pub profile: HydraulicProfile,
+    #[serde(default)]
+    pub granular_packets: bool,
+    #[serde(default = "riffles_present")]
+    pub riffles_enabled: bool,
+    #[serde(default)]
+    pub fluid_clock: f32,
     pub placement: Option<Placement>,
     pub hopper: Material,
     pub grains: Vec<Grain>,
@@ -199,12 +228,17 @@ pub struct Sluice {
     pub solver_steps: u64,
     pub contacts: sim3d::clump::ContactHistory3D,
     feed_credit: f64,
+    #[serde(default)]
+    pending_gold_g: f64,
     sequence: u64,
 }
 impl Default for Sluice {
     fn default() -> Self {
         Self {
             profile: HydraulicProfile::OriginalDemo,
+            granular_packets: true,
+            riffles_enabled: true,
+            fluid_clock: 0.0,
             placement: None,
             hopper: Material::default(),
             grains: Vec::new(),
@@ -213,7 +247,7 @@ impl Default for Sluice {
             pump_on: false,
             feed_on: false,
             flow_m3s: 0.00375,
-            feed_m3s: 0.006,
+            feed_m3s: 0.0001,
             processed_m3: 0.0,
             water_used_m3: 0.0,
             cleanups: 0,
@@ -224,11 +258,19 @@ impl Default for Sluice {
             solver_steps: 0,
             contacts: Default::default(),
             feed_credit: 0.0,
+            pending_gold_g: 0.0,
             sequence: 0,
         }
     }
 }
 impl Sluice {
+    pub fn parcel_volume(&self) -> f64 {
+        if self.granular_packets {
+            PARCEL_VOLUME
+        } else {
+            0.002
+        }
+    }
     pub fn hopper_position(site: &Site) -> Vec3 {
         Vec3::new(HOPPER_X, site.height(HOPPER_X, HOPPER_Z), HOPPER_Z)
     }
@@ -243,6 +285,7 @@ impl Sluice {
     }
     pub fn active_material(&self) -> Material {
         let mut m = self.hopper;
+        m.gold_g += self.pending_gold_g;
         for g in &self.grains {
             m.add(g.material);
         }
@@ -298,16 +341,20 @@ impl Sluice {
             return;
         }
         self.time += dt;
+        if !self.feed_on && self.pending_gold_g > 0.0 {
+            self.hopper.gold_g += self.pending_gold_g;
+            self.pending_gold_g = 0.0;
+        }
         if self.feed_on && self.pump_on && water_available && self.grains.len() + 3 < MAX_GRAINS {
-            self.feed_credit =
-                (self.feed_credit + self.feed_m3s as f64 * dt as f64).min(PARCEL_VOLUME * 2.0);
-            while self.feed_credit >= PARCEL_VOLUME
+            self.feed_credit = (self.feed_credit + self.feed_m3s as f64 * dt as f64)
+                .min(self.parcel_volume() * if self.granular_packets { 32.0 } else { 2.0 });
+            while self.feed_credit >= self.parcel_volume()
                 && !self.hopper.is_empty()
                 && self.grains.len() + 3 < MAX_GRAINS
             {
-                let m = self.hopper.take_volume(PARCEL_VOLUME);
+                let m = self.hopper.take_volume(self.parcel_volume());
                 self.processed_m3 += m.volume();
-                self.feed_credit -= PARCEL_VOLUME;
+                self.feed_credit -= self.parcel_volume();
                 self.emit(m);
             }
         }
@@ -330,7 +377,7 @@ impl Sluice {
             gold_g: m.gold_g,
             ..Material::default()
         };
-        for (kind, material) in [
+        for (kind, mut material) in [
             (GrainKind::Sand, sand),
             (GrainKind::Gravel, gravel),
             (GrainKind::Gold, gold),
@@ -339,18 +386,52 @@ impl Sluice {
                 % 1000) as f32
                 / 999.0;
             let diameter_m = match kind {
-                GrainKind::Gold => 0.00015 + size_sample * 0.00105,
+                GrainKind::Gold => 0.00008 + size_sample * 0.00042,
                 GrainKind::Sand => 0.0002 + size_sample * 0.0010,
-                GrainKind::Gravel => 0.001 + size_sample * 0.003,
+                GrainKind::Gravel => 0.001 + size_sample * 0.005,
             };
+            if kind == GrainKind::Gold && self.granular_packets {
+                self.pending_gold_g += material.gold_g;
+                let physical_mass =
+                    std::f64::consts::PI / 6.0 * (diameter_m as f64).powi(3) * 19_300.0 * 1000.0;
+                if self.pending_gold_g < physical_mass {
+                    continue;
+                }
+                material.gold_g = physical_mass;
+                self.pending_gold_g -= physical_mass;
+            }
             if !material.is_empty() {
-                self.grains.push(Grain {
-                    kind,
-                    position: Vec3::new(
+                let position = if self.granular_packets {
+                    // A continuous chute footprint, without coincident sand,
+                    // gravel and gold clumps or the old 40-lane repeating lattice.
+                    let phase = match kind {
+                        GrainKind::Sand => 0.0,
+                        GrainKind::Gravel => 0.37,
+                        GrainKind::Gold => 0.73,
+                    };
+                    let sample = |factor: f64| {
+                        ((self.sequence as f64 + 0.5) * factor + phase).fract() as f32
+                    };
+                    Vec3::new(
+                        0.10 + 0.04 * sample(0.754877666),
+                        (self.floor_cells() + 1) as f32 * self.profile.cell()
+                            + 0.05
+                            + 0.02 * sample(0.569840291),
+                        (sample(0.618033989) - 0.5) * self.profile.width() * 0.70
+                            + self.profile.width() * 0.5
+                            + self.profile.cell(),
+                    )
+                } else {
+                    Vec3::new(
                         0.12,
                         (self.floor_cells() + 1) as f32 * self.profile.cell() + 0.06,
                         z + self.profile.width() * 0.5 + self.profile.cell(),
-                    ),
+                    )
+                };
+                self.grains.push(Grain {
+                    volume_resolved: self.granular_packets,
+                    kind,
+                    position,
                     velocity: Vec3::new(0.4, 0.0, 0.0),
                     material,
                     resting: false,
@@ -369,9 +450,21 @@ impl Sluice {
         if self.grains.is_empty() {
             return Err("The mats are empty".into());
         }
+        if self.granular_packets && self.grains.iter().any(|g| !g.resting) {
+            return Err("Let the material settle before lifting the mats".into());
+        }
         let mut m = Material::default();
-        for g in self.grains.drain(..) {
-            m.add(g.material);
+        self.grains.retain(|g| {
+            let over_mats = g.position.x >= 0.40 && g.position.x < self.profile.length() - 0.12;
+            if !self.granular_packets || over_mats {
+                m.add(g.material);
+                false
+            } else {
+                true
+            }
+        });
+        if m.is_empty() {
+            return Err("No settled material on the mats".into());
         }
         self.contacts = Default::default();
         self.concentrate.add(m);
@@ -446,12 +539,17 @@ impl Sluice {
                 .iter()
                 .all(|v| v.is_finite() && *v >= 0.0)
             && (0.001..=0.120).contains(&self.flow_m3s)
-            && (0.001..=0.02).contains(&self.feed_m3s)
+            && (0.00001..=0.02).contains(&self.feed_m3s)
             && self.processed_m3.is_finite()
             && self.processed_m3 >= 0.0
             && self.water_used_m3.is_finite()
             && self.water_used_m3 >= 0.0
+            && self.fluid_clock.is_finite()
+            && (0.0..=0.034).contains(&self.fluid_clock)
+            && self.pending_gold_g.is_finite()
+            && self.pending_gold_g >= 0.0
             && self.feed_credit.is_finite()
-            && (0.0..=PARCEL_VOLUME * 2.01).contains(&self.feed_credit)
+            && (0.0..=self.parcel_volume() * if self.granular_packets { 32.01 } else { 2.01 })
+                .contains(&self.feed_credit)
     }
 }

@@ -4,6 +4,7 @@ mod demo;
 mod hud;
 mod runtime;
 mod scene;
+mod sediment;
 mod validation;
 mod water;
 
@@ -57,6 +58,7 @@ fn main() -> AppExit {
                 water::sync,
                 scene::sync_plant,
                 scene::sync_material,
+                sediment::sync,
                 scene::guides,
                 hud::update,
                 validation::update,

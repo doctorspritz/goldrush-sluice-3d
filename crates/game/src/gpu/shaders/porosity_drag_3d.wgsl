@@ -39,8 +39,9 @@ fn sediment_at(i: i32, j: i32, k: i32) -> f32 {
 }
 
 fn drag_factor(fraction: f32) -> f32 {
-    let drag = clamp(fraction * params.value, 0.0, 0.95);
-    return 1.0 - drag;
+    // Darcy/viscous Ergun term. params.value = dt * 150*nu/d50^2.
+    let porosity = max(1.0 - fraction,0.1);
+    return exp(-params.value * fraction*fraction / (porosity*porosity*porosity));
 }
 
 @compute @workgroup_size(8, 8, 4)

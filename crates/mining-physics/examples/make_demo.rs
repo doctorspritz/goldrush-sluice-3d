@@ -17,7 +17,7 @@ fn main() {
     s.player.third_person = false;
     s.on_action(Action::Place(Placement::suggested(&s.site)))
         .unwrap();
-    s.sluice.feed_m3s = 0.001;
+    s.sluice.feed_m3s = 0.0001;
     s.on_action(Action::TogglePump).unwrap();
     s.on_action(Action::ToggleFeed).unwrap();
     let mut solver = mining_physics::Hydraulics::new().unwrap();
@@ -34,7 +34,7 @@ fn main() {
                 s.sluice.tailings.volume()
             );
         }
-        if tick >= 1680 && s.sluice.water_returned_m3 > 0.005 && s.sluice.tailings.volume() > 0.001
+        if tick >= 720 && s.sluice.water_returned_m3 > 0.005 && s.sluice.tailings.volume() > 0.0001
         {
             break;
         }

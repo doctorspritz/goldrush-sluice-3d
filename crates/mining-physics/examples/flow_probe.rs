@@ -1,40 +1,39 @@
-//! Short original-solver flow-through diagnostic, without a rendering window.
-use mining_sim::{session::Controls, Action, Placement, Session, Vec3};
+//! Bounded real-solver probe, separate render and physical-time measurements.
+use mining_sim::{session::Controls, storage};
+use std::{path::Path, time::Instant};
 fn main() {
-    let mut s = Session::new();
-    s.player.position = Vec3::new(14.6, 0.35, 15.0);
-    s.on_action(Action::Place(Placement::suggested(&s.site)))
-        .unwrap();
-    s.on_action(Action::TogglePump).unwrap();
-    let mut physics = mining_physics::Hydraulics::new().unwrap();
-    let started = std::time::Instant::now();
-    for tick in 0..2400 {
+    let args: Vec<_> = std::env::args().collect();
+    let mut s = storage::load(Path::new(&args[1])).unwrap();
+    let ticks: u32 = args[2].parse().unwrap();
+    let output = &args[3];
+    let mut solver = mining_physics::Hydraulics::new().unwrap();
+    let before = s.sim_time;
+    let start = Instant::now();
+    let mut phases = [0.0; 5];
+    for _ in 0..ticks {
         s.step(Controls::default());
-        physics.step(&mut s).unwrap();
-        if tick % 240 == 239 {
-            let mut bins = [0usize; 7];
-            for p in &s.sluice.water {
-                bins[((p.position.x / 0.5) as usize).min(6)] += 1;
-            }
-            let max_x = s
-                .sluice
-                .water
-                .iter()
-                .map(|p| p.position.x)
-                .fold(0.0, f32::max);
-            let max_y = s
-                .sluice
-                .water
-                .iter()
-                .map(|p| p.position.y)
-                .fold(0.0, f32::max);
-            let max_v = s
-                .sluice
-                .water
-                .iter()
-                .map(|p| p.velocity.length())
-                .fold(0.0, f32::max);
-            println!("t={:.1} wall={:.1} water={} returned={:.5} mean_vx={:.3} max_v={max_v:.2} max_x={max_x:.2} max_y={max_y:.2} bins={bins:?}",s.sim_time,started.elapsed().as_secs_f64(),s.sluice.water.len(),s.sluice.water_returned_m3,s.sluice.water_speed());
+        solver.step(&mut s).unwrap();
+        let t = solver.timings;
+        for (sum, value) in phases.iter_mut().zip([
+            t.prepare_ms,
+            t.fluid_ms,
+            t.dem_ms,
+            t.finish_ms,
+            t.terrain_ms,
+        ]) {
+            *sum += value;
         }
     }
+    let elapsed = start.elapsed().as_secs_f64();
+    for value in &mut phases {
+        *value /= ticks as f64;
+    }
+    let w = &s.sluice.water;
+    let water = w.len() as f64 * s.sluice.profile.particle_m3()
+        + s.sluice.water_returned_m3
+        + s.sluice.water_credit_m3;
+    let data = serde_json::json!({"simulated_seconds":s.sim_time-before,"wall_seconds":elapsed,"simulation_wall_ratio":(s.sim_time-before)/elapsed,"timings_ms":{"prepare":phases[0],"fluid_and_readback":phases[1],"dem":phases[2],"finish":phases[3],"terrain":phases[4]},"water_particles":w.len(),"mean_downstream_ms":s.sluice.water_speed(),"backflow_fraction":w.iter().filter(|p|p.velocity.x < -0.05).count() as f64/w.len().max(1) as f64,"water_depth_m":s.sluice.water_depth(),"grains":s.sluice.grains.len(),"water_balance_error_m3":s.sluice.water_used_m3-water,"gold_balance_error_g":s.accounted_gold()-s.initial_gold_g});
+    std::fs::write(output, serde_json::to_vec_pretty(&data).unwrap()).unwrap();
+    storage::save(&s, Path::new(&format!("{output}.save.json"))).unwrap();
+    println!("{data}");
 }

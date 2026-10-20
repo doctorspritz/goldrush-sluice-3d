@@ -33,6 +33,7 @@ pub struct WaterSplats {
     data: Arc<Vec<InstanceData>>,
     health: Arc<AtomicU8>,
     clock: PresentationClock,
+    turbidity: f32,
 }
 impl Default for WaterSplats {
     fn default() -> Self {
@@ -41,6 +42,7 @@ impl Default for WaterSplats {
             data: Arc::new(Vec::new()),
             health: Arc::new(AtomicU8::new(0)),
             clock: PresentationClock::default(),
+            turbidity: 0.0,
         }
     }
 }
@@ -60,7 +62,7 @@ impl PresentationClock {
             let delta = self.sim.map(|previous| sim - previous).unwrap_or(0.0);
             if delta > 0.0 && delta <= mining_sim::FIXED_DT as f64 * 2.1 {
                 self.interval = (wall - self.updated).max(mining_sim::FIXED_DT as f64);
-                self.tick = (delta as f32).min(mining_sim::FIXED_DT);
+                self.tick = delta as f32;
             } else {
                 self.tick = 0.0;
             }
@@ -120,6 +122,7 @@ struct FluidUniforms {
     view_from_clip: Mat4,
     view_from_world: Mat4,
     viewport: Vec4,
+    sediment: Vec4,
 }
 #[derive(Component)]
 struct FluidTargets {
@@ -328,6 +331,7 @@ fn prepare_views(
             world_from_view,
             view_from_clip: view.clip_from_view.inverse(),
             view_from_world: world_from_view.inverse(),
+            sediment: Vec4::new(water.turbidity, 0.0, 0.0, 0.0),
             viewport: Vec4::new(full.x as f32, full.y as f32, 0.045, water.clock.prediction),
         };
         if let Some(mut target) = existing {
@@ -531,13 +535,23 @@ pub fn visible_count(sluice: &mining_sim::Sluice) -> usize {
 
 pub fn sync(game: Res<crate::app::Game>, time: Res<Time>, mut splats: ResMut<WaterSplats>) {
     splats.clock.sample(
-        game.session.sim_time,
+        game.session.sim_time - game.session.sluice.fluid_clock as f64,
         time.elapsed_secs_f64(),
         game.session.paused,
     );
     if splats.revision != game.snapshot_id {
         splats.revision = game.snapshot_id;
         splats.data = Arc::new(instances(&game.session.sluice));
+        let sluice = &game.session.sluice;
+        let fines: f64 = sluice
+            .grains
+            .iter()
+            .filter(|g| g.kind == mining_sim::GrainKind::Sand && !g.resting)
+            .map(|g| g.solid_volume())
+            .sum();
+        splats.turbidity = (fines
+            / (sluice.water.len() as f64 * sluice.profile.particle_m3()).max(1e-9))
+        .clamp(0.0, 1.0) as f32;
     }
 }
 
@@ -570,6 +584,17 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn presentation_uses_the_fluid_cadence_between_domain_ticks() {
+        let mut clock = PresentationClock::default();
+        let dt = mining_sim::FIXED_DT as f64 * 2.0;
+        clock.sample(10.0, 0.0, false);
+        clock.sample(10.0 + dt, 0.04, false);
+        clock.sample(10.0 + dt, 0.06, false);
+        assert!((clock.prediction - dt as f32 * 0.5).abs() < 1e-6);
+        clock.sample(10.0 + dt, 10.0, false);
+        assert!((clock.prediction - dt as f32).abs() < 1e-6);
+    }
     #[test]
     fn presentation_advects_only_one_tick_and_stops_on_pause_or_restore() {
         let mut clock = PresentationClock::default();

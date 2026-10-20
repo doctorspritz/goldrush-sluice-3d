@@ -23,11 +23,12 @@ struct G2pParams3D {
     height: u32,
     depth: u32,
     particle_count: u32,
-    d_inv: f32,         // APIC D inverse = 4/dx^2
-    flip_ratio: f32,    // FLIP blend ratio (0.97 for water)
-    dt: f32,            // Time step for velocity clamping
-    max_velocity: f32,  // Safety clamp (2000.0)
-    _padding: [f32; 3], // Align to 48 bytes
+    d_inv: f32,        // APIC D inverse = 4/dx^2
+    flip_ratio: f32,   // FLIP blend ratio (0.97 for water)
+    dt: f32,           // Time step for velocity clamping
+    max_velocity: f32, // Safety clamp (2000.0)
+    diameter_offset: u32,
+    _padding: [u32; 2], // Align to 48 bytes
 }
 
 /// Sediment parameters for G2P - drag-based entrainment model.
@@ -83,6 +84,7 @@ impl Default for SedimentParams3D {
 
 /// GPU-based Grid-to-Particle transfer for 3D simulation
 pub struct GpuG2p3D {
+    particle_metadata_buffer: wgpu::Buffer,
     width: u32,
     height: u32,
     depth: u32,
@@ -145,6 +147,12 @@ impl GpuG2p3D {
         water_grid_v_buffer: &wgpu::Buffer,
         water_grid_w_buffer: &wgpu::Buffer,
     ) -> Self {
+        let particle_metadata_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Grain density and diameter metadata"),
+            size: (max_particles * 8) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("G2P 3D Shader"),
@@ -447,7 +455,7 @@ impl GpuG2p3D {
                 },
                 wgpu::BindGroupEntry {
                     binding: 12,
-                    resource: densities_buffer.as_ref().as_entire_binding(),
+                    resource: particle_metadata_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 13,
@@ -489,6 +497,7 @@ impl GpuG2p3D {
         });
 
         Self {
+            particle_metadata_buffer,
             width,
             height,
             depth,
@@ -508,6 +517,18 @@ impl GpuG2p3D {
             bind_group,
             max_particles,
             workgroup_size: 256,
+        }
+    }
+
+    /// Metadata shares the original density binding: keep the storage-buffer
+    /// requirement at 16 rather than excluding adapters with that limit.
+    pub fn upload_grain_diameters(&self, queue: &wgpu::Queue, first: usize, values: &[f32]) {
+        if !values.is_empty() {
+            queue.write_buffer(
+                &self.particle_metadata_buffer,
+                ((self.max_particles + first) * 4) as u64,
+                bytemuck::cast_slice(values),
+            );
         }
     }
 
@@ -534,8 +555,9 @@ impl GpuG2p3D {
             d_inv,
             flip_ratio,
             dt,
-            max_velocity: 1.0, // CFL-safe: max_vel < dx/dt = 0.01/0.0083 ≈ 1.2 m/s
-            _padding: [0.0; 3],
+            max_velocity: 0.9 * cell_size / dt.max(1e-6), // Safety follows CFL, not an arbitrary 1 m/s sluice limit
+            diameter_offset: self.max_particles as u32,
+            _padding: [0; 2],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
         queue.write_buffer(
@@ -549,6 +571,13 @@ impl GpuG2p3D {
 
     /// Encode G2P compute pass into command encoder
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, particle_count: u32) {
+        encoder.copy_buffer_to_buffer(
+            &self.densities_buffer,
+            0,
+            &self.particle_metadata_buffer,
+            0,
+            (particle_count as u64) * 4,
+        );
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("G2P 3D Pass"),
             timestamp_writes: None,

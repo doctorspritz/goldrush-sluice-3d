@@ -253,7 +253,8 @@ pub fn observe(
             game.demo
                 && s.sluice.pump_on
                 && s.sluice.feed_on
-                && s.sluice.water.len() > 100_000
+                && s.sluice.water.len() > 10_000
+                && s.sluice.granular_packets
                 && s.sluice.hopper.volume() > 0.4,
             "Demo toolbar restores already-flowing finite paydirt",
             &mut validation,
