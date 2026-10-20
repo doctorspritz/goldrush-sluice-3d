@@ -15,7 +15,9 @@ Core requirement: preserve the existing FLIP/APIC sluice, CPU DEM and GPU terrai
 - [x] Validate larger live-fluid saves through the same storage path as gameplay.
 - [x] Finish full operator replay against the original solvers, including outlet flow and gangue discharge.
 - [x] Inspect native screenshots and measure rendering while the plant is running.
-- [ ] Complete targeted tests, lint and build; publish evidence and commit/push.
+- [x] Complete targeted tests, lint and build; publish evidence and commit/push.
+
+Playable code checkpoint: 728822e, pushed to codex/direct-mining. Review: https://github.com/doctorspritz/goldrush-sluice-3d/pull/24 (draft; GitHub CI is separate from local verification).
 
 20 October results: two complete native replays excavated/delivered/processed 0.560 m³, recovered 8.208 g and discharged 0.400 m³ of gangue. Live save/restore and gold/water ledgers passed. The final scheduling run averaged 57.47 FPS during washing at 1440×900, with simulation at 0.385× wall time. The final presentation-only particle splats and corrected side walls were verified from that live save in the standalone app at 49.62 FPS, with 106,660 water particles rendered as 53,330 splats. Details and images: docs/playtests/2026-10-20.md.
 
