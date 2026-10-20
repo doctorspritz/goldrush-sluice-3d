@@ -36,7 +36,7 @@ pub struct WaterSplats {
     turbidity: f32,
     terrain_data: Arc<Vec<InstanceData>>,
     terrain_revision: u64,
-    terrain_key: Option<(u64, u64, u64)>,
+    terrain_key: Option<(u64, u64, u64, u64)>,
     terrain_clock: PresentationClock,
     fluid_revision: Option<crate::app::FluidRevision>,
     outflow_clock: PresentationClock,
@@ -46,6 +46,12 @@ pub struct WaterSplats {
 impl WaterSplats {
     pub fn terrain_count(&self) -> usize {
         self.terrain_data.len()
+    }
+    pub fn terrain_fine_count(&self) -> usize {
+        self.terrain_data
+            .iter()
+            .take_while(|p| p.shape[3] > 1.)
+            .count()
     }
 }
 impl Default for WaterSplats {
@@ -111,6 +117,7 @@ pub(crate) struct InstanceData {
     pub axis_z: [f32; 4],
     pub slope_x: [f32; 4],
     pub slope_z: [f32; 4],
+    pub flow_z: [f32; 4],
 }
 
 pub struct WaterSplatPlugin;
@@ -144,6 +151,7 @@ struct ParticleBuffer {
     count: u32,
     revision: u64,
     terrain_count: u32,
+    terrain_fine_count: u32,
     terrain_revision: u64,
 }
 #[derive(Clone, ShaderType)]
@@ -362,6 +370,11 @@ fn prepare_particles(
                 );
             }
             buffer.terrain_count = data.terrain_data.len() as u32;
+            buffer.terrain_fine_count = data
+                .terrain_data
+                .iter()
+                .take_while(|p| p.shape[3] > 1.)
+                .count() as u32;
             buffer.terrain_revision = data.terrain_revision;
         }
     };
@@ -380,6 +393,7 @@ fn prepare_particles(
         count: 0,
         revision: u64::MAX,
         terrain_count: 0,
+        terrain_fine_count: 0,
         terrain_revision: u64::MAX,
     };
     upload(&mut buffer);
@@ -572,8 +586,13 @@ impl ViewNode for FluidNode {
             pass.set_bind_group(0, &particle_group, &[]);
             pass.draw(0..6, 0..particles.count);
             pass.draw(
+                0..(6 * crate::environment::FINE_SUBDIVISIONS.pow(2)) as u32,
+                MAX_SPLATS as u32..MAX_SPLATS as u32 + particles.terrain_fine_count,
+            );
+            pass.draw(
                 0..6,
-                MAX_SPLATS as u32..MAX_SPLATS as u32 + particles.terrain_count,
+                MAX_SPLATS as u32 + particles.terrain_fine_count
+                    ..MAX_SPLATS as u32 + particles.terrain_count,
             );
         }
         {
@@ -643,7 +662,12 @@ pub fn visible_count(sluice: &mining_sim::Sluice) -> usize {
     count.div_ceil(stride)
 }
 
-pub fn sync(game: Res<crate::app::Game>, time: Res<Time>, mut splats: ResMut<WaterSplats>) {
+pub fn sync(
+    game: Res<crate::app::Game>,
+    time: Res<Time>,
+    detail: Res<crate::environment::Detail>,
+    mut splats: ResMut<WaterSplats>,
+) {
     splats.clock.sample(
         game.session.sim_time - game.session.sluice.fluid_clock as f64,
         time.elapsed_secs_f64(),
@@ -684,12 +708,12 @@ pub fn sync(game: Res<crate::app::Game>, time: Res<Time>, mut splats: ResMut<Wat
         game.simulation_generation,
         site.hydraulic.steps,
         site.revision,
+        detail.revision,
     );
     if splats.terrain_key != Some(key) {
         splats.terrain_key = Some(key);
         splats.terrain_revision = splats.terrain_revision.wrapping_add(1);
-        splats.terrain_data =
-            Arc::new(crate::terrain_water::instances(site, game.session.sim_time));
+        splats.terrain_data = Arc::new(crate::terrain_water::instances(site, &detail));
     }
 }
 
@@ -749,6 +773,7 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
                 axis_z: axis(kernel.axes[2], kernel.normal.z),
                 slope_x: [0.; 4],
                 slope_z: [0.; 4],
+                flow_z: [0.; 4],
             }
         })
         .collect()

@@ -34,7 +34,9 @@ pub(crate) struct TerrainChunk {
     x: usize,
     z: usize,
     revision: u64,
+    generation: u64,
     source: Vec<[u32; 2]>,
+    subdivisions: usize,
 }
 #[derive(Clone, Copy)]
 enum Mount {
@@ -144,6 +146,7 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     game: Res<Game>,
 ) {
     commands.insert_resource(ClearColor(Color::srgb(0.70, 0.79, 0.83)));
@@ -213,14 +216,10 @@ pub fn setup(
         skin: material(&mut materials, Color::srgb(0.64, 0.40, 0.24), 0.8, 0.0),
         white: material(&mut materials, Color::srgb(0.88, 0.84, 0.71), 0.8, 0.0),
     };
-    let terrain_mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.96,
-        ..default()
-    });
+    let terrain_mat = materials.add(crate::ground_material::material(&mut images));
     for z in (0..WIDTH - 1).step_by(16) {
         for x in (0..WIDTH - 1).step_by(16) {
-            let mesh = terrain_mesh(&game.session.site, x, z);
+            let mesh = terrain_mesh(&game.session.site, x, z, 1);
             commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(terrain_mat.clone()),
@@ -229,7 +228,9 @@ pub fn setup(
                     x,
                     z,
                     revision: u64::MAX,
+                    generation: u64::MAX,
                     source: Vec::new(),
+                    subdivisions: 1,
                 },
             ));
         }
@@ -263,14 +264,12 @@ pub fn setup(
     commands.insert_resource(p);
 }
 
-pub fn terrain_mesh(site: &Site, x0: usize, z0: usize) -> Mesh {
+pub fn terrain_mesh(site: &Site, x0: usize, z0: usize, subdivisions: usize) -> Mesh {
     let nx = 16.min(WIDTH - 1 - x0);
     let nz = 16.min(WIDTH - 1 - z0);
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut colors = Vec::new();
-    let mut uvs = Vec::new();
-    let mut indices = Vec::new();
+    let mut source_height = Vec::new();
+    let mut source_normal = Vec::new();
+    let mut source_color = Vec::new();
     for z in 0..=nz {
         for x in 0..=nx {
             let ix = x0 + x;
@@ -278,15 +277,14 @@ pub fn terrain_mesh(site: &Site, x0: usize, z0: usize) -> Mesh {
             let px = ix as f32 * CELL;
             let pz = iz as f32 * CELL;
             let y = site.world.ground_height(ix, iz);
-            positions.push([px, y, pz]);
+            source_height.push(y);
             let normal = Vec3::new(
                 site.height(px - 0.12, pz) - site.height(px + 0.12, pz),
                 0.24,
                 site.height(px, pz - 0.12) - site.height(px, pz + 0.12),
             )
             .normalize();
-            normals.push(normal.to_array());
-            uvs.push([px, pz]);
+            source_normal.push(normal.to_array());
             let i = site.world.idx(ix, iz);
             let wet = site.world.water_depth(ix, iz) > 0.015;
             let mut c = if site.world.terrain_sediment[i] > 0.015 {
@@ -307,13 +305,47 @@ pub fn terrain_mesh(site: &Site, x0: usize, z0: usize) -> Mesh {
             {
                 c = [0.20 * noise, 0.29 * noise, 0.15 * noise, 1.0];
             }
-            colors.push(Color::srgb(c[0], c[1], c[2]).to_linear().to_f32_array());
+            source_color.push(Color::srgb(c[0], c[1], c[2]).to_linear().to_f32_array());
         }
     }
-    for z in 0..nz {
-        for x in 0..nx {
-            let i = (z * (nx + 1) + x) as u32;
-            let w = (nx + 1) as u32;
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut tangents = Vec::new();
+    let mut colors = Vec::new();
+    let mut uvs = Vec::new();
+    let mut indices = Vec::new();
+    let fine_x = nx * subdivisions;
+    let fine_z = nz * subdivisions;
+    for z in 0..=fine_z {
+        for x in 0..=fine_x {
+            let cx = (x / subdivisions).min(nx - 1);
+            let cz = (z / subdivisions).min(nz - 1);
+            let u = (x - cx * subdivisions) as f32 / subdivisions as f32;
+            let v = (z - cz * subdivisions) as f32 / subdivisions as f32;
+            let i = cz * (nx + 1) + cx;
+            let ids = [i, i + 1, i + nx + 1, i + nx + 2];
+            let sample = |values| crate::environment::interpolate(values, u, v);
+            let px = (x0 as f32 + x as f32 / subdivisions as f32) * CELL;
+            let pz = (z0 as f32 + z as f32 / subdivisions as f32) * CELL;
+            let y = sample(ids.map(|i| source_height[i]));
+            let n = Vec3::from_array(std::array::from_fn(|c| {
+                sample(ids.map(|i| source_normal[i][c]))
+            }))
+            .normalize();
+            let tangent = (Vec3::X - n * n.x).normalize();
+            positions.push([px, y, pz]);
+            normals.push(n.to_array());
+            tangents.push([tangent.x, tangent.y, tangent.z, -1.]);
+            colors.push(std::array::from_fn::<_, 4, _>(|c| {
+                sample(ids.map(|i| source_color[i][c]))
+            }));
+            uvs.push([px, pz]);
+        }
+    }
+    for z in 0..fine_z {
+        for x in 0..fine_x {
+            let i = (z * (fine_x + 1) + x) as u32;
+            let w = (fine_x + 1) as u32;
             indices.extend_from_slice(&[i, i + w, i + 1, i + 1, i + w, i + w + 1]);
         }
     }
@@ -323,6 +355,7 @@ pub fn terrain_mesh(site: &Site, x0: usize, z0: usize) -> Mesh {
     );
     m.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    m.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
     m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     m.insert_indices(Indices::U32(indices));
@@ -932,20 +965,27 @@ fn terrain_source(site: &Site, x0: usize, z0: usize) -> Vec<[u32; 2]> {
 }
 pub fn sync_terrain(
     game: Res<Game>,
+    detail: Res<crate::environment::Detail>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut chunks: Query<(&Mesh3d, &mut TerrainChunk)>,
 ) {
     let site = &game.session.site;
     for (handle, mut chunk) in &mut chunks {
-        if chunk.revision != site.revision {
+        let subdivisions = detail.subdivisions(chunk.x, chunk.z);
+        if chunk.revision != site.revision
+            || chunk.subdivisions != subdivisions
+            || chunk.generation != game.simulation_generation
+        {
             let source = terrain_source(site, chunk.x, chunk.z);
-            if source != chunk.source {
+            if source != chunk.source || chunk.subdivisions != subdivisions {
                 if let Some(mesh) = meshes.get_mut(&handle.0) {
-                    *mesh = terrain_mesh(site, chunk.x, chunk.z);
+                    *mesh = terrain_mesh(site, chunk.x, chunk.z, subdivisions);
                 }
                 chunk.source = source;
+                chunk.subdivisions = subdivisions;
             }
             chunk.revision = site.revision;
+            chunk.generation = game.simulation_generation;
         }
     }
 }
@@ -1209,5 +1249,38 @@ pub fn guides(game: Res<Game>, mut gizmos: Gizmos) {
                 Color::srgb(1.0, 0.75, 0.30),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod terrain_detail_tests {
+    use super::*;
+    use bevy::mesh::VertexAttributeValues;
+    #[test]
+    fn fine_chunk_edges_match_coarse_neighbours_without_cracks() {
+        let site = Site::new();
+        let fine = terrain_mesh(&site, 64, 64, 4);
+        let coarse = terrain_mesh(&site, 80, 64, 1);
+        let positions = |mesh: &Mesh| match mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap() {
+            VertexAttributeValues::Float32x3(p) => p.clone(),
+            _ => panic!("terrain positions must be float3"),
+        };
+        let a = positions(&fine);
+        let b = positions(&coarse);
+        assert_eq!(a.len(), 65 * 65);
+        for z in 0..=64 {
+            let lo = (z / 4).min(15);
+            let t = (z - lo * 4) as f32 / 4.;
+            let expected = Vec3::from_array(b[lo * 17]).lerp(Vec3::from_array(b[(lo + 1) * 17]), t);
+            assert!((Vec3::from_array(a[z * 65 + 64]) - expected).length() < 0.000002);
+        }
+        let Some(VertexAttributeValues::Float32x4(tangents)) =
+            fine.attribute(Mesh::ATTRIBUTE_TANGENT)
+        else {
+            panic!("fine terrain needs normal-map tangents")
+        };
+        assert!(tangents
+            .iter()
+            .all(|t| (Vec3::new(t[0], t[1], t[2]).length() - 1.).abs() < 0.00001 && t[3] == -1.));
     }
 }

@@ -1,0 +1,35 @@
+{
+  "source_save": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/shallow-2026-10-21/washing.save.json",
+  "physical_state_unchanged": true,
+  "frozen_state_time": 54.000002816319466,
+  "river_camera": {
+    "position": [
+      10.4,
+      0.27344433879999996,
+      17.0
+    ],
+    "yaw": -1.25,
+    "pitch": -0.42,
+    "mode": "OnFoot",
+    "third_person": false
+  },
+  "dry_bank_camera": {
+    "position": [
+      12.5,
+      0.35000000000000003,
+      17.0
+    ],
+    "yaw": -1.25,
+    "pitch": -0.55,
+    "mode": "OnFoot",
+    "third_person": false,
+    "hand": {
+      "soil_m3": 0.0,
+      "sand_m3": 0.0,
+      "gravel_m3": 0.0,
+      "gold_g": 0.0
+    },
+    "tool_swing": 0.0
+  },
+  "camera_traversal": "render-only player/camera x8..16m at fixed z; no physical advancement/OS input"
+}

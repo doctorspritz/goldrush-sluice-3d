@@ -2,7 +2,9 @@ mod activity;
 mod app;
 mod control_check;
 mod demo;
+mod environment;
 mod fluid_surface;
+mod ground_material;
 mod hud;
 mod runtime;
 mod scene;
@@ -45,6 +47,7 @@ fn main() -> AppExit {
         .insert_non_send_resource(runtime)
         .insert_non_send_resource(activity::SimulationActivity::default())
         .init_resource::<validation::Validation>()
+        .init_resource::<environment::Detail>()
         .insert_resource(control_check::Check::from_args())
         .add_systems(Startup, (scene::setup, hud::setup))
         .add_systems(
@@ -57,6 +60,7 @@ fn main() -> AppExit {
                 app::cursor,
                 control_check::observe,
                 app::camera,
+                environment::update_detail,
                 scene::sync_machine,
                 scene::sync_terrain,
                 water::sync,

@@ -23,6 +23,7 @@ pub struct Validation {
     pub input_complete: bool,
     capture: Option<PathBuf>,
     freeze: bool,
+    detail_walk: bool,
     load_path: Option<PathBuf>,
     pub replay: OperatorReplay,
     frames: u64,
@@ -73,6 +74,7 @@ impl Default for Validation {
             input_complete: false,
             capture,
             freeze: std::env::args().any(|a| a == "--freeze"),
+            detail_walk: std::env::args().any(|a| a == "--detail-walk"),
             load_path,
             replay: OperatorReplay::default(),
             frames: 0,
@@ -128,9 +130,20 @@ pub fn update(
     mut v: ResMut<Validation>,
     time: Res<Time<Real>>,
     water: Res<crate::water::WaterSplats>,
+    detail: Res<crate::environment::Detail>,
     mut exit: MessageWriter<AppExit>,
 ) {
     v.frames += 1;
+    // Render-only camera traversal checks the cost of LOD transitions without
+    // modifying the frozen solver state or requiring desktop key injection.
+    if v.detail_walk && v.freeze && v.capture.is_some() && v.saved && v.frames > 240 {
+        let phase = ((v.frames - 240) as f32 / 240.) % 2.;
+        let distance = if phase < 1. { phase } else { 2. - phase };
+        let x = 8. + distance * 8.;
+        let z = game.session.player.position.z;
+        game.session.player.position.x = x;
+        game.session.player.position.y = game.session.site.height(x, z);
+    }
     if v.automated() && crate::water::surface_failed(&water) {
         v.failure = Some("Water render pipeline failed".into());
     }
@@ -224,7 +237,7 @@ pub fn update(
                 "worker_phases_mean_ms":v.worker_phases.map(|n|n/v.worker_ms.len().max(1) as f64),"water_particles":game.session.sluice.water.len(),
                     "grains":game.session.sluice.grains.len(),
                 "water_mean_downstream_ms":game.session.sluice.water_speed(),"fluid_surface_ready":crate::water::surface_ready(&water),
-                "outflow_particles":sluice.outflow.len(),"terrain_water_splats":water.terrain_count(),"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
+                    "outflow_particles":sluice.outflow.len(),"terrain_water_splats":water.terrain_count(),"terrain_fine_cells":water.terrain_fine_count(),"detail_revision":detail.revision,"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -270,6 +283,9 @@ pub fn update(
                 exit.write(AppExit::error());
             } else {
                 let mean = v.frame_ms.iter().sum::<f64>() / v.frame_ms.len().max(1) as f64;
+                let mut sorted = v.frame_ms.clone();
+                sorted.sort_by(f64::total_cmp);
+                let p95 = sorted[(sorted.len().saturating_sub(1) as f64 * 0.95) as usize];
                 let config = mining_physics::geometry::config(&game.session.sluice);
                 let below_floor = game
                     .session
@@ -288,6 +304,7 @@ pub fn update(
                 let report = serde_json::json!({"scenario":if v.load_path.is_some() { "live saved shift" } else if game.demo { "flowing demo" } else { "initial scene" },
                     "mean_fps":if mean > 0.0 { Some(1000.0/mean) } else { None },
                     "frames":v.frame_ms.len(), "save_restored":v.saved,
+                    "frozen":v.freeze,"camera_traversal":v.detail_walk,"p95_frame_ms":p95,"detail_revision":detail.revision,"terrain_fine_cells":water.terrain_fine_count(),"terrain_water_cells":water.terrain_count(),
                     "water_rendering":"anisotropic particle surface + optical thickness + connected terrain water",
                     "fluid_surface_ready":crate::water::surface_ready(&water),
                     "input_check_passed":if v.input_check { Some(v.input_complete) } else { None },

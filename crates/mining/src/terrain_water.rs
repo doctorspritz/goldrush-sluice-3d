@@ -8,7 +8,7 @@ use mining_sim::{
 pub(crate) const MAX_SPLATS: usize = (WIDTH - 1) * (WIDTH - 1);
 // Presentation only; keep in step with MIN_FILM_DEPTH in water_depth.wgsl.
 const MIN_VISIBLE_DEPTH_M: f32 = 0.0001;
-pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
+pub(crate) fn instances(site: &Site, detail: &crate::environment::Detail) -> Vec<InstanceData> {
     let surface = &site.world.water_surface;
     let mut height = surface.clone();
     let mut supported = vec![false; WIDTH * WIDTH];
@@ -83,6 +83,7 @@ pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
         }
     }
     let mut result = Vec::new();
+    let mut coarse = Vec::new();
     for z in 0..WIDTH - 1 {
         for x in 0..WIDTH - 1 {
             let ids = [
@@ -105,38 +106,60 @@ pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
                     .water_depth(i % WIDTH, i / WIDTH)
                     .min(height[i] - site.world.ground_height(i % WIDTH, i / WIDTH))
             });
-            let vx = ids
-                .iter()
-                .map(|i| site.hydraulic.velocity_x.get(*i).copied().unwrap_or(0.))
-                .sum::<f32>()
-                * 0.25;
-            let vz = ids
-                .iter()
-                .map(|i| site.hydraulic.velocity_z.get(*i).copied().unwrap_or(0.))
-                .sum::<f32>()
-                * 0.25;
-            result.push(InstanceData {
+            let vx = ids.map(|i| site.hydraulic.velocity_x.get(i).copied().unwrap_or(0.));
+            let vz = ids.map(|i| site.hydraulic.velocity_z.get(i).copied().unwrap_or(0.));
+            let subdivisions = detail.subdivisions(x, z);
+            let instance = InstanceData {
                 center_radius: [
                     (x as f32 + 0.5) * CELL,
                     0.,
                     (z as f32 + 0.5) * CELL,
                     CELL * 0.5,
                 ],
-                velocity: [vx, 0., vz, 0.],
-                shape: [0., 0., 1., 0.],
+                velocity: vx,
+                shape: [0., 0., 1., subdivisions as f32],
                 axis_x: h,
                 axis_y: depth,
                 axis_z: ids.map(|i| concentration[i]),
                 slope_x: ids.map(|i| slopes_x[i]),
                 slope_z: ids.map(|i| slopes_z[i]),
-            });
+                flow_z: vz,
+            };
+            if subdivisions > 1 {
+                result.push(instance);
+            } else {
+                coarse.push(instance);
+            }
         }
     }
+    result.extend(coarse);
     result
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn near_detail_keeps_instances_bounded_and_updates_on_paused_camera_moves() {
+        let site = Site::new();
+        let mut detail = crate::environment::Detail::default();
+        detail.select(bevy::prelude::Vec3::new(7., 2., 17.));
+        let a = instances(&site, &detail);
+        let fine = a.iter().take_while(|p| p.shape[3] > 1.).count();
+        assert!(
+            fine > 0
+                && fine <= crate::environment::MAX_FINE_CHUNKS * crate::environment::CHUNK.pow(2)
+        );
+        assert!(a[fine..].iter().all(|p| p.shape[3] == 1.));
+        assert!(a.len() <= MAX_SPLATS);
+        let time = site.hydraulic.steps;
+        let revision = detail.revision;
+        detail.select(bevy::prelude::Vec3::new(28., 2., 17.));
+        let b = instances(&site, &detail);
+        assert_eq!(a.len(), b.len());
+        assert_eq!(time, site.hydraulic.steps);
+        assert_ne!(revision, detail.revision);
+        assert!(b.iter().filter(|p| p.shape[3] > 1.).count() < fine);
+    }
     #[test]
     fn shoreline_extension_keeps_saved_dry_corners_dry() {
         let mut site = Site::new();
@@ -146,7 +169,7 @@ mod tests {
             }
         }
         site.world.water_surface[60 * WIDTH + 80] += 0.003;
-        let water = instances(&site, 0.);
+        let water = instances(&site, &crate::environment::Detail::default());
         assert_eq!(water.len(), 4);
         assert!(water
             .iter()
@@ -161,7 +184,7 @@ mod tests {
             }
         }
         let before = site.world.water_surface.clone();
-        let film = instances(&site, 0.);
+        let film = instances(&site, &crate::environment::Detail::default());
         assert_eq!(film.len(), MAX_SPLATS);
         assert_eq!(before, site.world.water_surface);
         assert!(film
@@ -173,13 +196,19 @@ mod tests {
                 site.world.water_surface[z * WIDTH + x] = site.world.ground_height(x, z) + 0.00005;
             }
         }
-        assert!(instances(&site, 0.).is_empty());
+        assert!(instances(&site, &crate::environment::Detail::default()).is_empty());
     }
     #[test]
     fn continuous_cells_share_vertices_and_do_not_mutate_water() {
-        let site = Site::new();
+        let mut site = Site::new();
+        site.hydraulic.velocity_x = (0..WIDTH * WIDTH)
+            .map(|i| (i % WIDTH) as f32 * 0.001)
+            .collect();
+        site.hydraulic.velocity_z = (0..WIDTH * WIDTH)
+            .map(|i| (i / WIDTH) as f32 * -0.001)
+            .collect();
         let before = site.world.water_surface.clone();
-        let a = instances(&site, 0.);
+        let a = instances(&site, &crate::environment::Detail::default());
         assert!(!a.is_empty() && a.len() <= MAX_SPLATS);
         assert_eq!(before, site.world.water_surface);
         let lookup: std::collections::BTreeMap<_, _> = a
@@ -200,9 +229,11 @@ mod tests {
                 assert_eq!(p.axis_x[3], next.axis_x[2]);
                 assert_eq!(p.slope_x[1], next.slope_x[0]);
                 assert_eq!(p.slope_z[3], next.slope_z[2]);
+                assert_eq!(p.velocity[1], next.velocity[0]);
+                assert_eq!(p.flow_z[3], next.flow_z[2]);
             }
         }
-        let b = instances(&site, 1000.);
+        let b = instances(&site, &crate::environment::Detail::default());
         assert!(a
             .iter()
             .zip(b)
@@ -212,7 +243,7 @@ mod tests {
     fn concentration_is_independent_of_water_depth_and_dry_cells_are_absent() {
         let mut site = Site::new();
         site.hydraulic.suspended_sediment = vec![0.02; WIDTH * WIDTH];
-        let a = instances(&site, 0.);
+        let a = instances(&site, &crate::environment::Detail::default());
         assert!(a.iter().all(|p| p.axis_z == [0.02; 4]));
         for z in 0..WIDTH {
             for x in 0..WIDTH {
@@ -220,6 +251,6 @@ mod tests {
                 site.world.water_surface[i] = site.world.ground_height(x, z);
             }
         }
-        assert!(instances(&site, 0.).is_empty());
+        assert!(instances(&site, &crate::environment::Detail::default()).is_empty());
     }
 }
