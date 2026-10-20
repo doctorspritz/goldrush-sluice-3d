@@ -305,7 +305,9 @@ impl Session {
             let d = p - s.inlet;
             let x = d.dot(s.forward());
             let z = d.dot(s.right()).abs();
-            if (-0.2..LENGTH_WITH_MARGIN).contains(&x) && z < 0.60 {
+            if (-0.2..self.sluice.profile.length() + 0.2).contains(&x)
+                && z < self.sluice.profile.width() * 0.5 + 0.24
+            {
                 return false;
             }
         }
@@ -338,7 +340,7 @@ impl Session {
                 let d = p - placement.inlet;
                 let x = d.dot(placement.forward());
                 let z = d.dot(placement.right()).abs();
-                (-1.8..5.2).contains(&x) && z < 1.7
+                (-1.8..self.sluice.profile.length() + 1.8).contains(&x) && z < 1.7
             });
             if blocks_hopper || blocks_sluice {
                 self.machine.position = old_position;
@@ -393,8 +395,12 @@ impl Session {
             }
         }
         let requested = if self.sluice.pump_on && self.sluice.placement.is_some() {
-            let room = (crate::sluice::MAX_WATER_PARTICLES - self.sluice.water.len()) as f64
-                * crate::sluice::WATER_PARTICLE_M3
+            let room = self
+                .sluice
+                .profile
+                .capacity()
+                .saturating_sub(self.sluice.water.len()) as f64
+                * self.sluice.profile.particle_m3()
                 - self.sluice.water_credit_m3;
             (self.sluice.flow_m3s * dt).min(room.max(0.0) as f32)
         } else {
@@ -507,4 +513,3 @@ impl Session {
         Ok(session)
     }
 }
-const LENGTH_WITH_MARGIN: f32 = 3.6;

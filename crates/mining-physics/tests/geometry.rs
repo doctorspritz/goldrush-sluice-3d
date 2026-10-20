@@ -9,7 +9,7 @@ fn world_space_floor_faces_up_after_grid_to_placement_transform() {
     let (vertices, indices) = geometry::mesh(&session.sluice);
     let floor_offset = (session.sluice.floor_cells() + 1) as f32 * FLUID_CELL;
     let mut faces = 0;
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0.iter() {
         let a = Vec3::from_array(vertices[triangle[0] as usize]);
         let b = Vec3::from_array(vertices[triangle[1] as usize]);
         let c = Vec3::from_array(vertices[triangle[2] as usize]);
@@ -55,7 +55,7 @@ fn every_visible_face_points_from_collision_solid_into_air() {
             && config.is_solid(cell.x as usize, cell.y as usize, cell.z as usize)
     };
     let (vertices, indices) = geometry::mesh(&s.sluice);
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0.iter() {
         let a = Vec3::from_array(vertices[triangle[0] as usize]);
         let b = Vec3::from_array(vertices[triangle[1] as usize]);
         let c = Vec3::from_array(vertices[triangle[2] as usize]);
@@ -70,4 +70,31 @@ fn every_visible_face_points_from_collision_solid_into_air() {
             "face must have solid behind it"
         );
     }
+}
+
+#[test]
+fn original_profile_matches_the_standalone_channel_and_legacy_stays_loadable() {
+    use mining_sim::sluice::HydraulicProfile;
+    let mut s = Session::new();
+    s.sluice.placement = Some(Placement::suggested(&s.site));
+    let c = geometry::config(&s.sluice);
+    assert_eq!((c.grid_width, c.grid_height, c.grid_depth), (150, 52, 40));
+    assert_eq!(c.cell_size, 0.01);
+    assert_eq!((c.floor_height_left, c.floor_height_right), (30, 4));
+    assert_eq!(
+        (
+            c.riffle_spacing,
+            c.riffle_height,
+            c.riffle_thickness,
+            c.riffle_start_x
+        ),
+        (32, 3, 2, 40)
+    );
+    assert_eq!(s.sluice.profile.outlet_buffer(), 12);
+    s.sluice.profile = HydraulicProfile::Legacy;
+    s.sluice.placement.as_mut().unwrap().slope_deg = 6.0;
+    let c = geometry::config(&s.sluice);
+    assert_eq!((c.grid_width, c.grid_depth), (170, 38));
+    assert_eq!(c.cell_size, 0.02);
+    assert_eq!(s.sluice.profile.outlet_buffer(), 0);
 }

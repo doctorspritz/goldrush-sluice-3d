@@ -7,16 +7,15 @@ pub mod worker;
 use game::gpu::{flip_3d::GpuFlip3D, heightfield::GpuHeightfield};
 use glam::{Mat3, Vec3};
 use mining_sim::{
-    sluice::{WaterParticle, FLUID_CELL, LENGTH, MAX_WATER_PARTICLES, WATER_PARTICLE_M3},
+    sluice::{HydraulicProfile, WaterParticle},
     GrainKind, Session, FIXED_DT,
 };
 use sim3d::{
     constants, ClumpShape3D, ClumpTemplate3D, ClusterSimulation3D, FlipSimulation3D, SdfParams,
 };
 
-// G2P clamps velocity to 1 m/s. At dx=0.02, two substeps give a maximum
-// advective CFL of 0.417, below 0.5, without four full GPU round trips per tick.
-pub const FLIP_SUBSTEPS: u32 = 2;
+// Original standalone demo cadence: 1 cm cells, four substeps, CFL <= 0.417.
+pub const FLIP_SUBSTEPS: u32 = 4;
 
 pub struct Hydraulics {
     device: wgpu::Device,
@@ -32,6 +31,7 @@ struct LocalSluice {
     cell_types: Vec<u32>,
     dem: ClusterSimulation3D,
     slope: f32,
+    profile: HydraulicProfile,
     restoring_contacts: bool,
 }
 impl Hydraulics {
@@ -107,16 +107,19 @@ impl Hydraulics {
             self.sluice = None;
             return;
         };
-        if self.sluice.as_ref().is_some_and(|l| l.slope == p.slope_deg) {
+        if self
+            .sluice
+            .as_ref()
+            .is_some_and(|l| l.slope == p.slope_deg && l.profile == s.sluice.profile)
+        {
             return;
         }
         let config = geometry::config(&s.sluice);
-        let mut sim = FlipSimulation3D::new(
-            config.grid_width,
-            config.grid_height,
-            config.grid_depth,
-            FLUID_CELL,
-        );
+        let profile = s.sluice.profile;
+        let dx = profile.cell();
+        let simulation_width = config.grid_width + profile.outlet_buffer();
+        let mut sim =
+            FlipSimulation3D::new(simulation_width, config.grid_height, config.grid_depth, dx);
         let builder = game::sluice_geometry::SluiceGeometryBuilder::new(config.clone());
         for (i, j, k) in builder.solid_cells() {
             sim.grid.set_solid(i, j, k);
@@ -130,23 +133,29 @@ impl Hydraulics {
             .collect();
         let mut flip = GpuFlip3D::new(
             &self.device,
-            config.grid_width as u32,
+            simulation_width as u32,
             config.grid_height as u32,
             config.grid_depth as u32,
-            FLUID_CELL,
-            MAX_WATER_PARTICLES + mining_sim::sluice::MAX_GRAINS,
+            dx,
+            profile.capacity() + mining_sim::sluice::MAX_GRAINS,
         );
         // CPU DEM owns solid friction. Do not add the shader's heuristic
         // low-speed damping or extra turbulence lift to those same contacts.
         flip.sediment_friction_strength = 0.0;
+        // Match the standalone demo's freely entrained sediment settings;
+        // contacts remain DEM-owned, rather than applying porosity drag twice.
+        if profile == HydraulicProfile::OriginalDemo {
+            flip.sediment_rest_particles = 0.0;
+            flip.sediment_porosity_drag = 0.0;
+        }
         flip.sediment_vorticity_lift = 0.0;
         flip.open_boundaries = 2 | 8; // downstream +X outlet and free surface +Y
         let dem = ClusterSimulation3D::new(
             Vec3::ZERO,
             Vec3::new(
-                config.grid_width as f32 * FLUID_CELL,
-                config.grid_height as f32 * FLUID_CELL,
-                config.grid_depth as f32 * FLUID_CELL,
+                simulation_width as f32 * dx,
+                config.grid_height as f32 * dx,
+                config.grid_depth as f32 * dx,
             ),
         );
         self.sluice = Some(LocalSluice {
@@ -155,6 +164,7 @@ impl Hydraulics {
             cell_types,
             dem,
             slope: p.slope_deg,
+            profile,
             restoring_contacts: true,
         });
     }
@@ -163,28 +173,51 @@ impl Hydraulics {
         let Some(l) = &mut self.sluice else {
             return Ok(());
         };
-        let n = (s.sluice.water_credit_m3 / WATER_PARTICLE_M3).floor() as usize;
-        let emitted = n.min(MAX_WATER_PARTICLES.saturating_sub(s.sluice.water.len()));
+        let profile = s.sluice.profile;
+        let dx = profile.cell();
+        let particle_m3 = profile.particle_m3();
+        let n = (s.sluice.water_credit_m3 / particle_m3).floor() as usize;
+        let emitted = n.min(profile.capacity().saturating_sub(s.sluice.water.len()));
         for i in 0..emitted {
-            // Stratified 8 particles/cell inlet. Each emitted particle represents
+            // Water volume uses eight particles per cell. Each new particle represents
             // exactly dx^3/8 m3 withdrawn at the river intake by Session::step.
             let seq = s
                 .sluice
                 .solver_steps
                 .wrapping_mul(101)
                 .wrapping_add(i as u64);
-            let z = 0.04 + (seq % 68) as f32 * 0.01;
-            let x = 0.08 + ((seq / 68) % 4) as f32 * 0.01;
-            let y = (s.sluice.floor_cells() + 1) as f32 * FLUID_CELL
-                + 0.03
-                + ((seq / 272) % 3) as f32 * 0.01;
+            let (x, y, z) = if profile == HydraulicProfile::OriginalDemo {
+                // Same sheet footprint/drop as the standalone inlet. Low
+                // discrepancy samples avoid repeating the coarse inlet lattice
+                // while keeping the original sheet footprint deterministic.
+                let sample = |factor: f64| ((seq as f64 + 0.5) * factor).fract() as f32;
+                let x = (1.0 + 2.0 * sample(0.7548776662466927)) * dx;
+                let y = (s.sluice.floor_cells() + 1) as f32 * dx
+                    + (2.5 + 4.0 * sample(0.5698402909980532)) * dx;
+                let z = profile.width() * 0.5
+                    + dx
+                    + (sample(0.438579021) - 0.5) * (l.grid.depth as f32 - 4.0) * dx * 0.3;
+                (x, y, z)
+            } else {
+                (
+                    0.08 + ((seq / 68) % 4) as f32 * 0.01,
+                    (s.sluice.floor_cells() + 1) as f32 * dx
+                        + 0.03
+                        + ((seq / 272) % 3) as f32 * 0.01,
+                    0.04 + (seq % 68) as f32 * 0.01,
+                )
+            };
             s.sluice.water.push(WaterParticle {
                 position: Vec3::new(x, y, z),
-                velocity: Vec3::new(0.4, 0.0, 0.0),
+                velocity: if profile == HydraulicProfile::OriginalDemo {
+                    Vec3::new(0.5, -0.05, 0.0)
+                } else {
+                    Vec3::new(0.4, 0.0, 0.0)
+                },
                 affine: Mat3::ZERO,
             });
         }
-        s.sluice.water_credit_m3 -= emitted as f64 * WATER_PARTICLE_M3;
+        s.sluice.water_credit_m3 -= emitted as f64 * particle_m3;
         if s.sluice.water_credit_m3 > 0.02 {
             return Err(
                 "FLIP capacity reached: stop the pump; water was retained, not discarded".into(),
@@ -254,7 +287,14 @@ impl Hydraulics {
             l.dem.restore_contact_history(&s.sluice.contacts);
             l.restoring_contacts = false;
         }
-        let substeps = FLIP_SUBSTEPS;
+        let substeps = profile.substeps();
+        // This slope-derived drive was present in the old demo and missing
+        // from the playable adapter. Preserve its behaviour explicitly.
+        let flow_accel = if profile == HydraulicProfile::OriginalDemo {
+            constants::GRAVITY.abs() * (s.sluice.floor_cells() - 4) as f32 * dx / profile.length()
+        } else {
+            0.0
+        };
         for _ in 0..substeps {
             let dt = FIXED_DT / substeps as f32;
             if !l.flip.step_async(
@@ -269,7 +309,7 @@ impl Hydraulics {
                 None,
                 dt,
                 constants::GRAVITY,
-                0.0,
+                flow_accel,
                 80,
             ) {
                 return Err("Original FLIP readback queue is full".into());
@@ -293,7 +333,7 @@ impl Hydraulics {
                 grid_width: l.grid.width,
                 grid_height: l.grid.height,
                 grid_depth: l.grid.depth,
-                cell_size: FLUID_CELL,
+                cell_size: dx,
                 grid_offset: Vec3::ZERO,
             };
             // Advection and gravity already happened in FLIP. Apply contacts only.
@@ -323,18 +363,18 @@ impl Hydraulics {
         }
         let in_domain = |p: Vec3| {
             p.x >= 0.0
-                && p.x < LENGTH
+                && p.x < l.grid.width as f32 * dx
                 && p.y > 0.0
-                && p.y < l.grid.height as f32 * FLUID_CELL
+                && p.y < l.grid.height as f32 * dx
                 && p.z > 0.0
-                && p.z < l.grid.depth as f32 * FLUID_CELL
+                && p.z < l.grid.depth as f32 * dx
         };
         let before = s.sluice.water.len();
         s.sluice.water.retain(|p| in_domain(p.position));
-        let returned = (before - s.sluice.water.len()) as f64 * WATER_PARTICLE_M3;
+        let returned = (before - s.sluice.water.len()) as f64 * particle_m3;
         s.sluice.water_returned_m3 += returned;
-        if let Some(p) = s.sluice.placement {
-            s.site.world.add_water(p.outlet(), returned as f32);
+        if let Some(outlet) = s.sluice.outlet() {
+            s.site.world.add_water(outlet, returned as f32);
         }
         for i in (0..s.sluice.grains.len()).rev() {
             if !in_domain(s.sluice.grains[i].position) {

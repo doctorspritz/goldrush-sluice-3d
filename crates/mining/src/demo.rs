@@ -27,6 +27,10 @@ mod tests {
     fn bundled_demo_has_real_flow_finite_paydirt_and_balanced_ledger() {
         let s = super::session().unwrap();
         assert!(s.sluice.water.len() > 100_000);
+        assert_eq!(
+            s.sluice.profile,
+            mining_sim::sluice::HydraulicProfile::OriginalDemo
+        );
         assert!(s.sluice.pump_on && s.sluice.feed_on);
         assert!(s.sluice.hopper.volume() > 0.4 && s.sluice.hopper.volume() < 0.85);
         assert!(s.sluice.water_returned_m3 > 0.005 && s.sluice.tailings.volume() > 0.001);

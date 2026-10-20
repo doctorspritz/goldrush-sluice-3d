@@ -8,7 +8,7 @@ use bevy::{
 };
 use mining_sim::{
     site::{CELL, WIDTH},
-    sluice::{CHANNEL_WIDTH, HOPPER_X, HOPPER_Z, LENGTH},
+    sluice::{HOPPER_X, HOPPER_Z},
     ControlMode, GrainKind, Site, Vec3 as SVec,
 };
 
@@ -77,7 +77,7 @@ pub(crate) struct FallingVisual {
     index: usize,
 }
 #[derive(Resource, Default)]
-pub(crate) struct PlantRevision(Option<(SVec, f32, f32)>);
+pub(crate) struct PlantRevision(Option<(SVec, f32, f32, mining_sim::sluice::HydraulicProfile)>);
 
 fn material(
     materials: &mut Assets<StandardMaterial>,
@@ -930,8 +930,8 @@ fn equipment(commands: &mut Commands, meshes: &mut Assets<Mesh>, p: &Palette, si
     box_part(
         commands,
         p,
-        Vec3::new(HOPPER_X, h + 0.84, HOPPER_Z + 0.64),
-        Vec3::new(0.43, 0.12, 1.2),
+        Vec3::new(HOPPER_X, h + 0.84, HOPPER_Z + 0.59),
+        Vec3::new(0.35, 0.12, 0.65),
         p.steel.clone(),
     );
     commands.spawn((
@@ -1118,7 +1118,7 @@ pub fn sync_plant(
         .session
         .sluice
         .placement
-        .map(|p| (p.inlet, p.yaw, p.slope_deg));
+        .map(|p| (p.inlet, p.yaw, p.slope_deg, game.session.sluice.profile));
     if revision.0 == key {
         return;
     }
@@ -1144,8 +1144,9 @@ pub fn sync_plant(
         Transform::default(),
         SluiceVisual,
     ));
-    for x in [0.15, LENGTH - 0.15] {
-        for z in [-0.32, 0.32] {
+    for x in [0.15, game.session.sluice.profile.length() - 0.15] {
+        let half_width = game.session.sluice.profile.width() * 0.5 + 0.04;
+        for z in [-half_width, half_width] {
             let top = bvec(placement.to_world(SVec::new(x, -0.05, z)));
             let ground = game.session.site.height(top.x, top.z);
             let height = (top.y - ground).max(0.10);
@@ -1259,9 +1260,17 @@ pub fn guides(game: Res<Game>, mut gizmos: Gizmos) {
         let rotation =
             Quat::from_rotation_y(p.yaw) * Quat::from_rotation_x(p.slope_deg.to_radians());
         gizmos.cuboid(
-            Transform::from_translation(bvec(p.to_world(SVec::new(LENGTH * 0.5, 0.10, 0.0))))
-                .with_rotation(rotation)
-                .with_scale(Vec3::new(CHANNEL_WIDTH, 0.25, LENGTH)),
+            Transform::from_translation(bvec(p.to_world(SVec::new(
+                game.session.sluice.profile.length() * 0.5,
+                0.10,
+                0.0,
+            ))))
+            .with_rotation(rotation)
+            .with_scale(Vec3::new(
+                game.session.sluice.profile.width(),
+                0.25,
+                game.session.sluice.profile.length(),
+            )),
             color,
         );
         gizmos.line(
@@ -1275,7 +1284,8 @@ pub fn guides(game: Res<Game>, mut gizmos: Gizmos) {
         );
         gizmos.arrow(
             bvec(p.inlet) + Vec3::Y * 0.5,
-            bvec(p.outlet()) + Vec3::Y * 0.5,
+            bvec(p.to_world(SVec::new(game.session.sluice.profile.length(), 0.0, 0.0)))
+                + Vec3::Y * 0.5,
             color,
         );
     } else if game.session.player.mode == ControlMode::OnFoot {

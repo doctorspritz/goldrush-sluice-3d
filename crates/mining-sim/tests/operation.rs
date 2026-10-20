@@ -304,3 +304,41 @@ fn walking_into_equipment_slides_along_it_without_entering_collision() {
         "blocked X motion should not cancel free Z motion"
     );
 }
+
+#[test]
+fn previous_live_saves_keep_their_grid_volume_and_geometry() {
+    use mining_sim::sluice::{HydraulicProfile, WaterParticle};
+    let mut s = Session::new();
+    s.sluice.placement = Some(Placement {
+        slope_deg: 6.0,
+        ..Placement::suggested(&s.site)
+    });
+    s.sluice.profile = HydraulicProfile::Legacy;
+    s.sluice.water.push(WaterParticle {
+        position: Vec3::new(2.8, 0.2, 0.5),
+        velocity: Vec3::X,
+        affine: Default::default(),
+    });
+    let point = s.sluice.grid_to_local(s.sluice.water[0].position);
+    let volume = s.sluice.profile.particle_m3();
+    let mut old: serde_json::Value = serde_json::from_str(&s.save_json().unwrap()).unwrap();
+    old["sluice"].as_object_mut().unwrap().remove("profile");
+    let restored = Session::load_json(&old.to_string()).unwrap();
+    assert_eq!(restored.sluice.profile, HydraulicProfile::Legacy);
+    assert_eq!(restored.sluice.profile.length(), 3.4);
+    assert_eq!(restored.sluice.profile.cell(), 0.02);
+    assert_eq!(restored.sluice.profile.particle_m3(), volume);
+    assert_eq!(
+        restored
+            .sluice
+            .grid_to_local(restored.sluice.water[0].position),
+        point
+    );
+    assert_eq!(
+        restored.sluice.water[0].position,
+        s.sluice.water[0].position
+    );
+    let fresh = Session::new();
+    assert_eq!(fresh.sluice.profile, HydraulicProfile::OriginalDemo);
+    assert!((fresh.sluice.profile.particle_m3() * 8.0 - volume).abs() < 1e-15);
+}

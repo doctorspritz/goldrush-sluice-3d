@@ -32,6 +32,7 @@ pub struct WaterSplats {
     revision: u64,
     data: Arc<Vec<InstanceData>>,
     health: Arc<AtomicU8>,
+    clock: PresentationClock,
 }
 impl Default for WaterSplats {
     fn default() -> Self {
@@ -39,7 +40,38 @@ impl Default for WaterSplats {
             revision: u64::MAX,
             data: Arc::new(Vec::new()),
             health: Arc::new(AtomicU8::new(0)),
+            clock: PresentationClock::default(),
         }
+    }
+}
+/// Render-only advection spans at most one authoritative tick. It follows
+/// measured worker cadence, stops on pause/reset, and never writes to Session.
+#[derive(Clone, Default)]
+struct PresentationClock {
+    sim: Option<f64>,
+    updated: f64,
+    interval: f64,
+    tick: f32,
+    prediction: f32,
+}
+impl PresentationClock {
+    fn sample(&mut self, sim: f64, wall: f64, paused: bool) {
+        if self.sim != Some(sim) {
+            let delta = self.sim.map(|previous| sim - previous).unwrap_or(0.0);
+            if delta > 0.0 && delta <= mining_sim::FIXED_DT as f64 * 2.1 {
+                self.interval = (wall - self.updated).max(mining_sim::FIXED_DT as f64);
+                self.tick = (delta as f32).min(mining_sim::FIXED_DT);
+            } else {
+                self.tick = 0.0;
+            }
+            self.updated = wall;
+            self.sim = Some(sim);
+        }
+        self.prediction = if paused {
+            0.0
+        } else {
+            self.tick * ((wall - self.updated) / self.interval.max(0.001)).clamp(0.0, 1.0) as f32
+        };
     }
 }
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -150,6 +182,7 @@ fn init_pipelines(
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_depth_2d(),
                 uniform_buffer::<FluidUniforms>(false),
+                texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         ),
     );
@@ -271,6 +304,7 @@ fn prepare_particles(
 }
 fn prepare_views(
     mut commands: Commands,
+    water: Res<WaterSplats>,
     mut views: Query<(
         Entity,
         &ExtractedCamera,
@@ -294,7 +328,7 @@ fn prepare_views(
             world_from_view,
             view_from_clip: view.clip_from_view.inverse(),
             view_from_world: world_from_view.inverse(),
-            viewport: Vec4::new(full.x as f32, full.y as f32, 0.045, 0.0),
+            viewport: Vec4::new(full.x as f32, full.y as f32, 0.045, water.clock.prediction),
         };
         if let Some(mut target) = existing {
             if target.size == size {
@@ -403,7 +437,13 @@ impl ViewNode for FluidNode {
         let compose_group = device.create_bind_group(
             "fluid compose inputs",
             &settings.compose,
-            &BindGroupEntries::sequential((post.source, &target.pong, scene_depth.view(), uniform)),
+            &BindGroupEntries::sequential((
+                post.source,
+                &target.pong,
+                scene_depth.view(),
+                uniform,
+                &target.raw,
+            )),
         );
         let color = |view| {
             Some(RenderPassColorAttachment {
@@ -489,7 +529,12 @@ pub fn visible_count(sluice: &mining_sim::Sluice) -> usize {
     sluice.water.len().div_ceil(stride)
 }
 
-pub fn sync(game: Res<crate::app::Game>, mut splats: ResMut<WaterSplats>) {
+pub fn sync(game: Res<crate::app::Game>, time: Res<Time>, mut splats: ResMut<WaterSplats>) {
+    splats.clock.sample(
+        game.session.sim_time,
+        time.elapsed_secs_f64(),
+        game.session.paused,
+    );
     if splats.revision != game.snapshot_id {
         splats.revision = game.snapshot_id;
         splats.data = Arc::new(instances(&game.session.sluice));
@@ -501,7 +546,7 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
         return Vec::new();
     };
     let stride = sluice.water.len().div_ceil(MAX_SPLATS).max(1);
-    let radius = 0.012 * (stride as f32).cbrt();
+    let radius = sluice.profile.cell() * 0.6 * (stride as f32).cbrt();
     sluice
         .water
         .iter()
@@ -525,6 +570,21 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn presentation_advects_only_one_tick_and_stops_on_pause_or_restore() {
+        let mut clock = PresentationClock::default();
+        let dt = mining_sim::FIXED_DT as f64;
+        clock.sample(20.0, 0.0, false);
+        clock.sample(20.0 + dt, 0.12, false);
+        clock.sample(20.0 + dt, 0.18, false);
+        assert!((clock.prediction - mining_sim::FIXED_DT * 0.5).abs() < 1e-6);
+        clock.sample(20.0 + dt, 100.0, false);
+        assert_eq!(clock.prediction, mining_sim::FIXED_DT);
+        clock.sample(20.0 + dt, 100.0, true);
+        assert_eq!(clock.prediction, 0.0);
+        clock.sample(0.0, 100.0, false);
+        assert_eq!(clock.prediction, 0.0);
+    }
     #[test]
     fn detached_water_stays_three_dimensional_and_rendering_is_bounded() {
         use mining_sim::{

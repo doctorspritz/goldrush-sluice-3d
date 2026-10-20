@@ -5,6 +5,7 @@ struct Screen { @builtin(position) position: vec4<f32> };
 @group(0) @binding(1) var depths: texture_2d<f32>;
 @group(0) @binding(2) var scene_depth: texture_depth_2d;
 @group(0) @binding(3) var<uniform> u: Uniforms;
+@group(0) @binding(4) var raw_depths: texture_2d<f32>;
 fn depth_at(q: vec2<i32>) -> f32 { return textureLoad(depths,clamp(q,vec2(0),vec2<i32>(textureDimensions(depths))-vec2(1)),0).r; }
 // Bilateral upsampling keeps the half-resolution smoothing buffer from
 // producing two-pixel shading blocks. Empty pixels contribute only coverage.
@@ -30,6 +31,14 @@ fn view_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     let pixel = vec2<i32>(s.position.xy); let original = textureLoad(scene,pixel,0);
     let q = s.position.xy; let sample = sample_depth(q);
     let depth = sample.x; if depth <= 0. || sample.y <= 0.05 { return original; }
+    // Smoothing must not pull hidden water forward over an opaque side wall.
+    // Test original particle depth as well as the reconstructed surface.
+    let raw_pixel = clamp(vec2<i32>(q * vec2<f32>(textureDimensions(raw_depths)) / u.viewport.xy), vec2(0), vec2<i32>(textureDimensions(raw_depths))-vec2(1));
+    let raw_depth = textureLoad(raw_depths,raw_pixel,0).r;
+    if raw_depth <= 0. { return original; }
+    let opaque = textureLoad(scene_depth,pixel,0);
+    let raw_clip = u.clip_from_world * u.world_from_view * vec4(view_point(q,raw_depth),1.);
+    if raw_clip.z/raw_clip.w <= opaque + 0.000001 { return original; }
     let position = view_point(q,depth); let world = u.world_from_view * vec4(position,1.);
     let clip = u.clip_from_world * world;
     if clip.z/clip.w <= textureLoad(scene_depth,pixel,0) + 0.000001 { return original; }

@@ -4,11 +4,11 @@ A Rust mining game and a collection of fluid/granular simulation experiments.
 
 ## First Bend prototype
 
-The direct-control slice now completes a verified first shift with the original solvers. Development resumed on 20 October after the previous recovery checkpoint. Builds use one compiler job by default; the game uses one bounded simulation worker and limited Bevy task pools. The latest [flowing-demo and controls report](docs/playtests/2026-10-20-flowing-demo.md) records the new default scene and blended water. The earlier complete mining shift is recorded in [the first-shift report](docs/playtests/2026-10-20.md).
+The direct-control slice now completes a verified first shift with the original solvers. Development resumed on 20 October after the previous recovery checkpoint. Builds use one compiler job by default; the game uses one bounded simulation worker and limited Bevy task pools. The latest [original-flow restoration report](docs/playtests/2026-10-20-original-flow.md) compares the playable sluice with the standalone demo. The earlier [flowing-demo and controls report](docs/playtests/2026-10-20-flowing-demo.md) records the input fixes. The earlier complete mining shift is recorded in [the first-shift report](docs/playtests/2026-10-20.md).
 
 ## First Bend controls and loop
 
-The demo app opens beside an installed sluice with real water and finite paydirt already flowing. Its bundled shift was warmed by the original solvers for 28 simulated seconds; it still has about 0.73 m³ in the hopper. Use **Demo** to restart that view, **New shift** to begin with an untouched claim, and the visible **Help / Pause** buttons.
+The demo app opens beside an installed sluice with real water and finite paydirt already flowing. Its bundled shift was warmed by the original solvers for 28 simulated seconds; it still has about 0.78 m³ in the hopper. Use **Demo** to restart that view, **New shift** to begin with an untouched claim, and the visible **Help / Pause** buttons.
 
 For a fresh mining shift, walk to the excavator, cut finite paydirt, swing a loaded bucket over the hopper, place a sluice, wash and lift the mats. The first shift's goal is **5 grams of recovered gold**.
 
@@ -77,7 +77,7 @@ SLUICE_SAVE_PATH=/tmp/first-bend-validation-save.json ./scripts/play-mining.sh \
   --validate /tmp/first-bend-validation --benchmark-seconds 60
 ```
 
-It writes five screenshots, `operation.json` and `render-timing.json`, and restores a saved shift during processing. A failure writes `failure.txt` and returns an unsuccessful exit. The operation runs one fixed 1/60-second domain step with two FLIP substeps per worker request. If physics takes longer, the simulation slows without blocking the camera or accumulating work. The report includes frame timing during active washing, simulation speed relative to wall time, and a separate post-cleanup benchmark excluding five seconds of warmup. `--capture /tmp/site.png` captures the initial scene and exits.
+It writes five screenshots, `operation.json` and `render-timing.json`, and restores a saved shift during processing. A failure writes `failure.txt` and returns an unsuccessful exit. The operation runs one fixed 1/60-second domain step with four FLIP substeps (two for legacy saves) per worker request. If physics takes longer, the simulation slows without blocking the camera or accumulating work. The report includes frame timing during active washing, simulation speed relative to wall time, and a separate post-cleanup benchmark excluding five seconds of warmup. `--capture /tmp/site.png` captures the initial scene and exits.
 
 To inspect an existing live shift without replaying the excavation:
 
@@ -85,7 +85,7 @@ To inspect an existing live shift without replaying the excavation:
 ./scripts/play-mining.sh --load /tmp/first-bend-validation-save.json --capture /tmp/live-sluice.png
 ```
 
-The capture uses actual saved particle state, writes a timing receipt and closes its window. Sluice water renders the actual FLIP particles into a nearest-depth buffer, applies two separable bilateral smoothing iterations and shades one continuous surface. Bilateral upsampling removes the half-resolution buffer's blocky shading. Scene depth keeps the water behind equipment; detached spray remains separate. Reusable buffers cap rendering at 65,536 sampled particles while every particle stays in the original solver/save. Terrain flow continues to use the original GPU heightfield simulation.
+The capture uses actual saved particle state, writes a timing receipt and closes its window. Sluice water renders the actual FLIP particles into a nearest-depth buffer, applies two separable bilateral smoothing iterations and shades one continuous surface. Bilateral upsampling removes the half-resolution buffer's blocky shading. Scene depth keeps the water behind equipment; detached spray remains separate. Reusable buffers cap rendering at 65,536 sampled particles while every particle stays in the original solver/save. Terrain flow continues to use the original GPU heightfield simulation. New shifts restore the standalone sluice profile: 1 cm cells, a 1.5 m × 0.40 m channel with the original riffles, about 9.8° slope, four substeps, slope-derived downstream acceleration and a 12 cm free-outflow buffer. A bounded render-only prediction follows each particle velocity between worker updates; it advances at most one physics tick and stops on pause or load. Earlier saves keep their 2 cm grid, channel dimensions and particle volumes through an explicit legacy profile.
 
 To exercise the native keyboard/mouse and toolbar handlers, including cab controls and live F5/F9:
 

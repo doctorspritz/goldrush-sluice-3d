@@ -177,10 +177,11 @@ pub fn update(
                     .iter()
                     .filter(|p| {
                         let x = (p.position.x / config.cell_size) as usize;
-                        p.position.y
-                            < (config.floor_height_at(x.min(config.grid_width - 1)) + 1) as f32
-                                * config.cell_size
-                                - 0.002
+                        x < config.grid_width
+                            && p.position.y
+                                < (config.floor_height_at(x.min(config.grid_width - 1)) + 1) as f32
+                                    * config.cell_size
+                                    - 0.002
                     })
                     .count();
                 let report = serde_json::json!({"scenario":if v.load_path.is_some() { "live saved shift" } else if game.demo { "flowing demo" } else { "initial scene" },
@@ -189,6 +190,10 @@ pub fn update(
                     "water_rendering":"particle depth + bilateral surface",
                     "fluid_surface_ready":crate::water::surface_ready(&water),
                     "input_check_passed":if v.input_check { Some(v.input_complete) } else { None },
+                    "hydraulic_profile":game.session.sluice.profile,
+                    "simulation_time":game.session.sim_time,
+                    "wall_seconds":v.started.elapsed().as_secs_f64(),
+                    "water_mean_downstream_ms":game.session.sluice.water_speed(),
                     "water_particles":game.session.sluice.water.len(),
                     "sampled_splats":crate::water::visible_count(&game.session.sluice),
                     "particles_below_floor":below_floor,

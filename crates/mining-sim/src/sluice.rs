@@ -2,18 +2,66 @@ use crate::{Material, Site, Vec3};
 use glam::{Mat3, Quat};
 use serde::{Deserialize, Serialize};
 
-pub const LENGTH: f32 = 3.4;
-pub const CHANNEL_WIDTH: f32 = 0.72;
+pub const LENGTH: f32 = 1.5;
+pub const CHANNEL_WIDTH: f32 = 0.38;
 pub const HOPPER_X: f32 = 14.6;
 pub const HOPPER_Z: f32 = 17.0;
 pub const PARCEL_VOLUME: f64 = 0.002;
 pub const MAX_GRAINS: usize = 4096;
-pub const FLUID_CELL: f32 = 0.02;
+pub const FLUID_CELL: f32 = 0.01;
 pub const WATER_PARTICLE_M3: f64 = (FLUID_CELL * FLUID_CELL * FLUID_CELL / 8.0) as f64;
-// At 8 particles per 2 cm cell, 160k particles held only 0.16 m³:
-// less than a primed riffled channel. Reserve 0.4 m³ so the inlet cannot
-// throttle solely because the dry sluice has not reached its outlet yet.
-pub const MAX_WATER_PARTICLES: usize = 400_000;
+pub const MAX_WATER_PARTICLES: usize = 300_000;
+
+/// Saves without a profile are the first playable build: retain their grid,
+/// particle volumes and geometry instead of reinterpreting live water at 1 cm.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HydraulicProfile {
+    #[default]
+    Legacy,
+    OriginalDemo,
+}
+impl HydraulicProfile {
+    pub fn length(self) -> f32 {
+        match self {
+            Self::Legacy => 3.4,
+            Self::OriginalDemo => LENGTH,
+        }
+    }
+    pub fn width(self) -> f32 {
+        match self {
+            Self::Legacy => 0.72,
+            Self::OriginalDemo => CHANNEL_WIDTH,
+        }
+    }
+    pub fn cell(self) -> f32 {
+        match self {
+            Self::Legacy => 0.02,
+            Self::OriginalDemo => FLUID_CELL,
+        }
+    }
+    pub fn capacity(self) -> usize {
+        match self {
+            Self::Legacy => 400_000,
+            Self::OriginalDemo => MAX_WATER_PARTICLES,
+        }
+    }
+    pub fn particle_m3(self) -> f64 {
+        let dx = self.cell();
+        (dx * dx * dx / 8.0) as f64
+    }
+    pub fn outlet_buffer(self) -> usize {
+        match self {
+            Self::Legacy => 0,
+            Self::OriginalDemo => 12,
+        }
+    }
+    pub fn substeps(self) -> u32 {
+        match self {
+            Self::Legacy => 2,
+            Self::OriginalDemo => 4,
+        }
+    }
+}
 
 /// Original FLIP/APIC state, in the local simulation grid. Kept in the save,
 /// rather than recreated when a camera changes or a shift is restored.
@@ -39,7 +87,7 @@ impl Placement {
                 HOPPER_Z + 0.95,
             ),
             yaw: 0.0,
-            slope_deg: 6.0,
+            slope_deg: (26.0_f32 / 150.0).atan().to_degrees(),
         }
     }
     pub fn forward(self) -> Vec3 {
@@ -61,6 +109,14 @@ impl Placement {
         self.to_world(Vec3::new(LENGTH, 0.0, 0.0))
     }
     pub fn validate(self, site: &Site, machine: Vec3) -> Result<(), String> {
+        self.validate_profile(site, machine, HydraulicProfile::OriginalDemo)
+    }
+    fn validate_profile(
+        self,
+        site: &Site,
+        machine: Vec3,
+        profile: HydraulicProfile,
+    ) -> Result<(), String> {
         if !self.inlet.is_finite()
             || !self.yaw.is_finite()
             || !(3.0..=12.0).contains(&self.slope_deg)
@@ -79,8 +135,8 @@ impl Placement {
             return Err("Water hose cannot reach".into());
         }
         for i in 0..=12 {
-            let x = LENGTH * i as f32 / 12.0;
-            for z in [-CHANNEL_WIDTH * 0.5, CHANNEL_WIDTH * 0.5] {
+            let x = profile.length() * i as f32 / 12.0;
+            for z in [-profile.width() * 0.5, profile.width() * 0.5] {
                 let p = self.to_world(Vec3::new(x, 0.0, z));
                 if !Site::bounds(p, 0.7) {
                     return Err("Outside the claim".into());
@@ -122,6 +178,8 @@ pub struct Grain {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Sluice {
+    #[serde(default)]
+    pub profile: HydraulicProfile,
     pub placement: Option<Placement>,
     pub hopper: Material,
     pub grains: Vec<Grain>,
@@ -146,6 +204,7 @@ pub struct Sluice {
 impl Default for Sluice {
     fn default() -> Self {
         Self {
+            profile: HydraulicProfile::OriginalDemo,
             placement: None,
             hopper: Material::default(),
             grains: Vec::new(),
@@ -153,7 +212,7 @@ impl Default for Sluice {
             concentrate: Material::default(),
             pump_on: false,
             feed_on: false,
-            flow_m3s: 0.006,
+            flow_m3s: 0.00375,
             feed_m3s: 0.006,
             processed_m3: 0.0,
             water_used_m3: 0.0,
@@ -192,7 +251,12 @@ impl Sluice {
     /// Volume and positions come from FLIP; there is no analytic water-depth
     /// or sediment-capture model in the game layer.
     pub fn water_depth(&self) -> f32 {
-        self.water.len() as f32 * WATER_PARTICLE_M3 as f32 / (LENGTH * CHANNEL_WIDTH)
+        self.water.len() as f32 * self.profile.particle_m3() as f32
+            / (self.profile.length() * self.profile.width())
+    }
+    pub fn outlet(&self) -> Option<Vec3> {
+        self.placement
+            .map(|p| p.to_world(Vec3::new(self.profile.length(), 0.0, 0.0)))
     }
     pub fn water_speed(&self) -> f32 {
         if self.water.is_empty() {
@@ -204,10 +268,15 @@ impl Sluice {
         let slope = self
             .placement
             .map(|p| p.slope_deg)
-            .unwrap_or(6.0)
+            .unwrap_or((26.0_f32 / 150.0).atan().to_degrees())
             .to_radians()
             .tan();
-        (LENGTH * slope / FLUID_CELL).ceil() as usize + 4
+        let drop = self.profile.length() * slope / self.profile.cell();
+        let cells = match self.profile {
+            HydraulicProfile::Legacy => drop.ceil(),
+            HydraulicProfile::OriginalDemo => drop.round(),
+        };
+        cells as usize + 4
     }
     /// FLIP uses X downstream, Y vertical, Z across the channel. Placement uses
     /// a sloping reference plane, so convert once at the presentation boundary.
@@ -215,13 +284,13 @@ impl Sluice {
         let slope = self
             .placement
             .map(|p| p.slope_deg)
-            .unwrap_or(6.0)
+            .unwrap_or((26.0_f32 / 150.0).atan().to_degrees())
             .to_radians()
             .tan();
         Vec3::new(
             p.x,
-            p.y - (self.floor_cells() + 1) as f32 * FLUID_CELL + p.x * slope,
-            p.z - CHANNEL_WIDTH * 0.5 - FLUID_CELL,
+            p.y - (self.floor_cells() + 1) as f32 * self.profile.cell() + p.x * slope,
+            p.z - self.profile.width() * 0.5 - self.profile.cell(),
         )
     }
     pub fn feed(&mut self, dt: f32, water_available: bool) {
@@ -246,7 +315,7 @@ impl Sluice {
     fn emit(&mut self, m: Material) {
         self.sequence += 1;
         let z = ((self.sequence.wrapping_mul(1664525) % 1000) as f32 / 1000.0 - 0.5)
-            * CHANNEL_WIDTH
+            * self.profile.width()
             * 0.70;
         let sand = Material {
             soil_m3: m.soil_m3,
@@ -279,8 +348,8 @@ impl Sluice {
                     kind,
                     position: Vec3::new(
                         0.12,
-                        (self.floor_cells() + 1) as f32 * FLUID_CELL + 0.06,
-                        z + CHANNEL_WIDTH * 0.5 + FLUID_CELL,
+                        (self.floor_cells() + 1) as f32 * self.profile.cell() + 0.06,
+                        z + self.profile.width() * 0.5 + self.profile.cell(),
                     ),
                     velocity: Vec3::new(0.4, 0.0, 0.0),
                     material,
@@ -320,7 +389,7 @@ impl Sluice {
                 "Stop the pump, let water drain and clean the mats before moving the sluice".into(),
             );
         }
-        p.validate(site, machine)
+        p.validate_profile(site, machine, self.profile)
     }
     pub fn relocate(&mut self, p: Placement, site: &Site, machine: Vec3) -> Result<(), String> {
         self.validate_relocation(p, site, machine)?;
@@ -333,7 +402,7 @@ impl Sluice {
             && self.concentrate.valid()
             && self.hopper.volume() <= 0.85001
             && self.grains.len() <= MAX_GRAINS
-            && self.water.len() <= MAX_WATER_PARTICLES
+            && self.water.len() <= self.profile.capacity()
             && self.contacts.spheres.len() < MAX_GRAINS * 20
             && self.contacts.planes.len() < MAX_GRAINS * 20
             && self.contacts.sdf.len() < MAX_GRAINS * 20

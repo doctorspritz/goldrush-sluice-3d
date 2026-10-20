@@ -1,26 +1,25 @@
 //! The same original geometry builder supplies both collision solids and the
 //! visible sluice. Placement changes the transform, never an invisible proxy.
 use game::sluice_geometry::{SluiceConfig, SluiceGeometryBuilder};
-use mining_sim::{
-    sluice::{CHANNEL_WIDTH, FLUID_CELL, LENGTH},
-    Sluice, Vec3,
-};
+use mining_sim::{sluice::HydraulicProfile, Sluice, Vec3};
 pub fn config(s: &Sluice) -> SluiceConfig {
+    let profile = s.profile;
+    let original = profile == HydraulicProfile::OriginalDemo;
     SluiceConfig {
-        grid_width: (LENGTH / FLUID_CELL).round() as usize,
-        grid_height: s.floor_cells() + 18,
-        grid_depth: (CHANNEL_WIDTH / FLUID_CELL).round() as usize + 2,
-        cell_size: FLUID_CELL,
+        grid_width: (profile.length() / profile.cell()).round() as usize,
+        grid_height: s.floor_cells() + if original { 22 } else { 18 },
+        grid_depth: (profile.width() / profile.cell()).round() as usize + 2,
+        cell_size: profile.cell(),
         floor_height_left: s.floor_cells(),
         floor_height_right: 4,
-        riffle_spacing: 19,
-        riffle_height: 2,
+        riffle_spacing: if original { 32 } else { 19 },
+        riffle_height: if original { 3 } else { 2 },
         riffle_thickness: 2,
-        riffle_start_x: 27,
+        riffle_start_x: if original { 40 } else { 27 },
         riffle_end_pad: 12,
         wall_margin: 8,
         exit_width_fraction: 1.0,
-        exit_height: 14,
+        exit_height: if original { 12 } else { 14 },
         ..Default::default()
     }
 }
@@ -41,7 +40,9 @@ pub fn mesh(s: &Sluice) -> (Vec<[f32; 3]>, Vec<u32>) {
         // The legacy builder winds its Z faces inward. Repair those faces,
         // then account for the reflected (downstream, up, right) world basis.
         b.indices()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|t| {
                 let v = |i: u32| Vec3::from_array(b.vertices()[i as usize].position);
                 let normal = (v(t[1]) - v(t[0])).cross(v(t[2]) - v(t[0]));

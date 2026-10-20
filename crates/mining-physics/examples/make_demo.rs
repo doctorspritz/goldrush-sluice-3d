@@ -11,13 +11,13 @@ fn main() {
         assert!(s.sluice.add_to_hopper(batch).is_empty());
         s.delivered_m3 += volume;
     }
-    s.player.position = Vec3::new(16.6, s.site.height(16.6, 20.44), 20.44);
-    s.player.yaw = -1.9669;
-    s.player.pitch = -0.58;
+    s.player.position = Vec3::new(16.3, s.site.height(16.3, 20.0), 20.0);
+    s.player.yaw = -2.223643;
+    s.player.pitch = -0.40;
     s.player.third_person = false;
     s.on_action(Action::Place(Placement::suggested(&s.site)))
         .unwrap();
-    s.sluice.feed_m3s = 0.003;
+    s.sluice.feed_m3s = 0.001;
     s.on_action(Action::TogglePump).unwrap();
     s.on_action(Action::ToggleFeed).unwrap();
     let mut solver = mining_physics::Hydraulics::new().unwrap();
