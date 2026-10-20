@@ -9,10 +9,12 @@ pub(crate) const MAX_SPLATS: usize = (WIDTH - 1) * (WIDTH - 1);
 pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
     let surface = &site.world.water_surface;
     let mut height = surface.clone();
+    let mut supported = vec![false; WIDTH * WIDTH];
     let mut concentration = vec![0.; WIDTH * WIDTH];
     for z in 0..WIDTH {
         for x in 0..WIDTH {
             let i = z * WIDTH + x;
+            supported[i] = site.world.water_depth(x, z) >= 0.001;
             // These channels already contain volume concentration, not sediment depth.
             concentration[i] = [
                 &site.hydraulic.suspended_sediment,
@@ -45,8 +47,37 @@ pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
                 }
                 if weight > 0. {
                     height[i] = sum / weight;
+                    supported[i] = true;
                 }
             }
+        }
+    }
+    let mut slopes_x = vec![0.; WIDTH * WIDTH];
+    let mut slopes_z = vec![0.; WIDTH * WIDTH];
+    for z in 0..WIDTH {
+        for x in 0..WIDTH {
+            let lo = x.saturating_sub(1);
+            let hi = (x + 1).min(WIDTH - 1);
+            slopes_x[z * WIDTH + x] = (if supported[z * WIDTH + hi] {
+                height[z * WIDTH + hi]
+            } else {
+                height[z * WIDTH + x]
+            } - if supported[z * WIDTH + lo] {
+                height[z * WIDTH + lo]
+            } else {
+                height[z * WIDTH + x]
+            }) / ((hi - lo) as f32 * CELL);
+            let lo = z.saturating_sub(1);
+            let hi = (z + 1).min(WIDTH - 1);
+            slopes_z[z * WIDTH + x] = (if supported[hi * WIDTH + x] {
+                height[hi * WIDTH + x]
+            } else {
+                height[z * WIDTH + x]
+            } - if supported[lo * WIDTH + x] {
+                height[lo * WIDTH + x]
+            } else {
+                height[z * WIDTH + x]
+            }) / ((hi - lo) as f32 * CELL);
         }
     }
     let mut result = Vec::new();
@@ -88,6 +119,8 @@ pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
                 axis_x: h,
                 axis_y: depth,
                 axis_z: ids.map(|i| concentration[i]),
+                slope_x: ids.map(|i| slopes_x[i]),
+                slope_z: ids.map(|i| slopes_z[i]),
             });
         }
     }
@@ -119,6 +152,8 @@ mod tests {
             if let Some(next) = lookup.get(&(x + 1, z)) {
                 assert_eq!(p.axis_x[1], next.axis_x[0]);
                 assert_eq!(p.axis_x[3], next.axis_x[2]);
+                assert_eq!(p.slope_x[1], next.slope_x[0]);
+                assert_eq!(p.slope_z[3], next.slope_z[2]);
             }
         }
         let b = instances(&site, 1000.);

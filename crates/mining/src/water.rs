@@ -109,6 +109,8 @@ pub(crate) struct InstanceData {
     pub axis_x: [f32; 4],
     pub axis_y: [f32; 4],
     pub axis_z: [f32; 4],
+    pub slope_x: [f32; 4],
+    pub slope_z: [f32; 4],
 }
 
 pub struct WaterSplatPlugin;
@@ -161,6 +163,7 @@ struct FluidTargets {
     pong: TextureView,
     depth: TextureView,
     thickness: TextureView,
+    normals: TextureView,
     uniform: UniformBuffer<FluidUniforms>,
 }
 #[derive(Resource)]
@@ -218,6 +221,7 @@ fn init_pipelines(
                 uniform_buffer::<FluidUniforms>(false),
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         ),
     );
@@ -238,26 +242,36 @@ fn init_pipelines(
             fragment: Some(FragmentState {
                 shader,
                 entry_point: Some(fragment.into()),
-                targets: vec![Some(ColorTargetState {
-                    format,
-                    blend: if fragment == "particle_thickness" {
-                        Some(BlendState {
-                            color: BlendComponent {
-                                src_factor: BlendFactor::One,
-                                dst_factor: BlendFactor::One,
-                                operation: BlendOperation::Add,
-                            },
-                            alpha: BlendComponent {
-                                src_factor: BlendFactor::One,
-                                dst_factor: BlendFactor::One,
-                                operation: BlendOperation::Add,
-                            },
-                        })
-                    } else {
-                        None
-                    },
-                    write_mask: ColorWrites::ALL,
-                })],
+                targets: {
+                    let mut targets = vec![Some(ColorTargetState {
+                        format,
+                        blend: if fragment == "particle_thickness" {
+                            Some(BlendState {
+                                color: BlendComponent {
+                                    src_factor: BlendFactor::One,
+                                    dst_factor: BlendFactor::One,
+                                    operation: BlendOperation::Add,
+                                },
+                                alpha: BlendComponent {
+                                    src_factor: BlendFactor::One,
+                                    dst_factor: BlendFactor::One,
+                                    operation: BlendOperation::Add,
+                                },
+                            })
+                        } else {
+                            None
+                        },
+                        write_mask: ColorWrites::ALL,
+                    })];
+                    if fragment == "particle_depth" {
+                        targets.push(Some(ColorTargetState {
+                            format: TextureFormat::Rgba16Float,
+                            blend: None,
+                            write_mask: ColorWrites::ALL,
+                        }));
+                    }
+                    targets
+                },
                 ..default()
             }),
             depth_stencil: depth,
@@ -439,6 +453,7 @@ fn prepare_views(
             pong: texture("fluid blur pong", TextureFormat::R32Float),
             depth: texture("fluid depth test", TextureFormat::Depth32Float),
             thickness: texture("fluid optical thickness", TextureFormat::R16Float),
+            normals: texture("continuous water normals", TextureFormat::Rgba16Float),
             uniform,
         });
     }
@@ -522,6 +537,7 @@ impl ViewNode for FluidNode {
                 uniform,
                 &target.raw,
                 &target.thickness,
+                &target.normals,
             )),
         );
         let color = |view| {
@@ -540,7 +556,7 @@ impl ViewNode for FluidNode {
                 .command_encoder()
                 .begin_render_pass(&RenderPassDescriptor {
                     label: Some("fluid particle depth"),
-                    color_attachments: &[color(&target.raw)],
+                    color_attachments: &[color(&target.raw), color(&target.normals)],
                     depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
                         view: &target.depth,
                         depth_ops: Some(Operations {
@@ -712,7 +728,7 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
         .zip(kernels)
         .map(|((_p, v, kind), kernel)| {
             let c = kernel.center;
-            let axis = |v: Vec3| [v.x, v.y, v.z, 0.];
+            let axis = |v: Vec3, normal: f32| [v.x, v.y, v.z, normal];
             InstanceData {
                 center_radius: [c.x, c.y, c.z, radius],
                 velocity: [v.x, v.y, v.z, 0.],
@@ -726,11 +742,13 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
                             * kernel.axes[2].length() as f64)) as f32,
                     0.,
                     kind,
-                    0.,
+                    if kind == 0. { kernel.planarity } else { 0. },
                 ],
-                axis_x: axis(kernel.axes[0]),
-                axis_y: axis(kernel.axes[1]),
-                axis_z: axis(kernel.axes[2]),
+                axis_x: axis(kernel.axes[0], kernel.normal.x),
+                axis_y: axis(kernel.axes[1], kernel.normal.y),
+                axis_z: axis(kernel.axes[2], kernel.normal.z),
+                slope_x: [0.; 4],
+                slope_z: [0.; 4],
             }
         })
         .collect()
@@ -764,6 +782,22 @@ mod tests {
         assert_eq!(clock.prediction, 0.0);
         clock.sample(0.0, 100.0, false);
         assert_eq!(clock.prediction, 0.0);
+    }
+    #[test]
+    fn accepted_outlet_uses_no_surface_normal_override() {
+        let mut session = mining_sim::Session::new();
+        session.sluice.placement = Some(mining_sim::Placement::suggested(&session.site));
+        session.sluice.outflow = vec![
+            mining_sim::outflow::OutflowParticle {
+                position: mining_sim::Vec3::new(14., 1., 20.),
+                velocity: mining_sim::Vec3::Z
+            };
+            50
+        ];
+        let before = session.sluice.accounted_water_m3();
+        let data = instances(&session.sluice);
+        assert!(data.iter().all(|p| p.shape[2] == 2. && p.shape[3] == 0.));
+        assert_eq!(before, session.sluice.accounted_water_m3());
     }
     #[test]
     fn detached_water_stays_three_dimensional_and_rendering_is_bounded() {

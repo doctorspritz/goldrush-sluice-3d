@@ -7,6 +7,7 @@ struct Screen { @builtin(position) position: vec4<f32> };
 @group(0) @binding(3) var<uniform> u: Uniforms;
 @group(0) @binding(4) var raw_depths: texture_2d<f32>;
 @group(0) @binding(5) var fluid_thickness:texture_2d<f32>;
+@group(0) @binding(6) var surface_normals:texture_2d<f32>;
 fn depth_at(q: vec2<i32>) -> f32 { return textureLoad(depths,clamp(q,vec2(0),vec2<i32>(textureDimensions(depths))-vec2(1)),0).r; }
 // Bilateral upsampling keeps the half-resolution smoothing buffer from
 // producing two-pixel shading blocks. Empty pixels contribute only coverage.
@@ -23,16 +24,49 @@ fn sample_depth(pixel: vec2<f32>) -> vec2<f32> {
     }
     return vec2(total/max(weight,0.0001),weight);
 }
+// Reconstruction normals are independent of triangle/splat silhouettes. Keep
+// depth jumps and different water domains separate during local filtering.
+fn reconstructed_normal(pixel:vec2<i32>,depth:f32,river:bool)->vec4<f32> {
+    var sum=vec3(0.);var weight=0.;var confidence=0.;
+    let size=vec2<i32>(textureDimensions(surface_normals));
+    for(var y=-1;y<=1;y++){for(var x=-1;x<=1;x++){
+        let q=clamp(pixel+vec2(x,y),vec2(0),size-vec2(1));
+        let raw=textureLoad(raw_depths,q,0);let normal=textureLoad(surface_normals,q,0);
+        if raw.r<=0. || (raw.g>=1.)!=river || normal.w<=0. {continue;}
+        let delta=(raw.r-depth)/0.035;
+        let w=exp(-f32(x*x+y*y)*0.5-delta*delta);
+        sum+=normal.xyz*w;confidence+=normal.w*w;weight+=w;
+    }}
+    if weight<=0.0001 || length(sum)<0.0001 {return vec4(0.);}
+    return vec4(normalize(sum),confidence/weight);
+}
 fn view_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     let uv = pixel/u.viewport.xy;
     let ray = u.view_from_clip * vec4(uv.x*2.-1.,1.-uv.y*2.,1.,1.);
     return ray.xyz * (depth / max(-ray.z,0.0001));
 }
-fn ripple_gradient(q:vec2<f32>)->vec2<f32> {
-    // Analytic multi-scale optical ripples, without geometric sine-wave lumps.
-    return vec2(0.8,0.6)*cos(dot(q,vec2(27.,20.)))
-        +vec2(-0.4,0.9)*cos(dot(q,vec2(-63.,142.)))*0.36
-        +vec2(0.9,-0.3)*cos(dot(q,vec2(194.,-65.)))*0.12;
+fn ripple_gradient(q:vec2<f32>,footprint:f32)->vec2<f32> {
+    // Gaussian band filtering prevents narrow highlights from aliasing at a
+    // grazing angle. Frequency is optical detail, never extra water volume.
+    return vec2(0.8,0.6)*cos(dot(q,vec2(27.,20.)))*exp(-0.5*1130.*footprint*footprint)
+        +vec2(-0.4,0.9)*cos(dot(q,vec2(-63.,142.)))*0.36*exp(-0.5*24133.*footprint*footprint)
+        +vec2(0.9,-0.3)*cos(dot(q,vec2(194.,-65.)))*0.12*exp(-0.5*41861.*footprint*footprint);
+}
+fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,original:vec3<f32>)->vec3<f32> {
+    let position=view_point(pixel,depth);
+    let normal_view=normalize((u.view_from_world*vec4(normal,0.)).xyz);
+    let transmitted=refract(normalize(position),normal_view,1./1.333);
+    let under=position+transmitted*(thickness/max(-transmitted.z,0.05));
+    let projected=u.clip_from_world*u.world_from_view*vec4(under,1.);
+    let uv=vec2(projected.x/projected.w*0.5+0.5,0.5-projected.y/projected.w*0.5);
+    let offset=clamp(uv*u.viewport.xy-pixel,vec2(-10.),vec2(10.));
+    let q=clamp(vec2<i32>(pixel+offset),vec2(0),vec2<i32>(u.viewport.xy)-vec2(1));
+    let z=textureLoad(scene_depth,q,0);
+    let xy=vec2((f32(q.x)+0.5)/u.viewport.x*2.-1.,1.-(f32(q.y)+0.5)/u.viewport.y*2.);
+    let p=u.view_from_clip*vec4(xy,z,1.);
+    // Refraction cannot pull an opaque side wall/player in front of the water.
+    if z>0. && -p.z/p.w>depth+0.001 {return textureLoad(scene,q,0).rgb;}
+    return original;
 }
 @fragment fn compose(s: Screen) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(s.position.xy); let original = textureLoad(scene,pixel,0);
@@ -59,23 +93,34 @@ fn ripple_gradient(q:vec2<f32>)->vec2<f32> {
     var normal = normalize((u.world_from_view * vec4(n,0.)).xyz);
     let optical_sample=textureLoad(raw_depths,raw_pixel,0);
     let river=optical_sample.g>=1.;
+    let in_channel=optical_sample.g< -0.5;
+    if river || in_channel {
+        let surface=reconstructed_normal(raw_pixel,raw_depth,river);
+        if surface.w>0. {
+            var surface_normal=surface.xyz;if dot(surface_normal,u.world_from_view[3].xyz-world.xyz)<0. {surface_normal = -surface_normal;}
+            normal=normalize(mix(normal,surface_normal,select(surface.w*0.85,1.,river)));
+        }
+    }
     let flow=optical_sample.ba;
     // Dual-phase advection blends at resets, so a varying flow field cannot
     // stretch the normal detail indefinitely. Simulation time also freezes it.
-    if river {
+    let eye_world=normalize(u.world_from_view[3].xyz-world.xyz);
+    let pixel_size=depth*2.*abs(u.view_from_clip[1].y)/u.viewport.y;
+    let footprint=pixel_size/max(abs(dot(normal,eye_world)),0.12);
+    if river || (in_channel && textureLoad(surface_normals,raw_pixel,0).w>0.3) {
         let phase0=fract(u.sediment.z*0.5);let phase1=fract(u.sediment.z*0.5+0.5);
         let weight0=1.-abs(phase0*2.-1.);
         let q0=world.xz-flow*(phase0*2.);let q1=world.xz-flow*(phase1*2.);
-        let gradient=mix(ripple_gradient(q1),ripple_gradient(q0),weight0);
-        normal=normalize(normal+vec3(gradient.x,0.,gradient.y)*0.055);
+        let gradient=mix(ripple_gradient(q1,footprint),ripple_gradient(q0,footprint),weight0);
+        normal=normalize(normal+vec3(gradient.x,0.,gradient.y)*select(0.035,0.055,river));
     }
-    let eye_world=normalize(u.world_from_view[3].xyz-world.xyz);
     let fresnel=0.02+0.98*pow(1.-clamp(dot(normal,eye_world),0.,1.),5.);
     let light=normalize(vec3(0.35,0.85,0.3));
     let half_vector=normalize(light+eye_world);
     let specular=pow(max(dot(normal,half_vector),0.),96.)*0.32;
     let reflection=reflect(-eye_world,normal);
     let sky=mix(vec3(0.19,0.25,0.24),vec3(0.48,0.66,0.76),smoothstep(-0.1,0.65,reflection.y));
+
     let opaque_view = u.view_from_clip * vec4(q.x/u.viewport.x*2.-1.,1.-q.y/u.viewport.y*2.,opaque,1.);
     var thickness = 0.04;
     if opaque>0. && abs(opaque_view.w)>0.00001 { thickness=clamp(-opaque_view.z/opaque_view.w-depth,0.,0.5); }
@@ -85,7 +130,9 @@ fn ripple_gradient(q:vec2<f32>)->vec2<f32> {
     let extinction=vec3(0.8,0.24,0.12)+vec3(45.,80.,120.)*concentration*30.;
     let transmission=exp(-extinction*thickness);
     let scattering=mix(vec3(0.035,0.18,0.18),vec3(0.22,0.13,0.055),clamp(concentration*20.,0.,1.));
-    let body=original.rgb*transmission+scattering*(vec3(1.)-transmission);
+    var background=original.rgb;
+    if river || in_channel {background=refracted_scene(q,normal,depth,thickness,background);}
+    let body=background*transmission+scattering*(vec3(1.)-transmission);
     let shore=smoothstep(0.,0.025,thickness);
     let coverage=clamp(sample.y,0.,1.)*select(1.,shore,river);
     return vec4(mix(original.rgb,mix(body,sky,fresnel)+vec3(specular),coverage),original.a);

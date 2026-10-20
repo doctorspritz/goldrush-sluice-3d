@@ -25,6 +25,8 @@ fn outer(p: Vec3) -> Mat3 {
 pub(crate) struct Kernel {
     pub axes: [Vec3; 3],
     pub center: Vec3,
+    pub normal: Vec3,
+    pub planarity: f32,
 }
 pub(crate) fn kernels(points: &[Vec3], cell: f32) -> Vec<Kernel> {
     let width = cell * 2.;
@@ -76,11 +78,22 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32) -> Vec<Kernel> {
                     return Kernel {
                         axes: [Vec3::X, Vec3::Y, Vec3::Z],
                         center: p,
+                        normal: Vec3::Y,
+                        planarity: 0.,
                     };
                 }
                 let mean = total.sum / total.count;
                 let covariance = total.square / total.count - outer(mean);
                 let (basis, variance) = eigen(covariance);
+                let values = variance.to_array();
+                let mut sorted = [0usize, 1, 2];
+                sorted.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
+                let mut normal = basis.col(sorted[0]);
+                if normal.y < 0. {
+                    normal = -normal;
+                }
+                let planarity =
+                    (1. - values[sorted[0]].max(0.) / values[sorted[1]].max(1e-10)).clamp(0., 1.);
                 let floor = variance.max_element().max(1e-10) * 0.16;
                 let positive = variance.max(Vec3::splat(floor));
                 let scale = Vec3::new(positive.x.sqrt(), positive.y.sqrt(), positive.z.sqrt());
@@ -93,10 +106,14 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32) -> Vec<Kernel> {
                         basis.z_axis * ratio.z,
                     ],
                     center: origin + mean,
+                    normal,
+                    planarity,
                 }
             });
             Kernel {
                 axes: kernel.axes,
+                normal: kernel.normal,
+                planarity: kernel.planarity,
                 center: p + (kernel.center - p).clamp_length_max(cell * 0.2) * 0.35,
             }
         })
@@ -179,6 +196,7 @@ mod tests {
         let k = data[data.len() / 2];
         let vertical = k.axes.iter().map(|v| v.y * v.y).sum::<f32>().sqrt();
         let horizontal = k.axes.iter().map(|v| v.x * v.x).sum::<f32>().sqrt();
+        assert!(k.normal.dot(Vec3::Y) > 0.99 && k.planarity > 0.99);
         assert!(vertical < horizontal * 0.6, "{vertical} / {horizontal}");
         assert!(data
             .iter()
