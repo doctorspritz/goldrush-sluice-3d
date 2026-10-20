@@ -26,14 +26,18 @@ pub struct Work {
     pub commands: Vec<Command>,
     pub look_delta: [f32; 2],
     pub advance: bool,
+    /// At most two unchanged fixed steps, sharing one snapshot publication.
+    pub ticks: u8,
     pub replay: bool,
 }
 
 pub struct Snapshot {
+    pub generation: u64,
     pub sequence: u64,
     pub session: Box<Session>,
     pub replay: Option<OperatorReplay>,
     pub step_ms: f64,
+    pub phases_ms: [f64; 5],
     pub failure: Option<String>,
 }
 
@@ -45,6 +49,20 @@ pub struct Worker {
     ready: bool,
 }
 
+fn configure_worker_thread() {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn pthread_set_qos_class_self_np(class: u32, relative_priority: i32) -> i32;
+        }
+        // Normal macOS user-initiated QoS, scoped to this one worker. This is
+        // not a real-time scheduler policy and changes no system configuration.
+        let status = unsafe { pthread_set_qos_class_self_np(0x19, 0) };
+        if status != 0 {
+            eprintln!("Simulation worker QoS could not be set: {status}");
+        }
+    }
+}
 impl Worker {
     pub fn new() -> Result<Self, String> {
         Self::with_session(Session::new())
@@ -57,13 +75,15 @@ impl Worker {
         mut session: Session,
     ) -> Result<Self, String> {
         let (tx, requests) = mpsc::sync_channel::<Work>(2);
-        let (replies, rx) = mpsc::sync_channel(1);
+        let (replies, rx) = mpsc::sync_channel(2);
         let handle = thread::Builder::new()
             .name("sluice-simulation".into())
             .spawn(move || {
+                configure_worker_thread();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut solver = create()?;
                     let mut replay = None;
+                    let mut generation = 0;
                     if replies
                         .send(Ok(snapshot(0, &session, &replay, 0.0, None)))
                         .is_err()
@@ -72,37 +92,49 @@ impl Worker {
                     }
                     while let Ok(work) = requests.recv() {
                         let started = Instant::now();
-                        apply(&mut session, &mut solver, work.commands);
+                        if apply(&mut session, &mut solver, work.commands) {
+                            generation += 1;
+                        }
                         session.player.yaw += work.look_delta[0];
                         session.player.pitch =
                             (session.player.pitch + work.look_delta[1]).clamp(-1.30, 1.10);
                         let mut failure = None;
-                        if work.advance && !session.paused {
-                            let controls = if work.replay {
-                                replay
-                                    .get_or_insert_with(OperatorReplay::default)
-                                    .controls(&mut session)
-                            } else {
-                                work.controls
-                            };
-                            session.step(controls);
-                            if let Err(e) = solver.step(&mut session) {
-                                session.message =
-                                    format!("Simulation stopped: {e}. Save your shift with F5.");
-                                session.paused = true;
-                                failure = Some(e);
-                            }
-                            if let Some(e) = replay.as_ref().and_then(|r| r.error.clone()) {
-                                failure = Some(e);
+                        let mut phases = [0.; 5];
+                        for _ in 0..work.ticks.clamp(1, 2) {
+                            if work.advance && !session.paused {
+                                let controls = if work.replay {
+                                    replay
+                                        .get_or_insert_with(OperatorReplay::default)
+                                        .controls(&mut session)
+                                } else {
+                                    work.controls
+                                };
+                                session.step(controls);
+                                if let Err(e) = solver.step(&mut session) {
+                                    session.message = format!(
+                                        "Simulation stopped: {e}. Save your shift with F5."
+                                    );
+                                    session.paused = true;
+                                    failure = Some(e);
+                                }
+                                for (sum, p) in phases.iter_mut().zip(solver.timings()) {
+                                    *sum += p;
+                                }
+                                if let Some(e) = replay.as_ref().and_then(|r| r.error.clone()) {
+                                    failure = Some(e);
+                                }
                             }
                         }
-                        let frame = snapshot(
+                        let mut frame = snapshot(
                             work.sequence,
                             &session,
                             &replay,
                             started.elapsed().as_secs_f64() * 1000.0,
                             failure,
                         );
+                        frame.generation = generation;
+                        frame.phases_ms = phases;
+                        frame.step_ms = started.elapsed().as_secs_f64() * 1000.0;
                         if replies.send(Ok(frame)).is_err() {
                             break;
                         }
@@ -170,10 +202,23 @@ impl Drop for Worker {
     }
 }
 trait Solver {
+    fn timings(&self) -> [f64; 5] {
+        [0.; 5]
+    }
     fn step(&mut self, session: &mut Session) -> Result<(), String>;
     fn restore(&mut self);
 }
 impl Solver for Hydraulics {
+    fn timings(&self) -> [f64; 5] {
+        let t = self.timings;
+        [
+            t.prepare_ms,
+            t.fluid_ms,
+            t.dem_ms,
+            t.finish_ms,
+            t.terrain_ms,
+        ]
+    }
     fn step(&mut self, session: &mut Session) -> Result<(), String> {
         Hydraulics::step(self, session)
     }
@@ -189,14 +234,17 @@ fn snapshot(
     failure: Option<String>,
 ) -> Snapshot {
     Snapshot {
+        generation: 0,
         sequence,
         session: Box::new(session.clone()),
         replay: replay.clone(),
         step_ms,
+        phases_ms: [0.; 5],
         failure,
     }
 }
-fn apply(session: &mut Session, solver: &mut impl Solver, commands: Vec<Command>) {
+fn apply(session: &mut Session, solver: &mut impl Solver, commands: Vec<Command>) -> bool {
+    let mut restored_state = false;
     for command in commands {
         match command {
             Command::Action(action) => {
@@ -206,6 +254,7 @@ fn apply(session: &mut Session, solver: &mut impl Solver, commands: Vec<Command>
                 replacement.site.revision = session.site.revision + 1;
                 *session = *replacement;
                 solver.restore();
+                restored_state = true;
             }
             Command::Pause(paused) => session.paused = paused,
             Command::Water(delta) if session.near_plant() => {
@@ -226,11 +275,13 @@ fn apply(session: &mut Session, solver: &mut impl Solver, commands: Vec<Command>
                     restored.site.revision = session.site.revision + 1;
                     *session = restored;
                     solver.restore();
+                    restored_state = true;
                 }
                 Err(e) => session.message = format!("Load failed: {e}"),
             },
         }
     }
+    restored_state
 }
 
 #[cfg(test)]
@@ -254,6 +305,29 @@ mod tests {
             assert!(Instant::now() < deadline);
             thread::sleep(Duration::from_millis(1));
         }
+    }
+    #[test]
+    fn two_tick_packets_preserve_fixed_steps_and_apply_actions_once() {
+        let session = Session::new();
+        let yaw = session.machine.heading + session.machine.swing;
+        let mut worker = Worker::spawn(|| Ok(SlowSolver), session).unwrap();
+        receive(&mut worker);
+        worker
+            .submit(Work {
+                advance: true,
+                ticks: 2,
+                look_delta: [0.3, 0.],
+                commands: vec![Command::Action(Action::EnterExit)],
+                ..Default::default()
+            })
+            .unwrap();
+        let frame = receive(&mut worker);
+        assert!((frame.session.sim_time - 2. * mining_sim::FIXED_DT as f64).abs() < 1e-9);
+        assert_eq!(
+            frame.session.player.mode,
+            mining_sim::ControlMode::Excavator
+        );
+        assert!((frame.session.player.yaw - yaw - 0.3).abs() < 1e-6);
     }
     #[test]
     fn slow_steps_are_bounded_and_pause_save_load_are_ordered() {
@@ -308,6 +382,11 @@ mod tests {
             .unwrap();
         let restored = receive(&mut worker);
         assert_eq!(restored.session.sim_time, frame.session.sim_time);
+        assert_eq!(paused.generation, 0);
+        assert_eq!(
+            restored.generation, 1,
+            "paused restore must invalidate render caches"
+        );
         assert_eq!(
             restored.session.machine.arm().lip,
             frame.session.machine.arm().lip

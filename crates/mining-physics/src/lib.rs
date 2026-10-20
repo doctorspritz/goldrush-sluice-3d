@@ -24,12 +24,15 @@ pub struct StepTimings {
     pub fluid_ms: f64,
     pub prepare_ms: f64,
     pub dem_ms: f64,
+    pub dem_sdf_ms: f64,
+    pub dem_pairs_ms: f64,
     pub finish_ms: f64,
     pub terrain_ms: f64,
 }
 
 pub struct Hydraulics {
     pub timings: StepTimings,
+    pub gpu_stages: std::collections::BTreeMap<String, f64>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     terrain: GpuHeightfield,
@@ -90,6 +93,7 @@ impl Hydraulics {
         println!("PHYSICS: original FLIP/APIC + CPU DEM + GPU SWE/erosion/transport/collapse on {adapter_name}");
         Ok(Self {
             timings: StepTimings::default(),
+            gpu_stages: std::collections::BTreeMap::new(),
             device,
             queue,
             terrain,
@@ -113,6 +117,7 @@ impl Hydraulics {
             self.terrain_loaded = true;
         }
         self.timings = StepTimings::default();
+        self.gpu_stages.clear();
         let interval = if s.sluice.granular_packets {
             FIXED_DT * 2.0
         } else {
@@ -443,6 +448,11 @@ impl Hydraulics {
         for substep in 0..substeps {
             let fluid_started = std::time::Instant::now();
             let dt = fluid_dt / substeps as f32;
+            let first = if substep + 1 == substeps { 0 } else { nw };
+            let count = pos.len() - first;
+            if count > 0 && !l.flip.prepare_particle_readback(first, count) {
+                return Err("Original FLIP readback queue is full".into());
+            }
             if substep == 0 {
                 l.flip.step_no_readback(
                     &self.device,
@@ -480,25 +490,36 @@ impl Hydraulics {
                     80,
                 );
             }
-            let first = if substep + 1 == substeps { 0 } else { nw };
-            let count = pos.len() - first;
             if count > 0 {
-                if !l
-                    .flip
-                    .request_particle_range(&self.device, &self.queue, first, count)
-                {
-                    return Err("Original FLIP readback queue is full".into());
+                // Metal's blocking fence wait sleeps in 1ms increments. Poll at
+                // a short sleeping interval on this sole worker, without spinning
+                // or changing the required fluid/contact dependency.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                loop {
+                    if l.flip.try_readback(
+                        &self.device,
+                        &mut pos[first..],
+                        &mut vel[first..],
+                        &mut affine[first..],
+                    ) == Some(count)
+                    {
+                        break;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Err("Original FLIP range readback timed out".into());
+                    }
+                    std::thread::sleep(std::time::Duration::from_micros(100));
                 }
-                self.device.poll(wgpu::Maintain::Wait);
-                if l.flip.try_readback(
-                    &self.device,
-                    &mut pos[first..],
-                    &mut vel[first..],
-                    &mut affine[first..],
-                ) != Some(count)
-                {
-                    return Err("Original FLIP range readback failed".into());
-                }
+            }
+            for (stage, ms) in l.flip.stage_timings() {
+                *self
+                    .gpu_stages
+                    .entry(format!("{stage} encoding"))
+                    .or_default() += ms[0];
+                *self
+                    .gpu_stages
+                    .entry(format!("{stage} submit_wait"))
+                    .or_default() += ms[1];
             }
             self.timings.fluid_ms += fluid_started.elapsed().as_secs_f64() * 1000.0;
             let dem_started = std::time::Instant::now();
@@ -516,6 +537,8 @@ impl Hydraulics {
             };
             // Advection and gravity already happened in FLIP. Apply contacts only.
             l.dem.collision_response_with_wetness(dt, &sdf, &wetness);
+            self.timings.dem_sdf_ms += l.dem.contact_stage_ms[0];
+            self.timings.dem_pairs_ms += l.dem.contact_stage_ms[1];
             for (i, c) in l.dem.clumps.iter().enumerate() {
                 pos[nw + i] = c.position;
                 vel[nw + i] = c.velocity;

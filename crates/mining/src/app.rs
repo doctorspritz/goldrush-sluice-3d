@@ -9,6 +9,14 @@ use mining_sim::{
 };
 use std::path::PathBuf;
 
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct FluidRevision {
+    generation: u64,
+    solver_steps: u64,
+    cleanups: u32,
+    placement: Option<(SimVec3, f32, f32)>,
+}
+
 #[derive(Resource)]
 pub struct Game {
     pub session: Session,
@@ -21,6 +29,7 @@ pub struct Game {
     pub pending: Vec<Command>,
     pub look_delta: [f32; 2],
     pub snapshot_id: u64,
+    pub simulation_generation: u64,
     pub step_ms: f64,
     pub placement_error: Option<String>,
 }
@@ -37,12 +46,22 @@ impl Default for Game {
             pending: Vec::new(),
             look_delta: [0.0; 2],
             snapshot_id: 0,
+            simulation_generation: 0,
             step_ms: 0.0,
             placement_error: None,
         }
     }
 }
 impl Game {
+    pub(crate) fn fluid_revision(&self) -> FluidRevision {
+        let s = &self.session.sluice;
+        FluidRevision {
+            generation: self.simulation_generation,
+            solver_steps: s.solver_steps,
+            cleanups: s.cleanups,
+            placement: s.placement.map(|p| (p.inlet, p.yaw, p.slope_deg)),
+        }
+    }
     pub fn restart(&mut self, demo: bool) {
         self.stop_controls();
         self.pending.clear();

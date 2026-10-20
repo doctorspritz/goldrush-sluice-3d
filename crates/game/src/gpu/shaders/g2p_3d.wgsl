@@ -104,7 +104,7 @@ fn cell_index(i: i32, j: i32, k: i32) -> u32 {
     return u32(k) * params.width * params.height + u32(j) * params.width + u32(i);
 }
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(128)
 fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= params.particle_count) {
         return;
@@ -344,7 +344,14 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
             let d = abs(diameter); let relative = max(density-1.,0.);
             let terminal = relative * sediment_params.gravity * d*d /
                 (18e-6 + sqrt(0.75 * relative * sediment_params.gravity * d*d*d));
-            drag_rate = submerged_gravity / max(terminal,0.00001);
+            if submerged_gravity > 0.0 {
+                // Keep the normal-gravity reference calculation bit for bit.
+                drag_rate = submerged_gravity / max(terminal,0.00001);
+            } else {
+                // The zero-gravity viscous limit avoids an undefined 0/0 in
+                // the equilibrium velocity used by transfer regressions.
+                drag_rate = 18e-6 / max(density*d*d,1e-12);
+            }
         }
         let equilibrium = water_velocity - vec3<f32>(0.0, submerged_gravity / drag_rate, 0.0);
         final_velocity = mix(old_particle_vel, equilibrium, 1.0 - exp(-drag_rate * params.dt));

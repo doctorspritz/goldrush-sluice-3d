@@ -146,6 +146,7 @@ impl GpuG2p3D {
         water_grid_u_buffer: &wgpu::Buffer,
         water_grid_v_buffer: &wgpu::Buffer,
         water_grid_w_buffer: &wgpu::Buffer,
+        water_offsets: [u64; 3],
     ) -> Self {
         let particle_metadata_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Grain density and diameter metadata"),
@@ -467,15 +468,15 @@ impl GpuG2p3D {
                 },
                 wgpu::BindGroupEntry {
                     binding: 15,
-                    resource: water_grid_u_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding{buffer:water_grid_u_buffer,offset:water_offsets[0],size:std::num::NonZeroU64::new(((width+1)*height*depth) as u64*4)}),
                 },
                 wgpu::BindGroupEntry {
                     binding: 16,
-                    resource: water_grid_v_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding{buffer:water_grid_v_buffer,offset:water_offsets[1],size:std::num::NonZeroU64::new((width*(height+1)*depth) as u64*4)}),
                 },
                 wgpu::BindGroupEntry {
                     binding: 17,
-                    resource: water_grid_w_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding{buffer:water_grid_w_buffer,offset:water_offsets[2],size:std::num::NonZeroU64::new((width*height*(depth+1)) as u64*4)}),
                 },
             ],
         });
@@ -516,7 +517,7 @@ impl GpuG2p3D {
             g2p_pipeline,
             bind_group,
             max_particles,
-            workgroup_size: 256,
+            workgroup_size: 128,
         }
     }
 

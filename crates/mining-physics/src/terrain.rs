@@ -99,10 +99,24 @@ impl Hydraulics {
         staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        self.device.poll(wgpu::Maintain::Wait);
-        rx.recv()
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            self.device.poll(wgpu::Maintain::Poll);
+            match rx.try_recv() {
+                Ok(result) => {
+                    result.map_err(|e| e.to_string())?;
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    return Err("Terrain readback disconnected".into())
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("Terrain readback timed out".into());
+            }
+            std::thread::sleep(std::time::Duration::from_micros(100));
+        }
         let mapped = staging.slice(..).get_mapped_range();
         let mut arrays: Vec<Vec<f32>> = mapped
             .chunks(bytes as usize)

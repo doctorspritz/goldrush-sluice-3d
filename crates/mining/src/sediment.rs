@@ -96,9 +96,10 @@ pub fn sync(
     palette: Res<crate::scene::Palette>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut handles: Local<Option<[Handle<Mesh>; 3]>>,
-    mut revision: Local<u64>,
+    mut revision: Local<Option<crate::app::FluidRevision>>,
 ) {
-    if handles.is_some() && *revision == game.snapshot_id {
+    let key = game.fluid_revision();
+    if handles.is_some() && *revision == Some(key) {
         return;
     }
     if handles.is_none() {
@@ -122,7 +123,7 @@ pub fn sync(
         });
         *handles = Some(created);
     }
-    *revision = game.snapshot_id;
+    *revision = Some(key);
     for (handle, data) in handles
         .as_ref()
         .unwrap()

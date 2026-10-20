@@ -58,7 +58,8 @@ fn view_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     let opaque_view = u.view_from_clip * vec4(q.x/u.viewport.x*2.-1.,1.-q.y/u.viewport.y*2.,opaque,1.);
     var thickness = 0.04;
     if opaque>0. && abs(opaque_view.w)>0.00001 { thickness=clamp(-opaque_view.z/opaque_view.w-depth,0.,0.5); }
-    let concentration=u.sediment.x;
+    let optical=textureLoad(raw_depths,raw_pixel,0).g;
+    let concentration=select(u.sediment.x,optical-1.,optical>=1.);
     let extinction=vec3(4.,2.,0.9)+vec3(45.,80.,120.)*concentration*30.;
     let transmission=exp(-extinction*thickness);
     let scattering=mix(vec3(0.035,0.18,0.18),vec3(0.22,0.13,0.055),clamp(concentration*20.,0.,1.));

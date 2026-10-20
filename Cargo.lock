@@ -3127,6 +3127,8 @@ dependencies = [
  "flate2",
  "mining-physics",
  "mining-sim",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
  "serde_json",
 ]
 

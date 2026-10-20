@@ -34,6 +34,16 @@ pub struct WaterSplats {
     health: Arc<AtomicU8>,
     clock: PresentationClock,
     turbidity: f32,
+    terrain_data: Arc<Vec<InstanceData>>,
+    terrain_revision: u64,
+    terrain_key: Option<(u64, u64, u64)>,
+    terrain_clock: PresentationClock,
+    fluid_revision: Option<crate::app::FluidRevision>,
+}
+impl WaterSplats {
+    pub fn terrain_count(&self) -> usize {
+        self.terrain_data.len()
+    }
 }
 impl Default for WaterSplats {
     fn default() -> Self {
@@ -43,6 +53,11 @@ impl Default for WaterSplats {
             health: Arc::new(AtomicU8::new(0)),
             clock: PresentationClock::default(),
             turbidity: 0.0,
+            terrain_data: Arc::new(Vec::new()),
+            terrain_revision: 0,
+            terrain_key: None,
+            terrain_clock: PresentationClock::default(),
+            fluid_revision: None,
         }
     }
 }
@@ -58,9 +73,12 @@ struct PresentationClock {
 }
 impl PresentationClock {
     fn sample(&mut self, sim: f64, wall: f64, paused: bool) {
+        self.sample_interval(sim, wall, paused, mining_sim::FIXED_DT * 2.1);
+    }
+    fn sample_interval(&mut self, sim: f64, wall: f64, paused: bool, max_tick: f32) {
         if self.sim != Some(sim) {
             let delta = self.sim.map(|previous| sim - previous).unwrap_or(0.0);
-            if delta > 0.0 && delta <= mining_sim::FIXED_DT as f64 * 2.1 {
+            if delta > 0.0 && delta <= max_tick as f64 {
                 self.interval = (wall - self.updated).max(mining_sim::FIXED_DT as f64);
                 self.tick = delta as f32;
             } else {
@@ -78,9 +96,10 @@ impl PresentationClock {
 }
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
-struct InstanceData {
-    center_radius: [f32; 4],
-    velocity: [f32; 4],
+pub(crate) struct InstanceData {
+    pub center_radius: [f32; 4],
+    pub velocity: [f32; 4],
+    pub shape: [f32; 4],
 }
 
 pub struct WaterSplatPlugin;
@@ -111,9 +130,10 @@ impl Plugin for WaterSplatPlugin {
 #[derive(Resource)]
 struct ParticleBuffer {
     buffer: Buffer,
-    capacity: usize,
     count: u32,
     revision: u64,
+    terrain_count: u32,
+    terrain_revision: u64,
 }
 #[derive(Clone, ShaderType)]
 struct FluidUniforms {
@@ -225,7 +245,7 @@ fn init_pipelines(
         &particles,
         "particle_vertex",
         "particle_depth",
-        TextureFormat::R32Float,
+        TextureFormat::Rg32Float,
         Some(DepthStencilState {
             format: TextureFormat::Depth32Float,
             depth_write_enabled: true,
@@ -275,35 +295,45 @@ fn prepare_particles(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
 ) {
-    if let Some(mut buffer) = existing {
-        if buffer.revision == data.revision {
-            return;
-        }
-        if buffer.capacity >= data.data.len() {
+    let upload = |buffer: &mut ParticleBuffer| {
+        if buffer.revision != data.revision {
             if !data.data.is_empty() {
                 queue.write_buffer(&buffer.buffer, 0, bytemuck::cast_slice(&data.data));
             }
-            buffer.revision = data.revision;
             buffer.count = data.data.len() as u32;
-            return;
+            buffer.revision = data.revision;
         }
+        if buffer.terrain_revision != data.terrain_revision {
+            if !data.terrain_data.is_empty() {
+                queue.write_buffer(
+                    &buffer.buffer,
+                    (MAX_SPLATS * size_of::<InstanceData>()) as u64,
+                    bytemuck::cast_slice(&data.terrain_data),
+                );
+            }
+            buffer.terrain_count = data.terrain_data.len() as u32;
+            buffer.terrain_revision = data.terrain_revision;
+        }
+    };
+    if let Some(mut buffer) = existing {
+        upload(&mut buffer);
+        return;
     }
-    let capacity = data.data.len().max(1).next_power_of_two();
-    let buffer = device.create_buffer(&BufferDescriptor {
-        label: Some("fluid render particles"),
-        size: (capacity * size_of::<InstanceData>()) as u64,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    if !data.data.is_empty() {
-        queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&data.data));
-    }
-    commands.insert_resource(ParticleBuffer {
-        buffer,
-        capacity,
-        count: data.data.len() as u32,
-        revision: data.revision,
-    });
+    let mut buffer = ParticleBuffer {
+        buffer: device.create_buffer(&BufferDescriptor {
+            label: Some("Bounded sluice and terrain render splats"),
+            size: ((MAX_SPLATS + crate::terrain_water::MAX_SPLATS) * size_of::<InstanceData>())
+                as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }),
+        count: 0,
+        revision: u64::MAX,
+        terrain_count: 0,
+        terrain_revision: u64::MAX,
+    };
+    upload(&mut buffer);
+    commands.insert_resource(buffer);
 }
 fn prepare_views(
     mut commands: Commands,
@@ -331,7 +361,7 @@ fn prepare_views(
             world_from_view,
             view_from_clip: view.clip_from_view.inverse(),
             view_from_world: world_from_view.inverse(),
-            sediment: Vec4::new(water.turbidity, 0.0, 0.0, 0.0),
+            sediment: Vec4::new(water.turbidity, water.terrain_clock.prediction, 0.0, 0.0),
             viewport: Vec4::new(full.x as f32, full.y as f32, 0.045, water.clock.prediction),
         };
         if let Some(mut target) = existing {
@@ -363,7 +393,7 @@ fn prepare_views(
         uniform.write_buffer(&device, &queue);
         commands.entity(entity).insert(FluidTargets {
             size,
-            raw: texture("fluid raw depth", TextureFormat::R32Float),
+            raw: texture("fluid raw depth", TextureFormat::Rg32Float),
             ping: texture("fluid blur ping", TextureFormat::R32Float),
             pong: texture("fluid blur pong", TextureFormat::R32Float),
             depth: texture("fluid depth test", TextureFormat::Depth32Float),
@@ -391,7 +421,7 @@ impl ViewNode for FluidNode {
         let Some(particles) = world.get_resource::<ParticleBuffer>() else {
             return Ok(());
         };
-        if particles.count == 0 {
+        if particles.count == 0 && particles.terrain_count == 0 {
             return Ok(());
         }
         let settings = world.resource::<FluidPipelines>();
@@ -480,6 +510,10 @@ impl ViewNode for FluidNode {
             pass.set_pipeline(depth);
             pass.set_bind_group(0, &particle_group, &[]);
             pass.draw(0..6, 0..particles.count);
+            pass.draw(
+                0..6,
+                MAX_SPLATS as u32..MAX_SPLATS as u32 + particles.terrain_count,
+            );
         }
         // Two separable bilateral iterations smooth shared fluid normals, without
         // averaging across a depth jump or expanding water into empty pixels.
@@ -539,7 +573,9 @@ pub fn sync(game: Res<crate::app::Game>, time: Res<Time>, mut splats: ResMut<Wat
         time.elapsed_secs_f64(),
         game.session.paused,
     );
-    if splats.revision != game.snapshot_id {
+    let key = game.fluid_revision();
+    if splats.fluid_revision != Some(key) {
+        splats.fluid_revision = Some(key);
         splats.revision = game.snapshot_id;
         splats.data = Arc::new(instances(&game.session.sluice));
         let sluice = &game.session.sluice;
@@ -552,6 +588,24 @@ pub fn sync(game: Res<crate::app::Game>, time: Res<Time>, mut splats: ResMut<Wat
         splats.turbidity = (fines
             / (sluice.water.len() as f64 * sluice.profile.particle_m3()).max(1e-9))
         .clamp(0.0, 1.0) as f32;
+    }
+    let site = &game.session.site;
+    splats.terrain_clock.sample_interval(
+        site.hydraulic.steps as f64 * 3.0 * mining_sim::FIXED_DT as f64,
+        time.elapsed_secs_f64(),
+        game.session.paused,
+        0.051,
+    );
+    let key = (
+        game.simulation_generation,
+        site.hydraulic.steps,
+        site.revision,
+    );
+    if splats.terrain_key != Some(key) {
+        splats.terrain_key = Some(key);
+        splats.terrain_revision = splats.terrain_revision.wrapping_add(1);
+        splats.terrain_data =
+            Arc::new(crate::terrain_water::instances(site, game.session.sim_time));
     }
 }
 
@@ -576,6 +630,7 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
             Some(InstanceData {
                 center_radius: [world.x, world.y, world.z, radius],
                 velocity: [v.x, v.y, v.z, 0.0],
+                shape: [0.; 4],
             })
         })
         .collect()

@@ -23,7 +23,7 @@ fn run(
     projection: bool,
 ) -> (Vec<Vec3>, Vec<Vec3>, Vec<Mat3>) {
     let dx = 0.02;
-    let mut sim = GpuFlip3D::new(device, 16, 12, 8, dx, 4096);
+    let mut sim = GpuFlip3D::new_with_transfer(device, 16, 12, 8, dx, 4096, batch);
     sim.batch_submissions = batch;
     sim.open_boundaries = 63;
     sim.density_projection_enabled = projection;
@@ -54,9 +54,38 @@ fn run(
     sim.set_particle_volumes(weights);
     let mut velocities = vec![Vec3::new(0.4, 0.0, 0.0); positions.len()];
     let mut affine = vec![Mat3::ZERO; positions.len()];
-    let densities = vec![1.0; positions.len()];
+    let mut densities = vec![1.0; positions.len()];
+    let n = densities.len();
+    densities[n - 2] = 2.65;
+    densities[n - 1] = 19.3;
+    sim.upload_grain_diameters(queue, n - 2, &[0.0003, 0.0003]);
     let cells = vec![0; 16 * 12 * 8];
     for _ in 0..4 {
+        if batch {
+            assert!(sim.prepare_particle_readback(0, positions.len()));
+            assert!(!sim.prepare_particle_readback(0, positions.len()));
+            sim.step_no_readback(
+                device,
+                queue,
+                &mut positions,
+                &mut velocities,
+                &mut affine,
+                &densities,
+                &cells,
+                None,
+                None,
+                1.0 / 240.0,
+                0.0,
+                0.0,
+                80,
+            );
+            device.poll(wgpu::Maintain::Wait);
+            assert_eq!(
+                sim.try_readback(device, &mut positions, &mut velocities, &mut affine),
+                Some(n)
+            );
+            continue;
+        }
         sim.step(
             device,
             queue,
@@ -146,4 +175,118 @@ fn batching_preserves_results_and_density_projection_preserves_momentum() {
         "density repair must not add per-substep drag"
     );
     assert!(projected > 0.35);
+}
+
+#[test]
+#[ignore = "requires real Metal/Vulkan compute adapter"]
+fn paired_transfer_and_joined_readback_preserve_nonuniform_mixed_parcels() {
+    let (device, queue) = device();
+    let run = |optimized: bool| {
+        let mut sim = GpuFlip3D::new_with_transfer(&device, 16, 12, 8, 0.02, 4096, optimized);
+        sim.batch_submissions = optimized;
+        sim.open_boundaries = 63;
+        let n = 2048;
+        let mut p: Vec<_> = (0..n)
+            .map(|i| {
+                Vec3::new(
+                    0.04 + (i * 17 % 239) as f32 * 0.001,
+                    0.04 + (i * 37 % 159) as f32 * 0.001,
+                    0.04 + (i * 59 % 79) as f32 * 0.001,
+                )
+            })
+            .collect();
+        let mut v: Vec<_> = (0..n)
+            .map(|i| {
+                Vec3::new(
+                    (i as f32 * 0.17).sin() * 0.3,
+                    (i as f32 * 0.11).cos() * 0.1,
+                    (i as f32 * 0.07).sin() * 0.2,
+                )
+            })
+            .collect();
+        let mut c: Vec<_> = (0..n)
+            .map(|i| {
+                Mat3::from_diagonal(Vec3::new(
+                    (i as f32 * 0.31).sin(),
+                    (i as f32 * 0.23).cos(),
+                    0.2,
+                ))
+            })
+            .collect();
+        let densities: Vec<_> = (0..n)
+            .map(|i| match i % 5 {
+                0 => 19.3,
+                1 => 2.65,
+                _ => 1.,
+            })
+            .collect();
+        sim.set_particle_volumes((0..n).map(|i| 0.25 + (i % 19) as f32 * 0.2).collect());
+        sim.upload_grain_diameters(&queue, 0, &vec![0.0003; n]);
+        let cells = vec![0; 16 * 12 * 8];
+        for step in 0..3 {
+            if optimized {
+                // Exercise both a suffix range and the full five-plane mapping.
+                let first = if step == 0 { 11 } else { 0 };
+                assert!(sim.prepare_particle_readback(first, n - first));
+                sim.step_no_readback(
+                    &device,
+                    &queue,
+                    &mut p,
+                    &mut v,
+                    &mut c,
+                    &densities,
+                    &cells,
+                    None,
+                    None,
+                    1. / 240.,
+                    -9.81,
+                    0.,
+                    80,
+                );
+                device.poll(wgpu::Maintain::Wait);
+                assert_eq!(
+                    sim.try_readback(&device, &mut p[first..], &mut v[first..], &mut c[first..]),
+                    Some(n - first)
+                );
+                if first != 0 {
+                    assert!(sim.request_particle_range(&device, &queue, 0, first));
+                    device.poll(wgpu::Maintain::Wait);
+                    assert_eq!(
+                        sim.try_readback(
+                            &device,
+                            &mut p[..first],
+                            &mut v[..first],
+                            &mut c[..first]
+                        ),
+                        Some(first)
+                    );
+                }
+            } else {
+                sim.step(
+                    &device,
+                    &queue,
+                    &mut p,
+                    &mut v,
+                    &mut c,
+                    &densities,
+                    &cells,
+                    None,
+                    None,
+                    1. / 240.,
+                    -9.81,
+                    0.,
+                    80,
+                );
+            }
+        }
+        (p, v, c)
+    };
+    let reference = run(false);
+    let optimized = run(true);
+    assert_eq!(reference.0, optimized.0, "mixed parcel positions changed");
+    assert_eq!(reference.1, optimized.1, "mixed parcel velocities changed");
+    assert_eq!(
+        reference.2, optimized.2,
+        "mixed parcel APIC matrices changed"
+    );
 }

@@ -58,7 +58,7 @@ fn terminal_settling_is_independent_of_substep_count() {
         );
         let solver = GpuG2p3D::new(
             &device, 8, 8, 8, 3, position, velocity, c0, c1, c2, density, &grid, &grid, &grid,
-            &grid, &grid, &grid, &grid, &grid, &grid, &grid,
+            &grid, &grid, &grid, &grid, &grid, &grid, &grid, [0; 3],
         );
         solver.upload_grain_diameters(&queue, 0, &diameters);
         let params = SedimentParams3D {

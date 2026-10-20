@@ -22,3 +22,11 @@ inherits = "release"
 opt-level = 2
 codegen-units = 16
 lto = false
+
+# Optimize the CPU solvers without rebuilding all rendering dependencies.
+[profile.playable.package.sim3d]
+opt-level = 3
+[profile.playable.package.mining-sim]
+opt-level = 3
+[profile.playable.package.mining-physics]
+opt-level = 3

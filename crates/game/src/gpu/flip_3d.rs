@@ -38,6 +38,7 @@ pub struct PhysicsDiagnostics {
 
 /// GPU-accelerated 3D FLIP simulation
 pub struct GpuFlip3D {
+    profile_stages: Vec<(&'static str, [f64; 2])>,
     // Grid dimensions
     pub width: u32,
     pub height: u32,
@@ -52,6 +53,7 @@ pub struct GpuFlip3D {
     pub flip_ratio: f32,
     /// Submit ordered compute command buffers together; false is a diagnostic reference.
     pub batch_submissions: bool,
+    paired_water_transfer: bool,
     /// Slip factor for tangential velocities at solid boundaries.
     /// 1.0 = free-slip, 0.0 = no-slip.
     pub slip_factor: f32,
@@ -236,6 +238,7 @@ pub struct GpuFlip3D {
     // Double-buffered async readback slots
     readback_slots: Vec<ReadbackSlot>,
     readback_cursor: usize,
+    prepared_readback: Option<(usize, usize, usize)>,
 }
 
 impl GpuFlip3D {
@@ -247,6 +250,17 @@ impl GpuFlip3D {
         depth: u32,
         cell_size: f32,
         max_particles: usize,
+    ) -> Self {
+        Self::new_with_transfer(device, width, height, depth, cell_size, max_particles, true)
+    }
+    pub fn new_with_transfer(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        cell_size: f32,
+        max_particles: usize,
+        paired_water_transfer: bool,
     ) -> Self {
         // Shared particle buffers for P2G/G2P
         let particle_buffer_size = (max_particles * std::mem::size_of::<[f32; 4]>()) as u64;
@@ -298,7 +312,7 @@ impl GpuFlip3D {
         }));
 
         // Create P2G solver (owns the grid velocity buffers)
-        let p2g = GpuP2g3D::new(
+        let mut p2g = GpuP2g3D::new(
             device,
             width,
             height,
@@ -330,6 +344,7 @@ impl GpuFlip3D {
             Arc::clone(&c_col2_buffer),
         );
 
+        p2g.paired_water = paired_water_transfer;
         // Create particle sorter for cache coherence optimization
         let sorter = GpuParticleSort::new(
             device,
@@ -477,9 +492,14 @@ impl GpuFlip3D {
             &grid_v_old_buffer,
             &grid_w_old_buffer,
             &vorticity_mag_buffer,
-            &water_p2g.grid_u_buffer,
-            &water_p2g.grid_v_buffer,
-            &water_p2g.grid_w_buffer,
+            if paired_water_transfer {&p2g.grid_u_buffer}else{&water_p2g.grid_u_buffer},
+            if paired_water_transfer {&p2g.grid_v_buffer}else{&water_p2g.grid_v_buffer},
+            if paired_water_transfer {&p2g.grid_w_buffer}else{&water_p2g.grid_w_buffer},
+            if paired_water_transfer {[
+                (((width+1)*height*depth) as usize).div_ceil(64) as u64*256,
+                ((width*(height+1)*depth) as usize).div_ceil(64) as u64*256,
+                ((width*height*(depth+1)) as usize).div_ceil(64) as u64*256,
+            ]}else{[0;3]},
         );
 
         // Create gravity shader
@@ -2195,7 +2215,9 @@ impl GpuFlip3D {
             cell_size,
             open_boundaries: 0, // All boundaries closed by default
             flip_ratio: 0.95,
+            profile_stages:Vec::new(),
             batch_submissions: true,
+            paired_water_transfer,
             slip_factor: 1.0,
             fluid_cell_expand_min_neighbors: 1,
             vorticity_epsilon: 0.05,
@@ -2309,6 +2331,7 @@ impl GpuFlip3D {
             max_particles,
             readback_slots,
             readback_cursor: 0,
+            prepared_readback: None,
         }
     }
 
@@ -2443,7 +2466,9 @@ impl GpuFlip3D {
         self.water_p2g
             .prepare(queue, particle_count, self.cell_size);
         self.p2g.encode(encoder, particle_count);
-        self.water_p2g.encode(encoder, particle_count);
+        if !self.paired_water_transfer {
+            self.water_p2g.encode(encoder, particle_count);
+        }
 
         // 2. Pressure (Simplified for now - might need more steps for stability)
         self.pressure.encode(encoder, 40); // 40 iterations
@@ -2609,6 +2634,9 @@ impl GpuFlip3D {
     }
 
     /// Volume weights scale P2G inertia while density remains a phase tag.
+    pub fn stage_timings(&mut self) -> Vec<(&'static str, [f64; 2])> {
+        std::mem::take(&mut self.profile_stages)
+    }
     pub fn set_particle_volumes(&mut self, weights: Vec<f32>) {
         self.p2g.volume_weights = weights;
     }
@@ -2686,6 +2714,29 @@ impl GpuFlip3D {
     ) -> bool {
         self.schedule_readback_range(device, queue, 0, count)
     }
+    /// Reserve a range to copy at the end of the next nonempty GPU step.
+    /// The caller must request a range within that step's live particle count,
+    /// then consume it with `try_readback` before reusing the slot.
+    pub fn prepare_particle_readback(&mut self, first: usize, count: usize) -> bool {
+        if self.prepared_readback.is_some()
+            || count == 0
+            || first >= self.max_particles
+            || count > self.max_particles - first
+        {
+            return false;
+        }
+        let slots = self.readback_slots.len();
+        for _ in 0..slots {
+            let index = self.readback_cursor % slots;
+            self.readback_cursor = (self.readback_cursor + 1) % slots;
+            if !self.readback_slots[index].is_pending() {
+                self.prepared_readback = Some((index, first, count));
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn request_particle_range(
         &mut self,
         device: &wgpu::Device,
@@ -2758,7 +2809,7 @@ impl GpuFlip3D {
         first: usize,
         particle_count: usize,
     ) -> bool {
-        if self.readback_slots.is_empty() {
+        if self.readback_slots.is_empty() || self.prepared_readback.is_some() {
             return false;
         }
 
@@ -2831,14 +2882,32 @@ impl GpuFlip3D {
         flow_accel: f32,
         pressure_iterations: u32,
     ) -> u32 {
-        let batched = self.batch_submissions;
-        self.pressure.compact_iterations = batched;
-        let mut command_buffers = Vec::with_capacity(24);
-        let mut submit = |buffer| {
-            if batched {
-                command_buffers.push(buffer);
+        let profiling = std::env::var_os("SLUICE_PROFILE_STAGES").is_some();
+        let batched = self.batch_submissions && !profiling;
+        self.pressure.compact_iterations = self.batch_submissions;
+        // Reuse one encoder for the ordered substep. Splitting it into many
+        // command buffers adds Metal scheduling overhead without a dependency.
+        let pending_encoder = std::cell::RefCell::new(None);
+        let encoder_for = |label: &'static str| {
+            pending_encoder.borrow_mut().take().unwrap_or_else(|| {
+                device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) })
+            })
+        };
+        let mut times = Vec::new();
+        let mut stage_started = std::time::Instant::now();
+        let mut submit = |encoder: wgpu::CommandEncoder, label: &'static str| {
+            if profiling {
+                let encoded = stage_started.elapsed().as_secs_f64() * 1000.0;
+                let wait = std::time::Instant::now();
+                queue.submit(Some(encoder.finish()));
+                device.poll(wgpu::Maintain::Wait);
+                times.push((label, [encoded, wait.elapsed().as_secs_f64() * 1000.0]));
+                stage_started = std::time::Instant::now();
+            } else if batched {
+                *pending_encoder.borrow_mut() = Some(encoder);
             } else {
-                queue.submit(std::iter::once(buffer));
+                queue.submit(Some(encoder.finish()));
             }
         };
 
@@ -2847,9 +2916,7 @@ impl GpuFlip3D {
         self.p2g.prepare(queue, count, self.cell_size);
         self.water_p2g.prepare(queue, count, self.cell_size);
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Step Encoder"),
-        });
+        let mut encoder = encoder_for("FLIP 3D Step Encoder");
 
         // Run P2G scatter and divide (optionally with particle sorting)
         let (u_size, v_size, w_size) = self.p2g.grid_sizes();
@@ -2943,7 +3010,36 @@ impl GpuFlip3D {
         } else {
             self.p2g.encode(&mut encoder, count);
         }
-        self.water_p2g.encode(&mut encoder, count);
+        if !self.paired_water_transfer || self.use_sorted_p2g {
+            self.water_p2g.encode(&mut encoder, count);
+            if self.paired_water_transfer {
+                for (source, destination, n) in [
+                    (
+                        &self.water_p2g.grid_u_buffer,
+                        &self.p2g.grid_u_buffer,
+                        u_size,
+                    ),
+                    (
+                        &self.water_p2g.grid_v_buffer,
+                        &self.p2g.grid_v_buffer,
+                        v_size,
+                    ),
+                    (
+                        &self.water_p2g.grid_w_buffer,
+                        &self.p2g.grid_w_buffer,
+                        w_size,
+                    ),
+                ] {
+                    encoder.copy_buffer_to_buffer(
+                        source,
+                        0,
+                        destination,
+                        n.div_ceil(64) as u64 * 256,
+                        (n * 4) as u64,
+                    );
+                }
+            }
+        }
 
         let fluid_cell_params = FluidCellExpandParams3D::new(
             self.width,
@@ -2970,7 +3066,7 @@ impl GpuFlip3D {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
-        submit(encoder.finish());
+        submit(encoder, "Fluid Cell Expand 3D Pass");
 
         // ========== Density Projection (Volume Preservation) ==========
         // After P2G, before G2P: correct particle positions based on density error
@@ -2997,9 +3093,7 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&density_error_params),
             );
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Density Error 3D Encoder"),
-            });
+            let mut encoder = encoder_for("Density Error 3D Encoder");
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Density Error 3D Pass"),
@@ -3012,12 +3106,10 @@ impl GpuFlip3D {
                 let workgroups_z = self.depth.div_ceil(4);
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
-            submit(encoder.finish());
+            submit(encoder,"Density Error 3D Pass");
 
             // 2. Copy density error to divergence buffer (pressure solver reads from divergence)
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Density Error Copy Encoder"),
-            });
+            let mut encoder = encoder_for("Density Error Copy Encoder");
             encoder.copy_buffer_to_buffer(
                 &self.density_error_buffer,
                 0,
@@ -3025,16 +3117,14 @@ impl GpuFlip3D {
                 0,
                 (self.width * self.height * self.depth * std::mem::size_of::<f32>() as u32) as u64,
             );
-            submit(encoder.finish());
+            submit(encoder,"Density Error Copy Encoder");
 
             // 3. Solve pressure with density error as RHS
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Density Pressure 3D Encoder"),
-            });
+            let mut encoder = encoder_for("Density Pressure 3D Encoder");
             // Clear pressure before solving
             self.pressure.clear_pressure(&mut encoder);
             self.pressure.encode_iterations_only(&mut encoder, self.volume_iterations);
-            submit(encoder.finish());
+            submit(encoder,"Density Pressure 3D Encoder");
 
             // 4. Convert pressure to position deltas on grid
             let density_position_grid_params = DensityPositionGridParams3D {
@@ -3053,9 +3143,7 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&density_position_grid_params),
             );
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Density Position Grid 3D Encoder"),
-            });
+            let mut encoder = encoder_for("Density Position Grid 3D Encoder");
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Density Position Grid 3D Pass"),
@@ -3068,7 +3156,7 @@ impl GpuFlip3D {
                 let workgroups_z = self.depth.div_ceil(4);
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
-            submit(encoder.finish());
+            submit(encoder,"Density Position Grid 3D Pass");
 
             // 4. Apply position corrections to particles
             let density_correct_params = DensityCorrectParams3D {
@@ -3087,9 +3175,7 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&density_correct_params),
             );
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Density Correct 3D Encoder"),
-            });
+            let mut encoder = encoder_for("Density Correct 3D Encoder");
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Density Correct 3D Pass"),
@@ -3100,7 +3186,7 @@ impl GpuFlip3D {
                 let workgroups = count.div_ceil(256);
                 pass.dispatch_workgroups(workgroups, 1, 1);
             }
-            submit(encoder.finish());
+            submit(encoder,"Density Correct 3D Pass");
         }
 
         let sediment_fraction_params = SedimentFractionParams3D::new(
@@ -3115,9 +3201,7 @@ impl GpuFlip3D {
             bytemuck::bytes_of(&sediment_fraction_params),
         );
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Sediment Fraction 3D Encoder"),
-        });
+        let mut encoder = encoder_for("Sediment Fraction 3D Encoder");
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Sediment Fraction 3D Pass"),
@@ -3143,7 +3227,7 @@ impl GpuFlip3D {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
-        submit(encoder.finish());
+        submit(encoder, "Gravel Porosity 3D Pass");
 
         let sediment_pressure_params = SedimentPressureParams3D {
             width: self.width,
@@ -3161,9 +3245,7 @@ impl GpuFlip3D {
             bytemuck::bytes_of(&sediment_pressure_params),
         );
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Sediment Pressure 3D Encoder"),
-        });
+        let mut encoder = encoder_for("Sediment Pressure 3D Encoder");
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Sediment Pressure 3D Pass"),
@@ -3176,16 +3258,14 @@ impl GpuFlip3D {
             pass.dispatch_workgroups(workgroups_x, 1, workgroups_z);
         }
 
-        submit(encoder.finish());
+        submit(encoder, "Sediment Pressure 3D Pass");
 
 
 
 
 
         // 3. Save grid velocity for FLIP delta (now with proper BCs!)
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Grid Copy Encoder"),
-        });
+        let mut encoder = encoder_for("FLIP 3D Grid Copy Encoder");
         encoder.copy_buffer_to_buffer(
             &self.p2g.grid_u_buffer,
             0,
@@ -3207,7 +3287,7 @@ impl GpuFlip3D {
             0,
             (w_size * 4) as u64,
         );
-        submit(encoder.finish());
+        submit(encoder, "FLIP 3D Grid Copy Encoder");
 
         // 4. Apply gravity
 
@@ -3225,9 +3305,7 @@ impl GpuFlip3D {
             bytemuck::bytes_of(&gravity_params),
         );
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Gravity Encoder"),
-        });
+        let mut encoder = encoder_for("FLIP 3D Gravity Encoder");
 
         // Apply gravity
         {
@@ -3354,7 +3432,7 @@ impl GpuFlip3D {
         }
 
         // Submit gravity/flow/vorticity passes
-        submit(encoder.finish());
+        submit(encoder, "Vorticity Confine W 3D Pass");
 
         // 7. Enforce Boundary Conditions
         // CRITICAL FIX: Must run AFTER Gravity and BEFORE Pressure Solve.
@@ -3364,9 +3442,7 @@ impl GpuFlip3D {
         //
         // IMPORTANT: Separate encoder + submit ensures BC writes are committed
         // before pressure solver reads velocity buffers.
-        let mut bc_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D BC Encoder"),
-        });
+        let mut bc_encoder = encoder_for("FLIP 3D BC Encoder");
 
         // Enforce BC on U
         {
@@ -3411,12 +3487,10 @@ impl GpuFlip3D {
         }
 
         // Preserve BC-before-pressure command order, including within a batched submit.
-        submit(bc_encoder.finish());
+        submit(bc_encoder, "BC W 3D Pass");
 
         // 8. Pressure solve (divergence → iterations → gradient)
-        let mut pressure_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D Pressure Encoder"),
-        });
+        let mut pressure_encoder = encoder_for("FLIP 3D Pressure Encoder");
         if self.pressure_diagnostics_enabled {
             self.pressure
                 .encode_with_pressure_restore(&mut pressure_encoder, pressure_iterations);
@@ -3425,12 +3499,10 @@ impl GpuFlip3D {
                 .encode(&mut pressure_encoder, pressure_iterations);
         }
 
-        submit(pressure_encoder.finish());
+        submit(pressure_encoder, "FLIP 3D Pressure Encoder");
 
         // Re-apply boundary conditions after pressure gradient to clamp boundary velocities.
-        let mut bc_post_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D BC Post-Pressure Encoder"),
-        });
+        let mut bc_post_encoder = encoder_for("FLIP 3D BC Post-Pressure Encoder");
         {
             let mut pass = bc_post_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("BC U 3D Post-Pressure Pass"),
@@ -3468,7 +3540,7 @@ impl GpuFlip3D {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
-        submit(bc_post_encoder.finish());
+        submit(bc_post_encoder, "BC W 3D Post-Pressure Pass");
 
         if self.sediment_porosity_drag > 0.0 {
             let drag_params = PorosityDragParams3D::new(
@@ -3483,9 +3555,7 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&drag_params),
             );
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Porosity Drag 3D Encoder"),
-            });
+            let mut encoder = encoder_for("Porosity Drag 3D Encoder");
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Porosity Drag U 3D Pass"),
@@ -3523,7 +3593,7 @@ impl GpuFlip3D {
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
 
-            submit(encoder.finish());
+            submit(encoder,"Porosity Drag W 3D Pass");
         }
 
         // 8. Run G2P using grid buffers already on GPU
@@ -3545,11 +3615,9 @@ impl GpuFlip3D {
             .g2p
             .upload_params(queue, count, self.cell_size, dt, self.flip_ratio, sediment_params);
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D G2P Encoder"),
-        });
+        let mut encoder = encoder_for("FLIP 3D G2P Encoder");
         self.g2p.encode(&mut encoder, g2p_count);
-        submit(encoder.finish());
+        submit(encoder, "FLIP 3D G2P Encoder");
 
         // ========== Sediment Density Projection (Granular Packing) ==========
         if self.sediment_rest_particles > 0.0 {
@@ -3570,9 +3638,7 @@ impl GpuFlip3D {
             /*
             let jamming_iterations = 5;
             for _ in 0..jamming_iterations {
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Sediment Cell Type 3D Encoder"),
-                });
+                let mut encoder = encoder_for("Sediment Cell Type 3D Encoder");
                 {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                         label: Some("Sediment Cell Type 3D Pass"),
@@ -3585,7 +3651,7 @@ impl GpuFlip3D {
                     let workgroups_z = (self.depth + 3) / 4;
                     pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
                 }
-                submit(encoder.finish());
+                submit(encoder,"Sediment Cell Type 3D Pass");
             }
             */
 
@@ -3607,9 +3673,7 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&sediment_density_error_params),
             );
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Sediment Density Error 3D Encoder"),
-            });
+            let mut encoder = encoder_for("Sediment Density Error 3D Encoder");
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Sediment Density Error 3D Pass"),
@@ -3622,15 +3686,13 @@ impl GpuFlip3D {
                 let workgroups_z = (self.depth + 3) / 4;
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
-            submit(encoder.finish());
+            submit(encoder,"Sediment Density Error 3D Pass");
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Sediment Density Pressure 3D Encoder"),
-            });
+            let mut encoder = encoder_for("Sediment Density Pressure 3D Encoder");
             self.pressure.clear_pressure(&mut encoder);
             let sediment_iterations = 15;
             self.pressure.encode_iterations_only(&mut encoder, sediment_iterations);
-            submit(encoder.finish());
+            submit(encoder,"Sediment Density Pressure 3D Encoder");
 
             let grid_params = DensityPositionGridParams3D {
                 width: self.width,
@@ -3648,9 +3710,7 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&grid_params),
             );
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Sediment Position Grid 3D Encoder"),
-            });
+            let mut encoder = encoder_for("Sediment Position Grid 3D Encoder");
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Sediment Position Grid 3D Pass"),
@@ -3663,7 +3723,7 @@ impl GpuFlip3D {
                 let workgroups_z = (self.depth + 3) / 4;
                 pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
             }
-            submit(encoder.finish());
+            submit(encoder,"Sediment Position Grid 3D Pass");
 
             let density_correct_params = DensityCorrectionParams3D {
                 width: self.width,
@@ -3681,9 +3741,7 @@ impl GpuFlip3D {
                 bytemuck::bytes_of(&density_correct_params),
             );
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Sediment Density Correct 3D Encoder"),
-            });
+            let mut encoder = encoder_for("Sediment Density Correct 3D Encoder");
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Sediment Density Correct 3D Pass"),
@@ -3694,7 +3752,7 @@ impl GpuFlip3D {
                 let workgroups = (particle_count as u32 + 255) / 256;
                 pass.dispatch_workgroups(workgroups, 1, 1);
             }
-            submit(encoder.finish());
+            submit(encoder,"Sediment Density Correct 3D Pass");
             */
         }
 
@@ -3732,9 +3790,7 @@ impl GpuFlip3D {
             bytemuck::bytes_of(&sdf_params),
         );
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FLIP 3D SDF Collision Encoder"),
-        });
+        let mut encoder = encoder_for("FLIP 3D SDF Collision Encoder");
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("SDF Collision 3D Pass"),
@@ -3745,11 +3801,40 @@ impl GpuFlip3D {
             let workgroups = g2p_count.div_ceil(256);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
-        submit(encoder.finish());
+        submit(encoder, "SDF Collision 3D Pass");
 
-        if batched {
-            queue.submit(command_buffers);
+        drop(submit);
+        let mut encoder = pending_encoder.into_inner();
+        let prepared = self.prepared_readback.take();
+        if let Some((index, first, count)) = prepared {
+            assert!(
+                first + count <= particle_count as usize,
+                "readback exceeds live particles"
+            );
+            let encoder = encoder.get_or_insert_with(|| {
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("FLIP joined readback"),
+                })
+            });
+            let encoded = self.readback_slots[index].encode_copy(
+                encoder,
+                &self.positions_buffer,
+                &self.velocities_buffer,
+                &self.c_col0_buffer,
+                &self.c_col1_buffer,
+                &self.c_col2_buffer,
+                first,
+                count,
+            );
+            assert!(encoded, "reserved readback slot became unavailable");
         }
+        if let Some(encoder) = encoder {
+            queue.submit(Some(encoder.finish()));
+        }
+        if let Some((index, _, _)) = prepared {
+            self.readback_slots[index].begin_map();
+        }
+        self.profile_stages = times;
         g2p_count
     }
 

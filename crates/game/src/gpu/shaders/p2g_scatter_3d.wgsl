@@ -80,6 +80,7 @@ fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
 }
 
+fn water_offset(n:u32)->u32 {return ((n+63u)/64u)*64u;}
 // Multiply C matrix by offset vector
 // C is stored as 3 ROWS (not columns!): c_col0 = row 0, etc.
 // So C * offset = [dot(row0, offset), dot(row1, offset), dot(row2, offset)]
@@ -91,7 +92,7 @@ fn c_mat_mul(idx: u32, offset: vec3<f32>) -> vec3<f32> {
     );
 }
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(128)
 fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= params.particle_count) {
         return;
@@ -174,8 +175,13 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 let momentum_x = mass_weight * (vel.x + affine_vel.x) * w;
 
                 let idx = u_index(u32(ni), u32(nj), u32(nk));
-                atomicAdd(&u_sum[idx], i32(momentum_x * SCALE));
-                atomicAdd(&u_weight[idx], i32(mass_weight * w * SCALE));
+                // Water and solids accumulate once in disjoint integer ranges.
+                // Divide combines their integer sums before conversion, preserving
+                // the original mixture transfer and a separate water-only field.
+                var accum_idx=idx;
+                if params._pad0!=0u && density<=1.0 {accum_idx+=water_offset((params.width+1u)*params.height*params.depth);}
+                atomicAdd(&u_sum[accum_idx],i32(momentum_x*SCALE));
+                atomicAdd(&u_weight[accum_idx],i32(mass_weight*w*SCALE));
             }
         }
     }
@@ -231,8 +237,13 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 let momentum_y = mass_weight * (vel.y + affine_vel.y) * w;
 
                 let idx = v_index(u32(ni), u32(nj), u32(nk));
-                atomicAdd(&v_sum[idx], i32(momentum_y * SCALE));
-                atomicAdd(&v_weight[idx], i32(mass_weight * w * SCALE));
+                // Water and solids accumulate once in disjoint integer ranges.
+                // Divide combines their integer sums before conversion, preserving
+                // the original mixture transfer and a separate water-only field.
+                var accum_idx=idx;
+                if params._pad0!=0u && density<=1.0 {accum_idx+=water_offset(params.width*(params.height+1u)*params.depth);}
+                atomicAdd(&v_sum[accum_idx],i32(momentum_y*SCALE));
+                atomicAdd(&v_weight[accum_idx],i32(mass_weight*w*SCALE));
             }
         }
     }
@@ -288,8 +299,13 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 let momentum_z = mass_weight * (vel.z + affine_vel.z) * w;
 
                 let idx = w_index(u32(ni), u32(nj), u32(nk));
-                atomicAdd(&w_sum[idx], i32(momentum_z * SCALE));
-                atomicAdd(&w_weight[idx], i32(mass_weight * w * SCALE));
+                // Water and solids accumulate once in disjoint integer ranges.
+                // Divide combines their integer sums before conversion, preserving
+                // the original mixture transfer and a separate water-only field.
+                var accum_idx=idx;
+                if params._pad0!=0u && density<=1.0 {accum_idx+=water_offset(params.width*params.height*(params.depth+1u));}
+                atomicAdd(&w_sum[accum_idx],i32(momentum_z*SCALE));
+                atomicAdd(&w_weight[accum_idx],i32(mass_weight*w*SCALE));
             }
         }
     }

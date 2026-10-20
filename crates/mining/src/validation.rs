@@ -13,6 +13,13 @@ use std::{collections::HashSet, path::PathBuf, time::Instant};
 pub struct Validation {
     pub directory: Option<PathBuf>,
     pub input_check: bool,
+    flow_benchmark: Option<PathBuf>,
+    flow_result: Option<bool>,
+    flow_started: Option<(Instant, f64)>,
+    flow_sample: Option<(Instant, f64)>,
+    flow_windows: Vec<f64>,
+    worker_ms: Vec<f64>,
+    worker_phases: [f64; 5],
     pub input_complete: bool,
     capture: Option<PathBuf>,
     load_path: Option<PathBuf>,
@@ -37,10 +44,12 @@ impl Default for Validation {
         let mut directory = None;
         let mut capture = None;
         let mut load_path = None;
+        let mut flow_benchmark = None;
         let mut benchmark_seconds = 60.0;
         let mut args = std::env::args().skip(1);
         while let Some(a) = args.next() {
             match a.as_str() {
+                "--flow-benchmark" => flow_benchmark = args.next().map(PathBuf::from),
                 "--validate" => directory = args.next().map(PathBuf::from),
                 "--capture" => capture = args.next().map(PathBuf::from),
                 "--load" => load_path = args.next().map(PathBuf::from),
@@ -52,6 +61,13 @@ impl Default for Validation {
         }
         Self {
             directory,
+            flow_benchmark,
+            flow_result: None,
+            flow_started: None,
+            flow_sample: None,
+            flow_windows: Vec::new(),
+            worker_ms: Vec::new(),
+            worker_phases: [0.; 5],
             input_check: std::env::args().any(|a| a == "--check-controls"),
             input_complete: false,
             capture,
@@ -75,8 +91,16 @@ impl Default for Validation {
     }
 }
 impl Validation {
+    pub fn record_step(&mut self, ms: f64, phases: [f64; 5]) {
+        if self.flow_started.is_some() {
+            self.worker_ms.push(ms);
+            for (sum, p) in self.worker_phases.iter_mut().zip(phases) {
+                *sum += p;
+            }
+        }
+    }
     pub fn automated(&self) -> bool {
-        self.active() || self.capture.is_some() || self.input_check
+        self.active() || self.capture.is_some() || self.input_check || self.flow_benchmark.is_some()
     }
     pub fn ready(&self) -> bool {
         self.frames >= 180
@@ -140,6 +164,78 @@ pub fn update(
         v.wash_frame_ms.push(time.delta_secs_f64() * 1000.0);
     } else if let Some((started, sim)) = v.wash_started.take() {
         v.wash_seconds = (started.elapsed().as_secs_f64(), game.session.sim_time - sim);
+    }
+    if let Some(path) = v.flow_benchmark.clone() {
+        if let Some(passed) = v.flow_result {
+            exit.write(if passed {
+                AppExit::Success
+            } else {
+                AppExit::error()
+            });
+            return;
+        }
+        if v.started.elapsed().as_secs_f64() < 5.0 || (v.load_path.is_some() && !v.saved) {
+            return;
+        }
+        let now = Instant::now();
+        let sim = game.session.sim_time;
+        let (started, sim_start) = *v.flow_started.get_or_insert((now, sim));
+        let (sample, previous) = *v.flow_sample.get_or_insert((now, sim));
+        v.frame_ms.push(time.delta_secs_f64() * 1000.0);
+        if sample.elapsed().as_secs_f64() >= 1.0 {
+            v.flow_windows
+                .push((sim - previous) / sample.elapsed().as_secs_f64());
+            v.flow_sample = Some((now, sim));
+            if v.flow_windows.len().is_multiple_of(10) {
+                println!(
+                    "FLOW progress wall={:.1}s sim={:.2}s rate={:.3}",
+                    started.elapsed().as_secs_f64(),
+                    sim - sim_start,
+                    v.flow_windows.last().unwrap()
+                );
+            }
+        }
+        if started.elapsed().as_secs_f64() >= v.benchmark_seconds {
+            let wall = started.elapsed().as_secs_f64();
+            let simulated = sim - sim_start;
+            let mean = v.frame_ms.iter().sum::<f64>() / v.frame_ms.len().max(1) as f64;
+            let mut sorted = v.frame_ms.clone();
+            sorted.sort_by(f64::total_cmp);
+            let p95 = sorted[(sorted.len().saturating_sub(1) as f64 * 0.95) as usize];
+            let sluice = &game.session.sluice;
+            let water_error = sluice.water_used_m3
+                - (sluice.water.len() as f64 * sluice.profile.particle_m3()
+                    + sluice.water_returned_m3
+                    + sluice.water_credit_m3);
+            let gold_error = game.session.accounted_gold() - game.session.initial_gold_g;
+            let passed = simulated / wall >= 0.98
+                && 1000. / mean >= 50.
+                && crate::water::surface_ready(&water)
+                && water_error.abs() < 1e-6
+                && gold_error.abs() < 1e-6;
+            v.flow_result = Some(passed);
+            let report = serde_json::json!({"passed":passed,"water_balance_error_m3":water_error,"warmup_seconds":5,"wall_seconds":wall,"simulation_seconds":simulated,
+                "simulation_wall_ratio":simulated/wall,"one_second_ratios":v.flow_windows,"mean_fps":1000.0/mean,"p95_frame_ms":p95,
+                "last_worker_tick_ms":game.step_ms,"worker_packets":v.worker_ms.len(),"worker_busy_fraction":v.worker_ms.iter().sum::<f64>()/(wall*1000.),"worker_mean_ms":v.worker_ms.iter().sum::<f64>()/v.worker_ms.len().max(1) as f64,
+                "worker_phases_mean_ms":v.worker_phases.map(|n|n/v.worker_ms.len().max(1) as f64),"water_particles":game.session.sluice.water.len(),"grains":game.session.sluice.grains.len(),
+                "water_mean_downstream_ms":game.session.sluice.water_speed(),"fluid_surface_ready":crate::water::surface_ready(&water),
+                "terrain_water_splats":water.terrain_count(),"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap())
+                .expect("write flow benchmark");
+            mining_sim::storage::save(&game.session, &path.with_extension("save.json"))
+                .expect("save measured flow state for headless comparison");
+            println!("FLOW BENCHMARK: {report}");
+            // A benchmark that ran but missed throughput must not appear passed.
+            exit.write(if passed {
+                AppExit::Success
+            } else {
+                AppExit::error()
+            });
+        }
+        return;
     }
     if let Some(path) = v.capture.clone() {
         // Keep the deadline stable while a native check switches demo/shift.

@@ -42,6 +42,7 @@ struct PressureParams3D {
 /// GPU-based pressure solver for 3D FLIP
 pub struct GpuPressure3D {
     pub compact_iterations: bool,
+    pub cached_stencil: bool,
     width: u32,
     height: u32,
     depth: u32,
@@ -60,6 +61,11 @@ pub struct GpuPressure3D {
     divergence_pipeline: wgpu::ComputePipeline,
     pressure_red_pipeline: wgpu::ComputePipeline,
     pressure_black_pipeline: wgpu::ComputePipeline,
+    packed_red: wgpu::ComputePipeline,
+    packed_black: wgpu::ComputePipeline,
+    stencil_prepare: wgpu::ComputePipeline,
+    stencil_red: wgpu::ComputePipeline,
+    stencil_black: wgpu::ComputePipeline,
     gradient_u_pipeline: wgpu::ComputePipeline,
     gradient_v_pipeline: wgpu::ComputePipeline,
     gradient_w_pipeline: wgpu::ComputePipeline,
@@ -131,6 +137,13 @@ impl GpuPressure3D {
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let stencil_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pressure neighbour stencil"),
+            size: (cell_count * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
 
@@ -271,6 +284,16 @@ impl GpuPressure3D {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -400,6 +423,10 @@ impl GpuPressure3D {
                     binding: 3,
                     resource: pressure_params_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: stencil_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -516,8 +543,49 @@ impl GpuPressure3D {
                 cache: None,
             });
 
+        let pipeline = |module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, entry| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(layout),
+                module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let packed_red = pipeline(
+            &pressure_shader,
+            &pressure_pipeline_layout,
+            "pressure_red_packed",
+        );
+        let packed_black = pipeline(
+            &pressure_shader,
+            &pressure_pipeline_layout,
+            "pressure_black_packed",
+        );
+        let stencil_prepare = pipeline(
+            &pressure_shader,
+            &pressure_pipeline_layout,
+            "prepare_stencil",
+        );
+        let stencil_red = pipeline(
+            &pressure_shader,
+            &pressure_pipeline_layout,
+            "pressure_red_stencil",
+        );
+        let stencil_black = pipeline(
+            &pressure_shader,
+            &pressure_pipeline_layout,
+            "pressure_black_stencil",
+        );
         Self {
             compact_iterations: true,
+            cached_stencil: true,
+            stencil_prepare,
+            stencil_red,
+            stencil_black,
+            packed_red,
+            packed_black,
             width,
             height,
             depth,
@@ -708,11 +776,15 @@ impl GpuPressure3D {
                 timestamp_writes: None,
             });
             pass.set_bind_group(0, &self.pressure_bind_group, &[]);
+            if self.cached_stencil {
+                pass.set_pipeline(&self.stencil_prepare);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
             for _ in 0..iterations {
-                pass.set_pipeline(&self.pressure_red_pipeline);
-                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-                pass.set_pipeline(&self.pressure_black_pipeline);
-                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+                pass.set_pipeline(if self.cached_stencil { &self.stencil_red } else { &self.packed_red });
+                pass.dispatch_workgroups(self.width.div_ceil(64), self.height.div_ceil(2), self.depth.div_ceil(2));
+                pass.set_pipeline(if self.cached_stencil { &self.stencil_black } else { &self.packed_black });
+                pass.dispatch_workgroups(self.width.div_ceil(64), self.height.div_ceil(2), self.depth.div_ceil(2));
             }
             return;
         }

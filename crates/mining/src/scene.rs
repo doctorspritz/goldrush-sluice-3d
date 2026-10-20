@@ -25,7 +25,6 @@ pub struct Palette {
     pub dirt: Handle<StandardMaterial>,
     pub sand: Handle<StandardMaterial>,
     pub gold: Handle<StandardMaterial>,
-    pub water: Handle<StandardMaterial>,
     pub blue: Handle<StandardMaterial>,
     pub skin: Handle<StandardMaterial>,
     pub white: Handle<StandardMaterial>,
@@ -35,9 +34,8 @@ pub(crate) struct TerrainChunk {
     x: usize,
     z: usize,
     revision: u64,
+    source: Vec<[u32; 2]>,
 }
-#[derive(Component)]
-pub(crate) struct WaterSurface;
 #[derive(Clone, Copy)]
 enum Mount {
     Chassis,
@@ -211,15 +209,6 @@ pub fn setup(
         dirt: material(&mut materials, Color::srgb(0.29, 0.17, 0.085), 0.96, 0.0),
         sand: material(&mut materials, Color::srgb(0.50, 0.38, 0.23), 0.9, 0.0),
         gold: material(&mut materials, Color::srgb(0.98, 0.66, 0.10), 0.23, 0.8),
-        water: materials.add(StandardMaterial {
-            base_color: Color::srgba(0.11, 0.31, 0.30, 0.73),
-            alpha_mode: AlphaMode::Blend,
-            perceptual_roughness: 0.13,
-            metallic: 0.18,
-            reflectance: 0.65,
-            cull_mode: None,
-            ..default()
-        }),
         blue: material(&mut materials, Color::srgb(0.12, 0.23, 0.28), 0.85, 0.0),
         skin: material(&mut materials, Color::srgb(0.64, 0.40, 0.24), 0.8, 0.0),
         white: material(&mut materials, Color::srgb(0.88, 0.84, 0.71), 0.8, 0.0),
@@ -240,16 +229,11 @@ pub fn setup(
                     x,
                     z,
                     revision: u64::MAX,
+                    source: Vec::new(),
                 },
             ));
         }
     }
-    commands.spawn((
-        Mesh3d(meshes.add(water_mesh(&game.session.site, 0.0))),
-        MeshMaterial3d(p.water.clone()),
-        Transform::default(),
-        WaterSurface,
-    ));
     // Larger silhouettes conceal the finite claim edge without expanding simulation cost.
     let hill_mat = material(&mut materials, Color::srgb(0.24, 0.31, 0.23), 1.0, 0.0);
     for i in 0..16 {
@@ -341,56 +325,6 @@ pub fn terrain_mesh(site: &Site, x0: usize, z0: usize) -> Mesh {
     m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    m.insert_indices(Indices::U32(indices));
-    m
-}
-fn water_mesh(site: &Site, time: f32) -> Mesh {
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut indices = Vec::new();
-    for z in 0..WIDTH {
-        for x in 0..WIDTH {
-            let px = x as f32 * CELL;
-            let pz = z as f32 * CELL;
-            let depth = site.world.water_depth(x, z);
-            let wave = (px * 8.0 + time * 1.7).sin()
-                * (pz * 5.0 - time * 2.6).cos()
-                * 0.009
-                * depth.min(0.1)
-                * 10.0;
-            positions.push([
-                px,
-                site.world.water_surface[site.world.idx(x, z)] + 0.012 + wave,
-                pz,
-            ]);
-            normals.push(
-                Vec3::new(
-                    (px * 8.0 + time * 1.7).cos() * 0.05,
-                    1.0,
-                    (pz * 5.0 - time * 2.6).sin() * 0.05,
-                )
-                .normalize()
-                .to_array(),
-            );
-        }
-    }
-    for z in 0..WIDTH - 1 {
-        for x in 0..WIDTH - 1 {
-            if site.world.water_depth(x, z) < 0.008 || site.world.water_depth(x + 1, z + 1) < 0.008
-            {
-                continue;
-            }
-            let i = (z * WIDTH + x) as u32;
-            let w = WIDTH as u32;
-            indices.extend_from_slice(&[i, i + w, i + 1, i + 1, i + w, i + w + 1]);
-        }
-    }
-    let mut m = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    );
-    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     m.insert_indices(Indices::U32(indices));
     m
 }
@@ -980,30 +914,38 @@ fn equipment(commands: &mut Commands, meshes: &mut Assets<Mesh>, p: &Palette, si
     }
 }
 
+// Exact mesh inputs, including the one-cell halo used by normal sampling.
+// Water-only solver revisions should not upload unchanged bank meshes again.
+fn terrain_source(site: &Site, x0: usize, z0: usize) -> Vec<[u32; 2]> {
+    let mut key = Vec::new();
+    for z in z0.saturating_sub(1)..=(z0 + 17).min(WIDTH - 1) {
+        for x in x0.saturating_sub(1)..=(x0 + 17).min(WIDTH - 1) {
+            let i = site.world.idx(x, z);
+            let flags = u32::from(site.world.water_depth(x, z) > 0.015)
+                | (u32::from(site.world.terrain_sediment[i] > 0.015) << 1)
+                | (u32::from(site.world.overburden_thickness[i] > 0.025) << 2)
+                | (u32::from(site.world.paydirt_thickness[i] > 0.01) << 3);
+            key.push([site.world.ground_height(x, z).to_bits(), flags]);
+        }
+    }
+    key
+}
 pub fn sync_terrain(
     game: Res<Game>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut chunks: Query<(&Mesh3d, &mut TerrainChunk)>,
-    water: Query<&Mesh3d, (With<WaterSurface>, Without<TerrainChunk>)>,
-    mut clock: Local<f32>,
-    time: Res<Time>,
 ) {
     let site = &game.session.site;
     for (handle, mut chunk) in &mut chunks {
         if chunk.revision != site.revision {
-            if let Some(mesh) = meshes.get_mut(&handle.0) {
-                *mesh = terrain_mesh(site, chunk.x, chunk.z);
+            let source = terrain_source(site, chunk.x, chunk.z);
+            if source != chunk.source {
+                if let Some(mesh) = meshes.get_mut(&handle.0) {
+                    *mesh = terrain_mesh(site, chunk.x, chunk.z);
+                }
+                chunk.source = source;
             }
             chunk.revision = site.revision;
-        }
-    }
-    *clock += time.delta_secs();
-    if *clock > 0.065 {
-        *clock = 0.0;
-        if let Ok(handle) = water.single() {
-            if let Some(mesh) = meshes.get_mut(&handle.0) {
-                *mesh = water_mesh(site, game.session.sim_time as f32);
-            }
         }
     }
 }

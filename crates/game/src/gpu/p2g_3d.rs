@@ -36,6 +36,7 @@ struct P2gParams3D {
 
 /// GPU-based Particle-to-Grid transfer for 3D simulation
 pub struct GpuP2g3D {
+    pub paired_water: bool,
     pub volume_weights: Vec<f32>,
     width: u32,
     height: u32,
@@ -114,6 +115,14 @@ impl GpuP2g3D {
         let v_size = (width * (height + 1) * depth) as usize;
         let w_size = (width * height * (depth + 1)) as usize;
 
+        let allocated = |n: usize| {
+            if include_sediment {
+                n.div_ceil(64) * 64 + n
+            } else {
+                n
+            }
+        };
+
         // Create shader modules
         let scatter_shader = if use_tiled_scatter {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -139,42 +148,42 @@ impl GpuP2g3D {
         // Create grid accumulator buffers (atomic i32)
         let u_sum_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D U Sum"),
-            size: (u_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(u_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let u_weight_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D U Weight"),
-            size: (u_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(u_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let v_sum_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D V Sum"),
-            size: (v_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(v_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let v_weight_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D V Weight"),
-            size: (v_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(v_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let w_sum_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D W Sum"),
-            size: (w_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(w_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let w_weight_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D W Weight"),
-            size: (w_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(w_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -182,7 +191,7 @@ impl GpuP2g3D {
         // Create output grid buffers (f32)
         let grid_u_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid U"),
-            size: (u_size * std::mem::size_of::<f32>()) as u64,
+            size: (allocated(u_size) * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -191,7 +200,7 @@ impl GpuP2g3D {
 
         let grid_v_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid V"),
-            size: (v_size * std::mem::size_of::<f32>()) as u64,
+            size: (allocated(v_size) * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -200,7 +209,7 @@ impl GpuP2g3D {
 
         let grid_w_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid W"),
-            size: (w_size * std::mem::size_of::<f32>()) as u64,
+            size: (allocated(w_size) * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -687,6 +696,7 @@ impl GpuP2g3D {
         });
 
         Self {
+            paired_water: false,
             volume_weights: Vec::new(),
             width,
             height,
@@ -717,7 +727,7 @@ impl GpuP2g3D {
             scatter_bind_group,
             divide_bind_group,
             max_particles,
-            scatter_workgroup_size: 256,
+            scatter_workgroup_size: if use_tiled_scatter { 256 } else { 128 },
         }
     }
 
@@ -804,7 +814,7 @@ impl GpuP2g3D {
             depth: self.depth,
             particle_count,
             include_sediment: if self.include_sediment { 1 } else { 0 },
-            _pad0: 0,
+            _pad0: u32::from(self.paired_water),
             _pad1: 0,
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));

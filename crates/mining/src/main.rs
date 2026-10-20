@@ -1,3 +1,4 @@
+mod activity;
 mod app;
 mod control_check;
 mod demo;
@@ -5,6 +6,7 @@ mod hud;
 mod runtime;
 mod scene;
 mod sediment;
+mod terrain_water;
 mod validation;
 mod water;
 
@@ -40,6 +42,7 @@ fn main() -> AppExit {
         .add_plugins(water::WaterSplatPlugin)
         .insert_resource(game)
         .insert_non_send_resource(runtime)
+        .insert_non_send_resource(activity::SimulationActivity::default())
         .init_resource::<validation::Validation>()
         .insert_resource(control_check::Check::from_args())
         .add_systems(Startup, (scene::setup, hud::setup))
@@ -62,6 +65,7 @@ fn main() -> AppExit {
                 scene::guides,
                 hud::update,
                 validation::update,
+                activity::sync,
                 runtime::dispatch,
             )
                 .chain(),
