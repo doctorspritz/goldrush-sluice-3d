@@ -6,6 +6,8 @@ use mining_sim::{
     Site,
 };
 pub(crate) const MAX_SPLATS: usize = (WIDTH - 1) * (WIDTH - 1);
+// Presentation only; keep in step with MIN_FILM_DEPTH in water_depth.wgsl.
+const MIN_VISIBLE_DEPTH_M: f32 = 0.0001;
 pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
     let surface = &site.world.water_surface;
     let mut height = surface.clone();
@@ -14,7 +16,7 @@ pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
     for z in 0..WIDTH {
         for x in 0..WIDTH {
             let i = z * WIDTH + x;
-            supported[i] = site.world.water_depth(x, z) >= 0.001;
+            supported[i] = site.world.water_depth(x, z) > MIN_VISIBLE_DEPTH_M;
             // These channels already contain volume concentration, not sediment depth.
             concentration[i] = [
                 &site.hydraulic.suspended_sediment,
@@ -28,7 +30,7 @@ pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
             .clamp(0., 1.);
             // Extend wet levels across the dry shore for reconstruction. The final
             // surface is clipped against actual ground, never draped up dry banks.
-            if site.world.water_depth(x, z) < 0.001 {
+            if !supported[i] {
                 let mut sum = 0.;
                 let mut weight = 0.;
                 for dz in -1..=1 {
@@ -38,7 +40,7 @@ pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
                         if nx < 0 || nz < 0 || nx >= WIDTH as i32 || nz >= WIDTH as i32 {
                             continue;
                         }
-                        if site.world.water_depth(nx as usize, nz as usize) > 0.001 {
+                        if site.world.water_depth(nx as usize, nz as usize) > MIN_VISIBLE_DEPTH_M {
                             let w = 1. / (dx * dx + dz * dz).max(1) as f32;
                             sum += surface[nz as usize * WIDTH + nx as usize] * w;
                             weight += w;
@@ -91,12 +93,18 @@ pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
             ];
             if !ids
                 .iter()
-                .any(|&i| site.world.water_depth(i % WIDTH, i / WIDTH) > 0.001)
+                .any(|&i| site.world.water_depth(i % WIDTH, i / WIDTH) > MIN_VISIBLE_DEPTH_M)
             {
                 continue;
             }
             let h = ids.map(|i| height[i]);
-            let depth = ids.map(|i| height[i] - site.world.ground_height(i % WIDTH, i / WIDTH));
+            // Extending the surface plane across shore must not turn a saved
+            // dry corner into a visible film, especially below a millimetre.
+            let depth = ids.map(|i| {
+                site.world
+                    .water_depth(i % WIDTH, i / WIDTH)
+                    .min(height[i] - site.world.ground_height(i % WIDTH, i / WIDTH))
+            });
             let vx = ids
                 .iter()
                 .map(|i| site.hydraulic.velocity_x.get(*i).copied().unwrap_or(0.))
@@ -129,6 +137,44 @@ pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shoreline_extension_keeps_saved_dry_corners_dry() {
+        let mut site = Site::new();
+        for z in 0..WIDTH {
+            for x in 0..WIDTH {
+                site.world.water_surface[z * WIDTH + x] = site.world.ground_height(x, z);
+            }
+        }
+        site.world.water_surface[60 * WIDTH + 80] += 0.003;
+        let water = instances(&site, 0.);
+        assert_eq!(water.len(), 4);
+        assert!(water
+            .iter()
+            .all(|p| p.axis_y.iter().filter(|&&d| d > 0.).count() == 1));
+    }
+    #[test]
+    fn submillimetre_films_have_bounded_coverage_without_adding_water() {
+        let mut site = Site::new();
+        for z in 0..WIDTH {
+            for x in 0..WIDTH {
+                site.world.water_surface[z * WIDTH + x] = site.world.ground_height(x, z) + 0.0005;
+            }
+        }
+        let before = site.world.water_surface.clone();
+        let film = instances(&site, 0.);
+        assert_eq!(film.len(), MAX_SPLATS);
+        assert_eq!(before, site.world.water_surface);
+        assert!(film
+            .iter()
+            .all(|p| p.axis_y.iter().all(|h| (*h - 0.0005).abs() < 0.000001)));
+        // Numerical residue must not turn the entire dry site into water.
+        for z in 0..WIDTH {
+            for x in 0..WIDTH {
+                site.world.water_surface[z * WIDTH + x] = site.world.ground_height(x, z) + 0.00005;
+            }
+        }
+        assert!(instances(&site, 0.).is_empty());
+    }
     #[test]
     fn continuous_cells_share_vertices_and_do_not_mutate_water() {
         let site = Site::new();

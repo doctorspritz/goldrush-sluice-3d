@@ -22,6 +22,7 @@ pub struct Validation {
     worker_phases: [f64; 5],
     pub input_complete: bool,
     capture: Option<PathBuf>,
+    freeze: bool,
     load_path: Option<PathBuf>,
     pub replay: OperatorReplay,
     frames: u64,
@@ -71,6 +72,7 @@ impl Default for Validation {
             input_check: std::env::args().any(|a| a == "--check-controls"),
             input_complete: false,
             capture,
+            freeze: std::env::args().any(|a| a == "--freeze"),
             load_path,
             replay: OperatorReplay::default(),
             frames: 0,
@@ -137,6 +139,11 @@ pub fn update(
         if let Some(path) = v.load_path.clone() {
             game.command(Command::Load(path));
             v.restore_requested = true;
+        }
+        // A fixed saved scene allows before/after rendering checks without
+        // different solver timings changing its water depth or particle state.
+        if v.freeze {
+            game.command(Command::Pause(true));
         }
     }
     if v.active() && (v.last_phase != v.replay.phase || v.last_progress.elapsed().as_secs() >= 10) {

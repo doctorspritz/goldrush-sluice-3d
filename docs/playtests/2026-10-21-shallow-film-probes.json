@@ -1,0 +1,71 @@
+{
+  "method": "Unedited before/after PNG interior RGB probes; projected with the saved camera and default 45-degree vertical field of view. Diagnostic colour difference, not physical flow validation.",
+  "probes": [
+    {
+      "depth_m": 0.00025,
+      "world_x": 3.875,
+      "pixel": [
+        1005,
+        260
+      ],
+      "mean_absolute_rgb_change": 8.374149659863946,
+      "changed_pixels": 49,
+      "sample_pixels": 49
+    },
+    {
+      "depth_m": 0.0005,
+      "world_x": 5.125,
+      "pixel": [
+        891,
+        260
+      ],
+      "mean_absolute_rgb_change": 35.19727891156463,
+      "changed_pixels": 49,
+      "sample_pixels": 49
+    },
+    {
+      "depth_m": 0.001,
+      "world_x": 6.375,
+      "pixel": [
+        777,
+        260
+      ],
+      "mean_absolute_rgb_change": 36.7687074829932,
+      "changed_pixels": 49,
+      "sample_pixels": 49
+    },
+    {
+      "depth_m": 0.002,
+      "world_x": 7.625,
+      "pixel": [
+        663,
+        260
+      ],
+      "mean_absolute_rgb_change": 1.3945578231292517,
+      "changed_pixels": 36,
+      "sample_pixels": 49
+    },
+    {
+      "depth_m": 0.005,
+      "world_x": 8.875,
+      "pixel": [
+        549,
+        259
+      ],
+      "mean_absolute_rgb_change": 4.292517006802721,
+      "changed_pixels": 40,
+      "sample_pixels": 49
+    },
+    {
+      "depth_m": 0.01,
+      "world_x": 10.125,
+      "pixel": [
+        435,
+        259
+      ],
+      "mean_absolute_rgb_change": 2.2653061224489797,
+      "changed_pixels": 35,
+      "sample_pixels": 49
+    }
+  ]
+}

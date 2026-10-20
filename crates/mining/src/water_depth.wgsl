@@ -2,6 +2,8 @@ struct Uniforms {clip_from_world:mat4x4<f32>,world_from_view:mat4x4<f32>,view_fr
 struct Particle {center_radius:vec4<f32>,velocity:vec4<f32>,shape:vec4<f32>,axis_x:vec4<f32>,axis_y:vec4<f32>,axis_z:vec4<f32>,slope_x:vec4<f32>,slope_z:vec4<f32>};
 @group(0) @binding(0) var<storage,read> particles:array<Particle>;
 @group(0) @binding(1) var<uniform> u:Uniforms;
+// Presentation only, matching terrain_water::MIN_VISIBLE_DEPTH_M.
+const MIN_FILM_DEPTH:f32=0.0001;
 struct Varying {
  @builtin(position) clip:vec4<f32>,
  @location(0) world:vec3<f32>,
@@ -36,7 +38,7 @@ struct Depth {@location(0) linear:vec4<f32>,@location(1) normal:vec4<f32>,@built
 @fragment fn particle_depth(v:Varying)->Depth {
  var world=v.world;var optical=select(0.,-1.,v.shape.z==0.);
  if v.shape.z==1. {
-  if v.terrain.x<0.0008 {discard;}
+  if v.terrain.x<=MIN_FILM_DEPTH {discard;}
   optical=1.+v.terrain.y;
  } else {
   // Ray/ellipsoid intersection reconstructs a surface from neighbourhood
@@ -50,7 +52,10 @@ struct Depth {@location(0) linear:vec4<f32>,@location(1) normal:vec4<f32>,@built
   let t=closest-sqrt(squared/a);if t<=0. {discard;}world=eye+ray*t;
  }
  let clip=u.clip_from_world*vec4(world,1.);var out:Depth;
- out.linear=vec4(-(u.view_from_world*vec4(world,1.)).z,optical,v.velocity);out.normal=v.surface;out.depth=clip.z/clip.w;return out;
+ out.linear=vec4(-(u.view_from_world*vec4(world,1.)).z,optical,v.velocity);out.normal=v.surface;
+ // River alpha carries physical vertical depth, not view-ray thickness.
+ if v.shape.z==1. {out.normal.w=v.terrain.x;}
+ out.depth=clip.z/clip.w;return out;
 }
 @fragment fn particle_thickness(v:Varying)->@location(0) f32 {
  let eye=u.world_from_view[3].xyz;let ray=normalize(v.world-eye);let origin=eye-v.center_radius.xyz;
