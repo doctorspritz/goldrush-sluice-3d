@@ -2,6 +2,7 @@ mod activity;
 mod app;
 mod control_check;
 mod demo;
+mod fluid_surface;
 mod hud;
 mod runtime;
 mod scene;

@@ -9,10 +9,11 @@ use mining_sim::{
 };
 use std::path::PathBuf;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FluidRevision {
     generation: u64,
     solver_steps: u64,
+    outflow_time: u64,
     cleanups: u32,
     placement: Option<(SimVec3, f32, f32)>,
 }
@@ -58,6 +59,11 @@ impl Game {
         FluidRevision {
             generation: self.simulation_generation,
             solver_steps: s.solver_steps,
+            outflow_time: if s.outflow.is_empty() || !s.water.is_empty() {
+                0
+            } else {
+                self.session.sim_time.to_bits()
+            },
             cleanups: s.cleanups,
             placement: s.placement.map(|p| (p.inlet, p.yaw, p.slope_deg)),
         }
@@ -702,5 +708,46 @@ mod screen_direction_tests {
                 "yaw={yaw}: D must move right in the actual view"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod fluid_cache_tests {
+    use super::*;
+    #[test]
+    fn airborne_only_ticks_do_not_rebuild_unchanged_channel_but_drain_stays_visible() {
+        let mut game = Game::default();
+        game.session.sluice.placement = Some(Placement::suggested(&game.session.site));
+        game.session
+            .sluice
+            .outflow
+            .push(mining_sim::outflow::OutflowParticle {
+                position: SimVec3::new(14., 2., 20.),
+                velocity: SimVec3::X,
+            });
+        game.session
+            .sluice
+            .water
+            .push(mining_sim::sluice::WaterParticle {
+                position: SimVec3::new(0.5, 0.4, 0.2),
+                velocity: SimVec3::X,
+                affine: Default::default(),
+            });
+        let key = game.fluid_revision();
+        game.session.sim_time += mining_sim::FIXED_DT as f64;
+        assert_eq!(key, game.fluid_revision());
+        game.session.sluice.solver_steps += 4;
+        assert_ne!(key, game.fluid_revision());
+        game.session.sluice.water.clear();
+        let key = game.fluid_revision();
+        game.session.sim_time += mining_sim::FIXED_DT as f64;
+        assert_ne!(
+            key,
+            game.fluid_revision(),
+            "airborne water must keep moving after channel empties"
+        );
+        let key = game.fluid_revision();
+        game.session.sluice.outflow.clear();
+        assert_ne!(key, game.fluid_revision());
     }
 }

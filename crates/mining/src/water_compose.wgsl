@@ -6,6 +6,7 @@ struct Screen { @builtin(position) position: vec4<f32> };
 @group(0) @binding(2) var scene_depth: texture_depth_2d;
 @group(0) @binding(3) var<uniform> u: Uniforms;
 @group(0) @binding(4) var raw_depths: texture_2d<f32>;
+@group(0) @binding(5) var fluid_thickness:texture_2d<f32>;
 fn depth_at(q: vec2<i32>) -> f32 { return textureLoad(depths,clamp(q,vec2(0),vec2<i32>(textureDimensions(depths))-vec2(1)),0).r; }
 // Bilateral upsampling keeps the half-resolution smoothing buffer from
 // producing two-pixel shading blocks. Empty pixels contribute only coverage.
@@ -26,6 +27,12 @@ fn view_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     let uv = pixel/u.viewport.xy;
     let ray = u.view_from_clip * vec4(uv.x*2.-1.,1.-uv.y*2.,1.,1.);
     return ray.xyz * (depth / max(-ray.z,0.0001));
+}
+fn ripple_gradient(q:vec2<f32>)->vec2<f32> {
+    // Analytic multi-scale optical ripples, without geometric sine-wave lumps.
+    return vec2(0.8,0.6)*cos(dot(q,vec2(27.,20.)))
+        +vec2(-0.4,0.9)*cos(dot(q,vec2(-63.,142.)))*0.36
+        +vec2(0.9,-0.3)*cos(dot(q,vec2(194.,-65.)))*0.12;
 }
 @fragment fn compose(s: Screen) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(s.position.xy); let original = textureLoad(scene,pixel,0);
@@ -49,20 +56,37 @@ fn view_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     if left > 0. && (right <= 0. || abs(left-depth)<abs(right-depth)) { dx = position-view_point(q-vec2(1.,0.),left); }
     if up > 0. && (down <= 0. || abs(up-depth)<abs(down-depth)) { dy = position-view_point(q-vec2(0.,1.),up); }
     var n = normalize(cross(dy,dx)); if n.z < 0. { n = -n; }
-    let normal = normalize((u.world_from_view * vec4(n,0.)).xyz);
-    let eye = normalize(-position); let fresnel = 0.035 + 0.50*pow(1.-max(dot(n,eye),0.),4.);
-    let light = normalize(vec3(0.35,0.85,0.3));
-    let half_vector = normalize(light + normalize(u.world_from_view[3].xyz-world.xyz));
-    let specular = pow(max(dot(normal,half_vector),0.),72.) * 0.38;
-    let sky = mix(vec3(0.21,0.36,0.43),vec3(0.62,0.76,0.82),clamp(normal.y*0.5+0.5,0.,1.));
+    var normal = normalize((u.world_from_view * vec4(n,0.)).xyz);
+    let optical_sample=textureLoad(raw_depths,raw_pixel,0);
+    let river=optical_sample.g>=1.;
+    let flow=optical_sample.ba;
+    // Dual-phase advection blends at resets, so a varying flow field cannot
+    // stretch the normal detail indefinitely. Simulation time also freezes it.
+    if river {
+        let phase0=fract(u.sediment.z*0.5);let phase1=fract(u.sediment.z*0.5+0.5);
+        let weight0=1.-abs(phase0*2.-1.);
+        let q0=world.xz-flow*(phase0*2.);let q1=world.xz-flow*(phase1*2.);
+        let gradient=mix(ripple_gradient(q1),ripple_gradient(q0),weight0);
+        normal=normalize(normal+vec3(gradient.x,0.,gradient.y)*0.055);
+    }
+    let eye_world=normalize(u.world_from_view[3].xyz-world.xyz);
+    let fresnel=0.02+0.98*pow(1.-clamp(dot(normal,eye_world),0.,1.),5.);
+    let light=normalize(vec3(0.35,0.85,0.3));
+    let half_vector=normalize(light+eye_world);
+    let specular=pow(max(dot(normal,half_vector),0.),96.)*0.32;
+    let reflection=reflect(-eye_world,normal);
+    let sky=mix(vec3(0.19,0.25,0.24),vec3(0.48,0.66,0.76),smoothstep(-0.1,0.65,reflection.y));
     let opaque_view = u.view_from_clip * vec4(q.x/u.viewport.x*2.-1.,1.-q.y/u.viewport.y*2.,opaque,1.);
     var thickness = 0.04;
     if opaque>0. && abs(opaque_view.w)>0.00001 { thickness=clamp(-opaque_view.z/opaque_view.w-depth,0.,0.5); }
-    let optical=textureLoad(raw_depths,raw_pixel,0).g;
+    if !river {thickness=min(thickness,max(textureLoad(fluid_thickness,raw_pixel,0).r,0.0002));}
+    let optical=optical_sample.g;
     let concentration=select(u.sediment.x,optical-1.,optical>=1.);
-    let extinction=vec3(4.,2.,0.9)+vec3(45.,80.,120.)*concentration*30.;
+    let extinction=vec3(0.8,0.24,0.12)+vec3(45.,80.,120.)*concentration*30.;
     let transmission=exp(-extinction*thickness);
     let scattering=mix(vec3(0.035,0.18,0.18),vec3(0.22,0.13,0.055),clamp(concentration*20.,0.,1.));
     let body=original.rgb*transmission+scattering*(vec3(1.)-transmission);
-    return vec4(mix(original.rgb,mix(body,sky,fresnel)+vec3(specular),clamp(sample.y,0.,1.)),original.a);
+    let shore=smoothstep(0.,0.025,thickness);
+    let coverage=clamp(sample.y,0.,1.)*select(1.,shore,river);
+    return vec4(mix(original.rgb,mix(body,sky,fresnel)+vec3(specular),coverage),original.a);
 }

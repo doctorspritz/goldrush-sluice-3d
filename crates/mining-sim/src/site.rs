@@ -21,6 +21,9 @@ pub struct Site {
 pub struct HeightfieldState {
     pub velocity_x: Vec<f32>,
     pub velocity_z: Vec<f32>,
+    /// CPU water impacts changed momentum and suspension since the latest GPU step.
+    #[serde(default)]
+    pub impact_dirty: bool,
     pub flux_x: Vec<f32>,
     pub flux_z: Vec<f32>,
     pub suspended_sediment: Vec<f32>,

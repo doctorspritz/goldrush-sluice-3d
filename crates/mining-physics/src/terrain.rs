@@ -44,6 +44,41 @@ impl Hydraulics {
             dt,
         );
         h.upload_terrain_only(&self.queue, w);
+        if s.site.hydraulic.impact_dirty {
+            self.queue.write_buffer(
+                &h.water.velocity_x,
+                0,
+                bytemuck::cast_slice(&s.site.hydraulic.velocity_x),
+            );
+            self.queue.write_buffer(
+                &h.water.velocity_z,
+                0,
+                bytemuck::cast_slice(&s.site.hydraulic.velocity_z),
+            );
+            for (buffer, data) in [
+                (
+                    &h.water.suspended_sediment,
+                    &s.site.hydraulic.suspended_sediment,
+                ),
+                (
+                    &h.water.suspended_overburden,
+                    &s.site.hydraulic.suspended_overburden,
+                ),
+                (
+                    &h.water.suspended_gravel,
+                    &s.site.hydraulic.suspended_gravel,
+                ),
+                (
+                    &h.water.suspended_paydirt,
+                    &s.site.hydraulic.suspended_paydirt,
+                ),
+            ] {
+                if !data.is_empty() {
+                    self.queue
+                        .write_buffer(buffer, 0, bytemuck::cast_slice(data));
+                }
+            }
+        }
         let depth: Vec<f32> = (0..WIDTH * WIDTH)
             .map(|i| {
                 let ground = w.bedrock_elevation[i]
@@ -138,6 +173,7 @@ impl Hydraulics {
         w.terrain_sediment = next();
         let depth = next();
         let a = &mut s.site.hydraulic;
+        a.impact_dirty = false;
         a.velocity_x = next();
         a.velocity_z = next();
         a.flux_x = next();

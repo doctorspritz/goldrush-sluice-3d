@@ -68,7 +68,7 @@ fn packed_checkerboard_preserves_pressure_with_odd_grid_extents() {
         staging.unmap();
         values
     };
-    for boundaries in [0, 10, 63] {
+    for boundaries in [0, 10, 14, 63] {
         for iterations in [1, 7, 40, 80] {
             let reference = solve(false, false, iterations, boundaries);
             let packed = solve(true, false, iterations, boundaries);

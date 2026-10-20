@@ -186,7 +186,9 @@ impl Hydraulics {
             flip.sediment_porosity_drag = 0.0;
         }
         flip.sediment_vorticity_lift = 0.0;
-        flip.open_boundaries = 2 | 8; // downstream +X outlet and free surface +Y
+        // The solid channel floor remains in the SDF. Its exterior must not
+        // become an invisible floor under the open lip.
+        flip.open_boundaries = 2 | 4 | 8; // +X outlet, -Y exterior and +Y free surface
         let dem = ClusterSimulation3D::new(
             Vec3::ZERO,
             Vec3::new(
@@ -213,6 +215,8 @@ impl Hydraulics {
     }
     fn step_sluice(&mut self, s: &mut Session, fluid_dt: f32) -> Result<(), String> {
         let prepared = std::time::Instant::now();
+        // Migrate live saves containing particles beyond the old lip/buffer.
+        mining_sim::outflow::release(&mut s.sluice);
         self.local(s);
         let Some(l) = &mut self.sluice else {
             return Ok(());
@@ -221,7 +225,11 @@ impl Hydraulics {
         let dx = profile.cell();
         let particle_m3 = profile.particle_m3();
         let n = (s.sluice.water_credit_m3 / particle_m3).floor() as usize;
-        let emitted = n.min(profile.capacity().saturating_sub(s.sluice.water.len()));
+        let emitted = n.min(
+            profile
+                .capacity()
+                .saturating_sub(s.sluice.water.len() + s.sluice.outflow.len()),
+        );
         for i in 0..emitted {
             // Water volume uses eight particles per cell. Each new particle represents
             // exactly dx^3/8 m3 withdrawn at the river intake by Session::step.
@@ -572,6 +580,7 @@ impl Hydraulics {
                 && p.z > 0.0
                 && p.z < l.grid.depth as f32 * dx
         };
+        mining_sim::outflow::release(&mut s.sluice);
         let before = s.sluice.water.len();
         s.sluice.water.retain(|p| in_domain(p.position));
         let returned = (before - s.sluice.water.len()) as f64 * particle_m3;

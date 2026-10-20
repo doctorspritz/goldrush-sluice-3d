@@ -1,4 +1,4 @@
-//! Screen-space fluid from the authoritative FLIP particles: nearest particle
+//! Screen-space fluid from authoritative FLIP and saved outflow: nearest particle
 //! depth, edge-preserving smoothing, then one shaded surface. Render-only buffers
 //! are bounded/reused; neither the particle state nor terrain flow is modified.
 use bevy::{
@@ -39,6 +39,9 @@ pub struct WaterSplats {
     terrain_key: Option<(u64, u64, u64)>,
     terrain_clock: PresentationClock,
     fluid_revision: Option<crate::app::FluidRevision>,
+    outflow_clock: PresentationClock,
+    outflow_sample_time: f64,
+    sim_time: f32,
 }
 impl WaterSplats {
     pub fn terrain_count(&self) -> usize {
@@ -58,6 +61,9 @@ impl Default for WaterSplats {
             terrain_key: None,
             terrain_clock: PresentationClock::default(),
             fluid_revision: None,
+            outflow_clock: PresentationClock::default(),
+            outflow_sample_time: 0.,
+            sim_time: 0.,
         }
     }
 }
@@ -100,6 +106,9 @@ pub(crate) struct InstanceData {
     pub center_radius: [f32; 4],
     pub velocity: [f32; 4],
     pub shape: [f32; 4],
+    pub axis_x: [f32; 4],
+    pub axis_y: [f32; 4],
+    pub axis_z: [f32; 4],
 }
 
 pub struct WaterSplatPlugin;
@@ -151,6 +160,7 @@ struct FluidTargets {
     ping: TextureView,
     pong: TextureView,
     depth: TextureView,
+    thickness: TextureView,
     uniform: UniformBuffer<FluidUniforms>,
 }
 #[derive(Resource)]
@@ -159,6 +169,7 @@ struct FluidPipelines {
     blur: BindGroupLayout,
     compose: BindGroupLayout,
     depth_id: CachedRenderPipelineId,
+    thickness_id: CachedRenderPipelineId,
     blur_x: CachedRenderPipelineId,
     blur_y: CachedRenderPipelineId,
     compose_id: CachedRenderPipelineId,
@@ -206,6 +217,7 @@ fn init_pipelines(
                 texture_depth_2d(),
                 uniform_buffer::<FluidUniforms>(false),
                 texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         ),
     );
@@ -228,7 +240,22 @@ fn init_pipelines(
                 entry_point: Some(fragment.into()),
                 targets: vec![Some(ColorTargetState {
                     format,
-                    blend: None,
+                    blend: if fragment == "particle_thickness" {
+                        Some(BlendState {
+                            color: BlendComponent {
+                                src_factor: BlendFactor::One,
+                                dst_factor: BlendFactor::One,
+                                operation: BlendOperation::Add,
+                            },
+                            alpha: BlendComponent {
+                                src_factor: BlendFactor::One,
+                                dst_factor: BlendFactor::One,
+                                operation: BlendOperation::Add,
+                            },
+                        })
+                    } else {
+                        None
+                    },
                     write_mask: ColorWrites::ALL,
                 })],
                 ..default()
@@ -241,11 +268,11 @@ fn init_pipelines(
     let blur_shader = assets.load("embedded://mining/water_blur.wgsl");
     let compose_shader = assets.load("embedded://mining/water_compose.wgsl");
     let depth_id = make(
-        depth_shader,
+        depth_shader.clone(),
         &particles,
         "particle_vertex",
         "particle_depth",
-        TextureFormat::Rg32Float,
+        TextureFormat::Rgba32Float,
         Some(DepthStencilState {
             format: TextureFormat::Depth32Float,
             depth_write_enabled: true,
@@ -253,6 +280,14 @@ fn init_pipelines(
             stencil: default(),
             bias: default(),
         }),
+    );
+    let thickness_id = make(
+        depth_shader,
+        &particles,
+        "particle_vertex",
+        "particle_thickness",
+        TextureFormat::R16Float,
+        None,
     );
     let blur_x = make(
         blur_shader.clone(),
@@ -283,6 +318,7 @@ fn init_pipelines(
         blur,
         compose,
         depth_id,
+        thickness_id,
         blur_x,
         blur_y,
         compose_id,
@@ -321,7 +357,7 @@ fn prepare_particles(
     }
     let mut buffer = ParticleBuffer {
         buffer: device.create_buffer(&BufferDescriptor {
-            label: Some("Bounded sluice and terrain render splats"),
+            label: Some("Bounded fluid kernels and continuous terrain water"),
             size: ((MAX_SPLATS + crate::terrain_water::MAX_SPLATS) * size_of::<InstanceData>())
                 as u64,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
@@ -361,7 +397,12 @@ fn prepare_views(
             world_from_view,
             view_from_clip: view.clip_from_view.inverse(),
             view_from_world: world_from_view.inverse(),
-            sediment: Vec4::new(water.turbidity, water.terrain_clock.prediction, 0.0, 0.0),
+            sediment: Vec4::new(
+                water.turbidity,
+                water.terrain_clock.prediction,
+                water.sim_time,
+                water.outflow_clock.prediction,
+            ),
             viewport: Vec4::new(full.x as f32, full.y as f32, 0.045, water.clock.prediction),
         };
         if let Some(mut target) = existing {
@@ -393,10 +434,11 @@ fn prepare_views(
         uniform.write_buffer(&device, &queue);
         commands.entity(entity).insert(FluidTargets {
             size,
-            raw: texture("fluid raw depth", TextureFormat::Rg32Float),
+            raw: texture("fluid raw depth", TextureFormat::Rgba32Float),
             ping: texture("fluid blur ping", TextureFormat::R32Float),
             pong: texture("fluid blur pong", TextureFormat::R32Float),
             depth: texture("fluid depth test", TextureFormat::Depth32Float),
+            thickness: texture("fluid optical thickness", TextureFormat::R16Float),
             uniform,
         });
     }
@@ -429,6 +471,7 @@ impl ViewNode for FluidNode {
         let health = &world.resource::<WaterSplats>().health;
         for id in [
             settings.depth_id,
+            settings.thickness_id,
             settings.blur_x,
             settings.blur_y,
             settings.compose_id,
@@ -440,8 +483,9 @@ impl ViewNode for FluidNode {
                 return Ok(());
             }
         }
-        let (Some(depth), Some(blur_x), Some(blur_y), Some(compose)) = (
+        let (Some(depth), Some(thickness), Some(blur_x), Some(blur_y), Some(compose)) = (
             cache.get_render_pipeline(settings.depth_id),
+            cache.get_render_pipeline(settings.thickness_id),
             cache.get_render_pipeline(settings.blur_x),
             cache.get_render_pipeline(settings.blur_y),
             cache.get_render_pipeline(settings.compose_id),
@@ -477,6 +521,7 @@ impl ViewNode for FluidNode {
                 scene_depth.view(),
                 uniform,
                 &target.raw,
+                &target.thickness,
             )),
         );
         let color = |view| {
@@ -514,6 +559,20 @@ impl ViewNode for FluidNode {
                 0..6,
                 MAX_SPLATS as u32..MAX_SPLATS as u32 + particles.terrain_count,
             );
+        }
+        {
+            let mut pass = context
+                .command_encoder()
+                .begin_render_pass(&RenderPassDescriptor {
+                    label: Some("fluid volume-normalized optical thickness"),
+                    color_attachments: &[color(&target.thickness)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            pass.set_pipeline(thickness);
+            pass.set_bind_group(0, &particle_group, &[]);
+            pass.draw(0..6, 0..particles.count);
         }
         // Two separable bilateral iterations smooth shared fluid normals, without
         // averaging across a depth jump or expanding water into empty pixels.
@@ -563,8 +622,9 @@ pub fn surface_failed(splats: &WaterSplats) -> bool {
 /// Build world-space splats from the exact live FLIP state, including detached
 /// droplets. A deterministic stride bounds upload/fragment cost at high volumes.
 pub fn visible_count(sluice: &mining_sim::Sluice) -> usize {
-    let stride = sluice.water.len().div_ceil(MAX_SPLATS).max(1);
-    sluice.water.len().div_ceil(stride)
+    let count = sluice.water.len() + sluice.outflow.len();
+    let stride = count.div_ceil(MAX_SPLATS).max(1);
+    count.div_ceil(stride)
 }
 
 pub fn sync(game: Res<crate::app::Game>, time: Res<Time>, mut splats: ResMut<WaterSplats>) {
@@ -578,6 +638,7 @@ pub fn sync(game: Res<crate::app::Game>, time: Res<Time>, mut splats: ResMut<Wat
         splats.fluid_revision = Some(key);
         splats.revision = game.snapshot_id;
         splats.data = Arc::new(instances(&game.session.sluice));
+        splats.outflow_sample_time = game.session.sim_time;
         let sluice = &game.session.sluice;
         let fines: f64 = sluice
             .grains
@@ -589,6 +650,13 @@ pub fn sync(game: Res<crate::app::Game>, time: Res<Time>, mut splats: ResMut<Wat
             / (sluice.water.len() as f64 * sluice.profile.particle_m3()).max(1e-9))
         .clamp(0.0, 1.0) as f32;
     }
+    splats.sim_time = game.session.sim_time as f32;
+    let outflow_sample_time = splats.outflow_sample_time;
+    splats.outflow_clock.sample(
+        outflow_sample_time,
+        time.elapsed_secs_f64(),
+        game.session.paused,
+    );
     let site = &game.session.site;
     splats.terrain_clock.sample_interval(
         site.hydraulic.steps as f64 * 3.0 * mining_sim::FIXED_DT as f64,
@@ -613,25 +681,57 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
     let Some(p) = sluice.placement else {
         return Vec::new();
     };
-    let stride = sluice.water.len().div_ceil(MAX_SPLATS).max(1);
-    let radius = sluice.profile.cell() * 0.6 * (stride as f32).cbrt();
-    sluice
+    let count = sluice.water.len() + sluice.outflow.len();
+    let stride = count.div_ceil(MAX_SPLATS).max(1);
+    let radius = sluice.profile.cell() * 0.85 * (stride as f32).cbrt();
+    let sampled: Vec<_> = sluice
         .water
         .iter()
-        .step_by(stride)
-        .filter_map(|water| {
-            if !water.position.is_finite() || !water.velocity.is_finite() {
-                return None;
-            }
+        .map(|water| {
             let world = p.to_world(sluice.grid_to_local(water.position));
-            let v = p.forward() * water.velocity.x
-                + mining_sim::Vec3::Y * water.velocity.y
-                + p.right() * water.velocity.z;
-            Some(InstanceData {
-                center_radius: [world.x, world.y, world.z, radius],
-                velocity: [v.x, v.y, v.z, 0.0],
-                shape: [0.; 4],
-            })
+            (
+                Vec3::from_array(world.to_array()),
+                sluice.grid_velocity_to_world(water.velocity),
+                0.,
+            )
+        })
+        .chain(sluice.outflow.iter().map(|water| {
+            (
+                Vec3::from_array(water.position.to_array()),
+                water.velocity,
+                2.,
+            )
+        }))
+        .step_by(stride)
+        .filter(|(p, v, _)| p.is_finite() && v.is_finite())
+        .collect();
+    let points: Vec<_> = sampled.iter().map(|(p, _, _)| *p).collect();
+    let kernels = crate::fluid_surface::kernels(&points, sluice.profile.cell());
+    sampled
+        .into_iter()
+        .zip(kernels)
+        .map(|((_p, v, kind), kernel)| {
+            let c = kernel.center;
+            let axis = |v: Vec3| [v.x, v.y, v.z, 0.];
+            InstanceData {
+                center_radius: [c.x, c.y, c.z, radius],
+                velocity: [v.x, v.y, v.z, 0.],
+                shape: [
+                    (sluice.profile.particle_m3() * stride as f64
+                        / (4. / 3.
+                            * std::f64::consts::PI
+                            * (radius as f64).powi(3)
+                            * kernel.axes[0].length() as f64
+                            * kernel.axes[1].length() as f64
+                            * kernel.axes[2].length() as f64)) as f32,
+                    0.,
+                    kind,
+                    0.,
+                ],
+                axis_x: axis(kernel.axes[0]),
+                axis_y: axis(kernel.axes[1]),
+                axis_z: axis(kernel.axes[2]),
+            }
         })
         .collect()
 }

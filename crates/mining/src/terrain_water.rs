@@ -1,35 +1,20 @@
-//! Render-only tangent-disc splats of the saved terrain-flow state. These are
-//! neither new water volume nor a replacement for the conservative SWE solver.
+//! Continuous, shore-clipped presentation of the saved terrain-flow surface.
+//! Additional vertices and flow-mapped optical detail do not add water volume.
 use crate::water::InstanceData;
 use mining_sim::{
     site::{CELL, WIDTH},
     Site,
 };
-pub(crate) const MAX_SPLATS: usize = WIDTH * WIDTH * 4;
-pub(crate) fn instances(site: &Site, sim: f64) -> Vec<InstanceData> {
+pub(crate) const MAX_SPLATS: usize = (WIDTH - 1) * (WIDTH - 1);
+pub(crate) fn instances(site: &Site, _sim: f64) -> Vec<InstanceData> {
     let surface = &site.world.water_surface;
-    let sample = |x: f32, z: f32| {
-        let x = (x / CELL).clamp(0., (WIDTH - 1) as f32);
-        let z = (z / CELL).clamp(0., (WIDTH - 1) as f32);
-        let ix = x as usize;
-        let iz = z as usize;
-        let nx = (ix + 1).min(WIDTH - 1);
-        let nz = (iz + 1).min(WIDTH - 1);
-        let a = surface[iz * WIDTH + ix] * (1. - x.fract()) + surface[iz * WIDTH + nx] * x.fract();
-        let b = surface[nz * WIDTH + ix] * (1. - x.fract()) + surface[nz * WIDTH + nx] * x.fract();
-        a * (1. - z.fract()) + b * z.fract()
-    };
-    let mut result = Vec::new();
+    let mut height = surface.clone();
+    let mut concentration = vec![0.; WIDTH * WIDTH];
     for z in 0..WIDTH {
         for x in 0..WIDTH {
             let i = z * WIDTH + x;
-            let depth = site.world.water_depth(x, z);
-            if depth < 0.008 {
-                continue;
-            }
-            let vx = site.hydraulic.velocity_x.get(i).copied().unwrap_or(0.);
-            let vz = site.hydraulic.velocity_z.get(i).copied().unwrap_or(0.);
-            let sediment = [
+            // These channels already contain volume concentration, not sediment depth.
+            concentration[i] = [
                 &site.hydraulic.suspended_sediment,
                 &site.hydraulic.suspended_overburden,
                 &site.hydraulic.suspended_gravel,
@@ -37,31 +22,73 @@ pub(crate) fn instances(site: &Site, sim: f64) -> Vec<InstanceData> {
             ]
             .iter()
             .map(|a| a.get(i).copied().unwrap_or(0.))
-            .sum::<f32>();
-            let concentration = (sediment / depth.max(0.001)).clamp(0., 1.);
-            // Advect a periodic sampling pattern using physical simulation time and
-            // saved velocity, rather than animating artificial surface-height waves.
-            let phase_x = (sim * vx as f64 / CELL as f64).rem_euclid(1.) as f32;
-            let phase_z = (sim * vz as f64 / CELL as f64).rem_euclid(1.) as f32;
-            for qz in 0..2 {
-                for qx in 0..2 {
-                    let px = (x as f32 + (0.25 + qx as f32 * 0.5 + phase_x).fract()) * CELL;
-                    let pz = (z as f32 + (0.25 + qz as f32 * 0.5 + phase_z).fract()) * CELL;
-                    let height = sample(px, pz);
-                    let local_depth = (height - site.height(px, pz)).max(0.);
-                    if local_depth < 0.008 {
-                        continue;
+            .sum::<f32>()
+            .clamp(0., 1.);
+            // Extend wet levels across the dry shore for reconstruction. The final
+            // surface is clipped against actual ground, never draped up dry banks.
+            if site.world.water_depth(x, z) < 0.001 {
+                let mut sum = 0.;
+                let mut weight = 0.;
+                for dz in -1..=1 {
+                    for dx in -1..=1 {
+                        let nx = x as i32 + dx;
+                        let nz = z as i32 + dz;
+                        if nx < 0 || nz < 0 || nx >= WIDTH as i32 || nz >= WIDTH as i32 {
+                            continue;
+                        }
+                        if site.world.water_depth(nx as usize, nz as usize) > 0.001 {
+                            let w = 1. / (dx * dx + dz * dz).max(1) as f32;
+                            sum += surface[nz as usize * WIDTH + nx as usize] * w;
+                            weight += w;
+                        }
                     }
-                    let slope_x = (sample(px + 0.01, pz) - sample(px - 0.01, pz)) / 0.02;
-                    let slope_z = (sample(px, pz + 0.01) - sample(px, pz - 0.01)) / 0.02;
-                    let vertical = vx * slope_x + vz * slope_z;
-                    result.push(InstanceData {
-                        center_radius: [px, height, pz, CELL * 0.56],
-                        velocity: [vx, vertical, vz, 0.],
-                        shape: [slope_x, concentration, 1., slope_z],
-                    });
+                }
+                if weight > 0. {
+                    height[i] = sum / weight;
                 }
             }
+        }
+    }
+    let mut result = Vec::new();
+    for z in 0..WIDTH - 1 {
+        for x in 0..WIDTH - 1 {
+            let ids = [
+                z * WIDTH + x,
+                z * WIDTH + x + 1,
+                (z + 1) * WIDTH + x,
+                (z + 1) * WIDTH + x + 1,
+            ];
+            if !ids
+                .iter()
+                .any(|&i| site.world.water_depth(i % WIDTH, i / WIDTH) > 0.001)
+            {
+                continue;
+            }
+            let h = ids.map(|i| height[i]);
+            let depth = ids.map(|i| height[i] - site.world.ground_height(i % WIDTH, i / WIDTH));
+            let vx = ids
+                .iter()
+                .map(|i| site.hydraulic.velocity_x.get(*i).copied().unwrap_or(0.))
+                .sum::<f32>()
+                * 0.25;
+            let vz = ids
+                .iter()
+                .map(|i| site.hydraulic.velocity_z.get(*i).copied().unwrap_or(0.))
+                .sum::<f32>()
+                * 0.25;
+            result.push(InstanceData {
+                center_radius: [
+                    (x as f32 + 0.5) * CELL,
+                    0.,
+                    (z as f32 + 0.5) * CELL,
+                    CELL * 0.5,
+                ],
+                velocity: [vx, 0., vz, 0.],
+                shape: [0., 0., 1., 0.],
+                axis_x: h,
+                axis_y: depth,
+                axis_z: ids.map(|i| concentration[i]),
+            });
         }
     }
     result
@@ -70,23 +97,48 @@ pub(crate) fn instances(site: &Site, sim: f64) -> Vec<InstanceData> {
 mod tests {
     use super::*;
     #[test]
-    fn terrain_splats_follow_water_and_do_not_mutate_its_volume() {
+    fn continuous_cells_share_vertices_and_do_not_mutate_water() {
         let site = Site::new();
         let before = site.world.water_surface.clone();
         let a = instances(&site, 0.);
         assert!(!a.is_empty() && a.len() <= MAX_SPLATS);
-        assert!(a.iter().all(|p| p.shape[2] == 1.
-            && p.shape.iter().all(|n| n.is_finite())
-            && p.center_radius[3] == CELL * 0.56
-            && p.center_radius.iter().all(|n| n.is_finite())));
         assert_eq!(before, site.world.water_surface);
-        let mut dry = site.clone();
+        let lookup: std::collections::BTreeMap<_, _> = a
+            .iter()
+            .map(|p| {
+                (
+                    (
+                        (p.center_radius[0] / CELL) as usize,
+                        (p.center_radius[2] / CELL) as usize,
+                    ),
+                    p,
+                )
+            })
+            .collect();
+        for (&(x, z), p) in &lookup {
+            if let Some(next) = lookup.get(&(x + 1, z)) {
+                assert_eq!(p.axis_x[1], next.axis_x[0]);
+                assert_eq!(p.axis_x[3], next.axis_x[2]);
+            }
+        }
+        let b = instances(&site, 1000.);
+        assert!(a
+            .iter()
+            .zip(b)
+            .all(|(a, b)| a.center_radius == b.center_radius && a.axis_x == b.axis_x));
+    }
+    #[test]
+    fn concentration_is_independent_of_water_depth_and_dry_cells_are_absent() {
+        let mut site = Site::new();
+        site.hydraulic.suspended_sediment = vec![0.02; WIDTH * WIDTH];
+        let a = instances(&site, 0.);
+        assert!(a.iter().all(|p| p.axis_z == [0.02; 4]));
         for z in 0..WIDTH {
             for x in 0..WIDTH {
                 let i = z * WIDTH + x;
-                dry.world.water_surface[i] = dry.world.ground_height(x, z);
+                site.world.water_surface[i] = site.world.ground_height(x, z);
             }
         }
-        assert!(instances(&dry, 0.).is_empty());
+        assert!(instances(&site, 0.).is_empty());
     }
 }

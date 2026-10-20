@@ -394,12 +394,14 @@ impl Session {
                 self.site.deposit(load.position, load.material);
             }
         }
+        crate::outflow::step(&mut self.sluice, &mut self.site, dt);
         let requested = if self.sluice.pump_on && self.sluice.placement.is_some() {
             let room = self
                 .sluice
                 .profile
                 .capacity()
-                .saturating_sub(self.sluice.water.len()) as f64
+                .saturating_sub(self.sluice.water.len() + self.sluice.outflow.len())
+                as f64
                 * self.sluice.profile.particle_m3()
                 - self.sluice.water_credit_m3;
             (self.sluice.flow_m3s * dt).min(room.max(0.0) as f32)

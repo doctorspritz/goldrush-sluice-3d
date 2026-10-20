@@ -1,7 +1,7 @@
 //! GPU integration, explicitly opt in. Failure to obtain an adapter is a failure,
 //! never a passing test. CI compiles this; a Metal/Vulkan host runs it with --ignored.
 use mining_physics::Hydraulics;
-use mining_sim::{session::Controls, sluice::WATER_PARTICLE_M3, Action, Placement, Session, Vec3};
+use mining_sim::{session::Controls, Action, Placement, Session, Vec3};
 #[test]
 #[ignore = "requires real Metal/Vulkan compute adapter; run with --ignored --nocapture"]
 fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
@@ -20,8 +20,15 @@ fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
     for tick in 0..360 {
         s.step(Controls::default());
         physics.step(&mut s).unwrap();
-        if tick == 200 {
+        if tick == 300 {
             let positions: Vec<_> = s.sluice.water.iter().map(|p| p.position).collect();
+            let outflow: Vec<_> = s
+                .sluice
+                .outflow
+                .iter()
+                .map(|p| (p.position, p.velocity))
+                .collect();
+            assert!(!outflow.is_empty(), "save the real airborne stream");
             let affine: Vec<_> = s.sluice.water.iter().map(|p| p.affine).collect();
             let momentum = s.site.hydraulic.velocity_x.clone();
             let suspend = s.site.hydraulic.suspended_paydirt.clone();
@@ -63,6 +70,14 @@ fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
             s.on_action(Action::Camera).unwrap();
             s.on_action(Action::Camera).unwrap();
             assert_eq!(positions.len(), s.sluice.water.len());
+            assert_eq!(
+                outflow,
+                s.sluice
+                    .outflow
+                    .iter()
+                    .map(|p| (p.position, p.velocity))
+                    .collect::<Vec<_>>()
+            );
         }
     }
     assert_eq!(s.site.hydraulic.steps, 120);
@@ -93,13 +108,26 @@ fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
         "water must retain velocity from the original FLIP/PIC update"
     );
     assert!(!s.sluice.grains.is_empty());
+    assert!(
+        s.sluice
+            .water
+            .iter()
+            .all(|p| p.position.x < s.sluice.profile.length()),
+        "no water may remain on the old outlet-buffer floor"
+    );
+    assert!(
+        !s.sluice.outflow.is_empty(),
+        "real GPU discharge must reach free flight"
+    );
+    assert!(
+        s.sluice.water_returned_m3 > 0.,
+        "discharge must land on terrain"
+    );
     assert!(s.site.hydraulic.valid() && s.sluice.valid());
-    let water = s.sluice.water.len() as f64 * WATER_PARTICLE_M3
-        + s.sluice.water_credit_m3
-        + s.sluice.water_returned_m3;
+    let water = s.sluice.accounted_water_m3();
     assert!(
         (s.sluice.water_used_m3 - water).abs() < 1e-7,
-        "intake != FLIP + returned + credit"
+        "intake != FLIP + airborne + returned + credit"
     );
     assert!((s.accounted_gold() - s.initial_gold_g).abs() < 1e-3);
     println!("ORIGINAL PIPELINE: adapter={} real_seconds={:.2} water={} sediment={} SWE_steps={} FLIP_steps={} water_error={:.9} gold_error={:.9}",

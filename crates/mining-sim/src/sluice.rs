@@ -223,6 +223,9 @@ pub struct Sluice {
     pub cleanups: u32,
     pub time: f32,
     pub water: Vec<WaterParticle>,
+    /// Water outside the FLIP channel, in world coordinates; owns real volume.
+    #[serde(default)]
+    pub outflow: Vec<crate::outflow::OutflowParticle>,
     pub water_credit_m3: f64,
     pub water_returned_m3: f64,
     pub solver_steps: u64,
@@ -253,6 +256,7 @@ impl Default for Sluice {
             cleanups: 0,
             time: 0.0,
             water: Vec::new(),
+            outflow: Vec::new(),
             water_credit_m3: 0.0,
             water_returned_m3: 0.0,
             solver_steps: 0,
@@ -300,6 +304,15 @@ impl Sluice {
     pub fn outlet(&self) -> Option<Vec3> {
         self.placement
             .map(|p| p.to_world(Vec3::new(self.profile.length(), 0.0, 0.0)))
+    }
+    pub fn accounted_water_m3(&self) -> f64 {
+        (self.water.len() + self.outflow.len()) as f64 * self.profile.particle_m3()
+            + self.water_credit_m3
+            + self.water_returned_m3
+    }
+    pub fn grid_velocity_to_world(&self, v: Vec3) -> Vec3 {
+        let p = self.placement.expect("placed water domain");
+        p.forward() * v.x + Vec3::Y * v.y + p.right() * v.z
     }
     pub fn water_speed(&self) -> f32 {
         if self.water.is_empty() {
@@ -477,7 +490,11 @@ impl Sluice {
         site: &Site,
         machine: Vec3,
     ) -> Result<(), String> {
-        if self.pump_on || !self.grains.is_empty() || !self.water.is_empty() {
+        if self.pump_on
+            || !self.grains.is_empty()
+            || !self.water.is_empty()
+            || !self.outflow.is_empty()
+        {
             return Err(
                 "Stop the pump, let water drain and clean the mats before moving the sluice".into(),
             );
@@ -495,7 +512,13 @@ impl Sluice {
             && self.concentrate.valid()
             && self.hopper.volume() <= 0.85001
             && self.grains.len() <= MAX_GRAINS
-            && self.water.len() <= self.profile.capacity()
+            && self.water.len() + self.outflow.len() <= self.profile.capacity()
+            && self.outflow.iter().all(|p| {
+                p.position.is_finite()
+                    && p.position.length() < 1000.
+                    && p.velocity.is_finite()
+                    && p.velocity.length() < 100.
+            })
             && self.contacts.spheres.len() < MAX_GRAINS * 20
             && self.contacts.planes.len() < MAX_GRAINS * 20
             && self.contacts.sdf.len() < MAX_GRAINS * 20
