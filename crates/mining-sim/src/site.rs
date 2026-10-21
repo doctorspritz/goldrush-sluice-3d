@@ -34,6 +34,11 @@ pub struct HeightfieldState {
     pub suspended_gold_g: Vec<f64>,
     pub clock: f32,
     pub steps: u64,
+    /// Material actually discharged through map boundaries, retained in ledgers.
+    #[serde(default)]
+    pub exported_material_m3: [f64; 4],
+    #[serde(default)]
+    pub exported_gold_g: f64,
 }
 impl HeightfieldState {
     pub fn valid(&self) -> bool {
@@ -59,6 +64,12 @@ impl HeightfieldState {
                 .all(|x| x.is_finite() && *x >= 0.0)
             && self.clock.is_finite()
             && (0.0..=0.051).contains(&self.clock)
+            && self
+                .exported_material_m3
+                .iter()
+                .all(|v| v.is_finite() && *v >= 0.)
+            && self.exported_gold_g.is_finite()
+            && self.exported_gold_g >= 0.
     }
 }
 
@@ -111,6 +122,25 @@ impl Site {
                     world.paydirt_thickness[i] = 0.20;
                     world.overburden_thickness[i] = 0.10;
                 }
+                // A pregraded, excavatable tailrace provides an actual gravity
+                // route from the installed plant to the river. No water source
+                // or prescribed runoff velocity is added here.
+                let end_x = Self::river_center(18.5);
+                let t = (15.25 - px) / (15.25 - end_x);
+                if (0.0..=1.0).contains(&t) {
+                    let center_z = 19.7 + (18.5 - 19.7) * t;
+                    let distance = (pz - center_z).abs();
+                    let bank = ((0.70 - distance) / 0.40).clamp(0., 1.);
+                    let weight = bank * bank * (3. - 2. * bank);
+                    let bed = 0.27 + (0.02 + 18.5 * 0.004 - 0.27) * t;
+                    let old = world.ground_height(x, z);
+                    let mut cut = ((old - bed).max(0.) * weight)
+                        .min(world.overburden_thickness[i] + world.paydirt_thickness[i]);
+                    let soil = cut.min(world.overburden_thickness[i]);
+                    world.overburden_thickness[i] -= soil;
+                    cut -= soil;
+                    world.paydirt_thickness[i] -= cut;
+                }
                 let h = world.ground_height(x, z);
                 world.water_surface[i] = if (px - river_x).abs() < 1.7 {
                     h + 0.13
@@ -160,6 +190,12 @@ impl Site {
     }
     pub fn remaining_gold(&self) -> f64 {
         self.gold_g.iter().sum::<f64>() + self.hydraulic.suspended_gold_g.iter().sum::<f64>()
+    }
+    pub fn water_volume_m3(&self) -> f64 {
+        (0..WIDTH * WIDTH)
+            .map(|i| self.world.water_depth(i % WIDTH, i / WIDTH) as f64)
+            .sum::<f64>()
+            * (CELL * CELL) as f64
     }
     pub fn dig(&mut self, p: Vec3, radius: f32, depth: f32, capacity: f64) -> Material {
         if !p.is_finite()
@@ -220,10 +256,13 @@ impl Site {
                     .world
                     .idx((cx as i32 + dx) as usize, (cz as i32 + dz) as usize);
                 let scale = 1.0 / (25.0 * (CELL * CELL) as f64);
+                let depth = self.world.water_depth(i % WIDTH, i / WIDTH);
                 self.world.paydirt_thickness[i] += (m.gravel_m3 * scale) as f32;
                 self.world.overburden_thickness[i] += (m.soil_m3 * scale) as f32;
                 self.world.terrain_sediment[i] += (m.sand_m3 * scale) as f32;
                 self.gold_g[i] += m.gold_g / 25.0;
+                self.world.water_surface[i] =
+                    self.world.ground_height(i % WIDTH, i / WIDTH) + depth;
             }
         }
         self.revision += 1;

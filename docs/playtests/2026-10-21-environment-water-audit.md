@@ -1,6 +1,6 @@
 # Environmental water conservation audit — 21 October 2026
 
-**Environmental water is not yet verified conservative, and the saved live run shows an unexplained positive volume discrepancy.** Previous zero-water-error receipts measure the sluice ledger, not the complete environment. This audit changes no solver or renderer and launches no new GPU/game/test workload.
+**Historical audit of the pre-fix build.** The subsequent [repair and measured validation](2026-10-21-environment-water-fix.md) address these defects. At the audited revision, environmental water was not verified conservative, and the saved live run showed an unexplained positive volume discrepancy. Previous zero-water-error receipts measured the sluice ledger, not the complete environment. This audit itself changed no solver or renderer and launched no GPU/game/test workload.
 
 ## Measured saved-state comparison
 

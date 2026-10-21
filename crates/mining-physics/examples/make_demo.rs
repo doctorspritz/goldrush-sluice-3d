@@ -21,20 +21,22 @@ fn main() {
     s.on_action(Action::TogglePump).unwrap();
     s.on_action(Action::ToggleFeed).unwrap();
     let mut solver = mining_physics::Hydraulics::new().unwrap();
-    for tick in 0..3000 {
+    for tick in 0..6000 {
         s.step(Controls::default());
         solver.step(&mut s).unwrap();
         if tick % 240 == 239 {
             println!(
-                "DEMO sim={:.1}s water={} returned={:.4}m3 processed={:.3}m3 gangue={:.3}m3",
+                "DEMO sim={:.1}s water={} returned={:.4}m3 processed={:.3}m3 gangue={:.3}m3 balance={:.9}m3 drain={:.4}m3",
                 s.sim_time,
                 s.sluice.water.len(),
                 s.sluice.water_returned_m3,
                 s.sluice.processed_m3,
-                s.sluice.tailings.volume()
+                s.sluice.tailings.volume(),
+                s.water_balance_error_m3(),
+                s.water_balance.boundary_outflow_m3,
             );
         }
-        if tick >= 720 && s.sluice.water_returned_m3 > 0.005 && s.sluice.tailings.volume() > 0.0001
+        if tick >= 2400 && s.sluice.water_returned_m3 > 0.05 && s.sluice.tailings.volume() > 0.0001
         {
             break;
         }
@@ -42,6 +44,15 @@ fn main() {
     assert!(s.sluice.water_returned_m3 > 0.005 && !s.sluice.grains.is_empty());
     assert!(s.sluice.hopper.volume() > 0.4);
     assert!((s.accounted_gold() - s.initial_gold_g).abs() < 1e-7);
+    assert!(
+        s.water_balance_error_m3().abs() < 1e-4,
+        "whole-system water ledger: {}",
+        s.water_balance_error_m3()
+    );
+    assert!(
+        s.water_balance.boundary_outflow_m3 > 0.1,
+        "river must drain"
+    );
     s.message = "Flowing demo. Click to look around; Esc releases the mouse. P water, O feed. Demo / New shift buttons restart.".into();
     storage::save(&s, std::path::Path::new(&path)).unwrap();
     println!(

@@ -306,9 +306,11 @@ impl Sluice {
             .map(|p| p.to_world(Vec3::new(self.profile.length(), 0.0, 0.0)))
     }
     pub fn accounted_water_m3(&self) -> f64 {
+        self.stored_water_m3() + self.water_returned_m3
+    }
+    pub fn stored_water_m3(&self) -> f64 {
         (self.water.len() + self.outflow.len()) as f64 * self.profile.particle_m3()
             + self.water_credit_m3
-            + self.water_returned_m3
     }
     pub fn grid_velocity_to_world(&self, v: Vec3) -> Vec3 {
         let p = self.placement.expect("placed water domain");

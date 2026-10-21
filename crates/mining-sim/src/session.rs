@@ -63,6 +63,7 @@ pub struct Session {
     pub message: String,
     pub initial_gold_g: f64,
     pub delivered_m3: f64,
+    pub water_balance: crate::water_balance::WaterBalance,
 }
 #[derive(Serialize, Deserialize)]
 struct Save {
@@ -75,6 +76,8 @@ struct Save {
     sim_time: f64,
     initial_gold_g: f64,
     delivered_m3: f64,
+    #[serde(default)]
+    water_balance: Option<crate::water_balance::WaterBalance>,
 }
 impl Default for Session {
     fn default() -> Self {
@@ -86,6 +89,8 @@ impl Session {
         let site = Site::new();
         let machine = Excavator::new(&site);
         let initial_gold_g = site.remaining_gold();
+        let water_balance =
+            crate::water_balance::WaterBalance::new(site.water_volume_m3(), 0., false);
         let player = Player {
             position: Vec3::new(21.6, site.height(21.6, 17.0), 17.0),
             yaw: -std::f32::consts::FRAC_PI_2,
@@ -106,6 +111,7 @@ impl Session {
             message: "Welcome to First Bend. Enter the excavator with E. Controls: F1.".into(),
             initial_gold_g,
             delivered_m3: 0.0,
+            water_balance,
         }
     }
     pub fn near_plant(&self) -> bool {
@@ -429,6 +435,7 @@ impl Session {
 
     pub fn accounted_gold(&self) -> f64 {
         self.site.remaining_gold()
+            + self.site.hydraulic.exported_gold_g
             + self.machine.bucket.gold_g
             + self.player.hand.gold_g
             + self.sluice.active_material().gold_g
@@ -447,6 +454,7 @@ impl Session {
             sim_time: self.sim_time,
             initial_gold_g: self.initial_gold_g,
             delivered_m3: self.delivered_m3,
+            water_balance: Some(self.water_balance.clone()),
         })
         .map_err(|e| e.to_string())
     }
@@ -497,6 +505,16 @@ impl Session {
                 return Err("Invalid saved placement".into());
             }
         }
+        let water_balance = s.water_balance.unwrap_or_else(|| {
+            crate::water_balance::WaterBalance::new(
+                site.water_volume_m3() + s.sluice.stored_water_m3(),
+                s.sim_time,
+                true,
+            )
+        });
+        if !water_balance.valid() {
+            return Err("Invalid water ledger".into());
+        }
         let session = Self {
             site,
             machine: s.machine,
@@ -508,10 +526,17 @@ impl Session {
             message: "Shift restored".into(),
             initial_gold_g: s.initial_gold_g,
             delivered_m3: s.delivered_m3,
+            water_balance,
         };
         if (session.accounted_gold() - session.initial_gold_g).abs() > 1e-3 {
             return Err("Save has an inconsistent gold ledger".into());
         }
         Ok(session)
+    }
+    pub fn stored_water_m3(&self) -> f64 {
+        self.site.water_volume_m3() + self.sluice.stored_water_m3()
+    }
+    pub fn water_balance_error_m3(&self) -> f64 {
+        self.water_balance.error_m3(self.stored_water_m3())
     }
 }

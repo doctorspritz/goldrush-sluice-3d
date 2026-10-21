@@ -8,7 +8,8 @@ struct Params {
     tile_depth: u32,
     origin_x: u32,
     origin_z: u32,
-    _pad0: vec2<u32>,
+    open_boundaries: u32,
+    water_substeps: u32,
     cell_size: f32,
     dt: f32,
     gravity: f32,
@@ -312,7 +313,7 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     debug_record_deposit(deposit_height, 4u);
                     suspended -= settled_conc;
                     sediment[idx] += deposit_height;
-                    suspended_sediment[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                    suspended_sediment[idx] = max(suspended, 0.0);
                     updated_surface = true;
                 }
             }
@@ -349,7 +350,7 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     debug_record_deposit(deposit_height, 3u);
                     suspended -= settled_conc;
                     overburden[idx] += deposit_height;
-                    suspended_overburden[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                    suspended_overburden[idx] = max(suspended, 0.0);
                     updated_surface = true;
                 }
             }
@@ -386,7 +387,7 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     debug_record_deposit(deposit_height, 2u);
                     suspended -= settled_conc;
                     gravel[idx] += deposit_height;
-                    suspended_gravel[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                    suspended_gravel[idx] = max(suspended, 0.0);
                     updated_surface = true;
                 }
             }
@@ -423,7 +424,7 @@ fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     debug_record_deposit(deposit_height, 1u);
                     suspended -= settled_conc;
                     paydirt[idx] += deposit_height;
-                    suspended_paydirt[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+                    suspended_paydirt[idx] = max(suspended, 0.0);
                     updated_surface = true;
                 }
             }
@@ -568,25 +569,25 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (eroded_sediment > 0.0) {
             let eroded_conc = eroded_sediment / depth;
             let suspended = suspended_sediment[idx] + eroded_conc;
-            suspended_sediment[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+            suspended_sediment[idx] = max(suspended, 0.0);
             updated_surface = true;
         }
         if (eroded_overburden > 0.0) {
             let eroded_conc = eroded_overburden / depth;
             let suspended = suspended_overburden[idx] + eroded_conc;
-            suspended_overburden[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+            suspended_overburden[idx] = max(suspended, 0.0);
             updated_surface = true;
         }
         if (eroded_gravel > 0.0) {
             let eroded_conc = eroded_gravel / depth;
             let suspended = suspended_gravel[idx] + eroded_conc;
-            suspended_gravel[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+            suspended_gravel[idx] = max(suspended, 0.0);
             updated_surface = true;
         }
         if (eroded_paydirt > 0.0) {
             let eroded_conc = eroded_paydirt / depth;
             let suspended = suspended_paydirt[idx] + eroded_conc;
-            suspended_paydirt[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
+            suspended_paydirt[idx] = max(suspended, 0.0);
             updated_surface = true;
         }
     }
@@ -596,287 +597,46 @@ fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 }
 
-// 2. Advect Sediment (Semi-Lagrangian)
-@compute @workgroup_size(16, 16)
-fn advect_sediment(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
-    
-    let idx = get_idx(x, z);
-    
-    // Backtrack position
-    let u = water_velocity_x[idx];
-    let v = water_velocity_z[idx];
-    let dt = params.dt;
-    
-    let src_x = f32(x) - u * dt / params.cell_size;
-    let src_z = f32(z) - v * dt / params.cell_size;
-    
-    // Bilinear Interpolate suspended_sediment at (src_x, src_z)
-    // Boundary checks
-    if (src_x < 0.0 || src_x >= f32(params.world_width) - 1.0 || 
-        src_z < 0.0 || src_z >= f32(params.world_depth) - 1.0) {
-        
-        // Out of bounds: assumes 0 or clamp?
-        // Let's flow out.
-        // suspended_sediment[idx] = 0.0; // Clears buffer? No, output to new buffer?
-        // We need double buffering for correct advection!
-        // For V1, let's do simple forward Euler spread or just ignore advection to verify erosion first.
-        // Actually, without double buffering, this is racy.
-        return;
-    }
-    
-    // Accessing random other cells is racy if writing to same buffer.
-    // We need 'read' buffer (current) and 'write' buffer (next).
-    // The current setup has only one suspended buffer.
-    // For now, let's skip complex advection and trust water to carry it via flux?
-    // No, SWE flux carries water mass. Suspended mass must move with water.
-    // Let's implement correct Flux-Based Advection similar to Water Flux?
-    // Flux_Sediment = Flux_Water * Concentration.
-    // This is mass conservative and uses existing Flux buffers!
+// Conservative upwind advection using OLD water volume and the SAME limited
+// shared faces as water. Concentration dilution uses the new water volume.
+fn concentrations(i: u32) -> vec4<f32> {
+    return vec4<f32>(suspended_sediment[i], suspended_overburden[i],
+        suspended_gravel[i], suspended_paydirt[i]);
 }
-
-@compute @workgroup_size(16, 16)
-fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    // Flux-Based Sediment Advection
-    // Transport = Water_Flux * Concentration_upwind
-    // Use upwind scheme: concentration from cell that flux flows FROM
-
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
-    let idx = get_idx(x, z);
-
-    let depth = water_depth[idx];
-    let cell_area = params.cell_size * params.cell_size;
-
-    // Sediment
-    var net_sediment = 0.0;
-    let local_conc = suspended_sediment[idx];
-
-    if (x > 0) {
-        let idx_left = get_idx(x - 1, z);
-        let fx = flux_x[idx_left];
-        if (fx > 0.0) {
-            let conc_left = suspended_sediment[idx_left];
-            net_sediment += fx * conc_left;
-        } else {
-            net_sediment += fx * local_conc;
-        }
+@compute @workgroup_size(16,16)
+fn update_sediment_transport(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (g.x >= params.tile_width || g.y >= params.tile_depth) { return; }
+    let x=g.x+params.origin_x; let z=g.y+params.origin_z;
+    if (x>=params.world_width || z>=params.world_depth) { return; }
+    let i=get_idx(x,z);
+    let a=params.world_width*params.world_depth+i*12u;
+    let area=params.cell_size*params.cell_size;
+    let local=concentrations(i);
+    let exported=local*suspended_sediment_next[a+2u];
+    var mass=local*suspended_sediment_next[a]*area-exported;
+    if (x>0u) {
+        let j=get_idx(x-1u,z); let q=flux_x[j];
+        mass+=q*select(local,concentrations(j),q>0.0);
     }
-
-    if (x < params.world_width - 1) {
-        let fx = flux_x[idx];
-        if (fx > 0.0) {
-            net_sediment -= fx * local_conc;
-        } else {
-            let idx_right = get_idx(x + 1, z);
-            let conc_right = suspended_sediment[idx_right];
-            net_sediment -= fx * conc_right;
-        }
+    if (x+1u<params.world_width) {
+        let q=flux_x[i]; let j=get_idx(x+1u,z);
+        mass-=q*select(concentrations(j),local,q>0.0);
     }
-
-    if (z > 0) {
-        let idx_back = get_idx(x, z - 1);
-        let fz = flux_z[idx_back];
-        if (fz > 0.0) {
-            let conc_back = suspended_sediment[idx_back];
-            net_sediment += fz * conc_back;
-        } else {
-            net_sediment += fz * local_conc;
-        }
+    if (z>0u) {
+        let j=get_idx(x,z-1u); let q=flux_z[j];
+        mass+=q*select(local,concentrations(j),q>0.0);
     }
-
-    if (z < params.world_depth - 1) {
-        let fz = flux_z[idx];
-        if (fz > 0.0) {
-            net_sediment -= fz * local_conc;
-        } else {
-            let idx_front = get_idx(x, z + 1);
-            let conc_front = suspended_sediment[idx_front];
-            net_sediment -= fz * conc_front;
-        }
+    if (z+1u<params.world_depth) {
+        let q=flux_z[i]; let j=get_idx(x,z+1u);
+        mass-=q*select(concentrations(j),local,q>0.0);
     }
-    if (depth > 1e-4) {
-        let delta_conc = net_sediment / (cell_area * depth);
-        let new_sed = local_conc + delta_conc;
-        suspended_sediment_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
-    } else {
-        suspended_sediment_next[idx] = local_conc;
-    }
-
-    // Overburden
-    net_sediment = 0.0;
-    let local_over = suspended_overburden[idx];
-
-    if (x > 0) {
-        let idx_left = get_idx(x - 1, z);
-        let fx = flux_x[idx_left];
-        if (fx > 0.0) {
-            let conc_left = suspended_overburden[idx_left];
-            net_sediment += fx * conc_left;
-        } else {
-            net_sediment += fx * local_over;
-        }
-    }
-
-    if (x < params.world_width - 1) {
-        let fx = flux_x[idx];
-        if (fx > 0.0) {
-            net_sediment -= fx * local_over;
-        } else {
-            let idx_right = get_idx(x + 1, z);
-            let conc_right = suspended_overburden[idx_right];
-            net_sediment -= fx * conc_right;
-        }
-    }
-
-    if (z > 0) {
-        let idx_back = get_idx(x, z - 1);
-        let fz = flux_z[idx_back];
-        if (fz > 0.0) {
-            let conc_back = suspended_overburden[idx_back];
-            net_sediment += fz * conc_back;
-        } else {
-            net_sediment += fz * local_over;
-        }
-    }
-
-    if (z < params.world_depth - 1) {
-        let fz = flux_z[idx];
-        if (fz > 0.0) {
-            net_sediment -= fz * local_over;
-        } else {
-            let idx_front = get_idx(x, z + 1);
-            let conc_front = suspended_overburden[idx_front];
-            net_sediment -= fz * conc_front;
-        }
-    }
-
-    if (depth > 1e-4) {
-        let delta_conc = net_sediment / (cell_area * depth);
-        let new_sed = local_over + delta_conc;
-        suspended_overburden_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
-    } else {
-        suspended_overburden_next[idx] = local_over;
-    }
-
-    // Gravel
-    net_sediment = 0.0;
-    let local_gravel = suspended_gravel[idx];
-
-    if (x > 0) {
-        let idx_left = get_idx(x - 1, z);
-        let fx = flux_x[idx_left];
-        if (fx > 0.0) {
-            let conc_left = suspended_gravel[idx_left];
-            net_sediment += fx * conc_left;
-        } else {
-            net_sediment += fx * local_gravel;
-        }
-    }
-
-    if (x < params.world_width - 1) {
-        let fx = flux_x[idx];
-        if (fx > 0.0) {
-            net_sediment -= fx * local_gravel;
-        } else {
-            let idx_right = get_idx(x + 1, z);
-            let conc_right = suspended_gravel[idx_right];
-            net_sediment -= fx * conc_right;
-        }
-    }
-
-    if (z > 0) {
-        let idx_back = get_idx(x, z - 1);
-        let fz = flux_z[idx_back];
-        if (fz > 0.0) {
-            let conc_back = suspended_gravel[idx_back];
-            net_sediment += fz * conc_back;
-        } else {
-            net_sediment += fz * local_gravel;
-        }
-    }
-
-    if (z < params.world_depth - 1) {
-        let fz = flux_z[idx];
-        if (fz > 0.0) {
-            net_sediment -= fz * local_gravel;
-        } else {
-            let idx_front = get_idx(x, z + 1);
-            let conc_front = suspended_gravel[idx_front];
-            net_sediment -= fz * conc_front;
-        }
-    }
-
-    if (depth > 1e-4) {
-        let delta_conc = net_sediment / (cell_area * depth);
-        let new_sed = local_gravel + delta_conc;
-        suspended_gravel_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
-    } else {
-        suspended_gravel_next[idx] = local_gravel;
-    }
-
-    // Paydirt
-    net_sediment = 0.0;
-    let local_paydirt = suspended_paydirt[idx];
-
-    if (x > 0) {
-        let idx_left = get_idx(x - 1, z);
-        let fx = flux_x[idx_left];
-        if (fx > 0.0) {
-            let conc_left = suspended_paydirt[idx_left];
-            net_sediment += fx * conc_left;
-        } else {
-            net_sediment += fx * local_paydirt;
-        }
-    }
-
-    if (x < params.world_width - 1) {
-        let fx = flux_x[idx];
-        if (fx > 0.0) {
-            net_sediment -= fx * local_paydirt;
-        } else {
-            let idx_right = get_idx(x + 1, z);
-            let conc_right = suspended_paydirt[idx_right];
-            net_sediment -= fx * conc_right;
-        }
-    }
-
-    if (z > 0) {
-        let idx_back = get_idx(x, z - 1);
-        let fz = flux_z[idx_back];
-        if (fz > 0.0) {
-            let conc_back = suspended_paydirt[idx_back];
-            net_sediment += fz * conc_back;
-        } else {
-            net_sediment += fz * local_paydirt;
-        }
-    }
-
-    if (z < params.world_depth - 1) {
-        let fz = flux_z[idx];
-        if (fz > 0.0) {
-            net_sediment -= fz * local_paydirt;
-        } else {
-            let idx_front = get_idx(x, z + 1);
-            let conc_front = suspended_paydirt[idx_front];
-            net_sediment -= fz * conc_front;
-        }
-    }
-
-    if (depth > 1e-4) {
-        let delta_conc = net_sediment / (cell_area * depth);
-        let new_sed = local_paydirt + delta_conc;
-        suspended_paydirt_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
-    } else {
-        suspended_paydirt_next[idx] = local_paydirt;
-    }
+    let next=max(vec4<f32>(0.0),mass)/max(water_depth[i]*area,1e-30);
+    suspended_sediment_next[i]=next.x;
+    suspended_overburden_next[i]=next.y;
+    suspended_gravel_next[i]=next.z;
+    suspended_paydirt_next[i]=next.w;
+    suspended_sediment_next[a+8u]+=exported.x;
+    suspended_sediment_next[a+9u]+=exported.y;
+    suspended_sediment_next[a+10u]+=exported.z;
+    suspended_sediment_next[a+11u]+=exported.w;
 }

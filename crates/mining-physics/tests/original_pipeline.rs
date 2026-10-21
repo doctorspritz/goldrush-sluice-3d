@@ -124,6 +124,15 @@ fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
         "discharge must land on terrain"
     );
     assert!(s.site.hydraulic.valid() && s.sluice.valid());
+    assert!(
+        s.water_balance_error_m3().abs() < 1e-4,
+        "whole-system water balance: {}",
+        s.water_balance_error_m3()
+    );
+    assert!(
+        s.water_balance.boundary_outflow_m3 > 0.,
+        "river must drain downhill"
+    );
     let water = s.sluice.accounted_water_m3();
     assert!(
         (s.sluice.water_used_m3 - water).abs() < 1e-7,

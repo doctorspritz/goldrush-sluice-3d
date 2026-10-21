@@ -7,6 +7,7 @@ pub mod session;
 pub mod site;
 pub mod sluice;
 pub mod storage;
+pub mod water_balance;
 
 pub use glam::Vec3;
 pub use machine::{Excavator, MachineInput};

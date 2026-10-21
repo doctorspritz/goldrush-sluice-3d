@@ -13,6 +13,7 @@ pub fn dispatch_simulation_tile(
     depth: u32,
     tile_width: u32,
     tile_depth: u32,
+    water_substeps: u32,
     suspended_sediment_buffer: &wgpu::Buffer,
     suspended_sediment_next_buffer: &wgpu::Buffer,
     suspended_overburden_buffer: &wgpu::Buffer,
@@ -40,30 +41,31 @@ pub fn dispatch_simulation_tile(
         }};
     }
 
-    // CRITICAL: Update Surface FIRST - flux needs water_surface to compute gradients!
-    dispatch_step!("Update Surface", &pipelines.surface);
-
-    // 1. Update Flux (Updates Velocity + Flux) - Reads Surface gradients
-    dispatch_step!("Update Flux", &pipelines.flux);
-
-    // 2. Update Depth (Volume Conservation) - Reads Flux, updates water_depth
-    dispatch_step!("Update Depth", &pipelines.depth);
-
-    // 3a. Settling (post-flux) - Reads Depth/Vel, writes Terrain/Suspended
-    dispatch_step!("Update Settling", &pipelines.settling);
-
-    // 3b. Erosion (post-settling) - Reads Depth/Vel/Terrain, writes Terrain/Suspended
-    dispatch_step!("Update Erosion", &pipelines.erosion);
-
-    // 4. Sediment Transport (flux-based advection)
-    dispatch_step!("Update Sediment Transport", &pipelines.sediment_transport);
-
-    // 4b. Copy suspended_sediment_next -> suspended_sediment (swap double buffers)
     let buffer_size = (width * depth) as u64 * std::mem::size_of::<f32>() as u64;
-    encoder.copy_buffer_to_buffer(suspended_sediment_next_buffer, 0, suspended_sediment_buffer, 0, buffer_size);
-    encoder.copy_buffer_to_buffer(suspended_overburden_next_buffer, 0, suspended_overburden_buffer, 0, buffer_size);
-    encoder.copy_buffer_to_buffer(suspended_gravel_next_buffer, 0, suspended_gravel_buffer, 0, buffer_size);
-    encoder.copy_buffer_to_buffer(suspended_paydirt_next_buffer, 0, suspended_paydirt_buffer, 0, buffer_size);
+    encoder.clear_buffer(
+        suspended_sediment_next_buffer,
+        buffer_size,
+        Some(buffer_size * super::buffers::WATER_AUX_FLOATS as u64),
+    );
+    for _ in 0..water_substeps.max(1) {
+        dispatch_step!("Update Surface", &pipelines.surface);
+        dispatch_step!("Update Flux", &pipelines.flux);
+        dispatch_step!("Aggregate Donor Budget", &pipelines.donor_budget);
+        dispatch_step!("Limit Shared Flux", &pipelines.limit_flux);
+        dispatch_step!("Update Depth", &pipelines.depth);
+        dispatch_step!("Conservative Sediment Transport", &pipelines.sediment_transport);
+        for (next, current) in [
+            (suspended_sediment_next_buffer, suspended_sediment_buffer),
+            (suspended_overburden_next_buffer, suspended_overburden_buffer),
+            (suspended_gravel_next_buffer, suspended_gravel_buffer),
+            (suspended_paydirt_next_buffer, suspended_paydirt_buffer),
+        ] {
+            encoder.copy_buffer_to_buffer(next, 0, current, 0, buffer_size);
+        }
+    }
+    // Geology evolves over the full step, after conservative water/material advection.
+    dispatch_step!("Update Settling", &pipelines.settling);
+    dispatch_step!("Update Erosion", &pipelines.erosion);
 
     // 5. Collapse (angle of repose / slope stability)
     // Use red-black pattern for race-free updates
@@ -104,8 +106,8 @@ pub fn update_params_tile(
         tile_depth,
         origin_x,
         origin_z,
-        0,
-        0,
+        2, // legacy standalone caller: +X outflow; game configures its river explicitly
+        2, // must match the default dispatch substep count
         bytemuck::cast(cell_size),
         bytemuck::cast(dt),
         bytemuck::cast(9.81f32),

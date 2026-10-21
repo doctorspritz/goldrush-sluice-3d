@@ -43,6 +43,7 @@ impl Hydraulics {
             0.8,
             dt,
         );
+        s.water_balance.external_inflow_m3 += (0.12_f32 * dt) as f64;
         h.upload_terrain_only(&self.queue, w);
         if s.site.hydraulic.impact_dirty {
             self.queue.write_buffer(
@@ -93,13 +94,30 @@ impl Hydraulics {
             .write_buffer(&h.water.depth, 0, bytemuck::cast_slice(&depth));
         let previous_paydirt = w.paydirt_thickness.clone();
         let previous_suspended = s.site.hydraulic.suspended_paydirt.clone();
-        h.update_params(&self.queue, dt);
+        let max_depth = depth.iter().copied().fold(0.0_f32, f32::max);
+        let max_speed = s
+            .site
+            .hydraulic
+            .velocity_x
+            .iter()
+            .chain(&s.site.hydraulic.velocity_z)
+            .map(|v| v.abs())
+            .fold(0.0_f32, f32::max);
+        let substeps = (dt * (max_speed + (9.81 * max_depth).sqrt()) / (0.45 * CELL))
+            .ceil()
+            .max(2.0) as u32;
+        if substeps > 64 {
+            return Err("Terrain water exceeded the supported CFL substep budget".into());
+        }
+        // River bed descends toward -Z. The other borders are closed banks/upstream.
+        let boundaries = if w.params.open_boundaries { 4 } else { 0 };
+        h.update_water_params(&self.queue, dt, boundaries, w.params.manning_n, substeps);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Original complete heightfield step"),
             });
-        h.dispatch(&mut encoder, dt);
+        h.dispatch_water_substeps(&mut encoder, substeps);
         // All stages of the original pipeline are dispatched by h.dispatch:
         // surface, flux, depth, settling, erosion, conservative transport, collapse.
         let buffers = [
@@ -122,13 +140,20 @@ impl Hydraulics {
         let bytes = (WIDTH * WIDTH * 4) as u64;
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Complete heightfield readback"),
-            size: bytes * buffers.len() as u64,
+            size: bytes * (buffers.len() as u64 + 12),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
         for (i, b) in buffers.iter().enumerate() {
             encoder.copy_buffer_to_buffer(b, 0, &staging, i as u64 * bytes, bytes);
         }
+        encoder.copy_buffer_to_buffer(
+            &h.water.suspended_sediment_next,
+            bytes,
+            &staging,
+            bytes * buffers.len() as u64,
+            bytes * 12,
+        );
         self.queue.submit(Some(encoder.finish()));
         let (tx, rx) = std::sync::mpsc::channel();
         staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
@@ -158,10 +183,12 @@ impl Hydraulics {
             .take(14)
             .map(|b| bytemuck::cast_slice(b).to_vec())
             .collect();
-        let times: Vec<u32> = bytemuck::cast_slice(&mapped[14 * bytes as usize..]).to_vec();
+        let times: Vec<u32> =
+            bytemuck::cast_slice(&mapped[14 * bytes as usize..15 * bytes as usize]).to_vec();
+        let aux: Vec<f32> = bytemuck::cast_slice(&mapped[15 * bytes as usize..]).to_vec();
         drop(mapped);
         staging.unmap();
-        if arrays.iter().flatten().any(|v| !v.is_finite()) {
+        if arrays.iter().flatten().chain(&aux).any(|v| !v.is_finite()) {
             return Err("Non-finite original terrain solver output".into());
         }
         // Replace the compatibility World view only after every read succeeds.
@@ -171,7 +198,7 @@ impl Hydraulics {
         w.gravel_thickness = next();
         w.overburden_thickness = next();
         w.terrain_sediment = next();
-        let depth = next();
+        let next_depth = next();
         let a = &mut s.site.hydraulic;
         a.impact_dirty = false;
         a.velocity_x = next();
@@ -183,7 +210,15 @@ impl Hydraulics {
         a.suspended_gravel = next();
         a.suspended_paydirt = next();
         a.settling_time = times;
-        for (i, &water_depth) in depth.iter().enumerate() {
+        for (i, cell) in aux.chunks_exact(12).enumerate() {
+            a.flux_x[i] = cell[4];
+            a.flux_z[i] = cell[5];
+            s.water_balance.boundary_outflow_m3 += cell[6] as f64;
+            for channel in 0..4 {
+                a.exported_material_m3[channel] += cell[8 + channel] as f64;
+            }
+        }
+        for (i, &water_depth) in next_depth.iter().enumerate() {
             w.water_surface[i] = w.bedrock_elevation[i]
                 + w.paydirt_thickness[i]
                 + w.gravel_thickness[i]
@@ -205,7 +240,7 @@ impl Hydraulics {
         if a.suspended_gold_g.is_empty() {
             a.suspended_gold_g = vec![0.0; WIDTH * WIDTH];
         }
-        for (i, &water_depth) in depth.iter().enumerate() {
+        for (i, &water_depth) in next_depth.iter().enumerate() {
             let change = w.paydirt_thickness[i] - previous_paydirt[i];
             if change < 0.0 && previous_paydirt[i] > 0.0 {
                 let moved =
@@ -225,23 +260,25 @@ impl Hydraulics {
         for (i, &water_depth) in depth.iter().enumerate() {
             let x = i % WIDTH;
             let z = i / WIDTH;
-            let mut out = Vec::with_capacity(4);
+            let mut out = Vec::with_capacity(5);
             if x + 1 < WIDTH && a.flux_x[i] > 0.0 {
-                out.push((i + 1, a.flux_x[i]));
+                out.push((Some(i + 1), a.flux_x[i]));
             }
             if x > 0 && a.flux_x[i - 1] < 0.0 {
-                out.push((i - 1, -a.flux_x[i - 1]));
+                out.push((Some(i - 1), -a.flux_x[i - 1]));
             }
             if z + 1 < WIDTH && a.flux_z[i] > 0.0 {
-                out.push((i + WIDTH, a.flux_z[i]));
+                out.push((Some(i + WIDTH), a.flux_z[i]));
             }
             if z > 0 && a.flux_z[i - WIDTH] < 0.0 {
-                out.push((i - WIDTH, -a.flux_z[i - WIDTH]));
+                out.push((Some(i - WIDTH), -a.flux_z[i - WIDTH]));
+            }
+            if aux[i * 12 + 6] > 0.0 {
+                out.push((None, aux[i * 12 + 6]));
             }
             let total = out.iter().map(|(_, q)| *q as f64).sum::<f64>();
-            let fraction = (total * dt as f64
-                / (water_depth as f64 * (CELL * CELL) as f64).max(1e-12))
-            .clamp(0.0, 1.0);
+            let fraction =
+                (total / (water_depth as f64 * (CELL * CELL) as f64).max(1e-12)).clamp(0.0, 1.0);
             let budget = old[i] * fraction;
             a.suspended_gold_g[i] -= budget;
             let mut remaining = budget;
@@ -253,7 +290,11 @@ impl Hydraulics {
                     (budget * q as f64 / total.max(1e-12)).min(remaining)
                 };
                 remaining -= moved;
-                a.suspended_gold_g[j] += moved;
+                if let Some(j) = j {
+                    a.suspended_gold_g[j] += moved;
+                } else {
+                    a.exported_gold_g += moved;
+                }
             }
         }
         a.steps += 1;

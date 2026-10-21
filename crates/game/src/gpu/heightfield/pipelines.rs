@@ -6,6 +6,8 @@ use super::buffers::{GeologyBuffers, WaterBuffers};
 pub struct SimulationPipelines {
     pub surface: wgpu::ComputePipeline,
     pub flux: wgpu::ComputePipeline,
+    pub donor_budget: wgpu::ComputePipeline,
+    pub limit_flux: wgpu::ComputePipeline,
     pub depth: wgpu::ComputePipeline,
     pub settling: wgpu::ComputePipeline,
     pub erosion: wgpu::ComputePipeline,
@@ -227,6 +229,8 @@ pub fn create_simulation_pipelines(
     SimulationPipelines {
         surface: create_compute("Update Surface Pipeline", &water_shader, "update_surface"),
         flux: create_compute("Update Flux Pipeline", &water_shader, "update_flux"),
+        donor_budget: create_compute("Water Donor Budget", &water_shader, "donor_budget"),
+        limit_flux: create_compute("Limit Shared Water Flux", &water_shader, "limit_flux"),
         depth: create_compute("Update Depth Pipeline", &water_shader, "update_depth"),
         settling: create_compute("Update Settling Pipeline", &erosion_shader, "update_settling"),
         erosion: create_compute("Update Erosion Pipeline", &erosion_shader, "update_erosion"),

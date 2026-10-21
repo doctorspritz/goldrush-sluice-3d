@@ -153,7 +153,7 @@ impl World {
 
                 // Determine starting ground height for water calculation
                 let ground_before = self.ground_height(x, z);
-                let _had_water = self.water_surface[idx] > ground_before + 1e-4;
+                let water_depth_before = (self.water_surface[idx] - ground_before).max(0.0);
 
                 let mut remaining_dig = dig_depth;
 
@@ -218,12 +218,9 @@ impl World {
                 let _ = remaining_dig; // Silence unused warning; ready for bedrock digging
 
                 let ground_after = self.ground_height(x, z);
-                // Water surface should never go below ground.
-                // If we dug under water, water surface stays (fills the hole).
-                // Only clamp if surface would be underground.
-                if self.water_surface[idx] < ground_after {
-                    self.water_surface[idx] = ground_after;
-                }
+                // Preserve this cell's water volume. The flow solver draws
+                // neighbouring water into the excavation on subsequent steps.
+                self.water_surface[idx] = ground_after + water_depth_before;
 
                 if results.last().is_some() {
                     // Hack to return something for particles if needed,
@@ -264,18 +261,13 @@ impl World {
 
                 let idx = self.idx(x as usize, z as usize);
                 let ground_before = self.ground_height(x as usize, z as usize);
-                let had_water = self.water_surface[idx] > ground_before + 1e-4;
+                let water_depth_before = (self.water_surface[idx] - ground_before).max(0.0);
 
                 self.terrain_sediment[idx] += height;
                 // Material tracking is implicit in sediment now
 
                 let ground_after = self.ground_height(x as usize, z as usize);
-                if had_water {
-                    let delta = ground_after - ground_before;
-                    self.water_surface[idx] += delta;
-                } else {
-                    self.water_surface[idx] = ground_after;
-                }
+                self.water_surface[idx] = ground_after + water_depth_before;
             }
         }
     }

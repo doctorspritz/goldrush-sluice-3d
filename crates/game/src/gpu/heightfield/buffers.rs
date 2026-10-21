@@ -39,6 +39,8 @@ pub fn create_storage_buffer_u32(
 }
 
 const DEBUG_STATS_COUNT: u32 = 16;
+/// Interleaved water scratch/diagnostics after the N sediment-next floats.
+pub const WATER_AUX_FLOATS: u32 = 12;
 
 /// Holds all geology-related buffers.
 pub struct GeologyBuffers {
@@ -107,7 +109,13 @@ impl WaterBuffers {
             flux_x: create_storage_buffer(device, "Flux X Buffer", width, depth, 0.0),
             flux_z: create_storage_buffer(device, "Flux Z Buffer", width, depth, 0.0),
             suspended_sediment: create_storage_buffer(device, "Suspended Sediment Buffer", width, depth, 0.0),
-            suspended_sediment_next: create_storage_buffer(device, "Suspended Sediment Next Buffer", width, depth, 0.0),
+            suspended_sediment_next: create_storage_buffer(
+                device,
+                "Sediment Next and Water Scratch",
+                width * (1 + WATER_AUX_FLOATS),
+                depth,
+                0.0,
+            ),
             suspended_overburden: create_storage_buffer(device, "Suspended Overburden Buffer", width, depth, 0.0),
             suspended_overburden_next: create_storage_buffer(device, "Suspended Overburden Next Buffer", width, depth, 0.0),
             suspended_gravel: create_storage_buffer(device, "Suspended Gravel Buffer", width, depth, 0.0),

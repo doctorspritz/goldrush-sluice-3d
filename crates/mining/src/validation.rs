@@ -223,15 +223,23 @@ pub fn update(
             sorted.sort_by(f64::total_cmp);
             let p95 = sorted[(sorted.len().saturating_sub(1) as f64 * 0.95) as usize];
             let sluice = &game.session.sluice;
-            let water_error = sluice.water_used_m3 - sluice.accounted_water_m3();
+            let sluice_water_error = sluice.water_used_m3 - sluice.accounted_water_m3();
+            let water_error = game.session.water_balance_error_m3();
             let gold_error = game.session.accounted_gold() - game.session.initial_gold_g;
             let passed = simulated / wall >= 0.98
                 && 1000. / mean >= 50.
                 && crate::water::surface_ready(&water)
-                && water_error.abs() < 1e-6
+                && water_error.abs() < 1e-4
+                && sluice_water_error.abs() < 1e-6
                 && gold_error.abs() < 1e-6;
             v.flow_result = Some(passed);
-            let report = serde_json::json!({"passed":passed,"water_balance_error_m3":water_error,"warmup_seconds":5,"wall_seconds":wall,"simulation_seconds":simulated,
+            let report = serde_json::json!({"passed":passed,"water_balance_error_m3":water_error,
+                "sluice_water_balance_error_m3":sluice_water_error,
+                "water_balance":game.session.water_balance,
+                "stored_water_m3":game.session.stored_water_m3(),
+                "exported_material_m3":game.session.site.hydraulic.exported_material_m3,
+                "exported_gold_g":game.session.site.hydraulic.exported_gold_g,
+                "warmup_seconds":5,"wall_seconds":wall,"simulation_seconds":simulated,
                 "simulation_wall_ratio":simulated/wall,"one_second_ratios":v.flow_windows,"mean_fps":1000.0/mean,"p95_frame_ms":p95,
                 "last_worker_tick_ms":game.step_ms,"worker_packets":v.worker_ms.len(),"worker_busy_fraction":v.worker_ms.iter().sum::<f64>()/(wall*1000.),"worker_mean_ms":v.worker_ms.iter().sum::<f64>()/v.worker_ms.len().max(1) as f64,
                 "worker_phases_mean_ms":v.worker_phases.map(|n|n/v.worker_ms.len().max(1) as f64),"water_particles":game.session.sluice.water.len(),
@@ -314,7 +322,8 @@ pub fn update(
                     "water_mean_downstream_ms":game.session.sluice.water_speed(),
                     "water_particles":game.session.sluice.water.len(),
                     "airborne_water_particles":game.session.sluice.outflow.len(),
-                    "water_balance_error_m3":game.session.sluice.water_used_m3-game.session.sluice.accounted_water_m3(),
+                    "water_balance_error_m3":game.session.water_balance_error_m3(),
+                    "sluice_water_balance_error_m3":game.session.sluice.water_used_m3-game.session.sluice.accounted_water_m3(),
                     "sampled_splats":crate::water::visible_count(&game.session.sluice),
                     "particles_below_floor":below_floor,
                     "ledger_error_g":game.session.accounted_gold()-game.session.initial_gold_g});

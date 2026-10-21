@@ -1,330 +1,111 @@
-// heightfield_water.wgsl
-// Shallow Water Equations (SWE) solver for heightfield water simulation.
-// Uses Manning friction for physically accurate flow velocities.
-
-// Physics constants
-const WATER_VELOCITY_DAMPING: f32 = 0.99;  // 1% damping per frame to prevent numerical oscillations
-const MIN_WATER_DEPTH: f32 = 0.001;         // Minimum depth threshold (meters)
-
+// Local inertial SWE with hydrostatic wet/dry reconstruction and shared,
+// donor-limited face volumes. Every interior transfer is used by both cells.
 struct Params {
-    world_width: u32,
-    world_depth: u32,
-    tile_width: u32,
-    tile_depth: u32,
-    origin_x: u32,
-    origin_z: u32,
-    _pad0: vec2<u32>,
-    cell_size: f32,
-    dt: f32,
-    gravity: f32,
-    manning_n: f32, // Manning roughness coefficient (typical: 0.03 smooth, 0.05 rough)
+    world_width: u32, world_depth: u32,
+    tile_width: u32, tile_depth: u32,
+    origin_x: u32, origin_z: u32,
+    open_boundaries: u32, water_substeps: u32,
+    cell_size: f32, dt: f32, gravity: f32, manning_n: f32,
 }
-
 @group(0) @binding(0) var<uniform> params: Params;
-
 @group(1) @binding(0) var<storage, read_write> water_depth: array<f32>;
 @group(1) @binding(1) var<storage, read_write> water_velocity_x: array<f32>;
 @group(1) @binding(2) var<storage, read_write> water_velocity_z: array<f32>;
 @group(1) @binding(3) var<storage, read_write> water_surface: array<f32>;
 @group(1) @binding(4) var<storage, read_write> flux_x: array<f32>;
 @group(1) @binding(5) var<storage, read_write> flux_z: array<f32>;
-@group(1) @binding(6) var<storage, read_write> suspended_sediment: array<f32>; // For bind group compatibility
-@group(1) @binding(7) var<storage, read_write> suspended_sediment_next: array<f32>; // For bind group compatibility
-@group(1) @binding(8) var<storage, read_write> suspended_overburden: array<f32>;
-@group(1) @binding(9) var<storage, read_write> suspended_overburden_next: array<f32>;
-@group(1) @binding(10) var<storage, read_write> suspended_gravel: array<f32>;
-@group(1) @binding(11) var<storage, read_write> suspended_gravel_next: array<f32>;
-@group(1) @binding(12) var<storage, read_write> suspended_paydirt: array<f32>;
-@group(1) @binding(13) var<storage, read_write> suspended_paydirt_next: array<f32>;
-
-// Terrain Bind Group (Read Write for Layout Compatibility)
+// Scratch follows sediment-next, avoiding another storage binding.
+// Per cell: old depth, donor scale, drain, pad; cumulative X/Z/drain/pad;
+// cumulative exported material volumes (written by sediment transport).
+@group(1) @binding(7) var<storage, read_write> aux: array<f32>;
 @group(2) @binding(0) var<storage, read_write> bedrock: array<f32>;
 @group(2) @binding(1) var<storage, read_write> paydirt: array<f32>;
 @group(2) @binding(2) var<storage, read_write> gravel: array<f32>;
 @group(2) @binding(3) var<storage, read_write> overburden: array<f32>;
 @group(2) @binding(4) var<storage, read_write> sediment: array<f32>;
-@group(2) @binding(5) var<storage, read_write> surface_material: array<u32>; // For bind group compatibility
-
-fn get_idx(x: u32, z: u32) -> u32 {
-    return z * params.world_width + x;
+fn idx(x: u32, z: u32) -> u32 { return z * params.world_width + x; }
+fn scratch(i: u32) -> u32 { return params.world_width * params.world_depth + i * 12u; }
+fn ground(i: u32) -> f32 { return bedrock[i]+paydirt[i]+gravel[i]+overburden[i]+sediment[i]; }
+fn step_dt() -> f32 { return params.dt / f32(max(params.water_substeps, 1u)); }
+fn velocity(v: f32, slope: f32, depth: f32) -> f32 {
+    if (depth <= 1e-6) { return 0.0; }
+    let accelerated = v + params.gravity * slope * step_dt();
+    let friction = params.gravity * params.manning_n * params.manning_n / pow(max(depth, 1e-5), 4.0/3.0);
+    let limit = 0.45 * params.cell_size / step_dt();
+    return clamp(accelerated / (1.0 + friction * abs(accelerated) * step_dt()), -limit, limit);
 }
-
-fn get_ground_height(idx: u32) -> f32 {
-    return bedrock[idx] + paydirt[idx] + gravel[idx] + overburden[idx] + sediment[idx];
+fn face_depth(a: u32, b: u32) -> f32 {
+    let sill = max(ground(a), ground(b));
+    return 0.5 * (max(0.0, water_surface[a]-sill) + max(0.0, water_surface[b]-sill));
 }
-
-// 1. Calculate Water Surface Height
-@compute @workgroup_size(16, 16)
-fn update_surface(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
-    
-    let idx = get_idx(x, z);
-    let ground = get_ground_height(idx);
-    let depth = water_depth[idx];
-    
-    water_surface[idx] = ground + depth;
+fn drain(i: u32, inner: u32, outward_velocity: f32) -> f32 {
+    let slope = (water_surface[inner]-water_surface[i]) / params.cell_size;
+    return max(0.0, velocity(outward_velocity, slope, water_depth[i])) * water_depth[i] * params.cell_size * step_dt();
 }
-
-// Reconcile depth to preserve surface height after terrain changes.
-@compute @workgroup_size(16, 16)
-fn reconcile_depth(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
-
-    let idx = get_idx(x, z);
-    let ground = get_ground_height(idx);
-    let surface = water_surface[idx];
-    let new_depth = max(0.0, surface - ground);
-
-    water_depth[idx] = new_depth;
-
-    // Kill residual velocities in newly dry cells to avoid oscillation.
-    if (new_depth < 0.001) {
-        water_velocity_x[idx] = 0.0;
-        water_velocity_z[idx] = 0.0;
-    }
+fn cell(g: vec3<u32>) -> vec2<u32> { return g.xy + vec2<u32>(params.origin_x, params.origin_z); }
+fn outside(g: vec3<u32>) -> bool {
+    let p = cell(g);
+    return g.x >= params.tile_width || g.y >= params.tile_depth || p.x >= params.world_width || p.y >= params.world_depth;
 }
-
-// 2. Calculate Flux (Velocity Update)
-@compute @workgroup_size(16, 16)
-fn update_flux(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
-    
-    let idx = get_idx(x, z);
-    let cell_area = params.cell_size * params.cell_size;
-    
-    // X-Flux (Flow to Right: x -> x+1)
-    if (x < params.world_width - 1) {
-        let idx_r = get_idx(x + 1, z);
-        let h_l = water_surface[idx];
-        let h_r = water_surface[idx_r];
-        let d_l = water_depth[idx];
-        let d_r = water_depth[idx_r];
-
-        // Only calculate flow if water exists
-        if (d_l > MIN_WATER_DEPTH || d_r > MIN_WATER_DEPTH) {
-             // Detect wet-dry front
-             let is_wet_dry_front = (d_l > 0.01 && d_r < 0.01) || (d_r > 0.01 && d_l < 0.01);
-
-             // Use harmonic mean of depths (better for wet-dry) unless truly zero
-             let min_depth = min(d_l, d_r);
-             let max_depth = max(d_l, d_r);
-             let avg_depth = select(
-                 0.5 * (d_l + d_r),  // Normal: arithmetic mean
-                 max_depth * 0.5,    // Wet-dry: half of wet cell's depth
-                 is_wet_dry_front
-             );
-             let effective_depth = max(avg_depth, 0.01);
-
-             // Compute gradient from water surface heights
-             let gradient = (h_l - h_r) / params.cell_size;
-
-             // Apply gravity
-             var vel = water_velocity_x[idx];
-             vel += params.gravity * gradient * params.dt;
-
-             // Apply Manning friction (implicit method for stability)
-             let n2 = params.manning_n * params.manning_n;
-             let friction_coeff = params.gravity * n2 / pow(effective_depth, 4.0/3.0);
-             let friction_factor = 1.0 + friction_coeff * abs(vel) * params.dt;
-             vel = vel / friction_factor;
-
-             // Conditional damping to avoid spikes
-             let v_abs = abs(vel);
-             let damp = select(1.0, 0.98, v_abs > 2.0);
-             vel = vel * damp;
-
-             // Soft velocity cap (smooth tanh instead of hard clamp)
-             let max_v = params.cell_size / params.dt * 1.0;
-             vel = max_v * tanh(vel / max_v);
-
-             water_velocity_x[idx] = vel;
-
-             // Compute Flux
-             var flux = vel * effective_depth * params.cell_size * params.dt;
-
-             // Clamp by available donor volume (CFL-style)
-             if (flux > 0.0) {
-                 let max_flux = d_l * cell_area;
-                 flux = min(flux, max_flux);
-             } else {
-                 let max_flux = d_r * cell_area;
-                 flux = max(flux, -max_flux);
-             }
-
-             flux_x[idx] = flux;
-        } else {
-             water_velocity_x[idx] = 0.0;
-             flux_x[idx] = 0.0;
-        }
-    } else if (x == params.world_width - 1) {
-        // OPEN BOUNDARY: Allow water to flow OUT at right edge
-        let d_local = water_depth[idx];
-        if (d_local > MIN_WATER_DEPTH) {
-            var vel = water_velocity_x[idx];
-            // Assume slight downhill gradient to encourage outflow
-            vel += params.gravity * 0.01 * params.dt;
-
-            // Apply Manning friction at boundary too
-            let n2 = params.manning_n * params.manning_n;
-            let friction_coeff = params.gravity * n2 / pow(max(d_local, 0.01), 4.0/3.0);
-            let friction_factor = 1.0 + friction_coeff * abs(vel) * params.dt;
-            vel = vel / friction_factor;
-
-            // Only allow positive (outward) velocity at open boundary
-            vel = max(vel, 0.0);
-            let max_v = params.cell_size / params.dt * 0.25;
-            vel = min(vel, max_v);
-            water_velocity_x[idx] = vel;
-            // Outflow flux based on local depth
-            var flux = vel * d_local * params.cell_size * params.dt;
-            let max_flux = d_local * cell_area * 0.5; // Allow more outflow at boundary
-            flux = min(flux, max_flux);
-            flux_x[idx] = flux;
-        } else {
-            water_velocity_x[idx] = 0.0;
-            flux_x[idx] = 0.0;
-        }
-    }
-    
-    // Z-Flux (Flow Forward: z -> z+1)
-    if (z < params.world_depth - 1) {
-        let idx_f = get_idx(x, z + 1);
-        let h_b = water_surface[idx];
-        let h_f = water_surface[idx_f];
-        let d_b = water_depth[idx];
-        let d_f = water_depth[idx_f];
-        
-        if (d_b > MIN_WATER_DEPTH || d_f > MIN_WATER_DEPTH) {
-             // Detect wet-dry front
-             let is_wet_dry_front_z = (d_b > 0.01 && d_f < 0.01) || (d_f > 0.01 && d_b < 0.01);
-
-             // Use half of wet cell depth at wet-dry front
-             let max_depth_z = max(d_b, d_f);
-             let avg_depth_z = select(
-                 0.5 * (d_b + d_f),  // Normal: arithmetic mean
-                 max_depth_z * 0.5,  // Wet-dry: half of wet cell's depth
-                 is_wet_dry_front_z
-             );
-             let effective_depth_z = max(avg_depth_z, 0.01);
-
-             // Compute gradient from water surface heights
-             let gradient = (h_b - h_f) / params.cell_size;
-
-             // Apply gravity
-             var vel = water_velocity_z[idx];
-             vel += params.gravity * gradient * params.dt;
-
-             // Apply Manning friction (implicit method for stability)
-             let n2_z = params.manning_n * params.manning_n;
-             let friction_coeff_z = params.gravity * n2_z / pow(effective_depth_z, 4.0/3.0);
-             let friction_factor_z = 1.0 + friction_coeff_z * abs(vel) * params.dt;
-             vel = vel / friction_factor_z;
-
-             // Conditional damping to avoid spikes
-             let v_abs_z = abs(vel);
-             let damp_z = select(1.0, 0.98, v_abs_z > 2.0);
-             vel = vel * damp_z;
-
-             // Soft velocity cap (smooth tanh instead of hard clamp)
-             let max_v_z = params.cell_size / params.dt * 1.0;
-             vel = max_v_z * tanh(vel / max_v_z);
-
-             water_velocity_z[idx] = vel;
-
-             // Compute Flux
-             var flux = vel * effective_depth_z * params.cell_size * params.dt;
-
-             // Clamp by available donor volume (CFL-style)
-             if (flux > 0.0) {
-                 let max_flux = d_b * cell_area;
-                 flux = min(flux, max_flux);
-             } else {
-                 let max_flux = d_f * cell_area;
-                 flux = max(flux, -max_flux);
-             }
-
-             flux_z[idx] = flux;
-        } else {
-             water_velocity_z[idx] = 0.0;
-             flux_z[idx] = 0.0;
-        }
-    } else if (z == params.world_depth - 1) {
-         water_velocity_z[idx] = 0.0;
-         flux_z[idx] = 0.0;
-    }
+@compute @workgroup_size(16,16)
+fn update_surface(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (outside(g)) { return; }
+    let p=cell(g); let i=idx(p.x,p.y);
+    water_surface[i]=ground(i)+water_depth[i];
+    aux[scratch(i)]=water_depth[i];
 }
-
-// 3. Update Depth (Volume Conservation)
-@compute @workgroup_size(16, 16)
-fn update_depth(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
-    
-    let idx = get_idx(x, z);
-    
-    // Flux convention: flux_x[i] = flow from cell i to cell i+1 (positive = rightward)
-    // For cell x: 
-    //   - Inflow from left = max(0, flux_x[x-1]) (positive flow from x-1 to x)
-    //   - Outflow to left = max(0, -flux_x[x-1]) (negative flow from x-1 to x means x flows left)
-    //   - Outflow to right = max(0, flux_x[x]) (positive flow from x to x+1)
-    //   - Inflow from right = max(0, -flux_x[x]) (negative flow means x+1 flows to x)
-    
-    var net_flux = 0.0;
-
-    // X direction
-    if (x > 0) {
-        let f = flux_x[get_idx(x - 1, z)];
-        net_flux += f; // Positive = inflow from left
+@compute @workgroup_size(16,16)
+fn update_flux(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (outside(g)) { return; }
+    let p=cell(g); let x=p.x; let z=p.y; let i=idx(x,z);
+    // Read only our own old face velocities; neighbours update their own.
+    let old_x=water_velocity_x[i]; let old_z=water_velocity_z[i];
+    var boundary=0.0;
+    if (x==0u && (params.open_boundaries & 1u)!=0u) { boundary+=drain(i,idx(1u,z),-old_x); }
+    if (x+1u==params.world_width && (params.open_boundaries & 2u)!=0u) { boundary+=drain(i,idx(x-1u,z),old_x); }
+    if (z==0u && (params.open_boundaries & 4u)!=0u) { boundary+=drain(i,idx(x,1u),-old_z); }
+    if (z+1u==params.world_depth && (params.open_boundaries & 8u)!=0u) { boundary+=drain(i,idx(x,z-1u),old_z); }
+    aux[scratch(i)+2u]=boundary;
+    var vx=0.0; var vz=0.0; var qx=0.0; var qz=0.0;
+    if (x+1u<params.world_width) {
+        let r=idx(x+1u,z); let d=face_depth(i,r);
+        vx=velocity(old_x,(water_surface[i]-water_surface[r])/params.cell_size,d);
+        qx=vx*d*params.cell_size*step_dt();
     }
-    // Outflow to the right (includes open boundary at x=max)
-    let f_out_x = flux_x[idx];
-    net_flux -= f_out_x; // Positive = outflow to right
-
-    // Z direction
-    if (z > 0) {
-        let f = flux_z[get_idx(x, z - 1)];
-        net_flux += f; // Positive = inflow from back
+    if (z+1u<params.world_depth) {
+        let r=idx(x,z+1u); let d=face_depth(i,r);
+        vz=velocity(old_z,(water_surface[i]-water_surface[r])/params.cell_size,d);
+        qz=vz*d*params.cell_size*step_dt();
     }
-    if (z < params.world_depth - 1) {
-        let f = flux_z[idx];
-        net_flux -= f; // Positive = outflow to front
-    }
-
-    // Update Depth
-    let cell_area = params.cell_size * params.cell_size;
-    var depth_change = net_flux / cell_area;
-    // Limit per-step depth changes to reduce height spikes.
-    let max_depth_change = params.cell_size * 0.25;
-    depth_change = clamp(depth_change, -max_depth_change, max_depth_change);
-
-    var new_depth = water_depth[idx] + depth_change;
-
-    // Clamp to prevent negative depth
-    new_depth = max(0.0, new_depth);
-
-    water_depth[idx] = new_depth;
-    
-    // Apply artificial viscosity to dampen numerical oscillations
-    // This prevents water sloshing in still/settling conditions
-    water_velocity_x[idx] *= WATER_VELOCITY_DAMPING;
-    water_velocity_z[idx] *= WATER_VELOCITY_DAMPING;
+    water_velocity_x[i]=vx; water_velocity_z[i]=vz;
+    flux_x[i]=qx; flux_z[i]=qz;
+}
+@compute @workgroup_size(16,16)
+fn donor_budget(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (outside(g)) { return; }
+    let p=cell(g); let x=p.x; let z=p.y; let i=idx(x,z); let a=scratch(i);
+    var outgoing=max(flux_x[i],0.0)+max(flux_z[i],0.0)+aux[a+2u];
+    if (x>0u) { outgoing+=max(-flux_x[idx(x-1u,z)],0.0); }
+    if (z>0u) { outgoing+=max(-flux_z[idx(x,z-1u)],0.0); }
+    let available=water_depth[i]*params.cell_size*params.cell_size;
+    aux[a+1u]=min(1.0,available*(1.0-1e-6)/max(outgoing,1e-30));
+}
+@compute @workgroup_size(16,16)
+fn limit_flux(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (outside(g)) { return; }
+    let p=cell(g); let x=p.x; let z=p.y; let i=idx(x,z); let a=scratch(i);
+    var sx=aux[a+1u]; var sz=sx;
+    if (flux_x[i]<0.0 && x+1u<params.world_width) { sx=aux[scratch(idx(x+1u,z))+1u]; }
+    if (flux_z[i]<0.0 && z+1u<params.world_depth) { sz=aux[scratch(idx(x,z+1u))+1u]; }
+    flux_x[i]*=sx; flux_z[i]*=sz; aux[a+2u]*=aux[a+1u];
+    aux[a+4u]+=flux_x[i]; aux[a+5u]+=flux_z[i]; aux[a+6u]+=aux[a+2u];
+}
+@compute @workgroup_size(16,16)
+fn update_depth(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (outside(g)) { return; }
+    let p=cell(g); let x=p.x; let z=p.y; let i=idx(x,z);
+    var net=-flux_x[i]-flux_z[i]-aux[scratch(i)+2u];
+    if (x>0u) { net+=flux_x[idx(x-1u,z)]; }
+    if (z>0u) { net+=flux_z[idx(x,z-1u)]; }
+    water_depth[i]=max(0.0,water_depth[i]+net/(params.cell_size*params.cell_size));
 }

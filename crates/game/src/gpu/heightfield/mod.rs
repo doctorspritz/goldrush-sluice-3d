@@ -13,7 +13,7 @@ mod simulation;
 mod sync;
 mod tools;
 
-pub use buffers::{GeologyBuffers, WaterBuffers};
+pub use buffers::{GeologyBuffers, WaterBuffers, WATER_AUX_FLOATS};
 pub use mesh::{GridMesh, GridVertex};
 pub use pipelines::{
     BridgeMergeResources, CoreBindGroups, EmitterResources, MaterialToolResources,
@@ -191,6 +191,20 @@ impl GpuHeightfield {
     }
 
     pub fn dispatch_tile(&self, encoder: &mut wgpu::CommandEncoder, tile_width: u32, tile_depth: u32) {
+        self.dispatch_tile_substeps(encoder, tile_width, tile_depth, 2);
+    }
+
+    pub fn dispatch_water_substeps(&self, encoder: &mut wgpu::CommandEncoder, substeps: u32) {
+        self.dispatch_tile_substeps(encoder, self.width, self.depth, substeps);
+    }
+
+    fn dispatch_tile_substeps(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+        substeps: u32,
+    ) {
         simulation::dispatch_simulation_tile(
             encoder,
             &self.simulation,
@@ -199,6 +213,7 @@ impl GpuHeightfield {
             self.depth,
             tile_width,
             tile_depth,
+            substeps,
             &self.water.suspended_sediment,
             &self.water.suspended_sediment_next,
             &self.water.suspended_overburden,
@@ -212,6 +227,25 @@ impl GpuHeightfield {
 
     pub fn update_params(&self, queue: &wgpu::Queue, dt: f32) {
         simulation::update_params(queue, &self.params_buffer, self.width, self.depth, self.cell_size, dt);
+    }
+
+    /// Boundary mask: -X=1, +X=2, -Z=4, +Z=8. Outflow only.
+    /// The same substep count must be passed to dispatch_water_substeps.
+    pub fn update_water_params(
+        &self,
+        queue: &wgpu::Queue,
+        dt: f32,
+        boundaries: u32,
+        manning_n: f32,
+        substeps: u32,
+    ) {
+        self.update_params(queue, dt);
+        queue.write_buffer(
+            &self.params_buffer,
+            24,
+            bytemuck::cast_slice(&[boundaries, substeps.max(1)]),
+        );
+        queue.write_buffer(&self.params_buffer, 44, bytemuck::bytes_of(&manning_n));
     }
 
     pub fn update_params_tile(

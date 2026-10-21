@@ -8,7 +8,7 @@ The direct-control slice now completes a verified first shift with the original 
 
 The [shoreline report](docs/playtests/2026-10-21-shoreline.md) records full-resolution river/terrain contact, pixel-sized edge blending, native comparisons and its added GPU memory cost. The physical solvers and accepted particle/outlet optics remain unchanged; larger bank contours still need refinement.
 
-**Environmental water conservation needs repair.** The [saved-state audit](docs/playtests/2026-10-21-environment-water-audit.md) found unexplained water gain, a closed downstream river boundary and phantom water from dry excavation. Earlier zero-water-error receipts cover the sluice counter, not the complete terrain system. Repair is tracked as `sluice-environment-water` (P1).
+**Environmental water now has a complete source/storage/discharge ledger.** Dry/wet digging and dumping preserve water, shared GPU face transfers respect each donor's total volume, and the river drains at its downhill edge. The regenerated demo has a graded return channel connecting the sluice discharge to the river. See the [repair measurements](docs/playtests/2026-10-21-environment-water-fix.md); the [earlier audit](docs/playtests/2026-10-21-environment-water-audit.md) remains a historical record.
 
 ## First Bend controls and loop
 
