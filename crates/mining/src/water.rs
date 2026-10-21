@@ -57,15 +57,27 @@ impl WaterSplats {
             return Vec::new();
         };
         let alpha = self.presentation.alpha;
-        let mut points:Vec<_>=self.data.iter().filter(|v|v.shape[2]==0.).filter_map(|v|{
-            let c=Vec4::from_array(v.previous_center).lerp(Vec4::from_array(v.center_radius),alpha);
-            let delta=mining_sim::Vec3::new(c.x,c.y,c.z)-p.inlet;
-            let downstream=delta.dot(p.forward());
-            let height=delta.y+downstream*p.slope_deg.to_radians().tan();
-            (downstream>0.3 && downstream<1.35 && height>0.035 && c.w>0.0001).then_some((height,serde_json::json!({"world":[c.x,c.y,c.z],"downstream_m":downstream,"height_m":height,"radius_m":c.w,"planarity":v.previous_shape[3]*(1.-alpha)+v.shape[3]*alpha})))
-        }).collect();
+        let mut points: Vec<_> =
+            self.data
+                .iter()
+                .filter(|v| v.shape[2] == 0.)
+                .filter_map(|v| {
+                    let c = Vec4::from_array(v.previous_center)
+                        .lerp(Vec4::from_array(v.center_radius), alpha);
+                    let delta = mining_sim::Vec3::new(c.x, c.y, c.z) - p.inlet;
+                    let downstream = delta.dot(p.forward());
+                    let height = delta.y + downstream * p.slope_deg.to_radians().tan();
+                    (downstream > 0.3 && downstream < 1.35 && height > 0.035 && c.w > 0.0001)
+                        .then_some((
+                            height,
+                            c,
+                            downstream,
+                            v.previous_shape[3] * (1. - alpha) + v.shape[3] * alpha,
+                        ))
+                })
+                .collect();
         points.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
-        points.into_iter().take(128).map(|(_, v)| v).collect()
+        points.into_iter().take(128).map(|(height,c,downstream,planarity)|serde_json::json!({"world":[c.x,c.y,c.z],"downstream_m":downstream,"height_m":height,"radius_m":c.w,"planarity":planarity})).collect()
     }
     pub fn presentation_report(&self) -> serde_json::Value {
         serde_json::json!({"surface_builds": self.builds,
@@ -899,6 +911,45 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "bounded render profiling; run explicitly with --ignored --nocapture"]
+    fn profile_surface_reconstruction_and_correspondence() {
+        let mut session = crate::demo::session().unwrap();
+        session.sluice.ensure_water_ids();
+        let previous = samples(&session.sluice);
+        for p in &mut session.sluice.water {
+            p.position += p.velocity * (1. / 120.);
+        }
+        let mut rebuild = Vec::new();
+        let mut pairing = Vec::new();
+        let mut fingerprint = 0u64;
+        for _ in 0..16 {
+            let start = std::time::Instant::now();
+            let current = samples(std::hint::black_box(&session.sluice));
+            rebuild.push(start.elapsed().as_secs_f64() * 1000.);
+            let start = std::time::Instant::now();
+            let paired = crate::water_presentation::pair_particles(&previous, &current);
+            pairing.push(start.elapsed().as_secs_f64() * 1000.);
+            // Deterministic byte fingerprint permits an exact-output comparison
+            // across implementations; timing has no flaky pass threshold.
+            let mut hash = 0xcbf29ce484222325u64;
+            for byte in bytemuck::cast_slice::<InstanceData, u8>(&paired) {
+                hash = (hash ^ *byte as u64).wrapping_mul(0x100000001b3);
+            }
+            if fingerprint != 0 {
+                assert_eq!(hash, fingerprint);
+            }
+            fingerprint = hash;
+            std::hint::black_box(paired);
+        }
+        rebuild.sort_by(f64::total_cmp);
+        pairing.sort_by(f64::total_cmp);
+        let report = serde_json::json!({"water":session.sluice.water.len(),"grains":session.sluice.grains.len(),"samples":previous.len(),"iterations":rebuild.len(),"rebuild_median_ms":rebuild[rebuild.len()/2],"pairing_median_ms":pairing[pairing.len()/2],"output_fnv1a64":format!("{fingerprint:016x}")});
+        println!("SURFACE PROFILE: {report}");
+        if let Some(path) = std::env::var_os("SLUICE_SURFACE_PROFILE") {
+            std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        }
+    }
     #[test]
     fn accepted_outlet_uses_no_surface_normal_override() {
         let mut session = mining_sim::Session::new();

@@ -64,7 +64,7 @@ fn main() -> AppExit {
                 app::input,
                 app::cursor,
                 control_check::observe,
-                app::camera,
+                (app::camera, motion_capture::camera).chain(),
                 environment::update_detail,
                 scene::sync_machine,
                 scene::sync_terrain,

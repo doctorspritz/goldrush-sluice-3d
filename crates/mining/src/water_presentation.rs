@@ -103,6 +103,10 @@ fn aligned(previous: &InstanceData, mut current: InstanceData) -> InstanceData {
     let b = [current.axis_x, current.axis_y, current.axis_z];
     let a_unit = a.map(|v| vector(v).normalize_or_zero());
     let b_unit = b.map(|v| vector(v).normalize_or_zero());
+    // Each pair contributes to several permutations. Compute the nine dot
+    // products once, preserving the score order and tie-breaking exactly.
+    let similarity: [[f32; 3]; 3] =
+        std::array::from_fn(|i| std::array::from_fn(|j| a_unit[i].dot(b_unit[j]).abs()));
     let permutations = [
         [0, 1, 2],
         [0, 2, 1],
@@ -111,11 +115,7 @@ fn aligned(previous: &InstanceData, mut current: InstanceData) -> InstanceData {
         [2, 0, 1],
         [2, 1, 0],
     ];
-    let score = |order: &[usize; 3]| {
-        (0..3)
-            .map(|i| a_unit[i].dot(b_unit[order[i]]).abs())
-            .sum::<f32>()
-    };
+    let score = |order: &[usize; 3]| (0..3).map(|i| similarity[i][order[i]]).sum::<f32>();
     let order = permutations
         .into_iter()
         .max_by(|a, b| score(a).total_cmp(&score(b)))
