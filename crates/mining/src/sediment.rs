@@ -6,22 +6,58 @@ use bevy::{
     render::render_resource::PrimitiveTopology,
 };
 use mining_sim::{GrainKind, Sluice};
-const MAX_POINTS: usize = 32_768;
+pub(crate) const MAX_POINTS: usize = 32_768;
+fn sample_counts(s: &Sluice) -> Vec<usize> {
+    let wants: Vec<_> = s
+        .grains
+        .iter()
+        .take(MAX_POINTS)
+        .map(|g| {
+            // Subpixel fines are mainly represented by the local suspension field.
+            // Spend geometry on coarse grains that can actually cover the bed.
+            let cap = if g.diameter_m < 0.0002 { 8. } else { 512. };
+            let population = g.represented_grains();
+            if population <= 1.00001 {
+                1
+            } else {
+                population.ceil().clamp(1., cap) as usize
+            }
+        })
+        .collect();
+    let free = MAX_POINTS.saturating_sub(wants.len());
+    let extra: usize = wants.iter().map(|n| n - 1).sum();
+    wants
+        .into_iter()
+        .map(|n| 1 + (n - 1) * free / extra.max(free).max(1))
+        .collect()
+}
+pub(crate) fn visible_grains(s: &Sluice) -> usize {
+    sample_counts(s).iter().sum()
+}
 struct Geometry {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     indices: Vec<u32>,
 }
 fn geometry(s: &Sluice) -> [Geometry; 3] {
-    let mut out = std::array::from_fn(|_| Geometry {
-        positions: Vec::new(),
-        normals: Vec::new(),
-        indices: Vec::new(),
+    let counts = sample_counts(s);
+    let kind_index = |kind| match kind {
+        GrainKind::Sand => 0,
+        GrainKind::Gravel => 1,
+        GrainKind::Gold => 2,
+    };
+    let mut per_kind = [0; 3];
+    for (g, count) in s.grains.iter().zip(&counts) {
+        per_kind[kind_index(g.kind)] += count;
+    }
+    let mut out = std::array::from_fn(|i| Geometry {
+        positions: Vec::with_capacity(per_kind[i] * 6),
+        normals: Vec::with_capacity(per_kind[i] * 6),
+        indices: Vec::with_capacity(per_kind[i] * 24),
     });
     let Some(placement) = s.placement else {
         return out;
     };
-    let allowance = (MAX_POINTS / s.grains.len().max(1)).clamp(1, 12);
     let axes = [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z];
     let triangles = [
         [0, 2, 4],
@@ -33,20 +69,8 @@ fn geometry(s: &Sluice) -> [Geometry; 3] {
         [1, 5, 3],
         [5, 0, 3],
     ];
-    for (i, g) in s.grains.iter().enumerate() {
-        let kind = match g.kind {
-            GrainKind::Sand => 0,
-            GrainKind::Gravel => 1,
-            GrainKind::Gold => 2,
-        };
-        let physical_volume = std::f64::consts::PI * (g.diameter_m as f64).powi(3) / 6.0;
-        let count = if g.volume_resolved {
-            (g.solid_volume() / physical_volume)
-                .ceil()
-                .clamp(1.0, allowance as f64) as usize
-        } else {
-            1
-        };
+    for (i, (g, count)) in s.grains.iter().zip(counts).enumerate() {
+        let kind = kind_index(g.kind);
         let cloud = (g.collision_radius() - g.diameter_m * 0.5).max(0.0);
         for j in 0..count {
             let z = 1.0 - 2.0 * (j as f32 + 0.5) / count as f32;
@@ -118,6 +142,7 @@ pub fn sync(
                 MeshMaterial3d(materials[i].clone()),
                 Transform::default(),
                 NoFrustumCulling,
+                bevy::light::NotShadowCaster,
             ));
             handle
         });
@@ -138,5 +163,44 @@ pub fn sync(
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, data.normals);
         mesh.insert_indices(Indices::U32(data.indices));
         *meshes.get_mut(handle).unwrap() = mesh;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn dense_sampling_respects_global_budget_and_keeps_individual_gold() {
+        let mut s = crate::demo::session().unwrap();
+        let gold = s
+            .sluice
+            .grains
+            .iter()
+            .find(|g| g.kind == GrainKind::Gold)
+            .unwrap()
+            .clone();
+        let mut gravel = s
+            .sluice
+            .grains
+            .iter()
+            .find(|g| g.kind == GrainKind::Gravel)
+            .unwrap()
+            .clone();
+        gravel.diameter_m = 0.0003;
+        s.sluice.grains = vec![gravel; mining_sim::sluice::MAX_GRAINS - 1];
+        s.sluice.grains.push(gold);
+        let samples = sample_counts(&s.sluice);
+        let count: usize = samples.iter().sum();
+        assert_eq!(*samples.last().unwrap(), 1);
+        assert!(count > MAX_POINTS - mining_sim::sluice::MAX_GRAINS && count <= MAX_POINTS);
+        let meshes = geometry(&s.sluice);
+        assert_eq!(meshes[2].positions.len(), 6);
+        assert_eq!(
+            meshes.iter().map(|m| m.positions.len()).sum::<usize>(),
+            count * 6
+        );
+        assert!(meshes
+            .iter()
+            .all(|m| m.indices.iter().all(|i| (*i as usize) < m.positions.len())));
     }
 }

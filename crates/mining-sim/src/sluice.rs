@@ -169,6 +169,14 @@ pub enum ContactModel {
     LegacyDamping,
     Coulomb,
 }
+/// Explicit prototype grading, not a measured claim PSD. Old shifts keep
+/// their original soil/sand grouping and diameters when more feed is emitted.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FeedGrading {
+    #[default]
+    Legacy,
+    Alluvial,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Grain {
     #[serde(default)]
@@ -185,6 +193,13 @@ pub struct Grain {
 }
 
 impl Grain {
+    pub fn represented_grains(&self) -> f64 {
+        if self.volume_resolved {
+            self.solid_volume() / (std::f64::consts::PI / 6. * (self.diameter_m as f64).powi(3))
+        } else {
+            1.
+        }
+    }
     pub fn solid_volume(&self) -> f64 {
         self.material.volume() + self.material.gold_g * 0.001 / 19_300.0
     }
@@ -217,6 +232,8 @@ pub struct Sluice {
     pub granular_packets: bool,
     #[serde(default)]
     pub contact_model: ContactModel,
+    #[serde(default)]
+    pub feed_grading: FeedGrading,
     /// Research resolution control. Physical diameters remain independent.
     #[serde(default)]
     pub parcel_volume_m3: Option<f64>,
@@ -256,6 +273,7 @@ impl Default for Sluice {
             profile: HydraulicProfile::OriginalDemo,
             granular_packets: true,
             contact_model: ContactModel::Coulomb,
+            feed_grading: FeedGrading::Alluvial,
             parcel_volume_m3: None,
             riffles_enabled: true,
             fluid_clock: 0.0,
@@ -377,12 +395,12 @@ impl Sluice {
             self.hopper.gold_g += self.pending_gold_g;
             self.pending_gold_g = 0.0;
         }
-        if self.feed_on && self.pump_on && water_available && self.grains.len() + 3 < MAX_GRAINS {
+        if self.feed_on && self.pump_on && water_available && self.grains.len() + 4 < MAX_GRAINS {
             self.feed_credit = (self.feed_credit + self.feed_m3s as f64 * dt as f64)
                 .min(self.parcel_volume() * if self.granular_packets { 32.0 } else { 2.0 });
             while self.feed_credit >= self.parcel_volume()
                 && !self.hopper.is_empty()
-                && self.grains.len() + 3 < MAX_GRAINS
+                && self.grains.len() + 4 < MAX_GRAINS
             {
                 let m = self.hopper.take_volume(self.parcel_volume());
                 self.processed_m3 += m.volume();
@@ -397,8 +415,20 @@ impl Sluice {
             * self.profile.width()
             * 0.70;
         let sand = Material {
-            soil_m3: m.soil_m3,
+            soil_m3: if self.feed_grading == FeedGrading::Legacy {
+                m.soil_m3
+            } else {
+                0.
+            },
             sand_m3: m.sand_m3,
+            ..Material::default()
+        };
+        let fines = Material {
+            soil_m3: if self.feed_grading == FeedGrading::Alluvial {
+                m.soil_m3
+            } else {
+                0.
+            },
             ..Material::default()
         };
         let gravel = Material {
@@ -409,15 +439,23 @@ impl Sluice {
             gold_g: m.gold_g,
             ..Material::default()
         };
-        for (kind, mut material) in [
-            (GrainKind::Sand, sand),
-            (GrainKind::Gravel, gravel),
-            (GrainKind::Gold, gold),
+        for (kind, mut material, phase) in [
+            (GrainKind::Sand, fines, 0.0),
+            (GrainKind::Sand, sand, 0.19),
+            (GrainKind::Gravel, gravel, 0.37),
+            (GrainKind::Gold, gold, 0.73),
         ] {
             let size_sample = ((self.sequence.wrapping_mul(1103515245).wrapping_add(12345) >> 8)
                 % 1000) as f32
                 / 999.0;
             let diameter_m = match kind {
+                // Equal-volume parcels sample a log-spaced fine fraction.
+                // This changes the physical drag diameter, not the parcel mass.
+                GrainKind::Sand
+                    if self.feed_grading == FeedGrading::Alluvial && material.soil_m3 > 0. =>
+                {
+                    0.00002 * 10.0_f32.powf(size_sample)
+                }
                 GrainKind::Gold => 0.00008 + size_sample * 0.00042,
                 GrainKind::Sand => 0.0002 + size_sample * 0.0010,
                 GrainKind::Gravel => 0.001 + size_sample * 0.005,
@@ -436,11 +474,12 @@ impl Sluice {
                 let position = if self.granular_packets {
                     // A continuous chute footprint, without coincident sand,
                     // gravel and gold clumps or the old 40-lane repeating lattice.
-                    let phase = match kind {
-                        GrainKind::Sand => 0.0,
-                        GrainKind::Gravel => 0.37,
-                        GrainKind::Gold => 0.73,
-                    };
+                    let phase =
+                        if self.feed_grading == FeedGrading::Legacy && kind == GrainKind::Sand {
+                            0.0
+                        } else {
+                            phase
+                        };
                     let sample = |factor: f64| {
                         ((self.sequence as f64 + 0.5) * factor + phase).fract() as f32
                     };
@@ -575,7 +614,7 @@ impl Sluice {
                     && g.material.valid()
                     && g.position.length() < 100.0
                     && g.velocity.length() < 100.0
-                    && (0.00005..=0.02).contains(&g.diameter_m)
+                    && (0.00002..=0.02).contains(&g.diameter_m)
             })
             && [self.flow_m3s, self.feed_m3s, self.time]
                 .iter()

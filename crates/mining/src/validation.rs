@@ -215,6 +215,13 @@ pub fn update(
                 );
             }
         }
+        // Capture the measured live scene in the same bounded app run.
+        if started.elapsed().as_secs_f64() >= 10. && v.photos.insert("flow-benchmark") {
+            if let Some(path) = v.capture.clone() {
+                if let Some(parent) = path.parent() { let _=std::fs::create_dir_all(parent); }
+                commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+            }
+        }
         if started.elapsed().as_secs_f64() >= v.benchmark_seconds {
             let wall = started.elapsed().as_secs_f64();
             let simulated = sim - sim_start;
@@ -244,6 +251,8 @@ pub fn update(
                 "last_worker_tick_ms":game.step_ms,"worker_packets":v.worker_ms.len(),"worker_busy_fraction":v.worker_ms.iter().sum::<f64>()/(wall*1000.),"worker_mean_ms":v.worker_ms.iter().sum::<f64>()/v.worker_ms.len().max(1) as f64,
                 "worker_phases_mean_ms":v.worker_phases.map(|n|n/v.worker_ms.len().max(1) as f64),"water_particles":game.session.sluice.water.len(),
                     "grains":game.session.sluice.grains.len(),
+                    "displayed_grains":crate::sediment::visible_grains(&game.session.sluice),
+                    "slurry":mining_sim::slurry::diagnostics(&game.session.sluice),
                 "water_mean_downstream_ms":game.session.sluice.water_speed(),"fluid_surface_ready":crate::water::surface_ready(&water),
                     "outflow_particles":sluice.outflow.len(),"terrain_water_splats":water.terrain_count(),"terrain_fine_cells":water.terrain_fine_count(),"detail_revision":detail.revision,"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
             if let Some(parent) = path.parent() {
@@ -325,6 +334,8 @@ pub fn update(
                     "water_balance_error_m3":game.session.water_balance_error_m3(),
                     "sluice_water_balance_error_m3":game.session.sluice.water_used_m3-game.session.sluice.accounted_water_m3(),
                     "sampled_splats":crate::water::visible_count(&game.session.sluice),
+                    "displayed_grains":crate::sediment::visible_grains(&game.session.sluice),
+                    "slurry":mining_sim::slurry::diagnostics(&game.session.sluice),
                     "particles_below_floor":below_floor,
                     "ledger_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
                 let _ = std::fs::write(

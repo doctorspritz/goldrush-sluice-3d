@@ -153,10 +153,12 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     if opaque>0. && abs(opaque_view.w)>0.00001 { thickness=clamp(-opaque_view.z/opaque_view.w-depth,0.,0.5); }
     if !river {thickness=min(thickness,max(textureLoad(fluid_thickness,raw_pixel,0).r,0.0002));}
     let optical=optical_sample.g;
-    let concentration=select(u.sediment.x,optical-1.,optical>=1.);
-    let extinction=vec3(0.8,0.24,0.12)+vec3(45.,80.,120.)*concentration*30.;
+    // River keeps its existing concentration convention. Channel extinction
+    // comes from local represented fine-grain cross section per water volume.
+    let beta=select(select(max(optical-1.,0.),max(-optical-1.,0.),in_channel),max(optical-1.,0.)*2400.,river);
+    let extinction=vec3(0.8,0.24,0.12)+vec3(0.5625,1.,1.5)*beta;
     let transmission=exp(-extinction*thickness);
-    let scattering=mix(vec3(0.035,0.18,0.18),vec3(0.22,0.13,0.055),clamp(concentration*20.,0.,1.));
+    let scattering=mix(vec3(0.035,0.18,0.18),vec3(0.22,0.13,0.055),clamp(beta/120.,0.,1.));
     var background=original.rgb;
     if river || in_channel {background=refracted_scene(q,normal,depth,thickness,background);}
     let body=background*transmission+scattering*(vec3(1.)-transmission);

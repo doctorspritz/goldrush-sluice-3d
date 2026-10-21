@@ -42,7 +42,9 @@ fn quad_value(values:vec4<f32>,uv:vec2<f32>)->f32 {
 }
 struct Depth {@location(0) linear:vec4<f32>,@location(1) normal:vec4<f32>,@builtin(frag_depth) depth:f32};
 @fragment fn particle_depth(v:Varying)->Depth {
- var world=v.world;var optical=select(0.,-1.,v.shape.z==0.);
+ // Negative tags identify the channel; positive tags carry the airborne
+ // outlet's optical sample. River selection uses its separate depth buffer.
+ var world=v.world;var optical=select(1.+v.shape.y,-1.-v.shape.y,v.shape.z==0.);
  if v.shape.z==1. {
   if v.terrain.x<=MIN_FILM_DEPTH {discard;}
   optical=1.+v.terrain.y;

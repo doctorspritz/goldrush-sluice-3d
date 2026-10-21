@@ -16,6 +16,8 @@ The demo app opens beside an installed sluice with real water and finite paydirt
 
 The [sluice accuracy laboratory](docs/physics/accuracy.md) provides repeatable size-resolved water/feed experiments and actual cleanup assays. The [measured results](docs/playtests/2026-10-21-sluice-accuracy.md) distinguish outlet loss, residence and collected gold. Real-world recovery remains uncalibrated: the closed momentum budget and dense-bed contact convergence still need work. Water/feed arrows now have fine steps; hold Shift for coarse changes.
 
+New shifts also separate fine soil from sand, and local suspended-material plumes replace the whole-channel dirt tint. Denser visible grain sampling represents the existing weighted material without adding independent DEM bodies. See the [slurry model and its limits](docs/physics/slurry.md) and [native measurements](docs/playtests/2026-10-21-slurry.md).
+
 For a fresh mining shift, walk to the excavator, cut finite paydirt, swing a loaded bucket over the hopper, place a sluice, wash and lift the mats. The first shift's goal is **5 grams of recovered gold**.
 
 On this Mac, double-click **Play First Bend.command**, or run:

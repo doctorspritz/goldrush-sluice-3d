@@ -6,6 +6,7 @@ pub mod replay;
 pub mod session;
 pub mod site;
 pub mod sluice;
+pub mod slurry;
 pub mod storage;
 pub mod water_balance;
 

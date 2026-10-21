@@ -33,7 +33,6 @@ pub struct WaterSplats {
     data: Arc<Vec<InstanceData>>,
     health: Arc<AtomicU8>,
     clock: PresentationClock,
-    turbidity: f32,
     terrain_data: Arc<Vec<InstanceData>>,
     terrain_revision: u64,
     terrain_key: Option<(u64, u64, u64, u64)>,
@@ -61,7 +60,6 @@ impl Default for WaterSplats {
             data: Arc::new(Vec::new()),
             health: Arc::new(AtomicU8::new(0)),
             clock: PresentationClock::default(),
-            turbidity: 0.0,
             terrain_data: Arc::new(Vec::new()),
             terrain_revision: 0,
             terrain_key: None,
@@ -431,7 +429,7 @@ fn prepare_views(
             view_from_clip: view.clip_from_view.inverse(),
             view_from_world: world_from_view.inverse(),
             sediment: Vec4::new(
-                water.turbidity,
+                0., // reserved; particle optics carry local slurry extinction
                 water.terrain_clock.prediction,
                 water.sim_time,
                 water.outflow_clock.prediction,
@@ -711,16 +709,6 @@ pub fn sync(
         splats.revision = game.snapshot_id;
         splats.data = Arc::new(instances(&game.session.sluice));
         splats.outflow_sample_time = game.session.sim_time;
-        let sluice = &game.session.sluice;
-        let fines: f64 = sluice
-            .grains
-            .iter()
-            .filter(|g| g.kind == mining_sim::GrainKind::Sand && !g.resting)
-            .map(|g| g.solid_volume())
-            .sum();
-        splats.turbidity = (fines
-            / (sluice.water.len() as f64 * sluice.profile.particle_m3()).max(1e-9))
-        .clamp(0.0, 1.0) as f32;
     }
     splats.sim_time = game.session.sim_time as f32;
     let outflow_sample_time = splats.outflow_sample_time;
@@ -756,6 +744,8 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
     let count = sluice.water.len() + sluice.outflow.len();
     let stride = count.div_ceil(MAX_SPLATS).max(1);
     let radius = sluice.profile.cell() * 0.85 * (stride as f32).cbrt();
+    let slurry = mining_sim::slurry::SlurryField::new(sluice);
+    let outlet_extinction = slurry.outlet_extinction(sluice);
     let sampled: Vec<_> = sluice
         .water
         .iter()
@@ -765,6 +755,7 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
                 Vec3::from_array(world.to_array()),
                 sluice.grid_velocity_to_world(water.velocity),
                 0.,
+                slurry.sample(water.position).1,
             )
         })
         .chain(sluice.outflow.iter().map(|water| {
@@ -772,17 +763,18 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
                 Vec3::from_array(water.position.to_array()),
                 water.velocity,
                 2.,
+                outlet_extinction,
             )
         }))
         .step_by(stride)
-        .filter(|(p, v, _)| p.is_finite() && v.is_finite())
+        .filter(|(p, v, _, _)| p.is_finite() && v.is_finite())
         .collect();
-    let points: Vec<_> = sampled.iter().map(|(p, _, _)| *p).collect();
+    let points: Vec<_> = sampled.iter().map(|(p, _, _, _)| *p).collect();
     let kernels = crate::fluid_surface::kernels(&points, sluice.profile.cell());
     sampled
         .into_iter()
         .zip(kernels)
-        .map(|((_p, v, kind), kernel)| {
+        .map(|((_p, v, kind, extinction), kernel)| {
             let c = kernel.center;
             let axis = |v: Vec3, normal: f32| [v.x, v.y, v.z, normal];
             InstanceData {
@@ -796,7 +788,7 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
                             * kernel.axes[0].length() as f64
                             * kernel.axes[1].length() as f64
                             * kernel.axes[2].length() as f64)) as f32,
-                    0.,
+                    extinction,
                     kind,
                     if kind == 0. { kernel.planarity } else { 0. },
                 ],
