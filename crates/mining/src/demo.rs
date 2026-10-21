@@ -27,6 +27,7 @@ mod tests {
     fn bundled_demo_has_real_flow_finite_paydirt_and_balanced_ledger() {
         let s = super::session().unwrap();
         assert!(s.sluice.water.len() > 10_000 && s.sluice.granular_packets);
+        assert_eq!(s.sluice.contact_model, mining_sim::sluice::ContactModel::Coulomb);
         assert_eq!(
             s.sluice.profile,
             mining_sim::sluice::HydraulicProfile::OriginalDemo

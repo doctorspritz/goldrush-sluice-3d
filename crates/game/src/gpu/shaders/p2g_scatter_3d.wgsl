@@ -125,7 +125,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     // ========== U component (staggered on left YZ faces) ==========
     // U sample point is at (i, j+0.5, k+0.5) in cell coordinates
     let u_pos = pos / cell_size - vec3<f32>(0.0, 0.5, 0.5);
-    let base_u = vec3<i32>(floor(u_pos));
+    let base_u = vec3<i32>(floor(u_pos + vec3<f32>(0.5)));
     let frac_u = u_pos - vec3<f32>(base_u);
 
     // Precompute 1D weights for -1, 0, +1 offsets
@@ -189,7 +189,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     // ========== V component (staggered on bottom XZ faces) ==========
     // V sample point is at (i+0.5, j, k+0.5) in cell coordinates
     let v_pos = pos / cell_size - vec3<f32>(0.5, 0.0, 0.5);
-    let base_v = vec3<i32>(floor(v_pos));
+    let base_v = vec3<i32>(floor(v_pos + vec3<f32>(0.5)));
     let frac_v = v_pos - vec3<f32>(base_v);
 
     let v_wx = array<f32, 3>(
@@ -251,7 +251,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     // ========== W component (staggered on back XY faces) ==========
     // W sample point is at (i+0.5, j+0.5, k) in cell coordinates
     let w_pos = pos / cell_size - vec3<f32>(0.5, 0.5, 0.0);
-    let base_w = vec3<i32>(floor(w_pos));
+    let base_w = vec3<i32>(floor(w_pos + vec3<f32>(0.5)));
     let frac_w = w_pos - vec3<f32>(base_w);
 
     let w_wx = array<f32, 3>(

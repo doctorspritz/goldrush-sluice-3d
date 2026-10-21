@@ -350,17 +350,20 @@ pub fn input(
             }
         }
         if game.session.near_plant() {
+            let coarse = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+            let water_step = if coarse { 0.002 } else { 0.00025 };
+            let feed_step = if coarse { 0.0001 } else { 0.000025 };
             if keys.just_pressed(KeyCode::ArrowUp) {
-                game.command(Command::Water(0.002));
+                game.command(Command::Water(water_step));
             }
             if keys.just_pressed(KeyCode::ArrowDown) {
-                game.command(Command::Water(-0.002));
+                game.command(Command::Water(-water_step));
             }
             if keys.just_pressed(KeyCode::ArrowRight) {
-                game.command(Command::Feed(0.0001));
+                game.command(Command::Feed(feed_step));
             }
             if keys.just_pressed(KeyCode::ArrowLeft) {
-                game.command(Command::Feed(-0.0001));
+                game.command(Command::Feed(-feed_step));
             }
         }
     }
@@ -499,6 +502,30 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(key);
+    }
+    #[test]
+    fn plant_rate_controls_have_fine_steps_and_shift_keeps_coarse_adjustment() {
+        let mut app = input_app();
+        {
+            let mut game = app.world_mut().resource_mut::<Game>();
+            game.session.player.position = SimVec3::new(16.3, 0.35, 20.);
+            game.session.paused = false;
+        }
+        press(&mut app, KeyCode::ArrowUp);
+        app.update();
+        assert!(
+            matches!(app.world().resource::<Game>().pending.last(),Some(Command::Water(v)) if (*v-0.00025).abs()<1e-9)
+        );
+        clear_edges(&mut app);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::ArrowUp);
+        press(&mut app, KeyCode::ShiftLeft);
+        press(&mut app, KeyCode::ArrowDown);
+        app.update();
+        assert!(
+            matches!(app.world().resource::<Game>().pending.last(),Some(Command::Water(v)) if (*v+0.002).abs()<1e-9)
+        );
     }
     fn clear_edges(app: &mut App) {
         app.world_mut()

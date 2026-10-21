@@ -2,6 +2,7 @@
 //! wgpu 23 compute device owns the FLIP/APIC and heightfield solvers; Bevy's wgpu 26
 //! device presents bounded snapshots. Original stages are retained, with momentum,
 //! sediment coupling and GPU scheduling corrections.
+pub mod calibration;
 pub mod geometry;
 mod terrain;
 pub mod worker;
@@ -58,6 +59,28 @@ struct LocalSluice {
 impl Hydraulics {
     pub fn new() -> Result<Self, String> {
         pollster::block_on(Self::create())
+    }
+    /// Diagnostics use the same cell-centred geometry as the fluid solver.
+    pub fn boundary_diagnostics(&self, s: &Session) -> serde_json::Value {
+        let Some(l) = &self.sluice else {
+            return serde_json::json!({});
+        };
+        let mut max_grain_penetration = 0.0_f32;
+        let mut grain_centres_inside = 0;
+        for g in &s.sluice.grains {
+            let distance = l.grid.sample_sdf(g.position);
+            max_grain_penetration = max_grain_penetration.max(g.collision_radius() - distance);
+            grain_centres_inside += usize::from(distance < -0.002);
+        }
+        let water_inside = s
+            .sluice
+            .water
+            .iter()
+            .filter(|p| l.grid.sample_sdf(p.position) < -0.002)
+            .count();
+        serde_json::json!({"max_grain_surface_penetration_m":max_grain_penetration,
+            "grain_centres_over_2mm_inside_solid":grain_centres_inside,
+            "water_centres_over_2mm_inside_solid":water_inside})
     }
     async fn create() -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
@@ -221,6 +244,9 @@ impl Hydraulics {
         let Some(l) = &mut self.sluice else {
             return Ok(());
         };
+        l.dem.coulomb_contacts =
+            s.sluice.contact_model == mining_sim::sluice::ContactModel::Coulomb;
+        l.flip.cpu_sediment_contacts = l.dem.coulomb_contacts;
         let profile = s.sluice.profile;
         let dx = profile.cell();
         let particle_m3 = profile.particle_m3();

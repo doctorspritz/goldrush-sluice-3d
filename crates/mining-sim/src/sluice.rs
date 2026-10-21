@@ -163,6 +163,12 @@ pub enum GrainKind {
     Gravel,
     Gold,
 }
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ContactModel {
+    #[default]
+    LegacyDamping,
+    Coulomb,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Grain {
     #[serde(default)]
@@ -187,6 +193,10 @@ impl Grain {
         if !self.volume_resolved {
             return physical;
         }
+        let one_grain = std::f64::consts::PI / 6.0 * (self.diameter_m as f64).powi(3);
+        if self.solid_volume() <= one_grain * (1.0 + 1e-5) {
+            return physical;
+        }
         // Coarse DEM parcel: packed volume controls excluded space; the
         // physical grain diameter separately controls settling and rendering.
         physical
@@ -205,6 +215,11 @@ pub struct Sluice {
     pub profile: HydraulicProfile,
     #[serde(default)]
     pub granular_packets: bool,
+    #[serde(default)]
+    pub contact_model: ContactModel,
+    /// Research resolution control. Physical diameters remain independent.
+    #[serde(default)]
+    pub parcel_volume_m3: Option<f64>,
     #[serde(default = "riffles_present")]
     pub riffles_enabled: bool,
     #[serde(default)]
@@ -240,6 +255,8 @@ impl Default for Sluice {
         Self {
             profile: HydraulicProfile::OriginalDemo,
             granular_packets: true,
+            contact_model: ContactModel::Coulomb,
+            parcel_volume_m3: None,
             riffles_enabled: true,
             fluid_clock: 0.0,
             placement: None,
@@ -270,7 +287,7 @@ impl Default for Sluice {
 impl Sluice {
     pub fn parcel_volume(&self) -> f64 {
         if self.granular_packets {
-            PARCEL_VOLUME
+            self.parcel_volume_m3.unwrap_or(PARCEL_VOLUME)
         } else {
             0.002
         }
@@ -465,21 +482,21 @@ impl Sluice {
         if self.grains.is_empty() {
             return Err("The mats are empty".into());
         }
-        if self.granular_packets && self.grains.iter().any(|g| !g.resting) {
-            return Err("Let the material settle before lifting the mats".into());
-        }
         let mut m = Material::default();
+        let before = self.grains.len();
         self.grains.retain(|g| {
             let over_mats = g.position.x >= 0.40 && g.position.x < self.profile.length() - 0.12;
-            if !self.granular_packets || over_mats {
+            // Collect the settled material supported by the mats. Moving
+            // upstream/suspended grains remain in the physical domain.
+            if !self.granular_packets || (over_mats && g.resting) {
                 m.add(g.material);
                 false
             } else {
                 true
             }
         });
-        if m.is_empty() {
-            return Err("No settled material on the mats".into());
+        if self.grains.len() == before {
+            return Err("Let material settle on the mats before collecting".into());
         }
         self.contacts = Default::default();
         self.concentrate.add(m);
@@ -565,6 +582,9 @@ impl Sluice {
                 .all(|v| v.is_finite() && *v >= 0.0)
             && (0.001..=0.120).contains(&self.flow_m3s)
             && (0.00001..=0.02).contains(&self.feed_m3s)
+            && self
+                .parcel_volume_m3
+                .is_none_or(|v| v.is_finite() && (1e-9..=PARCEL_VOLUME).contains(&v))
             && self.processed_m3.is_finite()
             && self.processed_m3 >= 0.0
             && self.water_used_m3.is_finite()

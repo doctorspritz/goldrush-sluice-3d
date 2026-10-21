@@ -12,7 +12,9 @@ The [shoreline report](docs/playtests/2026-10-21-shoreline.md) records full-reso
 
 ## First Bend controls and loop
 
-The demo app opens beside an installed sluice with real water and finite paydirt already flowing. Its bundled shift was warmed by the original solvers for 12 simulated seconds; it still has about 0.81 m³ in the hopper. Use **Demo** to restart that view, **New shift** to begin with an untouched claim, and the visible **Help / Pause** buttons.
+The demo app opens beside an installed sluice with real water and finite paydirt already flowing. Its bundled shift was warmed by the original solvers for 40 simulated seconds with corrected Coulomb grain contacts and APIC transfers; it still has about 0.81 m³ in the hopper. Use **Demo** to restart that view, **New shift** to begin with an untouched claim, and the visible **Help / Pause** buttons.
+
+The [sluice accuracy laboratory](docs/physics/accuracy.md) provides repeatable size-resolved water/feed experiments and actual cleanup assays. The [measured results](docs/playtests/2026-10-21-sluice-accuracy.md) distinguish outlet loss, residence and collected gold. Real-world recovery remains uncalibrated: the closed momentum budget and dense-bed contact convergence still need work. Water/feed arrows now have fine steps; hold Shift for coarse changes.
 
 For a fresh mining shift, walk to the excavator, cut finite paydirt, swing a loaded bucket over the hopper, place a sluice, wash and lift the mats. The first shift's goal is **5 grams of recovered gold**.
 

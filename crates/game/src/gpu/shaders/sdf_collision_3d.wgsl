@@ -15,7 +15,7 @@ struct Params {
     // Bit 2 (4): -Y open, Bit 3 (8): +Y open
     // Bit 4 (16): -Z open, Bit 5 (32): +Z open
     open_boundaries: u32,
-    _pad0: u32,
+    cpu_sediment_contacts: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -158,6 +158,12 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Euler advection
     pos += vel * params.dt;
+    if (is_sediment && params.cpu_sediment_contacts != 0u) {
+        // Do not cancel the normal impact before DEM can compute the normal
+        // reaction and its Coulomb friction budget. DEM runs every substep.
+        positions[pid] = vec4<f32>(pos, positions[pid].w);
+        return;
+    }
 
     // SDF collision for ALL particles (water and sediment)
     // Sediment also gets DEM collision for friction/inter-particle, but SDF ensures

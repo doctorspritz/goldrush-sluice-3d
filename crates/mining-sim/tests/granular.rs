@@ -105,3 +105,31 @@ fn old_saves_keep_their_original_parcel_interpretation() {
     assert_eq!(s.parcel_volume(), 0.002);
     assert!(s.valid());
 }
+
+#[test]
+fn cleanup_collects_only_the_settled_mat_fraction_and_preserves_moving_material() {
+    let mut s = Sluice::default();
+    s.grains = vec![grain(0.2, false), grain(0.5, true), grain(0.8, false)];
+    let before = s.active_material();
+    let collected = s.cleanup().unwrap();
+    assert_eq!(collected.sand_m3, 0.000002);
+    assert_eq!(s.grains.len(), 2);
+    assert!(s.grains.iter().all(|g| !g.resting));
+    assert!((s.active_material().volume() + collected.volume() - before.volume()).abs() < 1e-12);
+    assert!((s.active_material().gold_g + collected.gold_g - before.gold_g).abs() < 1e-12);
+}
+
+#[test]
+fn cleanup_preserves_a_single_fine_quartz_grain_below_bulk_empty_threshold() {
+    let mut s = Sluice::default();
+    let mut fine = grain(0.5, true);
+    fine.diameter_m = 0.00008;
+    fine.material.sand_m3 = std::f64::consts::PI / 6. * (fine.diameter_m as f64).powi(3);
+    let volume = fine.material.sand_m3;
+    assert!(fine.material.is_empty(), "bulk tolerance exceeds a real fine grain");
+    s.grains.push(fine);
+    let collected = s.cleanup().unwrap();
+    assert_eq!(collected.sand_m3, volume);
+    assert_eq!(s.concentrate.sand_m3, volume);
+    assert!(s.grains.is_empty());
+}

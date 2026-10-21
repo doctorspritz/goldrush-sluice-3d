@@ -134,7 +134,9 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // ========== U component (staggered on left YZ faces) ==========
     let u_pos = pos / cell_size - vec3<f32>(0.0, 0.5, 0.5);
-    let base_u = vec3<i32>(floor(u_pos));
+    // The three-node quadratic support is centred on the NEAREST node.
+    // Flooring alone drops a positive-weight node and invents affine motion.
+    let base_u = vec3<i32>(floor(u_pos + vec3<f32>(0.5)));
     let frac_u = u_pos - vec3<f32>(base_u);
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
@@ -180,7 +182,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // ========== V component (staggered on bottom XZ faces) ==========
     let v_pos = pos / cell_size - vec3<f32>(0.5, 0.0, 0.5);
-    let base_v = vec3<i32>(floor(v_pos));
+    let base_v = vec3<i32>(floor(v_pos + vec3<f32>(0.5)));
     let frac_v = v_pos - vec3<f32>(base_v);
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
@@ -227,7 +229,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // ========== W component (staggered on back XY faces) ==========
     let w_pos = pos / cell_size - vec3<f32>(0.5, 0.5, 0.0);
-    let base_w = vec3<i32>(floor(w_pos));
+    let base_w = vec3<i32>(floor(w_pos + vec3<f32>(0.5)));
     let frac_w = w_pos - vec3<f32>(base_w);
 
     for (var dk: i32 = -1; dk <= 1; dk++) {

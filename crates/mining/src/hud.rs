@@ -376,7 +376,7 @@ pub fn update(
                 else if s.sluice.processed_m3<0.01{"04   START WASHING\n\nWalk to the sluice. P starts water,\nO opens the feed gate.".into()}
                 else{format!("05   LIFT THE MATS\n\nStop feed with O, let it clear,\nstop water with P, then C to collect.\nTarget: {GOLD_TARGET_G:.0} g")}
             },
-            HudText::Clock=>format!("Hopper  {:.3} / 0.850 m³\nWater  {}  ·  {:.0} L/s\nFeed  {}  ·  {:.1} L/s\nShift  {:02}:{:02}",s.sluice.hopper.volume(),if s.sluice.pump_on{"ON"}else{"OFF"},s.sluice.flow_m3s*1000.0,
+            HudText::Clock=>format!("Hopper  {:.3} / 0.850 m³\nWater  {}  ·  {:.2} L/s\nFeed  {}  ·  {:.3} L/s\nShift  {:02}:{:02}",s.sluice.hopper.volume(),if s.sluice.pump_on{"ON"}else{"OFF"},s.sluice.flow_m3s*1000.0,
                 if s.sluice.feed_on{"ON"}else{"OFF"},s.sluice.feed_m3s*1000.0,s.sim_time as u64/60,s.sim_time as u64%60),
             HudText::Context=>{
                 if let Some(p)=game.placement {
@@ -392,7 +392,7 @@ pub fn update(
             HudText::Message=>s.message.clone(),
             HudText::Help=>"OPERATING THE CLAIM\n\nON FOOT\nWASD walk · Shift run · Click captures mouse
 Move mouse to look · Esc releases it
-Right-drag also looks while the cursor is free\nE / Tab enter cab · Left-click shovel · J pour\nB sluice preview · R / Q rotate · [ / ] slope\n\nIN THE EXCAVATOR\nWASD tracks · Q / E swing the upper body\nR / F raise / lower boom · T / G extend / tuck stick\nY / H curl / open bucket · Space / left-click cut · J dump\nTab leave cab · I engine · V first / third person\n\nAT THE PLANT\nP pump · O feed · C lift mats when stopped\nUp / Down water flow · Left / Right feed rate\n\nF5 save · F9 restore · Esc mouse / pause · F1 help".into(),
+Right-drag also looks while the cursor is free\nE / Tab enter cab · Left-click shovel · J pour\nB sluice preview · R / Q rotate · [ / ] slope\n\nIN THE EXCAVATOR\nWASD tracks · Q / E swing the upper body\nR / F raise / lower boom · T / G extend / tuck stick\nY / H curl / open bucket · Space / left-click cut · J dump\nTab leave cab · I engine · V first / third person\n\nAT THE PLANT\nP pump · O feed · C lift mats when stopped\nUp / Down water · Left / Right feed\nShift + arrows: larger rate changes\n\nF5 save · F9 restore · Esc mouse / pause · F1 help".into(),
         };
     }
     for mut node in &mut panels.p0() {

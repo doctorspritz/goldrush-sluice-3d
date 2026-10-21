@@ -246,6 +246,10 @@ pub struct FluidVelocityField<'a> {
 }
 
 pub struct ClusterSimulation3D {
+    /// Coulomb impulses for the externally integrated fluid/contact path.
+    /// False preserves the older damping-based collision behaviour.
+    pub coulomb_contacts: bool,
+    contact_wet: Vec<bool>,
     /// Diagnostic fallback compares the same ordered contacts using a hash map.
     pub accelerated_contacts: bool,
     pub contact_stage_ms: [f64; 2],
@@ -283,6 +287,8 @@ pub struct ClusterSimulation3D {
 impl ClusterSimulation3D {
     pub fn new(bounds_min: Vec3, bounds_max: Vec3) -> Self {
         Self {
+            coulomb_contacts: false,
+            contact_wet: Vec::new(),
             accelerated_contacts: true,
             contact_stage_ms: [0.; 2],
             contact_cells: Vec::new(),
@@ -345,16 +351,50 @@ impl ClusterSimulation3D {
 
     pub fn contact_history(&self) -> ContactHistory3D {
         ContactHistory3D {
-            spheres: self.sphere_contacts.iter().map(|(k,v)|(k.a,k.b,k.ia,k.ib,*v)).collect(),
-            planes: self.plane_contacts.iter().map(|(k,v)|(k.clump,k.particle,k.axis,k.side,*v)).collect(),
-            sdf: self.sdf_contacts.iter().map(|(k,v)|(k.clump,k.particle,*v)).collect(),
+            spheres: self
+                .sphere_contacts
+                .iter()
+                .map(|(k, v)| (k.a, k.b, k.ia, k.ib, *v))
+                .collect(),
+            planes: self
+                .plane_contacts
+                .iter()
+                .map(|(k, v)| (k.clump, k.particle, k.axis, k.side, *v))
+                .collect(),
+            sdf: self
+                .sdf_contacts
+                .iter()
+                .map(|(k, v)| (k.clump, k.particle, *v))
+                .collect(),
         }
     }
 
     pub fn restore_contact_history(&mut self, state: &ContactHistory3D) {
-        self.sphere_contacts = state.spheres.iter().map(|&(a,b,ia,ib,v)|(SphereContactKey{a,b,ia,ib},v)).collect();
-        self.plane_contacts = state.planes.iter().map(|&(clump,particle,axis,side,v)|(PlaneContactKey{clump,particle,axis,side},v)).collect();
-        self.sdf_contacts = state.sdf.iter().map(|&(clump,particle,v)|(SdfContactKey{clump,particle},v)).collect();
+        self.sphere_contacts = state
+            .spheres
+            .iter()
+            .map(|&(a, b, ia, ib, v)| (SphereContactKey { a, b, ia, ib }, v))
+            .collect();
+        self.plane_contacts = state
+            .planes
+            .iter()
+            .map(|&(clump, particle, axis, side, v)| {
+                (
+                    PlaneContactKey {
+                        clump,
+                        particle,
+                        axis,
+                        side,
+                    },
+                    v,
+                )
+            })
+            .collect();
+        self.sdf_contacts = state
+            .sdf
+            .iter()
+            .map(|&(clump, particle, v)| (SdfContactKey { clump, particle }, v))
+            .collect();
     }
 
     /// Remove an exited grain without assigning its contact springs to the
@@ -363,18 +403,40 @@ impl ClusterSimulation3D {
         let last = self.clumps.len() - 1;
         self.clumps.swap_remove(index);
         let remap = |i: usize| if i == last { index } else { i };
-        self.sphere_contacts = self.sphere_contacts.drain().filter_map(|(mut k,v)| {
-            if k.a == index || k.b == index { return None; }
-            k.a = remap(k.a); k.b = remap(k.b); Some((k,v))
-        }).collect();
-        self.plane_contacts = self.plane_contacts.drain().filter_map(|(mut k,v)| {
-            if k.clump == index { return None; }
-            k.clump = remap(k.clump); Some((k,v))
-        }).collect();
-        self.sdf_contacts = self.sdf_contacts.drain().filter_map(|(mut k,v)| {
-            if k.clump == index { return None; }
-            k.clump = remap(k.clump); Some((k,v))
-        }).collect();
+        self.sphere_contacts = self
+            .sphere_contacts
+            .drain()
+            .filter_map(|(mut k, v)| {
+                if k.a == index || k.b == index {
+                    return None;
+                }
+                k.a = remap(k.a);
+                k.b = remap(k.b);
+                Some((k, v))
+            })
+            .collect();
+        self.plane_contacts = self
+            .plane_contacts
+            .drain()
+            .filter_map(|(mut k, v)| {
+                if k.clump == index {
+                    return None;
+                }
+                k.clump = remap(k.clump);
+                Some((k, v))
+            })
+            .collect();
+        self.sdf_contacts = self
+            .sdf_contacts
+            .drain()
+            .filter_map(|(mut k, v)| {
+                if k.clump == index {
+                    return None;
+                }
+                k.clump = remap(k.clump);
+                Some((k, v))
+            })
+            .collect();
     }
 
     pub fn step(&mut self, dt: f32) {
@@ -464,6 +526,10 @@ impl ClusterSimulation3D {
         if self.clumps.is_empty() {
             return;
         }
+        if self.coulomb_contacts {
+            self.contact_wet.clear();
+            self.contact_wet.extend((0..self.clumps.len()).map(&wet));
+        }
 
         let mut new_sdf_contacts: HashMap<SdfContactKey, Vec3> = HashMap::new();
 
@@ -499,6 +565,27 @@ impl ClusterSimulation3D {
 
                     // Push particle out of solid (position correction)
                     clump.position += normal * penetration * 1.01; // 1% extra to avoid re-penetration
+                    if self.coulomb_contacts {
+                        crate::contact::resolve_static(
+                            clump,
+                            template,
+                            normal,
+                            r - normal * radius,
+                            crate::contact::ContactMaterial {
+                                friction,
+                                restitution: self.restitution,
+                                rolling: rolling_friction,
+                            },
+                        );
+                        new_sdf_contacts.insert(
+                            SdfContactKey {
+                                clump: idx,
+                                particle: p_idx,
+                            },
+                            Vec3::ZERO,
+                        );
+                        continue;
+                    }
 
                     // Velocity correction - remove velocity into solid + apply friction
                     let v_n = vel.dot(normal);
@@ -653,9 +740,8 @@ impl ClusterSimulation3D {
 
         let contact_dist = template_a.particle_radius + template_b.particle_radius;
         let contact_dist_sq = contact_dist * contact_dist;
-        let m_eff =
-            (template_a.particle_mass * template_b.particle_mass)
-                / (template_a.particle_mass + template_b.particle_mass);
+        let m_eff = (template_a.particle_mass * template_b.particle_mass)
+            / (template_a.particle_mass + template_b.particle_mass);
 
         let c_n = dem_damping(self.restitution, self.normal_stiffness, m_eff);
         let c_t = dem_damping(self.restitution, self.tangential_stiffness, m_eff);
@@ -707,7 +793,11 @@ impl ClusterSimulation3D {
 
                 let vt = rel_vel - normal * v_n;
                 let key = SphereContactKey { a: i, b: j, ia, ib };
-                let prev = self.sphere_contacts.get(&key).copied().unwrap_or(Vec3::ZERO);
+                let prev = self
+                    .sphere_contacts
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(Vec3::ZERO);
                 let mut delta_t = prev + vt * dt;
 
                 let mut ft = -self.tangential_stiffness * delta_t - c_t * vt;
@@ -767,16 +857,40 @@ impl ClusterSimulation3D {
                 if pos.x - radius < self.bounds_min.x {
                     let penetration = self.bounds_min.x - (pos.x - radius);
                     self.apply_plane_contact(
-                        idx, p_idx, 0, -1, Vec3::X, penetration, r, vel,
-                        template.particle_mass, radius, clump.angular_velocity, dt,
-                        forces, torques, &mut new_plane_contacts,
+                        idx,
+                        p_idx,
+                        0,
+                        -1,
+                        Vec3::X,
+                        penetration,
+                        r,
+                        vel,
+                        template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
+                        dt,
+                        forces,
+                        torques,
+                        &mut new_plane_contacts,
                     );
                 } else if pos.x + radius > self.bounds_max.x {
                     let penetration = pos.x + radius - self.bounds_max.x;
                     self.apply_plane_contact(
-                        idx, p_idx, 0, 1, -Vec3::X, penetration, r, vel,
-                        template.particle_mass, radius, clump.angular_velocity, dt,
-                        forces, torques, &mut new_plane_contacts,
+                        idx,
+                        p_idx,
+                        0,
+                        1,
+                        -Vec3::X,
+                        penetration,
+                        r,
+                        vel,
+                        template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
+                        dt,
+                        forces,
+                        torques,
+                        &mut new_plane_contacts,
                     );
                 }
 
@@ -784,16 +898,40 @@ impl ClusterSimulation3D {
                 if pos.y - radius < self.bounds_min.y {
                     let penetration = self.bounds_min.y - (pos.y - radius);
                     self.apply_plane_contact(
-                        idx, p_idx, 1, -1, Vec3::Y, penetration, r, vel,
-                        template.particle_mass, radius, clump.angular_velocity, dt,
-                        forces, torques, &mut new_plane_contacts,
+                        idx,
+                        p_idx,
+                        1,
+                        -1,
+                        Vec3::Y,
+                        penetration,
+                        r,
+                        vel,
+                        template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
+                        dt,
+                        forces,
+                        torques,
+                        &mut new_plane_contacts,
                     );
                 } else if pos.y + radius > self.bounds_max.y {
                     let penetration = pos.y + radius - self.bounds_max.y;
                     self.apply_plane_contact(
-                        idx, p_idx, 1, 1, -Vec3::Y, penetration, r, vel,
-                        template.particle_mass, radius, clump.angular_velocity, dt,
-                        forces, torques, &mut new_plane_contacts,
+                        idx,
+                        p_idx,
+                        1,
+                        1,
+                        -Vec3::Y,
+                        penetration,
+                        r,
+                        vel,
+                        template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
+                        dt,
+                        forces,
+                        torques,
+                        &mut new_plane_contacts,
                     );
                 }
 
@@ -801,16 +939,40 @@ impl ClusterSimulation3D {
                 if pos.z - radius < self.bounds_min.z {
                     let penetration = self.bounds_min.z - (pos.z - radius);
                     self.apply_plane_contact(
-                        idx, p_idx, 2, -1, Vec3::Z, penetration, r, vel,
-                        template.particle_mass, radius, clump.angular_velocity, dt,
-                        forces, torques, &mut new_plane_contacts,
+                        idx,
+                        p_idx,
+                        2,
+                        -1,
+                        Vec3::Z,
+                        penetration,
+                        r,
+                        vel,
+                        template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
+                        dt,
+                        forces,
+                        torques,
+                        &mut new_plane_contacts,
                     );
                 } else if pos.z + radius > self.bounds_max.z {
                     let penetration = pos.z + radius - self.bounds_max.z;
                     self.apply_plane_contact(
-                        idx, p_idx, 2, 1, -Vec3::Z, penetration, r, vel,
-                        template.particle_mass, radius, clump.angular_velocity, dt,
-                        forces, torques, &mut new_plane_contacts,
+                        idx,
+                        p_idx,
+                        2,
+                        1,
+                        -Vec3::Z,
+                        penetration,
+                        r,
+                        vel,
+                        template.particle_mass,
+                        radius,
+                        clump.angular_velocity,
+                        dt,
+                        forces,
+                        torques,
+                        &mut new_plane_contacts,
                     );
                 }
             }
@@ -1044,11 +1206,9 @@ impl ClusterSimulation3D {
             forces[idx] += self.gravity * template.mass;
         }
 
-        let new_sphere_contacts =
-            self.compute_sphere_sphere_forces(dt, &mut forces, &mut torques);
+        let new_sphere_contacts = self.compute_sphere_sphere_forces(dt, &mut forces, &mut torques);
 
-        let new_plane_contacts =
-            self.compute_boundary_forces(dt, &mut forces, &mut torques);
+        let new_plane_contacts = self.compute_boundary_forces(dt, &mut forces, &mut torques);
 
         let new_sdf_contacts = if let Some(sdf) = sdf_params {
             self.compute_sdf_forces(sdf, dt, &mut forces, &mut torques)
@@ -1386,7 +1546,35 @@ impl ClusterSimulation3D {
                 return;
             }
             let closing = (clump_b.velocity - clump_a.velocity).dot(normal);
-            if closing < 0.0 {
+            if self.coulomb_contacts {
+                let contact =
+                    (clump_a.position + normal * template_a.particle_radius + clump_b.position
+                        - normal * template_b.particle_radius)
+                        * 0.5;
+                let point = crate::contact::ContactPoint {
+                    normal,
+                    arm_a: contact - clump_a.position,
+                    arm_b: contact - clump_b.position,
+                };
+                let wet = self.contact_wet.get(i).copied().unwrap_or(false)
+                    && self.contact_wet.get(j).copied().unwrap_or(false);
+                crate::contact::resolve_pair(
+                    clump_a,
+                    template_a,
+                    clump_b,
+                    template_b,
+                    point,
+                    crate::contact::ContactMaterial {
+                        friction: if wet {
+                            self.wet_friction
+                        } else {
+                            self.friction
+                        },
+                        restitution: self.restitution,
+                        rolling: 0.,
+                    },
+                );
+            } else if closing < 0.0 {
                 let impulse = normal * (-closing / inv_mass_sum);
                 clump_a.velocity -= impulse * inv_mass_a;
                 clump_b.velocity += impulse * inv_mass_b;
@@ -1429,7 +1617,34 @@ impl ClusterSimulation3D {
                     continue;
                 }
                 let closing = (clump_b.velocity - clump_a.velocity).dot(normal);
-                if closing < 0.0 {
+                if self.coulomb_contacts {
+                    let contact = (pa + normal * template_a.particle_radius + pb
+                        - normal * template_b.particle_radius)
+                        * 0.5;
+                    let point = crate::contact::ContactPoint {
+                        normal,
+                        arm_a: contact - clump_a.position,
+                        arm_b: contact - clump_b.position,
+                    };
+                    let wet = self.contact_wet.get(i).copied().unwrap_or(false)
+                        && self.contact_wet.get(j).copied().unwrap_or(false);
+                    crate::contact::resolve_pair(
+                        clump_a,
+                        template_a,
+                        clump_b,
+                        template_b,
+                        point,
+                        crate::contact::ContactMaterial {
+                            friction: if wet {
+                                self.wet_friction
+                            } else {
+                                self.friction
+                            },
+                            restitution: self.restitution,
+                            rolling: 0.,
+                        },
+                    );
+                } else if closing < 0.0 {
                     let impulse = normal * (-closing / inv_mass_sum);
                     clump_a.velocity -= impulse * inv_mass_a;
                     clump_b.velocity += impulse * inv_mass_b;
@@ -1769,45 +1984,21 @@ fn sample_fluid_velocity(field: &FluidVelocityField, pos: Vec3) -> Vec3 {
 
     // U component (staggered on X faces)
     let u_pos = local_pos / cell_size - Vec3::new(0.0, 0.5, 0.5);
-    let u = trilinear_sample(
-        field.grid_u,
-        u_pos,
-        width + 1,
-        height,
-        depth,
-    );
+    let u = trilinear_sample(field.grid_u, u_pos, width + 1, height, depth);
 
     // V component (staggered on Y faces)
     let v_pos = local_pos / cell_size - Vec3::new(0.5, 0.0, 0.5);
-    let v = trilinear_sample(
-        field.grid_v,
-        v_pos,
-        width,
-        height + 1,
-        depth,
-    );
+    let v = trilinear_sample(field.grid_v, v_pos, width, height + 1, depth);
 
     // W component (staggered on Z faces)
     let w_pos = local_pos / cell_size - Vec3::new(0.5, 0.5, 0.0);
-    let w = trilinear_sample(
-        field.grid_w,
-        w_pos,
-        width,
-        height,
-        depth + 1,
-    );
+    let w = trilinear_sample(field.grid_w, w_pos, width, height, depth + 1);
 
     Vec3::new(u, v, w)
 }
 
 /// Trilinear interpolation for a scalar field.
-fn trilinear_sample(
-    field: &[f32],
-    pos: Vec3,
-    width: usize,
-    height: usize,
-    depth: usize,
-) -> f32 {
+fn trilinear_sample(field: &[f32], pos: Vec3, width: usize, height: usize, depth: usize) -> f32 {
     let x = pos.x.max(0.0);
     let y = pos.y.max(0.0);
     let z = pos.z.max(0.0);
@@ -1824,9 +2015,7 @@ fn trilinear_sample(
     let fy = (y - j0 as f32).clamp(0.0, 1.0);
     let fz = (z - k0 as f32).clamp(0.0, 1.0);
 
-    let idx = |i: usize, j: usize, k: usize| -> usize {
-        k * width * height + j * width + i
-    };
+    let idx = |i: usize, j: usize, k: usize| -> usize { k * width * height + j * width + i };
 
     // Bounds check
     if idx(i1, j1, k1) >= field.len() {
@@ -2013,14 +2202,15 @@ fn sample_sdf_contact(params: &SdfParams, world_pos: Vec3, radius: f32) -> (f32,
     let local_pos = world_pos - grid_offset;
 
     // Convert grid-local position to grid coordinates (cell indices)
-    let fx = local_pos.x / cell_size;
-    let fy = local_pos.y / cell_size;
-    let fz = local_pos.z / cell_size;
+    // SDF samples are at CELL CENTRES, exactly as Grid3D and the GPU sampler.
+    let fx = local_pos.x / cell_size - 0.5;
+    let fy = local_pos.y / cell_size - 0.5;
+    let fz = local_pos.z / cell_size - 0.5;
 
     // Clamp to valid range
-    let fx = fx.clamp(0.5, width as f32 - 1.5);
-    let fy = fy.clamp(0.5, height as f32 - 1.5);
-    let fz = fz.clamp(0.5, depth as f32 - 1.5);
+    let fx = fx.clamp(0.0, width as f32 - 1.0);
+    let fy = fy.clamp(0.0, height as f32 - 1.0);
+    let fz = fz.clamp(0.0, depth as f32 - 1.0);
 
     let i = fx as usize;
     let j = fy as usize;
@@ -2068,23 +2258,15 @@ fn sample_sdf_contact(params: &SdfParams, world_pos: Vec3, radius: f32) -> (f32,
         return (sdf_value, Vec3::ZERO);
     }
 
-    // Compute gradient via finite differences
-    // Gradient points away from solid (towards increasing SDF)
-    let h = 0.5; // Half cell for central differences
-
-    let sample_at = |dx: f32, dy: f32, dz: f32| -> f32 {
-        let px = (fx + dx).clamp(0.0, width as f32 - 1.0);
-        let py = (fy + dy).clamp(0.0, height as f32 - 1.0);
-        let pz = (fz + dz).clamp(0.0, depth as f32 - 1.0);
-        let ii = px as usize;
-        let jj = py as usize;
-        let kk = pz as usize;
-        idx(ii, jj, kk)
-    };
-
-    let grad_x = (sample_at(h, 0.0, 0.0) - sample_at(-h, 0.0, 0.0)) / (2.0 * h * cell_size);
-    let grad_y = (sample_at(0.0, h, 0.0) - sample_at(0.0, -h, 0.0)) / (2.0 * h * cell_size);
-    let grad_z = (sample_at(0.0, 0.0, h) - sample_at(0.0, 0.0, -h)) / (2.0 * h * cell_size);
+    // Differentiate the SAME trilinear scalar field. Nearest-node finite
+    // differences produced discontinuous normals unrelated to the contact SDF.
+    let grad_x = ((c100 - c000) * (1.0 - ty) * (1.0 - tz)
+        + (c110 - c010) * ty * (1.0 - tz)
+        + (c101 - c001) * (1.0 - ty) * tz
+        + (c111 - c011) * ty * tz)
+        / cell_size;
+    let grad_y = ((c10 - c00) * (1.0 - tz) + (c11 - c01) * tz) / cell_size;
+    let grad_z = (c1 - c0) / cell_size;
 
     (sdf_value, Vec3::new(grad_x, grad_y, grad_z))
 }
@@ -2092,6 +2274,64 @@ fn sample_sdf_contact(params: &SdfParams, world_pos: Vec3, radius: f32) -> (f32,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contact_sdf_and_normal_use_cell_centres_and_the_same_trilinear_field() {
+        let n = 5;
+        let dx = 0.1;
+        // An oblique plane detects both half-cell shifts and normal errors.
+        let normal = Vec3::new(1., 2., 3.).normalize();
+        let mut sdf = vec![0.; n * n * n];
+        for z in 0..n {
+            for y in 0..n {
+                for x in 0..n {
+                    let p = (Vec3::new(x as f32, y as f32, z as f32) + Vec3::splat(0.5)) * dx;
+                    sdf[z * n * n + y * n + x] = normal.dot(p) - 0.6;
+                }
+            }
+        }
+        let params = SdfParams {
+            sdf: &sdf,
+            grid_width: n,
+            grid_height: n,
+            grid_depth: n,
+            cell_size: dx,
+            grid_offset: Vec3::ZERO,
+        };
+        let p = Vec3::new(0.184, 0.233, 0.279);
+        let (distance, gradient) = sample_sdf_contact(&params, p, 1.);
+        assert!((distance - (normal.dot(p) - 0.6)).abs() < 1e-7);
+        assert!((gradient - normal).length() < 2e-6);
+    }
+
+    #[test]
+    fn contact_normal_is_the_derivative_of_the_interpolated_distance() {
+        let n = 5;
+        let dx = 0.1;
+        let f = |p: Vec3| p.x * p.y + 2. * p.y * p.z + 3. * p.z * p.x - 1.;
+        let mut sdf = vec![0.; n * n * n];
+        for z in 0..n {
+            for y in 0..n {
+                for x in 0..n {
+                    sdf[z * n * n + y * n + x] =
+                        f((Vec3::new(x as f32, y as f32, z as f32) + Vec3::splat(0.5)) * dx);
+                }
+            }
+        }
+        let params = SdfParams {
+            sdf: &sdf,
+            grid_width: n,
+            grid_height: n,
+            grid_depth: n,
+            cell_size: dx,
+            grid_offset: Vec3::ZERO,
+        };
+        let p = Vec3::new(0.184, 0.233, 0.279);
+        let (distance, gradient) = sample_sdf_contact(&params, p, 1.);
+        let expected = Vec3::new(p.y + 3. * p.z, p.x + 2. * p.z, 2. * p.y + 3. * p.x);
+        assert!((distance - f(p)).abs() < 1e-7);
+        assert!((gradient - expected).length() < 3e-6);
+    }
 
     // ========== ClumpTemplate3D Tests ==========
 
@@ -2119,8 +2359,14 @@ mod tests {
         assert_eq!(template.local_offsets.len(), 4);
         // Flat4 should have all particles at same Y level
         let y_values: Vec<f32> = template.local_offsets.iter().map(|o| o.y).collect();
-        let y_spread = y_values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap()
-            - y_values.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let y_spread = y_values
+            .iter()
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap()
+            - y_values
+                .iter()
+                .min_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap();
         assert!(y_spread.abs() < 1e-5, "Flat4 should be planar in XZ");
     }
 
@@ -2194,7 +2440,10 @@ mod tests {
     #[test]
     fn test_template_centered_on_com() {
         let template = ClumpTemplate3D::generate(ClumpShape3D::Cube2, 0.05, 1.0);
-        let com: Vec3 = template.local_offsets.iter().fold(Vec3::ZERO, |acc, v| acc + *v)
+        let com: Vec3 = template
+            .local_offsets
+            .iter()
+            .fold(Vec3::ZERO, |acc, v| acc + *v)
             / template.local_offsets.len() as f32;
         assert!(com.length() < 1e-5, "Template should be centered on COM");
     }
@@ -2466,15 +2715,8 @@ mod tests {
     fn test_sample_sdf_uniform_positive() {
         // SDF with uniform positive value (empty space)
         let sdf: Vec<f32> = vec![1.0; 8]; // 2x2x2 grid
-        let (value, _gradient) = sample_sdf_with_gradient(
-            &sdf,
-            Vec3::new(0.5, 0.5, 0.5),
-            Vec3::ZERO,
-            2,
-            2,
-            2,
-            1.0,
-        );
+        let (value, _gradient) =
+            sample_sdf_with_gradient(&sdf, Vec3::new(0.5, 0.5, 0.5), Vec3::ZERO, 2, 2, 2, 1.0);
         assert!((value - 1.0).abs() < 0.1, "Uniform SDF should return ~1.0");
     }
 
@@ -2506,7 +2748,10 @@ mod tests {
             1.0,
         );
         assert!(value_above > 0.0, "Above floor should be positive");
-        assert!(grad_above.y > 0.0, "Gradient should point up (away from solid)");
+        assert!(
+            grad_above.y > 0.0,
+            "Gradient should point up (away from solid)"
+        );
 
         // Sample below floor
         let (value_below, _) = sample_sdf_with_gradient(
@@ -2618,7 +2863,10 @@ mod tests {
     fn test_center_on_com_single() {
         let mut offsets = vec![Vec3::new(1.0, 2.0, 3.0)];
         center_on_com(&mut offsets);
-        assert!(offsets[0].length() < 1e-6, "Single point should be at origin");
+        assert!(
+            offsets[0].length() < 1e-6,
+            "Single point should be at origin"
+        );
     }
 
     #[test]
@@ -2631,7 +2879,10 @@ mod tests {
         ];
         center_on_com(&mut offsets);
         let com: Vec3 = offsets.iter().fold(Vec3::ZERO, |acc, v| acc + *v) / 4.0;
-        assert!(com.length() < 1e-6, "COM should be at origin after centering");
+        assert!(
+            com.length() < 1e-6,
+            "COM should be at origin after centering"
+        );
     }
 
     #[test]

@@ -106,14 +106,13 @@ fn scatter_u(@builtin(global_invocation_id) id: vec3<u32>) {
     var momentum_sum: f32 = 0.0;
     var weight_sum: f32 = 0.0;
 
-    // Search 3x3x3 neighborhood of cells that might contain contributing particles
-    // A particle at position p contributes to U nodes around base_u = floor(p/cell_size - (0, 0.5, 0.5))
-    // So we need cells where particles could have base_u.x in {i-1, i, i+1}
+    // A face-centred quadratic kernel spans FOUR particle cells along its
+    // integer coordinate and three along each half-integer coordinate.
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let ck = i32(k) + dk;
         for (var dj: i32 = -1; dj <= 1; dj++) {
             let cj = i32(j) + dj;
-            for (var di: i32 = -1; di <= 1; di++) {
+            for (var di: i32 = -1; di <= 2; di++) {
                 // Cells that could have particles contributing to this U node
                 let ci = i32(i) + di - 1;  // offset by -1 due to staggering
 
@@ -196,8 +195,8 @@ fn scatter_v(@builtin(global_invocation_id) id: vec3<u32>) {
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let ck = i32(k) + dk;
-        for (var dj: i32 = -1; dj <= 1; dj++) {
-            let cj = i32(j) + dj - 1;  // offset due to staggering
+        for (var dj: i32 = -1; dj <= 2; dj++) {
+            let cj = i32(j) + dj - 1;  // four cells along the V face coordinate
             for (var di: i32 = -1; di <= 1; di++) {
                 let ci = i32(i) + di;
 
@@ -273,8 +272,8 @@ fn scatter_w(@builtin(global_invocation_id) id: vec3<u32>) {
     var momentum_sum: f32 = 0.0;
     var weight_sum: f32 = 0.0;
 
-    for (var dk: i32 = -1; dk <= 1; dk++) {
-        let ck = i32(k) + dk - 1;  // offset due to staggering
+    for (var dk: i32 = -1; dk <= 2; dk++) {
+        let ck = i32(k) + dk - 1;  // four cells along the W face coordinate
         for (var dj: i32 = -1; dj <= 1; dj++) {
             let cj = i32(j) + dj;
             for (var di: i32 = -1; di <= 1; di++) {

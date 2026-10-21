@@ -49,6 +49,8 @@ pub struct GpuFlip3D {
     /// Bit 2 (4): -Y open, Bit 3 (8): +Y open
     /// Bit 4 (16): -Z open, Bit 5 (32): +Z open
     pub open_boundaries: u32,
+    /// External DEM owns finite-radius grain collisions after each substep.
+    pub cpu_sediment_contacts: bool,
     /// FLIP blend ratio (1.0 = FLIP, 0.0 = PIC).
     pub flip_ratio: f32,
     /// Submit ordered compute command buffers together; false is a diagnostic reference.
@@ -2214,6 +2216,7 @@ impl GpuFlip3D {
             depth,
             cell_size,
             open_boundaries: 0, // All boundaries closed by default
+            cpu_sediment_contacts: false,
             flip_ratio: 0.95,
             profile_stages:Vec::new(),
             batch_submissions: true,
@@ -3782,7 +3785,7 @@ impl GpuFlip3D {
             cell_size: self.cell_size,
             dt,
             open_boundaries: self.open_boundaries,
-            _pad0: 0,
+            _pad0: u32::from(self.cpu_sediment_contacts),
         };
         queue.write_buffer(
             &self.sdf_collision_params_buffer,

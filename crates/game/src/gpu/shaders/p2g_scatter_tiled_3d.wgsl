@@ -228,7 +228,7 @@ fn scatter(
 
             // ========== U component ==========
             let u_pos = pos / cell_size - vec3<f32>(0.0, 0.5, 0.5);
-            let base_u = vec3<i32>(floor(u_pos));
+            let base_u = vec3<i32>(floor(u_pos + vec3<f32>(0.5)));
             let frac_u = u_pos - vec3<f32>(base_u);
 
             let u_wx = array<f32, 3>(
@@ -297,7 +297,7 @@ fn scatter(
 
             // ========== V component ==========
             let v_pos = pos / cell_size - vec3<f32>(0.5, 0.0, 0.5);
-            let base_v = vec3<i32>(floor(v_pos));
+            let base_v = vec3<i32>(floor(v_pos + vec3<f32>(0.5)));
             let frac_v = v_pos - vec3<f32>(base_v);
 
             let v_wx = array<f32, 3>(
@@ -363,7 +363,7 @@ fn scatter(
 
             // ========== W component ==========
             let w_pos = pos / cell_size - vec3<f32>(0.5, 0.5, 0.0);
-            let base_w = vec3<i32>(floor(w_pos));
+            let base_w = vec3<i32>(floor(w_pos + vec3<f32>(0.5)));
             let frac_w = w_pos - vec3<f32>(base_w);
 
             let w_wx = array<f32, 3>(
