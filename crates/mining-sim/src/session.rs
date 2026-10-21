@@ -7,7 +7,6 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 pub const FIXED_DT: f32 = 1.0 / 60.0;
-pub const HAND_CAPACITY: f64 = 0.025;
 pub const GOLD_TARGET_G: f64 = 5.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,11 +229,11 @@ impl Session {
                 } else if !p.is_finite() || self.player.position.distance(p) > 2.8 {
                     Err("Move closer to the ground you want to dig".into())
                 } else {
-                    let m = self
-                        .site
-                        .dig(p, 0.22, 0.12, HAND_CAPACITY - self.player.hand.volume());
+                    // Carrying is unbounded for now; the shovel footprint,
+                    // cut depth and finite terrain still bound each stroke.
+                    let m = self.site.dig(p, 0.22, 0.12, f64::MAX);
                     if m.is_empty() {
-                        Err("Bucket full or bedrock reached. J pours your load.".into())
+                        Err("Nothing left to dig here.".into())
                     } else {
                         self.player.hand.add(m);
                         self.player.tool_swing = 1.0;
@@ -475,7 +474,7 @@ impl Session {
             || !s.player.pitch.is_finite()
             || s.player.pitch.abs() > 1.5
             || !s.player.hand.valid()
-            || s.player.hand.volume() > HAND_CAPACITY + 1e-5
+            || !s.player.hand.volume().is_finite()
             || !s.player.tool_swing.is_finite()
             || !(0.0..=1.0).contains(&s.player.tool_swing)
             || !s.sim_time.is_finite()

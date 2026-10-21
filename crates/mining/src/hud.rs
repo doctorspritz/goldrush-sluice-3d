@@ -384,7 +384,7 @@ pub fn update(
                 }else if foot && s.near_plant() && s.sluice.placement.is_some() {
                     "Click to look · Esc frees mouse · P water · O feed · Up / Down water rate · Left / Right feed rate · C lift mats when stopped".into()
                 }else if foot {
-                    format!("WASD walk   ·   Click to capture mouse / shovel   ·   Esc release   ·   E / Tab cab   ·   B place   ·   Shovel: click   ·   Hand bucket: {:.0}%",s.player.hand.volume()/mining_sim::session::HAND_CAPACITY*100.0)
+                    format!("WASD walk   ·   Click to capture mouse / shovel   ·   Esc release   ·   E / Tab cab   ·   B place   ·   Shovel: click   ·   Hand load: {:.1} L",s.player.hand.volume()*1000.0)
                 }else{
                     format!("WASD tracks   ·   Q / E swing   ·   R / F boom   ·   T / G stick   ·   Y / H curl   ·   Space cut   ·   J dump   |   Bucket {:.0}%",s.machine.bucket.volume()/mining_sim::machine::BUCKET_CAPACITY*100.0)
                 }

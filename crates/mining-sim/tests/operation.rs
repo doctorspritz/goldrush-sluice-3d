@@ -99,6 +99,64 @@ fn bucket_cut_is_finite_capacity_limited_and_conserves_gold() {
 }
 
 #[test]
+fn unbounded_hand_load_saves_and_pours_without_losing_hopper_overflow() {
+    let mut s = Session::new();
+    s.player.position = Vec3::new(19., s.site.height(19., 22.), 22.);
+    for z in 0..9 {
+        for x in 0..9 {
+            for _ in 0..2 {
+                let (x, z) = (18. + x as f32 * 0.25, 21. + z as f32 * 0.25);
+                s.on_action(Action::Dig(Vec3::new(x, s.site.height(x, z), z)))
+                    .unwrap();
+            }
+        }
+    }
+    assert!(
+        s.player.hand.volume() > 1.,
+        "repeated shovelling must exceed the former 25 L limit and hopper capacity"
+    );
+    close(s.accounted_gold(), s.initial_gold_g, 1e-7);
+    let load = s.player.hand;
+    let mut s = Session::load_json(&s.save_json().unwrap()).unwrap();
+    assert_eq!(s.player.hand, load);
+    let bulk = |s: &Session| {
+        [
+            &s.site.world.overburden_thickness,
+            &s.site.world.terrain_sediment,
+            &s.site.world.gravel_thickness,
+            &s.site.world.paydirt_thickness,
+        ]
+        .iter()
+        .flat_map(|a| a.iter())
+        .map(|v| *v as f64)
+        .sum::<f64>()
+            * (mining_sim::site::CELL as f64).powi(2)
+    };
+    let before_ground = bulk(&s);
+    s.player.position = Vec3::new(
+        mining_sim::sluice::HOPPER_X,
+        s.site.height(
+            mining_sim::sluice::HOPPER_X,
+            mining_sim::sluice::HOPPER_Z - 0.6,
+        ),
+        mining_sim::sluice::HOPPER_Z - 0.6,
+    );
+    s.player.yaw = 0.;
+    s.on_action(Action::DumpHand).unwrap();
+    assert!(s.player.hand.is_empty());
+    assert_eq!(s.falling[0].material, load);
+    let mut s = Session::load_json(&s.save_json().unwrap()).unwrap();
+    for _ in 0..60 {
+        s.step(Controls::default());
+    }
+    assert!(s.falling.is_empty());
+    close(s.sluice.hopper.volume(), 0.85, 1e-8);
+    close(s.delivered_m3, 0.85, 1e-8);
+    close(bulk(&s) - before_ground, load.volume() - 0.85, 1e-5);
+    close(s.accounted_gold(), s.initial_gold_g, 1e-7);
+}
+
+#[test]
 fn distant_tools_and_camera_changes_do_not_edit_or_reset_operation() {
     let mut s = Session::new();
     let before = s.site.remaining_gold();
