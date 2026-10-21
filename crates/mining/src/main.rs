@@ -6,6 +6,7 @@ mod environment;
 mod fluid_surface;
 mod ground_material;
 mod hud;
+mod motion_capture;
 mod runtime;
 mod scene;
 mod sediment;
@@ -50,6 +51,7 @@ fn main() -> AppExit {
         .insert_non_send_resource(runtime)
         .insert_non_send_resource(activity::SimulationActivity::default())
         .init_resource::<validation::Validation>()
+        .init_resource::<motion_capture::MotionCapture>()
         .init_resource::<environment::Detail>()
         .insert_resource(control_check::Check::from_args())
         .add_systems(Startup, (scene::setup, hud::setup))
@@ -73,6 +75,7 @@ fn main() -> AppExit {
                 scene::guides,
                 hud::update,
                 validation::update,
+                motion_capture::update,
                 activity::sync,
                 runtime::dispatch,
             )

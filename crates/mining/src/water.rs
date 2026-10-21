@@ -51,6 +51,22 @@ pub struct WaterSplats {
     sim_time: f32,
 }
 impl WaterSplats {
+    /// Actual interpolated render kernels, for the opt-in motion evidence only.
+    pub fn motion_samples(&self, sluice: &mining_sim::Sluice) -> Vec<serde_json::Value> {
+        let Some(p) = sluice.placement else {
+            return Vec::new();
+        };
+        let alpha = self.presentation.alpha;
+        let mut points:Vec<_>=self.data.iter().filter(|v|v.shape[2]==0.).filter_map(|v|{
+            let c=Vec4::from_array(v.previous_center).lerp(Vec4::from_array(v.center_radius),alpha);
+            let delta=mining_sim::Vec3::new(c.x,c.y,c.z)-p.inlet;
+            let downstream=delta.dot(p.forward());
+            let height=delta.y+downstream*p.slope_deg.to_radians().tan();
+            (downstream>0.3 && downstream<1.35 && height>0.035 && c.w>0.0001).then_some((height,serde_json::json!({"world":[c.x,c.y,c.z],"downstream_m":downstream,"height_m":height,"radius_m":c.w,"planarity":v.previous_shape[3]*(1.-alpha)+v.shape[3]*alpha})))
+        }).collect();
+        points.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+        points.into_iter().take(128).map(|(_, v)| v).collect()
+    }
     pub fn presentation_report(&self) -> serde_json::Value {
         serde_json::json!({"surface_builds": self.builds,
             "mean_surface_build_ms": self.build_ms / self.builds.max(1) as f64,
