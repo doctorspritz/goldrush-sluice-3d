@@ -8,6 +8,8 @@ struct Screen { @builtin(position) position: vec4<f32> };
 @group(0) @binding(4) var raw_depths: texture_2d<f32>;
 @group(0) @binding(5) var fluid_thickness:texture_2d<f32>;
 @group(0) @binding(6) var surface_normals:texture_2d<f32>;
+@group(0) @binding(7) var river_depths:texture_2d<f32>;
+@group(0) @binding(8) var river_normals:texture_2d<f32>;
 fn depth_at(q: vec2<i32>) -> f32 { return textureLoad(depths,clamp(q,vec2(0),vec2<i32>(textureDimensions(depths))-vec2(1)),0).r; }
 // Bilateral upsampling keeps the half-resolution smoothing buffer from
 // producing two-pixel shading blocks. Empty pixels contribute only coverage.
@@ -45,26 +47,6 @@ fn view_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     let ray = u.view_from_clip * vec4(uv.x*2.-1.,1.-uv.y*2.,1.,1.);
     return ray.xyz * (depth / max(-ray.z,0.0001));
 }
-fn river_depth_gradient(pixel:vec2<i32>,axis:vec2<i32>,center:f32)->f32 {
-    let size=vec2<i32>(textureDimensions(raw_depths));
-    let before=textureLoad(raw_depths,clamp(pixel-axis,vec2(0),size-vec2(1)),0);
-    let after=textureLoad(raw_depths,clamp(pixel+axis,vec2(0),size-vec2(1)),0);
-    let valid_before=before.r>0. && before.g>=1.;
-    let valid_after=after.r>0. && after.g>=1.;
-    let inverse=1./center;
-    let a=inverse-1./max(before.r,0.0001);let b=1./max(after.r,0.0001)-inverse;
-    if valid_before && (!valid_after || abs(a)<abs(b)) {return a;}
-    if valid_after {return b;}
-    return 0.;
-}
-fn river_depth_at(pixel:vec2<f32>,raw_pixel:vec2<i32>,center:f32)->f32 {
-    // Reciprocal view depth is affine across a projected triangle. Reconstruct
-    // at the full-resolution pixel rather than borrowing the half-resolution
-    // centre or blurring a thin film beneath the matching terrain triangles.
-    let offset=pixel*vec2<f32>(textureDimensions(raw_depths))/u.viewport.xy-(vec2<f32>(raw_pixel)+0.5);
-    let gradient=vec2(river_depth_gradient(raw_pixel,vec2(1,0),center),river_depth_gradient(raw_pixel,vec2(0,1),center));
-    return 1./max(1./center+dot(gradient,offset),0.0001);
-}
 fn ripple_gradient(q:vec2<f32>,footprint:f32)->vec2<f32> {
     // Gaussian band filtering prevents narrow highlights from aliasing at a
     // grazing angle. Frequency is optical detail, never extra water volume.
@@ -94,17 +76,27 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     // Smoothing must not pull hidden water forward over an opaque side wall.
     // Test original particle depth as well as the reconstructed surface.
     let raw_pixel = clamp(vec2<i32>(q * vec2<f32>(textureDimensions(raw_depths)) / u.viewport.xy), vec2(0), vec2<i32>(textureDimensions(raw_depths))-vec2(1));
-    let optical_sample=textureLoad(raw_depths,raw_pixel,0);
-    let raw_depth = optical_sample.r;
-    if raw_depth <= 0. { return original; }
-    let river=optical_sample.g>=1.;
-    let in_channel=optical_sample.g< -0.5;
+    var optical_sample=textureLoad(raw_depths,raw_pixel,0);
+    let river_sample=textureLoad(river_depths,pixel,0);
+    let river_surface=textureLoad(river_normals,pixel,0);
+    let opaque=textureLoad(scene_depth,pixel,0);
+    let opaque_view=u.view_from_clip*vec4(q.x/u.viewport.x*2.-1.,1.-q.y/u.viewport.y*2.,opaque,1.);
+    // Reverse-Z sky has w=0; keep neighbouring derivative lanes finite.
+    let opaque_depth=select(0.,-opaque_view.z/max(opaque_view.w,0.000001),opaque>0.);
+    let contact=max(opaque_depth-river_sample.r,0.);
+    // Derivatives must be evaluated before any per-pixel early return. Both
+    // signed-film clipping and the opaque bank intersection get a pixel-wide
+    // transition, rather than nearest half-resolution shoreline coverage.
+    let film_width=max(0.0005,fwidth(river_surface.w));
+    let contact_width=max(0.0005,fwidth(contact));
+    let river=river_sample.r>0. && (optical_sample.r<=0. || river_sample.r<optical_sample.r);
+    if river {optical_sample=river_sample;}
+    let raw_depth=optical_sample.r;
+    if raw_depth<=0. {return original;}
+    let in_channel=!river && optical_sample.g< -0.5;
     var sample=vec2(raw_depth,1.);
-    if river {sample.x=river_depth_at(q,raw_pixel,raw_depth);} else {sample=sample_depth(q);}
+    if !river {sample=sample_depth(q);}
     let depth=sample.x;if depth<=0. || sample.y<=0.05 {return original;}
-    let opaque = textureLoad(scene_depth,pixel,0);
-    let opaque_view = u.view_from_clip * vec4(q.x/u.viewport.x*2.-1.,1.-q.y/u.viewport.y*2.,opaque,1.);
-    let opaque_depth=-opaque_view.z/opaque_view.w;
     if river || in_channel {
         // A fixed reverse-Z epsilon grows into centimetres with camera range.
         // Use 0.1 mm in view space, with no forward bias over solid equipment.
@@ -119,7 +111,7 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
         let clip = u.clip_from_world * world;
         if clip.z/clip.w <= opaque + 0.000001 {return original;}
     }
-    var normal=normalize(textureLoad(surface_normals,raw_pixel,0).xyz);
+    var normal=normalize(select(textureLoad(surface_normals,raw_pixel,0).xyz,river_surface.xyz,river));
     if !river {
     let left = sample_depth(q-vec2(1.,0.)).x; let right = sample_depth(q+vec2(1.,0.)).x;
     let up = sample_depth(q-vec2(0.,1.)).x; let down = sample_depth(q+vec2(0.,1.)).x;
@@ -130,7 +122,7 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     var n = normalize(cross(dy,dx)); if n.z < 0. { n = -n; }
     normal = normalize((u.world_from_view * vec4(n,0.)).xyz);
     }
-    if river || in_channel {
+    if in_channel {
         let surface=reconstructed_normal(raw_pixel,raw_depth,river);
         if surface.w>0. {
             var surface_normal=surface.xyz;if dot(surface_normal,u.world_from_view[3].xyz-world.xyz)<0. {surface_normal = -surface_normal;}
@@ -168,8 +160,10 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     var background=original.rgb;
     if river || in_channel {background=refracted_scene(q,normal,depth,thickness,background);}
     let body=background*transmission+scattering*(vec3(1.)-transmission);
-    // A 0.5 mm film is fully covered; only the last 0.1-0.5 mm fades at shore.
-    let shore=smoothstep(0.0001,0.0005,textureLoad(surface_normals,raw_pixel,0).w);
+    // A uniform 0.5 mm film stays fully covered. At a sloping bank use the
+    // full-resolution contact and film gradients to soften only the last pixel.
+    let shore=smoothstep(0.0001,film_width,river_surface.w)
+        *select(1.,smoothstep(0.0001,contact_width,contact),opaque>0.);
     let coverage=clamp(sample.y,0.,1.)*select(1.,shore,river);
     return vec4(mix(original.rgb,mix(body,sky,fresnel)+vec3(specular),coverage),original.a);
 }

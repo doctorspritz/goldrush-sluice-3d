@@ -166,6 +166,9 @@ struct FluidUniforms {
 #[derive(Component)]
 struct FluidTargets {
     size: UVec2,
+    river_raw: TextureView,
+    river_normals: TextureView,
+    river_depth: TextureView,
     raw: TextureView,
     ping: TextureView,
     pong: TextureView,
@@ -227,6 +230,8 @@ fn init_pipelines(
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_depth_2d(),
                 uniform_buffer::<FluidUniforms>(false),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_2d(TextureSampleType::Float { filterable: false }),
@@ -434,19 +439,19 @@ fn prepare_views(
             viewport: Vec4::new(full.x as f32, full.y as f32, 0.045, water.clock.prediction),
         };
         if let Some(mut target) = existing {
-            if target.size == size {
+            if target.size == full {
                 target.uniform.set(uniforms);
                 target.uniform.write_buffer(&device, &queue);
                 continue;
             }
         }
-        let texture = |label, format| {
+        let texture = |label, format, dimensions: UVec2| {
             device
                 .create_texture(&TextureDescriptor {
                     label: Some(label),
                     size: Extent3d {
-                        width: size.x,
-                        height: size.y,
+                        width: dimensions.x,
+                        height: dimensions.y,
                         depth_or_array_layers: 1,
                     },
                     mip_level_count: 1,
@@ -461,13 +466,18 @@ fn prepare_views(
         let mut uniform = UniformBuffer::from(uniforms);
         uniform.write_buffer(&device, &queue);
         commands.entity(entity).insert(FluidTargets {
-            size,
-            raw: texture("fluid raw depth", TextureFormat::Rgba32Float),
-            ping: texture("fluid blur ping", TextureFormat::R32Float),
-            pong: texture("fluid blur pong", TextureFormat::R32Float),
-            depth: texture("fluid depth test", TextureFormat::Depth32Float),
-            thickness: texture("fluid optical thickness", TextureFormat::R16Float),
-            normals: texture("continuous water normals", TextureFormat::Rgba16Float),
+            size: full,
+            // River contact uses full-resolution geometry. Particle splats and
+            // bilateral smoothing retain their bounded half-resolution targets.
+            river_raw: texture("river depth and flow", TextureFormat::Rgba32Float, full),
+            river_normals: texture("river normal and film", TextureFormat::Rgba16Float, full),
+            river_depth: texture("river depth test", TextureFormat::Depth32Float, full),
+            raw: texture("fluid raw depth", TextureFormat::Rgba32Float, size),
+            ping: texture("fluid blur ping", TextureFormat::R32Float, size),
+            pong: texture("fluid blur pong", TextureFormat::R32Float, size),
+            depth: texture("fluid depth test", TextureFormat::Depth32Float, size),
+            thickness: texture("fluid optical thickness", TextureFormat::R16Float, size),
+            normals: texture("continuous water normals", TextureFormat::Rgba16Float, size),
             uniform,
         });
     }
@@ -552,6 +562,8 @@ impl ViewNode for FluidNode {
                 &target.raw,
                 &target.thickness,
                 &target.normals,
+                &target.river_raw,
+                &target.river_normals,
             )),
         );
         let color = |view| {
@@ -585,6 +597,26 @@ impl ViewNode for FluidNode {
             pass.set_pipeline(depth);
             pass.set_bind_group(0, &particle_group, &[]);
             pass.draw(0..6, 0..particles.count);
+        }
+        {
+            let mut pass = context
+                .command_encoder()
+                .begin_render_pass(&RenderPassDescriptor {
+                    label: Some("full-resolution river contact"),
+                    color_attachments: &[color(&target.river_raw), color(&target.river_normals)],
+                    depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                        view: &target.river_depth,
+                        depth_ops: Some(Operations {
+                            load: LoadOp::Clear(0.0),
+                            store: StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            pass.set_pipeline(depth);
+            pass.set_bind_group(0, &particle_group, &[]);
             pass.draw(
                 0..(6 * crate::environment::FINE_SUBDIVISIONS.pow(2)) as u32,
                 MAX_SPLATS as u32..MAX_SPLATS as u32 + particles.terrain_fine_count,
