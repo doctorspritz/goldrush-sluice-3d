@@ -2,6 +2,8 @@ struct Uniforms {clip_from_world:mat4x4<f32>,world_from_view:mat4x4<f32>,view_fr
 struct Particle {center_radius:vec4<f32>,velocity:vec4<f32>,shape:vec4<f32>,axis_x:vec4<f32>,axis_y:vec4<f32>,axis_z:vec4<f32>,slope_x:vec4<f32>,slope_z:vec4<f32>,flow_z:vec4<f32>,previous_center:vec4<f32>,previous_x:vec4<f32>,previous_y:vec4<f32>,previous_z:vec4<f32>,previous_shape:vec4<f32>};
 @group(0) @binding(0) var<storage,read> particles:array<Particle>;
 @group(0) @binding(1) var<uniform> u:Uniforms;
+@group(0) @binding(2) var front_depth:texture_2d<f32>;
+@group(0) @binding(3) var opaque_depth:texture_depth_2d;
 // Presentation only, matching terrain_water::MIN_VISIBLE_DEPTH_M.
 const MIN_FILM_DEPTH:f32=0.0001;
 struct Varying {
@@ -80,11 +82,52 @@ struct Depth {@location(0) linear:vec4<f32>,@location(1) normal:vec4<f32>,@built
  if v.shape.z==1. {out.normal.w=v.terrain.x;}
  out.depth=clip.z/clip.w;return out;
 }
-@fragment fn particle_thickness(v:Varying)->@location(0) f32 {
+// A normalized poly6 column tapers continuously at a kernel's silhouette.
+// Its integral over the projected ellipsoid is the same represented volume
+// as the uniform chord, rather than losing water when softening the edge.
+fn column_primitive(l:f32,s:f32)->f32 {
+ let l2=l*l;
+ return l*(s*s*s+l2*(-s*s+l2*(0.6*s-l2/7.)));
+}
+fn column_integral(s:f32,a:f32,lo:f32,hi:f32)->f32 {
+ return max(6.5625*(column_primitive(hi,s)-column_primitive(lo,s))/sqrt(a),0.);
+}
+struct Column {@location(0) optical:vec2<f32>,@location(1) normal:vec4<f32>};
+@fragment fn particle_thickness(v:Varying)->Column {
  let eye=u.world_from_view[3].xyz;let ray=normalize(v.world-eye);let origin=eye-v.center_radius.xyz;
  let o=vec3(dot(origin,v.axis_x)/dot(v.axis_x,v.axis_x),dot(origin,v.axis_y)/dot(v.axis_y,v.axis_y),dot(origin,v.axis_z)/dot(v.axis_z,v.axis_z));
  let d=vec3(dot(ray,v.axis_x)/dot(v.axis_x,v.axis_x),dot(ray,v.axis_y)/dot(v.axis_y,v.axis_y),dot(ray,v.axis_z)/dot(v.axis_z,v.axis_z));
  let a=dot(d,d);let closest=-dot(o,d)/a;let q=o+d*closest;let squared=1.-dot(q,q);
  if squared<0. {discard;}
- return 2.*sqrt(squared/a)*v.shape.x;
+ let pixel=vec2<i32>(v.clip.xy);
+ let front=textureLoad(front_depth,pixel,0);
+ let channel=v.shape.z==0.;
+ if front.r<=0. || (front.g< -0.5)!=channel {discard;}
+ let half=sqrt(squared/a);
+ var path=2.*half*v.shape.x;
+ var normal=vec4(0.);
+ if channel {
+  // Integrate only the visible water column. A submerged kernel behind a
+  // riffle/wall cannot contribute sediment to the water in front of it.
+  let full=vec2<i32>(textureDimensions(opaque_depth));
+  let q=clamp(vec2<i32>(v.clip.xy*vec2<f32>(full)/vec2<f32>(textureDimensions(front_depth))),vec2(0),full-vec2(1));
+  let z=textureLoad(opaque_depth,q,0);
+  let xy=(vec2<f32>(q)+0.5)/vec2<f32>(full);
+  let opaque=u.view_from_clip*vec4(xy.x*2.-1.,1.-xy.y*2.,z,1.);
+  let ray_scale=-(u.view_from_world*vec4(ray,0.)).z;
+  var back=closest+half;
+  if z>0. {back=min(back,(-opaque.z/max(opaque.w,0.000001))/max(ray_scale,0.000001));}
+  let front_t=max(closest-half,0.);
+  if back<=front_t {discard;}
+  let support=sqrt(squared);
+  path=column_integral(squared,a,clamp((front_t-closest)*sqrt(a),-support,support),clamp((back-closest)*sqrt(a),-support,support))*v.shape.x;
+  let delta=(front_t*ray_scale-front.r)/0.025;
+  let weight=path*exp(-delta*delta);
+  var n=v.surface.xyz;
+  if dot(n,eye-v.center_radius.xyz)<0. {n = -n;}
+  // XYZ sums trusted normals; W sums all front-surface support. Their ratio
+  // measures both planarity and agreement, without a nearest-particle gate.
+  normal=vec4(n*weight*clamp(v.surface.w,0.,1.),weight);
+ }
+ var out:Column;out.optical=vec2(path,path*v.shape.y);out.normal=normal;return out;
 }

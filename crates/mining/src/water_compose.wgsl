@@ -10,6 +10,7 @@ struct Screen { @builtin(position) position: vec4<f32> };
 @group(0) @binding(6) var surface_normals:texture_2d<f32>;
 @group(0) @binding(7) var river_depths:texture_2d<f32>;
 @group(0) @binding(8) var river_normals:texture_2d<f32>;
+@group(0) @binding(9) var normal_sums:texture_2d<f32>;
 fn depth_at(q: vec2<i32>) -> f32 { return textureLoad(depths,clamp(q,vec2(0),vec2<i32>(textureDimensions(depths))-vec2(1)),0).r; }
 // Bilateral upsampling keeps the half-resolution smoothing buffer from
 // producing two-pixel shading blocks. Empty pixels contribute only coverage.
@@ -28,19 +29,39 @@ fn sample_depth(pixel: vec2<f32>) -> vec2<f32> {
 }
 // Reconstruction normals are independent of triangle/splat silhouettes. Keep
 // depth jumps and different water domains separate during local filtering.
-fn reconstructed_normal(pixel:vec2<i32>,depth:f32,river:bool)->vec4<f32> {
-    var sum=vec3(0.);var weight=0.;var confidence=0.;
+fn reconstructed_normal(pixel:vec2<f32>,depth:f32)->vec4<f32> {
+    var sum=vec3(0.);var weight=0.;
     let size=vec2<i32>(textureDimensions(surface_normals));
+    let p=pixel*vec2<f32>(size)/u.viewport.xy-0.5;
+    let center=vec2<i32>(round(p));
     for(var y=-1;y<=1;y++){for(var x=-1;x<=1;x++){
-        let q=clamp(pixel+vec2(x,y),vec2(0),size-vec2(1));
-        let raw=textureLoad(raw_depths,q,0);let normal=textureLoad(surface_normals,q,0);
-        if raw.r<=0. || (raw.g>=1.)!=river || normal.w<=0. {continue;}
+        let q=clamp(center+vec2(x,y),vec2(0),size-vec2(1));
+        let raw=textureLoad(raw_depths,q,0);let normal=textureLoad(normal_sums,q,0);
+        if raw.r<=0. || raw.g>= -0.5 || normal.w<=0. {continue;}
         let delta=(raw.r-depth)/0.035;
-        let w=exp(-f32(x*x+y*y)*0.5-delta*delta);
-        sum+=normal.xyz*w;confidence+=normal.w*w;weight+=w;
+        let distance=vec2<f32>(q)-p;
+        let w=exp(-dot(distance,distance)*0.5-delta*delta);
+        sum+=normal.xyz*w;weight+=normal.w*w;
     }}
-    if weight<=0.0001 || length(sum)<0.0001 {return vec4(0.);}
-    return vec4(normalize(sum),confidence/weight);
+    if weight<=0.000001 || length(sum)<0.000001 {return vec4(0.);}
+    return vec4(normalize(sum),clamp(length(sum)/weight,0.,1.));
+}
+// Interpolate additive moments before dividing. Switching the front-most
+// particle must not switch the colour of an entire overlapping water column.
+fn optical_column(pixel:vec2<f32>,depth:f32,channel:bool)->vec2<f32> {
+    let size=vec2<i32>(textureDimensions(fluid_thickness));
+    let p=pixel*vec2<f32>(size)/u.viewport.xy-0.5;
+    let base=vec2<i32>(floor(p));let f=fract(p);
+    var sum=vec2(0.);var weight=0.;
+    for(var y=0;y<2;y++){for(var x=0;x<2;x++){
+        let q=clamp(base+vec2(x,y),vec2(0),size-vec2(1));
+        let raw=textureLoad(raw_depths,q,0);
+        if raw.r<=0. || (raw.g< -0.5)!=channel {continue;}
+        let delta=(raw.r-depth)/0.035;
+        let w=select(1.-f.x,f.x,x==1)*select(1.-f.y,f.y,y==1)*exp(-delta*delta);
+        sum+=textureLoad(fluid_thickness,q,0).rg*w;weight+=w;
+    }}
+    return sum/max(weight,0.000001);
 }
 fn view_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     let uv = pixel/u.viewport.xy;
@@ -122,11 +143,13 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     var n = normalize(cross(dy,dx)); if n.z < 0. { n = -n; }
     normal = normalize((u.world_from_view * vec4(n,0.)).xyz);
     }
+    var surface_confidence=0.;
     if in_channel {
-        let surface=reconstructed_normal(raw_pixel,raw_depth,river);
+        let surface=reconstructed_normal(q,raw_depth);
+        surface_confidence=surface.w;
         if surface.w>0. {
             var surface_normal=surface.xyz;if dot(surface_normal,u.world_from_view[3].xyz-world.xyz)<0. {surface_normal = -surface_normal;}
-            normal=normalize(mix(normal,surface_normal,select(surface.w*0.85,1.,river)));
+            normal=normalize(mix(normal,surface_normal,0.9*smoothstep(0.08,0.5,surface.w)));
         }
     }
     let flow=optical_sample.ba;
@@ -135,12 +158,12 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     let eye_world=normalize(u.world_from_view[3].xyz-world.xyz);
     let pixel_size=depth*2.*abs(u.view_from_clip[1].y)/u.viewport.y;
     let footprint=pixel_size/max(abs(dot(normal,eye_world)),0.12);
-    if river || (in_channel && textureLoad(surface_normals,raw_pixel,0).w>0.3) {
+    if river || in_channel {
         let phase0=fract(u.sediment.z*0.5);let phase1=fract(u.sediment.z*0.5+0.5);
         let weight0=1.-abs(phase0*2.-1.);
         let q0=world.xz-flow*(phase0*2.);let q1=world.xz-flow*(phase1*2.);
         let gradient=mix(ripple_gradient(q1,footprint),ripple_gradient(q0,footprint),weight0);
-        normal=normalize(normal+vec3(gradient.x,0.,gradient.y)*select(0.035,0.055,river));
+        normal=normalize(normal+vec3(gradient.x,0.,gradient.y)*select(0.065*surface_confidence,0.055,river));
     }
     let fresnel=0.02+0.98*pow(1.-clamp(dot(normal,eye_world),0.,1.),5.);
     let light=normalize(vec3(0.35,0.85,0.3));
@@ -151,14 +174,29 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
 
     var thickness = 0.04;
     if opaque>0. && abs(opaque_view.w)>0.00001 { thickness=clamp(-opaque_view.z/opaque_view.w-depth,0.,0.5); }
-    if !river {thickness=min(thickness,max(textureLoad(fluid_thickness,raw_pixel,0).r,0.0002));}
+    var column=vec2(0.);
+    if !river {
+        column=optical_column(q,raw_depth,in_channel);
+        thickness=min(thickness,max(column.x,0.0002));
+    }
     let optical=optical_sample.g;
     // River keeps its existing concentration convention. Channel extinction
     // comes from local represented fine-grain cross section per water volume.
-    let beta=select(select(max(optical-1.,0.),max(-optical-1.,0.),in_channel),max(optical-1.,0.)*2400.,river);
-    let extinction=vec3(0.8,0.24,0.12)+vec3(0.5625,1.,1.5)*beta;
+    let beta=select(column.y/max(column.x,0.000001),max(optical-1.,0.)*2400.,river);
+    // Particle water uses reduced scattering for unresolved forward-scattered
+    // light, rather than treating every grain cross section as absorption.
+    // g=.85 and albedo=.95 are presentation approximations, not measured soil
+    // coefficients; concentration and represented sediment remain unchanged.
+    let transport=select((1.-0.95)+0.95*(1.-0.85),1.,river);
+    let extinction=vec3(0.8,0.24,0.12)+vec3(0.5625,1.,1.5)*beta*transport;
     let transmission=exp(-extinction*thickness);
-    let scattering=mix(vec3(0.035,0.18,0.18),vec3(0.22,0.13,0.055),clamp(beta/120.,0.,1.));
+    var scattering=mix(vec3(0.035,0.18,0.18),vec3(0.22,0.13,0.055),clamp(beta/120.,0.,1.));
+    if !river {
+        // Even opaque slurry receives changing incident light across a wave.
+        // A constant unlit source term made its surface read as flat mud paint.
+        // Keep this optical model continuous as channel water leaves the lip.
+        scattering*=0.35+0.65*max(dot(normal,light),0.);
+    }
     var background=original.rgb;
     if river || in_channel {background=refracted_scene(q,normal,depth,thickness,background);}
     let body=background*transmission+scattering*(vec3(1.)-transmission);

@@ -198,12 +198,14 @@ struct FluidTargets {
     pong: TextureView,
     depth: TextureView,
     thickness: TextureView,
+    normal_sums: TextureView,
     normals: TextureView,
     uniform: UniformBuffer<FluidUniforms>,
 }
 #[derive(Resource)]
 struct FluidPipelines {
     particles: BindGroupLayout,
+    thickness_particles: BindGroupLayout,
     blur: BindGroupLayout,
     compose: BindGroupLayout,
     depth_id: CachedRenderPipelineId,
@@ -235,6 +237,21 @@ fn init_pipelines(
             ((0, storage), (1, uniform_buffer::<FluidUniforms>(false))),
         ),
     );
+    let thickness_particles = device.create_bind_group_layout(
+        "fluid column inputs",
+        &BindGroupLayoutEntries::with_indices(
+            ShaderStages::VERTEX_FRAGMENT,
+            (
+                (0, storage),
+                (1, uniform_buffer::<FluidUniforms>(false)),
+                (
+                    2,
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                ),
+                (3, texture_depth_2d()),
+            ),
+        ),
+    );
     let blur = device.create_bind_group_layout(
         "fluid smoothing",
         &BindGroupLayoutEntries::sequential(
@@ -254,6 +271,7 @@ fn init_pipelines(
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_depth_2d(),
                 uniform_buffer::<FluidUniforms>(false),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_2d(TextureSampleType::Float { filterable: false }),
@@ -300,10 +318,14 @@ fn init_pipelines(
                         },
                         write_mask: ColorWrites::ALL,
                     })];
-                    if fragment == "particle_depth" {
+                    if fragment == "particle_depth" || fragment == "particle_thickness" {
                         targets.push(Some(ColorTargetState {
                             format: TextureFormat::Rgba16Float,
-                            blend: None,
+                            blend: if fragment == "particle_thickness" {
+                                targets[0].as_ref().unwrap().blend
+                            } else {
+                                None
+                            },
                             write_mask: ColorWrites::ALL,
                         }));
                     }
@@ -334,10 +356,10 @@ fn init_pipelines(
     );
     let thickness_id = make(
         depth_shader,
-        &particles,
+        &thickness_particles,
         "particle_vertex",
         "particle_thickness",
-        TextureFormat::R16Float,
+        TextureFormat::Rg16Float,
         None,
     );
     let blur_x = make(
@@ -366,6 +388,7 @@ fn init_pipelines(
     );
     commands.insert_resource(FluidPipelines {
         particles,
+        thickness_particles,
         blur,
         compose,
         depth_id,
@@ -505,7 +528,16 @@ fn prepare_views(
             ping: texture("fluid blur ping", TextureFormat::R32Float, size),
             pong: texture("fluid blur pong", TextureFormat::R32Float, size),
             depth: texture("fluid depth test", TextureFormat::Depth32Float, size),
-            thickness: texture("fluid optical thickness", TextureFormat::R16Float, size),
+            thickness: texture(
+                "fluid optical depth moments",
+                TextureFormat::Rg16Float,
+                size,
+            ),
+            normal_sums: texture(
+                "fluid surface normal moments",
+                TextureFormat::Rgba16Float,
+                size,
+            ),
             normals: texture("continuous water normals", TextureFormat::Rgba16Float, size),
             uniform,
         });
@@ -569,6 +601,16 @@ impl ViewNode for FluidNode {
             &settings.particles,
             &BindGroupEntries::sequential((particles.buffer.as_entire_binding(), uniform.clone())),
         );
+        let thickness_group = device.create_bind_group(
+            "fluid column inputs",
+            &settings.thickness_particles,
+            &BindGroupEntries::sequential((
+                particles.buffer.as_entire_binding(),
+                uniform.clone(),
+                &target.raw,
+                scene_depth.view(),
+            )),
+        );
         let blur_group = |texture: &TextureView| {
             device.create_bind_group(
                 "fluid blur inputs",
@@ -593,6 +635,7 @@ impl ViewNode for FluidNode {
                 &target.normals,
                 &target.river_raw,
                 &target.river_normals,
+                &target.normal_sums,
             )),
         );
         let color = |view| {
@@ -661,13 +704,13 @@ impl ViewNode for FluidNode {
                 .command_encoder()
                 .begin_render_pass(&RenderPassDescriptor {
                     label: Some("fluid volume-normalized optical thickness"),
-                    color_attachments: &[color(&target.thickness)],
+                    color_attachments: &[color(&target.thickness), color(&target.normal_sums)],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
             pass.set_pipeline(thickness);
-            pass.set_bind_group(0, &particle_group, &[]);
+            pass.set_bind_group(0, &thickness_group, &[]);
             pass.draw(0..6, 0..particles.count);
         }
         // Two separable bilateral iterations smooth shared fluid normals, without
