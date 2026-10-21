@@ -14,6 +14,7 @@ fn lip_handoff_keeps_world_position_momentum_and_water_ledger() {
     let position = Vec3::new(1.501, 0.06, 0.2);
     let velocity = Vec3::new(0.7, -0.2, 0.1);
     s.sluice.water.push(WaterParticle {
+        id: 43,
         position,
         velocity,
         affine: Mat3::ZERO,
@@ -22,6 +23,7 @@ fn lip_handoff_keeps_world_position_momentum_and_water_ledger() {
     outflow::release(&mut s.sluice);
     assert!(s.sluice.water.is_empty());
     let particle = &s.sluice.outflow[0];
+    assert_eq!(particle.id, 43);
     assert_eq!(
         particle.position,
         p.to_world(s.sluice.grid_to_local(position))
@@ -31,10 +33,63 @@ fn lip_handoff_keeps_world_position_momentum_and_water_ledger() {
     );
     assert_eq!(before, s.sluice.accounted_water_m3());
 }
+
+#[test]
+fn legacy_water_ids_migrate_without_changing_physics_and_survive_restore() {
+    let mut s = Session::new();
+    s.sluice.water = vec![
+        WaterParticle {
+            id: 0,
+            position: Vec3::new(0.4, 0.2, 0.2),
+            velocity: Vec3::X,
+            affine: Mat3::IDENTITY
+        };
+        3
+    ];
+    s.sluice.outflow = vec![OutflowParticle {
+        id: 0,
+        position: Vec3::new(14., 2., 20.),
+        velocity: Vec3::Z,
+    }];
+    let mut legacy: serde_json::Value = serde_json::from_str(&s.save_json().unwrap()).unwrap();
+    legacy["sluice"]
+        .as_object_mut()
+        .unwrap()
+        .remove("next_water_id");
+    for kind in ["water", "outflow"] {
+        for p in legacy["sluice"][kind].as_array_mut().unwrap() {
+            p.as_object_mut().unwrap().remove("id");
+        }
+    }
+    let mut loaded = Session::load_json(&legacy.to_string()).unwrap();
+    let before = loaded.sluice.accounted_water_m3();
+    loaded.sluice.ensure_water_ids();
+    let ids: std::collections::HashSet<_> = loaded
+        .sluice
+        .water
+        .iter()
+        .map(|p| p.id)
+        .chain(loaded.sluice.outflow.iter().map(|p| p.id))
+        .collect();
+    assert_eq!(ids.len(), 4);
+    assert!(!ids.contains(&0));
+    assert_eq!(before, loaded.sluice.accounted_water_m3());
+    assert!(loaded
+        .sluice
+        .water
+        .iter()
+        .all(|p| p.position == Vec3::new(0.4, 0.2, 0.2)
+            && p.velocity == Vec3::X
+            && p.affine == Mat3::IDENTITY));
+    let mut restored = Session::load_json(&loaded.save_json().unwrap()).unwrap();
+    assert_eq!(restored.sluice.water[1].id, loaded.sluice.water[1].id);
+    assert!(!ids.contains(&restored.sluice.allocate_water_id()));
+}
 #[test]
 fn flight_follows_exact_ballistic_arc_and_save_restore() {
     let mut s = Session::new();
     let particle = OutflowParticle {
+        id: 0,
         position: Vec3::new(14.6, 2., 19.5),
         velocity: Vec3::new(0.6, -0.1, 0.3),
     };
@@ -59,6 +114,7 @@ fn impacts_deposit_volume_and_horizontal_momentum_at_landing() {
     let x = 14.625;
     let z = 20.625;
     let p = OutflowParticle {
+        id: 0,
         position: Vec3::new(x, s.site.height(x, z) + 0.002, z),
         velocity: Vec3::new(0.8, -2., -0.4),
     };
@@ -96,6 +152,7 @@ fn old_saves_default_to_no_airborne_water_and_pause_stops_flight() {
         .outflow
         .is_empty());
     s.sluice.outflow.push(OutflowParticle {
+        id: 0,
         position: Vec3::new(14., 2., 20.),
         velocity: Vec3::X,
     });
@@ -120,6 +177,7 @@ fn clean_water_impact_dilutes_all_suspension_without_creating_sediment() {
     let before_pay = s.site.world.water_depth(ix, iz) * s.site.hydraulic.suspended_paydirt[i];
     s.sluice.outflow = vec![
         OutflowParticle {
+            id: 0,
             position: Vec3::new(ix as f32 * 0.25, ground + 0.02, iz as f32 * 0.25),
             velocity: -Vec3::Y
         };

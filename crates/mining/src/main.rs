@@ -12,13 +12,16 @@ mod sediment;
 mod terrain_water;
 mod validation;
 mod water;
+mod water_presentation;
+mod water_surface_worker;
 
 use bevy::{prelude::*, window::WindowResolution};
 
 fn main() -> AppExit {
     // Keep Bevy's compute/IO pools bounded as well as the single solver worker.
     use bevy::app::{TaskPoolOptions, TaskPoolPlugin};
-    let (session, demo) = demo::initial();
+    let (mut session, demo) = demo::initial();
+    session.sluice.ensure_water_ids();
     let game = app::Game {
         session,
         demo,

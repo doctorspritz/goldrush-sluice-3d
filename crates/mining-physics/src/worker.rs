@@ -82,6 +82,7 @@ impl Worker {
                 configure_worker_thread();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut solver = create()?;
+                    session.sluice.ensure_water_ids();
                     let mut replay = None;
                     let mut generation = 0;
                     if replies
@@ -95,6 +96,7 @@ impl Worker {
                         if apply(&mut session, &mut solver, work.commands) {
                             generation += 1;
                         }
+                        session.sluice.ensure_water_ids();
                         session.player.yaw += work.look_delta[0];
                         session.player.pitch =
                             (session.player.pitch + work.look_delta[1]).clamp(-1.30, 1.10);

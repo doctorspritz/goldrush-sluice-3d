@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OutflowParticle {
+    #[serde(default)]
+    pub id: u64,
     pub position: Vec3,
     pub velocity: Vec3,
 }
@@ -26,6 +28,7 @@ pub fn release(s: &mut Sluice) {
             return true;
         }
         s.outflow.push(OutflowParticle {
+            id: p.id,
             position: placement.to_world(s.grid_to_local(p.position)),
             velocity: s.grid_velocity_to_world(p.velocity),
         });

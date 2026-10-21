@@ -279,6 +279,7 @@ fn complete_live_fluid_save_larger_than_eight_megabytes_restores() {
     session.sluice.placement = Some(Placement::suggested(&session.site));
     session.sluice.water = vec![
         WaterParticle {
+            id: 0,
             position: Vec3::new(0.4, 0.8, 0.3),
             velocity: Vec3::new(0.2, 0.0, 0.0),
             affine: Mat3::ZERO,
@@ -373,6 +374,7 @@ fn previous_live_saves_keep_their_grid_volume_and_geometry() {
     });
     s.sluice.profile = HydraulicProfile::Legacy;
     s.sluice.water.push(WaterParticle {
+        id: 0,
         position: Vec3::new(2.8, 0.2, 0.5),
         velocity: Vec3::X,
         affine: Default::default(),

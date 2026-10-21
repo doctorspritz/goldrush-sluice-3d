@@ -218,8 +218,12 @@ pub fn update(
         // Capture the measured live scene in the same bounded app run.
         if started.elapsed().as_secs_f64() >= 10. && v.photos.insert("flow-benchmark") {
             if let Some(path) = v.capture.clone() {
-                if let Some(parent) = path.parent() { let _=std::fs::create_dir_all(parent); }
-                commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                commands
+                    .spawn(Screenshot::primary_window())
+                    .observe(save_to_disk(path));
             }
         }
         if started.elapsed().as_secs_f64() >= v.benchmark_seconds {
@@ -253,6 +257,7 @@ pub fn update(
                     "grains":game.session.sluice.grains.len(),
                     "displayed_grains":crate::sediment::visible_grains(&game.session.sluice),
                     "slurry":mining_sim::slurry::diagnostics(&game.session.sluice),
+                    "water_presentation": water.presentation_report(),
                 "water_mean_downstream_ms":game.session.sluice.water_speed(),"fluid_surface_ready":crate::water::surface_ready(&water),
                     "outflow_particles":sluice.outflow.len(),"terrain_water_splats":water.terrain_count(),"terrain_fine_cells":water.terrain_fine_count(),"detail_revision":detail.revision,"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
             if let Some(parent) = path.parent() {

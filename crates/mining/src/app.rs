@@ -749,6 +749,7 @@ mod fluid_cache_tests {
             .sluice
             .outflow
             .push(mining_sim::outflow::OutflowParticle {
+                id: 0,
                 position: SimVec3::new(14., 2., 20.),
                 velocity: SimVec3::X,
             });
@@ -756,6 +757,7 @@ mod fluid_cache_tests {
             .sluice
             .water
             .push(mining_sim::sluice::WaterParticle {
+                id: 0,
                 position: SimVec3::new(0.5, 0.4, 0.2),
                 velocity: SimVec3::X,
                 affine: Default::default(),

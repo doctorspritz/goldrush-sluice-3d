@@ -67,6 +67,9 @@ impl HydraulicProfile {
 /// rather than recreated when a camera changes or a shift is restored.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WaterParticle {
+    /// Presentation identity only; never used by the physical solver.
+    #[serde(default)]
+    pub id: u64,
     pub position: Vec3,
     pub velocity: Vec3,
     pub affine: Mat3,
@@ -255,6 +258,8 @@ pub struct Sluice {
     pub cleanups: u32,
     pub time: f32,
     pub water: Vec<WaterParticle>,
+    #[serde(default)]
+    next_water_id: u64,
     /// Water outside the FLIP channel, in world coordinates; owns real volume.
     #[serde(default)]
     pub outflow: Vec<crate::outflow::OutflowParticle>,
@@ -291,6 +296,7 @@ impl Default for Sluice {
             cleanups: 0,
             time: 0.0,
             water: Vec::new(),
+            next_water_id: 0,
             outflow: Vec::new(),
             water_credit_m3: 0.0,
             water_returned_m3: 0.0,
@@ -303,6 +309,38 @@ impl Default for Sluice {
     }
 }
 impl Sluice {
+    /// One-time migration for saves predating persistent water identities.
+    pub fn ensure_water_ids(&mut self) {
+        if self.next_water_id != 0 {
+            return;
+        }
+        let mut next = self
+            .water
+            .iter()
+            .map(|p| p.id)
+            .chain(self.outflow.iter().map(|p| p.id))
+            .max()
+            .unwrap_or(0)
+            + 1;
+        for id in self
+            .water
+            .iter_mut()
+            .map(|p| &mut p.id)
+            .chain(self.outflow.iter_mut().map(|p| &mut p.id))
+        {
+            if *id == 0 {
+                *id = next;
+                next += 1;
+            }
+        }
+        self.next_water_id = next;
+    }
+    pub fn allocate_water_id(&mut self) -> u64 {
+        self.ensure_water_ids();
+        let id = self.next_water_id;
+        self.next_water_id += 1;
+        id
+    }
     pub fn parcel_volume(&self) -> f64 {
         if self.granular_packets {
             self.parcel_volume_m3.unwrap_or(PARCEL_VOLUME)

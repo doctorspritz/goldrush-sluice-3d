@@ -89,6 +89,7 @@ fn column() -> Sluice {
     let mut s = Sluice::default();
     s.water = (0..300)
         .map(|_| WaterParticle {
+            id: 0,
             position: Vec3::new(0.6, 0.28, 0.2),
             velocity: Vec3::ZERO,
             affine: Mat3::ZERO,

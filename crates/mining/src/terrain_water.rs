@@ -124,6 +124,7 @@ pub(crate) fn instances(site: &Site, detail: &crate::environment::Detail) -> Vec
                 slope_x: ids.map(|i| slopes_x[i]),
                 slope_z: ids.map(|i| slopes_z[i]),
                 flow_z: vz,
+                ..Default::default()
             };
             if subdivisions > 1 {
                 result.push(instance);

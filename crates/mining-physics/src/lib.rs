@@ -285,7 +285,9 @@ impl Hydraulics {
                     0.04 + (seq % 68) as f32 * 0.01,
                 )
             };
+            let id = s.sluice.allocate_water_id();
             s.sluice.water.push(WaterParticle {
+                id,
                 position: Vec3::new(x, y, z),
                 velocity: if profile == HydraulicProfile::OriginalDemo {
                     Vec3::new(0.5, -0.05, 0.0)

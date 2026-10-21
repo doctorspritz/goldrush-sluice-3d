@@ -27,22 +27,41 @@ use std::sync::{
 };
 
 const MAX_SPLATS: usize = 65_536;
+const MAX_RENDER_SPLATS: usize = MAX_SPLATS * 2;
+type PresentationKey = (u64, u32, Option<(mining_sim::Vec3, f32, f32)>);
 #[derive(Resource, Clone, ExtractResource)]
 pub struct WaterSplats {
     revision: u64,
     data: Arc<Vec<InstanceData>>,
     health: Arc<AtomicU8>,
-    clock: PresentationClock,
+    presentation: crate::water_presentation::Presentation,
+    presentation_key: Option<PresentationKey>,
+    builds: u64,
+    build_ms: f64,
+    max_build_ms: f64,
+    last_sample_time: f64,
+    surface_epoch: u64,
+    capture_ms: f64,
+    max_capture_ms: f64,
+    captures: u64,
     terrain_data: Arc<Vec<InstanceData>>,
     terrain_revision: u64,
     terrain_key: Option<(u64, u64, u64, u64)>,
-    terrain_clock: PresentationClock,
     fluid_revision: Option<crate::app::FluidRevision>,
-    outflow_clock: PresentationClock,
-    outflow_sample_time: f64,
     sim_time: f32,
 }
 impl WaterSplats {
+    pub fn presentation_report(&self) -> serde_json::Value {
+        serde_json::json!({"surface_builds": self.builds,
+            "mean_surface_build_ms": self.build_ms / self.builds.max(1) as f64,
+            "max_surface_build_ms": self.max_build_ms,
+            "mean_capture_ms": self.capture_ms / self.captures.max(1) as f64,
+            "max_capture_ms": self.max_capture_ms,
+            "interpolation_alpha": self.presentation.alpha,
+            "presented_sim_time": self.presentation.time,
+            "buffer_underrun_frames": self.presentation.underruns,
+            "paired_render_particles": self.presentation.paired})
+    }
     pub fn terrain_count(&self) -> usize {
         self.terrain_data.len()
     }
@@ -59,52 +78,25 @@ impl Default for WaterSplats {
             revision: u64::MAX,
             data: Arc::new(Vec::new()),
             health: Arc::new(AtomicU8::new(0)),
-            clock: PresentationClock::default(),
+            presentation: Default::default(),
+            presentation_key: None,
+            builds: 0,
+            build_ms: 0.,
+            max_build_ms: 0.,
+            last_sample_time: -1.,
+            surface_epoch: 0,
+            capture_ms: 0.,
+            max_capture_ms: 0.,
+            captures: 0,
             terrain_data: Arc::new(Vec::new()),
             terrain_revision: 0,
             terrain_key: None,
-            terrain_clock: PresentationClock::default(),
             fluid_revision: None,
-            outflow_clock: PresentationClock::default(),
-            outflow_sample_time: 0.,
             sim_time: 0.,
         }
     }
 }
-/// Render-only advection spans at most one authoritative tick. It follows
-/// measured worker cadence, stops on pause/reset, and never writes to Session.
-#[derive(Clone, Default)]
-struct PresentationClock {
-    sim: Option<f64>,
-    updated: f64,
-    interval: f64,
-    tick: f32,
-    prediction: f32,
-}
-impl PresentationClock {
-    fn sample(&mut self, sim: f64, wall: f64, paused: bool) {
-        self.sample_interval(sim, wall, paused, mining_sim::FIXED_DT * 2.1);
-    }
-    fn sample_interval(&mut self, sim: f64, wall: f64, paused: bool, max_tick: f32) {
-        if self.sim != Some(sim) {
-            let delta = self.sim.map(|previous| sim - previous).unwrap_or(0.0);
-            if delta > 0.0 && delta <= max_tick as f64 {
-                self.interval = (wall - self.updated).max(mining_sim::FIXED_DT as f64);
-                self.tick = delta as f32;
-            } else {
-                self.tick = 0.0;
-            }
-            self.updated = wall;
-            self.sim = Some(sim);
-        }
-        self.prediction = if paused {
-            0.0
-        } else {
-            self.tick * ((wall - self.updated) / self.interval.max(0.001)).clamp(0.0, 1.0) as f32
-        };
-    }
-}
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
 #[repr(C)]
 pub(crate) struct InstanceData {
     pub center_radius: [f32; 4],
@@ -116,6 +108,11 @@ pub(crate) struct InstanceData {
     pub slope_x: [f32; 4],
     pub slope_z: [f32; 4],
     pub flow_z: [f32; 4],
+    pub previous_center: [f32; 4],
+    pub previous_x: [f32; 4],
+    pub previous_y: [f32; 4],
+    pub previous_z: [f32; 4],
+    pub previous_shape: [f32; 4],
 }
 
 pub struct WaterSplatPlugin;
@@ -125,6 +122,7 @@ impl Plugin for WaterSplatPlugin {
         bevy::asset::embedded_asset!(app, "water_blur.wgsl");
         bevy::asset::embedded_asset!(app, "water_compose.wgsl");
         app.init_resource::<WaterSplats>()
+            .insert_non_send_resource(crate::water_surface_worker::SurfaceWorker::default())
             .add_plugins(ExtractResourcePlugin::<WaterSplats>::default());
         app.sub_app_mut(RenderApp)
             .add_systems(RenderStartup, init_pipelines)
@@ -368,7 +366,7 @@ fn prepare_particles(
             if !data.terrain_data.is_empty() {
                 queue.write_buffer(
                     &buffer.buffer,
-                    (MAX_SPLATS * size_of::<InstanceData>()) as u64,
+                    (MAX_RENDER_SPLATS * size_of::<InstanceData>()) as u64,
                     bytemuck::cast_slice(&data.terrain_data),
                 );
             }
@@ -388,8 +386,8 @@ fn prepare_particles(
     let mut buffer = ParticleBuffer {
         buffer: device.create_buffer(&BufferDescriptor {
             label: Some("Bounded fluid kernels and continuous terrain water"),
-            size: ((MAX_SPLATS + crate::terrain_water::MAX_SPLATS) * size_of::<InstanceData>())
-                as u64,
+            size: ((MAX_RENDER_SPLATS + crate::terrain_water::MAX_SPLATS)
+                * size_of::<InstanceData>()) as u64,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }),
@@ -430,11 +428,16 @@ fn prepare_views(
             view_from_world: world_from_view.inverse(),
             sediment: Vec4::new(
                 0., // reserved; particle optics carry local slurry extinction
-                water.terrain_clock.prediction,
+                0., // reserved
                 water.sim_time,
-                water.outflow_clock.prediction,
+                0.,
             ),
-            viewport: Vec4::new(full.x as f32, full.y as f32, 0.045, water.clock.prediction),
+            viewport: Vec4::new(
+                full.x as f32,
+                full.y as f32,
+                0.045,
+                water.presentation.alpha,
+            ),
         };
         if let Some(mut target) = existing {
             if target.size == full {
@@ -617,12 +620,12 @@ impl ViewNode for FluidNode {
             pass.set_bind_group(0, &particle_group, &[]);
             pass.draw(
                 0..(6 * crate::environment::FINE_SUBDIVISIONS.pow(2)) as u32,
-                MAX_SPLATS as u32..MAX_SPLATS as u32 + particles.terrain_fine_count,
+                MAX_RENDER_SPLATS as u32..MAX_RENDER_SPLATS as u32 + particles.terrain_fine_count,
             );
             pass.draw(
                 0..6,
-                MAX_SPLATS as u32 + particles.terrain_fine_count
-                    ..MAX_SPLATS as u32 + particles.terrain_count,
+                MAX_RENDER_SPLATS as u32 + particles.terrain_fine_count
+                    ..MAX_RENDER_SPLATS as u32 + particles.terrain_count,
             );
         }
         {
@@ -685,11 +688,10 @@ pub fn surface_failed(splats: &WaterSplats) -> bool {
     splats.health.load(Ordering::Acquire) == 2
 }
 /// Build world-space splats from the exact live FLIP state, including detached
-/// droplets. A deterministic stride bounds upload/fragment cost at high volumes.
+/// droplets. Stable hashed identities bound upload/fragment cost at high volumes.
 pub fn visible_count(sluice: &mining_sim::Sluice) -> usize {
     let count = sluice.water.len() + sluice.outflow.len();
-    let stride = count.div_ceil(MAX_SPLATS).max(1);
-    count.div_ceil(stride)
+    count.min(MAX_SPLATS)
 }
 
 pub fn sync(
@@ -697,33 +699,57 @@ pub fn sync(
     time: Res<Time>,
     detail: Res<crate::environment::Detail>,
     mut splats: ResMut<WaterSplats>,
+    mut worker: NonSendMut<crate::water_surface_worker::SurfaceWorker>,
 ) {
-    splats.clock.sample(
-        game.session.sim_time - game.session.sluice.fluid_clock as f64,
-        time.elapsed_secs_f64(),
-        game.session.paused,
+    let wall = time.elapsed_secs_f64();
+    let s = &game.session.sluice;
+    let presentation_key = (
+        game.simulation_generation,
+        s.cleanups,
+        s.placement.map(|p| (p.inlet, p.yaw, p.slope_deg)),
     );
-    let key = game.fluid_revision();
-    if splats.fluid_revision != Some(key) {
-        splats.fluid_revision = Some(key);
-        splats.revision = game.snapshot_id;
-        splats.data = Arc::new(instances(&game.session.sluice));
-        splats.outflow_sample_time = game.session.sim_time;
+    if splats.presentation_key != Some(presentation_key) {
+        splats.presentation = Default::default();
+        splats.presentation_key = Some(presentation_key);
+        splats.fluid_revision = None;
+        splats.last_sample_time = -1.;
+        splats.surface_epoch = splats.surface_epoch.wrapping_add(1);
+        splats.data = Arc::new(Vec::new());
+        splats.revision = splats.revision.wrapping_add(1);
     }
-    splats.sim_time = game.session.sim_time as f32;
-    let outflow_sample_time = splats.outflow_sample_time;
-    splats.outflow_clock.sample(
-        outflow_sample_time,
-        time.elapsed_secs_f64(),
-        game.session.paused,
-    );
+    let key = game.fluid_revision();
+    while let Some(surface) = worker.poll() {
+        if surface.epoch != splats.surface_epoch {
+            continue;
+        }
+        splats
+            .presentation
+            .push(surface.sim, surface.wall, surface.data);
+        splats.builds += 1;
+        splats.build_ms += surface.ms;
+        splats.max_build_ms = splats.max_build_ms.max(surface.ms);
+    }
+    if worker.can_submit()
+        && (splats.fluid_revision != Some(key)
+            || (s.water.is_empty()
+                && s.outflow.is_empty()
+                && game.session.sim_time > splats.last_sample_time))
+    {
+        let started = std::time::Instant::now();
+        splats.fluid_revision = Some(key);
+        splats.last_sample_time = game.session.sim_time;
+        worker.submit(splats.surface_epoch, game.session.sim_time, wall, s);
+        let ms = started.elapsed().as_secs_f64() * 1000.;
+        splats.captures += 1;
+        splats.capture_ms += ms;
+        splats.max_capture_ms = splats.max_capture_ms.max(ms);
+    }
+    if let Some(data) = splats.presentation.advance(wall, game.session.paused) {
+        splats.revision = splats.revision.wrapping_add(1);
+        splats.data = data;
+    }
+    splats.sim_time = splats.presentation.time as f32;
     let site = &game.session.site;
-    splats.terrain_clock.sample_interval(
-        site.hydraulic.steps as f64 * 3.0 * mining_sim::FIXED_DT as f64,
-        time.elapsed_secs_f64(),
-        game.session.paused,
-        0.051,
-    );
     let key = (
         game.simulation_generation,
         site.hydraulic.steps,
@@ -737,107 +763,121 @@ pub fn sync(
     }
 }
 
-fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
+pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
     let Some(p) = sluice.placement else {
         return Vec::new();
     };
     let count = sluice.water.len() + sluice.outflow.len();
-    let stride = count.div_ceil(MAX_SPLATS).max(1);
-    let radius = sluice.profile.cell() * 0.85 * (stride as f32).cbrt();
+    let weight = count as f32 / count.clamp(1, MAX_SPLATS) as f32;
+    let radius = sluice.profile.cell() * 0.85 * weight.cbrt();
     let slurry = mining_sim::slurry::SlurryField::new(sluice);
     let outlet_extinction = slurry.outlet_extinction(sluice);
-    let sampled: Vec<_> = sluice
+    // Select IDs before evaluating the optical field or transforming positions.
+    let mut selected: Vec<_> = sluice
         .water
         .iter()
-        .map(|water| {
-            let world = p.to_world(sluice.grid_to_local(water.position));
-            (
-                Vec3::from_array(world.to_array()),
-                sluice.grid_velocity_to_world(water.velocity),
-                0.,
-                slurry.sample(water.position).1,
-            )
-        })
-        .chain(sluice.outflow.iter().map(|water| {
-            (
-                Vec3::from_array(water.position.to_array()),
-                water.velocity,
-                2.,
-                outlet_extinction,
-            )
-        }))
-        .step_by(stride)
-        .filter(|(p, v, _, _)| p.is_finite() && v.is_finite())
+        .enumerate()
+        .map(|(i, p)| (p.id, false, i))
+        .chain(
+            sluice
+                .outflow
+                .iter()
+                .enumerate()
+                .map(|(i, p)| (p.id, true, i)),
+        )
         .collect();
-    let points: Vec<_> = sampled.iter().map(|(p, _, _, _)| *p).collect();
+    // Bottom-k hashed identities bound cost without reselecting the whole
+    // surface when one particle exits and compacts the simulation vector.
+    if selected.len() > MAX_SPLATS {
+        selected.select_nth_unstable_by_key(MAX_SPLATS, |p| sample_rank(p.0));
+        selected.truncate(MAX_SPLATS);
+    }
+    selected.sort_unstable_by_key(|p| p.0);
+    let sampled: Vec<_> = selected
+        .into_iter()
+        .map(|(id, outlet, index)| {
+            if outlet {
+                let water = &sluice.outflow[index];
+                (
+                    id,
+                    Vec3::from_array(water.position.to_array()),
+                    water.velocity,
+                    2.,
+                    outlet_extinction,
+                )
+            } else {
+                let water = &sluice.water[index];
+                let world = p.to_world(sluice.grid_to_local(water.position));
+                (
+                    id,
+                    Vec3::from_array(world.to_array()),
+                    sluice.grid_velocity_to_world(water.velocity),
+                    0.,
+                    slurry.sample(water.position).1,
+                )
+            }
+        })
+        .filter(|(_, p, v, _, _)| p.is_finite() && v.is_finite())
+        .collect();
+    let points: Vec<_> = sampled.iter().map(|(_, p, _, _, _)| *p).collect();
     let kernels = crate::fluid_surface::kernels(&points, sluice.profile.cell());
     sampled
         .into_iter()
         .zip(kernels)
-        .map(|((_p, v, kind, extinction), kernel)| {
+        .map(|((id, _p, v, kind, extinction), kernel)| {
             let c = kernel.center;
             let axis = |v: Vec3, normal: f32| [v.x, v.y, v.z, normal];
-            InstanceData {
-                center_radius: [c.x, c.y, c.z, radius],
-                velocity: [v.x, v.y, v.z, 0.],
-                shape: [
-                    (sluice.profile.particle_m3() * stride as f64
-                        / (4. / 3.
-                            * std::f64::consts::PI
-                            * (radius as f64).powi(3)
-                            * kernel.axes[0].length() as f64
-                            * kernel.axes[1].length() as f64
-                            * kernel.axes[2].length() as f64)) as f32,
-                    extinction,
-                    kind,
-                    if kind == 0. { kernel.planarity } else { 0. },
-                ],
-                axis_x: axis(kernel.axes[0], kernel.normal.x),
-                axis_y: axis(kernel.axes[1], kernel.normal.y),
-                axis_z: axis(kernel.axes[2], kernel.normal.z),
-                slope_x: [0.; 4],
-                slope_z: [0.; 4],
-                flow_z: [0.; 4],
-            }
+            (
+                id,
+                InstanceData {
+                    center_radius: [c.x, c.y, c.z, radius],
+                    velocity: [v.x, v.y, v.z, 0.],
+                    shape: [
+                        (sluice.profile.particle_m3() * weight as f64
+                            / (4. / 3.
+                                * std::f64::consts::PI
+                                * (radius as f64).powi(3)
+                                * kernel.axes[0].length() as f64
+                                * kernel.axes[1].length() as f64
+                                * kernel.axes[2].length() as f64)) as f32,
+                        extinction,
+                        kind,
+                        if kind == 0. { kernel.planarity } else { 0. },
+                    ],
+                    axis_x: axis(kernel.axes[0], kernel.normal.x),
+                    axis_y: axis(kernel.axes[1], kernel.normal.y),
+                    axis_z: axis(kernel.axes[2], kernel.normal.z),
+                    slope_x: [0.; 4],
+                    slope_z: [0.; 4],
+                    flow_z: [0.; 4],
+                    ..Default::default()
+                },
+            )
         })
         .collect()
+}
+
+fn sample_rank(mut id: u64) -> u64 {
+    id = (id ^ (id >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    id = (id ^ (id >> 27)).wrapping_mul(0x94d049bb133111eb);
+    id ^ (id >> 31)
+}
+
+#[cfg(test)]
+fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
+    samples(sluice).into_iter().map(|(_, p)| p).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn presentation_uses_the_fluid_cadence_between_domain_ticks() {
-        let mut clock = PresentationClock::default();
-        let dt = mining_sim::FIXED_DT as f64 * 2.0;
-        clock.sample(10.0, 0.0, false);
-        clock.sample(10.0 + dt, 0.04, false);
-        clock.sample(10.0 + dt, 0.06, false);
-        assert!((clock.prediction - dt as f32 * 0.5).abs() < 1e-6);
-        clock.sample(10.0 + dt, 10.0, false);
-        assert!((clock.prediction - dt as f32).abs() < 1e-6);
-    }
-    #[test]
-    fn presentation_advects_only_one_tick_and_stops_on_pause_or_restore() {
-        let mut clock = PresentationClock::default();
-        let dt = mining_sim::FIXED_DT as f64;
-        clock.sample(20.0, 0.0, false);
-        clock.sample(20.0 + dt, 0.12, false);
-        clock.sample(20.0 + dt, 0.18, false);
-        assert!((clock.prediction - mining_sim::FIXED_DT * 0.5).abs() < 1e-6);
-        clock.sample(20.0 + dt, 100.0, false);
-        assert_eq!(clock.prediction, mining_sim::FIXED_DT);
-        clock.sample(20.0 + dt, 100.0, true);
-        assert_eq!(clock.prediction, 0.0);
-        clock.sample(0.0, 100.0, false);
-        assert_eq!(clock.prediction, 0.0);
-    }
-    #[test]
     fn accepted_outlet_uses_no_surface_normal_override() {
         let mut session = mining_sim::Session::new();
         session.sluice.placement = Some(mining_sim::Placement::suggested(&session.site));
         session.sluice.outflow = vec![
             mining_sim::outflow::OutflowParticle {
+                id: 0,
                 position: mining_sim::Vec3::new(14., 1., 20.),
                 velocity: mining_sim::Vec3::Z
             };
@@ -860,18 +900,41 @@ mod tests {
         sluice.placement = Some(p);
         let y = (sluice.floor_cells() + 1) as f32 * FLUID_CELL;
         let particle = WaterParticle {
+            id: 0,
             position: Vec3::new(1.0, y + 0.3, 0.2),
             velocity: Vec3::X,
             affine: Default::default(),
         };
         sluice.water = vec![particle.clone(); MAX_SPLATS + 1];
         sluice.water[2].position.y += 0.4;
+        sluice.ensure_water_ids();
         let result = instances(sluice);
         assert!(result.len() <= MAX_SPLATS);
-        assert!((result[1].center_radius[1] - result[0].center_radius[1] - 0.4).abs() < 1e-5);
+        assert!(result
+            .iter()
+            .any(|q| (q.center_radius[1] - p.inlet.y - 0.7).abs() < 1e-5));
         assert!((result[0].center_radius[1] - p.inlet.y - 0.3).abs() < 1e-5);
         assert_eq!(sluice.water.len(), MAX_SPLATS + 1);
         sluice.water.clear();
         assert!(instances(sluice).is_empty());
+    }
+    #[test]
+    fn removing_one_particle_keeps_all_other_sampled_identities() {
+        use mining_sim::{sluice::WaterParticle, Session, Vec3};
+        let mut s = Session::new();
+        s.sluice.placement = Some(mining_sim::Placement::suggested(&s.site));
+        s.sluice.water = (1..=MAX_SPLATS + 16)
+            .map(|id| WaterParticle {
+                id: id as u64,
+                position: Vec3::new(0.4, 0.2, 0.2),
+                velocity: Vec3::ZERO,
+                affine: Default::default(),
+            })
+            .collect();
+        let a: std::collections::HashSet<_> = samples(&s.sluice).into_iter().map(|p| p.0).collect();
+        let removed = s.sluice.water.remove(1).id;
+        let b: std::collections::HashSet<_> = samples(&s.sluice).into_iter().map(|p| p.0).collect();
+        assert!(a.difference(&b).all(|id| *id == removed));
+        assert!(b.difference(&a).count() <= 1);
     }
 }

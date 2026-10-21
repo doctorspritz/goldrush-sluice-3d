@@ -1,5 +1,5 @@
 struct Uniforms {clip_from_world:mat4x4<f32>,world_from_view:mat4x4<f32>,view_from_clip:mat4x4<f32>,view_from_world:mat4x4<f32>,viewport:vec4<f32>,sediment:vec4<f32>};
-struct Particle {center_radius:vec4<f32>,velocity:vec4<f32>,shape:vec4<f32>,axis_x:vec4<f32>,axis_y:vec4<f32>,axis_z:vec4<f32>,slope_x:vec4<f32>,slope_z:vec4<f32>,flow_z:vec4<f32>};
+struct Particle {center_radius:vec4<f32>,velocity:vec4<f32>,shape:vec4<f32>,axis_x:vec4<f32>,axis_y:vec4<f32>,axis_z:vec4<f32>,slope_x:vec4<f32>,slope_z:vec4<f32>,flow_z:vec4<f32>,previous_center:vec4<f32>,previous_x:vec4<f32>,previous_y:vec4<f32>,previous_z:vec4<f32>,previous_shape:vec4<f32>};
 @group(0) @binding(0) var<storage,read> particles:array<Particle>;
 @group(0) @binding(1) var<uniform> u:Uniforms;
 // Presentation only, matching terrain_water::MIN_VISIBLE_DEPTH_M.
@@ -21,9 +21,24 @@ fn quad_value(values:vec4<f32>,uv:vec2<f32>)->f32 {
 }
 @vertex fn particle_vertex(@builtin(vertex_index) id:u32,@builtin(instance_index) instance:u32)->Varying {
  let corners=array<vec2<f32>,6>(vec2(-1.,-1.),vec2(1.,-1.),vec2(-1.,1.),vec2(-1.,1.),vec2(1.,-1.),vec2(1.,1.));
- let p=particles[instance];var local=corners[id%6u];let radius=p.center_radius.w;
- let prediction=select(u.viewport.w,u.sediment.w,p.shape.z==2.);
- let center=p.center_radius.xyz+p.velocity.xyz*prediction;
+ var p=particles[instance];var local=corners[id%6u];
+ if p.shape.z!=1. {
+  p.center_radius=mix(p.previous_center,p.center_radius,u.viewport.w);
+  p.velocity=vec4(mix(p.slope_x.xyz,p.velocity.xyz,u.viewport.w),p.velocity.w);
+  p.axis_x=mix(p.previous_x,p.axis_x,u.viewport.w);
+  p.axis_y=mix(p.previous_y,p.axis_y,u.viewport.w);
+  p.axis_z=mix(p.previous_z,p.axis_z,u.viewport.w);
+  // Interpolated eigenframes retain orthogonal ellipsoid axes. Equivalent
+  // signs/permutations were aligned once when the snapshot pair was built.
+  let x=normalize(p.axis_x.xyz);
+  let y=normalize(p.axis_y.xyz-x*dot(x,p.axis_y.xyz));
+  let z=normalize(cross(x,y))*select(-1.,1.,dot(cross(x,y),p.axis_z.xyz)>=0.);
+  p.axis_x=vec4(x*length(p.axis_x.xyz),p.axis_x.w);
+  p.axis_y=vec4(y*length(p.axis_y.xyz),p.axis_y.w);
+  p.axis_z=vec4(z*length(p.axis_z.xyz),p.axis_z.w);
+  let kind=p.shape.z;p.shape=mix(p.previous_shape,p.shape,u.viewport.w);p.shape.z=kind;
+ }
+ let radius=p.center_radius.w;let center=p.center_radius.xyz;
  let ax=p.axis_x.xyz*radius;let ay=p.axis_y.xyz*radius;let az=p.axis_z.xyz*radius;
  let extent=max(length(ax),max(length(ay),length(az)))*1.02;
  var world=center+(u.world_from_view[0].xyz*local.x+u.world_from_view[1].xyz*local.y)*extent;
