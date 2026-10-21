@@ -8,6 +8,8 @@ use std::{collections::HashSet, path::PathBuf, time::Instant};
 
 #[derive(Resource)]
 pub struct MotionCapture {
+    /// Diagnostic visibility control only; sediment physics/optics still run.
+    pub water_only: bool,
     directory: Option<PathBuf>,
     started: Instant,
     recording: Option<Instant>,
@@ -31,6 +33,7 @@ impl Default for MotionCapture {
             std::fs::create_dir_all(dir).expect("motion capture directory");
         }
         Self {
+            water_only: directory.is_some() && args.iter().any(|a| a == "--capture-water-only"),
             directory,
             started: Instant::now(),
             recording: None,
@@ -77,6 +80,7 @@ pub fn update(
                 directory.display()
             );
             exit.write(AppExit::Success);
+            capture.directory = None;
         } else if finished.elapsed().as_secs_f64() > 10. {
             eprintln!(
                 "Missing screenshot files: {written}/{}",
@@ -118,7 +122,7 @@ pub fn update(
     let placement = sluice.placement.expect("flowing demo placement");
     let tracks:Vec<_>=sluice.water.iter().filter(|p|capture.ids.contains(&p.id)).map(|p|serde_json::json!({"id":p.id,"kind":"channel","grid":p.position.to_array(),"world":placement.to_world(sluice.grid_to_local(p.position)).to_array(),"velocity":sluice.grid_velocity_to_world(p.velocity).to_array(),"height_above_plane_m":sluice.grid_to_local(p.position).y})).chain(sluice.outflow.iter().filter(|p|capture.ids.contains(&p.id)).map(|p|serde_json::json!({"id":p.id,"kind":"outlet","world":p.position.to_array(),"velocity":p.velocity.to_array()}))).collect();
     let name = format!("frame-{:04}.png", capture.frames.len());
-    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report()});
+    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report()});
     capture.frames.push(record);
     commands
         .spawn(Screenshot::primary_window())

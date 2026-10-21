@@ -842,6 +842,18 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
         .zip(kernels)
         .map(|((id, _p, v, kind, extinction), kernel)| {
             let c = kernel.center;
+            // Overlapping bulk kernels reconstruct a continuous surface. A
+            // detached sample instead uses its represented water volume, so
+            // millimetre spray does not inherit a two-centimetre bulk silhouette.
+            // The accepted outlet reconstruction retains its existing support.
+            let radius = if kind == 0. {
+                let drop = (sluice.profile.particle_m3() * weight as f64 * 3.
+                    / (4. * std::f64::consts::PI))
+                    .cbrt() as f32;
+                drop.min(radius) + (radius - drop.min(radius)) * kernel.bulk
+            } else {
+                radius
+            };
             let axis = |v: Vec3, normal: f32| [v.x, v.y, v.z, normal];
             (
                 id,

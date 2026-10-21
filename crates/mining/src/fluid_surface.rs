@@ -27,6 +27,8 @@ pub(crate) struct Kernel {
     pub center: Vec3,
     pub normal: Vec3,
     pub planarity: f32,
+    /// Connected-neighbour support for rendering bulk water versus small spray.
+    pub bulk: f32,
 }
 pub(crate) fn kernels(points: &[Vec3], cell: f32) -> Vec<Kernel> {
     let width = cell * 2.;
@@ -75,11 +77,13 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32) -> Vec<Kernel> {
                     }
                 }
                 if total.count < 12. {
+                    let support = ((total.count - 1.) / 11.).clamp(0., 1.);
                     return Kernel {
                         axes: [Vec3::X, Vec3::Y, Vec3::Z],
                         center: p,
                         normal: Vec3::Y,
                         planarity: 0.,
+                        bulk: support * support * (3. - 2. * support),
                     };
                 }
                 let mean = total.sum / total.count;
@@ -108,12 +112,14 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32) -> Vec<Kernel> {
                     center: origin + mean,
                     normal,
                     planarity,
+                    bulk: 1.,
                 }
             });
             Kernel {
                 axes: kernel.axes,
                 normal: kernel.normal,
                 planarity: kernel.planarity,
+                bulk: kernel.bulk,
                 center: p + (kernel.center - p).clamp_length_max(cell * 0.2) * 0.35,
             }
         })
@@ -202,5 +208,14 @@ mod tests {
             .iter()
             .flat_map(|k| k.axes)
             .all(|v| v.is_finite() && v.length() <= 1.81));
+    }
+    #[test]
+    fn detached_water_has_no_bulk_support_while_a_connected_sheet_does() {
+        let isolated = kernels(&[Vec3::ZERO, Vec3::new(0.2, 0.1, 0.)], 0.01);
+        assert!(isolated.iter().all(|k| k.bulk == 0.));
+        let sheet: Vec<_> = (0..25)
+            .map(|i| Vec3::new((i % 5) as f32 * 0.003, 0., (i / 5) as f32 * 0.003))
+            .collect();
+        assert!(kernels(&sheet, 0.01).iter().all(|k| k.bulk == 1.));
     }
 }

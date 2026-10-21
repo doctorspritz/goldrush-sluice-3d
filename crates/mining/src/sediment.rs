@@ -117,11 +117,15 @@ fn geometry(s: &Sluice) -> [Geometry; 3] {
 pub fn sync(
     mut commands: Commands,
     game: Res<crate::app::Game>,
+    capture: Res<crate::motion_capture::MotionCapture>,
     palette: Res<crate::scene::Palette>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut handles: Local<Option<[Handle<Mesh>; 3]>>,
     mut revision: Local<Option<crate::app::FluidRevision>>,
 ) {
+    if capture.water_only {
+        return;
+    }
     let key = game.fluid_revision();
     if handles.is_some() && *revision == Some(key) {
         return;

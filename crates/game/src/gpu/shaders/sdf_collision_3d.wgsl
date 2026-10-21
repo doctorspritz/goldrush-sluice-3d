@@ -181,58 +181,46 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    // Check if particle would enter a jammed sediment cell (INTERNAL solid obstacles only)
-    // Skip for sediment particles - DEM handles their collision properly
-    // Skip for boundary cells - handled by boundary clamping below
+    // Resolve voxel occupancy (including packed bed) at the nearest free face.
+    // Never jump to a cell centre or damp tangential flow: those operations
+    // repeatedly stranded water above riffles and manufactured visible pops.
     if (!is_sediment) {
-        let cell_i = i32(pos.x / params.cell_size);
-        let cell_j = i32(pos.y / params.cell_size);
-        let cell_k = i32(pos.z / params.cell_size);
-
-        // Only check for INTERNAL solid cells, not boundary walls
-        // Boundary walls are handled by the clamping code below
-        let is_boundary_cell = cell_i <= 0 || cell_i >= i32(params.width) - 1 ||
-                               cell_j <= 0 || cell_j >= i32(params.height) - 1 ||
-                               cell_k <= 0 || cell_k >= i32(params.depth) - 1;
-
-        if (!is_boundary_cell && is_cell_solid(cell_i, cell_j, cell_k)) {
-            // Particle entered an INTERNAL solid cell (jammed sediment) - push to nearest fluid
-            let old_pos = positions[pid].xyz;
-
-            // Find the nearest non-solid cell by checking neighbors
-            // Priority: same level (dj=0) first, then upward (dj=1,2)
-            var best_pos = old_pos;
-            var found_valid = false;
-
-            for (var dj: i32 = 0; dj <= 2; dj++) {
-                for (var dk: i32 = -1; dk <= 1; dk++) {
-                    for (var di: i32 = -1; di <= 1; di++) {
-                        if (di == 0 && dj == 0 && dk == 0) { continue; }
-
-                        let test_i = cell_i + di;
-                        let test_j = cell_j + dj;
-                        let test_k = cell_k + dk;
-
-                        if (!is_cell_solid(test_i, test_j, test_k)) {
-                            let test_pos = vec3<f32>(
-                                (f32(test_i) + 0.5) * params.cell_size,
-                                (f32(test_j) + 0.5) * params.cell_size,
-                                (f32(test_k) + 0.5) * params.cell_size
-                            );
-                            best_pos = test_pos;
-                            found_valid = true;
-                            break;
+        let cell = vec3<i32>(floor(pos / params.cell_size));
+        let internal = all(cell > vec3<i32>(0)) &&
+            all(cell < vec3<i32>(i32(params.width)-1, i32(params.height)-1, i32(params.depth)-1));
+        if (internal && is_cell_solid(cell.x, cell.y, cell.z)) {
+            let skin = params.cell_size * 0.001;
+            var best = pos;
+            var distance_sq = 1e20;
+            // Usually one ring suffices. A second ring handles a newly packed
+            // bed surrounding a particle; all directions have equal priority.
+            for (var ring = 1; ring <= 2; ring++) {
+                for (var z = -ring; z <= ring; z++) {
+                    for (var y = -ring; y <= ring; y++) {
+                        for (var x = -ring; x <= ring; x++) {
+                            if (max(abs(x), max(abs(y), abs(z))) != ring) { continue; }
+                            let neighbour = cell + vec3<i32>(x,y,z);
+                            if (is_cell_solid(neighbour.x, neighbour.y, neighbour.z)) { continue; }
+                            let lo = vec3<f32>(neighbour) * params.cell_size + vec3<f32>(skin);
+                            let hi = lo + vec3<f32>(params.cell_size - 2.0 * skin);
+                            let candidate = clamp(pos, lo, hi);
+                            let delta = candidate - pos;
+                            let d2 = dot(delta, delta);
+                            if (d2 < distance_sq) { best = candidate; distance_sq = d2; }
                         }
                     }
-                    if (found_valid) { break; }
                 }
-                if (found_valid) { break; }
+                if (distance_sq < 1e19) { break; }
             }
-
-            pos = best_pos;
-
-            // Damp velocity when hitting jammed sediment
-            vel *= 0.3;
+            if (distance_sq < 1e19) {
+                let normal = normalize(best - pos);
+                pos = best;
+                vel -= normal * min(dot(vel, normal), 0.0);
+            } else {
+                // No local free volume: retain the last position rather than
+                // invent an upward escape or erase all momentum.
+                pos = positions[pid].xyz;
+            }
         }
     }
 

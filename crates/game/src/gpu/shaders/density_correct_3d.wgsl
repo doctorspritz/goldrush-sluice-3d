@@ -2,10 +2,9 @@
 //
 // Particles sample position deltas from grid using trilinear interpolation
 // and apply corrections in-place on the positions buffer.
-// Uses offset positions for proper staggered grid sampling (blub approach):
-// - X delta sampled at pos - (0.5, 0, 0)
-// - Y delta sampled at pos - (0, 0.5, 0)
-// - Z delta sampled at pos - (0, 0, 0.5)
+// Forward differences at index (i,j,k) live on the POSITIVE cell faces:
+// - X: (i+1, j+0.5, k+0.5), cyclically for Y/Z.
+// These arrays are cell-sized, unlike the negative-face MAC velocity arrays.
 //
 // Based on: blub/density_projection_correct_particles.comp
 
@@ -67,10 +66,10 @@ fn sample_delta_z(i: i32, j: i32, k: i32) -> f32 {
     return position_delta_z[cell_index(u32(i), u32(j), u32(k))];
 }
 
-// Trilinear interpolation for position delta X (offset by -0.5 in X)
+// Positive X face of a cell-centred pressure field.
 fn trilinear_delta_x(pos: vec3<f32>) -> f32 {
     // Sample position with offset for staggered grid
-    let sample_pos = max(vec3<f32>(0.0), pos - vec3<f32>(0.5, 0.0, 0.0));
+    let sample_pos = pos - vec3<f32>(1.0, 0.5, 0.5);
 
     // Get base cell coordinates
     let base_x = i32(floor(sample_pos.x));
@@ -104,9 +103,9 @@ fn trilinear_delta_x(pos: vec3<f32>) -> f32 {
     return mix(v0, v1, fz);
 }
 
-// Trilinear interpolation for position delta Y (offset by -0.5 in Y)
+// Positive Y face.
 fn trilinear_delta_y(pos: vec3<f32>) -> f32 {
-    let sample_pos = max(vec3<f32>(0.0), pos - vec3<f32>(0.0, 0.5, 0.0));
+    let sample_pos = pos - vec3<f32>(0.5, 1.0, 0.5);
 
     let base_x = i32(floor(sample_pos.x));
     let base_y = i32(floor(sample_pos.y));
@@ -136,9 +135,9 @@ fn trilinear_delta_y(pos: vec3<f32>) -> f32 {
     return mix(v0, v1, fz);
 }
 
-// Trilinear interpolation for position delta Z (offset by -0.5 in Z)
+// Positive Z face.
 fn trilinear_delta_z(pos: vec3<f32>) -> f32 {
-    let sample_pos = max(vec3<f32>(0.0), pos - vec3<f32>(0.0, 0.0, 0.5));
+    let sample_pos = pos - vec3<f32>(0.5, 0.5, 1.0);
 
     let base_x = i32(floor(sample_pos.x));
     let base_y = i32(floor(sample_pos.y));
