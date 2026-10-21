@@ -2,6 +2,8 @@
 
 Water now leaves the sluice lip with its actual position and velocity, follows a saved ballistic trajectory, and deposits volume and horizontal momentum at its first terrain/water impact. The in-channel 1 cm FLIP/APIC solver, 120 Hz FLIP/DEM substeps, 80 velocity/40 density pressure sweeps and DEM riffle contacts remain. The terrain still runs the original conservative SWE, erosion, settling, transport and collapse stages.
 
+**Follow-up conservation correction:** the [environmental audit](2026-10-21-environment-water-audit.md) found water-creation and drainage defects in the original terrain path. The handoff ledger and reported zero water errors below cover the sluice/landing counter, not subsequent environmental storage. The complete system cannot yet be described as verified conservative.
+
 ## Confirmed fault and correction
 
 Two previous native saves contained 4,244 and 4,101 water particles at the outlet buffer's invisible 11 mm bottom boundary. Most had their downward velocity clamped to zero. The buffer extended only 12 cm beyond the visible channel, and escaped water was returned at one fixed terrain point.

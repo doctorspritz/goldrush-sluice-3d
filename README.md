@@ -8,6 +8,8 @@ The direct-control slice now completes a verified first shift with the original 
 
 The [shoreline report](docs/playtests/2026-10-21-shoreline.md) records full-resolution river/terrain contact, pixel-sized edge blending, native comparisons and its added GPU memory cost. The physical solvers and accepted particle/outlet optics remain unchanged; larger bank contours still need refinement.
 
+**Environmental water conservation needs repair.** The [saved-state audit](docs/playtests/2026-10-21-environment-water-audit.md) found unexplained water gain, a closed downstream river boundary and phantom water from dry excavation. Earlier zero-water-error receipts cover the sluice counter, not the complete terrain system. Repair is tracked as `sluice-environment-water` (P1).
+
 ## First Bend controls and loop
 
 The demo app opens beside an installed sluice with real water and finite paydirt already flowing. Its bundled shift was warmed by the original solvers for 12 simulated seconds; it still has about 0.81 m³ in the hopper. Use **Demo** to restart that view, **New shift** to begin with an untouched claim, and the visible **Help / Pause** buttons.

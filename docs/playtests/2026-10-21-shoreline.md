@@ -2,6 +2,8 @@
 
 The finer terrain still met a coarse-looking water edge. River depth, normals and film coverage were sampled from half-resolution particle targets; the compositor estimated full-resolution depth from neighbouring triangles. Near banks, tiny triangles, wet/dry boundaries and changes in slope invalidated that approximation.
 
+**Follow-up conservation correction:** the [environmental audit](2026-10-21-environment-water-audit.md) found an unexplained whole-system water gain and physical drainage/excavation defects. The zero water-ledger errors below measure the sluice counter only; they do not establish conservation after landing. No environmental physics correction is included in this rendering checkpoint.
+
 ## Correction
 
 River/runoff now rasterizes its existing connected geometry into **full-resolution depth/flow and normal/film targets**, with a separate depth attachment. Composition uses the actual river pixel and compares it with the full-resolution opaque terrain/equipment depth. The last pixel of signed-film and terrain contact fades using screen derivatives, calculated before divergent returns. Reverse-Z sky lanes stay finite. The river uses its continuously reconstructed surface normals directly.

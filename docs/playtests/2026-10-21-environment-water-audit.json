@@ -1,0 +1,77 @@
+{
+  "source": "Bundled12s demo versus final56s saved native benchmark; no new simulation run. Source increment from880 terrain steps at approximately0.05s; no cumulative boundary-drain ledger exists.",
+  "initial": {
+    "simulation_seconds": 12.016667293384671,
+    "terrain_steps": 240,
+    "terrain_water_m3": 16.4828372918672,
+    "active_sluice_airborne_credit_m3": 0.015097252216008883,
+    "whole_system_stored_m3": 16.497934544083208,
+    "cumulative_pumped_m3": 0.0450625021403539,
+    "cumulative_landed_m3": 0.029965249924345017,
+    "sluice_ledger_error_m3": 0.0,
+    "service_pad_water_m3": 0.7506232067578902,
+    "service_pad_max_depth_m": 0.1625829041004181,
+    "right_edge_water_m3": 9.263772957068817e-08,
+    "right_edge_last_outflow_m3": 0.0,
+    "downstream_edge_water_m3": 0.15167724163455973,
+    "downstream_edge_max_depth_m": 0.18347805738449097,
+    "wet_bbox_m": [
+      [
+        3.5,
+        0.0
+      ],
+      [
+        23.75,
+        31.75
+      ]
+    ],
+    "maximum_depth_m": 0.22465290129184723,
+    "source_inflow_m3_per_s": 0.12,
+    "water_at_or_below_1mm_m3": 0.003811929371165845
+  },
+  "final": {
+    "simulation_seconds": 56.000002920627594,
+    "terrain_steps": 1120,
+    "terrain_water_m3": 21.86402181013462,
+    "active_sluice_airborne_credit_m3": 0.015190010466312742,
+    "whole_system_stored_m3": 21.879211820600933,
+    "cumulative_pumped_m3": 0.21000000997446477,
+    "cumulative_landed_m3": 0.19480999950815203,
+    "sluice_ledger_error_m3": 0.0,
+    "service_pad_water_m3": 0.9683076133361974,
+    "service_pad_max_depth_m": 0.2636425495147705,
+    "right_edge_water_m3": 9.263772957068817e-08,
+    "right_edge_last_outflow_m3": 0.0,
+    "downstream_edge_water_m3": 0.24683246180655122,
+    "downstream_edge_max_depth_m": 0.21190033853054047,
+    "wet_bbox_m": [
+      [
+        3.25,
+        0.0
+      ],
+      [
+        23.75,
+        31.75
+      ]
+    ],
+    "maximum_depth_m": 0.2636425495147705,
+    "source_inflow_m3_per_s": 0.12,
+    "water_at_or_below_1mm_m3": 0.003856019996495404
+  },
+  "expected_added_river_source_m3": 5.279999999999999,
+  "unexplained_stored_minus_source_m3_before_boundary_losses": 0.10127727651772567,
+  "unexplained_litres": 101.27727651772567,
+  "limitations": [
+    "Cumulative edge outflow is not logged; its final value is zero.",
+    "This arithmetic identifies a net volume discrepancy but does not attribute it to a single stage.",
+    "No new GPU/native workloads were launched.",
+    "The <=1mm depth statistic does not classify each face as stationary; a neighbouring deeper cell can still cause flow."
+  ],
+  "inputs": {
+    "/Users/simonheikkila/.codex/worktrees/direct-mining/the-sluice-moose/crates/mining/assets/demo/flowing.json.zlib": "74a69efe161ebd23e45474b706f9554740d6f0ddf79d4d9093c19c91fcba8645",
+    "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/shoreline-2026-10-21/washing.save.json": "ba96f9cc2d46c81258e0f444f9d32c3a9e263d040bdaed9b8985a5e1ea252c46"
+  },
+  "audited_commit": "b2baac6c4c0423617dc60b2f1f5f9817eb157893",
+  "source_increment_method": "880 additional terrain steps times approximately0.05s times0.12m3/s; f32 source rounding changes the result by less than1mL",
+  "unexplained_gain_fraction_of_river_source": 0.01918130237078138
+}
