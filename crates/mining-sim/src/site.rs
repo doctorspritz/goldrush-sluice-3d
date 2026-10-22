@@ -39,7 +39,8 @@ pub struct HeightfieldState {
     pub impact_dirty: bool,
     pub flux_x: Vec<f32>,
     pub flux_z: Vec<f32>,
-    /// Separate solid/water volume concentrations, not layer depths or kg/m².
+    /// Separate reference-bulk/water concentrations, not literal grain volume,
+    /// layer depths or kg/m². Class dry densities convert these to grain mass.
     pub suspended_sediment: Vec<f32>,
     pub suspended_overburden: Vec<f32>,
     pub suspended_gravel: Vec<f32>,
@@ -252,36 +253,36 @@ impl Site {
             * (CELL * CELL) as f64
     }
     pub fn bulk_solid_volume_m3(&self) -> f64 {
-        let ground = [
+        self.stored_material().volume()
+    }
+    pub fn stored_material(&self) -> Material {
+        let layers = [
             &self.world.terrain_sediment,
-            &self.world.gravel_thickness,
             &self.world.overburden_thickness,
+            &self.world.gravel_thickness,
             &self.world.paydirt_thickness,
-        ]
-        .iter()
-        .flat_map(|v| v.iter())
-        .map(|v| *v as f64)
-        .sum::<f64>();
+        ];
         let fields = [
             &self.hydraulic.suspended_sediment,
             &self.hydraulic.suspended_overburden,
             &self.hydraulic.suspended_gravel,
             &self.hydraulic.suspended_paydirt,
         ];
-        let suspended = if fields.iter().all(|v| v.is_empty()) {
-            0.
-        } else {
-            (0..WIDTH * WIDTH)
-                .map(|i| {
-                    let concentration = fields
-                        .iter()
-                        .map(|v| v.get(i).copied().unwrap_or(0.) as f64)
-                        .sum::<f64>();
-                    concentration * self.world.water_depth(i % WIDTH, i / WIDTH) as f64
-                })
-                .sum::<f64>()
-        };
-        (ground + suspended) * (CELL as f64).powi(2)
+        let mut volumes = [0.; 4];
+        let area = (CELL as f64).powi(2);
+        for (i, _) in self.world.water_surface.iter().enumerate() {
+            let h = self.world.water_depth(i % WIDTH, i / WIDTH) as f64;
+            for ch in 0..4 {
+                volumes[ch] += (layers[ch][i] as f64
+                    + fields[ch].get(i).copied().unwrap_or(0.) as f64 * h)
+                    * area;
+            }
+        }
+        crate::intake::Suspension {
+            solid_m3: volumes,
+            gold_g: self.remaining_gold(),
+        }
+        .material()
     }
     /// Add the existing circular river source as clean water. Suspension is
     /// stored as concentration, so keeping C fixed would create dirt whenever

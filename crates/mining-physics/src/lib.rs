@@ -82,6 +82,29 @@ impl Hydraulics {
             "grain_centres_over_2mm_inside_solid":grain_centres_inside,
             "water_centres_over_2mm_inside_solid":water_inside})
     }
+    /// Compare the actual registered DEM templates with canonical inventory.
+    /// The old individual-grain compatibility mode is reported separately.
+    pub fn material_diagnostics(&self, s: &Session) -> serde_json::Value {
+        let Some(l) = &self.sluice else {
+            return serde_json::json!({"ready":false});
+        };
+        if l.dem.clumps.len() != s.sluice.grains.len() {
+            return serde_json::json!({"ready":false});
+        }
+        let mut expected = 0.;
+        let mut registered = 0.;
+        let mut count = 0;
+        for (g, c) in s.sluice.grains.iter().zip(&l.dem.clumps) {
+            if !g.volume_resolved {
+                continue;
+            }
+            expected += g.material.mass_kg();
+            registered += l.dem.templates[c.template_idx].mass as f64;
+            count += 1;
+        }
+        serde_json::json!({"ready":true,"volume_resolved_grains":count,"legacy_grains":s.sluice.grains.len()-count,
+            "inventory_dry_mass_kg":expected,"registered_dem_mass_kg":registered,"dem_mass_error_kg":registered-expected})
+    }
     async fn create() -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
         let adapter = instance
@@ -328,7 +351,9 @@ impl Hydraulics {
             .collect();
         let density: Vec<_> = std::iter::repeat_n(1.0, nw)
             .chain(s.sluice.grains.iter().map(|g| {
-                if g.kind == GrainKind::Gold {
+                if g.volume_resolved {
+                    g.density_kg_m3() / 1000.
+                } else if g.kind == GrainKind::Gold {
                     constants::GOLD_DENSITY
                 } else {
                     constants::GANGUE_DENSITY

@@ -35,10 +35,7 @@ fn main() {
                         ..Default::default()
                     }
                 } else {
-                    Material {
-                        sand_m3: volume,
-                        ..Default::default()
-                    }
+                    Material::sand_from_solid_volume(volume)
                 };
                 initial[slot] += if slot == 0 {
                     material.gold_g

@@ -114,10 +114,7 @@ fn main() {
                         ..Default::default()
                     }
                 } else {
-                    Material {
-                        sand_m3: volume,
-                        ..Default::default()
-                    }
+                    Material::sand_from_solid_volume(volume)
                 };
                 s.sluice.grains.push(Grain {
                     volume_resolved: true,
@@ -142,6 +139,8 @@ fn main() {
         }
     }
     let input = Assay::resident(&s);
+    let initial_mass = s.accounted_dry_mass_kg();
+    let mass_start = s.sim_time;
     let pumped = s.sluice.water_used_m3;
     let processed = s.sluice.processed_m3;
     advance(&mut s, duration, "tracer_with_feed", &mut solver);
@@ -154,6 +153,7 @@ fn main() {
     s.sluice.pump_on = false;
     advance(&mut s, 15., "draining", &mut solver);
     let before_cleanup = Assay::resident(&s);
+    let registered_material = solver.material_diagnostics(&s);
     let cleanup = s.sluice.cleanup();
     let cleanup_allowed = cleanup.is_ok();
     let after_cleanup = Assay::resident(&s);
@@ -176,13 +176,16 @@ fn main() {
         .map(|b| b["outlet_gold_g"].as_f64().unwrap())
         .sum();
     assert!((loss_from_bins - s.sluice.tailings.gold_g).abs() < 1e-7);
+    let dry_mass_error = s.accounted_dry_mass_kg() - initial_mass;
     let valid = s.water_balance_error_m3().abs() < 1e-4
+        && dry_mass_error.abs() < initial_mass * 1e-6
         && (s.accounted_gold() - s.initial_gold_g).abs() < 1e-7
         && s.sluice.valid();
     let achieved = (0.98..=1.02).contains(&(delivered_feed / case.feed_m3s as f64))
         && (0.98..=1.02).contains(&(delivered_water / case.flow_m3s as f64));
-    let data = json!({"schema_version":3,"component":"sluice","case":case.name,
-        "model_revision":"2026-10-21-apic-contacts",
+    let mut data = json!({"schema_version":4,"component":"sluice","case":case.name,
+        "model_revision":"2026-10-22-reference-bulk-mass",
+        "volume_basis":{"feed_and_parcels":"reference_bulk","quartz_assay":"mineral_grain_solids"},
         "requested_conditions_achieved":achieved,
         "boundaries":solver.boundary_diagnostics(&s),
         "contact_model":case.contact,"riffles":case.riffles,"cell_m":s.sluice.profile.cell(),
@@ -201,6 +204,9 @@ fn main() {
         "whole_water_error_m3":s.water_balance_error_m3(),"gold_error_g":s.accounted_gold()-s.initial_gold_g,
         "size_assay":bins,"observations":series,
         "limits":["weighted bulk parcels","voxel ramp and riffles","unresolved mat fibres","no calibrated flake drag","not matched to an experimental geometry","24 deterministic lateral positions per size; no statistical confidence claim"]});
+    data["mass_budget"] = json!({"start_sim_time":mass_start,
+        "dry_mass_error_kg":dry_mass_error,"dry_mass_tolerance_kg":initial_mass*1e-6,
+        "registered_material_before_cleanup":registered_material});
     mining_sim::storage::save(&s, &dir.join(format!("{}.save.json", case.name))).unwrap();
     std::fs::write(report, serde_json::to_vec_pretty(&data).unwrap()).unwrap();
     println!(

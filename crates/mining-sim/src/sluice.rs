@@ -204,7 +204,7 @@ impl Grain {
         }
     }
     pub fn solid_volume(&self) -> f64 {
-        self.material.volume() + self.material.gold_g * 0.001 / 19_300.0
+        self.material.solid_volume_m3()
     }
     pub fn collision_radius(&self) -> f32 {
         let physical = self.diameter_m * 0.5;
@@ -221,7 +221,10 @@ impl Grain {
             .max((self.solid_volume() * 3.0 / (4.0 * std::f64::consts::PI * 0.60)).cbrt() as f32)
     }
     pub fn mass_kg(&self) -> f32 {
-        (self.material.volume() * 2_650.0 + self.material.gold_g * 0.001) as f32
+        self.material.mass_kg() as f32
+    }
+    pub fn density_kg_m3(&self) -> f32 {
+        (self.material.mass_kg() / self.solid_volume().max(1e-30)) as f32
     }
 }
 fn riffles_present() -> bool {
@@ -425,12 +428,18 @@ impl Sluice {
                     break;
                 }
                 let one_grain = std::f64::consts::PI / 6. * (diameter as f64).powi(3);
+                let one_reference = if channel == 4 {
+                    one_grain
+                } else {
+                    one_grain * crate::material::MINERAL_DENSITY_KG_M3
+                        / crate::material::REFERENCE_DRY_DENSITIES_KG_M3[channel]
+                };
                 let available = if channel == 4 {
                     self.inlet.pending.gold_g / (19_300. * 1000.)
                 } else {
                     self.inlet.pending.solid_m3[channel]
                 };
-                if available < one_grain {
+                if available < one_reference {
                     continue;
                 }
                 let mut load = crate::intake::Suspension::default();
@@ -443,7 +452,7 @@ impl Sluice {
                     self.inlet.pending.gold_g -= load.gold_g;
                 } else {
                     load.solid_m3[channel] =
-                        self.inlet.pending.solid_m3[channel].min(parcel_volume.max(one_grain));
+                        self.inlet.pending.solid_m3[channel].min(parcel_volume.max(one_reference));
                     self.inlet.pending.solid_m3[channel] -= load.solid_m3[channel];
                 }
                 self.inlet.sequence = self.inlet.sequence.wrapping_add(1);
@@ -773,6 +782,7 @@ impl Sluice {
                     && g.position.is_finite()
                     && g.velocity.is_finite()
                     && g.material.valid()
+                    && g.solid_volume() > 0.
                     && g.position.length() < 100.0
                     && g.velocity.length() < 100.0
                     && (0.00002..=0.02).contains(&g.diameter_m)

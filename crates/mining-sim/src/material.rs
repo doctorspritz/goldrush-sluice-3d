@@ -1,7 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-/// Bulk volume plus trace gold. Parcels carry statistical weights; visual grain size
-/// does not create or destroy mass. Gold is measured in grams throughout the domain.
+pub const MINERAL_DENSITY_KG_M3: f64 = 2650.;
+pub const GOLD_DENSITY_KG_M3: f64 = 19300.;
+/// Reference dry bulk densities, in terrain channel order: fines, soil, gravel,
+/// paydirt. These inherited prototype assumptions are not a site calibration.
+pub const REFERENCE_DRY_DENSITIES_KG_M3: [f64; 4] = [1600., 1800., 2000., 2000.];
+
+/// Reference bulk inventory plus trace gold, never literal grain-solid volume.
+/// Keep these conserved quantities when actual void space/compaction is added.
+/// Gold is measured in grams throughout the domain.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Material {
     pub soil_m3: f64,
@@ -18,10 +25,26 @@ impl Material {
         self.volume() < 1e-10 && self.gold_g < 1e-10
     }
     pub fn mass_kg(self) -> f64 {
-        self.soil_m3 * 1800.0
-            + self.sand_m3 * 1600.0
-            + self.gravel_m3 * 2000.0
-            + self.gold_g / 1000.0
+        self.mineral_mass_kg() + self.gold_g / 1000.0
+    }
+    pub fn mineral_mass_kg(self) -> f64 {
+        self.soil_m3 * REFERENCE_DRY_DENSITIES_KG_M3[1]
+            + self.sand_m3 * REFERENCE_DRY_DENSITIES_KG_M3[0]
+            + self.gravel_m3 * REFERENCE_DRY_DENSITIES_KG_M3[2]
+    }
+    pub fn mineral_solid_volume_m3(self) -> f64 {
+        self.mineral_mass_kg() / MINERAL_DENSITY_KG_M3
+    }
+    pub fn solid_volume_m3(self) -> f64 {
+        self.mineral_solid_volume_m3() + self.gold_g * 0.001 / GOLD_DENSITY_KG_M3
+    }
+    /// Construct a specified quartz tracer without counting its reference pore
+    /// space as another fraction of a physical grain.
+    pub fn sand_from_solid_volume(solid_m3: f64) -> Self {
+        Self {
+            sand_m3: solid_m3 * MINERAL_DENSITY_KG_M3 / REFERENCE_DRY_DENSITIES_KG_M3[0],
+            ..Self::default()
+        }
     }
     pub fn add(&mut self, other: Self) {
         self.soil_m3 += other.soil_m3;

@@ -5,8 +5,10 @@ use serde::{Deserialize, Serialize};
 
 pub const ADMISSION_BATCH: usize = 32;
 
-/// Same order and solid/water volume convention as the terrain solver:
-/// sediment, overburden, gravel, paydirt. Gold is a separate passive mass tag.
+/// Historical `solid_m3` wire field: reference bulk volumes in terrain order
+/// (fines, soil, gravel, paydirt), with the same fixed density basis as Material.
+/// Convert to physical grain solids before computing displacement or optics.
+/// Gold is a separate mass tag.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Suspension {
     pub solid_m3: [f64; 4],

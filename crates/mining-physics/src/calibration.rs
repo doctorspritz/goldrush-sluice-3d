@@ -99,7 +99,7 @@ impl Assay {
                     assay.count[bin] += 1;
                 }
                 GrainKind::Sand => {
-                    assay.quartz_m3[bin] += g.material.sand_m3;
+                    assay.quartz_m3[bin] += g.material.mineral_solid_volume_m3();
                 }
                 GrainKind::Gravel => {}
             }

@@ -76,7 +76,8 @@ fn new_grading_separates_fines_and_sand_without_changing_any_material() {
 #[test]
 fn one_parcel_represents_many_fines_but_one_gold_grain_stays_one_grain() {
     let p = fine(Vec3::ZERO, 2e-6, 0.0001);
-    assert!(p.represented_grains() > 3_000_000.);
+    let expected = 2e-6 * 1800. / 2650. / (std::f64::consts::PI / 6. * (0.0001_f32 as f64).powi(3));
+    assert!((p.represented_grains() / expected - 1.).abs() < 1e-12);
     let mut g = p;
     g.kind = GrainKind::Gold;
     g.material = Material {
@@ -106,7 +107,7 @@ fn projection_is_local_and_conserves_volume_even_at_domain_edges() {
     let f = SlurryField::new(&s);
     let (w, v) = f.projected_volumes();
     assert!((w - s.water.len() as f64 * s.profile.particle_m3()).abs() < 1e-15);
-    assert!((v - 3e-6).abs() < 1e-15);
+    assert!((v - 3e-6 * 1800. / 2650.).abs() < 1e-15);
     assert!(f.sample(Vec3::new(0.6, 0.28, 0.2)).1 > 0.);
     assert_eq!(f.sample(Vec3::new(1.2, 0.28, 0.2)).1, 0.);
     assert_eq!(before, serde_json::to_string(&s).unwrap());

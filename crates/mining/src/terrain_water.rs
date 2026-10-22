@@ -17,7 +17,8 @@ pub(crate) fn instances(site: &Site, detail: &crate::environment::Detail) -> Vec
         for x in 0..WIDTH {
             let i = z * WIDTH + x;
             supported[i] = site.world.water_depth(x, z) > MIN_VISIBLE_DEPTH_M;
-            // These channels already contain volume concentration, not sediment depth.
+            // Terrain transport stores reference bulk/water concentration.
+            // Only actual mineral solids contribute to optical extinction.
             concentration[i] = [
                 &site.hydraulic.suspended_sediment,
                 &site.hydraulic.suspended_overburden,
@@ -25,7 +26,11 @@ pub(crate) fn instances(site: &Site, detail: &crate::environment::Detail) -> Vec
                 &site.hydraulic.suspended_paydirt,
             ]
             .iter()
-            .map(|a| a.get(i).copied().unwrap_or(0.))
+            .zip(mining_sim::material::REFERENCE_DRY_DENSITIES_KG_M3)
+            .map(|(a, rho)| {
+                (a.get(i).copied().unwrap_or(0.) as f64 * rho
+                    / mining_sim::material::MINERAL_DENSITY_KG_M3) as f32
+            })
             .sum::<f32>()
             .clamp(0., 1.);
             // Extend wet levels across the dry shore for reconstruction. The final
@@ -245,7 +250,8 @@ mod tests {
         let mut site = Site::new();
         site.hydraulic.suspended_sediment = vec![0.02; WIDTH * WIDTH];
         let a = instances(&site, &crate::environment::Detail::default());
-        assert!(a.iter().all(|p| p.axis_z == [0.02; 4]));
+        let expected = (0.02_f32 as f64 * 1600. / 2650.) as f32;
+        assert!(a.iter().all(|p| p.axis_z == [expected; 4]));
         for z in 0..WIDTH {
             for x in 0..WIDTH {
                 let i = z * WIDTH + x;

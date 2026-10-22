@@ -124,7 +124,9 @@ fn cleanup_preserves_a_single_fine_quartz_grain_below_bulk_empty_threshold() {
     let mut s = Sluice::default();
     let mut fine = grain(0.5, true);
     fine.diameter_m = 0.00008;
-    fine.material.sand_m3 = std::f64::consts::PI / 6. * (fine.diameter_m as f64).powi(3);
+    fine.material = Material::sand_from_solid_volume(
+        std::f64::consts::PI / 6. * (fine.diameter_m as f64).powi(3),
+    );
     let volume = fine.material.sand_m3;
     assert!(
         fine.material.is_empty(),

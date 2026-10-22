@@ -454,18 +454,31 @@ impl Session {
             + self.falling.iter().map(|l| l.material.gold_g).sum::<f64>()
     }
     pub fn accounted_bulk_material_m3(&self) -> f64 {
-        self.site.bulk_solid_volume_m3()
-            + self.site.hydraulic.exported_material_m3.iter().sum::<f64>()
-            + self.machine.bucket.volume()
-            + self.player.hand.volume()
-            + self.sluice.active_material().volume()
-            + self.sluice.tailings.volume()
-            + self.sluice.concentrate.volume()
-            + self
-                .falling
-                .iter()
-                .map(|l| l.material.volume())
-                .sum::<f64>()
+        self.accounted_material().volume()
+    }
+    pub fn accounted_dry_mass_kg(&self) -> f64 {
+        self.accounted_material().mass_kg()
+    }
+    pub fn accounted_material(&self) -> Material {
+        let mut total = self.site.stored_material();
+        for m in [
+            crate::intake::Suspension {
+                solid_m3: self.site.hydraulic.exported_material_m3,
+                gold_g: self.site.hydraulic.exported_gold_g,
+            }
+            .material(),
+            self.machine.bucket,
+            self.player.hand,
+            self.sluice.active_material(),
+            self.sluice.tailings,
+            self.sluice.concentrate,
+        ] {
+            total.add(m);
+        }
+        for load in &self.falling {
+            total.add(load.material);
+        }
+        total
     }
     pub fn save_json(&self) -> Result<String, String> {
         serde_json::to_string(&Save {

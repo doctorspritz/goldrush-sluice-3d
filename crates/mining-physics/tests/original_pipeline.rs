@@ -6,6 +6,7 @@ use mining_sim::{session::Controls, Action, Placement, Session, Vec3};
 #[ignore = "requires real Metal/Vulkan compute adapter; run with --ignored --nocapture"]
 fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
     let mut s = Session::new();
+    let initial_mass = s.accounted_dry_mass_kg();
     let mut physics = Hydraulics::new().unwrap();
     let initial_layers = s.site.world.overburden_thickness.clone();
     let batch = s.site.dig(Vec3::new(19.0, 0.0, 22.0), 0.44, 0.3, 0.08);
@@ -101,6 +102,20 @@ fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
         }
     }
     assert_eq!(s.site.hydraulic.steps, 120);
+    let mass = physics.material_diagnostics(&s);
+    assert_eq!(mass["ready"], true);
+    assert_eq!(mass["legacy_grains"], 0);
+    let inventory = mass["inventory_dry_mass_kg"].as_f64().unwrap();
+    assert!(inventory > 0.);
+    assert!(
+        mass["dem_mass_error_kg"].as_f64().unwrap().abs() < inventory * 1e-6,
+        "DEM mass handoff: {mass}"
+    );
+    assert!(
+        (s.accounted_dry_mass_kg() - initial_mass).abs() < initial_mass * 1e-6,
+        "full dry-mass budget"
+    );
+    println!("ACTUAL MATERIAL MASS: {mass}");
     assert!(s.sluice.solver_steps >= 180 * mining_physics::FLIP_SUBSTEPS as u64);
     assert!(
         s.sluice.water.iter().any(|p| p.position.x > 0.4),

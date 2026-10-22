@@ -1,6 +1,6 @@
 # Conservative pump-to-inlet transfer
 
-The terrain solver stores four solid/water volume concentrations: sediment,
+The terrain solver stores four reference-bulk / water volume concentrations: sediment,
 overburden, gravel and paydirt. Suspended gold is a separate mass tag in grams.
 The previous pump lowered water depth while keeping concentration fixed, then
 credited only water to the sluice. It silently removed `C × withdrawn water`
@@ -37,7 +37,9 @@ physical grain stay explicitly in the accumulator, including trace gold.
 The existing three-component `Material` convention maps sediment to sand,
 overburden to soil, and gravel plus paydirt to gravel. The four classes remain
 separate in the inlet's custody and diagnostic counters. This does not add
-porosity, grain-mass conversion, clay cohesion or a new soil calibration.
+porosity, clay cohesion or a new soil calibration. The later
+[material-mass correction](material-mass.md) converts these conserved reference
+quantities to physical grain mass and volume when emitting DEM parcels.
 
 Full water/solid capacity applies backpressure **before** modifying the river.
 Unemitted water and solids remain stored. Source starvation supplies only actual
