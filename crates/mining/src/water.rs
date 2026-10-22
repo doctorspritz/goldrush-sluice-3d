@@ -928,7 +928,11 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
         .filter(|(_, p, v, _, _)| p.is_finite() && v.is_finite())
         .collect();
     let points: Vec<_> = sampled.iter().map(|(_, p, _, _, _)| *p).collect();
-    let kernels = crate::fluid_surface::kernels(&points, sluice.profile.cell());
+    let kernels = crate::fluid_surface::kernels(
+        &points,
+        sluice.profile.cell(),
+        sluice.profile.particle_m3() * weight as f64,
+    );
     sampled
         .into_iter()
         .zip(kernels)

@@ -30,7 +30,7 @@ pub(crate) struct Kernel {
     /// Connected-neighbour support for rendering bulk water versus small spray.
     pub bulk: f32,
 }
-pub(crate) fn kernels(points: &[Vec3], cell: f32) -> Vec<Kernel> {
+pub(crate) fn kernels(points: &[Vec3], cell: f32, sample_volume_m3: f64) -> Vec<Kernel> {
     let width = cell * 2.;
     let key = |p: Vec3| (p / width).floor().as_ivec3().to_array();
     let center =
@@ -76,19 +76,35 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32) -> Vec<Kernel> {
                         }
                     }
                 }
+                let mean = total.sum / total.count;
+                let covariance = total.square / total.count - outer(mean);
+                let (basis, variance) = eigen(covariance);
+                // A dozen neighbours across a 6 cm region can still be sparse
+                // spray. Estimate local occupancy from represented volume and
+                // covariance, rather than mistaking neighbour count for density.
+                // A half-cell variance floor also supports thin water sheets.
+                // This selects reconstruction support only, never solver density.
+                let spread = variance.max(Vec3::splat(cell * cell * 0.25));
+                let footprint = std::f64::consts::TAU.powf(1.5)
+                    * ((spread.x as f64) * spread.y as f64 * spread.z as f64).sqrt();
+                let density = (total.count as f64 * sample_volume_m3 / footprint) as f32;
+                let occupancy = ((density - 0.05) / 0.45).clamp(0., 1.);
+                let neighbours = ((total.count - 1.) / 11.).clamp(0., 1.);
+                let support = occupancy
+                    * occupancy
+                    * (3. - 2. * occupancy)
+                    * neighbours
+                    * neighbours
+                    * (3. - 2. * neighbours);
                 if total.count < 12. {
-                    let support = ((total.count - 1.) / 11.).clamp(0., 1.);
                     return Kernel {
                         axes: [Vec3::X, Vec3::Y, Vec3::Z],
                         center: p,
                         normal: Vec3::Y,
                         planarity: 0.,
-                        bulk: support * support * (3. - 2. * support),
+                        bulk: support,
                     };
                 }
-                let mean = total.sum / total.count;
-                let covariance = total.square / total.count - outer(mean);
-                let (basis, variance) = eigen(covariance);
                 let values = variance.to_array();
                 let mut sorted = [0usize, 1, 2];
                 sorted.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
@@ -112,7 +128,7 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32) -> Vec<Kernel> {
                     center: origin + mean,
                     normal,
                     planarity,
-                    bulk: 1.,
+                    bulk: support,
                 }
             });
             Kernel {
@@ -196,7 +212,7 @@ mod tests {
             .flat_map(|x| (-8..=8).map(move |z| Vec3::new(x as f32 * 0.005, 0., z as f32 * 0.005)))
             .collect();
         let before = points.clone();
-        let data = kernels(&points, 0.01);
+        let data = kernels(&points, 0.01, 1.25e-7);
         assert_eq!(points, before);
         assert_eq!(data.len(), points.len());
         let k = data[data.len() / 2];
@@ -210,12 +226,33 @@ mod tests {
             .all(|v| v.is_finite() && v.length() <= 1.81));
     }
     #[test]
+    fn sparse_crest_clouds_do_not_inherit_bulk_water_silhouettes() {
+        let sparse: Vec<_> = (0..27)
+            .map(|i| {
+                Vec3::new(
+                    (i % 3) as f32 * 0.019,
+                    ((i / 3) % 3) as f32 * 0.019,
+                    (i / 9) as f32 * 0.019,
+                )
+            })
+            .collect();
+        let compact: Vec<_> = sparse.iter().map(|p| *p * 0.16).collect();
+        let spray = kernels(&sparse, 0.01, 1.25e-7);
+        let bulk = kernels(&compact, 0.01, 1.25e-7);
+        assert!(spray.iter().all(|k| k.bulk < 0.1));
+        assert!(bulk.iter().all(|k| k.bulk == 1.));
+        // Coincident subdivision changes sampling, not represented occupancy.
+        let split: Vec<_> = compact.iter().flat_map(|p| [*p, *p]).collect();
+        let divided = kernels(&split, 0.01, 6.25e-8);
+        assert!(divided.iter().all(|k| k.bulk == 1.));
+    }
+    #[test]
     fn detached_water_has_no_bulk_support_while_a_connected_sheet_does() {
-        let isolated = kernels(&[Vec3::ZERO, Vec3::new(0.2, 0.1, 0.)], 0.01);
+        let isolated = kernels(&[Vec3::ZERO, Vec3::new(0.2, 0.1, 0.)], 0.01, 1.25e-7);
         assert!(isolated.iter().all(|k| k.bulk == 0.));
         let sheet: Vec<_> = (0..25)
             .map(|i| Vec3::new((i % 5) as f32 * 0.003, 0., (i / 5) as f32 * 0.003))
             .collect();
-        assert!(kernels(&sheet, 0.01).iter().all(|k| k.bulk == 1.));
+        assert!(kernels(&sheet, 0.01, 1.25e-7).iter().all(|k| k.bulk == 1.));
     }
 }

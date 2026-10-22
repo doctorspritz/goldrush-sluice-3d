@@ -224,7 +224,11 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     let half_vector=normalize(light+eye_world);
     // Unresolved normal variation broadens the sun lobe instead of producing
     // a bright bead for each kernel. Scale its peak to retain the lobe energy.
-    let exponent=select(96.,mix(12.,96.,pow(surface_confidence,8.)),in_channel);
+    // Confidence measures agreement of neighbouring gradients, not optical
+    // roughness. A single symmetric kernel can have perfect confidence, so
+    // using it to sharpen the sun creates a bright round cap on every crest.
+    // Keep a broad unresolved-wave lobe throughout connected channel water.
+    let exponent=select(96.,24.,in_channel);
     let specular=pow(max(dot(normal,half_vector),0.),exponent)*0.32*(exponent+2.)/98.;
     let reflection=reflect(-eye_world,normal);
     let sky=mix(vec3(0.19,0.25,0.24),vec3(0.48,0.66,0.76),smoothstep(-0.1,0.65,reflection.y));

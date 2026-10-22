@@ -13,8 +13,6 @@ fn sample_counts(s: &Sluice) -> Vec<usize> {
         .iter()
         .take(MAX_POINTS)
         .map(|g| {
-            // Subpixel fines are mainly represented by the local suspension field.
-            // Spend geometry on coarse grains that can actually cover the bed.
             let cap = if g.diameter_m < 0.0002 { 8. } else { 512. };
             let population = g.represented_grains();
             if population <= 1.00001 {
@@ -24,11 +22,23 @@ fn sample_counts(s: &Sluice) -> Vec<usize> {
             }
         })
         .collect();
+    // Reserve the original shares before suppressing fine geometry. Reusing
+    // their quota would turn neighbouring gravel into denser opaque clusters.
     let free = MAX_POINTS.saturating_sub(wants.len());
     let extra: usize = wants.iter().map(|n| n - 1).sum();
     wants
         .into_iter()
-        .map(|n| 1 + (n - 1) * free / extra.max(free).max(1))
+        .zip(&s.grains)
+        .map(|(n, g)| {
+            // Fine suspended sand already contributes to the conservative
+            // optical field. Opaque proxies also write scene depth, punching
+            // brown islands through water. Keep deposited sand and all gold.
+            if g.kind == GrainKind::Sand && !g.resting && g.diameter_m < 0.0015 {
+                0
+            } else {
+                1 + (n - 1) * free / extra.max(free).max(1)
+            }
+        })
         .collect()
 }
 pub(crate) fn visible_grains(s: &Sluice) -> usize {
@@ -69,12 +79,15 @@ fn geometry(s: &Sluice) -> [Geometry; 3] {
         [1, 5, 3],
         [5, 0, 3],
     ];
-    for (i, (g, count)) in s.grains.iter().zip(counts).enumerate() {
+    for (g, count) in s.grains.iter().zip(counts) {
         let kind = kind_index(g.kind);
         let cloud = (g.collision_radius() - g.diameter_m * 0.5).max(0.0);
         for j in 0..count {
-            let z = 1.0 - 2.0 * (j as f32 + 0.5) / count as f32;
-            let angle = j as f32 * 2.3999631 + i as f32 * 1.618034;
+            // A nested sequence keeps existing proxies fixed when the global
+            // sampling budget changes or an earlier DEM parcel leaves the box.
+            // Array index and total sample count are not particle identities.
+            let z = 1.0 - 2.0 * ((j as f32 + 0.5) * 0.5698403).fract();
+            let angle = j as f32 * 2.3999631;
             let r = (1.0 - z * z).sqrt();
             let fraction = ((j as f32 + 0.5) * 0.7548777).fract().cbrt();
             let offset = g.rotation
@@ -173,6 +186,55 @@ pub fn sync(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn suspended_fines_use_optics_without_changing_material_or_hiding_gold_and_bed() {
+        let mut s = crate::demo::session().unwrap().sluice;
+        let fine = s
+            .grains
+            .iter()
+            .find(|g| g.kind == GrainKind::Sand && !g.resting)
+            .unwrap()
+            .clone();
+        let gold = s
+            .grains
+            .iter()
+            .find(|g| g.kind == GrainKind::Gold)
+            .unwrap()
+            .clone();
+        let mut deposited = fine.clone();
+        deposited.resting = true;
+        s.grains = vec![fine, gold, deposited];
+        let before = serde_json::to_string(&s).unwrap();
+        let field = mining_sim::slurry::SlurryField::new(&s);
+        let projected = field.projected_volumes();
+        let counts = sample_counts(&s);
+        assert_eq!(counts[0], 0);
+        assert_eq!(counts[1], 1);
+        assert!(counts[2] > 0);
+        assert!((projected.1 - s.grains[0].solid_volume()).abs() < 1e-15);
+        assert_eq!(geometry(&s)[2].positions.len(), 6);
+        assert_eq!(before, serde_json::to_string(&s).unwrap());
+    }
+    #[test]
+    fn removing_a_parcel_does_not_reseed_surviving_proxy_clouds() {
+        let mut s = crate::demo::session().unwrap().sluice;
+        let gravel = s
+            .grains
+            .iter()
+            .find(|g| g.kind == GrainKind::Gravel)
+            .unwrap()
+            .clone();
+        let gold = s
+            .grains
+            .iter()
+            .find(|g| g.kind == GrainKind::Gold)
+            .unwrap()
+            .clone();
+        s.grains = vec![gold, gravel];
+        let before = geometry(&s)[1].positions.clone();
+        s.grains.remove(0);
+        assert_eq!(before, geometry(&s)[1].positions);
+    }
     #[test]
     fn dense_sampling_respects_global_budget_and_keeps_individual_gold() {
         let mut s = crate::demo::session().unwrap();
