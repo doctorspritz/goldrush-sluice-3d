@@ -734,7 +734,7 @@ impl ViewNode for FluidNode {
             pass.set_bind_group(0, &thickness_group, &[]);
             pass.draw(0..6, 0..particles.count);
         }
-        // Resolve a shared front layer before the existing two bilateral
+        // Resolve the overlapping density interface before the existing two bilateral
         // iterations. Outlet/river depth is unchanged by this channel pass.
         {
             let mut pass = context

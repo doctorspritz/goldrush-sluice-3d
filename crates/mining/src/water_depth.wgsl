@@ -101,6 +101,14 @@ fn density_gradient(point:vec3<f32>,center:vec3<f32>,ax:vec3<f32>,ay:vec3<f32>,a
  let support=max(1.-dot(q,q),0.);
  return (ax*q.x/dot(ax,ax)+ay*q.y/dot(ay,ay)+az*q.z/dot(az,az))*(39.375*volume_scale*support*support);
 }
+// Same normalized kernel as the optical volume integral. Density is additive:
+// the interface belongs to all overlapping water, never the nearest sphere.
+fn kernel_density(point:vec3<f32>,center:vec3<f32>,ax:vec3<f32>,ay:vec3<f32>,az:vec3<f32>,scale:f32)->f32 {
+ let r=point-center;
+ let q=vec3(dot(r,ax)/dot(ax,ax),dot(r,ay)/dot(ay,ay),dot(r,az)/dot(az,az));
+ let support=max(1.-dot(q,q),0.);
+ return 6.5625*scale*support*support*support;
+}
 struct Column {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>};
 @fragment fn particle_thickness(v:Varying)->Column {
  let eye=u.world_from_view[3].xyz;let ray=normalize(v.world-eye);let origin=eye-v.center_radius.xyz;
@@ -138,11 +146,16 @@ struct Column {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>};
   let probe=min(front.r/max(ray_scale,0.000001)+inset,back);
   let gradient=density_gradient(eye+ray*probe,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x);
   normal=vec4(gradient,length(gradient));
-  // Reconstruct one interface from the visible front layer of overlapping
-  // kernels. Relative depth moments retain submillimetre precision in f16.
-  let offset=max(front_t*ray_scale-front.r,0.);
-  let weight=path*exp(-pow(offset/0.012,2.));
-  surface=vec2(offset*weight,weight);
+  // Sample a shared density field along the visible ray. Reusing the two
+  // existing channels adds no target or pass. Opaque objects bound both probes.
+  let t0=(front.r+0.004)/max(ray_scale,0.000001);
+  let t1=(front.r+0.012)/max(ray_scale,0.000001);
+  // A probe behind an opaque floor contains no visible liquid. Clamping its
+  // position to the floor would mislabel that density as 12 mm-deep water and
+  // bury shallow films when resolving the interface.
+  surface=vec2(
+   select(0.,kernel_density(eye+ray*t0,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),t0<=back),
+   select(0.,kernel_density(eye+ray*t1,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),t1<=back));
  }
  var out:Column;out.optical=vec4(path,path*v.shape.y,surface);out.normal=normal;return out;
 }

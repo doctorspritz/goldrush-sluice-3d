@@ -181,7 +181,7 @@ fn overlapping_interface_gradient_matches_independent_density_derivative() {
  let ax=vec3(0.016,0.,0.);let ay=vec3(0.,0.012,0.);let az=vec3(0.,0.,0.02);
  let a=density_gradient(point,vec3(-0.006,0.,0.),ax,ay,az,0.2);
  let b=density_gradient(point,vec3(0.006,0.,0.),ax,ay,az,0.2);
- result[p.y*8u+p.x]=vec4(a+b,0.);
+ result[p.y*8u+p.x]=vec4(a+b,kernel_density(point,vec3(-0.006,0.,0.),ax,ay,az,0.2)+kernel_density(point,vec3(0.006,0.,0.),ax,ay,az,0.2));
 }"#
     );
     let values = execute(
@@ -208,6 +208,7 @@ fn overlapping_interface_gradient_matches_independent_density_derivative() {
     let mut previous: Option<[f64; 3]> = None;
     for (i, gradient) in values.as_chunks::<4>().0.iter().enumerate() {
         let p = [(i as f64 - 31.5) * 0.0003, 0.006, 0.];
+        assert!((gradient[3] as f64 - density(p)).abs() < 1e-6);
         let mut direction = [0.; 3];
         for axis in 0..3 {
             let (mut a, mut b) = (p, p);
@@ -234,7 +235,7 @@ fn overlapping_interface_gradient_matches_independent_density_derivative() {
 
 #[test]
 #[ignore = "requires real GPU; run explicitly with --ignored"]
-fn shared_interface_uses_relative_depth_moments_without_moving_spray_or_hidden_water() {
+fn shared_density_interface_crossings_are_bounded_without_moving_spray_or_empty_water() {
     let (device, queue) = device();
     let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
@@ -252,14 +253,17 @@ fn shared_interface_uses_relative_depth_moments_without_moving_spray_or_hidden_w
         r#"
 @group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
 @compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
- let scale=f32(p.y*8u+p.x+1u);
- // A shared front at 3 m, with equal weighted offsets of 2 and 6 mm.
- let moments=(vec2(0.002*0.01,0.01)+vec2(0.006*0.01,0.01))*scale;
+ let density=vec2(0.1,0.9);
+ // Linear density reaches 0.5 halfway between the 4 mm and 12 mm probes.
  result[p.y*8u+p.x]=vec4(
-  shared_surface_depth(vec2(3.,-1.),moments),
-  shared_surface_depth(vec2(3.,1.),moments),
-  shared_surface_depth(vec2(0.,-1.),moments),
+  shared_surface_depth(vec2(3.,-1.),density),
+  shared_surface_depth(vec2(3.,1.),density),
+  shared_surface_depth(vec2(0.,-1.),density),
   shared_surface_depth(vec2(3.,-1.),vec2(0.)));
+ // Test both sides of the sparse/crossing boundary at 0.5 independently.
+ let rho=0.47+f32(p.y*8u+p.x)*0.001;
+ let weak=shared_surface_depth(vec2(3.,-1.),vec2(0.,rho));
+ result[p.y*8u+p.x].w=weak;
 }"#
     );
     let values = execute(
@@ -271,9 +275,19 @@ fn shared_interface_uses_relative_depth_moments_without_moving_spray_or_hidden_w
         &buffer,
         [1, 1],
     );
+    let mut previous: Option<f32> = None;
     for value in values.as_chunks::<4>().0 {
-        assert!((value[0] - 3.004).abs() < 1e-6, "{value:?}");
-        assert_eq!(value[1..], [3., 0., 3.]);
+        assert!((value[0] - 3.008).abs() < 1e-6, "{value:?}");
+        assert_eq!(value[1..3], [3., 0.]);
+        assert!((3. ..=3.012001).contains(&value[3]));
+        if let Some(last) = previous {
+            assert!(
+                (value[3] - last).abs() < 0.0001,
+                "sparse interface jumped: {last} -> {}",
+                value[3]
+            );
+        }
+        previous = Some(value[3]);
     }
 }
 
@@ -366,8 +380,16 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
         &[0., 0.008, 0., 0.01].repeat(64),
         4,
     );
+    let joined_depth = texture(wgpu::TextureFormat::R32Float, &[1.; 64], 1);
     let mut uniforms = [0f32; 72];
-    uniforms[37] = 1.;
+    uniforms[16] = 1.;
+    uniforms[22] = -1.;
+    uniforms[25] = 1.;
+    uniforms[31] = 1.;
+    uniforms[32] = 0.1;
+    uniforms[37] = 0.1;
+    uniforms[42] = -1.;
+    uniforms[47] = 1.;
     // Exercise all four full-resolution pixel phases of the half-size surface
     // buffer, rather than checking only the particle-buffer texel centres.
     uniforms[64] = 16.;
@@ -379,7 +401,7 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
     });
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
-        entries: &[3, 4, 5, 6, 9].map(|binding| wgpu::BindGroupLayoutEntry {
+        entries: &[1, 3, 4, 5, 6, 9].map(|binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
             ty: if binding == 3 {
@@ -402,6 +424,10 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
         label: None,
         layout: &layout,
         entries: &[
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&joined_depth),
+            },
             wgpu::BindGroupEntry {
                 binding: 3,
                 resource: uniform.as_entire_binding(),
@@ -480,7 +506,7 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
     let filtered = execute(
         &device,
         &queue,
-        source,
+        source.clone(),
         &[&group, &out_group],
         &[&layout, &out_layout],
         &buffer,
@@ -494,6 +520,59 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
                 "texel-phase mud island: {value:?}"
             );
             assert!(value[1] > 0.995, "texel-phase crest highlight: {value:?}");
+        }
+    }
+    // Intersect the test camera rays with a known tilted geometric plane.
+    // Kernel-gradient normals deliberately remain vertical: only a normal
+    // reconstructed from the shared geometry can recover this plane's slope.
+    let plane_depth: Vec<f32> = (0..64)
+        .map(|i| {
+            let x = ((i % 8) as f32 + 0.5) / 8. * 2. - 1.;
+            let y = 1. - ((i / 8) as f32 + 0.5) / 8. * 2.;
+            1. / (1. - 0.2 * 0.1 * x + 0.1 * 0.1 * y)
+        })
+        .collect();
+    queue.write_texture(
+        textures[4].as_image_copy(),
+        bytemuck::cast_slice(&plane_depth),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(32),
+            rows_per_image: None,
+        },
+        textures[4].size(),
+    );
+    queue.write_texture(
+        textures[3].as_image_copy(),
+        bytemuck::cast_slice(&[0f32, 0.008, 0., 0.01].repeat(64)),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(128),
+            rows_per_image: None,
+        },
+        textures[3].size(),
+    );
+    let plane_source = source.replace(
+        "vec4(column.x,n.y,column.y/max(column.x,0.000001),n.w)",
+        "vec4(n.xyz,n.w)",
+    );
+    let plane = execute(
+        &device,
+        &queue,
+        plane_source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [2, 2],
+    );
+    let expected = glam::Vec3::new(0.2, 1., 0.1).normalize();
+    for y in 6..10 {
+        for x in 6..10 {
+            let n = glam::Vec3::from_slice(&plane[(y * 16 + x) * 4..][..3]);
+            assert!(
+                n.is_finite() && n.dot(expected) > 0.9995,
+                "shared wave slope lost: {n:?} vs {expected:?}"
+            );
         }
     }
 }

@@ -33,12 +33,13 @@ struct ChannelSurface {normal:vec4<f32>,column:vec2<f32>};
 // Share visibility tests between the two additive fields, before normalizing.
 fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
     var sum=vec3(0.);var weight=0.;
+    var position_sum=vec3(0.);var second=vec3(0.);var cross_depth=vec2(0.);var plane_weight=0.;
     var column=vec2(0.);var column_weight=0.;
     let size=vec2<i32>(textureDimensions(surface_normals));
     let p=pixel*vec2<f32>(size)/u.viewport.xy-0.5;
     let center=vec2<i32>(round(p));
     let pixel_m=depth*4.*abs(u.view_from_clip[1].y)/u.viewport.y;
-    let radius=clamp(0.012/max(pixel_m,0.00001),2.5,5.);
+    let radius=clamp(0.030/max(pixel_m,0.00001),2.5,5.);
     for(var y=-4;y<=4;y++){for(var x=-4;x<=4;x++){
         let q=clamp(center+vec2(x,y),vec2(0),size-vec2(1));
         let raw=textureLoad(raw_depths,q,0);
@@ -48,6 +49,14 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         let w=exp(-dot(distance,distance)/24.-delta*delta);
         let normal=textureLoad(normal_sums,q,0);
         sum+=normal.xyz*w;weight+=normal.w*w;
+        let shared_depth=textureLoad(depths,q,0).r;
+        if shared_depth>0. && abs(shared_depth-depth)<0.035 {
+            let pw=exp(-dot(distance,distance)/12.-delta*delta);
+            let z=shared_depth-depth;
+            position_sum+=vec3(distance,z)*pw;
+            second+=vec3(distance.x*distance.x,distance.x*distance.y,distance.y*distance.y)*pw;
+            cross_depth+=distance*z*pw;plane_weight+=pw;
+        }
         let cw=exp(-2.*dot(distance,distance)/(radius*radius)-delta*delta);
         column+=textureLoad(fluid_thickness,q,0).rg*cw;column_weight+=cw;
     }}
@@ -55,6 +64,26 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
     out.normal=vec4(0.);
     if weight>0.000001 && length(sum)>0.000001 {
         out.normal=vec4(normalize(sum),clamp(length(sum)/weight,0.,1.));
+    }
+    // Fit a local plane through the joined depth field. Differencing adjacent
+    // half-size texels magnifies subpixel phase; fitting the whole footprint
+    // preserves the travelling wave slope without each kernel's shiny dome.
+    if plane_weight>0.000001 && out.normal.w>0. {
+        let mean=position_sum/plane_weight;
+        let cov=second/plane_weight-vec3(mean.x*mean.x,mean.x*mean.y,mean.y*mean.y);
+        let rhs=cross_depth/plane_weight-mean.xy*mean.z;
+        let determinant=cov.x*cov.z-cov.y*cov.y;
+        if determinant>0.001 {
+            let slope=vec2(cov.z*rhs.x-cov.y*rhs.y,cov.x*rhs.y-cov.y*rhs.x)/determinant;
+            let step=u.viewport.xy/vec2<f32>(size);
+            let origin=view_point(pixel,depth+mean.z);
+            let dx=view_point(pixel+vec2(step.x,0.),depth+mean.z+slope.x)-origin;
+            let dy=view_point(pixel+vec2(0.,step.y),depth+mean.z+slope.y)-origin;
+            var n=normalize(cross(dy,dx));if n.z<0. {n = -n;}
+            var world_n=normalize((u.world_from_view*vec4(n,0.)).xyz);
+            if dot(world_n,out.normal.xyz)<0. {world_n = -world_n;}
+            out.normal=vec4(normalize(mix(out.normal.xyz,world_n,0.9)),out.normal.w);
+        }
     }
     out.column=column/max(column_weight,0.000001);
     return out;

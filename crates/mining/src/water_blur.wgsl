@@ -4,9 +4,18 @@ struct Screen { @builtin(position) position: vec4<f32> };
 @group(0) @binding(0) var depths: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> u: Uniforms;
 @group(0) @binding(2) var columns:texture_2d<f32>;
-fn shared_surface_depth(raw:vec2<f32>,moments:vec2<f32>)->f32 {
-    if raw.x<=0. || raw.y>= -0.5 || moments.y<=0.000001 {return raw.x;}
-    return raw.x+clamp(moments.x/moments.y,0.,0.012);
+fn shared_surface_depth(raw:vec2<f32>,density:vec2<f32>)->f32 {
+    if raw.x<=0. || raw.y>= -0.5 {return raw.x;}
+    // Half rest density is the visual liquid/air interface. Piecewise linear
+    // crossing is bounded to the original 12 mm front-layer footprint. Fade
+    // weak support continuously: switching between a crossing and a sparse
+    // film must never jump the interface by the full probe separation.
+    let iso_density=0.5;
+    if density.x>=iso_density {return raw.x+0.004*iso_density/max(density.x,0.000001);}
+    if density.y>=iso_density {
+        return raw.x+0.004+0.008*(iso_density-density.x)/max(density.y-density.x,0.000001);
+    }
+    return raw.x+0.012*smoothstep(0.05,iso_density,max(density.x,density.y));
 }
 @fragment fn reconstruct(s:Screen)->@location(0) f32 {
     let q=vec2<i32>(s.position.xy);
