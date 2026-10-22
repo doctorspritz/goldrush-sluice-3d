@@ -4,22 +4,29 @@ struct Screen { @builtin(position) position: vec4<f32> };
 @group(0) @binding(0) var depths: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> u: Uniforms;
 @group(0) @binding(2) var columns:texture_2d<f32>;
-fn shared_surface_depth(raw:vec2<f32>,density:vec2<f32>)->f32 {
+@group(0) @binding(3) var density_near:texture_2d<f32>;
+@group(0) @binding(4) var density_far:texture_2d<f32>;
+const PROFILE_DEPTHS:array<f32,8>=array(0.,0.002,0.005,0.009,0.015,0.023,0.035,0.051);
+fn shared_surface_depth(raw:vec2<f32>,near:vec4<f32>,far:vec4<f32>)->f32 {
     if raw.x<=0. || raw.y>= -0.5 {return raw.x;}
-    // Half rest density is the visual liquid/air interface. Piecewise linear
-    // crossing is bounded to the original 12 mm front-layer footprint. Fade
-    // weak support continuously: switching between a crossing and a sparse
-    // film must never jump the interface by the full probe separation.
-    let iso_density=0.5;
-    if density.x>=iso_density {return raw.x+0.004*iso_density/max(density.x,0.000001);}
-    if density.y>=iso_density {
-        return raw.x+0.004+0.008*(iso_density-density.x)/max(density.y-density.x,0.000001);
+    let density=array(near.x,near.y,near.z,near.w,far.x,far.y,far.z,far.w);
+    let iso=0.5;
+    var peak=0.;var peak_depth=0.;
+    for(var i=0u;i<8u;i++) {
+        if density[i]>=iso {
+            if i==0u {return raw.x;}
+            let t=clamp((iso-density[i-1u])/max(density[i]-density[i-1u],0.000001),0.,1.);
+            return raw.x+mix(PROFILE_DEPTHS[i-1u],PROFILE_DEPTHS[i],t);
+        }
+        if density[i]>peak {peak=density[i];peak_depth=PROFILE_DEPTHS[i];}
     }
-    return raw.x+0.012*smoothstep(0.05,iso_density,max(density.x,density.y));
+    // Retain a dilute film continuously as peak density approaches the level
+    // set. Opaque geometry already clips every probe; never sample below it.
+    return raw.x+peak_depth*smoothstep(0.05,iso,peak);
 }
 @fragment fn reconstruct(s:Screen)->@location(0) f32 {
     let q=vec2<i32>(s.position.xy);
-    return shared_surface_depth(textureLoad(depths,q,0).rg,textureLoad(columns,q,0).ba);
+    return shared_surface_depth(textureLoad(depths,q,0).rg,textureLoad(density_near,q,0),textureLoad(density_far,q,0));
 }
 fn smooth_depth(pixel: vec2<i32>, direction: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(depths)); let center = textureLoad(depths,pixel,0).r;

@@ -45,7 +45,12 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         if any(q<vec2(0)) || any(q>=size) {continue;}
         let raw=textureLoad(raw_depths,q,0);
         if raw.r<=0. || raw.g>= -0.5 {continue;}
-        let delta=(raw.r-depth)/0.035;
+        // A profile spans 51 mm and the local filter another 35 mm. A
+        // different surface outside that range cannot contribute optics.
+        if abs(raw.r-depth)>0.086 {continue;}
+        let shared_depth=textureLoad(depths,q,0).r;
+        if shared_depth<=0. {continue;}
+        let delta=(shared_depth-depth)/0.035;
         let distance=vec2<f32>(q)-p;
         // A truncated Gaussian has nonzero weight at the gathered edge:
         // rounding the footprint centre then switches an entire row/column.
@@ -56,8 +61,7 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         let w=taper*exp(-dot(distance,distance)/24.-delta*delta);
         let normal=textureLoad(normal_sums,q,0);
         sum+=normal.xyz*w;weight+=normal.w*w;
-        let shared_depth=textureLoad(depths,q,0).r;
-        if shared_depth>0. && abs(shared_depth-depth)<0.035 {
+        if abs(shared_depth-depth)<0.035 {
             let pw=taper*exp(-dot(distance,distance)/12.-delta*delta);
             let z=shared_depth-depth;
             position_sum+=vec3(distance,z)*pw;
@@ -157,6 +161,11 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     }}
     return colour;
 }
+// Channel columns were clipped against opaque geometry during accumulation.
+// Reconstructing the visible interface must not change their optical depth.
+fn visible_column_path(column:f32,view_gap:f32,channel:bool)->f32 {
+    return select(min(view_gap,max(column,0.0002)),max(column,0.),channel);
+}
 @fragment fn compose(s: Screen) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(s.position.xy); let original = textureLoad(scene,pixel,0);
     let q = s.position.xy;
@@ -212,7 +221,7 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     var surface_confidence=0.;
     var channel_column=vec2(0.);
     if in_channel {
-        let joined=channel_surface(q,raw_depth);
+        let joined=channel_surface(q,depth);
         let surface=joined.normal;
         channel_column=joined.column;
         surface_confidence=surface.w;
@@ -257,7 +266,10 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     var column=vec2(0.);
     if !river {
         if in_channel {column=channel_column;} else {column=optical_column(q,raw_depth,false);}
-        thickness=min(thickness,max(column.x,0.0002));
+        // The additive path is already clipped once against the opaque bed.
+        // Re-clipping it using the smoothed interface makes equal suspension
+        // columns change opacity as a crest is reconstructed in front of them.
+        thickness=visible_column_path(column.x,thickness,in_channel);
     }
     let optical=optical_sample.g;
     // River keeps its existing concentration convention. Channel extinction

@@ -199,6 +199,8 @@ struct FluidTargets {
     depth: TextureView,
     thickness: TextureView,
     normal_sums: TextureView,
+    density_near: TextureView,
+    density_far: TextureView,
     normals: TextureView,
     uniform: UniformBuffer<FluidUniforms>,
 }
@@ -260,6 +262,8 @@ fn init_pipelines(
             (
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 uniform_buffer::<FluidUniforms>(false),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         ),
@@ -330,6 +334,10 @@ fn init_pipelines(
                             },
                             write_mask: ColorWrites::ALL,
                         }));
+                    }
+                    if fragment == "particle_thickness" {
+                        // Four RGBA16F targets fit the 32-byte attachment budget.
+                        targets.extend([targets[1].clone(), targets[1].clone()]);
                     }
                     targets
                 },
@@ -549,6 +557,8 @@ fn prepare_views(
                 TextureFormat::Rgba16Float,
                 size,
             ),
+            density_near: texture("near interface density", TextureFormat::Rgba16Float, size),
+            density_far: texture("far interface density", TextureFormat::Rgba16Float, size),
             normals: texture("continuous water normals", TextureFormat::Rgba16Float, size),
             uniform,
         });
@@ -636,7 +646,13 @@ impl ViewNode for FluidNode {
             device.create_bind_group(
                 "fluid blur inputs",
                 &settings.blur,
-                &BindGroupEntries::sequential((texture, uniform.clone(), &target.thickness)),
+                &BindGroupEntries::sequential((
+                    texture,
+                    uniform.clone(),
+                    &target.thickness,
+                    &target.density_near,
+                    &target.density_far,
+                )),
             )
         };
         let raw_group = blur_group(&target.raw);
@@ -725,7 +741,12 @@ impl ViewNode for FluidNode {
                 .command_encoder()
                 .begin_render_pass(&RenderPassDescriptor {
                     label: Some("fluid volume-normalized optical thickness"),
-                    color_attachments: &[color(&target.thickness), color(&target.normal_sums)],
+                    color_attachments: &[
+                        color(&target.thickness),
+                        color(&target.normal_sums),
+                        color(&target.density_near),
+                        color(&target.density_far),
+                    ],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,

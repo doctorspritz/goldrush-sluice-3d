@@ -126,7 +126,10 @@ fn kernel_density(point:vec3<f32>,center:vec3<f32>,ax:vec3<f32>,ay:vec3<f32>,az:
  let support=max(1.-dot(q,q),0.);
  return 6.5625*scale*support*support*support;
 }
-struct Column {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>};
+// Fixed view-depth probes bracket a connected crest even when a sparse front
+// particle sits ahead of it. No extra particle pass or simulation grid is used.
+const PROFILE_DEPTHS:array<f32,8>=array(0.,0.002,0.005,0.009,0.015,0.023,0.035,0.051);
+struct Column {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>,@location(2) near:vec4<f32>,@location(3) far:vec4<f32>};
 @fragment fn particle_thickness(v:Varying)->Column {
  let eye=u.world_from_view[3].xyz;let ray=normalize(v.world-eye);let origin=eye-v.center_radius.xyz;
  let o=vec3(dot(origin,v.axis_x)/dot(v.axis_x,v.axis_x),dot(origin,v.axis_y)/dot(v.axis_y,v.axis_y),dot(origin,v.axis_z)/dot(v.axis_z,v.axis_z));
@@ -141,6 +144,7 @@ struct Column {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>};
  var path=2.*half*v.shape.x;
  var normal=vec4(0.);
  var surface=vec2(0.);
+ var profile:array<f32,8>;
  if channel {
   // Integrate only the visible water column. A submerged kernel behind a
   // riffle/wall cannot contribute sediment to the water in front of it.
@@ -175,6 +179,12 @@ struct Column {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>};
   surface=vec2(
    select(0.,kernel_density(eye+ray*t0,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),t0<=back),
    select(0.,kernel_density(eye+ray*t1,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),t1<=back));
+  for(var i=0u;i<8u;i++) {
+   let t=(front.r+PROFILE_DEPTHS[i])/max(ray_scale,0.000001);
+   if t<=back {profile[i]=kernel_density(eye+ray*t,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x);}
+  }
  }
- var out:Column;out.optical=vec4(path,path*v.shape.y,surface);out.normal=normal;return out;
+ var out:Column;out.optical=vec4(path,path*v.shape.y,surface);out.normal=normal;
+ out.near=vec4(profile[0],profile[1],profile[2],profile[3]);
+ out.far=vec4(profile[4],profile[5],profile[6],profile[7]);return out;
 }

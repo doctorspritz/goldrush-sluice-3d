@@ -253,16 +253,28 @@ fn shared_density_interface_crossings_are_bounded_without_moving_spray_or_empty_
         r#"
 @group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
 @compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
- let density=vec2(0.1,0.9);
- // Linear density reaches 0.5 halfway between the 4 mm and 12 mm probes.
+ // An independent linear ramp reaches half density at 19 mm. The old
+ // two-probe 12 mm interval cannot bracket this connected interface.
+ var near=vec4(0.);
+ var far=vec4(0.1,0.9,1.,1.);
+ // Independent near/deep ramps, two layers (choose the first), vacuum,
+ // an already submerged front, and a crossing at the last interval.
+ switch p.x {
+  case 0u: {near=vec4(0.,0.1,0.4,0.8);}
+  case 2u: {near=vec4(0.,0.1,0.6,0.);}
+  case 3u: {far=vec4(0.);}
+  case 4u: {near=vec4(0.8);}
+  case 5u: {far=vec4(0.,0.,0.,1.);}
+  default: {}
+ }
  result[p.y*8u+p.x]=vec4(
-  shared_surface_depth(vec2(3.,-1.),density),
-  shared_surface_depth(vec2(3.,1.),density),
-  shared_surface_depth(vec2(0.,-1.),density),
-  shared_surface_depth(vec2(3.,-1.),vec2(0.)));
+  shared_surface_depth(vec2(3.,-1.),near,far),
+  shared_surface_depth(vec2(3.,1.),near,far),
+  shared_surface_depth(vec2(0.,-1.),near,far),
+  shared_surface_depth(vec2(3.,-1.),vec4(0.),vec4(0.)));
  // Test both sides of the sparse/crossing boundary at 0.5 independently.
  let rho=0.47+f32(p.y*8u+p.x)*0.001;
- let weak=shared_surface_depth(vec2(3.,-1.),vec2(0.,rho));
+ let weak=shared_surface_depth(vec2(3.,-1.),vec4(0.),vec4(0.,0.,0.,rho));
  result[p.y*8u+p.x].w=weak;
 }"#
     );
@@ -276,13 +288,14 @@ fn shared_density_interface_crossings_are_bounded_without_moving_spray_or_empty_
         [1, 1],
     );
     let mut previous: Option<f32> = None;
-    for value in values.as_chunks::<4>().0 {
-        assert!((value[0] - 3.008).abs() < 1e-6, "{value:?}");
+    let expected = [3.006, 3.019, 3.0044, 3., 3., 3.043, 3.019, 3.019];
+    for (i, value) in values.as_chunks::<4>().0.iter().enumerate() {
+        assert!((value[0] - expected[i % 8]).abs() < 1e-6, "{value:?}");
         assert_eq!(value[1..3], [3., 0.]);
-        assert!((3. ..=3.012001).contains(&value[3]));
+        assert!((3. ..=3.051001).contains(&value[3]));
         if let Some(last) = previous {
             assert!(
-                (value[3] - last).abs() < 0.0001,
+                (value[3] - last).abs() < 0.0005,
                 "sparse interface jumped: {last} -> {}",
                 value[3]
             );
@@ -806,5 +819,50 @@ fn channel_wall_clipping_keeps_the_visible_slab_and_handles_parallel_rays() {
             "{value:?}"
         );
         assert_eq!(value[2..], [1., 1.]);
+    }
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn joined_surface_motion_keeps_the_clipped_optical_column_and_sparse_path() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 64);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let gap=f32(p.y*8u+p.x)*0.001;
+ // Equal pre-clipped columns must transmit the same light, even if a joined
+ // interface moves relative to the bed. The outlet retains its own clip.
+ let path=visible_column_path(0.02,gap,true);
+ result[p.y*8u+p.x]=vec4(exp(-50.*path),path,
+  visible_column_path(0.02,gap,false),visible_column_path(0.,gap,true));
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    for (i, v) in values.as_chunks::<4>().0.iter().enumerate() {
+        assert!((v[0] as f64 - (-1f64).exp()).abs() < 1e-6);
+        assert!((v[1] - 0.02).abs() < 1e-7);
+        assert!((v[2] - (i as f32 * 0.001).min(0.02)).abs() < 1e-7);
+        assert_eq!(v[3], 0.);
     }
 }

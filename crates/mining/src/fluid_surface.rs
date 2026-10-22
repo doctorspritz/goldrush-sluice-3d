@@ -192,9 +192,15 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32, sample_volume_m3: f64) -> Vec<
                 mass += count * w;
                 displacement += (sum + (origin - p) * count) * w;
             }
-            let occupancy = ((mass as f64 * sample_volume_m3 / (width as f64).powi(3) - 0.05)
-                / 0.45)
-                .clamp(0., 1.) as f32;
+            let local_density = (mass as f64 * sample_volume_m3 / (width as f64).powi(3)) as f32;
+            let occupancy = ((local_density - 0.05) / 0.45).clamp(0., 1.);
+            // The broad covariance neighbourhood can include a full sheet below
+            // detached spray. Require some water in the continuous local stencil
+            // before lending that sample a bulk silhouette. These permissive
+            // render thresholds retain thin sheets; they are not solver density.
+            // Using represented volume keeps coincident subdivision invariant.
+            let local_support = ((local_density - 0.025) / 0.02).clamp(0., 1.);
+            let local_support = local_support * local_support * (3. - 2. * local_support);
             let support = occupancy * occupancy * (3. - 2. * occupancy);
             let channel_center =
                 p + (displacement / mass.max(1e-8)).clamp_length_max(cell * 0.75) * (0.8 * support);
@@ -202,7 +208,7 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32, sample_volume_m3: f64) -> Vec<
                 axes: kernel.axes,
                 normal: kernel.normal,
                 planarity: kernel.planarity,
-                bulk: kernel.bulk,
+                bulk: kernel.bulk * local_support,
                 center: p + (kernel.center - p).clamp_length_max(cell * 0.2) * 0.35,
                 channel_center,
             }
@@ -318,6 +324,31 @@ mod tests {
         let split: Vec<_> = compact.iter().flat_map(|p| [*p, *p]).collect();
         let divided = kernels(&split, 0.01, 6.25e-8);
         assert!(divided.iter().all(|k| k.bulk == 1.));
+    }
+    #[test]
+    fn spray_above_a_dense_sheet_does_not_borrow_its_bulk_silhouette() {
+        let mut points: Vec<_> = (0..12)
+            .flat_map(|x| {
+                (0..4).flat_map(move |y| {
+                    (0..12).map(move |z| {
+                        Vec3::new(
+                            x as f32 * 0.005 + 0.0025,
+                            y as f32 * 0.005 + 0.0025,
+                            z as f32 * 0.005 + 0.0025,
+                        )
+                    })
+                })
+            })
+            .collect();
+        points.push(Vec3::new(0.03, 0.03001, 0.03));
+        let before = points.clone();
+        let data = kernels(&points, 0.01, 1.25e-7);
+        assert!(
+            data.last().unwrap().bulk < 0.02,
+            "detached spray borrowed bulk: {}",
+            data.last().unwrap().bulk
+        );
+        assert_eq!(points, before);
     }
     #[test]
     fn detached_water_has_no_bulk_support_while_a_connected_sheet_does() {
