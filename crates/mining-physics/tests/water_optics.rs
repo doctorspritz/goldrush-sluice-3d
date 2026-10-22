@@ -631,9 +631,11 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
 fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet() {
     let (device, queue) = device();
     let mut textures = Vec::new();
-    for (format, channels) in [
-        (wgpu::TextureFormat::R32Float, 1),
-        (wgpu::TextureFormat::Rgba32Float, 4),
+    for (slot, format, channels) in [
+        (0, wgpu::TextureFormat::R32Float, 1),
+        (2, wgpu::TextureFormat::Rgba32Float, 4),
+        (3, wgpu::TextureFormat::Rgba32Float, 4),
+        (4, wgpu::TextureFormat::Rgba32Float, 4),
     ] {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -662,7 +664,18 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
                     }]
                 } else {
                     let density = [0., 0.0499, 0.0501, 0.5, 0.5, 0.5, 0.5, 0.25][y];
-                    vec![0.04, 2., density, density]
+                    if slot == 2 {
+                        vec![0.04, 2., density, density]
+                    } else if y == 7 {
+                        // Bulk surface selected at 35 mm, after both old probes.
+                        if slot == 4 {
+                            vec![0., 0., 0.5, 0.]
+                        } else {
+                            vec![0.; 4]
+                        }
+                    } else {
+                        vec![density; 4]
+                    }
                 }
             })
             .collect();
@@ -693,7 +706,7 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
     });
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
-        entries: &[0, 1, 2].map(|binding| wgpu::BindGroupLayoutEntry {
+        entries: &[0, 1, 2, 3, 4].map(|binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
             ty: if binding == 1 {
@@ -727,6 +740,14 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::TextureView(&views[1]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&views[2]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(&views[3]),
             },
         ],
     });
@@ -773,6 +794,10 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
     assert!((row(4) - 1.125).abs() < 1e-6, "uniform film moved");
     assert!((row(5) - 1.).abs() < 1e-6, "planar wave slope drifted");
     assert_eq!(row(6), 0., "dry coverage was invented");
+    assert!(
+        (row(7) - row(3)).abs() < 1e-6,
+        "delayed bulk crest was filtered as a detached drop"
+    );
 }
 
 #[test]

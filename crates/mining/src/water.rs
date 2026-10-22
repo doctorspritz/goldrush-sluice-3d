@@ -947,7 +947,7 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
                     Vec3::from_array(world.to_array()),
                     sluice.grid_velocity_to_world(water.velocity),
                     0.,
-                    slurry.sample(water.position).1,
+                    slurry.sample_channel(water.position).1,
                 )
             }
         })

@@ -136,9 +136,39 @@ impl SlurryField {
     /// Q_ext=2 is an optical approximation for grains much larger than light
     /// wavelengths, not an NTU calibration or a dense-slurry constitutive law.
     pub fn sample(&self, p: Vec3) -> (f32, f32) {
+        self.sample_reconstructed(p, false)
+    }
+    pub fn sample_channel(&self, p: Vec3) -> (f32, f32) {
+        self.sample_reconstructed(p, true)
+    }
+    fn sample_reconstructed(&self, p: Vec3, channel: bool) -> (f32, f32) {
         let mut cell = Cell::default();
-        for (i, w) in self.stencil(p) {
-            cell.add(self.cells[i], w);
+        if !channel {
+            for (i, w) in self.stencil(p) {
+                cell.add(self.cells[i], w);
+            }
+        } else {
+            // Reconstruct the additive moments with one C2 B-spline footprint.
+            // Linear interpolation leaves a kink at each optical-cell plane; after
+            // Beer-Lambert shading those kinks read as separate muddy patches.
+            // Divide only after gathering, so a homogeneous mixture stays uniform.
+            let q = p / CELL_M - Vec3::splat(0.5);
+            let base = q.floor().as_ivec3();
+            let f = (q - base.as_vec3()).to_array();
+            let weights = f.map(cubic_weights);
+            for z in 0..4 {
+                for y in 0..4 {
+                    for x in 0..4 {
+                        let offsets = [x, y, z];
+                        let index = std::array::from_fn(|a| {
+                            (base[a] + offsets[a] as i32 - 1).clamp(0, self.dims[a] as i32 - 1)
+                                as usize
+                        });
+                        let w = weights[0][x] * weights[1][y] * weights[2][z];
+                        cell.add(self.cells[self.index(index)], w);
+                    }
+                }
+            }
         }
         if cell.water < 1e-12 {
             return (0., 0.);
@@ -166,6 +196,17 @@ impl SlurryField {
         }
         beta / count.max(1) as f32
     }
+}
+
+// Positive cardinal cubic weights sum to one, including clamped boundaries.
+fn cubic_weights(t: f32) -> [f64; 4] {
+    let t = t as f64;
+    [
+        (1. - t).powi(3) / 6.,
+        (3. * t.powi(3) - 6. * t * t + 4.) / 6.,
+        (-3. * t.powi(3) + 3. * t * t + 3. * t + 1.) / 6.,
+        t.powi(3) / 6.,
+    ]
 }
 
 pub fn diagnostics(s: &Sluice) -> serde_json::Value {
@@ -229,6 +270,55 @@ mod reconstruction_tests {
             assert!((total.water - 0.001).abs() < 1e-17);
             assert!((total.fines - 0.00002).abs() < 1e-18);
             assert!((total.area - 0.3).abs() < 1e-14);
+        }
+    }
+}
+
+#[cfg(test)]
+mod continuous_optics_tests {
+    use super::*;
+    #[test]
+    fn nonuniform_optics_have_continuous_slopes_across_every_cell_axis() {
+        let mut f = SlurryField {
+            dims: [9; 3],
+            cells: vec![
+                Cell {
+                    water: 1.,
+                    fines: 0.,
+                    area: 0.
+                };
+                729
+            ],
+        };
+        let i = f.index([4; 3]);
+        f.cells[i].area = 1.;
+        let before = f.projected_volumes();
+        for axis in 0..3 {
+            for knot in [3, 4, 5] {
+                let mut p = Vec3::splat(4.5 * CELL_M);
+                p[axis] = (knot as f32 + 0.5) * CELL_M;
+                let mut d = Vec3::ZERO;
+                d[axis] = CELL_M * 0.002;
+                let value = |q| f.sample_channel(q).1 as f64;
+                let (a, b, c) = (value(p - d), value(p), value(p + d));
+                let left = (b - a) / d[axis] as f64;
+                let right = (c - b) / d[axis] as f64;
+                assert!(
+                    (left - right).abs() < 0.13,
+                    "axis {axis}, knot {knot}: {left} vs {right}"
+                );
+                assert!(a >= 0. && b >= 0. && c >= 0.);
+            }
+        }
+        assert_eq!(
+            before,
+            f.projected_volumes(),
+            "sampling changed represented inventory"
+        );
+        for t in [0., 0.1, 0.5, 0.9, 1.] {
+            let w = cubic_weights(t);
+            assert!(w.iter().all(|v| *v >= 0.));
+            assert!((w.iter().sum::<f64>() - 1.).abs() < 1e-14);
         }
     }
 }

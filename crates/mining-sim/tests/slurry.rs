@@ -148,7 +148,13 @@ fn a_uniform_mixture_keeps_extinction_across_optical_cell_phases() {
                 field.reconstruct_channel();
             }
             for offset in [-0.025, 0., 0.025] {
-                let beta = field.sample(p + Vec3::new(offset, 0., -offset * 0.3)).1 as f64;
+                let sample = p + Vec3::new(offset, 0., -offset * 0.3);
+                let beta = if channel {
+                    field.sample_channel(sample)
+                } else {
+                    field.sample(sample)
+                }
+                .1 as f64;
                 assert!(
                     (beta / expected - 1.).abs() < 2e-6,
                     "channel {channel}, phase {i}, offset {offset}: {beta} vs {expected}"

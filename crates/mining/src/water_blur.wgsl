@@ -35,8 +35,14 @@ fn smooth_depth(pixel: vec2<i32>, direction: vec2<i32>) -> f32 {
     // interface needs a broader footprint than detached spray; otherwise the
     // remaining kernel domes reappear as circular crest highlights. Outlet
     // columns have zero density probes and retain the existing 15-tap filter.
-    let density=textureLoad(columns,pixel,0).ba;
-    let bulk=smoothstep(0.05,0.5,max(density.x,density.y));
+    let near=textureLoad(density_near,pixel,0);
+    let far=textureLoad(density_far,pixel,0);
+    // A connected layer may start behind a front spray particle. Use the same
+    // full density profile that selected the interface, rather than only the
+    // old 4/12 mm probes, which misclassified the delayed crest as a drop.
+    let peak=max(max(max(near.x,near.y),max(near.z,near.w)),
+                 max(max(far.x,far.y),max(far.z,far.w)));
+    let bulk=smoothstep(0.05,0.5,peak);
     var total = 0.; var weights = 0.;
     for (var i = -11; i <= 11; i++) {
         if abs(i)>7 && bulk==0. {continue;}
