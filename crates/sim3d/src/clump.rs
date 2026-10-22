@@ -671,30 +671,30 @@ impl ClusterSimulation3D {
                     if penetration <= radius * 0.005 || gradient.length_squared() <= 1e-12 {
                         continue;
                     }
-                    // Differentiate the actual trilinear scalar field. Its
-                    // interpolated gradient need not have unit magnitude.
-                    let delta = (gradient * (penetration / gradient.length_squared()))
-                        .clamp_length_max(sdf.cell_size);
-                    let initial = body.position;
-                    let mut fraction = 1.;
-                    let mut accepted = false;
-                    for _ in 0..8 {
-                        let candidate = initial + delta * fraction;
-                        let (next, _) = sample_sdf_contact(sdf, candidate + arm, radius);
-                        if next.is_finite()
-                            && (next >= radius || next > distance + penetration * fraction * 0.25)
+                    // Keep the ordinary scalar Newton step on smooth geometry.
+                    // At a trilinear ridge it can repeatedly cross a cell knot
+                    // with negligible progress; sample local gradients only on
+                    // that stalled path, then check the unchanged scalar field.
+                    let mut step =
+                        static_contact_step(sdf, body.position, arm, radius, distance, gradient);
+                    let mut normal_gradient = gradient;
+                    if step.is_none_or(|s| s.fraction < 0.5) {
+                        let common = static_contact_ascent(sdf, point, radius, gradient);
+                        if let Some(alternative) =
+                            static_contact_step(sdf, body.position, arm, radius, distance, common)
                         {
-                            body.position = candidate;
-                            accepted = true;
-                            break;
+                            if step.is_none_or(|s| alternative.distance > s.distance) {
+                                step = Some(alternative);
+                                normal_gradient = common;
+                            }
                         }
-                        fraction *= 0.5;
                     }
-                    if !accepted {
+                    let Some(step) = step else {
                         continue;
-                    }
+                    };
+                    body.position = step.position;
                     changed = true;
-                    let normal = gradient.normalize();
+                    let normal = normal_gradient.normalize();
                     crate::contact::resolve_static(
                         body,
                         template,
@@ -2344,6 +2344,78 @@ pub fn sample_sdf_with_gradient(
         f32::INFINITY,
     )
 }
+#[derive(Clone, Copy)]
+struct StaticContactStep {
+    position: Vec3,
+    distance: f32,
+    fraction: f32,
+}
+fn static_contact_step(
+    sdf: &SdfParams,
+    position: Vec3,
+    arm: Vec3,
+    radius: f32,
+    distance: f32,
+    gradient: Vec3,
+) -> Option<StaticContactStep> {
+    let norm = gradient.length_squared();
+    if !norm.is_finite() || norm <= 1e-12 {
+        return None;
+    }
+    let penetration = radius - distance;
+    let delta = (gradient * (penetration / norm)).clamp_length_max(sdf.cell_size);
+    let mut fraction = 1.;
+    for _ in 0..8 {
+        let candidate = position + delta * fraction;
+        let (next, _) = sample_sdf_contact(sdf, candidate + arm, radius);
+        if next.is_finite() && (next >= radius || next > distance + penetration * fraction * 0.25) {
+            return Some(StaticContactStep {
+                position: candidate,
+                distance: next,
+                fraction,
+            });
+        }
+        fraction *= 0.5;
+    }
+    None
+}
+// A bounded, deterministic sampled-gradient safeguard, not a new distance
+// field or a global convergence claim. A small convex-hull search seeks a
+// common ascent direction near competing trilinear pieces. Every accepted
+// displacement still passes the original true-field Armijo check above.
+fn static_contact_ascent(sdf: &SdfParams, point: Vec3, radius: f32, gradient: Vec3) -> Vec3 {
+    let precision = point.abs().max_element().max(sdf.cell_size) * 8. * f32::EPSILON;
+    let epsilon = (radius * 0.005).max(precision).min(sdf.cell_size * 0.01);
+    let mut samples = [gradient; 7];
+    for axis in 0..3 {
+        let mut offset = Vec3::ZERO;
+        offset[axis] = epsilon;
+        samples[1 + 2 * axis] = sample_sdf_contact(sdf, point - offset, radius).1;
+        samples[2 + 2 * axis] = sample_sdf_contact(sdf, point + offset, radius).1;
+    }
+    if samples.iter().any(|g| !g.is_finite()) {
+        return gradient;
+    }
+    let mut common = gradient;
+    for _ in 0..16 {
+        let vertex = *samples
+            .iter()
+            .min_by(|a, b| a.dot(common).total_cmp(&b.dot(common)))
+            .unwrap();
+        let direction = vertex - common;
+        let norm = direction.length_squared();
+        if norm <= 1e-20 {
+            break;
+        }
+        let alpha = (-common.dot(direction) / norm).clamp(0., 1.);
+        if alpha <= 1e-6 {
+            break;
+        }
+        common += direction * alpha;
+    }
+    common
+}
+
 fn sample_sdf_contact(params: &SdfParams, world_pos: Vec3, radius: f32) -> (f32, Vec3) {
     let SdfParams {
         sdf,
@@ -3759,5 +3831,162 @@ mod tests {
         let sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::splat(10.0));
         assert!(sim.wet_friction < sim.floor_friction);
         assert!(sim.wet_rolling_friction < sim.rolling_friction);
+    }
+}
+
+#[cfg(test)]
+mod static_nonsmooth_tests {
+    use super::*;
+    #[test]
+    fn completed_static_contacts_escape_the_recorded_riffle_distance_ridge() {
+        // Exact 5^3 sample crop/body from the 5.0333336 s live-restore failure.
+        // The scalar field is unchanged; the local gradient switches at x=0.695 m.
+        let field = [
+            0xbcf08b57, 0xbce86ffc, 0xbcccf159, 0xbca78da8, 0xbca78da8, 0xbca77ba9, 0xbca41014,
+            0xbc8e5f91, 0xbc45c5ba, 0xbc45c5ba, 0xbc45c548, 0xbc44dfd0, 0xbc308358, 0xbba3d70a,
+            0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0xbba3d70a,
+            0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0xbccc6389, 0xbcc4a996, 0xbca78da8,
+            0xbc75c28f, 0xbc75c28f, 0xbc75ab00, 0xbc702d63, 0xbc45c5ba, 0xbba3d70a, 0xbba3d70a,
+            0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a,
+            0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a,
+            0x3ba3d70a, 0xbccc6389, 0xbcc4a996, 0xbca78da8, 0xbc75c28f, 0xbc75c28f, 0xbc75ab00,
+            0xbc702d63, 0xbc45c5ba, 0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0xbba3d70a,
+            0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3c308358, 0x3c308358,
+            0x3c45c548, 0x3c45c5bb, 0x3c45c5ba, 0x3c6803af, 0x3c44dfd0, 0xbccc6389, 0xbcc4a996,
+            0xbca78da8, 0xbc75c28f, 0xbc75c28f, 0xbc75ab00, 0xbc702d63, 0xbc45c5ba, 0xbba3d70a,
+            0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a,
+            0x3ba3d70a, 0x3ba3d70a, 0x3c44dfd0, 0x3c44dfd0, 0x3c7022d4, 0x3c702d63, 0x3c702d63,
+            0x3c9d4cc0, 0x3c6c16b5, 0xbccc6389, 0xbcc4a996, 0xbca78da8, 0xbc75c28f, 0xbc75c28f,
+            0xbc75ab00, 0xbc702d63, 0xbc45c5ba, 0xbba3d70a, 0xbba3d70a, 0xbba3d70a, 0xbba3d70a,
+            0xbba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3ba3d70a, 0x3c45c548,
+            0x3c45c548, 0x3c75943d, 0x3c75aafd, 0x3c75aafd, 0x3ca6161f, 0x3c7022d4,
+        ]
+        .map(f32::from_bits);
+        let sdf = SdfParams {
+            sdf: &field,
+            grid_width: 5,
+            grid_height: 5,
+            grid_depth: 5,
+            cell_size: 0.01,
+            grid_offset: Vec3::new(
+                f32::from_bits(0x3f28f5c2),
+                f32::from_bits(0x3e23d70a),
+                f32::from_bits(0x00000000),
+            ),
+        };
+        let radius = f32::from_bits(0x3bb848d9);
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::ONE);
+        sim.add_template(ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 1,
+                seed: 4,
+                style: IrregularStyle3D::Round,
+            },
+            radius,
+            f32::from_bits(0x3a9b476d),
+        ));
+        sim.spawn(
+            0,
+            Vec3::new(
+                f32::from_bits(0x3f31eb82),
+                f32::from_bits(0x3e4049bc),
+                f32::from_bits(0x3c8f594d),
+            ),
+            Vec3::new(
+                f32::from_bits(0xbbba9d7a),
+                f32::from_bits(0xbcd74a5f),
+                f32::from_bits(0xbba06e09),
+            ),
+        );
+        sim.clumps[0].angular_velocity = Vec3::new(
+            f32::from_bits(0x4079ec41),
+            f32::from_bits(0x3f8a2f03),
+            f32::from_bits(0xbe0e05d8),
+        );
+        let initial = sim.clumps[0];
+        let t = &sim.templates[0];
+        let energy = |c: &Clump3D| {
+            0.5 * t.mass * c.velocity.length_squared()
+                + 0.5
+                    * c.angular_velocity
+                        .dot(c.world_inertia_inv(t).inverse() * c.angular_velocity)
+        };
+        let before_energy = energy(&initial);
+        assert!(
+            sample_sdf_contact(&sdf, initial.position, radius).0 < 0.97 * radius,
+            "fixture no longer reproduces penetration"
+        );
+        let residual = sim.complete_static_contacts(&sdf, &[true]);
+        assert!(
+            residual < 0.01,
+            "ridge projection stalled at relative penetration {residual}"
+        );
+        let c = sim.clumps[0];
+        assert!(
+            (c.position - initial.position).length() < 0.003,
+            "completion made a large escape jump"
+        );
+        assert_eq!(
+            c.rotation, initial.rotation,
+            "completion integrated time/orientation"
+        );
+        let t = &sim.templates[0];
+        let after_energy = 0.5 * t.mass * c.velocity.length_squared()
+            + 0.5
+                * c.angular_velocity
+                    .dot(c.world_inertia_inv(t).inverse() * c.angular_velocity);
+        assert!(
+            after_energy <= before_energy * (1. + 1e-6),
+            "static completion added kinetic energy"
+        );
+        let snapshot = (c.position, c.velocity, c.rotation, c.angular_velocity);
+        assert!(sim.complete_static_contacts(&sdf, &[true]) < 0.01);
+        let c = sim.clumps[0];
+        assert_eq!(
+            snapshot,
+            (c.position, c.velocity, c.rotation, c.angular_velocity),
+            "completed state is not idempotent"
+        );
+    }
+    #[test]
+    fn completed_static_contacts_do_not_invent_clearance_in_an_infeasible_pocket() {
+        let mut field = vec![0.; 7 * 7 * 7];
+        for z in 0..7 {
+            for y in 0..7 {
+                for x in 0..7 {
+                    let p = (Vec3::new(x as f32, y as f32, z as f32) + Vec3::splat(0.5)) * 0.01;
+                    field[(z * 7 + y) * 7 + x] =
+                        0.002 - (p - Vec3::splat(0.035)).abs().element_sum();
+                }
+            }
+        }
+        let sdf = SdfParams {
+            sdf: &field,
+            grid_width: 7,
+            grid_height: 7,
+            grid_depth: 7,
+            cell_size: 0.01,
+            grid_offset: Vec3::ZERO,
+        };
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::ONE);
+        sim.add_template(ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 1,
+                seed: 4,
+                style: IrregularStyle3D::Round,
+            },
+            0.003,
+            0.01,
+        ));
+        sim.spawn(0, Vec3::splat(0.035), Vec3::ZERO);
+        let initial = sim.clumps[0].position;
+        assert!(
+            sim.complete_static_contacts(&sdf, &[true]) > 0.01,
+            "impossible clearance was marked resolved"
+        );
+        assert!(
+            (sim.clumps[0].position - initial).length() < 1e-6,
+            "infeasible pocket caused a jump"
+        );
     }
 }
