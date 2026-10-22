@@ -2,7 +2,7 @@
 
 The persistent goal is a direct-control gold-mining game with realistic digging and fluids, buildable pads, mud, shaker decks, sluice buildup, settling pools, and high quality graphics. The goal remains incomplete until the complete operation works and is verified. The water-rendering checkpoint `71a195b` is the starting point for these stages, not the completion criterion.
 
-Stage 1 is verified in the [22 October earthwork report](../docs/playtests/2026-10-22-earthworks.md). Stages 2–6 and the global-solver prerequisites below remain open. The two closed stage issues do not close this full objective.
+Stage 1 is verified in the [22 October earthwork report](../docs/playtests/2026-10-22-earthworks.md). The first conservative pump handoff and safe final-render teardown are verified in the [intake report](../docs/playtests/2026-10-22-intake.md). Stages 2–6 and the global-solver prerequisites below remain open. Closing these bounded stage issues does not close this full objective.
 
 | Stage | Deliverable | Evidence required |
 |---|---|---|
@@ -21,7 +21,7 @@ The initial soil-resistance model is an explicitly limited level-ground passive-
 
 Compaction must distinguish grain mass, bulk volume, porosity and pore water: the current bulk-volume ledger is insufficient when void volume changes. Stage 2 must conserve grain mass and total pore/surface water while allowing compaction, swelling and expelled water. Pads require finite cut/fill and bearing/support; a cosmetic flattened mesh does not satisfy Stage 3.
 
-The first earthwork stage also exposed global-solver prerequisites. Conservative collapse and clean-source dilution are implemented. `sluice-geology-snapshots` still requires immutable slope reads and long-run representable bed exchange. `sluice-intake-solids` requires an explicit pump stream carrying sediment/gold rather than silently discarding concentration times withdrawn water. The current pump-off dig/delivery gate does not establish the complete circuit or plant stage. The historical 20 October full-shift replay predates swept excavation; the current small feed takes roughly 97 simulated minutes for a 0.58 m³ load.
+The first earthwork stage also exposed global-solver prerequisites. Conservative collapse and clean-source dilution are implemented. `sluice-geology-snapshots` still requires immutable slope reads and long-run representable bed exchange. The first [pump handoff](../docs/physics/intake.md) now carries local sediment/gold into saved inlet custody and actual DEM parcels, with source/capacity starvation. `sluice-intake-solids` remains open for physical hose/pressure behavior, substep-local gold transport and the complete constructed pond circuit. The pump-off dig/delivery gate and a controlled intake pulse do not establish the complete circuit or plant stage. The historical 20 October full-shift replay predates swept excavation; the current small feed takes roughly 97 simulated minutes for a 0.58 m³ load.
 
 References: [earthmoving models and limitations](https://doi.org/10.1186/s40323-021-00196-3), [passive earth pressure](https://www.scdot.org/content/dam/scdot-legacy/business/pdf/geotech/2022-by-chapter/Chapter18-EarthRetainingStructures-12032021.pdf), [manufacturer force reference](https://www.cat.com/en_US/products/new/equipment/excavators/mini-excavators/127700.html).
 

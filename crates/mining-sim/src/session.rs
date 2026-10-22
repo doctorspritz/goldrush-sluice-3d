@@ -407,7 +407,10 @@ impl Session {
             }
         }
         crate::outflow::step(&mut self.sluice, &mut self.site, dt);
-        let requested = if self.sluice.pump_on && self.sluice.placement.is_some() {
+        let requested = if self.sluice.pump_on
+            && self.sluice.placement.is_some()
+            && self.sluice.intake_has_room()
+        {
             let room = self
                 .sluice
                 .profile
@@ -421,22 +424,23 @@ impl Session {
             0.0
         };
         let actual = if requested > 0.0 {
-            self.site.withdraw_water(
+            self.site.withdraw_intake(
                 Vec3::new(Site::river_center(HOPPER_Z), 0.0, HOPPER_Z),
                 requested,
             )
         } else {
-            0.0
+            crate::intake::IntakePacket::default()
         };
         let expected = self.sluice.flow_m3s * dt;
         let fraction = if expected > 0.0 {
-            actual / expected
+            actual.water_m3 / expected as f64
         } else {
             0.0
         };
-        self.sluice.water_used_m3 += actual as f64;
+        self.sluice.water_used_m3 += actual.water_m3;
+        self.sluice.inlet.last_water_m3 = actual.water_m3;
         self.sluice.feed(dt, fraction > 0.01);
-        self.sluice.water_credit_m3 += actual as f64;
+        self.sluice.accept_intake(actual);
     }
 
     pub fn accounted_gold(&self) -> f64 {

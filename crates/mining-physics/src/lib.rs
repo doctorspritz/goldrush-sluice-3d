@@ -289,15 +289,12 @@ impl Hydraulics {
             s.sluice.water.push(WaterParticle {
                 id,
                 position: Vec3::new(x, y, z),
-                velocity: if profile == HydraulicProfile::OriginalDemo {
-                    Vec3::new(0.5, -0.05, 0.0)
-                } else {
-                    Vec3::new(0.4, 0.0, 0.0)
-                },
+                velocity: s.sluice.inlet_velocity(),
                 affine: Mat3::ZERO,
             });
         }
-        s.sluice.water_credit_m3 -= emitted as f64 * particle_m3;
+        s.sluice.admit_intake_water(emitted as f64 * particle_m3);
+        s.sluice.emit_intake_grains(fluid_dt);
         if s.sluice.water_credit_m3 > 0.02 {
             return Err(
                 "FLIP capacity reached: stop the pump; water was retained, not discarded".into(),

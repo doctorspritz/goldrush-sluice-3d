@@ -57,7 +57,15 @@ impl HeightfieldState {
         .iter()
         .all(|v| {
             (v.is_empty() || v.len() == n) && v.iter().all(|x| x.is_finite() && x.abs() < 10000.0)
-        }) && (self.settling_time.is_empty() || self.settling_time.len() == n)
+        }) && [
+            &self.suspended_sediment,
+            &self.suspended_overburden,
+            &self.suspended_gravel,
+            &self.suspended_paydirt,
+        ]
+        .iter()
+        .all(|v| v.iter().all(|c| *c >= 0.))
+            && (self.settling_time.is_empty() || self.settling_time.len() == n)
             && (self.suspended_gold_g.is_empty() || self.suspended_gold_g.len() == n)
             && self
                 .suspended_gold_g
@@ -339,25 +347,75 @@ impl Site {
         }
         self.revision += 1;
     }
-    pub fn withdraw_water(&mut self, p: Vec3, volume: f32) -> f32 {
+    /// Withdraw a well-mixed local sample, including all four suspension
+    /// channels and their gold tag. Use the represented depth change, not the
+    /// requested f32 decrement, so the receiving ledger matches the donor.
+    pub fn withdraw_intake(&mut self, p: Vec3, volume: f32) -> crate::intake::IntakePacket {
+        let mut packet = crate::intake::IntakePacket::default();
+        if !p.is_finite() || !Self::bounds(p, 0.) || !volume.is_finite() || volume <= 0. {
+            return packet;
+        }
         let x = (p.x / CELL) as i32;
         let z = (p.z / CELL) as i32;
-        let mut remaining = volume.max(0.0);
-        for dz in -3..=3 {
-            for dx in -3..=3 {
+        // A compact 3x3 finite-volume intake. Sample all wet donor cells
+        // proportionally; draining the first corner of a 7x7 square biased
+        // both the source location and the concentration presented to the pump.
+        let mut cells = Vec::with_capacity(9);
+        for dz in -1..=1 {
+            for dx in -1..=1 {
                 let ix = x + dx;
                 let iz = z + dz;
                 if ix < 0 || iz < 0 || ix >= WIDTH as i32 || iz >= WIDTH as i32 {
                     continue;
                 }
                 let i = self.world.idx(ix as usize, iz as usize);
-                let available = self.world.water_depth(ix as usize, iz as usize) * CELL * CELL;
-                let taken = available.min(remaining);
-                self.world.water_surface[i] -= taken / (CELL * CELL);
-                remaining -= taken;
+                let before = self.world.water_depth(ix as usize, iz as usize) as f64;
+                cells.push((i, before));
             }
         }
-        volume.max(0.0) - remaining
+        let area = (CELL as f64).powi(2);
+        let available = cells.iter().map(|(_, depth)| depth * area).sum::<f64>();
+        let fraction = (volume as f64 / available.max(1e-30)).min(1.);
+        for (i, before) in cells {
+            let requested = before * area * fraction;
+            if requested <= 0. {
+                continue;
+            }
+            let target = (self.world.water_surface[i] as f64 - requested / area)
+                .max(self.world.ground_height(i % WIDTH, i / WIDTH) as f64);
+            let mut surface = target as f32;
+            // Round toward retained water: a sub-ULP request cannot draw
+            // extra water merely to satisfy a nominal pump setting.
+            if (surface as f64) < target {
+                surface = surface.next_up();
+            }
+            self.world.water_surface[i] = surface;
+            let after = self.world.water_depth(i % WIDTH, i / WIDTH) as f64;
+            let taken = (before - after).max(0.) * area;
+            for (channel, field) in [
+                &self.hydraulic.suspended_sediment,
+                &self.hydraulic.suspended_overburden,
+                &self.hydraulic.suspended_gravel,
+                &self.hydraulic.suspended_paydirt,
+            ]
+            .iter()
+            .enumerate()
+            {
+                packet.suspension.solid_m3[channel] +=
+                    field.get(i).copied().unwrap_or(0.) as f64 * taken;
+            }
+            if let Some(gold) = self.hydraulic.suspended_gold_g.get_mut(i) {
+                let removed = *gold * ((before - after) / before.max(1e-30)).clamp(0., 1.);
+                *gold -= removed;
+                packet.suspension.gold_g += removed;
+            }
+            packet.water_m3 += taken;
+        }
+        if packet.water_m3 > 0. {
+            self.hydraulic.impact_dirty = true;
+            self.revision += 1;
+        }
+        packet
     }
     pub fn raycast(&self, origin: Vec3, direction: Vec3, reach: f32) -> Option<Vec3> {
         if !origin.is_finite() || !direction.is_finite() {

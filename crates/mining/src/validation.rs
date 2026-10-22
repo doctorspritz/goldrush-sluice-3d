@@ -19,6 +19,7 @@ pub struct Validation {
     flow_benchmark: Option<PathBuf>,
     flow_result: Option<bool>,
     flow_started: Option<(Instant, f64)>,
+    flow_initial_bulk_m3: Option<f64>,
     flow_sample: Option<(Instant, f64)>,
     flow_windows: Vec<f64>,
     worker_ms: Vec<f64>,
@@ -84,6 +85,7 @@ impl Default for Validation {
             flow_benchmark,
             flow_result: None,
             flow_started: None,
+            flow_initial_bulk_m3: None,
             flow_sample: None,
             flow_windows: Vec::new(),
             worker_ms: Vec::new(),
@@ -224,6 +226,9 @@ pub fn update(
         let now = Instant::now();
         let sim = game.session.sim_time;
         let (started, sim_start) = *v.flow_started.get_or_insert((now, sim));
+        let initial_bulk = *v
+            .flow_initial_bulk_m3
+            .get_or_insert_with(|| game.session.accounted_bulk_material_m3());
         let (sample, previous) = *v.flow_sample.get_or_insert((now, sim));
         v.frame_ms.push(time.delta_secs_f64() * 1000.0);
         if sample.elapsed().as_secs_f64() >= 1.0 {
@@ -261,14 +266,21 @@ pub fn update(
             let sluice_water_error = sluice.water_used_m3 - sluice.accounted_water_m3();
             let water_error = game.session.water_balance_error_m3();
             let gold_error = game.session.accounted_gold() - game.session.initial_gold_g;
+            let bulk_error = game.session.accounted_bulk_material_m3() - initial_bulk;
+            let bulk_tolerance = initial_bulk * 1e-6;
+            let bulk_passed = bulk_error.abs() <= bulk_tolerance;
             let passed = simulated / wall >= 0.98
                 && 1000. / mean >= 50.
                 && crate::water::surface_ready(&water)
                 && water_error.abs() < 1e-4
                 && sluice_water_error.abs() < 1e-6
                 && gold_error.abs() < 1e-6;
+            let passed = passed && bulk_passed;
             v.flow_result = Some(passed);
             let report = serde_json::json!({"passed":passed,"water_balance_error_m3":water_error,
+                "bulk_material_error_m3":bulk_error,"initial_bulk_material_m3":initial_bulk,
+                "bulk_tolerance_m3":bulk_tolerance,"bulk_budget_passed":bulk_passed,
+                "inlet":sluice.inlet,
                 "sluice_water_balance_error_m3":sluice_water_error,
                 "water_balance":game.session.water_balance,
                 "stored_water_m3":game.session.stored_water_m3(),

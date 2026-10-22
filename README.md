@@ -24,6 +24,8 @@ The [sluice accuracy laboratory](docs/physics/accuracy.md) provides repeatable s
 
 New shifts also separate fine soil from sand, and local suspended-material plumes replace the whole-channel dirt tint. Denser visible grain sampling represents the existing weighted material without adding independent DEM bodies. See the [slurry model and its limits](docs/physics/slurry.md) and [native measurements](docs/playtests/2026-10-21-slurry.md).
 
+Pumped river suspension now enters the real grain solver at the water inlet, with saved custody of all four terrain material classes and trace gold. Dry or capacity-limited intakes retain their material and reduce delivery; the HUD shows actual versus requested water flow. See the [pump model and remaining circuit requirements](docs/physics/intake.md).
+
 For a fresh mining shift, walk to the excavator, cut finite paydirt, swing a loaded bucket over the hopper, place a sluice, wash and lift the mats. The first shift's goal is **5 grams of recovered gold**.
 
 On this Mac, double-click **Play First Bend.command**, or run:

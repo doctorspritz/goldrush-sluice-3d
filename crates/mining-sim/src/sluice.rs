@@ -264,6 +264,8 @@ pub struct Sluice {
     #[serde(default)]
     pub outflow: Vec<crate::outflow::OutflowParticle>,
     pub water_credit_m3: f64,
+    #[serde(default)]
+    pub inlet: crate::intake::Inlet,
     pub water_returned_m3: f64,
     pub solver_steps: u64,
     pub contacts: sim3d::clump::ContactHistory3D,
@@ -299,6 +301,7 @@ impl Default for Sluice {
             next_water_id: 0,
             outflow: Vec::new(),
             water_credit_m3: 0.0,
+            inlet: Default::default(),
             water_returned_m3: 0.0,
             solver_steps: 0,
             contacts: Default::default(),
@@ -362,11 +365,130 @@ impl Sluice {
     }
     pub fn active_material(&self) -> Material {
         let mut m = self.hopper;
+        m.add(self.inlet.material());
         m.gold_g += self.pending_gold_g;
         for g in &self.grains {
             m.add(g.material);
         }
         m
+    }
+    pub fn accept_intake(&mut self, packet: crate::intake::IntakePacket) {
+        self.water_credit_m3 += packet.water_m3;
+        self.inlet.ready.add(packet.suspension);
+        self.inlet.withdrawn.add(packet.suspension);
+    }
+    pub fn intake_has_room(&self) -> bool {
+        self.grains.len() + 5 <= MAX_GRAINS
+            && self.inlet.material().volume()
+                < self
+                    .parcel_volume()
+                    .min(PARCEL_VOLUME)
+                    .max(std::f64::consts::PI / 6. * 0.01_f64.powi(3))
+                    * crate::intake::ADMISSION_BATCH as f64
+    }
+    /// Called with precisely the water volume admitted to FLIP. Suspended
+    /// material leaves the same carrier fraction and remains in inlet custody
+    /// until actual DEM parcels can be created; no hopper/feed gate is involved.
+    pub fn admit_intake_water(&mut self, water_m3: f64) {
+        let fraction = water_m3 / self.water_credit_m3.max(1e-30);
+        self.inlet
+            .pending
+            .add(self.inlet.ready.take_fraction(fraction));
+        self.water_credit_m3 = (self.water_credit_m3 - water_m3).max(0.);
+    }
+    pub fn emit_intake_grains(&mut self, dt: f32) {
+        if self.placement.is_none() {
+            return;
+        }
+        self.inlet.emission_clock = (self.inlet.emission_clock + dt).min(0.25);
+        let parcel_volume = self.parcel_volume().min(PARCEL_VOLUME);
+        if self.grains.len() + 5 > MAX_GRAINS
+            || (self.inlet.pending.material().volume() < parcel_volume
+                && self.inlet.emission_clock < 0.2499
+                && self.pump_on)
+        {
+            return;
+        }
+        // Match the terrain solver's four D50 values, rather than resampling
+        // pumped fines as the dry hopper's much coarser alluvial grading.
+        let mut budget = crate::intake::ADMISSION_BATCH.min(MAX_GRAINS - self.grains.len());
+        while budget > 0 {
+            let mut progressed = false;
+            for (channel, diameter, kind) in [
+                (0, 0.0001, GrainKind::Sand),
+                (1, 0.001, GrainKind::Sand),
+                (2, 0.01, GrainKind::Gravel),
+                (3, 0.002, GrainKind::Gravel),
+                (4, 0.0001, GrainKind::Gold),
+            ] {
+                if budget == 0 {
+                    break;
+                }
+                let one_grain = std::f64::consts::PI / 6. * (diameter as f64).powi(3);
+                let available = if channel == 4 {
+                    self.inlet.pending.gold_g / (19_300. * 1000.)
+                } else {
+                    self.inlet.pending.solid_m3[channel]
+                };
+                if available < one_grain {
+                    continue;
+                }
+                let mut load = crate::intake::Suspension::default();
+                if channel == 4 {
+                    load.gold_g = self
+                        .inlet
+                        .pending
+                        .gold_g
+                        .min(parcel_volume.max(one_grain) * 19_300. * 1000.);
+                    self.inlet.pending.gold_g -= load.gold_g;
+                } else {
+                    load.solid_m3[channel] =
+                        self.inlet.pending.solid_m3[channel].min(parcel_volume.max(one_grain));
+                    self.inlet.pending.solid_m3[channel] -= load.solid_m3[channel];
+                }
+                self.inlet.sequence = self.inlet.sequence.wrapping_add(1);
+                let sample =
+                    |factor: f64| ((self.inlet.sequence as f64 + 0.5) * factor).fract() as f32;
+                let mut grain = Grain {
+                    volume_resolved: true,
+                    kind,
+                    position: Vec3::new(
+                        self.profile.cell() * (2. + sample(0.754877666)),
+                        (self.floor_cells() + 1) as f32 * self.profile.cell() + 0.04,
+                        self.profile.width() * 0.5
+                            + self.profile.cell()
+                            + (sample(0.438579021) - 0.5) * self.profile.width() * 0.25,
+                    ),
+                    velocity: self.inlet_velocity(),
+                    material: load.material(),
+                    resting: false,
+                    diameter_m: diameter,
+                    affine: Mat3::ZERO,
+                    rotation: Quat::IDENTITY,
+                    angular_velocity: Vec3::ZERO,
+                };
+                // A weighted parcel has a larger contact envelope than a water
+                // sample. Release its complete envelope clear of the inlet wall.
+                grain.position.x += grain.collision_radius();
+                self.grains.push(grain);
+                self.inlet.emitted.add(load);
+                budget -= 1;
+                progressed = true;
+            }
+            if !progressed || budget == 0 {
+                break;
+            }
+        }
+        self.inlet.emission_clock = 0.;
+    }
+    /// Retain the existing specified inlet velocity. Pump pressure, nozzle
+    /// geometry and the external reaction force are separate calibration work.
+    pub fn inlet_velocity(&self) -> Vec3 {
+        if self.profile == HydraulicProfile::OriginalDemo {
+            Vec3::new(0.5, -0.05, 0.)
+        } else {
+            Vec3::new(0.4, 0., 0.)
+        }
     }
     /// Volume and positions come from FLIP; there is no analytic water-depth
     /// or sediment-capture model in the game layer.
@@ -604,6 +726,7 @@ impl Sluice {
     }
     pub fn valid(&self) -> bool {
         self.hopper.valid()
+            && self.inlet.valid()
             && self.tailings.valid()
             && self.concentrate.valid()
             && self.hopper.volume() <= 0.85001

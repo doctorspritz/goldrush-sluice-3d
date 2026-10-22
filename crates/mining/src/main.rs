@@ -7,6 +7,7 @@ mod fluid_surface;
 mod ground_material;
 mod hud;
 mod motion_capture;
+mod render_exit;
 mod runtime;
 mod scene;
 mod sediment;
@@ -47,6 +48,7 @@ fn main() -> AppExit {
                 }),
         )
         .add_plugins(water::WaterSplatPlugin)
+        .add_plugins(render_exit::RenderExitPlugin)
         .insert_resource(game)
         .insert_non_send_resource(runtime)
         .insert_non_send_resource(activity::SimulationActivity::default())
