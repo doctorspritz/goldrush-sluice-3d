@@ -313,11 +313,38 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
     let raw = texture(
         wgpu::TextureFormat::Rgba32Float,
         &(0..64)
-            .flat_map(|i| [1., if i % 2 == 0 { -1. } else { -10001. }, 0., 0.])
+            .flat_map(|i| {
+                [
+                    if i == 18 { 2. } else { 1. },
+                    if i == 45 {
+                        1.
+                    } else if i % 2 == 0 {
+                        -1.
+                    } else {
+                        -10001.
+                    },
+                    0.,
+                    0.,
+                ]
+            })
             .collect::<Vec<_>>(),
         4,
     );
-    let moments = texture(wgpu::TextureFormat::Rg32Float, &[0.04f32, 2.].repeat(64), 2);
+    // A different depth surface and an outlet pixel carry deliberately huge
+    // extinction. Neither may contaminate the visible channel's column filter.
+    let moments = texture(
+        wgpu::TextureFormat::Rg32Float,
+        &(0..64)
+            .flat_map(|i| {
+                if i == 18 || i == 45 {
+                    [0.5, 5000.]
+                } else {
+                    [0.04, 2.]
+                }
+            })
+            .collect::<Vec<_>>(),
+        2,
+    );
     let nearest_normals = texture(
         wgpu::TextureFormat::Rgba32Float,
         &(0..64)
@@ -337,8 +364,11 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
         4,
     );
     let mut uniforms = [0f32; 72];
-    uniforms[64] = 8.;
-    uniforms[65] = 8.;
+    uniforms[37] = 1.;
+    // Exercise all four full-resolution pixel phases of the half-size surface
+    // buffer, rather than checking only the particle-buffer texel centres.
+    uniforms[64] = 16.;
+    uniforms[65] = 16.;
     let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(&uniforms),
@@ -391,7 +421,7 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
             },
         ],
     });
-    let (buffer, out_layout, out_group) = output(&device, 64);
+    let (buffer, out_layout, out_group) = output(&device, 256);
     let source = format!(
         "{}\n{}",
         include_str!("../../mining/src/water_compose.wgsl"),
@@ -400,7 +430,7 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
 @compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
  let column=optical_column(vec2<f32>(p.xy)+0.5,1.,true);
  let n=reconstructed_normal(vec2<f32>(p.xy)+0.5,1.);
- result[p.y*8u+p.x]=vec4(column.x,n.y,column.y/max(column.x,0.000001),n.w);
+ result[p.y*16u+p.x]=vec4(column.x,n.y,column.y/max(column.x,0.000001),n.w);
 }"#
     );
     let values = execute(
@@ -410,7 +440,7 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
         &[&group, &out_group],
         &[&layout, &out_layout],
         &buffer,
-        [1, 1],
+        [2, 2],
     );
     for value in values.as_chunks::<4>().0 {
         assert!((value[0] - 0.04).abs() < 1e-6);
