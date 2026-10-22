@@ -30,6 +30,18 @@ impl Hydraulics {
                 bytemuck::cast_slice(&a.settling_time),
             );
         }
+        let zeros;
+        let errors = if a.bed_exchange_error.is_empty() {
+            zeros = vec![[0f32; 4]; WIDTH * WIDTH];
+            &zeros
+        } else {
+            &a.bed_exchange_error
+        };
+        self.queue.write_buffer(
+            &h.geology.bed_exchange_error,
+            0,
+            bytemuck::cast_slice(errors),
+        );
     }
     pub(super) fn step_terrain(&mut self, s: &mut Session, dt: f32) -> Result<(), String> {
         let h = &self.terrain;
@@ -140,7 +152,7 @@ impl Hydraulics {
         let bytes = (WIDTH * WIDTH * 4) as u64;
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Complete heightfield readback"),
-            size: bytes * (buffers.len() as u64 + 12),
+            size: bytes * (buffers.len() as u64 + 4 + 12),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -148,10 +160,17 @@ impl Hydraulics {
             encoder.copy_buffer_to_buffer(b, 0, &staging, i as u64 * bytes, bytes);
         }
         encoder.copy_buffer_to_buffer(
+            &h.geology.bed_exchange_error,
+            0,
+            &staging,
+            bytes * buffers.len() as u64,
+            bytes * 4,
+        );
+        encoder.copy_buffer_to_buffer(
             &h.water.suspended_sediment_next,
             bytes,
             &staging,
-            bytes * buffers.len() as u64,
+            bytes * (buffers.len() as u64 + 4),
             bytes * 12,
         );
         self.queue.submit(Some(encoder.finish()));
@@ -185,10 +204,18 @@ impl Hydraulics {
             .collect();
         let times: Vec<u32> =
             bytemuck::cast_slice(&mapped[14 * bytes as usize..15 * bytes as usize]).to_vec();
-        let aux: Vec<f32> = bytemuck::cast_slice(&mapped[15 * bytes as usize..]).to_vec();
+        let errors: Vec<[f32; 4]> =
+            bytemuck::cast_slice(&mapped[15 * bytes as usize..19 * bytes as usize]).to_vec();
+        let aux: Vec<f32> = bytemuck::cast_slice(&mapped[19 * bytes as usize..]).to_vec();
         drop(mapped);
         staging.unmap();
-        if arrays.iter().flatten().chain(&aux).any(|v| !v.is_finite()) {
+        if arrays
+            .iter()
+            .flatten()
+            .chain(&aux)
+            .chain(errors.iter().flatten())
+            .any(|v| !v.is_finite())
+        {
             return Err("Non-finite original terrain solver output".into());
         }
         // Replace the compatibility World view only after every read succeeds.
@@ -210,6 +237,7 @@ impl Hydraulics {
         a.suspended_gravel = next();
         a.suspended_paydirt = next();
         a.settling_time = times;
+        a.bed_exchange_error = errors;
         for (i, cell) in aux.as_chunks::<12>().0.iter().enumerate() {
             a.flux_x[i] = cell[4];
             a.flux_z[i] = cell[5];

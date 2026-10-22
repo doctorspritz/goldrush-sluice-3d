@@ -5,6 +5,19 @@ use sim3d::World;
 pub const WIDTH: usize = 128;
 pub const CELL: f32 = 0.25;
 pub const EXTENT: f32 = WIDTH as f32 * CELL;
+pub const BED_STABILITY_MICROS: u32 = 1_500_000;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BedAgeUnit {
+    #[serde(rename = "legacy_20hz_steps")]
+    Legacy20HzSteps,
+    #[default]
+    #[serde(rename = "microseconds")]
+    Microseconds,
+}
+fn legacy_bed_age_unit() -> BedAgeUnit {
+    BedAgeUnit::Legacy20HzSteps
+}
 
 #[derive(Clone)]
 pub struct Site {
@@ -31,7 +44,14 @@ pub struct HeightfieldState {
     pub suspended_overburden: Vec<f32>,
     pub suspended_gravel: Vec<f32>,
     pub suspended_paydirt: Vec<f32>,
+    /// Wet-bed age since disturbance, with an explicit clock for old saves.
     pub settling_time: Vec<u32>,
+    #[serde(default = "legacy_bed_age_unit")]
+    pub settling_time_unit: BedAgeUnit,
+    /// Signed numerical exchange remainder (metres of class volume per area).
+    /// Feedback prevents accumulated bias; this is not another material store.
+    #[serde(default)]
+    pub bed_exchange_error: Vec<[f32; 4]>,
     pub suspended_gold_g: Vec<f64>,
     pub clock: f32,
     pub steps: u64,
@@ -42,6 +62,14 @@ pub struct HeightfieldState {
     pub exported_gold_g: f64,
 }
 impl HeightfieldState {
+    pub fn normalize_bed_age(&mut self) {
+        if self.settling_time_unit == BedAgeUnit::Legacy20HzSteps {
+            for age in &mut self.settling_time {
+                *age = age.saturating_mul(50_000).min(BED_STABILITY_MICROS);
+            }
+            self.settling_time_unit = BedAgeUnit::Microseconds;
+        }
+    }
     pub fn valid(&self) -> bool {
         let n = WIDTH * WIDTH;
         [
@@ -66,6 +94,18 @@ impl HeightfieldState {
         .iter()
         .all(|v| v.iter().all(|c| *c >= 0.))
             && (self.settling_time.is_empty() || self.settling_time.len() == n)
+            && (self.bed_exchange_error.is_empty() || self.bed_exchange_error.len() == n)
+            && self
+                .bed_exchange_error
+                .iter()
+                .flatten()
+                .all(|v| v.is_finite() && v.abs() < 1.)
+            && self.settling_time.iter().all(|age| {
+                *age <= match self.settling_time_unit {
+                    BedAgeUnit::Legacy20HzSteps => 255,
+                    BedAgeUnit::Microseconds => BED_STABILITY_MICROS,
+                }
+            })
             && (self.suspended_gold_g.is_empty() || self.suspended_gold_g.len() == n)
             && self
                 .suspended_gold_g
@@ -95,6 +135,11 @@ pub struct SiteSnapshot {
     excavated: Material,
     gravel: Vec<f32>,
     hydraulic: HeightfieldState,
+}
+impl SiteSnapshot {
+    pub(crate) fn bed_age_unit(&self) -> BedAgeUnit {
+        self.hydraulic.settling_time_unit
+    }
 }
 
 impl Default for Site {
@@ -494,6 +539,7 @@ impl Site {
         site.excavated = s.excavated;
         site.world.gravel_thickness = s.gravel;
         site.hydraulic = s.hydraulic;
+        site.hydraulic.normalize_bed_age();
         site.revision = 1;
         Ok(site)
     }

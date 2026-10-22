@@ -66,14 +66,14 @@ fn dispatch_bed_exchange_passes(
     tile_depth: u32,
     stage: BedExchangeStage,
 ) {
-    let candidate = match stage {
-        BedExchangeStage::Settling => &pipelines.settling,
-        BedExchangeStage::Erosion => &pipelines.erosion,
+    let (candidate, reconcile) = match stage {
+        BedExchangeStage::Settling => (&pipelines.settling, &pipelines.settling_reconcile),
+        BedExchangeStage::Erosion => (&pipelines.erosion, &pipelines.erosion_reconcile),
     };
     for (pipeline, label) in [
         (&pipelines.bed_snapshot, "Snapshot Bed Geometry"),
         (candidate, "Store Candidate Bed Exchange"),
-        (&pipelines.bed_reconcile, "Reconcile Stored Bed Exchange"),
+        (reconcile, "Reconcile Stored Bed Exchange"),
     ] {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some(label),

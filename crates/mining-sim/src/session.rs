@@ -469,7 +469,14 @@ impl Session {
     }
     pub fn save_json(&self) -> Result<String, String> {
         serde_json::to_string(&Save {
-            version: 2,
+            // Old binaries must not mistake microseconds for legacy tick counts.
+            version: if self.site.hydraulic.settling_time_unit
+                == crate::site::BedAgeUnit::Microseconds
+            {
+                3
+            } else {
+                2
+            },
             site: self.site.snapshot(),
             machine: self.machine.clone(),
             sluice: self.sluice.clone(),
@@ -487,8 +494,15 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if s.version != 2 {
+        if !matches!(s.version, 2 | 3) {
             return Err("Unsupported save version".into());
+        }
+        if !matches!(
+            (s.version, s.site.bed_age_unit()),
+            (2, crate::site::BedAgeUnit::Legacy20HzSteps)
+                | (3, crate::site::BedAgeUnit::Microseconds)
+        ) {
+            return Err("Invalid saved terrain clock".into());
         }
         let site = Site::restore(s.site)?;
         if !s.machine.valid()

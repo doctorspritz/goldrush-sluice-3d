@@ -34,7 +34,7 @@ const MIN_WATER_DEPTH: f32 = 0.001;      // Minimum water depth for calculations
 const EPSILON_FINE: f32 = 0.0001;        // Fine epsilon for numerical checks
 
 // Particle sizes (median diameter, meters)
-const D50_SEDIMENT: f32 = 0.0001;    // 0.1mm fine silt
+const D50_SEDIMENT: f32 = 0.0001;    // 0.1mm finest represented class
 const D50_OVERBURDEN: f32 = 0.001;   // 1mm coarse sand
 const D50_GRAVEL: f32 = 0.01;        // 10mm gravel
 const D50_PAYDIRT: f32 = 0.002;      // 2mm compacted sand
@@ -64,7 +64,7 @@ const MIN_EROSION_SPEED: f32 = 0.05;
 const MIN_EROSION_SLOPE: f32 = 0.0005;
 
 // Temporal stability parameters
-const STABILITY_BUILDUP_FRAMES: f32 = 30.0;  // Frames to reach max stability (~1 second at 30fps)
+const STABILITY_BUILDUP_MICROS: u32 = 1500000u; // Legacy 30 ticks at the game's 20Hz terrain rate
 const STABILITY_MULTIPLIER: f32 = 0.5;        // Max threshold multiplier (50% increase)
 const DBG_EROSION_GRAVEL: u32 = 6u;
 const DBG_EROSION_PAYDIRT: u32 = 7u;
@@ -96,8 +96,9 @@ const DBG_DEPOSITION_PAYDIRT: u32 = 11u;
 @group(2) @binding(3) var<storage, read_write> overburden: array<f32>;
 @group(2) @binding(4) var<storage, read_write> sediment: array<f32>;
 @group(2) @binding(5) var<storage, read_write> surface_material: array<u32>; // 0=bed,1=pay,2=gravel,3=over,4=sed
-@group(2) @binding(6) var<storage, read_write> settling_time: array<u32>; // frames since last disturbance
+@group(2) @binding(6) var<storage, read_write> settling_time: array<u32>; // wet-bed age in microseconds
 @group(2) @binding(7) var<storage, read_write> debug_stats: array<atomic<u32>>;
+@group(2) @binding(8) var<storage, read_write> bed_exchange_error: array<vec4<f32>>;
 
 // Determine what material is exposed on the surface based on layer thicknesses
 fn compute_surface_material(idx: u32) -> u32 {
@@ -275,312 +276,176 @@ fn snapshot_bed_exchange(@builtin(global_invocation_id) g: vec3<u32>) {
 // A distinct pass must read the stored candidate. Computing (old+request)-old
 // within the writer can be reassociated to request by GPU fast-math, undoing
 // the f32 storage boundary that the material budget actually observes.
-fn reconcile_layer(old: f32, stored: f32, concentration: f32, depth: f32, layer: u32) -> vec2<f32> {
-    let actual=stored-old;
-    if (actual==0.0) {return vec2(stored,concentration);}
-    let next=concentration-actual/depth;
+fn stored_difference(a: f32, b: f32) -> f32 {
+    let ua=bitcast<u32>(a);let ub=bitcast<u32>(b);
+    let ea=(ua>>23u)&255u;let eb=(ub>>23u)&255u;
+    if (ea==0u || eb==0u || ea+1u<eb || eb+1u<ea) {return a-b;}
+    // Decode nearby positive values at their common binary exponent. This
+    // retains subtraction's rounding without letting fast-math replace the
+    // concentration delta with its nominal, unrounded transfer request.
+    let exponent=min(ea,eb);
+    let ma=((ua&0x7fffffu)|0x800000u)<<(ea-exponent);
+    let mb=((ub&0x7fffffu)|0x800000u)<<(eb-exponent);
+    return ldexp(f32(i32(ma)-i32(mb)),i32(exponent)-150);
+}
+fn concentration_after_exchange(concentration: f32, amount: f32, depth: f32) -> f32 {
+    let quotient=amount/depth;
+    // Metal may use an approximate reciprocal. Recover its product residual
+    // with a fused operation before rounding the concentration update.
+    let residual=fma(-quotient,depth,amount);
+    return (concentration-quotient)-residual/depth;
+}
+fn reconcile_layer(old: f32, stored: f32, concentration: f32, depth: f32, layer: u32, carry: f32) -> vec3<f32> {
+    var accepted=stored;
+    var actual=stored_difference(accepted,old);
+    if (actual==0.0) {return vec3(stored,concentration,carry);}
+    var next=concentration_after_exchange(concentration,actual-carry,depth);
+    for (var roundoff=0u;roundoff<8u && actual>0.0 && next<0.0;roundoff++) {
+        // At complete settling, rounding C*h and the stored sum can overdraw
+        // the last ULP of suspended material. Accept the next lower bed value
+        // rather than rolling the entire load back into suspension. The bit
+        // step cannot be reassociated with the candidate's nominal request.
+        accepted=bitcast<f32>(bitcast<u32>(accepted)-1u);
+        actual=stored_difference(accepted,old);
+        next=concentration_after_exchange(concentration,actual-carry,depth);
+    }
     // Reject an unrepresentable recipient change or an overdrawn donor. Never
     // remove bed material without adding it to water, or create a negative load.
-    if (next<0.0 || next==concentration) {return vec2(old,concentration);}
+    if (next<0.0 || next==concentration || (stored>old && actual<=0.0)) {return vec3(old,concentration,carry);}
+    // Pick the representable recipient with the smallest actual exchange
+    // error. Approximate division and a rounded subtraction can otherwise
+    // choose the wrong side of a half-ULP boundary repeatedly.
+    let bits=bitcast<u32>(next);
+    var best_error=abs(fma(stored_difference(next,concentration),depth,actual-carry));
+    for (var direction=0u;direction<2u;direction++) {
+        if (direction==0u && bits==0u) {continue;}
+        let candidate=bitcast<f32>(select(bits+1u,bits-1u,direction==0u));
+        if ((actual>0.0 && candidate>=concentration) || (actual<0.0 && candidate<=concentration)) {continue;}
+        let error=abs(fma(stored_difference(candidate,concentration),depth,actual-carry));
+        if (error<best_error) {next=candidate;best_error=error;}
+    }
+    if (actual>0.0) {
+        // A shallow new deposit can have much finer precision than its water
+        // concentration. Align that bed with the representable concentration
+        // change when doing so reduces the exchange residual. Keep full scour
+        // clears exact: leaving an unreceivable numerical film would falsely
+        // shield the stratum below on the next step.
+        let received=stored_difference(concentration,next);
+        let aligned=fma(received,depth,old+carry);
+        let error=abs(carry+fma(received,depth,-actual));
+        let aligned_error=abs(carry+fma(received,depth,-stored_difference(aligned,old)));
+        if (aligned>old && aligned_error<error) {accepted=aligned;actual=stored_difference(accepted,old);}
+    }
     if (actual>0.0) {debug_record_deposit(actual,layer);}
-    else {debug_record_erosion(-actual,layer);}
-    return vec2(stored,next);
+    // Carry the signed loss forward, so individually tiny rounding errors do
+    // not accumulate into a systematic material source or sink over time.
+    let error=carry+fma(stored_difference(concentration,next),depth,-actual);
+    return vec3(accepted,next,error);
 }
-@compute @workgroup_size(16,16)
-fn reconcile_bed_exchange(@builtin(global_invocation_id) g: vec3<u32>) {
+fn reconcile_bed_exchange(g: vec3<u32>, advance_age: bool) {
     if (g.x>=params.tile_width || g.y>=params.tile_depth) {return;}
     let x=g.x+params.origin_x; let z=g.y+params.origin_z;
     if (x>=params.world_width || z>=params.world_depth) {return;}
     let i=get_idx(x,z); let h=water_depth[i];
-    if (h<MIN_WATER_DEPTH) {return;}
+    if (h<MIN_WATER_DEPTH || params.dt<=0.0) {return;}
     let old=vec4(suspended_sediment_next[i],suspended_overburden_next[i],suspended_gravel_next[i],suspended_paydirt_next[i]);
-    let a=reconcile_layer(old.x,sediment[i],suspended_sediment[i],h,4u);
-    let b=reconcile_layer(old.y,overburden[i],suspended_overburden[i],h,3u);
-    let c=reconcile_layer(old.z,gravel[i],suspended_gravel[i],h,2u);
-    let d=reconcile_layer(old.w,paydirt[i],suspended_paydirt[i],h,1u);
+    let carry=bed_exchange_error[i];
+    let a=reconcile_layer(old.x,sediment[i],suspended_sediment[i],h,4u,carry.x);
+    let b=reconcile_layer(old.y,overburden[i],suspended_overburden[i],h,3u,carry.y);
+    let c=reconcile_layer(old.z,gravel[i],suspended_gravel[i],h,2u,carry.z);
+    let d=reconcile_layer(old.w,paydirt[i],suspended_paydirt[i],h,1u,carry.w);
+    bed_exchange_error[i]=vec4(a.z,b.z,c.z,d.z);
     sediment[i]=a.x; suspended_sediment[i]=a.y;
     overburden[i]=b.x; suspended_overburden[i]=b.y;
     gravel[i]=c.x; suspended_gravel[i]=c.y;
     paydirt[i]=d.x; suspended_paydirt[i]=d.y;
-    if (any(vec4(a.x,b.x,c.x,d.x)!=old)) {
+    let accepted=vec4(a.x,b.x,c.x,d.x);
+    let removed=max(old-accepted,vec4(0.0));
+    let total_removed=dot(removed,vec4(1.0));
+    if (total_removed>0.0 && debug_enabled()) {
+        // Count an eroded cell once, even if thin cover exposes another class.
+        debug_record_erosion(total_removed,0u);
+        if (removed.x>0.0) {atomicAdd(&debug_stats[DBG_EROSION_SEDIMENT],1u);}
+        if (removed.y>0.0) {atomicAdd(&debug_stats[DBG_EROSION_OVERBURDEN],1u);}
+        if (removed.z>0.0) {atomicAdd(&debug_stats[DBG_EROSION_GRAVEL],1u);}
+        if (removed.w>0.0) {atomicAdd(&debug_stats[DBG_EROSION_PAYDIRT],1u);}
+    }
+    if (any(accepted!=old)) {
         surface_material[i]=compute_surface_material(i);
         settling_time[i]=0u;
+    } else if (advance_age && any(accepted>vec4(0.0))) {
+        let elapsed=u32(round(min(params.dt,1.5)*1000000.0));
+        settling_time[i]=min(min(settling_time[i],STABILITY_BUILDUP_MICROS)+elapsed,STABILITY_BUILDUP_MICROS);
     }
 }
-
-// 1a. Settling only (prevents oscillation with erosion)
-@compute @workgroup_size(16, 16)
-fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
-
-    let idx = get_idx(x, z);
-    let depth = water_depth[idx];
-
-    if (depth < MIN_WATER_DEPTH) {
-        return;
-    }
-
-    let vel_x = water_velocity_x[idx];
-    let vel_z = water_velocity_z[idx];
-    let slope = exchange_slope(idx);
-    let u_star = shear_velocity(depth, slope, vel_x, vel_z, params.gravity);
-    let tau = shear_stress(u_star, params.rho_water);
-
-    // Only settle when Shields stress is below deposition threshold (hysteresis vs erosion)
-    // Use a smooth calm-water factor to avoid hard transitions.
-    let speed = sqrt(vel_x * vel_x + vel_z * vel_z);
-    let calm_factor = clamp(1.0 - speed / 0.2, 0.0, 1.0);
-
-    // Sediment settling (layer-specific)
-    var suspended = suspended_sediment[idx];
-    if (suspended > 0.0 && depth > 1e-4) {
-        let shields = shields_stress(
-            tau,
-            D50_SEDIMENT,
-            params.gravity,
-            params.rho_sediment,
-            params.rho_water,
-        );
-        let deposition_threshold = params.critical_shields * 0.4;
-        if (shields < deposition_threshold || calm_factor > 0.0) {
-            let v_settle = settling_velocity(
-                D50_SEDIMENT,
-                params.gravity,
-                params.rho_sediment,
-                params.rho_water,
-                params.water_viscosity,
-            );
-            let settling_rate = v_settle / depth;
-            var settled_frac = min(settling_rate * params.dt, 0.25);
-            let settle_boost = 0.04 * calm_factor;
-            settled_frac = max(settled_frac, settle_boost);
-            let settled_conc = suspended * settled_frac;
-            if (settled_conc > 1e-6) {
-                let deposit_height = settled_conc * depth;
-                // Only deposit if it's meaningful (>1mm) to prevent micro-topography oscillation
-                if (deposit_height > MIN_LAYER_THICKNESS) {
-                    sediment[idx] += deposit_height;
-                }
-            }
-        }
-    }
-
-    // Overburden settling
-    suspended = suspended_overburden[idx];
-    if (suspended > 0.0 && depth > 1e-4) {
-        let shields = shields_stress(
-            tau,
-            D50_OVERBURDEN,
-            params.gravity,
-            params.rho_sediment,
-            params.rho_water,
-        );
-        let deposition_threshold = params.critical_shields * 0.5;
-        if (shields < deposition_threshold || calm_factor > 0.0) {
-            let v_settle = settling_velocity(
-                D50_OVERBURDEN,
-                params.gravity,
-                params.rho_sediment,
-                params.rho_water,
-                params.water_viscosity,
-            );
-            let settling_rate = v_settle / depth;
-            var settled_frac = min(settling_rate * params.dt, 0.25);
-            let settle_boost = 0.05 * calm_factor;
-            settled_frac = max(settled_frac, settle_boost);
-            let settled_conc = suspended * settled_frac;
-            if (settled_conc > 1e-6) {
-                let deposit_height = settled_conc * depth;
-                if (deposit_height > MIN_LAYER_THICKNESS) {
-                    overburden[idx] += deposit_height;
-                }
-            }
-        }
-    }
-
-    // Gravel settling
-    suspended = suspended_gravel[idx];
-    if (suspended > 0.0 && depth > 1e-4) {
-        let shields = shields_stress(
-            tau,
-            D50_GRAVEL,
-            params.gravity,
-            params.rho_sediment,
-            params.rho_water,
-        );
-        let deposition_threshold = params.critical_shields * 0.8;
-        if (shields < deposition_threshold || calm_factor > 0.0) {
-            let v_settle = settling_velocity(
-                D50_GRAVEL,
-                params.gravity,
-                params.rho_sediment,
-                params.rho_water,
-                params.water_viscosity,
-            );
-            let settling_rate = v_settle / depth;
-            var settled_frac = min(settling_rate * params.dt, 0.35);
-            let settle_boost = 0.08 * calm_factor;
-            settled_frac = max(settled_frac, settle_boost);
-            let settled_conc = suspended * settled_frac;
-            if (settled_conc > 1e-6) {
-                let deposit_height = settled_conc * depth;
-                if (deposit_height > MIN_LAYER_THICKNESS) {
-                    gravel[idx] += deposit_height;
-                }
-            }
-        }
-    }
-
-    // Paydirt settling
-    suspended = suspended_paydirt[idx];
-    if (suspended > 0.0 && depth > 1e-4) {
-        let shields = shields_stress(
-            tau,
-            D50_PAYDIRT,
-            params.gravity,
-            params.rho_sediment,
-            params.rho_water,
-        );
-        let deposition_threshold = params.critical_shields * 0.6;
-        if (shields < deposition_threshold || calm_factor > 0.0) {
-            let v_settle = settling_velocity(
-                D50_PAYDIRT,
-                params.gravity,
-                params.rho_sediment,
-                params.rho_water,
-                params.water_viscosity,
-            );
-            let settling_rate = v_settle / depth;
-            var settled_frac = min(settling_rate * params.dt, 0.25);
-            let settle_boost = 0.05 * calm_factor;
-            settled_frac = max(settled_frac, settle_boost);
-            let settled_conc = suspended * settled_frac;
-            if (settled_conc > 1e-6) {
-                let deposit_height = settled_conc * depth;
-                if (deposit_height > MIN_LAYER_THICKNESS) {
-                    paydirt[idx] += deposit_height;
-                }
-            }
-        }
-    }
-
+@compute @workgroup_size(16,16)
+fn reconcile_settling(@builtin(global_invocation_id) g: vec3<u32>) {
+    reconcile_bed_exchange(g,false);
+}
+@compute @workgroup_size(16,16)
+fn reconcile_erosion(@builtin(global_invocation_id) g: vec3<u32>) {
+    reconcile_bed_exchange(g,true);
 }
 
-// 1b. Erosion only (called after settling to prevent feedback)
-@compute @workgroup_size(16, 16)
-fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
+// Continuous noncohesive deposition, with a well-mixed vertical column:
+// D=ws*C and dC/dt=-ws*C/h. Flow-dependent scour is a separate, simultaneous
+// process. No per-step minimum amount, percentage boost or fractional cap.
+fn deposited_height(concentration: f32, depth: f32, diameter: f32) -> f32 {
+    let ws=settling_velocity(diameter,params.gravity,params.rho_sediment,params.rho_water,params.water_viscosity);
+    let a=ws*params.dt/depth;
+    // Avoid cancellation in 1-exp(-a) for dilute/shallow-step controls.
+    var fraction=1.0-exp(-a);
+    if (a<0.01) {fraction=a*(1.0-a*(0.5-a*(1.0/6.0-a/24.0)));}
+    return concentration*depth*clamp(fraction,0.0,1.0);
+}
+@compute @workgroup_size(16,16)
+fn update_settling(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (g.x>=params.tile_width || g.y>=params.tile_depth || params.dt<=0.0) {return;}
+    let x=g.x+params.origin_x; let z=g.y+params.origin_z;
+    if (x>=params.world_width || z>=params.world_depth) {return;}
+    let i=get_idx(x,z);let h=water_depth[i];
+    if (h<MIN_WATER_DEPTH) {return;}
+    sediment[i]+=deposited_height(suspended_sediment[i],h,D50_SEDIMENT);
+    overburden[i]+=deposited_height(suspended_overburden[i],h,D50_OVERBURDEN);
+    gravel[i]+=deposited_height(suspended_gravel[i],h,D50_GRAVEL);
+    paydirt[i]+=deposited_height(suspended_paydirt[i],h,D50_PAYDIRT);
+}
 
-    let idx = get_idx(x, z);
-    let depth = water_depth[idx];
-
-    if (depth < MIN_WATER_DEPTH) {
-        return;
+// Spend physical time removing each exposed stratum. A micrometre cover must
+// consume its own removal time, rather than shielding the next layer for a full
+// timestep. Coarse visual surface tags do not determine physical exposure.
+@compute @workgroup_size(16,16)
+fn update_erosion(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (g.x>=params.tile_width || g.y>=params.tile_depth || params.dt<=0.0) {return;}
+    let x=g.x+params.origin_x; let z=g.y+params.origin_z;
+    if (x>=params.world_width || z>=params.world_depth) {return;}
+    let i=get_idx(x,z);let h=water_depth[i];
+    if (h<MIN_WATER_DEPTH || params.critical_shields<=0.0) {return;}
+    let vx=water_velocity_x[i];let vz=water_velocity_z[i];
+    if (sqrt(vx*vx+vz*vz)<MIN_EROSION_SPEED) {return;}
+    let tau=shear_stress(shear_velocity(h,exchange_slope(i),vx,vz,params.gravity),params.rho_water);
+    let progress=f32(min(settling_time[i],STABILITY_BUILDUP_MICROS))/f32(STABILITY_BUILDUP_MICROS);
+    let critical=params.critical_shields*(1.0+STABILITY_MULTIPLIER*progress);
+    var layers=vec4(sediment[i],overburden[i],gravel[i],paydirt[i]);
+    let loads=vec4(suspended_sediment[i],suspended_overburden[i],suspended_gravel[i],suspended_paydirt[i]);
+    var remaining=params.dt;
+    for (var layer=0u;layer<4u;layer++) {
+        let available=layers[layer];
+        if (available<=0.0) {continue;}
+        let material=4u-layer;
+        let shields=shields_stress(tau,get_d50(material),params.gravity,params.rho_sediment,params.rho_water);
+        let rate=min(params.k_erosion*max(shields/critical-1.0,0.0)/get_hardness(material),params.max_erosion_per_step);
+        if (rate<=0.0 || remaining<=0.0) {break;}
+        let requested=rate*remaining;
+        if (requested<available) {layers[layer]=available-requested;break;}
+        // A complete layer clear has an exact stored delta. Do not uncover the
+        // layer below when suspension cannot represent the receiving transfer.
+        if (loads[layer]+available/h==loads[layer]) {break;}
+        layers[layer]=0.0;
+        remaining=max(remaining-available/rate,0.0);
     }
-
-    let vel_x = water_velocity_x[idx];
-    let vel_z = water_velocity_z[idx];
-    
-    // Skip erosion in still water (prevent oscillation from numerical water sloshing)
-    let speed = sqrt(vel_x * vel_x + vel_z * vel_z);
-    if (speed < 0.05) {  // <5cm/s is effectively still water
-        return;
-    }
-    
-    let slope = exchange_slope(idx);
-    let u_star = shear_velocity(depth, slope, vel_x, vel_z, params.gravity);
-    let tau = shear_stress(u_star, params.rho_water);
-
-
-    // EROSION ONLY (settling happens in separate pass)
-    // Erode ONLY the exposed (top) layer.
-    let critical = params.critical_shields;
-    let max_erosion = params.max_erosion_per_step * params.dt;
-    let surface = surface_material[idx];
-
-    if (critical > 0.0 && max_erosion > 0.0) {
-        var available = 0.0;
-        var d50_layer = 0.0;
-        var hardness = 1.0;
-
-        switch (surface) {
-            case 4u: { // sediment
-                available = sediment[idx];
-                d50_layer = get_d50(4u);
-                hardness = get_hardness(4u);
-            }
-            case 3u: { // overburden
-                available = overburden[idx];
-                d50_layer = get_d50(3u);
-                hardness = get_hardness(3u);
-            }
-            case 2u: { // gravel
-                available = gravel[idx];
-                d50_layer = get_d50(2u);
-                hardness = get_hardness(2u);
-            }
-            case 1u: { // paydirt
-                available = paydirt[idx];
-                d50_layer = get_d50(1u);
-                hardness = get_hardness(1u);
-            }
-            default: { }
-        }
-
-        if (available > 0.001 && d50_layer > 0.0) {
-            let shields_layer = shields_stress(
-                tau,
-                d50_layer,
-                params.gravity,
-                params.rho_sediment,
-                params.rho_water,
-            );
-            
-            // Apply temporal stability bonus
-            let time_settled = settling_time[idx];
-            let stability_progress = min(f32(time_settled) / STABILITY_BUILDUP_FRAMES, 1.0);
-            let stability_bonus = STABILITY_MULTIPLIER * stability_progress;
-            let effective_critical = critical * (1.0 + stability_bonus);
-            
-            if (shields_layer > effective_critical) {
-                let excess = (shields_layer - effective_critical) / effective_critical;
-                let erosion_rate = params.k_erosion * excess / hardness;
-                let erode_height = min(erosion_rate * params.dt, available);
-                let erode = min(erode_height, max_erosion);
-
-                switch (surface) {
-                    case 4u: {
-                        sediment[idx] -= erode;
-                    }
-                    case 3u: {
-                        overburden[idx] -= erode;
-                    }
-                    case 2u: {
-                        gravel[idx] -= erode;
-                    }
-                    case 1u: {
-                        paydirt[idx] -= erode;
-                    }
-                    default: { }
-                }
-                
-            } else {
-                // Increment stability counter (saturate at 255)
-                settling_time[idx] = min(settling_time[idx] + 1u, 255u);
-            }
-        }
-    }
-
+    sediment[i]=layers.x;overburden[i]=layers.y;
+    gravel[i]=layers.z;paydirt[i]=layers.w;
 }
 
 // Conservative upwind advection using OLD water volume and the SAME limited

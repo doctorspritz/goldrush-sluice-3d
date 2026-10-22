@@ -10,7 +10,8 @@ pub struct SimulationPipelines {
     pub limit_flux: wgpu::ComputePipeline,
     pub depth: wgpu::ComputePipeline,
     pub bed_snapshot: wgpu::ComputePipeline,
-    pub bed_reconcile: wgpu::ComputePipeline,
+    pub settling_reconcile: wgpu::ComputePipeline,
+    pub erosion_reconcile: wgpu::ComputePipeline,
     pub settling: wgpu::ComputePipeline,
     pub erosion: wgpu::ComputePipeline,
     pub sediment_transport: wgpu::ComputePipeline,
@@ -116,6 +117,7 @@ pub fn create_terrain_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             storage_entry(5, false), // surface_material
             storage_entry(6, false), // settling_time
             storage_entry(7, false), // debug_stats
+            storage_entry(8, false), // bed exchange roundoff feedback
         ],
     })
 }
@@ -248,6 +250,10 @@ pub fn create_terrain_bind_group(
                 binding: 7,
                 resource: geology.debug_stats.as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: geology.bed_exchange_error.as_entire_binding(),
+            },
         ],
     })
 }
@@ -361,10 +367,15 @@ pub fn create_simulation_pipelines(
             &erosion_shader,
             "snapshot_bed_exchange",
         ),
-        bed_reconcile: create_compute(
-            "Reconcile Stored Bed Exchange",
+        settling_reconcile: create_compute(
+            "Reconcile Stored Settling",
             &erosion_shader,
-            "reconcile_bed_exchange",
+            "reconcile_settling",
+        ),
+        erosion_reconcile: create_compute(
+            "Reconcile Stored Erosion and Bed Age",
+            &erosion_shader,
+            "reconcile_erosion",
         ),
         settling: create_compute(
             "Update Settling Pipeline",

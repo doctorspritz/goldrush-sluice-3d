@@ -388,6 +388,17 @@ fn shared_faces_preserve_water_and_all_four_suspended_materials() {
 fn every_open_edge_accounts_for_discharge_and_closed_edges_do_not_leak() {
     let f = Fixture::new();
     for mask in [0, 1, 2, 4, 8, 15] {
+        let layers = [
+            &f.h.geology.sediment,
+            &f.h.geology.overburden,
+            &f.h.geology.gravel,
+            &f.h.geology.paydirt,
+        ];
+        for buffer in layers {
+            f.write(buffer, &vec![0.; CELLS]);
+        }
+        f.write(&f.h.geology.bed_exchange_error, &vec![0.; CELLS * 4]);
+        f.write(&f.h.geology.settling_time, &vec![0.; CELLS]);
         let depth = vec![0.02; CELLS];
         f.write(&f.h.water.depth, &depth);
         // Sloped surfaces drive outward flow on all four sides, including corners.
@@ -433,7 +444,10 @@ fn every_open_edge_accounts_for_discharge_and_closed_edges_do_not_leak() {
                 .map(|(c, d)| *c as f64 * *d as f64 * 0.0625)
                 .sum();
             assert!(
-                (stored + solids_exported[channel] - volume(&depth) * 0.001).abs() < 1e-8,
+                (stored + volume(&f.read(layers[channel], 0, CELLS)) + solids_exported[channel]
+                    - volume(&depth) * 0.001)
+                    .abs()
+                    < 1e-8,
                 "material {channel} at edge mask {mask}"
             );
         }

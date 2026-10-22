@@ -32,6 +32,20 @@ fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
             let affine: Vec<_> = s.sluice.water.iter().map(|p| p.affine).collect();
             let momentum = s.site.hydraulic.velocity_x.clone();
             let suspend = s.site.hydraulic.suspended_paydirt.clone();
+            let bed_age = s.site.hydraulic.settling_time.clone();
+            let exchange_error = s.site.hydraulic.bed_exchange_error.clone();
+            assert!(
+                exchange_error.iter().flatten().any(|error| *error != 0.),
+                "roundoff state was not exercised"
+            );
+            assert!(
+                bed_age.iter().any(|age| *age > 255),
+                "physical bed clock never advanced"
+            );
+            assert_eq!(
+                s.site.hydraulic.settling_time_unit,
+                mining_sim::site::BedAgeUnit::Microseconds
+            );
             println!(
                 "PRE SAVE: hydraulic={} gold_min={:?} suspended_min={:?} clock={} max_vel={}",
                 s.site.hydraulic.valid(),
@@ -67,6 +81,12 @@ fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
             );
             assert_eq!(momentum, s.site.hydraulic.velocity_x);
             assert_eq!(suspend, s.site.hydraulic.suspended_paydirt);
+            assert_eq!(bed_age, s.site.hydraulic.settling_time);
+            assert_eq!(exchange_error, s.site.hydraulic.bed_exchange_error);
+            assert_eq!(
+                s.site.hydraulic.settling_time_unit,
+                mining_sim::site::BedAgeUnit::Microseconds
+            );
             s.on_action(Action::Camera).unwrap();
             s.on_action(Action::Camera).unwrap();
             assert_eq!(positions.len(), s.sluice.water.len());

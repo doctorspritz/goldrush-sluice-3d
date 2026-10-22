@@ -136,6 +136,7 @@ impl Hydraulics {
             return Ok(());
         }
         if !self.terrain_loaded {
+            s.site.hydraulic.normalize_bed_age();
             self.upload_terrain(s);
             self.terrain_loaded = true;
         }
