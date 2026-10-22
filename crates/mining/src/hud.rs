@@ -353,6 +353,7 @@ pub fn setup(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
 )]
 pub fn update(
     game: Res<Game>,
+    capture: Res<crate::motion_capture::MotionCapture>,
     mut text: Query<(&HudText, &mut Text)>,
     mut panels: ParamSet<(
         Query<&mut Node, With<HelpPanel>>,
@@ -429,7 +430,7 @@ Right-drag also looks while the cursor is free\nE / Tab enter cab · Left-click 
         };
     }
     for mut node in &mut panels.p1() {
-        node.display = if s.paused {
+        node.display = if s.paused && !capture.frozen {
             Display::Flex
         } else {
             Display::None

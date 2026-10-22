@@ -4,6 +4,7 @@ mod control_check;
 mod demo;
 mod environment;
 mod fluid_surface;
+mod foliage;
 mod ground_material;
 mod hud;
 mod motion_capture;

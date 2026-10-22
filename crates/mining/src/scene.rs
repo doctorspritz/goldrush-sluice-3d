@@ -258,6 +258,7 @@ pub fn setup(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut images,
         &p,
         &game.session.site,
     );
@@ -377,11 +378,16 @@ fn vegetation(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
     p: &Palette,
     site: &Site,
 ) {
     let bark = material(materials, Color::srgb(0.22, 0.15, 0.10), 0.95, 0.0);
-    let green = material(materials, Color::srgb(0.12, 0.25, 0.18), 0.95, 0.0);
+    let foliage = materials.add(crate::foliage::material(images));
+    let canopies: Vec<_> = (0..8)
+        .map(|seed| meshes.add(crate::foliage::canopy(seed)))
+        .collect();
+    let trunk = meshes.add(Cone::new(0.075, 4.4).mesh().resolution(10));
     let grass = material(materials, Color::srgb(0.30, 0.34, 0.18), 1.0, 0.0);
     let rock = material(materials, Color::srgb(0.34, 0.37, 0.34), 0.95, 0.0);
     let cone = meshes.add(Cone::new(1.0, 1.0).mesh().resolution(7));
@@ -397,27 +403,17 @@ fn vegetation(
         let scale = 0.7 + hash(i, 11) * 0.8;
         if i < 75 {
             commands.spawn((
-                Mesh3d(p.cylinder.clone()),
+                Mesh3d(trunk.clone()),
                 MeshMaterial3d(bark.clone()),
-                Transform::from_xyz(x, h + scale * 1.5, z).with_scale(Vec3::new(
-                    0.14 * scale,
-                    3.0 * scale,
-                    0.14 * scale,
-                )),
+                Transform::from_xyz(x, h + scale * 2.2, z).with_scale(Vec3::splat(scale)),
             ));
-            for tier in 0..3 {
-                commands.spawn((
-                    Mesh3d(cone.clone()),
-                    MeshMaterial3d(green.clone()),
-                    Transform::from_xyz(x, h + (2.1 + tier as f32 * 0.70) * scale, z).with_scale(
-                        Vec3::new(
-                            (1.1 - tier as f32 * 0.17) * scale,
-                            2.0 * scale,
-                            (1.1 - tier as f32 * 0.17) * scale,
-                        ),
-                    ),
-                ));
-            }
+            commands.spawn((
+                Mesh3d(canopies[i as usize % canopies.len()].clone()),
+                MeshMaterial3d(foliage.clone()),
+                Transform::from_xyz(x, h, z)
+                    .with_scale(Vec3::splat(scale))
+                    .with_rotation(Quat::from_rotation_y(hash(i, 19) * std::f32::consts::TAU)),
+            ));
         } else {
             commands.spawn((
                 Mesh3d(p.sphere.clone()),

@@ -168,6 +168,8 @@ fn visible_column_path(column:f32,view_gap:f32,channel:bool)->f32 {
 }
 @fragment fn compose(s: Screen) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(s.position.xy); let original = textureLoad(scene,pixel,0);
+    // Uniform capture-only selection; ordinary gameplay always uses mode zero.
+    if u.sediment.w==1. {return original;}
     let q = s.position.xy;
     // Smoothing must not pull hidden water forward over an opaque side wall.
     // Test original particle depth as well as the reconstructed surface.
@@ -309,5 +311,8 @@ fn visible_column_path(column:f32,view_gap:f32,channel:bool)->f32 {
     let shore=smoothstep(0.0001,film_width,river_surface.w)
         *select(1.,smoothstep(0.0001,contact_width,contact),opaque>0.);
     let coverage=clamp(sample.y,0.,1.)*select(1.,shore,river);
+    if u.sediment.w==2. {return vec4(mix(original.rgb,normal*0.5+vec3(0.5),coverage),original.a);}
+    if u.sediment.w==3. {return vec4(mix(original.rgb,vec3(clamp(thickness*2.,0.,1.)),coverage),original.a);}
+    if u.sediment.w==4. {return vec4(mix(original.rgb,vec3(clamp(beta/1200.,0.,1.)),coverage),original.a);}
     return vec4(mix(original.rgb,mix(body,sky,fresnel)+vec3(specular),coverage),original.a);
 }

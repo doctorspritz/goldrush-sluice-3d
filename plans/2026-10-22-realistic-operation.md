@@ -39,3 +39,13 @@ state and explicit resource refusal. Exact preallocated/grown and large-save
 controls support sustained-admission studies. The [23 October evidence](../docs/playtests/2026-10-23-grain-storage.md)
 separates that correction from dense-phase convergence, hydraulic restrictions,
 long-duration operation and real-time performance. Stages 2–6 remain open.
+
+
+The [river shadow investigation](../docs/playtests/2026-10-23-river-shadows.md)
+uses matched opaque-scene, normal, optical-column and sediment captures to trace
+the large triangles to placeholder cone-canopy shadows. Shared cutout branch
+assets replace that silhouette while preserving the water/terrain models and
+shadow lighting. This is Stage 6 art progress, not closure of Stage 6 or any
+physical stage. Conservative interphase momentum remains the next physical
+prerequisite; soil contact, construction, wet screening, complete water circuits,
+calibration, real-time throughput and the full operator replay remain open.

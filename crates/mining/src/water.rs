@@ -49,6 +49,7 @@ pub struct WaterSplats {
     terrain_key: Option<(u64, u64, u64, u64)>,
     fluid_revision: Option<crate::app::FluidRevision>,
     sim_time: f32,
+    debug_mode: u32,
 }
 impl WaterSplats {
     /// Actual interpolated render kernels, for the opt-in motion evidence only.
@@ -121,6 +122,7 @@ impl Default for WaterSplats {
             terrain_key: None,
             fluid_revision: None,
             sim_time: 0.,
+            debug_mode: 0,
         }
     }
 }
@@ -500,7 +502,7 @@ fn prepare_views(
                 0., // reserved; particle optics carry local slurry extinction
                 0., // reserved
                 water.sim_time,
-                0.,
+                water.debug_mode as f32,
             ),
             viewport: Vec4::new(
                 full.x as f32,
@@ -825,11 +827,13 @@ pub fn visible_count(sluice: &mining_sim::Sluice) -> usize {
 
 pub fn sync(
     game: Res<crate::app::Game>,
+    capture: Res<crate::motion_capture::MotionCapture>,
     time: Res<Time>,
     detail: Res<crate::environment::Detail>,
     mut splats: ResMut<WaterSplats>,
     mut worker: NonSendMut<crate::water_surface_worker::SurfaceWorker>,
 ) {
+    splats.debug_mode = capture.water_debug;
     let wall = time.elapsed_secs_f64();
     let s = &game.session.sluice;
     let presentation_key = (

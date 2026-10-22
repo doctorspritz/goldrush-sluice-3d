@@ -10,6 +10,10 @@ use std::{collections::HashSet, path::PathBuf, time::Instant};
 pub struct MotionCapture {
     /// Diagnostic visibility control only; sediment physics/optics still run.
     pub water_only: bool,
+    /// Opt-in capture channels: final, scene, normal, column, sediment.
+    pub water_debug: u32,
+    /// Keep the physical pause while removing its obstructing evidence overlay.
+    pub frozen: bool,
     directory: Option<PathBuf>,
     started: Instant,
     recording: Option<Instant>,
@@ -48,8 +52,10 @@ impl Default for MotionCapture {
             .find(|p| p[0] == "--capture-view")
             .map(|p| p[1].clone());
         assert!(
-            view.as_deref()
-                .is_none_or(|v| matches!(v, "sluice" | "outlet" | "river" | "tailrace" | "bucket")),
+            view.as_deref().is_none_or(|v| matches!(
+                v,
+                "sluice" | "outlet" | "river" | "tailrace" | "bucket" | "bank"
+            )),
             "capture view"
         );
         if let Some(dir) = &directory {
@@ -59,7 +65,26 @@ impl Default for MotionCapture {
             );
             std::fs::create_dir_all(dir).expect("motion capture directory");
         }
+        let water_debug = args
+            .windows(2)
+            .find(|p| p[0] == "--capture-water-debug")
+            .map(|p| match p[1].as_str() {
+                "final" => 0,
+                "scene" => 1,
+                "normal" => 2,
+                "column" => 3,
+                "sediment" => 4,
+                _ => panic!("unknown capture water channel"),
+            })
+            .unwrap_or(0);
+        assert!(
+            directory.is_some() || water_debug == 0,
+            "water diagnostics require --capture-motion"
+        );
+        let frozen = directory.is_some() && args.iter().any(|a| a == "--freeze");
         Self {
+            water_debug,
+            frozen,
             water_only: directory.is_some() && args.iter().any(|a| a == "--capture-water-only"),
             directory,
             started: Instant::now(),
@@ -139,6 +164,14 @@ pub fn camera(
             (
                 Vec3::new(x, game.session.site.height(x, z) + 0.05, z),
                 r * 3.2 + Vec3::Y * 3. - f * 2.5,
+            )
+        }
+        "bank" => {
+            let z = 18.5;
+            let x = mining_sim::Site::river_center(z);
+            (
+                Vec3::new(x, game.session.site.height(x, z) + 1.5, z),
+                r * 7. + Vec3::Y * 2.5 - f * 6.,
             )
         }
         _ => unreachable!(),
@@ -224,7 +257,7 @@ pub fn update(
     let sluice = &game.session.sluice;
     let tracks = water_tracks(sluice, &capture.ids);
     let name = format!("frame-{:04}.png", capture.frames.len());
-    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3});
+    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"water_debug":capture.water_debug,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3});
     capture.frames.push(record);
     commands
         .spawn(Screenshot::primary_window())
