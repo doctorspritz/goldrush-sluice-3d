@@ -232,8 +232,16 @@ fn live_restore(conservative: bool) {
         restored.step(Controls::default());
         solver.step(&mut restored).unwrap();
     }
+    let actual = canonical(&restored);
+    if expected != actual {
+        if let Ok(dir) = std::env::var("SLUICE_RESTORE_REPORT_DIR") {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(std::path::Path::new(&dir).join("expected.json"), &expected).unwrap();
+            std::fs::write(std::path::Path::new(&dir).join("restored.json"), &actual).unwrap();
+        }
+    }
     assert!(
-        expected == canonical(&restored),
+        expected == actual,
         "live restoration changed the continued physical state"
     );
 }

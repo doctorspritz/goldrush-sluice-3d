@@ -640,6 +640,24 @@ impl Hydraulics {
         l.flip.upload_grain_diameters(&self.queue, nw, &diameters);
         if l.restoring_contacts {
             l.dem.restore_contact_history(&s.sluice.contacts);
+            if self.conservative_phases {
+                let sdf = SdfParams {
+                    sdf: l.grid.sdf(),
+                    grid_width: l.grid.width,
+                    grid_height: l.grid.height,
+                    grid_depth: l.grid.depth,
+                    cell_size: dx,
+                    grid_offset: Vec3::ZERO,
+                };
+                let residual = l.dem.complete_static_contacts(&sdf, &wetness);
+                if residual > 0.01 {
+                    return Err(format!("Static contact restoration failed (relative penetration {residual}); material retained"));
+                }
+                for (i, c) in l.dem.clumps.iter().enumerate() {
+                    pos[nw + i] = c.position;
+                    vel[nw + i] = c.velocity;
+                }
+            }
             l.restoring_contacts = false;
         }
         let substeps = profile.substeps();
@@ -713,6 +731,14 @@ impl Hydraulics {
                         break;
                     }
                     if let Some(status) = l.flip.take_phase_error() {
+                        if status & 32 != 0 {
+                            if let Some((particle, p)) =
+                                l.flip.phase_failure_particle(&self.device, &self.queue)
+                            {
+                                let position = Vec3::new(p[0], p[1], p[2]);
+                                eprintln!("PHASE BOUNDARY REFUSAL: particle={particle}, water={}, rho={:?}, position={position:?}, home={:?}, cell_type={:?}, sdf={}, represented_volume={}",particle<nw,density.get(particle),(position/dx).floor(),index(position).map(|i|l.cell_types[i]),l.grid.sample_sdf(position),p[3]);
+                            }
+                        }
                         return Err(format!("Conservative phase response refused input (status {status}); material retained"));
                     }
                     if std::time::Instant::now() >= deadline {
@@ -750,6 +776,14 @@ impl Hydraulics {
             };
             // Advection and gravity already happened in FLIP. Apply contacts only.
             l.dem.collision_response_with_wetness(dt, &sdf, &wetness);
+            if self.conservative_phases {
+                let correction_started = std::time::Instant::now();
+                let residual = l.dem.complete_static_contacts(&sdf, &wetness);
+                l.dem.contact_stage_ms[0] += correction_started.elapsed().as_secs_f64() * 1000.;
+                if residual > 0.01 {
+                    return Err(format!("Static contacts did not converge (relative penetration {residual}); material retained"));
+                }
+            }
             self.timings.dem_sdf_ms += l.dem.contact_stage_ms[0];
             self.timings.dem_pairs_ms += l.dem.contact_stage_ms[1];
             for (i, c) in l.dem.clumps.iter().enumerate() {

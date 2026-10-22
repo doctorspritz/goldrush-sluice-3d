@@ -185,3 +185,79 @@ fn validate_particles(@builtin(global_invocation_id) invocation:vec3<u32>) {
   if !finite(value.x) || !finite(value.y) || !finite(value.z) {fail(8u);return;}
  }
 }
+
+// Runtime-only no-flux volume transfer. A blocked stencil transfer stays in
+// its fluid home cell. For uniform cell quadrature, off-diagonal transfers
+// retain their symmetric kernel weights and rejected weights add only to the
+// diagonal. This preserves constant density even at voxel corners; sending
+// diagonal blocked weights to other fluid nodes does not. Open exits retain
+// their lost kernel fraction. No physical particle is moved by this operator.
+@group(0) @binding(17) var<storage,read> volume_cell_types:array<u32>;
+fn volume_cell_index(q:vec3<i32>)->u32 {return (u32(q.z)*params.height+u32(q.y))*params.width+u32(q.x);}
+fn volume_admissible(q:vec3<i32>)->bool {
+ let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
+ if any(q<vec3(0)) || any(q>=shape) {return false;}
+ return volume_cell_types[volume_cell_index(q)]!=2u;
+}
+fn volume_open_exit(q:vec3<i32>)->bool {
+ let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));let open=u32(params.sediment.pad);
+ for(var axis=0u;axis<3u;axis++) {
+  if q[axis]<0 && (open&(1u<<(axis*2u)))!=0u {return true;}
+  if q[axis]>=shape[axis] && (open&(2u<<(axis*2u)))!=0u {return true;}
+ }return false;
+}
+fn reflected_volume(q:vec3<i32>,home:vec3<i32>,value:f32,particle:u32) {
+ if volume_open_exit(q) {return;}
+ if volume_admissible(q) {checked_add(cell_moment_start()+2u*volume_cell_index(q)+1u,value);return;}
+ if !volume_admissible(home) {atomicMax(&wide_accumulators[0].high,particle+1u);fail(32u);return;}
+ checked_add(cell_moment_start()+2u*volume_cell_index(home)+1u,value);
+}
+@compute @workgroup_size(128)
+fn count_cells_reflected(@builtin(global_invocation_id) invocation:vec3<u32>) {
+ let id=invocation.x;if id>=params.count {return;}
+ let p=positions[id];let rho=metadata[id];
+ if !finite(p.x) || !finite(p.y) || !finite(p.z) || !finite(p.w) || !finite(rho) || rho<1. {fail(2u);return;}
+ let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));let home=vec3<i32>(floor(p.xyz/params.cell_size));
+ if rho<=1. && all(home>=vec3(0)) && all(home<shape) {atomicAdd(&wide_accumulators[cell_moment_start()+2u*volume_cell_index(home)].low,1u);}
+ let volume=select(p.w,1.,p.w<=0.);
+ // Folding can send several stencil weights to one cell. Bound the whole
+ // particle volume, rather than assuming one contribution per particle/cell.
+ if volume>WIDE_MAX_UNITS/f32(max(params.count,1u)) {fail(1u);return;}
+ // A positive-SDF particle can occupy the fluid part of a cell whose centre
+ // is marked solid. Conservatively lump that subcell support into adjacent
+ // admissible stencil cells. This does not move the particle, erase geometry,
+ // or admit a point lying inside the physical SDF.
+ if !volume_admissible(home) {
+  let inside=all(home>=vec3(0)) && all(home<shape);
+  if inside {
+   let distance=sample_sdf(p.xyz);
+   if !finite(distance) || distance<0. {atomicMax(&wide_accumulators[0].high,id+1u);fail(32u);return;}
+  } else if !volume_open_exit(home) {atomicMax(&wide_accumulators[0].high,id+1u);fail(32u);return;}
+  let q=p.xyz/params.cell_size-vec3(.5);let center=vec3<i32>(floor(q+vec3(.5)));let frac=q-vec3<f32>(center);
+  var available=0.;var blocked=0.;
+  for(var z=-1;z<=1;z++) {for(var y=-1;y<=1;y++) {for(var x=-1;x<=1;x++) {
+   let node=center+vec3(x,y,z);let w=weight(frac.x-f32(x))*weight(frac.y-f32(y))*weight(frac.z-f32(z));
+   if volume_open_exit(node) {continue;}
+   if volume_admissible(node) {available+=w;} else {blocked+=w;}
+  }}}
+  if available<=0. {
+   if blocked>0. {atomicMax(&wide_accumulators[0].high,id+1u);fail(32u);}return;
+  }
+  let scale=(available+blocked)/available;
+  for(var z=-1;z<=1;z++) {for(var y=-1;y<=1;y++) {for(var x=-1;x<=1;x++) {
+   let node=center+vec3(x,y,z);if !volume_admissible(node) {continue;}
+   let w=weight(frac.x-f32(x))*weight(frac.y-f32(y))*weight(frac.z-f32(z));
+   checked_add(cell_moment_start()+2u*volume_cell_index(node)+1u,volume*w*scale);
+  }}}
+  return;
+ }
+
+ let q=p.xyz/params.cell_size-vec3(.5);let center=vec3<i32>(floor(q+vec3(.5)));let frac=q-vec3<f32>(center);
+ for(var dz=-1;dz<=1;dz++) {for(var dy=-1;dy<=1;dy++) {for(var dx=-1;dx<=1;dx++) {
+  let w=weight(frac.x-f32(dx))*weight(frac.y-f32(dy))*weight(frac.z-f32(dz));
+  if w>0. {reflected_volume(center+vec3(dx,dy,dz),home,volume*w,id);}
+ }}}
+}
+
+@group(0) @binding(18) var<storage,read> sdf:array<f32>;
+fn cell_index(i:u32,j:u32,k:u32)->u32 {return (k*params.height+j)*params.width+i;}

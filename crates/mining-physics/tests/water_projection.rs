@@ -184,7 +184,11 @@ fn volume_repair_samples_the_faces_where_deltas_were_written() {
 fn contact(p: [f32; 4], v: [f32; 4], cells: Vec<u32>, open: u32) -> Vec<Vec<f32>> {
     let n = 12u32;
     run(
-        include_str!("../../game/src/gpu/shaders/sdf_collision_3d.wgsl"),
+        &format!(
+            "{}\n{}",
+            include_str!("../../game/src/gpu/shaders/sample_sdf_3d.wgsl"),
+            include_str!("../../game/src/gpu/shaders/sdf_collision_3d.wgsl")
+        ),
         "sdf_collision",
         vec![
             bytes(&[n, n, n, 1, 0.01f32.to_bits(), 0.001f32.to_bits(), open, 0]),

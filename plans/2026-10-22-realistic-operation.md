@@ -55,8 +55,13 @@ The [local phase response](../docs/physics/phase-response.md) now extends throug
 actual `GpuFlip3D` and the hydraulic worker in explicit `--conservative-phases`
 validation mode. Actual full-step linear budgets, freefall, represented-volume
 repair, storage growth/restore and refusal custody are checked; ordinary gameplay
-still uses the existing model. The next physical gates are the measured
-position-repair angular defect (`sluice-volume-constraint`), boundary/rest-state
-and numerical-clipping controls, then voidage-dependent drag and packed-bed
-convergence. Runtime integration does not close Stage 4, `sluice-phase-coupling`
+still uses the existing model. Pressure-based volume correction and complete affine-state blending now pass
+angular/energy and zero-gravity boundary controls. The actual gravity column
+still develops currents; `sluice-volume-constraint` remains in progress. Next
+physical gates are gravity-balanced boundaries, dynamic convergence and clipping
+budgets, then voidage-dependent drag and packed-bed convergence. Physical
+micrograin inertia is corrected in both modes; validation-mode contacts also
+complete static nonpenetration after pairs. Runtime integration does not close Stage 4, `sluice-phase-coupling`
 or the complete objective. See [the runtime evidence](../docs/playtests/2026-10-23-phase-runtime.md).
+
+See [the volume-stage evidence](../docs/playtests/2026-10-23-volume-constraint.md) for the passing controls and the failed hydrostatic gate. These are bounded physical prerequisites; Stages 2–6 remain open.

@@ -840,23 +840,72 @@ impl GpuPressure3D {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         iterations: u32,
+        timer: Option<&mut super::timing::GpuStageTimer>,
+    ) {
+        self.encode_with_rhs_profiled(encoder, iterations, timer, false, |_| {});
+    }
+
+    /// Insert a consistent divergence target before every pressure solve,
+    /// including diagnostic reprojection. Ordinary projection uses no target.
+    pub fn encode_with_rhs_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        iterations: u32,
+        mut timer: Option<&mut super::timing::GpuStageTimer>,
+        restore_pressure: bool,
+        mut rhs: impl FnMut(&mut wgpu::CommandEncoder),
+    ) {
+        let bytes = (self.width * self.height * self.depth * 4) as u64;
+        for solve in 0..if restore_pressure { 2 } else { 1 } {
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
+
+            // Compute divergence
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Divergence 3D Pass"),
+                    timestamp_writes: timer
+                        .as_deref_mut()
+                        .map(|timer| timer.pass("Divergence 3D Pass")),
+                });
+                pass.set_pipeline(&self.divergence_pipeline);
+                pass.set_bind_group(0, &self.divergence_bind_group, &[]);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+
+            rhs(encoder);
+            self.encode_projection_profiled(encoder, iterations, timer.as_deref_mut());
+            if restore_pressure && solve == 0 {
+                encoder.copy_buffer_to_buffer(
+                    &self.pressure_buffer,
+                    0,
+                    &self.pressure_backup_buffer,
+                    0,
+                    bytes,
+                );
+            }
+        }
+        if restore_pressure {
+            encoder.copy_buffer_to_buffer(
+                &self.pressure_backup_buffer,
+                0,
+                &self.pressure_buffer,
+                0,
+                bytes,
+            );
+        }
+    }
+
+    fn encode_projection_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        iterations: u32,
         mut timer: Option<&mut super::timing::GpuStageTimer>,
     ) {
         let workgroups_x = self.width.div_ceil(8);
         let workgroups_y = self.height.div_ceil(8);
         let workgroups_z = self.depth.div_ceil(4);
-
-        // Compute divergence
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Divergence 3D Pass"),
-                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("Divergence 3D Pass")),
-            });
-            pass.set_pipeline(&self.divergence_pipeline);
-            pass.set_bind_group(0, &self.divergence_bind_group, &[]);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-        }
-
         self.encode_iterations_only_profiled(
             encoder,
             iterations,
@@ -868,7 +917,9 @@ impl GpuPressure3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Gradient U 3D Pass"),
-                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("Gradient U 3D Pass")),
+                timestamp_writes: timer
+                    .as_deref_mut()
+                    .map(|timer| timer.pass("Gradient U 3D Pass")),
             });
             pass.set_pipeline(&self.gradient_u_pipeline);
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
@@ -880,7 +931,9 @@ impl GpuPressure3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Gradient V 3D Pass"),
-                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("Gradient V 3D Pass")),
+                timestamp_writes: timer
+                    .as_deref_mut()
+                    .map(|timer| timer.pass("Gradient V 3D Pass")),
             });
             pass.set_pipeline(&self.gradient_v_pipeline);
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
@@ -914,27 +967,10 @@ impl GpuPressure3D {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         iterations: u32,
-        mut timer: Option<&mut super::timing::GpuStageTimer>,
+        timer: Option<&mut super::timing::GpuStageTimer>,
     ) {
-        self.encode_profiled(encoder, iterations, timer.as_deref_mut());
-        let byte_size = (self.width * self.height * self.depth * std::mem::size_of::<f32>() as u32) as u64;
-        encoder.copy_buffer_to_buffer(
-            &self.pressure_buffer,
-            0,
-            &self.pressure_backup_buffer,
-            0,
-            byte_size,
-        );
-        self.encode_profiled(encoder, iterations, timer);
-        encoder.copy_buffer_to_buffer(
-            &self.pressure_backup_buffer,
-            0,
-            &self.pressure_buffer,
-            0,
-            byte_size,
-        );
+        self.encode_with_rhs_profiled(encoder, iterations, timer, true, |_| {});
     }
-
 
     /// Encode just the divergence pass (no pressure iterations or gradient apply).
     pub fn encode_divergence_only(&self, encoder: &mut wgpu::CommandEncoder) {

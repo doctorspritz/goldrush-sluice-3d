@@ -156,6 +156,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     // Also sample old grid velocity for FLIP delta
     // NOTE: old and new use same stencil, so weights are identical
     var old_grid_vel = vec3<f32>(0.0, 0.0, 0.0);
+    var old_grid_c0=vec3(0.);var old_grid_c1=vec3(0.);var old_grid_c2=vec3(0.);
 
     // ========== U component (staggered on left YZ faces) ==========
     let u_pos = pos / cell_size - vec3<f32>(0.0, 0.5, 0.5);
@@ -200,6 +201,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 weight_sum.x += w;
                 if is_sediment && !phase {water_velocity.x += w * water_grid_u[idx];}
                 new_c_row0 += offset * (w * u_val * d_inv);
+                if phase && !is_sediment {old_grid_c0 += offset * (w * u_old * d_inv);}
             }
         }
     }
@@ -246,6 +248,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 weight_sum.y += w;
                 if is_sediment && !phase {water_velocity.y += w * water_grid_v[idx];}
                 new_c_row1 += offset * (w * v_val * d_inv);
+                if phase && !is_sediment {old_grid_c1 += offset * (w * v_old * d_inv);}
             }
         }
     }
@@ -291,6 +294,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 weight_sum.z += w;
                 if is_sediment && !phase {water_velocity.z += w * water_grid_w[idx];}
                 new_c_row2 += offset * (w * w_val * d_inv);
+                if phase && !is_sediment {old_grid_c2 += offset * (w * w_old * d_inv);}
             }
         }
     }
@@ -304,6 +308,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         new_velocity.x /= weight_sum.x;
         old_grid_vel.x /= weight_sum.x;
         new_c_row0 /= weight_sum.x;
+        if phase && !is_sediment {old_grid_c0 /= weight_sum.x;}
         if (is_sediment) {
             water_velocity.x /= weight_sum.x;
         }
@@ -312,6 +317,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         new_velocity.y /= weight_sum.y;
         old_grid_vel.y /= weight_sum.y;
         new_c_row1 /= weight_sum.y;
+        if phase && !is_sediment {old_grid_c1 /= weight_sum.y;}
         if (is_sediment) {
             water_velocity.y /= weight_sum.y;
         }
@@ -320,6 +326,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         new_velocity.z /= weight_sum.z;
         old_grid_vel.z /= weight_sum.z;
         new_c_row2 /= weight_sum.z;
+        if phase && !is_sediment {old_grid_c2 /= weight_sum.z;}
         if (is_sediment) {
             water_velocity.z /= weight_sum.z;
         }
@@ -425,9 +432,23 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     // All particles keep APIC C matrix for angular momentum transfer
-    c_col0[id.x] = new_c_row0;
-    c_col1[id.x] = new_c_row1;
-    c_col2[id.x] = new_c_row2;
+    if phase && !is_sediment {
+        // Blend the complete APIC state. Blending only velocity while taking
+        // 100% of the PIC affine field creates spin and kinetic energy even
+        // with no forces. The FLIP affine increment uses the SAME old grid,
+        // weights and (if active) delta limiter as the velocity increment.
+        let force_scale=select(1.,max_dv/max(sqrt(delta_len_sq),0.000001),delta_len_sq>max_dv*max_dv);
+        let flip_c0=c_col0[id.x]+(new_c_row0-old_grid_c0)*force_scale;
+        let flip_c1=c_col1[id.x]+(new_c_row1-old_grid_c1)*force_scale;
+        let flip_c2=c_col2[id.x]+(new_c_row2-old_grid_c2)*force_scale;
+        c_col0[id.x]=params.flip_ratio*flip_c0+(1.-params.flip_ratio)*new_c_row0;
+        c_col1[id.x]=params.flip_ratio*flip_c1+(1.-params.flip_ratio)*new_c_row1;
+        c_col2[id.x]=params.flip_ratio*flip_c2+(1.-params.flip_ratio)*new_c_row2;
+    } else {
+        c_col0[id.x] = new_c_row0;
+        c_col1[id.x] = new_c_row1;
+        c_col2[id.x] = new_c_row2;
+    }
 
     // Safety clamp
     let final_speed = length(final_velocity);

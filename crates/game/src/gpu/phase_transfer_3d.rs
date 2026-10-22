@@ -1,7 +1,7 @@
 //! Conservative local phase response on the existing quadratic APIC MAC grid.
 //!
-//! This operator is deliberately separate from the playable step until the
-//! complete pressure/gather/position-repair integration has passed its controls.
+//! Integrated with the playable step in explicit conservative validation mode.
+//! Gravity boundaries, packed beds and operating calibration remain open.
 //! It never applies a global momentum correction or reads back between passes.
 use super::g2p_3d::SedimentParams3D;
 use bytemuck::{Pod, Zeroable};
@@ -18,6 +18,11 @@ struct Params {
     capacity: u32,
     face_counts: [u32; 3],
     sediment: SedimentParams3D,
+}
+
+pub struct BoundaryVolume3D {
+    pipeline: wgpu::ComputePipeline,
+    group: wgpu::BindGroup,
 }
 
 pub struct PhaseTransfer3D {
@@ -202,8 +207,9 @@ impl PhaseTransfer3D {
             label: Some("Conservative phase transfer"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}",
+                    "{}\n{}\n{}",
                     include_str!("shaders/wide_sum.wgsl"),
+                    include_str!("shaders/sample_sdf_3d.wgsl"),
                     include_str!("shaders/phase_transfer_3d.wgsl")
                 )
                 .into(),
@@ -372,6 +378,22 @@ impl PhaseTransfer3D {
     /// Represented total volume and raw water markers use independent planes.
     /// Re-run after any position correction before the phase transfer.
     pub fn encode_cell_volume(&self, encoder: &mut wgpu::CommandEncoder, count: u32) {
+        self.encode_volume(encoder, count, None);
+    }
+    pub fn encode_cell_volume_with_boundaries(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        count: u32,
+        boundary: &BoundaryVolume3D,
+    ) {
+        self.encode_volume(encoder, count, Some(boundary));
+    }
+    fn encode_volume(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        count: u32,
+        boundary: Option<&BoundaryVolume3D>,
+    ) {
         assert!(count <= self.capacity);
         let first = 8 + self.face_counts.into_iter().map(u64::from).sum::<u64>() * 64;
         encoder.clear_buffer(&self.moments, first, None);
@@ -379,13 +401,120 @@ impl PhaseTransfer3D {
             label: Some("Phase represented cell volume"),
             timestamp_writes: None,
         });
-        pass.set_bind_group(0, &self.group, &[]);
-        pass.set_pipeline(&self.count_cells);
+        if let Some(boundary) = boundary {
+            pass.set_bind_group(0, &boundary.group, &[]);
+            pass.set_pipeline(&boundary.pipeline);
+        } else {
+            pass.set_bind_group(0, &self.group, &[]);
+            pass.set_pipeline(&self.count_cells);
+        }
         if count > 0 {
             pass.dispatch_workgroups(count.div_ceil(128), 1, 1);
         }
+        pass.set_bind_group(0, &self.group, &[]);
         pass.set_pipeline(&self.decode_cells);
         pass.dispatch_workgroups(self.shape.into_iter().product::<u32>().div_ceil(128), 1, 1);
+    }
+
+    /// Reuse the otherwise unused sediment padding for the volume boundary
+    /// mask. Call after prepare; physical drag never reads this padding.
+    pub fn set_volume_boundaries(&self, queue: &wgpu::Queue, open: u32) {
+        assert!(open <= 63);
+        queue.write_buffer(
+            &self.params,
+            (std::mem::size_of::<Params>() - 4) as u64,
+            bytemuck::bytes_of(&(open as f32)),
+        );
+    }
+    pub fn boundary_volume(
+        &self,
+        device: &wgpu::Device,
+        positions: &wgpu::Buffer,
+        metadata: &wgpu::Buffer,
+        cell_types: &wgpu::Buffer,
+        sdf: &wgpu::Buffer,
+    ) -> BoundaryVolume3D {
+        assert!(
+            positions.size() >= u64::from(self.capacity) * 16
+                && metadata.size() >= u64::from(self.capacity) * 16
+        );
+        assert!(cell_types.size() >= self.shape.into_iter().map(u64::from).product::<u64>() * 4);
+        assert!(sdf.size() >= self.shape.into_iter().map(u64::from).product::<u64>() * 4);
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Boundary volume layout"),
+            entries: &[0, 1, 6, 7, 17, 18].map(|binding| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: if binding == 0 {
+                        wgpu::BufferBindingType::Uniform
+                    } else {
+                        wgpu::BufferBindingType::Storage {
+                            read_only: binding == 1 || binding == 17 || binding == 18,
+                        }
+                    },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }),
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Boundary volume"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: positions.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: metadata.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.moments.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 17,
+                    resource: cell_types.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 18,
+                    resource: sdf.as_entire_binding(),
+                },
+            ],
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Boundary volume shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}\n{}",
+                    include_str!("shaders/wide_sum.wgsl"),
+                    include_str!("shaders/sample_sdf_3d.wgsl"),
+                    include_str!("shaders/phase_transfer_3d.wgsl")
+                )
+                .into(),
+            ),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Boundary volume pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("count_cells_reflected"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        BoundaryVolume3D { pipeline, group }
     }
 
     pub fn encode_response(&self, encoder: &mut wgpu::CommandEncoder) {

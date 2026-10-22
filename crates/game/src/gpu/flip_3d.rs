@@ -202,6 +202,8 @@ pub struct GpuFlip3D {
     #[allow(dead_code)]
     position_delta_z_buffer: wgpu::Buffer,
     density_error_pipeline: wgpu::ComputePipeline,
+    volume_rhs: Option<(wgpu::ComputePipeline, wgpu::BindGroup)>,
+    boundary_volume: Option<super::phase_transfer_3d::BoundaryVolume3D>,
     density_error_bind_group: wgpu::BindGroup,
     density_error_params_buffer: wgpu::Buffer,
     density_position_grid_pipeline: wgpu::ComputePipeline,
@@ -424,6 +426,31 @@ impl GpuFlip3D {
     }
     pub fn take_phase_error(&mut self) -> Option<u32> {
         self.phase_error.take()
+    }
+
+    /// Fault-only diagnostics; ordinary stepping performs no extra readback.
+    pub fn phase_failure_particle(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Option<(usize, [f32; 4])> {
+        let phase = self.phase_transfer.as_ref()?;
+        let mut header = [[0f32; 4]; 1];
+        Self::read_buffer_vec4(device, queue, phase.status_buffer(), &mut header, 1);
+        let encoded = header[0][1].to_bits();
+        if encoded == 0 || encoded as usize > self.max_particles {
+            return None;
+        }
+        let index = encoded as usize - 1;
+        let mut position = [[0f32; 4]; 1];
+        Self::read_buffer_vec4_range(
+            device,
+            queue,
+            &self.positions_buffer,
+            &mut position,
+            index..index + 1,
+        );
+        Some((index, position[0]))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2291,6 +2318,68 @@ impl GpuFlip3D {
                 cache: None,
             });
 
+        let volume_rhs = conservative.then(|| {
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Conservative volume RHS layout"),
+                entries: &[0, 2, 4, 5, 6].map(|binding| wgpu::BindGroupLayoutEntry {
+                    binding,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: if binding == 0 {
+                            wgpu::BufferBindingType::Uniform
+                        } else {
+                            wgpu::BufferBindingType::Storage {
+                                read_only: binding == 2 || binding == 4,
+                            }
+                        },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }),
+            });
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Conservative volume RHS"),
+                layout: &layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: density_error_params_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: pressure.cell_type_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: phase_cell_binding(true),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: pressure.divergence_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: phase_status.as_entire_binding(),
+                    },
+                ],
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Conservative volume RHS pipeline layout"),
+                bind_group_layouts: &[&layout],
+                push_constant_ranges: &[],
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Conservative volume RHS pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &density_error_shader,
+                entry_point: Some("add_density_rhs"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            (pipeline, group)
+        });
+
         // Density Position Grid pass
         let density_position_grid_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Density Position Grid Params 3D"),
@@ -2510,7 +2599,14 @@ impl GpuFlip3D {
         // ========== SDF Collision (Advection + Solid Collision) ==========
         let sdf_collision_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("SDF Collision 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sdf_collision_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("shaders/sample_sdf_3d.wgsl"),
+                    include_str!("shaders/sdf_collision_3d.wgsl")
+                )
+                .into(),
+            ),
         });
 
         let sdf_collision_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -2681,6 +2777,16 @@ impl GpuFlip3D {
             ReadbackSlot::new(device, max_particles),
         ];
 
+        let boundary_volume = phase_transfer.as_ref().map(|phase| {
+            phase.boundary_volume(
+                device,
+                &positions_buffer,
+                phase_metadata.as_ref().unwrap(),
+                &pressure.cell_type_buffer,
+                &sdf_buffer,
+            )
+        });
+
         Self {
             phase_transfer,
             phase_metadata,
@@ -2779,6 +2885,8 @@ impl GpuFlip3D {
             position_delta_y_buffer,
             position_delta_z_buffer,
             density_error_pipeline,
+            volume_rhs,
+            boundary_volume,
             density_error_bind_group,
             density_error_params_buffer,
             density_position_grid_pipeline,
@@ -3444,6 +3552,11 @@ impl GpuFlip3D {
             gravity: gravity.abs(),
             _pad: [0.0; 1],
         };
+        if self.phase_transfer.is_some() {
+            if let Some(sdf) = sdf {
+                self.upload_sdf(queue, sdf);
+            }
+        }
         if let Some(phase) = &self.phase_transfer {
             phase.prepare(
                 queue,
@@ -3454,6 +3567,7 @@ impl GpuFlip3D {
                 if rest_density > 0. { rest_density } else { 8. },
                 sediment_params,
             );
+            phase.set_volume_boundaries(queue, self.open_boundaries);
         }
 
         self.p2g.prepare(queue, count, self.cell_size);
@@ -3473,7 +3587,11 @@ impl GpuFlip3D {
                 u64::from(count) * 4,
             );
             phase.encode_begin_step(&mut encoder);
-            phase.encode_cell_volume(&mut encoder, count);
+            phase.encode_cell_volume_with_boundaries(
+                &mut encoder,
+                count,
+                self.boundary_volume.as_ref().unwrap(),
+            );
         }
         if self.phase_transfer.is_none() && self.use_sorted_p2g {
             // Sort particles by cell index for cache coherence
@@ -3630,7 +3748,7 @@ impl GpuFlip3D {
 
         // ========== Density Projection (Volume Preservation) ==========
         // After P2G, before G2P: correct particle positions based on density error
-        if self.density_projection_enabled && rest_density > 0.0 {
+        if self.phase_transfer.is_none() && self.density_projection_enabled && rest_density > 0.0 {
             // 1. Compute density error from particle count
             let density_error_params = DensityErrorParams3D {
                 width: self.width,
@@ -3745,21 +3863,7 @@ impl GpuFlip3D {
         }
 
         if let Some(phase) = &self.phase_transfer {
-            let mut encoder = encoder_for("Phase transfer after position repair");
-            if self.density_projection_enabled && rest_density > 0. {
-                phase.encode_cell_volume(&mut encoder, count);
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Phase repaired fluid mask"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.fluid_cell_expand_pipeline);
-                pass.set_bind_group(0, &self.fluid_cell_expand_bind_group, &[]);
-                pass.dispatch_workgroups(
-                    self.width.div_ceil(8),
-                    self.height.div_ceil(8),
-                    self.depth.div_ceil(4),
-                );
-            }
+            let mut encoder = encoder_for("Conservative phase transfer encoder");
             phase.encode_transfer(&mut encoder, count);
             submit(encoder, "Conservative phase transfer");
         } else {
@@ -4097,10 +4201,54 @@ impl GpuFlip3D {
                 );
             }
         }
-        if self.phase_transfer.is_some() && pressure_iterations == 0 {
+        if self.phase_transfer.is_some()
+            && (pressure_iterations == 0 || self.density_projection_enabled)
+        {
+            // Volume-constrained steps are reproducible from the authoritative
+            // particle/contact save. The old position solve also cleared this
+            // scratch pressure each step; retaining it here introduced hidden
+            // warm state and changed a continued shift after live restoration.
             self.pressure.clear_pressure(&mut pressure_encoder);
         }
-        if self.pressure_diagnostics_enabled {
+        if let Some((pipeline, group)) = self.volume_rhs.as_ref().filter(|_| {
+            self.density_projection_enabled && rest_density > 0. && pressure_iterations > 0
+        }) {
+            queue.write_buffer(
+                &self.density_error_params_buffer,
+                0,
+                bytemuck::bytes_of(&DensityErrorParams3D {
+                    width: self.width,
+                    height: self.height,
+                    depth: self.depth,
+                    rest_density,
+                    dt,
+                    surface_clamp: u32::from(self.density_surface_clamp),
+                    _pad2: self.open_boundaries,
+                    _pad3: self.density_projection_strength.to_bits(),
+                }),
+            );
+            // Retain the former combined volume/velocity sweep work initially.
+            // A cheaper solve requires independent convergence evidence.
+            self.pressure.encode_with_rhs_profiled(
+                &mut pressure_encoder,
+                pressure_iterations.saturating_add(self.volume_iterations),
+                device_timer.as_mut(),
+                self.pressure_diagnostics_enabled,
+                |encoder| {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Conservative volume pressure source"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, group, &[]);
+                    pass.dispatch_workgroups(
+                        self.width.div_ceil(8),
+                        self.height.div_ceil(8),
+                        self.depth.div_ceil(4),
+                    );
+                },
+            );
+        } else if self.pressure_diagnostics_enabled {
             self.pressure.encode_with_pressure_restore_profiled(
                 &mut pressure_encoder,
                 pressure_iterations,
@@ -4545,6 +4693,16 @@ impl GpuFlip3D {
         output: &mut [[f32; 4]],
         count: usize,
     ) {
+        Self::read_buffer_vec4_range(device, queue, buffer, output, 0..count);
+    }
+    fn read_buffer_vec4_range(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        buffer: &wgpu::Buffer,
+        output: &mut [[f32; 4]],
+        range: std::ops::Range<usize>,
+    ) {
+        let count = range.len();
         let byte_size = count * std::mem::size_of::<[f32; 4]>();
 
         // Create a staging buffer
@@ -4558,7 +4716,13 @@ impl GpuFlip3D {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Read Vec4 Buffer Encoder"),
         });
-        encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, byte_size as u64);
+        encoder.copy_buffer_to_buffer(
+            buffer,
+            (range.start * 16) as u64,
+            &staging,
+            0,
+            byte_size as u64,
+        );
         queue.submit(std::iter::once(encoder.finish()));
 
         let buffer_slice = staging.slice(..);

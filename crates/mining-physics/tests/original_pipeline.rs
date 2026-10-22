@@ -31,7 +31,9 @@ fn run_pipeline(conservative: bool) {
     let started = std::time::Instant::now();
     for tick in 0..360 {
         s.step(Controls::default());
-        physics.step(&mut s).unwrap();
+        physics
+            .step(&mut s)
+            .unwrap_or_else(|error| panic!("pipeline tick {tick}: {error}"));
         if tick == 300 {
             let positions: Vec<_> = s.sluice.water.iter().map(|p| p.position).collect();
             let outflow: Vec<_> = s

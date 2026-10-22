@@ -642,6 +642,109 @@ impl ClusterSimulation3D {
         self.sdf_contacts = new_sdf_contacts;
     }
 
+    /// Complete static nonpenetration after pair corrections. Pair projection
+    /// can otherwise push a light grain through the floor after its SDF pass.
+    /// This does not integrate time, damp spin, or repeat impact restitution.
+    /// Pair/bed convergence remains a separate coupled-contact requirement.
+    pub fn complete_static_contacts(&mut self, sdf: &SdfParams, wet: &[bool]) -> f32 {
+        assert_eq!(wet.len(), self.clumps.len());
+        if !sdf.cell_size.is_finite() || sdf.cell_size <= 0. {
+            return f32::INFINITY;
+        }
+        for _ in 0..8 {
+            let mut changed = false;
+            for (index, body) in self.clumps.iter_mut().enumerate() {
+                let template = &self.templates[body.template_idx];
+                let radius = template.particle_radius;
+                for (particle, offset) in template.local_offsets.iter().enumerate() {
+                    let arm = body.rotation * *offset;
+                    let point = body.position + arm;
+                    let (distance, gradient) = sample_sdf_contact(sdf, point, radius);
+                    if !distance.is_finite()
+                        || !gradient.is_finite()
+                        || !radius.is_finite()
+                        || radius <= 0.
+                    {
+                        return f32::INFINITY;
+                    }
+                    let penetration = radius - distance;
+                    if penetration <= radius * 0.005 || gradient.length_squared() <= 1e-12 {
+                        continue;
+                    }
+                    // Differentiate the actual trilinear scalar field. Its
+                    // interpolated gradient need not have unit magnitude.
+                    let delta = (gradient * (penetration / gradient.length_squared()))
+                        .clamp_length_max(sdf.cell_size);
+                    let initial = body.position;
+                    let mut fraction = 1.;
+                    let mut accepted = false;
+                    for _ in 0..8 {
+                        let candidate = initial + delta * fraction;
+                        let (next, _) = sample_sdf_contact(sdf, candidate + arm, radius);
+                        if next.is_finite()
+                            && (next >= radius || next > distance + penetration * fraction * 0.25)
+                        {
+                            body.position = candidate;
+                            accepted = true;
+                            break;
+                        }
+                        fraction *= 0.5;
+                    }
+                    if !accepted {
+                        continue;
+                    }
+                    changed = true;
+                    let normal = gradient.normalize();
+                    crate::contact::resolve_static(
+                        body,
+                        template,
+                        normal,
+                        arm - normal * radius,
+                        crate::contact::ContactMaterial {
+                            restitution: 0.,
+                            friction: if wet[index] {
+                                self.wet_friction
+                            } else {
+                                self.floor_friction
+                            },
+                            rolling: if wet[index] {
+                                self.wet_rolling_friction
+                            } else {
+                                self.rolling_friction
+                            },
+                        },
+                    );
+                    self.sdf_contacts
+                        .entry(SdfContactKey {
+                            clump: index,
+                            particle,
+                        })
+                        .or_insert(Vec3::ZERO);
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let mut maximum = 0f32;
+        for body in &self.clumps {
+            let template = &self.templates[body.template_idx];
+            for offset in &template.local_offsets {
+                let (distance, _) = sample_sdf_contact(
+                    sdf,
+                    body.position + body.rotation * *offset,
+                    template.particle_radius,
+                );
+                if !distance.is_finite() {
+                    return f32::INFINITY;
+                }
+                maximum = maximum
+                    .max((template.particle_radius - distance).max(0.) / template.particle_radius);
+            }
+        }
+        maximum
+    }
+
     /// Compute sphere-sphere collision forces using spatial hashing for O(n) detection.
     fn compute_sphere_sphere_forces(
         &self,
@@ -2104,25 +2207,40 @@ fn center_on_com(offsets: &mut [Vec3]) {
 }
 
 fn compute_inertia(offsets: &[Vec3], particle_mass: f32, particle_radius: f32) -> (Mat3, f32) {
-    let mut inertia = Mat3::ZERO;
+    assert!(
+        particle_mass.is_finite()
+            && particle_mass >= 0.
+            && particle_radius.is_finite()
+            && particle_radius >= 0.
+    );
+    // Sum physical sphere inertia and parallel-axis terms. A dimensionful
+    // 1e-6 floor overwhelmed micrograin inertia by up to eleven orders.
+    // Normalize the double-precision tensor before inversion, then convert
+    // the resulting mobility to the solver's float representation.
+    let mut inertia = glam::DMat3::ZERO;
+    let intrinsic = 0.4 * (particle_radius as f64).powi(2);
     for r in offsets {
-        let r2 = r.length_squared();
-        let diag = Mat3::from_diagonal(Vec3::splat(r2));
-        let outer = Mat3::from_cols(*r * r.x, *r * r.y, *r * r.z);
-        inertia += (diag - outer) * particle_mass;
+        let r = r.as_dvec3();
+        let outer = glam::DMat3::from_cols(r * r.x, r * r.y, r * r.z);
+        inertia += (glam::DMat3::from_diagonal(glam::DVec3::splat(r.length_squared() + intrinsic))
+            - outer)
+            * particle_mass as f64;
     }
-
-    let jitter = (particle_mass * particle_radius * particle_radius).max(1.0e-6);
-    inertia += Mat3::from_diagonal(Vec3::splat(jitter));
-
-    let det = inertia.determinant();
-    let inertia_inv = if det.abs() > 1.0e-6 {
-        inertia.inverse()
+    let scale = inertia
+        .x_axis
+        .abs()
+        .max_element()
+        .max(inertia.y_axis.abs().max_element())
+        .max(inertia.z_axis.abs().max_element());
+    let inertia_inv = if scale == 0. {
+        Mat3::ZERO
     } else {
-        let mass = particle_mass * offsets.len() as f32;
-        let denom = (0.4 * mass * particle_radius * particle_radius).max(1.0e-6);
-        Mat3::from_diagonal(Vec3::splat(1.0 / denom))
+        ((inertia / scale).inverse() / scale).as_mat3()
     };
+    assert!(
+        inertia_inv.is_finite(),
+        "physical inertia is outside the solver's representable range"
+    );
 
     let bounding_radius =
         offsets.iter().map(|r| r.length()).fold(0.0_f32, f32::max) + particle_radius;
@@ -3420,6 +3538,220 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(run(true), run(false));
+    }
+
+    #[test]
+    fn completed_static_contacts_restore_grains_pushed_through_the_floor_by_pairs() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::ONE);
+        sim.coulomb_contacts = true;
+        for (r, mass) in [(0.00005, 1e-8), (0.0005, 1.4e-6)] {
+            sim.add_template(ClumpTemplate3D::generate(
+                ClumpShape3D::Irregular {
+                    count: 1,
+                    seed: 42,
+                    style: IrregularStyle3D::Round,
+                },
+                r,
+                mass,
+            ));
+        }
+        sim.spawn(0, Vec3::new(0.04, 0.030052, 0.04), Vec3::ZERO);
+        sim.spawn(1, Vec3::new(0.04, 0.03052, 0.04), Vec3::new(0., -0.2, 0.));
+        let n = 8;
+        let h = 0.01;
+        let mut field = vec![0.; n * n * n];
+        for z in 0..n {
+            for y in 0..n {
+                for x in 0..n {
+                    field[(z * n + y) * n + x] = (y as f32 + 0.5) * h - 0.03;
+                }
+            }
+        }
+        let sdf = SdfParams {
+            sdf: &field,
+            grid_width: n,
+            grid_height: n,
+            grid_depth: n,
+            cell_size: h,
+            grid_offset: Vec3::ZERO,
+        };
+        sim.collision_response_with_wetness(1. / 120., &sdf, &[true, true]);
+        let before = sample_sdf_contact(&sdf, sim.clumps[0].position, 1.).0;
+        assert!(
+            before < 0.,
+            "pair pass did not reproduce the buried-grain failure: {before}"
+        );
+        let energy = |sim: &ClusterSimulation3D| {
+            sim.clumps
+                .iter()
+                .map(|c| {
+                    let t = &sim.templates[c.template_idx];
+                    0.5 * t.mass * c.velocity.length_squared()
+                        + 0.5
+                            * c.angular_velocity
+                                .dot(c.world_inertia_inv(t).inverse() * c.angular_velocity)
+                })
+                .sum::<f32>()
+        };
+        let initial_energy = energy(&sim);
+        let rotations: Vec<_> = sim.clumps.iter().map(|c| c.rotation).collect();
+        let residual = sim.complete_static_contacts(&sdf, &[true, true]);
+        assert!(
+            residual < 0.01,
+            "static constraint did not converge: {residual}"
+        );
+        for (c, rotation) in sim.clumps.iter().zip(rotations) {
+            let r = sim.templates[c.template_idx].particle_radius;
+            assert!(sample_sdf_contact(&sdf, c.position, r).0 >= 0.99 * r);
+            assert_eq!(
+                c.rotation, rotation,
+                "static completion integrated rotation again"
+            );
+        }
+        assert!(
+            energy(&sim) <= initial_energy * (1. + 1e-6) + 1e-16,
+            "static completion added kinetic energy"
+        );
+    }
+
+    #[test]
+    fn completed_static_contacts_use_the_scalar_gradient_and_are_idempotent() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::ONE);
+        sim.add_template(ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 1,
+                seed: 4,
+                style: IrregularStyle3D::Round,
+            },
+            0.003,
+            0.01,
+        ));
+        sim.spawn(0, Vec3::new(0.04, 0.0295, 0.04), Vec3::new(0.1, -0.2, 0.03));
+        sim.clumps[0].angular_velocity = Vec3::new(0.3, 0.4, 0.5);
+        let n = 8;
+        let h = 0.01;
+        let mut field = vec![0.; n * n * n];
+        for z in 0..n {
+            for y in 0..n {
+                for x in 0..n {
+                    field[(z * n + y) * n + x] = 0.25 * ((y as f32 + 0.5) * h - 0.03);
+                }
+            }
+        }
+        let sdf = SdfParams {
+            sdf: &field,
+            grid_width: n,
+            grid_height: n,
+            grid_depth: n,
+            cell_size: h,
+            grid_offset: Vec3::ZERO,
+        };
+        assert!(sim.complete_static_contacts(&sdf, &[true]) < 0.01);
+        let c = sim.clumps[0];
+        assert!(
+            (c.position.y - 0.042).abs() < 2e-6,
+            "constraint assumed unit SDF gradient"
+        );
+        let snapshot = (c.position, c.velocity, c.rotation, c.angular_velocity);
+        let contacts = sim.sdf_contacts.clone();
+        assert!(sim.complete_static_contacts(&sdf, &[true]) < 0.01);
+        let c = sim.clumps[0];
+        assert_eq!(
+            snapshot,
+            (c.position, c.velocity, c.rotation, c.angular_velocity)
+        );
+        assert_eq!(contacts, sim.sdf_contacts);
+    }
+
+    #[test]
+    fn completed_static_contacts_refuse_nonfinite_geometry() {
+        let mut sim = ClusterSimulation3D::new(Vec3::ZERO, Vec3::ONE);
+        sim.add_template(ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 1,
+                seed: 4,
+                style: IrregularStyle3D::Round,
+            },
+            0.003,
+            0.01,
+        ));
+        sim.spawn(0, Vec3::splat(0.04), Vec3::ZERO);
+        let field = vec![f32::NAN; 8 * 8 * 8];
+        let sdf = SdfParams {
+            sdf: &field,
+            grid_width: 8,
+            grid_height: 8,
+            grid_depth: 8,
+            cell_size: 0.01,
+            grid_offset: Vec3::ZERO,
+        };
+        let initial = sim.clumps[0];
+        assert!(sim.complete_static_contacts(&sdf, &[true]).is_infinite());
+        assert_eq!(sim.clumps[0].position, initial.position);
+        assert_eq!(sim.clumps[0].velocity, initial.velocity);
+    }
+
+    #[test]
+    fn physical_sphere_inertia_remains_correct_at_gold_and_sand_scales() {
+        for radius in [0.000025f32, 0.00005, 0.0005, 0.005] {
+            for density in [2650f32, 19300.] {
+                let mass = 4. / 3. * PI * radius.powi(3) * density;
+                let (inverse, _) = compute_inertia(&[Vec3::ZERO], mass, radius);
+                let expected = 1. / (0.4 * mass as f64 * (radius as f64).powi(2));
+                for value in [inverse.x_axis.x, inverse.y_axis.y, inverse.z_axis.z] {
+                    assert!(
+                        (value as f64 / expected - 1.).abs() < 2e-6,
+                        "radius={radius},mass={mass}: {value} vs {expected}"
+                    );
+                }
+                assert!(inverse.is_finite());
+            }
+        }
+    }
+
+    #[test]
+    fn physical_compound_inertia_retains_parallel_axis_terms_and_scale() {
+        let mass = 1e-8f32;
+        let radius = 0.00005f32;
+        let arm = 0.002f32;
+        let (inverse, _) = compute_inertia(&[Vec3::X * arm, -Vec3::X * arm], mass, radius);
+        let axial = 2. * 0.4 * mass as f64 * (radius as f64).powi(2);
+        let transverse = axial + 2. * mass as f64 * (arm as f64).powi(2);
+        assert!((inverse.x_axis.x as f64 * axial - 1.).abs() < 2e-6);
+        assert!((inverse.y_axis.y as f64 * transverse - 1.).abs() < 2e-6);
+        assert!((inverse.z_axis.z as f64 * transverse - 1.).abs() < 2e-6);
+        let shape = ClumpShape3D::Irregular {
+            count: 7,
+            seed: 42,
+            style: IrregularStyle3D::Round,
+        };
+        let base = ClumpTemplate3D::generate(shape, 0.003, 0.01);
+        let scaled = ClumpTemplate3D::generate(shape, 0.00003, 0.00000001);
+        let expected = base.inertia_inv_local * 1e10;
+        let magnitude = expected
+            .to_cols_array()
+            .iter()
+            .map(|x| x.abs())
+            .fold(0f32, f32::max);
+        for (a, b) in scaled
+            .inertia_inv_local
+            .to_cols_array()
+            .iter()
+            .zip(expected.to_cols_array())
+        {
+            assert!(
+                (*a - b).abs() / magnitude < 2e-6,
+                "dimensionful inertia floor remains"
+            );
+        }
+    }
+
+    #[test]
+    fn static_mass_has_zero_rotational_mobility() {
+        let (inverse, _) = compute_inertia(&[Vec3::X, Vec3::Y], 0., 0.01);
+        assert_eq!(inverse, Mat3::ZERO);
+        let (inverse, _) = compute_inertia(&[Vec3::ZERO], 1., 0.);
+        assert_eq!(inverse, Mat3::ZERO);
     }
 
     #[test]

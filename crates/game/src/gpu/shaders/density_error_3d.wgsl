@@ -120,24 +120,72 @@ fn compute_density_error(@builtin(global_invocation_id) id: vec3<u32>) {
 fn phase_cell_type(q:vec3<i32>)->u32 {
     let bits=array<u32,3>(1u,4u,16u);
     let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
+    var outside=false;
     for(var a=0u;a<3u;a++) {
-        if q[a]<0 {return select(CELL_SOLID,CELL_AIR,(params._pad2&bits[a])!=0u);}
-        if q[a]>=shape[a] {return select(CELL_SOLID,CELL_AIR,(params._pad2&(bits[a]*2u))!=0u);}
+        if q[a]<0 {
+            if (params._pad2&bits[a])==0u {return CELL_SOLID;}
+            outside=true;
+        }
+        if q[a]>=shape[a] {
+            if (params._pad2&(bits[a]*2u))==0u {return CELL_SOLID;}
+            outside=true;
+        }
     }
+    if outside {return CELL_AIR;}
     return cell_type[cell_index(u32(q.x),u32(q.y),u32(q.z))];
 }
-fn phase_error(id:vec3<u32>)->f32 {
-    let index=cell_index(id.x,id.y,id.z);var density=represented_volume[index];var air=false;
+struct PhaseVolume {moving:f32,fixed:f32,free_surface:bool};
+fn phase_volume(id:vec3<u32>)->PhaseVolume {
+    let index=cell_index(id.x,id.y,id.z);var fixed=0.;var air=false;
     let center=vec3<i32>(id);
     for(var z=-1;z<=1;z++) {for(var y=-1;y<=1;y++) {for(var x=-1;x<=1;x++) {
         let ct=phase_cell_type(center+vec3(x,y,z));
         if ct==CELL_SOLID {
             let w=select(1./6.,2./3.,x==0)*select(1./6.,2./3.,y==0)*select(1./6.,2./3.,z==0);
-            density+=params.rest_density*w;
+            fixed+=params.rest_density*w;
         }
         if abs(x)+abs(y)+abs(z)==1 && ct==CELL_AIR {air=true;}
     }}}
-    var error=density/params.rest_density-1.;
-    if air {error=max(error,0.);}
+    return PhaseVolume(represented_volume[index],fixed,air);
+}
+fn phase_error(id:vec3<u32>)->f32 {
+    let state=phase_volume(id);
+    var error=(state.moving+state.fixed)/params.rest_density-1.;
+    if state.free_surface {error=max(error,0.);}
     return clamp(error/params.dt,-200.,200.);
+}
+
+@group(0) @binding(5) var<storage,read_write> velocity_divergence:array<f32>;
+@group(0) @binding(6) var<storage,read_write> volume_status:array<atomic<u32>>;
+
+// Linearize continuity about the incompressible reference volume R:
+// r_new = r - dt*R*div(q). Boundary-reflected volume has no phantom solid
+// fill and conserves total represented material at closed walls. Thus
+// div(q)=(r-R)/(dt*R), with no net source in a full closed box. Only an
+// underfilled free surface omits negative feedback. This remains a first-order
+// stabilization; convergence and contact/pressure calibration are required.
+fn source_finite(x:f32)->bool {return (bitcast<u32>(x)&0x7f800000u)!=0x7f800000u;}
+@compute @workgroup_size(8,8,4)
+fn add_density_rhs(@builtin(global_invocation_id) id:vec3<u32>) {
+    if any(id>=vec3(params.width,params.height,params.depth)) {return;}
+    let index=cell_index(id.x,id.y,id.z);
+    if cell_type[index]!=CELL_FLUID || atomicLoad(&volume_status[0])!=0u {return;}
+    let strength=bitcast<f32>(params._pad3);
+    let moving=represented_volume[index];
+    if !source_finite(params.dt) || params.dt<=0. || !source_finite(params.rest_density) || params.rest_density<=0.
+       || !source_finite(strength) || strength<0. || strength>1.
+       || !source_finite(moving) || moving<=0. {
+        atomicOr(&volume_status[0],16u);return;
+    }
+    var excess=moving-params.rest_density;
+    let q=vec3<i32>(id);var surface=false;
+    for(var axis=0u;axis<3u;axis++) {
+        var unit=vec3(0);unit[axis]=1;
+        surface=surface || phase_cell_type(q+unit)==CELL_AIR || phase_cell_type(q-unit)==CELL_AIR;
+    }
+    if surface {excess=max(excess,0.);}
+    let volume_rate=strength*excess/(params.rest_density*params.dt);
+    let result=velocity_divergence[index]-volume_rate;
+    if !source_finite(volume_rate) || !source_finite(result) {atomicOr(&volume_status[0],16u);return;}
+    velocity_divergence[index]=result;
 }
