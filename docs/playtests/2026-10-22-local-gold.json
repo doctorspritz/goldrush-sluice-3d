@@ -1,0 +1,1080 @@
+{
+  "created_utc": "2026-10-22T09:44:49.908022+00:00",
+  "source": {
+    "base_commit": "0dcb5a22d6f79aa49f6cb890f1c81b33e7a29706",
+    "files": {
+      "crates/game/src/gpu/heightfield/events.rs": "a6ad0f114bb15d88c6f135efef32c8313dd351760d48730cc692036478276c10",
+      "crates/game/src/gpu/heightfield/mod.rs": "eb75e16b410e9cdf28c963a6fe706cf20a8c21aa3cfdabd8024a171ce926b2cf",
+      "crates/game/src/gpu/heightfield/simulation.rs": "529aed55f07b8f32b5311397580250282d9c8af9147168cc0e3e69e21ab5f1da",
+      "crates/game/src/gpu/shaders/heightfield_events.wgsl": "bab3d36bb6843db578edea46617f62ac5cc123c0186129c41b7c2e8f6e3accab",
+      "crates/mining-physics/src/lib.rs": "86555d31ad094deb7e5ff2fb488487c9fe91594b21f6529f124d83e97a99522e",
+      "crates/mining-physics/src/terrain.rs": "76ea2c0291f0402b7f1abddc868d5d2c8cd041b30037e60d33a211e064f1a91b",
+      "crates/mining-physics/src/terrain_gold.rs": "aefbfd11b0ec08071e0500c2e8f15460ea53562821f5f38ee4f98f97302a5cf9",
+      "crates/mining-physics/tests/terrain_exchange.rs": "593785efef60b25c3b72bf574b1a99d0aab20ad2b1be597e4b90d6a7c62db7c7",
+      "crates/mining-physics/tests/thin_films.rs": "7aa363200566daba729a6b5ec07ed44c23870278d09a1aa534733747d6893a2e"
+    },
+    "binary_sha256": "0abfc17075944cfa79e876a22efbbb0c1d74c60939ef10a0757b91ba42d8c688",
+    "baseline_binary_sha256": "2b4e22f3893b8ee5ca873dd0b279701c52e1cb346ae9f618edfad1a8eb95f81b",
+    "final_test_added_after_captures": "finite intake drain/restore/clean rewet; native binary unchanged and re-packaged"
+  },
+  "cpu_counts": [
+    117,
+    0,
+    52
+  ],
+  "gpu_counts": [
+    51,
+    0,
+    0
+  ],
+  "extra_gpu_drain_rewet_counts": [
+    1,
+    0,
+    0
+  ],
+  "marked_pulse": {
+    "before_gold_g": 7.05146949809038e-13,
+    "after_gold_g": 0.00022048544185953112,
+    "expected_gold_g": 0.0002204854673210768,
+    "arrived_paydirt_m3": 1.5749228193487082e-08,
+    "initial_mobile_paydirt_m3": 5.00008452683498e-07,
+    "relative_error_to_receiver_reference_ppm": 0.11547947353918175,
+    "tested_directions": [
+      "+X",
+      "-X",
+      "+Z",
+      "-Z"
+    ]
+  },
+  "checks": {
+    "strict_app_domain_physics_all_targets": "pass",
+    "final_drain_test_strict_clippy": "pass",
+    "game_library_strict_clippy": "failed: 99 diagnostics outside changed lines; tracked by sluice-legacy-clippy",
+    "stable_touched_format": "pass",
+    "signed_packaging": "pass",
+    "recording_physical_state_identity": "bit-identical for closed/open boundary controls",
+    "mixed_provenance_live_restore": "exact bed/mobile/export gold equality",
+    "drain_rewet_gold_residual_g": 0.0,
+    "new_crash_reports": []
+  },
+  "game_library_lint_findings": [
+    {
+      "message": "error: unnecessary `>= y + 1` or `x - 1 >=`",
+      "path": "crates/game/src/multigrid/solid_cells.rs",
+      "line": 85,
+      "changed_line": false
+    },
+    {
+      "message": "error: unnecessary `>= y + 1` or `x - 1 >=`",
+      "path": "crates/game/src/multigrid/solid_cells.rs",
+      "line": 96,
+      "changed_line": false
+    },
+    {
+      "message": "error: unnecessary `>= y + 1` or `x - 1 >=`",
+      "path": "crates/game/src/multigrid/solid_cells.rs",
+      "line": 233,
+      "changed_line": false
+    },
+    {
+      "message": "error: unnecessary `>= y + 1` or `x - 1 >=`",
+      "path": "crates/game/src/multigrid/solid_cells.rs",
+      "line": 244,
+      "changed_line": false
+    },
+    {
+      "message": "error: match expression looks like `matches!` macro",
+      "path": "crates/game/src/app/pipeline.rs",
+      "line": 37,
+      "changed_line": false
+    },
+    {
+      "message": "error: this `if` statement can be collapsed",
+      "path": "crates/game/src/equipment_geometry.rs",
+      "line": 497,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/equipment_geometry.rs",
+      "line": 859,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/equipment_geometry.rs",
+      "line": 864,
+      "changed_line": false
+    },
+    {
+      "message": "error: casting the result of `i32::abs()` to usize",
+      "path": "crates/game/src/equipment_geometry.rs",
+      "line": 981,
+      "changed_line": false
+    },
+    {
+      "message": "error: casting the result of `i32::abs()` to usize",
+      "path": "crates/game/src/equipment_geometry.rs",
+      "line": 982,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (11/7)",
+      "path": "crates/game/src/gpu/bridge_3d.rs",
+      "line": 374,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (9/7)",
+      "path": "crates/game/src/gpu/bridge_3d.rs",
+      "line": 410,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/dem_3d.rs",
+      "line": 1021,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/dem_3d.rs",
+      "line": 1025,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/dem_3d.rs",
+      "line": 1060,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/dem_3d.rs",
+      "line": 1161,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (14/7)",
+      "path": "crates/game/src/gpu/dem_3d.rs",
+      "line": 1192,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/dem_3d.rs",
+      "line": 1283,
+      "changed_line": false
+    },
+    {
+      "message": "error: function call inside of `expect`",
+      "path": "crates/game/src/gpu/dem_3d.rs",
+      "line": 1553,
+      "changed_line": false
+    },
+    {
+      "message": "error: function call inside of `expect`",
+      "path": "crates/game/src/gpu/dem_3d.rs",
+      "line": 1656,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (10/7)",
+      "path": "crates/game/src/gpu/dem_render.rs",
+      "line": 186,
+      "changed_line": false
+    },
+    {
+      "message": "error: doc list item overindented",
+      "path": "crates/game/src/gpu/flip_3d.rs",
+      "line": 2453,
+      "changed_line": false
+    },
+    {
+      "message": "error: doc list item without indentation",
+      "path": "crates/game/src/gpu/flip_3d.rs",
+      "line": 2454,
+      "changed_line": false
+    },
+    {
+      "message": "error: doc list item without indentation",
+      "path": "crates/game/src/gpu/flip_3d.rs",
+      "line": 2455,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (14/7)",
+      "path": "crates/game/src/gpu/flip_3d.rs",
+      "line": 2502,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (14/7)",
+      "path": "crates/game/src/gpu/flip_3d.rs",
+      "line": 2537,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (14/7)",
+      "path": "crates/game/src/gpu/flip_3d.rs",
+      "line": 2575,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (11/7)",
+      "path": "crates/game/src/gpu/flip_3d.rs",
+      "line": 2842,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (10/7)",
+      "path": "crates/game/src/gpu/flip_3d.rs",
+      "line": 2876,
+      "changed_line": false
+    },
+    {
+      "message": "error: call to `std::mem::drop` with a value that does not implement `Drop`. Dropping such a type only extends its contained lifetimes",
+      "path": "crates/game/src/gpu/flip_3d.rs",
+      "line": 3809,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (15/7)",
+      "path": "crates/game/src/gpu/flip_3d.rs",
+      "line": 3844,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (12/7)",
+      "path": "crates/game/src/gpu/fluid_renderer.rs",
+      "line": 399,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (22/7)",
+      "path": "crates/game/src/gpu/g2p_3d.rs",
+      "line": 127,
+      "changed_line": false
+    },
+    {
+      "message": "error: the loop variable `i` is used to index `surface_mat`",
+      "path": "crates/game/src/gpu/heightfield/sync.rs",
+      "line": 34,
+      "changed_line": false
+    },
+    {
+      "message": "error: the loop variable `i` is used to index `depth_data`",
+      "path": "crates/game/src/gpu/heightfield/sync.rs",
+      "line": 52,
+      "changed_line": false
+    },
+    {
+      "message": "error: the loop variable `i` is used to index `water_depth`",
+      "path": "crates/game/src/gpu/heightfield/sync.rs",
+      "line": 182,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (12/7)",
+      "path": "crates/game/src/gpu/heightfield/mod.rs",
+      "line": 398,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (16/7)",
+      "path": "crates/game/src/gpu/heightfield/mod.rs",
+      "line": 431,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (9/7)",
+      "path": "crates/game/src/gpu/heightfield/mod.rs",
+      "line": 485,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (13/7)",
+      "path": "crates/game/src/gpu/heightfield/mod.rs",
+      "line": 512,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (10/7)",
+      "path": "crates/game/src/gpu/heightfield/mod.rs",
+      "line": 606,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (13/7)",
+      "path": "crates/game/src/gpu/p2g_3d.rs",
+      "line": 99,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (12/7)",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 66,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 461,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 462,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 463,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 476,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 477,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 478,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 491,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 492,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 493,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 506,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 507,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/p2g_cell_centric_3d.rs",
+      "line": 508,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (11/7)",
+      "path": "crates/game/src/gpu/particle_sort.rs",
+      "line": 109,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/particle_sort.rs",
+      "line": 123,
+      "changed_line": false
+    },
+    {
+      "message": "error: this boolean expression can be simplified",
+      "path": "crates/game/src/gpu/particle_sort.rs",
+      "line": 439,
+      "changed_line": false
+    },
+    {
+      "message": "error: manual `Range::contains` implementation",
+      "path": "crates/game/src/gpu/particle_sort.rs",
+      "line": 439,
+      "changed_line": false
+    },
+    {
+      "message": "error: manual `Range::contains` implementation",
+      "path": "crates/game/src/gpu/particle_sort.rs",
+      "line": 448,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/particle_sort.rs",
+      "line": 706,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/particle_sort.rs",
+      "line": 724,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/particle_sort.rs",
+      "line": 725,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/particle_sort.rs",
+      "line": 726,
+      "changed_line": false
+    },
+    {
+      "message": "error: very complex type used. Consider factoring parts into `type` definitions",
+      "path": "crates/game/src/gpu/particle_sort.rs",
+      "line": 819,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (10/7)",
+      "path": "crates/game/src/gpu/readback.rs",
+      "line": 104,
+      "changed_line": false
+    },
+    {
+      "message": "error: this function has too many arguments (9/7)",
+      "path": "crates/game/src/gpu/readback.rs",
+      "line": 137,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/sph_3d.rs",
+      "line": 594,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/sph_3d.rs",
+      "line": 609,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/sph_3d.rs",
+      "line": 680,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/sph_3d.rs",
+      "line": 886,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/sph_3d.rs",
+      "line": 897,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/sph_dfsph.rs",
+      "line": 544,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/sph_dfsph.rs",
+      "line": 748,
+      "changed_line": false
+    },
+    {
+      "message": "error: manually reimplementing `div_ceil`",
+      "path": "crates/game/src/gpu/sph_dfsph.rs",
+      "line": 760,
+      "changed_line": false
+    },
+    {
+      "message": "error: this expression creates a reference which is immediately dereferenced by the compiler",
+      "path": "crates/game/src/multigrid/pieces.rs",
+      "line": 120,
+      "changed_line": false
+    },
+    {
+      "message": "error: this expression creates a reference which is immediately dereferenced by the compiler",
+      "path": "crates/game/src/multigrid/pieces.rs",
+      "line": 237,
+      "changed_line": false
+    },
+    {
+      "message": "error: this expression creates a reference which is immediately dereferenced by the compiler",
+      "path": "crates/game/src/multigrid/pieces.rs",
+      "line": 358,
+      "changed_line": false
+    },
+    {
+      "message": "error: this expression creates a reference which is immediately dereferenced by the compiler",
+      "path": "crates/game/src/multigrid/pieces.rs",
+      "line": 477,
+      "changed_line": false
+    },
+    {
+      "message": "error: this expression creates a reference which is immediately dereferenced by the compiler",
+      "path": "crates/game/src/multigrid/step.rs",
+      "line": 37,
+      "changed_line": false
+    },
+    {
+      "message": "error: derefed type is same as origin",
+      "path": "crates/game/src/multigrid/step.rs",
+      "line": 153,
+      "changed_line": false
+    },
+    {
+      "message": "error: manual implementation of `.is_multiple_of()`",
+      "path": "crates/game/src/multigrid/step.rs",
+      "line": 233,
+      "changed_line": false
+    },
+    {
+      "message": "error: this expression creates a reference which is immediately dereferenced by the compiler",
+      "path": "crates/game/src/multigrid/step.rs",
+      "line": 507,
+      "changed_line": false
+    },
+    {
+      "message": "error: this expression creates a reference which is immediately dereferenced by the compiler",
+      "path": "crates/game/src/multigrid/mod.rs",
+      "line": 123,
+      "changed_line": false
+    },
+    {
+      "message": "error: struct `RollingAverage` has a public `len` method, but no `is_empty` method",
+      "path": "crates/game/src/washplant/metrics.rs",
+      "line": 80,
+      "changed_line": false
+    },
+    {
+      "message": "error: initializer for `thread_local` value can be made `const`",
+      "path": "crates/game/src/washplant/plant.rs",
+      "line": 334,
+      "changed_line": false
+    },
+    {
+      "message": "error: field assignment outside of initializer for an instance created with Default::default()",
+      "path": "crates/game/src/washplant/stage.rs",
+      "line": 102,
+      "changed_line": false
+    },
+    {
+      "message": "error: field assignment outside of initializer for an instance created with Default::default()",
+      "path": "crates/game/src/washplant/stage.rs",
+      "line": 135,
+      "changed_line": false
+    },
+    {
+      "message": "error: field assignment outside of initializer for an instance created with Default::default()",
+      "path": "crates/game/src/washplant/stage.rs",
+      "line": 178,
+      "changed_line": false
+    },
+    {
+      "message": "error: field assignment outside of initializer for an instance created with Default::default()",
+      "path": "crates/game/src/washplant/stage.rs",
+      "line": 221,
+      "changed_line": false
+    },
+    {
+      "message": "error: called `expect` on `device` after checking its variant with `is_some`",
+      "path": "crates/game/src/washplant/stage.rs",
+      "line": 295,
+      "changed_line": false
+    },
+    {
+      "message": "error: called `expect` on `queue` after checking its variant with `is_some`",
+      "path": "crates/game/src/washplant/stage.rs",
+      "line": 296,
+      "changed_line": false
+    },
+    {
+      "message": "error: the loop variable `idx` is used to index `smoothed`",
+      "path": "crates/game/src/water_heightfield.rs",
+      "line": 379,
+      "changed_line": false
+    },
+    {
+      "message": "error: casting to the same type is unnecessary (`u32` -> `u32`)",
+      "path": "crates/game/src/water_emitter.rs",
+      "line": 120,
+      "changed_line": false
+    },
+    {
+      "message": "error: casting to the same type is unnecessary (`u32` -> `u32`)",
+      "path": "crates/game/src/water_emitter.rs",
+      "line": 121,
+      "changed_line": false
+    },
+    {
+      "message": "error: casting to the same type is unnecessary (`u32` -> `u32`)",
+      "path": "crates/game/src/water_emitter.rs",
+      "line": 122,
+      "changed_line": false
+    },
+    {
+      "message": "error: casting to the same type is unnecessary (`u32` -> `u32`)",
+      "path": "crates/game/src/water_emitter.rs",
+      "line": 124,
+      "changed_line": false
+    },
+    {
+      "message": "error: casting to the same type is unnecessary (`u32` -> `u32`)",
+      "path": "crates/game/src/water_emitter.rs",
+      "line": 125,
+      "changed_line": false
+    },
+    {
+      "message": "error: casting to the same type is unnecessary (`u32` -> `u32`)",
+      "path": "crates/game/src/water_emitter.rs",
+      "line": 126,
+      "changed_line": false
+    }
+  ],
+  "quality_commands": {
+    "cpu-final": {
+      "exit_code": 0,
+      "command": [
+        "env",
+        "CARGO_TARGET_DIR=/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target",
+        "cargo",
+        "+nightly",
+        "test",
+        "-p",
+        "mining",
+        "-p",
+        "mining-sim",
+        "-p",
+        "mining-physics",
+        "--profile",
+        "playable",
+        "--locked",
+        "--jobs",
+        "1",
+        "--",
+        "--test-threads",
+        "1"
+      ]
+    },
+    "clippy": {
+      "exit_code": 0,
+      "command": [
+        "env",
+        "CARGO_TARGET_DIR=/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target",
+        "cargo",
+        "+nightly",
+        "clippy",
+        "-p",
+        "mining",
+        "-p",
+        "mining-sim",
+        "-p",
+        "mining-physics",
+        "--all-targets",
+        "--profile",
+        "playable",
+        "--locked",
+        "--jobs",
+        "1",
+        "--no-deps",
+        "--",
+        "-D",
+        "warnings"
+      ]
+    },
+    "game-clippy": {
+      "exit_code": 101,
+      "command": [
+        "env",
+        "CARGO_TARGET_DIR=/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target",
+        "cargo",
+        "+nightly",
+        "clippy",
+        "-p",
+        "game",
+        "--lib",
+        "--profile",
+        "playable",
+        "--locked",
+        "--jobs",
+        "1",
+        "--no-deps",
+        "--",
+        "-D",
+        "warnings",
+        "-A",
+        "dead_code"
+      ]
+    },
+    "build": {
+      "exit_code": 0,
+      "verification": "signed package built separately after broader legacy lint failed"
+    }
+  },
+  "native_before": {
+    "bulk_budget_passed": true,
+    "bulk_material_error_m3": 1.0126038546331984e-05,
+    "bulk_tolerance_m3": 0.00041246746501921055,
+    "detail_revision": 3,
+    "displayed_grains": 32275,
+    "dry_mass_budget_passed": true,
+    "dry_mass_error_kg": 0.018721712520346045,
+    "dry_mass_tolerance_kg": 0.8074216257435767,
+    "exported_gold_g": 4.291801077793274,
+    "exported_material_m3": [
+      0.0,
+      0.5238833153843829,
+      0.0,
+      0.47319874165732023
+    ],
+    "fluid_surface_ready": true,
+    "gold_balance_error_g": 4.547473508864641e-12,
+    "grains": 2706,
+    "initial_bulk_material_m3": 412.4674650192106,
+    "initial_dry_mass_kg": 807421.6257435767,
+    "inlet": {
+      "emission_clock": 0.0,
+      "emitted": {
+        "gold_g": 0.00735111877843404,
+        "solid_m3": [
+          0.0,
+          0.0026770701805222414,
+          0.0,
+          0.0008165298418157042
+        ]
+      },
+      "last_water_m3": 6.249453872442245e-05,
+      "pending": {
+        "gold_g": 0.0,
+        "solid_m3": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "ready": {
+        "gold_g": 9.260171727326548e-09,
+        "solid_m3": [
+          0.0,
+          6.379797129996621e-09,
+          0.0,
+          1.0450713599290617e-09
+        ]
+      },
+      "sequence": 2561,
+      "withdrawn": {
+        "gold_g": 0.00735112803860577,
+        "solid_m3": [
+          0.0,
+          0.0026770765603193925,
+          0.0,
+          0.0008165308868870631
+        ]
+      }
+    },
+    "last_worker_tick_ms": 73.700583,
+    "mean_fps": 56.15795196984511,
+    "one_second_ratios": [
+      0.626526366030598,
+      0.6598837288718523,
+      0.6285686587884595,
+      0.6326006042085659,
+      0.5989752098653177,
+      0.631041371725699,
+      0.6306028817410201,
+      0.5929815754876634,
+      0.5972483587913968,
+      0.63016155342207,
+      0.5597271066378406,
+      0.5903401722629441,
+      0.5663687154802044,
+      0.5601559570390273,
+      0.5872620002118396,
+      0.5580900608090726,
+      0.5558002003717516,
+      0.5586038550988632,
+      0.493531697001537
+    ],
+    "outflow_particles": 11294,
+    "p95_frame_ms": 30.313625000000002,
+    "passed": false,
+    "simulation_seconds": 11.733333945274353,
+    "simulation_wall_ratio": 0.5863890689255202,
+    "sluice_water_balance_error_m3": 0.0,
+    "slurry": {
+      "feed_grading": "Alluvial",
+      "fine_parcels_below_200um": 121,
+      "independently_resolved_grain_collisions": false,
+      "optical_grid_m": 0.029999999329447746,
+      "optics_calibrated": false,
+      "outlet_extinction_m1": 138.59364318847656,
+      "projected_suspended_fines_m3": 0.0006030470128438671,
+      "projected_water_m3": 0.01468899996291384,
+      "projection_fines_error_m3": 1.8431436932253575e-18,
+      "projection_water_error_m3": 0.0,
+      "represented_grains": 1687050966.654475,
+      "solver_parcels": 2706
+    },
+    "stored_water_m3": 13.004159341368673,
+    "terrain_fine_cells": 361,
+    "terrain_water_splats": 2785,
+    "wall_seconds": 20.009469083,
+    "warmup_seconds": 5,
+    "water_balance": {
+      "baseline_sim_time": 0.0,
+      "boundary_outflow_m3": 7.696955559843806,
+      "external_inflow_m3": 6.5879975110292435,
+      "initial_stored_m3": 14.113124481402338,
+      "legacy_baseline": false
+    },
+    "water_balance_error_m3": -7.091219103472213e-06,
+    "water_mean_downstream_ms": 0.38451752066612244,
+    "water_particles": 117512,
+    "water_presentation": {
+      "buffer_underrun_frames": 0,
+      "interpolation_alpha": 0.5288810133934021,
+      "max_capture_ms": 1.201792,
+      "max_surface_build_ms": 42.802,
+      "mean_capture_ms": 0.3591718730512251,
+      "mean_surface_build_ms": 21.039431710467714,
+      "paired_render_particles": 66051,
+      "presented_sim_time": 54.884298896783655,
+      "surface_builds": 449
+    },
+    "worker_busy_fraction": 0.9932045633776697,
+    "worker_mean_ms": 55.20415556666666,
+    "worker_packets": 360,
+    "worker_phases_mean_ms": [
+      2.0440038083333354,
+      32.38556743333337,
+      13.594206755555566,
+      2.032301936111112,
+      3.2547308888888886
+    ]
+  },
+  "native_after": {
+    "bulk_budget_passed": true,
+    "bulk_material_error_m3": 1.0206754950559116e-05,
+    "bulk_tolerance_m3": 0.0004124674646499909,
+    "detail_revision": 3,
+    "displayed_grains": 32393,
+    "dry_mass_budget_passed": true,
+    "dry_mass_error_kg": 0.018872670247219503,
+    "dry_mass_tolerance_kg": 0.8074216250604648,
+    "exported_gold_g": 4.297713040528426,
+    "exported_material_m3": [
+      0.0,
+      0.5187000236664703,
+      0.0,
+      0.47230395696403327
+    ],
+    "fluid_surface_ready": true,
+    "gold_balance_error_g": 9.094947017729282e-13,
+    "grains": 2692,
+    "initial_bulk_material_m3": 412.4674646499909,
+    "initial_dry_mass_kg": 807421.6250604648,
+    "inlet": {
+      "emission_clock": 0.0,
+      "emitted": {
+        "gold_g": 0.007444023088426067,
+        "solid_m3": [
+          0.0,
+          0.0025945282235095464,
+          0.0,
+          0.0008029023278937757
+        ]
+      },
+      "last_water_m3": 6.249640136957169e-05,
+      "pending": {
+        "gold_g": 0.0,
+        "solid_m3": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "ready": {
+        "gold_g": 6.634796919439528e-09,
+        "solid_m3": [
+          0.0,
+          4.269679520304306e-09,
+          0.0,
+          7.168289931602164e-10
+        ]
+      },
+      "sequence": 2495,
+      "withdrawn": {
+        "gold_g": 0.0074440297232229785,
+        "solid_m3": [
+          0.0,
+          0.002594532493189091,
+          0.0,
+          0.0008029030447227669
+        ]
+      }
+    },
+    "last_worker_tick_ms": 83.157709,
+    "mean_fps": 56.374854081223894,
+    "one_second_ratios": [
+      0.623353707268512,
+      0.6702924933672375,
+      0.6145505199241028,
+      0.6280244141056252,
+      0.6295103237288021,
+      0.6283120017741658,
+      0.593410724432005,
+      0.595233623646883,
+      0.5947642472781183,
+      0.5947627244119822,
+      0.5993462194852575,
+      0.5937686519534318,
+      0.5637475639795548,
+      0.5978840943713264,
+      0.563476106305714,
+      0.5617658275469519,
+      0.5612575296331642,
+      0.5608417472834851,
+      0.531936474158299
+    ],
+    "outflow_particles": 11072,
+    "p95_frame_ms": 30.25675,
+    "passed": false,
+    "simulation_seconds": 11.766667280346155,
+    "simulation_wall_ratio": 0.5879244540052464,
+    "sluice_water_balance_error_m3": 0.0,
+    "slurry": {
+      "feed_grading": "Alluvial",
+      "fine_parcels_below_200um": 125,
+      "independently_resolved_grain_collisions": false,
+      "optical_grid_m": 0.029999999329447746,
+      "optics_calibrated": false,
+      "outlet_extinction_m1": 319.6860046386719,
+      "projected_suspended_fines_m3": 0.0005964412112889388,
+      "projected_water_m3": 0.01466712496296907,
+      "projection_fines_error_m3": 2.710505431213761e-18,
+      "projection_water_error_m3": 0.0,
+      "represented_grains": 1803393426.636014,
+      "solver_parcels": 2692
+    },
+    "stored_water_m3": 13.014639288993498,
+    "terrain_fine_cells": 361,
+    "terrain_water_splats": 2785,
+    "wall_seconds": 20.013910291,
+    "warmup_seconds": 5,
+    "water_balance": {
+      "baseline_sim_time": 0.0,
+      "boundary_outflow_m3": 7.644475637875688,
+      "external_inflow_m3": 6.545997582376003,
+      "initial_stored_m3": 14.113124481402338,
+      "legacy_baseline": false
+    },
+    "water_balance_error_m3": -7.1369091543260765e-06,
+    "water_mean_downstream_ms": 0.38342905044555664,
+    "water_particles": 117337,
+    "water_presentation": {
+      "buffer_underrun_frames": 0,
+      "interpolation_alpha": 0.7975250482559204,
+      "max_capture_ms": 1.129125,
+      "max_surface_build_ms": 30.4485,
+      "mean_capture_ms": 0.36047126940639257,
+      "mean_surface_build_ms": 21.081184353881284,
+      "paired_render_particles": 66041,
+      "presented_sim_time": 54.52658701184018,
+      "surface_builds": 438
+    },
+    "worker_busy_fraction": 0.9924048553835899,
+    "worker_mean_ms": 54.86713190055248,
+    "worker_packets": 362,
+    "worker_phases_mean_ms": [
+      2.0767954668508284,
+      32.656743397790024,
+      12.700146370165747,
+      1.9737286988950289,
+      3.5659041077348075
+    ]
+  },
+  "motion": {
+    "sluice": {
+      "frames": 44,
+      "wall_span": 3.9759691249999998,
+      "simulation_span": 2.2833334524184465,
+      "presentation_stalls": 0,
+      "presentation_reversals": 0,
+      "buffer_underruns": 0,
+      "water_error_m3": -7.299001978822162e-06,
+      "gold_error_g": 9.094947017729282e-13
+    },
+    "outlet": {
+      "frames": 44,
+      "wall_span": 3.9261377499999996,
+      "simulation_span": 2.5666668005287647,
+      "presentation_stalls": 0,
+      "presentation_reversals": 0,
+      "buffer_underruns": 0,
+      "water_error_m3": -7.2418595102874406e-06,
+      "gold_error_g": 5.4569682106375694e-12
+    },
+    "river": {
+      "frames": 45,
+      "wall_span": 3.976828834,
+      "simulation_span": 2.5333334654569626,
+      "presentation_stalls": 0,
+      "presentation_reversals": 0,
+      "buffer_underruns": 0,
+      "water_error_m3": -7.257731155618785e-06,
+      "gold_error_g": 7.73070496506989e-12
+    }
+  },
+  "preceding_ci": {
+    "sha": "0dcb5a22d6f79aa49f6cb890f1c81b33e7a29706",
+    "url": "https://github.com/doctorspritz/goldrush-sluice-3d/actions/runs/39754092175",
+    "status": "completed",
+    "conclusion": "failure",
+    "failed_jobs": [
+      "Format",
+      "Test game"
+    ]
+  },
+  "cleanup": {
+    "task_owned_native_jobs": 0,
+    "agent_browser": 0,
+    "playwright_tests": 0,
+    "chrome_for_testing": 0,
+    "shared_playwright_mcp": 14,
+    "shared_node_ecosystem": 56
+  },
+  "limits": [
+    "passive paydirt tag, not independently settled environmental gold",
+    "paydirt does not move in the current collapse law",
+    "mobile precision stock stays local until represented",
+    "bed exchange remains once per full terrain tick; fast-settling moving-film convergence still required",
+    "continuous shoreline/infiltration/shallow rough-bed scour open",
+    "real-time gate fails",
+    "diagnostic camera captures, not an operator input replay"
+  ],
+  "media_sha256": "9b9761198133c6edff645f64322b0954e92d2ba9136e9435d1a11e852c9059b5"
+}

@@ -5,6 +5,7 @@
 pub mod calibration;
 pub mod geometry;
 mod terrain;
+mod terrain_gold;
 pub mod worker;
 use game::gpu::{flip_3d::GpuFlip3D, heightfield::GpuHeightfield};
 use glam::{Mat3, Vec3};
@@ -37,6 +38,7 @@ pub struct Hydraulics {
     device: wgpu::Device,
     queue: wgpu::Queue,
     terrain: GpuHeightfield,
+    terrain_events: game::gpu::heightfield::TerrainEventRecorder,
     sluice: Option<LocalSluice>,
     terrain_loaded: bool,
     pub adapter_name: String,
@@ -136,6 +138,11 @@ impl Hydraulics {
             0.0,
             wgpu::TextureFormat::Bgra8UnormSrgb,
         );
+        let terrain_events = game::gpu::heightfield::TerrainEventRecorder::new(
+            &device,
+            &terrain.water,
+            &terrain.geology,
+        );
         println!("PHYSICS: original FLIP/APIC + CPU DEM + GPU SWE/erosion/transport/collapse on {adapter_name}");
         Ok(Self {
             timings: StepTimings::default(),
@@ -143,6 +150,7 @@ impl Hydraulics {
             device,
             queue,
             terrain,
+            terrain_events,
             sluice: None,
             terrain_loaded: false,
             adapter_name,

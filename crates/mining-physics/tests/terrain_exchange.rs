@@ -1172,3 +1172,148 @@ fn prescribed_drying_preserves_deposits_and_rewet_flow_can_remobilize_each_class
         );
     }
 }
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored --test-threads=1"]
+fn provenance_records_actual_substeps_without_changing_any_physical_channel() {
+    use game::gpu::heightfield::TerrainEventRecorder;
+    for boundaries in [0, 15] {
+        let f = Fixture::new();
+        let traced = GpuHeightfield::new(
+            &f.device,
+            N as u32,
+            N as u32,
+            0.25,
+            0.,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+        );
+        for (a, b, value) in [
+            (&f.h.geology.paydirt, &traced.geology.paydirt, 0.125),
+            (&f.h.geology.overburden, &traced.geology.overburden, 0.03),
+            (&f.h.geology.gravel, &traced.geology.gravel, 0.01),
+            (&f.h.geology.sediment, &traced.geology.sediment, 0.02),
+            (&f.h.water.velocity_x, &traced.water.velocity_x, 0.7),
+            (&f.h.water.velocity_z, &traced.water.velocity_z, -0.3),
+        ] {
+            f.fill(a, value);
+            f.fill(b, value);
+        }
+        let initial_depth: Vec<f32> = (0..CELLS).map(|i| 0.2 + 0.001 * (i % N) as f32).collect();
+        let ground: Vec<f32> = (0..CELLS)
+            .map(|i| 0.002 * ((i % N) + (i / N)) as f32)
+            .collect();
+        for b in [&f.h.water.depth, &traced.water.depth] {
+            f.write(b, &initial_depth);
+        }
+        for b in [&f.h.geology.bedrock, &traced.geology.bedrock] {
+            f.write(b, &ground);
+        }
+        for (ch, (a, b)) in f
+            .concentrations()
+            .into_iter()
+            .zip([
+                &traced.water.suspended_sediment,
+                &traced.water.suspended_overburden,
+                &traced.water.suspended_gravel,
+                &traced.water.suspended_paydirt,
+            ])
+            .enumerate()
+        {
+            let values: Vec<f32> = (0..CELLS)
+                .map(|i| 0.01 * (ch + 1) as f32 * (1. + (i % N) as f32 / N as f32))
+                .collect();
+            f.write(a, &values);
+            f.write(b, &values);
+        }
+        let recorder = TerrainEventRecorder::new(&f.device, &traced.water, &traced.geology);
+        let capture = recorder.capture(&f.device, CELLS as u32, 4);
+        for h in [&f.h, &traced] {
+            h.update_water_params(&f.queue, 0.05, boundaries, 0.02, 4);
+        }
+        let mut encoder = f.device.create_command_encoder(&Default::default());
+        f.h.dispatch_water_substeps(&mut encoder, 4);
+        traced.dispatch_water_substeps_traced(&mut encoder, 4, &recorder, &capture);
+        f.queue.submit(Some(encoder.finish()));
+        for (a, b, count) in [
+            (&f.h.water.depth, &traced.water.depth, CELLS),
+            (&f.h.water.velocity_x, &traced.water.velocity_x, CELLS),
+            (&f.h.water.velocity_z, &traced.water.velocity_z, CELLS),
+            (&f.h.water.flux_x, &traced.water.flux_x, CELLS),
+            (&f.h.water.flux_z, &traced.water.flux_z, CELLS),
+            (&f.h.geology.bedrock, &traced.geology.bedrock, CELLS),
+            (&f.h.geology.paydirt, &traced.geology.paydirt, CELLS),
+            (&f.h.geology.overburden, &traced.geology.overburden, CELLS),
+            (&f.h.geology.gravel, &traced.geology.gravel, CELLS),
+            (&f.h.geology.sediment, &traced.geology.sediment, CELLS),
+            (
+                &f.h.geology.bed_remainder,
+                &traced.geology.bed_remainder,
+                CELLS * 4,
+            ),
+            (
+                &f.h.geology.bed_exchange_error,
+                &traced.geology.bed_exchange_error,
+                CELLS * 4,
+            ),
+            (
+                &f.h.geology.settling_time,
+                &traced.geology.settling_time,
+                CELLS,
+            ),
+        ] {
+            assert_eq!(
+                f.read_range(a, 0, count),
+                f.read_range(b, 0, count),
+                "recorder changed physical channel"
+            );
+        }
+        for (a, b) in f.concentrations().into_iter().zip([
+            &traced.water.suspended_sediment,
+            &traced.water.suspended_overburden,
+            &traced.water.suspended_gravel,
+            &traced.water.suspended_paydirt,
+        ]) {
+            assert_eq!(f.read(a), f.read(b));
+        }
+        let raw = f.read_range(&capture.buffer, 0, (capture.size / 4) as usize);
+        let events = raw.as_chunks::<4>().0;
+        let n = CELLS;
+        for (a, b) in events[..n].iter().map(|v| v[0]).zip(&initial_depth) {
+            assert_eq!(a, *b);
+        }
+        for step in 0..4 {
+            let event = &events[step * n..(step + 1) * n];
+            for i in 0..n {
+                let x = i % N;
+                let z = i / N;
+                let outgoing = event[i][1].max(0.)
+                    + event[i][2].max(0.)
+                    + event[i][3]
+                    + if x > 0 { -event[i - 1][1].min(0.) } else { 0. }
+                    + if z > 0 { -event[i - N][2].min(0.) } else { 0. };
+                assert!(outgoing as f64 <= event[i][0] as f64 * AREA * (1. + 1e-7));
+                if step < 3 {
+                    let mut net = -event[i][1] - event[i][2] - event[i][3];
+                    if x > 0 {
+                        net += event[i - 1][1];
+                    }
+                    if z > 0 {
+                        net += event[i - N][2];
+                    }
+                    let predicted = (event[i][0] + net / (AREA as f32)).max(0.);
+                    assert!(
+                        (predicted - events[(step + 1) * n + i][0]).abs() < 1e-6 * initial_depth[i]
+                    );
+                }
+            }
+        }
+        let after_scour = &events[5 * n..6 * n];
+        let pay = f.read(&traced.geology.paydirt);
+        let c = f.read(&traced.water.suspended_paydirt);
+        for i in 0..n {
+            assert_eq!(after_scour[i][0], pay[i]);
+            assert_eq!(after_scour[i][2], c[i]);
+        }
+        println!("READ-ONLY EVENTS boundaries={boundaries}: four actual water substeps and separate bed stages; physical channels bit-identical");
+    }
+}

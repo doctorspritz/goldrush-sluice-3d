@@ -2,6 +2,7 @@
 
 use super::buffers::WaterBuffers;
 use super::pipelines::{CoreBindGroups, SimulationPipelines};
+use super::{TerrainEventCapture, TerrainEventRecorder};
 
 #[derive(Clone, Copy)]
 pub enum BedExchangeStage {
@@ -102,6 +103,7 @@ pub fn dispatch_simulation_tile(
     tile_depth: u32,
     water_substeps: u32,
     water: &WaterBuffers,
+    events: Option<(&TerrainEventRecorder, &TerrainEventCapture)>,
 ) {
     let x_groups = tile_width.div_ceil(16);
     let z_groups = tile_depth.div_ceil(16);
@@ -130,11 +132,14 @@ pub fn dispatch_simulation_tile(
     // Transport writes only the active tile but copies the complete target.
     // Preserve CPU edits and concentrations outside moving tile boundaries.
     copy_concentrations(encoder, water, buffer_size, true);
-    for _ in 0..water_substeps.max(1) {
+    for step in 0..water_substeps.max(1) {
         dispatch_step!("Update Surface", &pipelines.surface);
         dispatch_step!("Update Flux", &pipelines.flux);
         dispatch_step!("Aggregate Donor Budget", &pipelines.donor_budget);
         dispatch_step!("Limit Shared Flux", &pipelines.limit_flux);
+        if let Some((recorder, capture)) = events {
+            recorder.record(encoder, capture, step);
+        }
         dispatch_step!("Update Depth", &pipelines.depth);
         dispatch_step!(
             "Conservative Sediment Transport",
@@ -143,7 +148,10 @@ pub fn dispatch_simulation_tile(
         copy_concentrations(encoder, water, buffer_size, false);
     }
     // Geology evolves over the full step, after conservative water/material advection.
-    for stage in [BedExchangeStage::Settling, BedExchangeStage::Erosion] {
+    for (event, stage) in [BedExchangeStage::Settling, BedExchangeStage::Erosion]
+        .into_iter()
+        .enumerate()
+    {
         dispatch_bed_exchange_passes(
             encoder,
             pipelines,
@@ -152,6 +160,9 @@ pub fn dispatch_simulation_tile(
             tile_depth,
             stage,
         );
+        if let Some((recorder, capture)) = events {
+            recorder.record(encoder, capture, water_substeps.max(1) + event as u32);
+        }
     }
     // No transport runs between the two bed stages. The second snapshot
     // replaces the first alias; restore the public targets only once at exit.

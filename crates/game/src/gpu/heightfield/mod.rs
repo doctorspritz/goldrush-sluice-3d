@@ -6,6 +6,7 @@
 //! - Multi-layer Geology (Bedrock, Paydirt, Overburden)
 
 mod buffers;
+mod events;
 mod mesh;
 mod pipelines;
 mod rendering;
@@ -14,6 +15,7 @@ mod sync;
 mod tools;
 
 pub use buffers::{GeologyBuffers, WaterBuffers, WATER_AUX_FLOATS};
+pub use events::{TerrainEventCapture, TerrainEventRecorder};
 pub use mesh::{GridMesh, GridVertex};
 pub use pipelines::{
     BridgeMergeResources, CoreBindGroups, EmitterResources, MaterialToolResources,
@@ -293,6 +295,29 @@ impl GpuHeightfield {
             tile_depth,
             substeps,
             &self.water,
+            None,
+        );
+    }
+
+    /// Same physical dispatch, with read-only records for local f64 tracers.
+    pub fn dispatch_water_substeps_traced(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        substeps: u32,
+        recorder: &TerrainEventRecorder,
+        capture: &TerrainEventCapture,
+    ) {
+        simulation::dispatch_simulation_tile(
+            encoder,
+            &self.simulation,
+            &self.bind_groups,
+            self.width,
+            self.depth,
+            self.width,
+            self.depth,
+            substeps,
+            &self.water,
+            Some((recorder, capture)),
         );
     }
 
