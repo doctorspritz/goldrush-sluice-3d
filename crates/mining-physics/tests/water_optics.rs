@@ -522,6 +522,42 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
             assert!(value[1] > 0.995, "texel-phase crest highlight: {value:?}");
         }
     }
+    // Cross the rounded gather-centre boundary by 0.0002 screen pixels.
+    // An entering edge tap used to retain substantial Gaussian weight and
+    // clamped border texels were counted twice, switching a whole mud patch.
+    let edge_moments: Vec<f32> = (0..64)
+        .flat_map(|i| [0.04, 0.04 * if i % 8 == 7 { 500. } else { 10. }])
+        .collect();
+    queue.write_texture(
+        textures[1].as_image_copy(),
+        bytemuck::cast_slice(&edge_moments),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(64),
+            rows_per_image: None,
+        },
+        textures[1].size(),
+    );
+    let boundary_source = source.replace(
+        "let column=optical_column(vec2<f32>(p.xy)+0.5,1.,true);",
+        "let column=optical_column(vec2(7.9999+f32(p.x)*0.0002,8.),1.,true);",
+    );
+    let boundary = execute(
+        &device,
+        &queue,
+        boundary_source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [2, 2],
+    );
+    assert!(
+        (boundary[2] - boundary[6]).abs() < 0.01,
+        "gather edge switched a sediment patch: {} -> {}",
+        boundary[2],
+        boundary[6]
+    );
+
     // Intersect the test camera rays with a known tilted geometric plane.
     // Deliberately biased kernel gradients must not bend a known geometric
     // plane back toward individual particle domes.

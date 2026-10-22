@@ -30,6 +30,30 @@ pub(crate) struct Kernel {
     /// Connected-neighbour support for rendering bulk water versus small spray.
     pub bulk: f32,
 }
+impl Kernel {
+    /// Channel sheets use thinner support along their measured minor axis.
+    /// Tangent expansion preserves kernel volume; spray and the outlet retain
+    /// the original axes. This changes reconstruction, never particle motion.
+    pub(crate) fn channel_axes(self) -> [Vec3; 3] {
+        let mut axes = self.axes;
+        let minor = (0..3)
+            .min_by(|&a, &b| {
+                axes[a]
+                    .length_squared()
+                    .total_cmp(&axes[b].length_squared())
+            })
+            .unwrap();
+        let thickness = 1. - 0.5 * self.planarity * self.bulk;
+        for (i, axis) in axes.iter_mut().enumerate() {
+            *axis *= if i == minor {
+                thickness
+            } else {
+                thickness.sqrt().recip()
+            };
+        }
+        axes
+    }
+}
 pub(crate) fn kernels(points: &[Vec3], cell: f32, sample_volume_m3: f64) -> Vec<Kernel> {
     let width = cell * 2.;
     let key = |p: Vec3| (p / width).floor().as_ivec3().to_array();
@@ -216,10 +240,15 @@ mod tests {
         assert_eq!(points, before);
         assert_eq!(data.len(), points.len());
         let k = data[data.len() / 2];
-        let vertical = k.axes.iter().map(|v| v.y * v.y).sum::<f32>().sqrt();
-        let horizontal = k.axes.iter().map(|v| v.x * v.x).sum::<f32>().sqrt();
+        let axes = k.channel_axes();
+        let vertical = axes.iter().map(|v| v.y * v.y).sum::<f32>().sqrt();
+        let horizontal = axes.iter().map(|v| v.x * v.x).sum::<f32>().sqrt();
         assert!(k.normal.dot(Vec3::Y) > 0.99 && k.planarity > 0.99);
-        assert!(vertical < horizontal * 0.6, "{vertical} / {horizontal}");
+        assert!(vertical < horizontal * 0.35, "{vertical} / {horizontal}");
+        let volume = |axes: [Vec3; 3]| axes.iter().map(|a| a.length()).product::<f32>();
+        assert!((volume(axes) - volume(k.axes)).abs() < 1e-5);
+        let spray = Kernel { bulk: 0., ..k };
+        assert_eq!(spray.channel_axes(), spray.axes);
         assert!(data
             .iter()
             .flat_map(|k| k.axes)

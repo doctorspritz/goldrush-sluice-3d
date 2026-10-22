@@ -938,6 +938,11 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
         .zip(kernels)
         .map(|((id, _p, v, kind, extinction), kernel)| {
             let c = kernel.center;
+            let axes = if kind == 0. {
+                kernel.channel_axes()
+            } else {
+                kernel.axes
+            };
             // Overlapping bulk kernels reconstruct a continuous surface. A
             // detached sample instead uses its represented water volume, so
             // millimetre spray does not inherit a two-centimetre bulk silhouette.
@@ -965,16 +970,16 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
                             / (4. / 3.
                                 * std::f64::consts::PI
                                 * (radius as f64).powi(3)
-                                * kernel.axes[0].length() as f64
-                                * kernel.axes[1].length() as f64
-                                * kernel.axes[2].length() as f64)) as f32,
+                                * axes[0].length() as f64
+                                * axes[1].length() as f64
+                                * axes[2].length() as f64)) as f32,
                         extinction,
                         kind,
                         if kind == 0. { kernel.planarity } else { 0. },
                     ],
-                    axis_x: axis(kernel.axes[0], kernel.normal.x),
-                    axis_y: axis(kernel.axes[1], kernel.normal.y),
-                    axis_z: axis(kernel.axes[2], kernel.normal.z),
+                    axis_x: axis(axes[0], kernel.normal.x),
+                    axis_y: axis(axes[1], kernel.normal.y),
+                    axis_z: axis(axes[2], kernel.normal.z),
                     slope_x: [0.; 4],
                     slope_z: [0.; 4],
                     flow_z: [0.; 4],

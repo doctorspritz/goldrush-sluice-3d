@@ -41,23 +41,30 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
     let pixel_m=depth*4.*abs(u.view_from_clip[1].y)/u.viewport.y;
     let radius=clamp(0.030/max(pixel_m,0.00001),2.5,5.);
     for(var y=-4;y<=4;y++){for(var x=-4;x<=4;x++){
-        let q=clamp(center+vec2(x,y),vec2(0),size-vec2(1));
+        let q=center+vec2(x,y);
+        if any(q<vec2(0)) || any(q>=size) {continue;}
         let raw=textureLoad(raw_depths,q,0);
         if raw.r<=0. || raw.g>= -0.5 {continue;}
         let delta=(raw.r-depth)/0.035;
         let distance=vec2<f32>(q)-p;
-        let w=exp(-dot(distance,distance)/24.-delta*delta);
+        // A truncated Gaussian has nonzero weight at the gathered edge:
+        // rounding the footprint centre then switches an entire row/column.
+        // Compact C2 support reaches zero before a texel can enter or leave.
+        let edge=clamp(vec2(4.5)-abs(distance),vec2(0.),vec2(1.));
+        let window=edge*edge*edge*(edge*(edge*6.-vec2(15.))+vec2(10.));
+        let taper=window.x*window.y;
+        let w=taper*exp(-dot(distance,distance)/24.-delta*delta);
         let normal=textureLoad(normal_sums,q,0);
         sum+=normal.xyz*w;weight+=normal.w*w;
         let shared_depth=textureLoad(depths,q,0).r;
         if shared_depth>0. && abs(shared_depth-depth)<0.035 {
-            let pw=exp(-dot(distance,distance)/12.-delta*delta);
+            let pw=taper*exp(-dot(distance,distance)/12.-delta*delta);
             let z=shared_depth-depth;
             position_sum+=vec3(distance,z)*pw;
             second+=vec3(distance.x*distance.x,distance.x*distance.y,distance.y*distance.y)*pw;
             cross_depth+=distance*z*pw;plane_weight+=pw;
         }
-        let cw=exp(-2.*dot(distance,distance)/(radius*radius)-delta*delta);
+        let cw=taper*exp(-2.*dot(distance,distance)/(radius*radius)-delta*delta);
         column+=textureLoad(fluid_thickness,q,0).rg*cw;column_weight+=cw;
     }}
     var out:ChannelSurface;
@@ -134,13 +141,21 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     let projected=u.clip_from_world*u.world_from_view*vec4(under,1.);
     let uv=vec2(projected.x/projected.w*0.5+0.5,0.5-projected.y/projected.w*0.5);
     let offset=clamp(uv*u.viewport.xy-pixel,vec2(-10.),vec2(10.));
-    let q=clamp(vec2<i32>(pixel+offset),vec2(0),vec2<i32>(u.viewport.xy)-vec2(1));
-    let z=textureLoad(scene_depth,q,0);
-    let xy=vec2((f32(q.x)+0.5)/u.viewport.x*2.-1.,1.-(f32(q.y)+0.5)/u.viewport.y*2.);
-    let p=u.view_from_clip*vec4(xy,z,1.);
-    // Refraction cannot pull an opaque side wall/player in front of the water.
-    if z>0. && -p.z/p.w>depth+0.001 {return textureLoad(scene,q,0).rgb;}
-    return original;
+    // Refracted coordinates are pixel centres. Nearest-texel reads made
+    // bed/grain colour jump whenever a moving wave crossed a pixel boundary.
+    let texel=pixel+offset-0.5;let base=vec2<i32>(floor(texel));let f=fract(texel);
+    var colour=vec3(0.);
+    for(var y=0;y<2;y++){for(var x=0;x<2;x++){
+        let q=clamp(base+vec2(x,y),vec2(0),vec2<i32>(u.viewport.xy)-vec2(1));
+        let z=textureLoad(scene_depth,q,0);
+        let xy=vec2((f32(q.x)+0.5)/u.viewport.x*2.-1.,1.-(f32(q.y)+0.5)/u.viewport.y*2.);
+        let p=u.view_from_clip*vec4(xy,z,1.);
+        // Validate every tap: interpolation must not drag walls/player into water.
+        let behind=z>0. && -p.z/max(p.w,0.000001)>depth+0.001;
+        let w=select(1.-f.x,f.x,x==1)*select(1.-f.y,f.y,y==1);
+        colour+=select(original,textureLoad(scene,q,0).rgb,behind)*w;
+    }}
+    return colour;
 }
 @fragment fn compose(s: Screen) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(s.position.xy); let original = textureLoad(scene,pixel,0);
