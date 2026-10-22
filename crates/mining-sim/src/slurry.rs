@@ -58,9 +58,13 @@ impl SlurryField {
                 },
             );
         }
-        // Separable binomial reconstruction. Clamping destinations (rather
-        // than dropping edge taps) keeps the projected integrals unchanged.
-        for axis in 0..3 {
+        // Separable binomial reconstruction of optical moments. Reconstruct
+        // the horizontal footprint twice: weighted fine parcels are samples of
+        // a suspension, rather than opaque centimetre-sized dirt clods. Keep
+        // the vertical footprint narrow so bed/bulk stratification survives.
+        // This is a presentation filter, not physical sediment diffusion.
+        // Clamped destinations retain every projected water/fine/area integral.
+        for axis in [0, 1, 2, 0, 2] {
             let mut next = vec![Cell::default(); field.cells.len()];
             for z in 0..dims[2] {
                 for y in 0..dims[1] {

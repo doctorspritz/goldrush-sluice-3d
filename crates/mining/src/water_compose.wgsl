@@ -82,7 +82,10 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
             var n=normalize(cross(dy,dx));if n.z<0. {n = -n;}
             var world_n=normalize((u.world_from_view*vec4(n,0.)).xyz);
             if dot(world_n,out.normal.xyz)<0. {world_n = -world_n;}
-            out.normal=vec4(normalize(mix(out.normal.xyz,world_n,0.9)),out.normal.w);
+            // The fitted shared interface owns the connected-water normal.
+            // Mixing a kernel gradient back in restores a dome highlight for
+            // each particle, even when the reconstructed surface is smooth.
+            out.normal=vec4(world_n,out.normal.w);
         }
     }
     out.column=column/max(column_weight,0.000001);
@@ -200,7 +203,7 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
         surface_confidence=surface.w;
         if surface.w>0. {
             var surface_normal=surface.xyz;if dot(surface_normal,u.world_from_view[3].xyz-world.xyz)<0. {surface_normal = -surface_normal;}
-            normal=normalize(mix(normal,surface_normal,0.9*smoothstep(0.08,0.5,surface.w)));
+            normal=surface_normal;
         }
     }
     let flow=optical_sample.ba;

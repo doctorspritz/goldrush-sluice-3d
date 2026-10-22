@@ -939,6 +939,10 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
             // millimetre spray does not inherit a two-centimetre bulk silhouette.
             // The accepted outlet reconstruction retains its existing support.
             let radius = if kind == 0. {
+                // A wider bulk reconstruction joins neighbouring crest samples.
+                // shape.x below renormalizes the kernel to its represented volume;
+                // detached spray and the accepted outlet keep their own support.
+                let radius = radius * (1.25 / 0.85);
                 let drop = (sluice.profile.particle_m3() * weight as f64 * 3.
                     / (4. * std::f64::consts::PI))
                     .cbrt() as f32;
@@ -1077,6 +1081,58 @@ mod tests {
         sluice.water.clear();
         assert!(instances(sluice).is_empty());
     }
+    #[test]
+    fn joined_bulk_and_detached_spray_retain_represented_water_volume() {
+        use mining_sim::{sluice::WaterParticle, Session, Vec3};
+        let mut session = Session::new();
+        session.sluice.placement = Some(mining_sim::Placement::suggested(&session.site));
+        session.sluice.water = (0..125)
+            .map(|i| WaterParticle {
+                id: i as u64 + 1,
+                position: Vec3::new(
+                    0.5 + (i % 5) as f32 * 0.003,
+                    0.2 + ((i / 5) % 5) as f32 * 0.003,
+                    0.2 + (i / 25) as f32 * 0.003,
+                ),
+                velocity: Vec3::X,
+                affine: Default::default(),
+            })
+            .collect();
+        session.sluice.water.push(WaterParticle {
+            id: 126,
+            position: Vec3::new(1., 0.5, 0.2),
+            velocity: Vec3::Y,
+            affine: Default::default(),
+        });
+        let before = serde_json::to_string(&session.sluice).unwrap();
+        let data = samples(&session.sluice);
+        let parcel = session.sluice.profile.particle_m3();
+        let mut reconstructed = 0.;
+        for (_, kernel) in &data {
+            let axis_length = |axis: [f32; 4]| {
+                (axis[0] as f64 * axis[0] as f64
+                    + axis[1] as f64 * axis[1] as f64
+                    + axis[2] as f64 * axis[2] as f64)
+                    .sqrt()
+            };
+            let integral = 4. / 3.
+                * std::f64::consts::PI
+                * (kernel.center_radius[3] as f64).powi(3)
+                * axis_length(kernel.axis_x)
+                * axis_length(kernel.axis_y)
+                * axis_length(kernel.axis_z)
+                * kernel.shape[0] as f64;
+            assert!((integral / parcel - 1.).abs() < 1e-6);
+            reconstructed += integral;
+        }
+        assert!((reconstructed / (126. * parcel) - 1.).abs() < 1e-6);
+        let drop = &data.iter().find(|(id, _)| *id == 126).unwrap().1;
+        let physical_radius = (parcel * 3. / (4. * std::f64::consts::PI)).cbrt();
+        assert!((drop.center_radius[3] as f64 / physical_radius - 1.).abs() < 1e-6);
+        assert!(data[0].1.center_radius[3] > drop.center_radius[3] * 2.);
+        assert_eq!(before, serde_json::to_string(&session.sluice).unwrap());
+    }
+
     #[test]
     fn removing_one_particle_keeps_all_other_sampled_identities() {
         use mining_sim::{sluice::WaterParticle, Session, Vec3};

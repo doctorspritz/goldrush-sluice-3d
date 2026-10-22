@@ -523,8 +523,8 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
         }
     }
     // Intersect the test camera rays with a known tilted geometric plane.
-    // Kernel-gradient normals deliberately remain vertical: only a normal
-    // reconstructed from the shared geometry can recover this plane's slope.
+    // Deliberately biased kernel gradients must not bend a known geometric
+    // plane back toward individual particle domes.
     let plane_depth: Vec<f32> = (0..64)
         .map(|i| {
             let x = ((i % 8) as f32 + 0.5) / 8. * 2. - 1.;
@@ -544,7 +544,7 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
     );
     queue.write_texture(
         textures[3].as_image_copy(),
-        bytemuck::cast_slice(&[0f32, 0.008, 0., 0.01].repeat(64)),
+        bytemuck::cast_slice(&[0.006f32, 0.008, 0., 0.01].repeat(64)),
         wgpu::ImageDataLayout {
             offset: 0,
             bytes_per_row: Some(128),
@@ -570,9 +570,158 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
         for x in 6..10 {
             let n = glam::Vec3::from_slice(&plane[(y * 16 + x) * 4..][..3]);
             assert!(
-                n.is_finite() && n.dot(expected) > 0.9995,
+                n.is_finite() && n.dot(expected) > 0.99999,
                 "shared wave slope lost: {n:?} vs {expected:?}"
             );
         }
     }
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet() {
+    let (device, queue) = device();
+    let mut textures = Vec::new();
+    for (format, channels) in [
+        (wgpu::TextureFormat::R32Float, 1),
+        (wgpu::TextureFormat::Rgba32Float, 4),
+    ] {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: 32,
+                height: 8,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let values: Vec<f32> = (0..256)
+            .flat_map(|i| {
+                let (x, y) = (i % 32, i / 32);
+                if channels == 1 {
+                    vec![match y {
+                        4 => 1.125,
+                        5 => 1. + (x as f32 - 16.) * 0.001,
+                        6 if x == 16 => 0.,
+                        _ if x == 16 => 1.02,
+                        _ => 1.,
+                    }]
+                } else {
+                    let density = [0., 0.0499, 0.0501, 0.5, 0.5, 0.5, 0.5, 0.25][y];
+                    vec![0.04, 2., density, density]
+                }
+            })
+            .collect();
+        queue.write_texture(
+            texture.as_image_copy(),
+            bytemuck::cast_slice(&values),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 4 * channels),
+                rows_per_image: None,
+            },
+            texture.size(),
+        );
+        textures.push(texture);
+    }
+    let views: Vec<_> = textures
+        .iter()
+        .map(|t| t.create_view(&Default::default()))
+        .collect();
+    let mut uniforms = [0f32; 72];
+    uniforms[64] = 32.;
+    uniforms[65] = 8.;
+    uniforms[66] = 0.045;
+    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&uniforms),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[0, 1, 2].map(|binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: if binding == 1 {
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                }
+            } else {
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                }
+            },
+            count: None,
+        }),
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&views[0]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&views[1]),
+            },
+        ],
+    });
+    let (buffer, out_layout, out_group) = output(&device, 64);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_blur.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ result[p.y*8u+p.x]=vec4(smooth_depth(vec2(16,i32(p.y)),vec2(1,0)),0.,0.,0.);
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [1, 1],
+    );
+    let row = |y: usize| values[y * 8 * 4] as f64;
+    // Independent original 15-tap reference: outlet/spray must keep its old
+    // response, while bulk water suppresses more of a solitary kernel dome.
+    let mut sum = 0.;
+    let mut weight = 0.;
+    for i in -7i32..=7 {
+        let depth = if i == 0 { 1.02f32 as f64 } else { 1. };
+        let w =
+            (-(i * i) as f64 / 24. - ((depth - 1.02f32 as f64) / (0.045f32 as f64)).powi(2)).exp();
+        sum += depth * w;
+        weight += w;
+    }
+    assert!(
+        (row(0) - sum / weight).abs() < 1e-6,
+        "outlet filter changed"
+    );
+    assert!(
+        row(3) > 1. && row(3) < row(0),
+        "connected dome was not reduced"
+    );
+    assert!((row(2) - row(1)).abs() < 1e-6, "density transition popped");
+    assert!((row(4) - 1.125).abs() < 1e-6, "uniform film moved");
+    assert!((row(5) - 1.).abs() < 1e-6, "planar wave slope drifted");
+    assert_eq!(row(6), 0., "dry coverage was invented");
 }

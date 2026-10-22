@@ -24,12 +24,20 @@ fn shared_surface_depth(raw:vec2<f32>,density:vec2<f32>)->f32 {
 fn smooth_depth(pixel: vec2<i32>, direction: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(depths)); let center = textureLoad(depths,pixel,0).r;
     if center <= 0. { return 0.; }
+    // The summed density probes identify connected channel water. Its joined
+    // interface needs a broader footprint than detached spray; otherwise the
+    // remaining kernel domes reappear as circular crest highlights. Outlet
+    // columns have zero density probes and retain the existing 15-tap filter.
+    let density=textureLoad(columns,pixel,0).ba;
+    let bulk=smoothstep(0.05,0.5,max(density.x,density.y));
     var total = 0.; var weights = 0.;
-    for (var i = -7; i <= 7; i++) {
+    for (var i = -11; i <= 11; i++) {
+        if abs(i)>7 && bulk==0. {continue;}
         let q = clamp(pixel + direction * i, vec2(0),size-vec2(1)); let sample = textureLoad(depths,q,0).r;
         if sample <= 0. { continue; }
         let distance = (sample-center)/u.viewport.z;
-        let weight = exp(-f32(i*i)/24. - distance*distance);
+        let tail=select(bulk,1.,abs(i)<=7);
+        let weight = tail*exp(-f32(i*i)/mix(24.,48.,bulk) - distance*distance);
         total += sample*weight; weights += weight;
     }
     return total/max(weights,0.0001);
