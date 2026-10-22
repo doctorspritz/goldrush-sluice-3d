@@ -54,6 +54,13 @@ pub struct HeightfieldState {
     /// Feedback prevents accumulated bias; this is not another material store.
     #[serde(default)]
     pub bed_exchange_error: Vec<[f32; 4]>,
+    /// Positive actual class bed volume below the f32 layer increment (m³).
+    /// This is counted material, not signed numerical exchange feedback.
+    #[serde(default)]
+    pub bed_remainder_m3: Vec<[f64; 4]>,
+    /// Counted mobile class volume below f32 concentration precision (m³).
+    #[serde(default)]
+    pub suspended_remainder_m3: Vec<[f64; 4]>,
     pub suspended_gold_g: Vec<f64>,
     pub clock: f32,
     pub steps: u64,
@@ -108,6 +115,18 @@ impl HeightfieldState {
                     BedAgeUnit::Microseconds => BED_STABILITY_MICROS,
                 }
             })
+            && (self.bed_remainder_m3.is_empty() || self.bed_remainder_m3.len() == n)
+            && self
+                .bed_remainder_m3
+                .iter()
+                .flatten()
+                .all(|v| v.is_finite() && *v >= 0. && *v < 100.)
+            && (self.suspended_remainder_m3.is_empty() || self.suspended_remainder_m3.len() == n)
+            && self
+                .suspended_remainder_m3
+                .iter()
+                .flatten()
+                .all(|v| v.is_finite() && *v >= 0. && *v < 100.)
             && (self.suspended_gold_g.is_empty() || self.suspended_gold_g.len() == n)
             && self
                 .suspended_gold_g
@@ -143,6 +162,22 @@ pub struct SiteSnapshot {
 impl SiteSnapshot {
     pub(crate) fn normalize_bed_age(&mut self) {
         self.hydraulic.normalize_bed_age();
+    }
+    pub(crate) fn bed_remainder_m3(&self) -> f64 {
+        self.hydraulic.bed_remainder_m3.iter().flatten().sum()
+    }
+    pub(crate) fn has_projection_inventory(&self) -> bool {
+        self.hydraulic
+            .suspended_remainder_m3
+            .iter()
+            .flatten()
+            .any(|v| *v > 0.)
+            || self
+                .soil_water
+                .surface_momentum_m4_s
+                .iter()
+                .flatten()
+                .any(|v| *v != 0.)
     }
     pub(crate) fn soil_water_m3(&self) -> f64 {
         self.soil_water.stored_m3()
@@ -268,12 +303,6 @@ impl Site {
         self.stored_material().volume()
     }
     pub fn stored_material(&self) -> Material {
-        let layers = [
-            &self.world.terrain_sediment,
-            &self.world.overburden_thickness,
-            &self.world.gravel_thickness,
-            &self.world.paydirt_thickness,
-        ];
         let fields = [
             &self.hydraulic.suspended_sediment,
             &self.hydraulic.suspended_overburden,
@@ -285,9 +314,14 @@ impl Site {
         for (i, _) in self.world.water_surface.iter().enumerate() {
             let h = self.world.water_depth(i % WIDTH, i / WIDTH) as f64;
             for ch in 0..4 {
-                volumes[ch] += (layers[ch][i] as f64
-                    + fields[ch].get(i).copied().unwrap_or(0.) as f64 * h)
-                    * area;
+                volumes[ch] += self.bed_class_volume_m3(i, ch)
+                    + fields[ch].get(i).copied().unwrap_or(0.) as f64 * h * area
+                    + self
+                        .hydraulic
+                        .suspended_remainder_m3
+                        .get(i)
+                        .map(|v| v[ch])
+                        .unwrap_or(0.);
             }
         }
         let mut material = crate::intake::Suspension {
@@ -329,31 +363,23 @@ impl Site {
                     continue;
                 }
                 let (x, z) = (x as usize, z as usize);
-                old.push((z * WIDTH + x, self.world.water_depth(x, z)));
+                let i = z * WIDTH + x;
+                old.push((
+                    i,
+                    self.world.water_depth(x, z),
+                    self.suspended_class_volumes_m3(i),
+                ));
             }
         }
         self.world.add_inflow(position, rate, radius, dt);
         let mut added = 0.;
-        for (i, before) in old {
+        for (i, before, inventory) in old {
             let after = self.world.water_depth(i % WIDTH, i / WIDTH);
             if after <= before {
                 continue;
             }
             added += (after as f64 - before as f64) * (CELL as f64).powi(2);
-            let dilution = before as f64 / after as f64;
-            let mut aggregate = 0.;
-            for field in [
-                &mut self.hydraulic.suspended_sediment,
-                &mut self.hydraulic.suspended_overburden,
-                &mut self.hydraulic.suspended_gravel,
-                &mut self.hydraulic.suspended_paydirt,
-            ] {
-                if let Some(c) = field.get_mut(i) {
-                    *c = (*c as f64 * dilution) as f32;
-                    aggregate += *c;
-                }
-            }
-            self.world.suspended_sediment[i] = aggregate;
+            self.set_suspension_inventory_m3(i, inventory);
         }
         if added > 0. {
             self.hydraulic.impact_dirty = true;
@@ -395,11 +421,10 @@ impl Site {
                 let i = self
                     .world
                     .idx((cx as i32 + dx) as usize, (cz as i32 + dz) as usize);
-                let scale = 1.0 / (25.0 * (CELL * CELL) as f64);
                 let depth = self.world.water_depth(i % WIDTH, i / WIDTH);
-                self.world.paydirt_thickness[i] += (m.gravel_m3 * scale) as f32;
-                self.world.overburden_thickness[i] += (m.soil_m3 * scale) as f32;
-                self.world.terrain_sediment[i] += (m.sand_m3 * scale) as f32;
+                for (class, amount) in [(3, m.gravel_m3), (1, m.soil_m3), (0, m.sand_m3)] {
+                    self.add_bed_volume_m3(i, class, amount / 25.);
+                }
                 self.gold_g[i] += m.gold_g / 25.0;
                 self.world.water_surface[i] =
                     self.world.ground_height(i % WIDTH, i / WIDTH) + depth;
@@ -464,6 +489,14 @@ impl Site {
             {
                 packet.suspension.solid_m3[channel] +=
                     field.get(i).copied().unwrap_or(0.) as f64 * taken;
+            }
+            if let Some(remainder) = self.hydraulic.suspended_remainder_m3.get_mut(i) {
+                let fraction = ((before - after) / before.max(1e-30)).clamp(0., 1.);
+                for (class, volume) in remainder.iter_mut().enumerate() {
+                    let removed = *volume * fraction;
+                    *volume -= removed;
+                    packet.suspension.solid_m3[class] += removed;
+                }
             }
             if let Some(gold) = self.hydraulic.suspended_gold_g.get_mut(i) {
                 let removed = *gold * ((before - after) / before.max(1e-30)).clamp(0., 1.);
@@ -558,6 +591,38 @@ impl Site {
         site.world.gravel_thickness = s.gravel;
         site.hydraulic = s.hydraulic;
         site.soil_water = s.soil_water;
+        for (i, remainder) in site.hydraulic.bed_remainder_m3.iter().enumerate() {
+            for (class, volume) in remainder.iter().enumerate() {
+                let height = site.bed_layer(i, class);
+                let ground = site.world.ground_height(i % WIDTH, i / WIDTH).abs();
+                let quantum = (height.next_up() as f64 - height as f64)
+                    .max(ground.next_up() as f64 - ground as f64)
+                    * (CELL as f64).powi(2);
+                if *volume > quantum * (1. + 1e-6) {
+                    return Err("Saved bed remainder exceeds geometric precision".into());
+                }
+            }
+        }
+        for (i, remainder) in site.hydraulic.suspended_remainder_m3.iter().enumerate() {
+            let volume =
+                site.world.water_depth(i % WIDTH, i / WIDTH) as f64 * (CELL as f64).powi(2);
+            let a = &site.hydraulic;
+            for (class, field) in [
+                &a.suspended_sediment,
+                &a.suspended_overburden,
+                &a.suspended_gravel,
+                &a.suspended_paydirt,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let c = field.get(i).copied().unwrap_or(0.);
+                let quantum = (c.next_up() as f64 - c as f64) * volume;
+                if remainder[class] > quantum * (1. + 1e-6) {
+                    return Err("Saved suspension remainder exceeds concentration precision".into());
+                }
+            }
+        }
         for (i, water) in site.soil_water.pore_m3.iter().enumerate() {
             if *water > site.column_pore_volume_m3(i) + 1e-10 {
                 return Err("Saved soil water exceeds pore capacity".into());

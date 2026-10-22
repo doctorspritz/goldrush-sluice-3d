@@ -99,6 +99,10 @@ const DBG_DEPOSITION_PAYDIRT: u32 = 11u;
 @group(2) @binding(6) var<storage, read_write> settling_time: array<u32>; // wet-bed age in microseconds
 @group(2) @binding(7) var<storage, read_write> debug_stats: array<atomic<u32>>;
 @group(2) @binding(8) var<storage, read_write> bed_exchange_error: array<vec4<f32>>;
+// Actual positive reference-bulk thickness below the geometric f32 layer ULP.
+// It survives drying, readback, excavation and saves; it is not error feedback.
+@group(2) @binding(9) var<storage, read_write> bed_remainder: array<vec4<f32>>;
+
 
 // Determine what material is exposed on the surface based on layer thicknesses
 fn compute_surface_material(idx: u32) -> u32 {
@@ -379,36 +383,78 @@ fn reconcile_bed_exchange(g: vec3<u32>, advance_age: bool) {
     }
 }
 @compute @workgroup_size(16,16)
-fn reconcile_settling(@builtin(global_invocation_id) g: vec3<u32>) {
-    reconcile_bed_exchange(g,false);
-}
-@compute @workgroup_size(16,16)
 fn reconcile_erosion(@builtin(global_invocation_id) g: vec3<u32>) {
     reconcile_bed_exchange(g,true);
 }
 
-// Continuous noncohesive deposition, with a well-mixed vertical column:
-// D=ws*C and dC/dt=-ws*C/h. Flow-dependent scour is a separate, simultaneous
-// process. No per-step minimum amount, percentage boost or fractional cap.
-fn deposited_height(concentration: f32, depth: f32, diameter: f32) -> f32 {
-    let ws=settling_velocity(diameter,params.gravity,params.rho_sediment,params.rho_water,params.water_viscosity);
-    let a=ws*params.dt/depth;
-    // Avoid cancellation in 1-exp(-a) for dilute/shallow-step controls.
-    var fraction=1.0-exp(-a);
-    if (a<0.01) {fraction=a*(1.0-a*(0.5-a*(1.0/6.0-a/24.0)));}
-    return concentration*depth*clamp(fraction,0.0,1.0);
+// Round a deposit into geometry without losing the unrepresentable part.
+// The bit-decoded stored difference prevents GPU fast-math from cancelling
+// the storage boundary. Product/addition residuals keep the small stock useful.
+// Decode the rounded positive value through its integer representation. Metal
+// fast-math may otherwise reassociate a*b and fma(a,b,-a*b), deleting the very
+// product residual needed to close a repeated material exchange budget.
+fn stored_positive(value:f32)->f32 {
+    let bits=bitcast<u32>(value);let exponent=(bits>>23u)&255u;
+    if (exponent==0u) {return ldexp(f32(bits&0x7fffffu),-149);}
+    return ldexp(f32((bits&0x7fffffu)|0x800000u),i32(exponent)-150);
+}
+fn addition_residual(high:f32,a:f32,b:f32)->f32 {
+    let big=max(a,b);let small=min(a,b);
+    // FastTwoSum orders operands so the decoded subtraction stays within
+    // Sterbenz's exact interval, even when a fresh deposit dwarfs the old bed.
+    let delta=stored_difference(high,big);
+    if (delta>=0.0) {return stored_difference(small,delta);}
+    return small-delta;
+}
+fn receive_deposit(old:f32,low:f32,before:f32,after:f32,depth:f32)->vec2<f32> {
+    let removed=stored_difference(before,after);
+    var concentration_error=0.0;
+    if (removed>before*0.5) {concentration_error=stored_difference(stored_difference(before,removed),after);}
+    let amount=stored_positive(removed*depth);
+    let product_error=fma(removed,depth,-amount)+concentration_error*depth;
+    let total=stored_positive(low+amount);
+    let addition_error=addition_residual(total,low,amount);
+    var high=stored_positive(old+total);
+    var remainder=addition_residual(high,old,total)+product_error+addition_error;
+    if (remainder<0.0 && high>0.0) {
+        high=bitcast<f32>(bitcast<u32>(high)-1u);
+        remainder=addition_residual(high,old,total)+product_error+addition_error;
+    }
+    return vec2(high,max(remainder,0.0));
+}
+fn settle_column(i:u32,h:f32) {
+    let before=vec4(suspended_sediment[i],suspended_overburden[i],suspended_gravel[i],suspended_paydirt[i]);
+    let diameters=vec4(D50_SEDIMENT,D50_OVERBURDEN,D50_GRAVEL,D50_PAYDIRT);
+    var after=before;
+    // Immutable stored layers from the phase snapshot, rather than a rounded
+    // candidate sum that would leave an unreceivable suspended tail.
+    var layers=vec4(suspended_sediment_next[i],suspended_overburden_next[i],suspended_gravel_next[i],suspended_paydirt_next[i]);
+    var low=bed_remainder[i];
+    for (var ch=0u;ch<4u;ch++) {
+        let ws=settling_velocity(diameters[ch],params.gravity,params.rho_sediment,params.rho_water,params.water_viscosity);
+        after[ch]=before[ch]*exp(-ws*params.dt/h);
+        if (after[ch]!=before[ch]) {
+            let received=receive_deposit(layers[ch],low[ch],before[ch],after[ch],h);
+            layers[ch]=received.x;low[ch]=received.y;
+            debug_record_deposit(stored_difference(before[ch],after[ch])*h,4u-ch);
+        }
+    }
+    sediment[i]=layers.x;overburden[i]=layers.y;gravel[i]=layers.z;paydirt[i]=layers.w;
+    suspended_sediment[i]=after.x;suspended_overburden[i]=after.y;suspended_gravel[i]=after.z;suspended_paydirt[i]=after.w;
+    bed_remainder[i]=low;
+    if (any(after!=before)) {settling_time[i]=0u;surface_material[i]=compute_surface_material(i);}
 }
 @compute @workgroup_size(16,16)
 fn update_settling(@builtin(global_invocation_id) g: vec3<u32>) {
     if (g.x>=params.tile_width || g.y>=params.tile_depth || params.dt<=0.0) {return;}
-    let x=g.x+params.origin_x; let z=g.y+params.origin_z;
+    let x=g.x+params.origin_x;let z=g.y+params.origin_z;
     if (x>=params.world_width || z>=params.world_depth) {return;}
     let i=get_idx(x,z);let h=water_depth[i];
-    if (h<MIN_WATER_DEPTH) {return;}
-    sediment[i]+=deposited_height(suspended_sediment[i],h,D50_SEDIMENT);
-    overburden[i]+=deposited_height(suspended_overburden[i],h,D50_OVERBURDEN);
-    gravel[i]+=deposited_height(suspended_gravel[i],h,D50_GRAVEL);
-    paydirt[i]+=deposited_height(suspended_paydirt[i],h,D50_PAYDIRT);
+    if (h<=0.0) {return;}
+    // Same D=ws*C mixed-column balance at every positive water depth.
+    // The receiving bed has explicit sub-float inventory, so no depth gate or
+    // full-transfer rejection is needed to preserve the four class budgets.
+    settle_column(i,h);
 }
 
 // Spend physical time removing each exposed stratum. A micrometre cover must
@@ -463,6 +509,18 @@ fn update_sediment_transport(@builtin(global_invocation_id) g: vec3<u32>) {
     let a=params.world_width*params.world_depth+i*12u;
     let area=params.cell_size*params.cell_size;
     let local=concentrations(i);
+    // An unchanged, stationary water cell is an exact identity. Multiplying
+    // C*h then dividing by the same nonbinary h needlessly rounds suspension
+    // at every water substep, even though no material crosses a face.
+    var movement=abs(suspended_sediment_next[a+2u]);
+    if (x>0u) {movement+=abs(flux_x[i-1u]);}
+    if (x+1u<params.world_width) {movement+=abs(flux_x[i]);}
+    if (z>0u) {movement+=abs(flux_z[i-params.world_width]);}
+    if (z+1u<params.world_depth) {movement+=abs(flux_z[i]);}
+    if (movement==0.0 && water_depth[i]==suspended_sediment_next[a]) {
+        suspended_sediment_next[i]=local.x;suspended_overburden_next[i]=local.y;
+        suspended_gravel_next[i]=local.z;suspended_paydirt_next[i]=local.w;return;
+    }
     let exported=local*suspended_sediment_next[a+2u];
     var mass=local*suspended_sediment_next[a]*area-exported;
     if (x>0u) {

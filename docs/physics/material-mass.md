@@ -22,7 +22,7 @@ Terrain concentrations and historical `Suspension.solid_m3` fields retain their
 reference bulk meaning and serialized values. Channel optics use true grain
 volume and grain cross section; environmental optics convert each class before
 summing its physical concentration. The mass correction used version 3 with v2/v3
-load handling; [wet-soil custody](soil-water.md) now uses version 4 with v2/v3/v4 loading; derived mass, contacts and subsequent trajectories are corrected.
+load handling; [wet-soil custody](soil-water.md) was introduced in version 4; current v5 preserves subgeometry bed/mobile stock with v2–v5 loading; derived mass, contacts and subsequent trajectories are corrected.
 
 The native benchmark adds a dry-mass gate alongside bulk, water and gold gates.
 A global one-ppm tolerance is relative to the whole site's inventory, so local

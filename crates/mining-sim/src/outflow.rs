@@ -119,30 +119,9 @@ pub fn step(s: &mut Sluice, site: &mut Site, dt: f32) {
     if landed == 0 {
         return;
     }
-    let a = &mut site.hydraulic;
-    if a.velocity_x.is_empty() {
-        a.velocity_x = vec![0.; WIDTH * WIDTH];
-    }
-    if a.velocity_z.is_empty() {
-        a.velocity_z = vec![0.; WIDTH * WIDTH];
-    }
     for (i, (v, mx, mz)) in deposits {
-        let old = site.world.water_depth(i % WIDTH, i / WIDTH) as f64 * (CELL * CELL) as f64;
-        a.velocity_x[i] = ((old * a.velocity_x[i] as f64 + mx) / (old + v).max(1e-20)) as f32;
-        a.velocity_z[i] = ((old * a.velocity_z[i] as f64 + mz) / (old + v).max(1e-20)) as f32;
-        let dilution = (old / (old + v).max(1e-20)) as f32;
-        for channel in [
-            &mut a.suspended_sediment,
-            &mut a.suspended_overburden,
-            &mut a.suspended_gravel,
-            &mut a.suspended_paydirt,
-        ] {
-            if let Some(concentration) = channel.get_mut(i) {
-                *concentration *= dilution;
-            }
-        }
-        site.world.water_surface[i] += (v / (CELL * CELL) as f64) as f32;
+        site.receive_surface_water(i, v, [mx, mz]);
     }
-    a.impact_dirty = true;
+    site.hydraulic.impact_dirty = true;
     s.water_returned_m3 += landed as f64 * volume;
 }

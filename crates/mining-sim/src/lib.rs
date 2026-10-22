@@ -11,6 +11,7 @@ pub mod sluice;
 pub mod slurry;
 pub mod soil_water;
 pub mod storage;
+pub mod surface_bed;
 pub mod water_balance;
 
 pub use glam::Vec3;

@@ -10,7 +10,7 @@ fn new_clock_roundtrips_without_rescaling_physical_age() {
     s.site.hydraulic.bed_exchange_error = vec![[1e-9, -1e-9, 2e-9, -2e-9]; WIDTH * WIDTH];
     let json = s.save_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 4);
+    assert_eq!(value["version"], 5);
     assert_eq!(
         value["site"]["hydraulic"]["settling_time_unit"],
         "microseconds"
@@ -76,7 +76,7 @@ fn version_two_tick_ages_migrate_once_with_unchanged_inventories() {
     let saved = loaded.save_json().unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&saved).unwrap()["version"],
-        4
+        5
     );
     let resumed = Session::load_json(&saved).unwrap();
     assert_eq!(

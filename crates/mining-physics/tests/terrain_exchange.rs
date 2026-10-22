@@ -12,6 +12,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_cell(0.25)
+    }
+    fn with_cell(cell: f32) -> Self {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&Default::default()))
             .expect("real GPU adapter");
@@ -29,7 +32,7 @@ impl Fixture {
             &device,
             N as u32,
             N as u32,
-            0.25,
+            cell,
             0.,
             wgpu::TextureFormat::Bgra8UnormSrgb,
         );
@@ -74,6 +77,11 @@ impl Fixture {
         self.write(buffer, &vec![value; CELLS]);
     }
     fn clear_exchange_error(&self) {
+        self.queue.write_buffer(
+            &self.h.geology.bed_remainder,
+            0,
+            bytemuck::cast_slice(&vec![[0f32; 4]; CELLS]),
+        );
         self.queue.write_buffer(
             &self.h.geology.bed_exchange_error,
             0,
@@ -124,10 +132,14 @@ impl Fixture {
         let bed = self.read(self.layers()[channel]);
         let c = self.read(self.concentrations()[channel]);
         let h = self.read(&self.h.water.depth);
+        let remainder = self.read_range(&self.h.geology.bed_remainder, 0, CELLS * 4);
         bed.into_iter()
             .zip(c)
             .zip(h)
-            .map(|((b, c), h)| (b as f64 + c as f64 * h as f64) * AREA)
+            .enumerate()
+            .map(|(i, ((b, c), h))| {
+                (b as f64 + remainder[i * 4 + channel] as f64 + c as f64 * h as f64) * AREA
+            })
             .sum()
     }
 }
@@ -432,10 +444,20 @@ fn unrepresentable_recipients_and_dry_cells_cannot_lose_material() {
         .read(&f.h.geology.sediment)
         .iter()
         .all(|v| *v == 1_048_576.));
-    assert!(f
-        .read(&f.h.water.suspended_sediment)
-        .iter()
-        .all(|v| *v == 0.1));
+    let c = f.read(&f.h.water.suspended_sediment);
+    let low = f.read_range(&f.h.geology.bed_remainder, 0, CELLS * 4);
+    for i in 0..CELLS {
+        assert!(
+            c[i] < 0.1,
+            "large background bed must not suspend fines forever"
+        );
+        let mobile = 0.1_f32 as f64 * 0.5;
+        assert!(
+            (low[i * 4] as f64 + c[i] as f64 * 0.5 - mobile).abs() < mobile * 1e-6,
+            "unrepresentable geometry lost its counted deposit"
+        );
+    }
+    f.clear_exchange_error();
     f.fill(&f.h.geology.sediment, 0.125);
     f.fill(&f.h.water.suspended_sediment, 1_000_000.);
     f.fill(&f.h.water.velocity_x, 8.);
@@ -878,10 +900,13 @@ fn physical_recipients_match_independently_rounded_component_balances() {
             f.stage(settling, [0, 0, N as u32, N as u32], 0.001);
             let bed = f.read(f.layers()[ch]);
             let c = f.read(f.concentrations()[ch]);
+            let low = f.read_range(&f.h.geology.bed_remainder, 0, CELLS * 4);
             for i in 0..CELLS {
-                // The reference observes final stored bed values, then rounds
-                // the independently evaluated f64 conservation equation once.
-                let expected = (0.1_f32 as f64 + (0.125 - bed[i] as f64) / h[i] as f64) as f32;
+                // Count both parts of actual bed inventory in the independent
+                // f64 receiver balance, excluding numerical error feedback.
+                let expected = (0.1_f32 as f64
+                    + ((0.125 - bed[i] as f64) - low[i * 4 + ch] as f64) / h[i] as f64)
+                    as f32;
                 assert_eq!(
                     c[i].to_bits(),
                     expected.to_bits(),
@@ -889,5 +914,261 @@ fn physical_recipients_match_independently_rounded_component_balances() {
                 );
             }
         }
+    }
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored --test-threads=1"]
+fn submillimetre_films_settle_without_a_depth_gate_or_unphysical_suspension_tail() {
+    let f = Fixture::new();
+    let h = 0.00025f32;
+    for b in f.layers() {
+        f.fill(b, 0.125);
+    }
+    for b in f.concentrations() {
+        f.fill(b, 0.01);
+    }
+    f.fill(&f.h.water.depth, h);
+    let before: Vec<_> = (0..4).map(|ch| f.mass(ch)).collect();
+    for _ in 0..100 {
+        f.stage(true, [0, 0, N as u32, N as u32], 0.05);
+    }
+    for (ch, start) in before.into_iter().enumerate() {
+        let c = f.read(f.concentrations()[ch]);
+        let remaining = c.iter().map(|c| *c as f64 * h as f64 * AREA).sum::<f64>();
+        let mobile = 0.01f32 as f64 * h as f64 * AREA * CELLS as f64;
+        println!(
+            "THIN FILM class={ch} remaining_fraction={} budget_error_m3={}",
+            remaining / mobile,
+            f.mass(ch) - start
+        );
+        assert!(
+            remaining / mobile < 1e-5,
+            "class {ch} cannot settle out of a 0.25 mm film"
+        );
+        assert!(
+            (f.mass(ch) - start).abs() < mobile * 1e-6,
+            "class {ch} thin-film mass budget"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored --test-threads=1"]
+fn deposition_pair_preserves_the_nonbinary_product_residual() {
+    use wgpu::util::DeviceExt;
+    let f = Fixture::new();
+    let source = include_str!("../../game/src/gpu/shaders/heightfield_erosion.wgsl");
+    let difference = &source[source.find("fn stored_difference(").unwrap()
+        ..source.find("fn concentration_after_exchange(").unwrap()];
+    let receiver = &source
+        [source.find("fn stored_positive(").unwrap()..source.find("fn settle_column(").unwrap()];
+    let shader = format!(
+        "{difference}\n{receiver}\n{}",
+        r#"
+@group(0) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
+@group(0) @binding(1) var<storage,read> input:array<vec4<f32>>;
+@compute @workgroup_size(16,16) fn probe(@builtin(global_invocation_id) g:vec3<u32>) {
+ let i=g.y*32u+g.x;let v=input[i];
+ let pair=receive_deposit(v.x,0.,v.y,v.z,v.w);
+ let difference=stored_difference(v.y,v.z);
+ let amount=stored_positive(difference*v.w);
+ output[i]=vec4(pair,amount,fma(difference,v.w,-amount));
+}"#
+    );
+    let values: Vec<[f32; 4]> = (0..CELLS)
+        .map(|i| [[0., 1e-9, 0.125, 1.][i % 4], 0.1, 0.09851249, 0.3])
+        .collect();
+    let input = f
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&values),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    let output = f.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (CELLS * 16) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let module = f.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(shader.into()),
+    });
+    let pipeline = f
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: None,
+            module: &module,
+            entry_point: Some("probe"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+    let group = f.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: output.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: input.as_entire_binding(),
+            },
+        ],
+    });
+    let mut encoder = f.device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(2, 2, 1);
+    }
+    f.queue.submit(Some(encoder.finish()));
+    let result = f.read_range(&output, 0, CELLS * 4);
+    for i in 0..4 {
+        let v = values[i];
+        let r = &result[i * 4..][..4];
+        let expected = (v[1] as f64 - v[2] as f64) * v[3] as f64;
+        let error = (r[0] as f64 - v[0] as f64) + r[1] as f64 - expected;
+        println!(
+            "PAIR old={} high={} low={} product={} fma={} relative_error={}",
+            v[0],
+            r[0],
+            r[1],
+            r[2],
+            r[3],
+            error / expected
+        );
+        assert!(
+            error.abs() < expected * 1e-10,
+            "stored deposit pair loses its product residual"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored --test-threads=1"]
+fn mixed_column_deposition_is_continuous_across_film_depth_timestep_and_cell_size() {
+    let mut max_concentration_error = 0f64;
+    let mut max_material_fraction = 0f64;
+    let depths = [
+        0.0000001f32,
+        0.0001,
+        0.00025,
+        0.000999,
+        0.001001,
+        0.003,
+        0.1,
+    ];
+    for cell in [0.125, 0.25, 0.5] {
+        let f = Fixture::with_cell(cell);
+        let h: Vec<f32> = (0..CELLS).map(|i| depths[i % depths.len()]).collect();
+        f.write(&f.h.water.depth, &h);
+        for steps in [1, 2, 4, 8] {
+            f.clear_exchange_error();
+            for b in f.layers() {
+                f.fill(b, 0.125);
+            }
+            for b in f.concentrations() {
+                f.fill(b, 0.01);
+            }
+            for _ in 0..steps {
+                f.stage(true, [0, 0, N as u32, N as u32], 0.0001 / steps as f32);
+            }
+            let low = f.read_range(&f.h.geology.bed_remainder, 0, CELLS * 4);
+            for (ch, d) in [0.0001, 0.001, 0.01, 0.002].into_iter().enumerate() {
+                let bed = f.read(f.layers()[ch]);
+                let c = f.read(f.concentrations()[ch]);
+                for i in 0..CELLS {
+                    let initial = 0.01f32 as f64 * h[i] as f64;
+                    let expected =
+                        0.01f32 as f64 * (-settling_speed(d) * 0.0001 / h[i] as f64).exp();
+                    let error = (c[i] as f64 - expected).abs() / 0.01f32 as f64;
+                    max_concentration_error = max_concentration_error.max(error);
+                    let residual = ((bed[i] as f64 - 0.125)
+                        + low[i * 4 + ch] as f64
+                        + c[i] as f64 * h[i] as f64
+                        - initial)
+                        .abs()
+                        / initial;
+                    max_material_fraction = max_material_fraction.max(residual);
+                    assert!(
+                        error < 3e-6,
+                        "cell {cell}, steps {steps}, h {}, class {ch}: reference",
+                        h[i]
+                    );
+                    assert!(
+                        residual < 1e-6,
+                        "cell {cell}, steps {steps}, h {}, class {ch}: budget {residual}",
+                        h[i]
+                    );
+                }
+            }
+        }
+    }
+    println!("FILM MATRIX max_concentration_relative={max_concentration_error} max_mobile_budget_fraction={max_material_fraction}");
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored --test-threads=1"]
+fn prescribed_drying_preserves_deposits_and_rewet_flow_can_remobilize_each_class() {
+    let f = Fixture::new();
+    for ch in 0..4 {
+        f.clear_exchange_error();
+        for b in f.layers() {
+            f.fill(b, 0.);
+        }
+        for b in f.concentrations() {
+            f.fill(b, 0.);
+        }
+        f.fill(&f.h.geology.bedrock, 0.125);
+        f.fill(&f.h.water.depth, 0.00025);
+        f.fill(f.concentrations()[ch], 0.01);
+        let initial = f.mass(ch);
+        for _ in 0..100 {
+            f.stage(true, [0, 0, N as u32, N as u32], 0.05);
+        }
+        assert!(f.read(f.concentrations()[ch]).iter().all(|v| *v == 0.));
+        f.fill(&f.h.water.depth, 0.);
+        f.fill(&f.h.water.velocity_x, 0.);
+        for settling in [true, false] {
+            f.stage(settling, [0, 0, N as u32, N as u32], 0.05);
+        }
+        assert!(
+            (f.mass(ch) - initial).abs() < initial * 1e-6,
+            "dry bed lost class {ch}"
+        );
+        f.fill(&f.h.water.depth, 0.01);
+        for settling in [true, false] {
+            f.stage(settling, [0, 0, N as u32, N as u32], 0.05);
+        }
+        assert!(
+            f.read(f.concentrations()[ch]).iter().all(|v| *v == 0.),
+            "quiet rewet resuspended class {ch}"
+        );
+        f.fill(&f.h.water.velocity_x, 2.);
+        f.stage(false, [0, 0, N as u32, N as u32], 0.05);
+        let mobile = f
+            .read(f.concentrations()[ch])
+            .iter()
+            .map(|c| *c as f64 * 0.01f32 as f64 * AREA)
+            .sum::<f64>();
+        assert!(
+            mobile / initial > 1. - 1e-6,
+            "flow failed to remobilize class {ch}"
+        );
+        assert!(
+            (f.mass(ch) - initial).abs() < initial * 1e-6,
+            "rewet exchange budget class {ch}"
+        );
+        println!(
+            "REWET class={ch} mobile_fraction={} material_fraction={}",
+            mobile / initial,
+            (f.mass(ch) - initial) / initial
+        );
     }
 }

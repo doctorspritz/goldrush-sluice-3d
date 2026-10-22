@@ -188,7 +188,7 @@ fn old_saves_gain_no_water_and_new_saves_retain_wet_custody() {
     assert!(wet > 0.);
     let save = s.save_json().unwrap();
     let mut json: serde_json::Value = serde_json::from_str(&save).unwrap();
-    assert_eq!(json["version"], 4);
+    assert_eq!(json["version"], 5);
     close(
         Session::load_json(&save).unwrap().stored_water_m3(),
         s.stored_water_m3(),

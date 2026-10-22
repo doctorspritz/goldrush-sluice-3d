@@ -211,23 +211,24 @@ impl Site {
     /// Shared stratigraphy for hand tools and machine cuts. Deposited gravel
     /// remains excavatable and paydirt's trace gold follows its removed volume.
     fn column_material(&self, i: usize, depth: f32) -> Material {
-        let mut remaining = depth.max(0.);
-        let mut take = |available: f32| {
-            let next = (available - remaining.min(available)).max(0.);
-            let d = available - next;
-            remaining = (remaining - d).max(0.);
-            d as f64
+        let area = (CELL as f64).powi(2);
+        let mut remaining = depth.max(0.) as f64 * area;
+        let mut take = |available: f64| {
+            let amount = remaining.min(available);
+            remaining -= amount;
+            amount
         };
-        let sand = take(self.world.terrain_sediment[i]);
-        let soil = take(self.world.overburden_thickness[i]);
-        let gravel = take(self.world.gravel_thickness[i]);
-        let paydirt = take(self.world.paydirt_thickness[i]);
+        let sand = take(self.bed_class_volume_m3(i, 0));
+        let soil = take(self.bed_class_volume_m3(i, 1));
+        let gravel = take(self.bed_class_volume_m3(i, 2));
+        let pay_available = self.bed_class_volume_m3(i, 3);
+        let paydirt = take(pay_available);
         let mut material = Material {
-            soil_m3: soil * (CELL * CELL) as f64,
-            sand_m3: sand * (CELL * CELL) as f64,
-            gravel_m3: (gravel + paydirt) * (CELL * CELL) as f64,
-            gold_g: if self.world.paydirt_thickness[i] > 0. {
-                self.gold_g[i] * paydirt / self.world.paydirt_thickness[i] as f64
+            soil_m3: soil,
+            sand_m3: sand,
+            gravel_m3: gravel + paydirt,
+            gold_g: if pay_available > 0. {
+                self.gold_g[i] * paydirt / pay_available
             } else {
                 0.
             },
@@ -241,17 +242,13 @@ impl Site {
         for (i, depth) in cuts {
             let mut material = self.column_material(i, depth);
             material.pore_water_m3 = self.take_pore_water(i, material.pore_water_m3);
-            let mut left = depth.max(0.);
+            let mut left = depth.max(0.) as f64 * (CELL as f64).powi(2);
             let water = self.world.water_depth(i % WIDTH, i / WIDTH);
-            for layer in [
-                &mut self.world.terrain_sediment,
-                &mut self.world.overburden_thickness,
-                &mut self.world.gravel_thickness,
-                &mut self.world.paydirt_thickness,
-            ] {
-                let old = layer[i];
-                layer[i] = (old - left.min(old)).max(0.);
-                left = (left - (old - layer[i])).max(0.);
+            for class in 0..4 {
+                let old = self.bed_class_volume_m3(i, class);
+                let amount = left.min(old);
+                self.set_bed_volume_m3(i, class, old - amount);
+                left -= amount;
             }
             self.gold_g[i] = (self.gold_g[i] - material.gold_g).max(0.);
             self.world.water_surface[i] = self.world.ground_height(i % WIDTH, i / WIDTH) + water;

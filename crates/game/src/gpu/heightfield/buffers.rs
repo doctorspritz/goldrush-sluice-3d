@@ -53,6 +53,8 @@ pub struct GeologyBuffers {
     pub settling_time: wgpu::Buffer,
     /// Persistent per-class roundoff feedback for bed/suspension exchange.
     pub bed_exchange_error: wgpu::Buffer,
+    /// Counted positive bed thickness below a geometric layer ULP, per class.
+    pub bed_remainder: wgpu::Buffer,
     pub debug_stats: wgpu::Buffer,
     /// Derived scratch: 8 source-owned vec4 transfers per cell, not save state.
     pub collapse_flux: wgpu::Buffer,
@@ -97,6 +99,13 @@ impl GeologyBuffers {
             bed_exchange_error: create_storage_buffer(
                 device,
                 "Bed Exchange Roundoff",
+                width * 4,
+                depth,
+                0.,
+            ),
+            bed_remainder: create_storage_buffer(
+                device,
+                "Subgrid Bed Inventory",
                 width * 4,
                 depth,
                 0.,

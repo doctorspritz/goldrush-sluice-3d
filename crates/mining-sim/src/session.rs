@@ -488,8 +488,8 @@ impl Session {
         let mut site = self.site.snapshot();
         site.normalize_bed_age();
         serde_json::to_string(&Save {
-            // Earlier binaries must reject moisture they cannot account for.
-            version: 4,
+            // Earlier binaries must reject the subgrid material they cannot account for.
+            version: 5,
             site,
             machine: self.machine.clone(),
             sluice: self.sluice.clone(),
@@ -507,13 +507,13 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if !matches!(s.version, 2..=4) {
+        if !matches!(s.version, 2..=5) {
             return Err("Unsupported save version".into());
         }
         if !matches!(
             (s.version, s.site.bed_age_unit()),
             (2, crate::site::BedAgeUnit::Legacy20HzSteps)
-                | (3 | 4, crate::site::BedAgeUnit::Microseconds)
+                | (3..=5, crate::site::BedAgeUnit::Microseconds)
         ) {
             return Err("Invalid saved terrain clock".into());
         }
@@ -532,6 +532,9 @@ impl Session {
                 || s.sluice.feed_water_credit_m3 > 0.)
         {
             return Err("Legacy save contains unsupported soil water".into());
+        }
+        if s.version < 5 && (s.site.bed_remainder_m3() > 0. || s.site.has_projection_inventory()) {
+            return Err("Legacy save contains unsupported subgrid bed inventory".into());
         }
         let site = Site::restore(s.site)?;
         if !s.machine.valid()

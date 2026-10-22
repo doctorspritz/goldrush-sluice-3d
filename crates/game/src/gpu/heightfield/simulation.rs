@@ -33,8 +33,8 @@ fn copy_concentrations(
     }
 }
 
-/// Snapshot immutable geometry, store the requested bed change, then reconcile
-/// suspension against the actual stored f32 bed delta in a separate pass.
+/// Snapshot immutable geometry, then exchange material. Settling writes the
+/// counted high/low bed directly; erosion reconciles its stored candidate.
 #[allow(clippy::too_many_arguments)]
 pub fn dispatch_bed_exchange_tile(
     encoder: &mut wgpu::CommandEncoder,
@@ -67,14 +67,17 @@ fn dispatch_bed_exchange_passes(
     stage: BedExchangeStage,
 ) {
     let (candidate, reconcile) = match stage {
-        BedExchangeStage::Settling => (&pipelines.settling, &pipelines.settling_reconcile),
-        BedExchangeStage::Erosion => (&pipelines.erosion, &pipelines.erosion_reconcile),
+        BedExchangeStage::Settling => (&pipelines.settling, None),
+        BedExchangeStage::Erosion => (&pipelines.erosion, Some(&pipelines.erosion_reconcile)),
     };
     for (pipeline, label) in [
-        (&pipelines.bed_snapshot, "Snapshot Bed Geometry"),
-        (candidate, "Store Candidate Bed Exchange"),
-        (reconcile, "Reconcile Stored Bed Exchange"),
-    ] {
+        Some((&pipelines.bed_snapshot, "Snapshot Bed Geometry")),
+        Some((candidate, "Exchange Bed Material")),
+        reconcile.map(|pipeline| (pipeline, "Reconcile Stored Bed Exchange")),
+    ]
+    .into_iter()
+    .flatten()
+    {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some(label),
             timestamp_writes: None,

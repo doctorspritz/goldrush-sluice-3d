@@ -28,7 +28,7 @@ Expelled water dilutes existing surface suspension and horizontal momentum;
 trace-gold mass remains unchanged. A positive `surface_m3` store retains real
 water too small for the float surface to represent. It is counted in the water
 ledger and is flushed using actual represented depth increments. It is not a
-material-error correction or an uncounted water source.
+material-error correction or an uncounted water source. The same queue retains GPU depth that cannot be represented as a World surface height and finite outlet impact water. `surface_momentum_m4_s` preserves horizontal momentum belonging to that queued free water; pore water is stationary. Four-class suspension rounding uses a counted mobile precision remainder.
 
 Hopper feeding separates moisture from grain solids into saved
 `feed_water_credit_m3`. Shared particle capacity is reserved before taking the
@@ -43,8 +43,8 @@ The complete water ledger includes soil pores, unresolved expelled surface water
 carried moisture, flowing channel water and world surface water. Sluice flowing
 water accounting starts when moisture is released from the hopper, so retained
 hopper moisture is not counted twice. The existing dry/reference-bulk and gold
-ledgers remain separate. New saves are version 4 and older binaries reject them;
-current binaries accept versions 2/3/4 and retain the previous bed-age migration.
+ledgers remain separate. Moisture was introduced in version 4. New saves are version 5 and older binaries reject them;
+current binaries accept versions 2–5 and retain the previous bed-age migration.
 A legacy version carrying new moisture is rejected rather than silently losing
 water in an old reader.
 
@@ -56,4 +56,4 @@ For example, a [Green-Ampt infiltration model](https://www.hec.usace.army.mil/co
 requires hydraulic conductivity, suction and initial moisture; it also assumes a
 simplified front. No such calibrated infiltration or Richards solution is
 claimed here. Drying/rewetting of sediment-bearing thin films must be closed
-before adding water sinks; the known under-1-mm sediment limitation remains.
+before adding water sinks; deposition now operates at every positive water depth using [counted precision stock](subgrid-bed.md). Under-1-mm rough-bed scour and continuous sloping shoreline convergence remain unresolved. New submerged deposits gain void capacity without automatic saturation: the current model does not draw surface water into that new capacity until a conservative infiltration model exists.
