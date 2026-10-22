@@ -137,7 +137,9 @@ fn softened_columns_preserve_volume_and_add_across_clipping_planes() {
         [32, 32],
     );
     let volume: f64 = values
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|v| {
             assert!(v.iter().all(|x| x.is_finite() && *x >= 0.));
             assert!((v[0] - v[1] - v[2]).abs() < 1e-7);
@@ -204,7 +206,7 @@ fn overlapping_interface_gradient_matches_independent_density_derivative() {
             .sum::<f64>()
     };
     let mut previous: Option<[f64; 3]> = None;
-    for (i, gradient) in values.chunks_exact(4).enumerate() {
+    for (i, gradient) in values.as_chunks::<4>().0.iter().enumerate() {
         let p = [(i as f64 - 31.5) * 0.0003, 0.006, 0.];
         let mut direction = [0.; 3];
         for axis in 0..3 {
@@ -269,7 +271,7 @@ fn shared_interface_uses_relative_depth_moments_without_moving_spray_or_hidden_w
         &buffer,
         [1, 1],
     );
-    for value in values.chunks_exact(4) {
+    for value in values.as_chunks::<4>().0 {
         assert!((value[0] - 3.004).abs() < 1e-6, "{value:?}");
         assert_eq!(value[1..], [3., 0., 3.]);
     }
@@ -410,7 +412,7 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
         &buffer,
         [1, 1],
     );
-    for value in values.chunks_exact(4) {
+    for value in values.as_chunks::<4>().0 {
         assert!((value[0] - 0.04).abs() < 1e-6);
         assert!((value[1] - 1.).abs() < 1e-6);
         assert!((value[2] - 50.).abs() < 0.001, "colour jumped: {value:?}");

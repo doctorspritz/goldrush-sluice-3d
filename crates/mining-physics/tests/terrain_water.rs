@@ -414,7 +414,7 @@ fn every_open_edge_accounts_for_discharge_and_closed_edges_do_not_leak() {
         let mut solids_exported = [0.; 4];
         for _ in 0..40 {
             f.step(mask);
-            for a in f.aux().chunks_exact(12) {
+            for a in f.aux().as_chunks::<12>().0 {
                 exported += a[6] as f64;
                 for channel in 0..4 {
                     solids_exported[channel] += a[8 + channel] as f64;

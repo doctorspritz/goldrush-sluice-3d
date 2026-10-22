@@ -210,7 +210,7 @@ impl Hydraulics {
         a.suspended_gravel = next();
         a.suspended_paydirt = next();
         a.settling_time = times;
-        for (i, cell) in aux.chunks_exact(12).enumerate() {
+        for (i, cell) in aux.as_chunks::<12>().0.iter().enumerate() {
             a.flux_x[i] = cell[4];
             a.flux_z[i] = cell[5];
             s.water_balance.boundary_outflow_m3 += cell[6] as f64;
