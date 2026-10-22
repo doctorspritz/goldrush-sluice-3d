@@ -146,7 +146,8 @@ pub fn dispatch(
             commands: std::mem::take(&mut game.pending),
             look_delta: std::mem::take(&mut game.look_delta),
             advance: !validation.active() || validation.ready(),
-            replay: validation.active(),
+            replay: validation.active()
+                && !(validation.earthworks_only && validation.replay.phase >= 15),
         };
         let prediction = Prediction {
             sequence: work.sequence,

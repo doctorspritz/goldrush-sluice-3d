@@ -6,13 +6,16 @@ use bevy::{
     render::view::screenshot::{save_to_disk, Screenshot},
 };
 use mining_physics::worker::Command;
-use mining_sim::replay::{replay_receipt, OperatorReplay};
+use mining_sim::replay::{earthworks_receipt, replay_receipt, OperatorReplay};
 use std::{collections::HashSet, path::PathBuf, time::Instant};
 
 #[derive(Resource)]
 pub struct Validation {
     pub directory: Option<PathBuf>,
     pub input_check: bool,
+    pub earthworks_only: bool,
+    earthwork_started: Option<(Instant, f64)>,
+    earthwork_seconds: (f64, f64),
     flow_benchmark: Option<PathBuf>,
     flow_result: Option<bool>,
     flow_started: Option<(Instant, f64)>,
@@ -22,6 +25,7 @@ pub struct Validation {
     worker_phases: [f64; 5],
     pub input_complete: bool,
     capture: Option<PathBuf>,
+    motion_capture: bool,
     freeze: bool,
     detail_walk: bool,
     load_path: Option<PathBuf>,
@@ -61,8 +65,22 @@ impl Default for Validation {
                 _ => {}
             }
         }
+        let earthworks_only = std::env::args().any(|a| a == "--earthworks-only");
+        assert!(
+            !earthworks_only || directory.is_some(),
+            "--earthworks-only requires --validate DIRECTORY"
+        );
+        if earthworks_only {
+            assert!(
+                !directory.as_ref().unwrap().join("earthworks.json").exists(),
+                "preserve existing earthwork evidence"
+            );
+        }
         Self {
             directory,
+            earthworks_only,
+            earthwork_started: None,
+            earthwork_seconds: (0., 0.),
             flow_benchmark,
             flow_result: None,
             flow_started: None,
@@ -73,6 +91,7 @@ impl Default for Validation {
             input_check: std::env::args().any(|a| a == "--check-controls"),
             input_complete: false,
             capture,
+            motion_capture: std::env::args().any(|a| a == "--capture-motion"),
             freeze: std::env::args().any(|a| a == "--freeze"),
             detail_walk: std::env::args().any(|a| a == "--detail-walk"),
             load_path,
@@ -115,6 +134,11 @@ impl Validation {
 }
 
 fn photo(commands: &mut Commands, v: &mut Validation, name: &'static str) {
+    // Bevy skips duplicate requests for a render target in the same frame.
+    // Motion capture owns the primary target; do not race it with still photos.
+    if v.motion_capture {
+        return;
+    }
     if v.photos.insert(name) {
         if let Some(dir) = &v.directory {
             let path = dir.join(format!("{name}.png"));
@@ -363,11 +387,89 @@ pub fn update(
     if v.frames == 150 {
         photo(&mut commands, &mut v, "01-site");
     }
+    if v.earthworks_only && v.replay.phase == 2 && v.replay.ticks > 100 {
+        photo(&mut commands, &mut v, "02-earth-cut");
+    }
     if v.replay.phase == 4 && v.replay.ticks > 30 {
         photo(&mut commands, &mut v, "02-cab");
     }
     if v.replay.phase == 5 && v.replay.ticks > 70 {
         photo(&mut commands, &mut v, "03-delivery");
+    }
+    if v.earthworks_only {
+        if v.replay.phase >= 2 {
+            v.earthwork_started
+                .get_or_insert_with(|| (Instant::now(), game.session.sim_time));
+        }
+        if v.started.elapsed().as_secs_f64() > 5. && v.finished.is_none() {
+            v.frame_ms.push(time.delta_secs_f64() * 1000.);
+        }
+        if v.replay.phase == 10 && v.replay.ticks > 30 && !v.restore_requested {
+            game.command(Command::Save(save_path()));
+            game.command(Command::Load(save_path()));
+            v.restore_requested = true;
+        }
+        if v.replay.phase >= 15 && v.finished.is_none() {
+            if let Some((start, sim)) = v.earthwork_started {
+                v.earthwork_seconds = (start.elapsed().as_secs_f64(), game.session.sim_time - sim);
+            }
+            match earthworks_receipt(&game.session, &v.replay) {
+                Ok(report) => {
+                    if let Err(e) = std::fs::write(dir.join("earthworks.json"), report) {
+                        v.failure = Some(e.to_string());
+                    }
+                }
+                Err(error) => v.failure = Some(error),
+            }
+            game.command(Command::Save(save_path()));
+            game.command(Command::Pause(true));
+            photo(&mut commands, &mut v, "04-earthworks-delivered");
+            v.finished = Some(Instant::now());
+        }
+        let screenshots_done = v
+            .photos
+            .iter()
+            .all(|name| dir.join(format!("{name}.png")).exists());
+        if v.finished
+            .is_some_and(|done| done.elapsed().as_secs_f64() > 10.)
+            && !screenshots_done
+        {
+            v.failure = Some("Earthwork screenshots did not finish writing".into());
+        }
+        if v.finished
+            .is_some_and(|done| done.elapsed().as_secs_f64() > 2.)
+            && (screenshots_done || v.failure.is_some())
+        {
+            if !v.saved {
+                v.failure = Some("Earthwork live save/restore was not verified".into());
+            }
+            if let Some(error) = &v.failure {
+                let _ = std::fs::write(dir.join("failure.txt"), error);
+                eprintln!("EARTHWORK VALIDATION FAILED: {error}");
+                exit.write(AppExit::error());
+            } else {
+                let mut times = v.frame_ms.clone();
+                times.sort_by(f64::total_cmp);
+                let mean = times.iter().sum::<f64>() / times.len().max(1) as f64;
+                let report = serde_json::json!({"phase":"earthwork only; original GPU terrain flow running, sluice idle",
+                    "mean_fps":1000./mean,"p95_ms":times.get(times.len()*95/100),"frames":times.len(),
+                    "simulated_seconds":game.session.sim_time,"wall_seconds":v.started.elapsed().as_secs_f64(),
+                    "active_simulated_seconds":v.earthwork_seconds.1,"active_wall_seconds":v.earthwork_seconds.0,
+                    "simulation_wall_ratio":v.earthwork_seconds.1/v.earthwork_seconds.0.max(1e-9),
+                    "save_restored_during_cut":v.saved,"fixed_inspection_camera":true});
+                if let Err(error) = std::fs::write(
+                    dir.join("render-timing.json"),
+                    serde_json::to_string_pretty(&report).unwrap(),
+                ) {
+                    eprintln!("Earthwork timing receipt failed: {error}");
+                    exit.write(AppExit::error());
+                    return;
+                }
+                println!("EARTHWORK VALIDATION: {report}");
+                exit.write(AppExit::Success);
+            }
+        }
+        return;
     }
     if v.replay.phase == 20 && v.replay.ticks > 1800 {
         photo(&mut commands, &mut v, "04-washing");

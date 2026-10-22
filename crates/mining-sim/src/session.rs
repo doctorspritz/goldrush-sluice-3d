@@ -328,17 +328,14 @@ impl Session {
         if self.player.mode == ControlMode::Excavator {
             // Equipment, rather than camera focus, owns the running simulation.
             let old_yaw = self.machine.heading + self.machine.swing;
-            let old_position = self.machine.position;
-            if let Some((position, velocity, material)) =
-                self.machine.step(input.machine, &mut self.site, dt)
-            {
-                self.falling.push(FallingLoad {
-                    position,
-                    velocity,
-                    material,
-                });
-            }
-            let p = self.machine.position;
+            // Reject blocked travel before it reaches the tool sweep. Reverting
+            // the chassis after cutting could mine at a rejected bucket pose.
+            let heading = self.machine.heading + input.machine.steer.clamp(-1., 1.) * dt * 0.45;
+            let p = self.machine.position
+                + Vec3::new(heading.sin(), 0., heading.cos())
+                    * input.machine.drive.clamp(-1., 1.)
+                    * dt
+                    * 1.6;
             let hopper = Sluice::hopper_position(&self.site);
             let blocks_hopper = Vec3::new(p.x - hopper.x, 0.0, p.z - hopper.z).length() < 2.2;
             let blocks_sluice = self.sluice.placement.is_some_and(|placement| {
@@ -347,8 +344,18 @@ impl Session {
                 let z = d.dot(placement.right()).abs();
                 (-1.8..self.sluice.profile.length() + 1.8).contains(&x) && z < 1.7
             });
+            let mut machine_input = input.machine;
             if blocks_hopper || blocks_sluice {
-                self.machine.position = old_position;
+                machine_input.drive = 0.;
+            }
+            if let Some((position, velocity, material)) =
+                self.machine.step(machine_input, &mut self.site, dt)
+            {
+                self.falling.push(FallingLoad {
+                    position,
+                    velocity,
+                    material,
+                });
             }
             self.player.yaw += self.machine.heading + self.machine.swing - old_yaw;
             self.player.position = self.machine.position + Vec3::Y * 1.9;
@@ -441,6 +448,20 @@ impl Session {
             + self.sluice.tailings.gold_g
             + self.sluice.concentrate.gold_g
             + self.falling.iter().map(|l| l.material.gold_g).sum::<f64>()
+    }
+    pub fn accounted_bulk_material_m3(&self) -> f64 {
+        self.site.bulk_solid_volume_m3()
+            + self.site.hydraulic.exported_material_m3.iter().sum::<f64>()
+            + self.machine.bucket.volume()
+            + self.player.hand.volume()
+            + self.sluice.active_material().volume()
+            + self.sluice.tailings.volume()
+            + self.sluice.concentrate.volume()
+            + self
+                .falling
+                .iter()
+                .map(|l| l.material.volume())
+                .sum::<f64>()
     }
     pub fn save_json(&self) -> Result<String, String> {
         serde_json::to_string(&Save {

@@ -1,9 +1,10 @@
 use mining_sim::{
-    replay::{replay_receipt, OperatorReplay},
+    replay::{earthworks_receipt, replay_receipt, OperatorReplay},
     Session,
 };
 use std::time::Instant;
 fn main() {
+    let earthworks_only = std::env::args().any(|a| a == "--earthworks-only");
     let mut s = Session::new();
     let mut physics = mining_physics::Hydraulics::new().expect("GPU physics");
     let mut r = OperatorReplay::default();
@@ -54,6 +55,9 @@ fn main() {
         if r.complete || r.error.is_some() {
             break;
         }
+        if earthworks_only && r.phase >= 15 {
+            break;
+        }
         if started.elapsed().as_secs_f64() > wall_seconds {
             eprintln!(
                 "Replay stopped at its {wall_seconds:.0}-second wall-clock bound; phase {}",
@@ -62,7 +66,12 @@ fn main() {
             std::process::exit(2);
         }
     }
-    match replay_receipt(&s, &r) {
+    let receipt = if earthworks_only {
+        earthworks_receipt(&s, &r)
+    } else {
+        replay_receipt(&s, &r)
+    };
+    match receipt {
         Ok(json) => println!("{json}"),
         Err(e) => {
             eprintln!("{e}");

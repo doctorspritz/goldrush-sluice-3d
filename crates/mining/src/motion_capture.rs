@@ -81,8 +81,18 @@ impl Default for MotionCapture {
 pub fn camera(
     capture: Res<MotionCapture>,
     game: Res<crate::app::Game>,
+    validation: Res<crate::validation::Validation>,
     mut camera: Query<&mut Transform, With<crate::app::GameCamera>>,
 ) {
+    if validation.earthworks_only {
+        let m = &game.session.machine;
+        let target = crate::app::bvec(m.position + m.forward() * 2.3) + Vec3::Y * 1.1;
+        if let Ok(mut camera) = camera.single_mut() {
+            *camera = Transform::from_translation(target + Vec3::new(6., 4.6, 5.5))
+                .looking_at(target, Vec3::Y);
+        }
+        return;
+    }
     if capture.directory.is_none() {
         return;
     }
@@ -199,14 +209,20 @@ pub fn update(
     }
     capture.next = elapsed + capture.interval;
     let sluice = &game.session.sluice;
-    let placement = sluice.placement.expect("flowing demo placement");
-    let tracks:Vec<_>=sluice.water.iter().filter(|p|capture.ids.contains(&p.id)).map(|p|serde_json::json!({"id":p.id,"kind":"channel","grid":p.position.to_array(),"world":placement.to_world(sluice.grid_to_local(p.position)).to_array(),"velocity":sluice.grid_velocity_to_world(p.velocity).to_array(),"height_above_plane_m":sluice.grid_to_local(p.position).y})).chain(sluice.outflow.iter().filter(|p|capture.ids.contains(&p.id)).map(|p|serde_json::json!({"id":p.id,"kind":"outlet","world":p.position.to_array(),"velocity":p.velocity.to_array()}))).collect();
+    let tracks = water_tracks(sluice, &capture.ids);
     let name = format!("frame-{:04}.png", capture.frames.len());
-    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report()});
+    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3});
     capture.frames.push(record);
     commands
         .spawn(Screenshot::primary_window())
         .observe(save_to_disk(directory.join(name)));
+}
+
+fn water_tracks(sluice: &mining_sim::Sluice, ids: &HashSet<u64>) -> Vec<serde_json::Value> {
+    sluice.water.iter().filter(|p|ids.contains(&p.id)).filter_map(|p| {
+        let placement=sluice.placement?;
+        Some(serde_json::json!({"id":p.id,"kind":"channel","grid":p.position.to_array(),"world":placement.to_world(sluice.grid_to_local(p.position)).to_array(),"velocity":sluice.grid_velocity_to_world(p.velocity).to_array(),"height_above_plane_m":sluice.grid_to_local(p.position).y}))
+    }).chain(sluice.outflow.iter().filter(|p|ids.contains(&p.id)).map(|p|serde_json::json!({"id":p.id,"kind":"outlet","world":p.position.to_array(),"velocity":p.velocity.to_array()}))).collect()
 }
 
 /// Population measurements in the same central channel region as the raised
@@ -234,4 +250,13 @@ fn flow_metrics(sluice: &mining_sim::Sluice) -> serde_json::Value {
         "above_5cm":high,"above_5cm_fraction":high as f64/count.max(1) as f64,
         "high_mean_abs_downstream_mps":high_vx/high.max(1) as f64,"high_mean_abs_vertical_mps":high_vy/high.max(1) as f64,
         "high_vertical_dominance":high_vertical as f64/high.max(1) as f64})
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fresh_claim_motion_capture_does_not_require_an_installed_sluice() {
+        let session = mining_sim::Session::new();
+        assert!(super::water_tracks(&session.sluice, &Default::default()).is_empty());
+    }
 }

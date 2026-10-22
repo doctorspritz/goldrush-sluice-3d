@@ -45,6 +45,14 @@ impl Fixture {
         self.h.dispatch_water_substeps(&mut encoder, 4);
         self.queue.submit(Some(encoder.finish()));
     }
+    fn collapse(&self, tile: [u32; 4], dt: f32) {
+        self.h
+            .update_params_tile(&self.queue, dt, tile[0], tile[1], tile[2], tile[3]);
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        self.h
+            .dispatch_collapse_tile(&mut encoder, tile[2], tile[3]);
+        self.queue.submit(Some(encoder.finish()));
+    }
     fn read(&self, buffer: &wgpu::Buffer, offset: u64, count: usize) -> Vec<f32> {
         let size = (count * 4) as u64;
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -79,6 +87,249 @@ impl Fixture {
 }
 fn volume(depth: &[f32]) -> f64 {
     depth.iter().map(|d| *d as f64 * 0.0625).sum()
+}
+
+#[test]
+#[ignore = "requires native GPU; run explicitly with --ignored --test-threads=1"]
+fn dry_collapse_preserves_material_when_many_donors_share_receivers() {
+    let f = Fixture::new();
+    let initial: Vec<f32> = (0..CELLS)
+        .map(|i| {
+            if ((i % N) + (i / N)).is_multiple_of(2) {
+                2.
+            } else {
+                0.
+            }
+        })
+        .collect();
+    f.write(&f.h.geology.overburden, &initial);
+    let before = volume(&initial);
+    for _ in 0..20 {
+        f.step(0);
+    }
+    let after = f.read(&f.h.geology.overburden, 0, CELLS);
+    let total = volume(&after);
+    println!(
+        "dry collapse volume: before={before} after={total} residual={}",
+        total - before
+    );
+    assert!(after.iter().all(|v| v.is_finite() && *v >= 0.));
+    assert!(
+        (total - before).abs() < before * 1e-6,
+        "collapse lost {} m3",
+        before - total
+    );
+}
+
+// Independent f64 snapshot/gather reference for a single exposed overburden
+// layer. Compare every cell, so a conserved total cannot hide wrong directions.
+fn reference_collapse(old: &[f32], tile: [u32; 4], dt: f64) -> Vec<f64> {
+    let mut next: Vec<f64> = old.iter().map(|v| *v as f64).collect();
+    for z in tile[1] as usize..(tile[1] + tile[3]) as usize {
+        for x in tile[0] as usize..(tile[0] + tile[2]) as usize {
+            if x >= N || z >= N {
+                continue;
+            }
+            let i = z * N + x;
+            let source = old[i] as f64;
+            if source <= 0.001 {
+                continue;
+            }
+            let neighbours: Vec<_> = (-1i32..=1)
+                .flat_map(|dz| (-1i32..=1).map(move |dx| (dx, dz)))
+                .filter(|(dx, dz)| *dx != 0 || *dz != 0)
+                .filter_map(|(dx, dz)| {
+                    let (nx, nz) = (x as i32 + dx, z as i32 + dz);
+                    if !(0..N as i32).contains(&nx) || !(0..N as i32).contains(&nz) {
+                        return None;
+                    }
+                    let j = nz as usize * N + nx as usize;
+                    let distance = ((dx * dx + dz * dz) as f64).sqrt();
+                    Some((j, (source - old[j] as f64).max(0.), distance))
+                })
+                .collect();
+            let total: f64 = neighbours
+                .iter()
+                .map(|(_, difference, distance)| difference / distance)
+                .sum();
+            if total <= 0. {
+                continue;
+            }
+            for (j, difference, distance) in neighbours {
+                let weight = difference / distance / total;
+                let excess = (difference - 0.7002 * 0.25 * distance).max(0.) * 0.5;
+                let amount = (excess * weight * 4. * dt).min(source * 0.5 * weight);
+                next[i] -= amount;
+                next[j] += amount;
+            }
+        }
+    }
+    next
+}
+
+#[test]
+#[ignore = "requires native GPU; run explicitly with --ignored --test-threads=1"]
+fn collapse_gathers_across_tile_halos_and_ignores_stale_donors() {
+    let f = Fixture::new();
+    let mut current = vec![0.; CELLS];
+    current[15 * N + 15] = 2.;
+    current[0] = 1.;
+    current[CELLS - 1] = 1.5;
+    f.write(&f.h.geology.overburden, &current);
+    let initial = volume(&current);
+    for tile in [
+        [15, 15, 1, 1],
+        [16, 15, 1, 1],
+        [0, 0, 2, 2],
+        [31, 31, 1, 1],
+        [14, 14, 5, 4],
+    ] {
+        let expected = reference_collapse(&current, tile, 0.05);
+        f.collapse(tile, 0.05);
+        let next = f.read(&f.h.geology.overburden, 0, CELLS);
+        let max_error = next
+            .iter()
+            .zip(expected)
+            .map(|(v, e)| (*v as f64 - e).abs())
+            .fold(0., f64::max);
+        assert!(max_error < 5e-7, "tile {tile:?}: {max_error}");
+        assert!(
+            (volume(&next) - initial).abs() < 1e-7,
+            "tile {tile:?} volume"
+        );
+        if tile == [15, 15, 1, 1] {
+            for (dx, dz) in [
+                (-1, -1),
+                (0, -1),
+                (1, -1),
+                (-1, 0),
+                (1, 0),
+                (-1, 1),
+                (0, 1),
+                (1, 1),
+            ] {
+                assert!(
+                    next[(15 + dz) as usize * N + (15 + dx) as usize] > 0.,
+                    "halo receiver missing"
+                );
+            }
+        }
+        current = next;
+    }
+}
+
+#[test]
+#[ignore = "requires native GPU; run explicitly with --ignored --test-threads=1"]
+fn collapse_preserves_each_layer_and_respects_repose_and_burial() {
+    let f = Fixture::new();
+    let layers = [
+        &f.h.geology.sediment,
+        &f.h.geology.overburden,
+        &f.h.geology.gravel,
+    ];
+    for (layer, angle) in layers.into_iter().zip([0.6249, 0.7002, 0.7813]) {
+        for slope in [angle - 0.01, angle + 0.2] {
+            for b in layers {
+                f.write(b, &vec![0.; CELLS]);
+            }
+            let initial: Vec<_> = (0..CELLS)
+                .map(|i| 1. + (i % N) as f32 * 0.25 * slope)
+                .collect();
+            f.write(layer, &initial);
+            for _ in 0..20 {
+                f.collapse([0, 0, N as u32, N as u32], 0.05);
+            }
+            let next = f.read(layer, 0, CELLS);
+            assert!(next.iter().all(|v| v.is_finite() && *v >= 0.));
+            assert!((volume(&next) - volume(&initial)).abs() < volume(&initial) * 1e-6);
+            let change = next
+                .iter()
+                .zip(&initial)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0., f32::max);
+            if slope < angle {
+                assert_eq!(change, 0.);
+            } else {
+                assert!(change > 0.001);
+            }
+        }
+    }
+    let checker: Vec<f32> = (0..CELLS)
+        .map(|i| {
+            if ((i % N) + (i / N)).is_multiple_of(2) {
+                1.
+            } else {
+                0.
+            }
+        })
+        .collect();
+    for b in [
+        &f.h.geology.bedrock,
+        &f.h.geology.paydirt,
+        &f.h.geology.gravel,
+        &f.h.geology.overburden,
+    ] {
+        f.write(b, &checker);
+    }
+    f.write(&f.h.geology.sediment, &vec![0.1; CELLS]);
+    // An exposed sediment cover cannot let buried material collapse through it.
+    f.collapse([0, 0, N as u32, N as u32], 0.05);
+    for b in [
+        &f.h.geology.bedrock,
+        &f.h.geology.paydirt,
+        &f.h.geology.gravel,
+        &f.h.geology.overburden,
+    ] {
+        assert_eq!(f.read(b, 0, CELLS), checker);
+    }
+    let before: Vec<_> = layers
+        .iter()
+        .map(|b| volume(&f.read(b, 0, CELLS)))
+        .collect();
+    for _ in 0..120 {
+        f.collapse([0, 0, N as u32, N as u32], 0.05);
+    }
+    for (b, initial) in layers.into_iter().zip(before) {
+        let next = f.read(b, 0, CELLS);
+        assert!(next.iter().all(|v| v.is_finite() && *v >= 0.));
+        assert!((volume(&next) - initial).abs() < initial * 1e-6);
+    }
+}
+
+#[test]
+#[ignore = "requires native GPU; run explicitly with --ignored --test-threads=1"]
+fn collapse_shape_converges_as_the_timestep_decreases() {
+    let f = Fixture::new();
+    let mut pile = vec![0.; CELLS];
+    for z in 12..20 {
+        for x in 12..20 {
+            pile[z * N + x] = 2.;
+        }
+    }
+    let mut profiles = Vec::new();
+    for steps in [40, 80, 160] {
+        f.write(&f.h.geology.overburden, &pile);
+        for _ in 0..steps {
+            f.collapse([0, 0, N as u32, N as u32], 2. / steps as f32);
+        }
+        let next = f.read(&f.h.geology.overburden, 0, CELLS);
+        assert!((volume(&next) - volume(&pile)).abs() < volume(&pile) * 1e-6);
+        profiles.push(next);
+    }
+    let difference = |a: &[f32], b: &[f32]| {
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (*x as f64 - *y as f64).abs() * 0.0625)
+            .sum::<f64>()
+            / volume(&pile)
+    };
+    let coarse = difference(&profiles[0], &profiles[1]);
+    let fine = difference(&profiles[1], &profiles[2]);
+    println!("collapse normalized shape error: dt .05/.025={coarse}, .025/.0125={fine}");
+    assert!(
+        coarse < 0.03 && fine < coarse * 0.8,
+        "timestep convergence {coarse} -> {fine}"
+    );
 }
 
 #[test]

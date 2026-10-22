@@ -7,4 +7,4 @@ edition = "2021"
 sim3d = { path = "../sim3d" }
 glam = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["float_roundtrip"] }

@@ -26,6 +26,7 @@ pub struct HeightfieldState {
     pub impact_dirty: bool,
     pub flux_x: Vec<f32>,
     pub flux_z: Vec<f32>,
+    /// Separate solid/water volume concentrations, not layer depths or kg/m².
     pub suspended_sediment: Vec<f32>,
     pub suspended_overburden: Vec<f32>,
     pub suspended_gravel: Vec<f32>,
@@ -197,6 +198,101 @@ impl Site {
             .sum::<f64>()
             * (CELL * CELL) as f64
     }
+    pub fn bulk_solid_volume_m3(&self) -> f64 {
+        let ground = [
+            &self.world.terrain_sediment,
+            &self.world.gravel_thickness,
+            &self.world.overburden_thickness,
+            &self.world.paydirt_thickness,
+        ]
+        .iter()
+        .flat_map(|v| v.iter())
+        .map(|v| *v as f64)
+        .sum::<f64>();
+        let fields = [
+            &self.hydraulic.suspended_sediment,
+            &self.hydraulic.suspended_overburden,
+            &self.hydraulic.suspended_gravel,
+            &self.hydraulic.suspended_paydirt,
+        ];
+        let suspended = if fields.iter().all(|v| v.is_empty()) {
+            0.
+        } else {
+            (0..WIDTH * WIDTH)
+                .map(|i| {
+                    let concentration = fields
+                        .iter()
+                        .map(|v| v.get(i).copied().unwrap_or(0.) as f64)
+                        .sum::<f64>();
+                    concentration * self.world.water_depth(i % WIDTH, i / WIDTH) as f64
+                })
+                .sum::<f64>()
+        };
+        (ground + suspended) * (CELL as f64).powi(2)
+    }
+    /// Add the existing circular river source as clean water. Suspension is
+    /// stored as concentration, so keeping C fixed would create dirt whenever
+    /// source water is added to an eroding cell. Return the represented volume
+    /// actually added after f32 surface/depth rounding for the water ledger.
+    pub fn add_clean_inflow(&mut self, position: Vec3, rate: f32, radius: f32, dt: f32) -> f64 {
+        if !position.is_finite()
+            || !Self::bounds(position, 0.)
+            || !rate.is_finite()
+            || !radius.is_finite()
+            || !dt.is_finite()
+            || rate <= 0.
+            || radius <= 0.
+            || dt <= 0.
+            || !(rate * dt).is_finite()
+        {
+            return 0.;
+        }
+        let radius = radius.min(WIDTH as f32 * CELL);
+        let r = (radius / CELL).ceil() as i32;
+        let (cx, cz) = ((position.x / CELL) as i32, (position.z / CELL) as i32);
+        let mut old = Vec::new();
+        for dz in -r..=r {
+            for dx in -r..=r {
+                let (x, z) = (cx + dx, cz + dz);
+                if (dx * dx + dz * dz) as f32 > (radius / CELL).powi(2)
+                    || !(0..WIDTH as i32).contains(&x)
+                    || !(0..WIDTH as i32).contains(&z)
+                {
+                    continue;
+                }
+                let (x, z) = (x as usize, z as usize);
+                old.push((z * WIDTH + x, self.world.water_depth(x, z)));
+            }
+        }
+        self.world.add_inflow(position, rate, radius, dt);
+        let mut added = 0.;
+        for (i, before) in old {
+            let after = self.world.water_depth(i % WIDTH, i / WIDTH);
+            if after <= before {
+                continue;
+            }
+            added += (after as f64 - before as f64) * (CELL as f64).powi(2);
+            let dilution = before as f64 / after as f64;
+            let mut aggregate = 0.;
+            for field in [
+                &mut self.hydraulic.suspended_sediment,
+                &mut self.hydraulic.suspended_overburden,
+                &mut self.hydraulic.suspended_gravel,
+                &mut self.hydraulic.suspended_paydirt,
+            ] {
+                if let Some(c) = field.get_mut(i) {
+                    *c = (*c as f64 * dilution) as f32;
+                    aggregate += *c;
+                }
+            }
+            self.world.suspended_sediment[i] = aggregate;
+        }
+        if added > 0. {
+            self.hydraulic.impact_dirty = true;
+            self.revision += 1;
+        }
+        added
+    }
     pub fn dig(&mut self, p: Vec3, radius: f32, depth: f32, capacity: f64) -> Material {
         if !p.is_finite()
             || !radius.is_finite()
@@ -209,43 +305,19 @@ impl Site {
         {
             return Material::default();
         }
-        // Uniform depth cap bounds the actual set of cells touched by World::excavate,
-        // including its integer-radius footprint (which is larger than pi*r*r).
-        let r = (radius / CELL).ceil() as i32;
-        let cell_count = (-r..=r)
-            .flat_map(|z| (-r..=r).map(move |x| (x, z)))
-            .filter(|(x, z)| (*x as f32).powi(2) + (*z as f32).powi(2) <= (radius / CELL).powi(2))
-            .count();
-        let depth =
-            depth.min((capacity / (cell_count as f64 * (CELL * CELL) as f64)) as f32 * 0.999);
-        let before_pd = self.world.paydirt_thickness.clone();
-        let before_gr = self.world.gravel_thickness.clone();
-        let before_ob = self.world.overburden_thickness.clone();
-        let before_sd = self.world.terrain_sediment.clone();
-        self.world.excavate(p, radius, depth);
-        let mut batch = Material::default();
-        for i in 0..WIDTH * WIDTH {
-            let pd = (before_pd[i] - self.world.paydirt_thickness[i]).max(0.0) as f64;
-            let gold = if before_pd[i] > 0.0 {
-                self.gold_g[i] * pd / before_pd[i] as f64
-            } else {
-                0.0
-            };
-            self.gold_g[i] = (self.gold_g[i] - gold).max(0.0);
-            batch.gold_g += gold;
-            batch.gravel_m3 += (pd
-                + (before_gr[i] - self.world.gravel_thickness[i]).max(0.0) as f64)
-                * (CELL * CELL) as f64;
-            batch.soil_m3 += (before_ob[i] - self.world.overburden_thickness[i]).max(0.0) as f64
-                * (CELL * CELL) as f64;
-            batch.sand_m3 += (before_sd[i] - self.world.terrain_sediment[i]).max(0.0) as f64
-                * (CELL * CELL) as f64;
+        let r = ((radius / CELL).ceil() as i32).min(WIDTH as i32);
+        let (cx, cz) = ((p.x / CELL) as i32, (p.z / CELL) as i32);
+        let mut cells = Vec::new();
+        for z in (cz - r).max(0)..=(cz + r).min(WIDTH as i32 - 1) {
+            for x in (cx - r).max(0)..=(cx + r).min(WIDTH as i32 - 1) {
+                if ((x - cx).pow(2) + (z - cz).pow(2)) as f32 <= (radius / CELL).powi(2) {
+                    cells.push(self.world.idx(x as usize, z as usize));
+                }
+            }
         }
-        if !batch.is_empty() {
-            self.revision += 1;
-            self.excavated.add(batch);
-        }
-        batch
+        let depth = depth
+            .min((capacity / (cells.len().max(1) as f64 * (CELL * CELL) as f64)) as f32 * 0.999);
+        self.excavate_columns(cells.into_iter().map(|i| (i, depth)).collect())
     }
     pub fn deposit(&mut self, p: Vec3, m: Material) {
         let cx = (p.x / CELL).clamp(2.0, (WIDTH - 3) as f32) as usize;

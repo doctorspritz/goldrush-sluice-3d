@@ -2,7 +2,6 @@
 
 use super::pipelines::{CoreBindGroups, SimulationPipelines};
 
-
 /// Dispatch simulation for a specific tile region.
 #[allow(clippy::too_many_arguments)]
 pub fn dispatch_simulation_tile(
@@ -53,10 +52,16 @@ pub fn dispatch_simulation_tile(
         dispatch_step!("Aggregate Donor Budget", &pipelines.donor_budget);
         dispatch_step!("Limit Shared Flux", &pipelines.limit_flux);
         dispatch_step!("Update Depth", &pipelines.depth);
-        dispatch_step!("Conservative Sediment Transport", &pipelines.sediment_transport);
+        dispatch_step!(
+            "Conservative Sediment Transport",
+            &pipelines.sediment_transport
+        );
         for (next, current) in [
             (suspended_sediment_next_buffer, suspended_sediment_buffer),
-            (suspended_overburden_next_buffer, suspended_overburden_buffer),
+            (
+                suspended_overburden_next_buffer,
+                suspended_overburden_buffer,
+            ),
             (suspended_gravel_next_buffer, suspended_gravel_buffer),
             (suspended_paydirt_next_buffer, suspended_paydirt_buffer),
         ] {
@@ -67,10 +72,41 @@ pub fn dispatch_simulation_tile(
     dispatch_step!("Update Settling", &pipelines.settling);
     dispatch_step!("Update Erosion", &pipelines.erosion);
 
-    // 5. Collapse (angle of repose / slope stability)
-    // Use red-black pattern for race-free updates
-    dispatch_step!("Update Collapse Red", &pipelines.collapse_red);
-    dispatch_step!("Update Collapse Black", &pipelines.collapse_black);
+    dispatch_collapse_tile(encoder, pipelines, bind_groups, tile_width, tile_depth);
+}
+
+/// Snapshot donor transfers followed by a gather into each receiver, including
+/// a one-cell tile halo. Every cell has exactly one writer in each pass.
+pub fn dispatch_collapse_tile(
+    encoder: &mut wgpu::CommandEncoder,
+    pipelines: &SimulationPipelines,
+    bind_groups: &CoreBindGroups,
+    tile_width: u32,
+    tile_depth: u32,
+) {
+    for (pipeline, label, width, depth) in [
+        (
+            &pipelines.collapse_flux,
+            "Collapse Donor Transfers",
+            tile_width,
+            tile_depth,
+        ),
+        (
+            &pipelines.collapse_apply,
+            "Gather Collapse Transfers",
+            tile_width + 2,
+            tile_depth + 2,
+        ),
+    ] {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(label),
+            timestamp_writes: None,
+        });
+        pass.set_bind_group(0, &bind_groups.params, &[]);
+        pass.set_bind_group(1, &bind_groups.collapse, &[]);
+        pass.set_pipeline(pipeline);
+        pass.dispatch_workgroups(width.div_ceil(16), depth.div_ceil(16), 1);
+    }
 }
 
 /// Update simulation parameters buffer.
@@ -82,7 +118,18 @@ pub fn update_params(
     cell_size: f32,
     dt: f32,
 ) {
-    update_params_tile(queue, params_buffer, width, depth, cell_size, dt, 0, 0, width, depth);
+    update_params_tile(
+        queue,
+        params_buffer,
+        width,
+        depth,
+        cell_size,
+        dt,
+        0,
+        0,
+        width,
+        depth,
+    );
 }
 
 /// Update simulation parameters for a specific tile.
@@ -111,13 +158,13 @@ pub fn update_params_tile(
         bytemuck::cast(cell_size),
         bytemuck::cast(dt),
         bytemuck::cast(9.81f32),
-        bytemuck::cast(0.02f32),    // Manning's n coefficient
-        bytemuck::cast(1000.0f32),  // rho_water
-        bytemuck::cast(2650.0f32),  // rho_sediment
-        bytemuck::cast(0.001f32),   // water_viscosity
-        bytemuck::cast(0.045f32),   // critical_shields
-        bytemuck::cast(0.01f32),    // k_erosion
-        bytemuck::cast(0.05f32),    // max_erosion_per_step
+        bytemuck::cast(0.02f32),   // Manning's n coefficient
+        bytemuck::cast(1000.0f32), // rho_water
+        bytemuck::cast(2650.0f32), // rho_sediment
+        bytemuck::cast(0.001f32),  // water_viscosity
+        bytemuck::cast(0.045f32),  // critical_shields
+        bytemuck::cast(0.01f32),   // k_erosion
+        bytemuck::cast(0.05f32),   // max_erosion_per_step
         0,
         0,
     ];

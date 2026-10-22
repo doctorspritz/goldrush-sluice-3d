@@ -58,3 +58,47 @@ fn dry_dump_and_idle_player_do_not_create_water() {
     }
     assert!((s.stored_water_m3() - before).abs() < 1e-7);
 }
+#[test]
+fn clean_river_source_dilutes_all_suspension_without_creating_solid() {
+    let mut s = mining_sim::Session::new();
+    let n = mining_sim::site::WIDTH.pow(2);
+    s.site.hydraulic.suspended_sediment = vec![0.01; n];
+    s.site.hydraulic.suspended_overburden = vec![0.02; n];
+    s.site.hydraulic.suspended_gravel = vec![0.03; n];
+    s.site.hydraulic.suspended_paydirt = vec![0.04; n];
+    s.site.hydraulic.suspended_gold_g = vec![0.1; n];
+    let mass = |site: &mining_sim::Site| {
+        [
+            &site.hydraulic.suspended_sediment,
+            &site.hydraulic.suspended_overburden,
+            &site.hydraulic.suspended_gravel,
+            &site.hydraulic.suspended_paydirt,
+        ]
+        .map(|field| {
+            field
+                .iter()
+                .enumerate()
+                .map(|(i, c)| *c as f64 * site.world.water_depth(i % 128, i / 128) as f64 * 0.0625)
+                .sum::<f64>()
+        })
+    };
+    let before = mass(&s.site);
+    let water = s.site.water_volume_m3();
+    let gold = s.site.remaining_gold();
+    let mut added = 0.;
+    for _ in 0..100 {
+        added += s.site.add_clean_inflow(
+            mining_sim::Vec3::new(mining_sim::Site::river_center(30.5), 0., 30.5),
+            0.12,
+            0.8,
+            0.05,
+        );
+    }
+    assert!((added - 0.6).abs() < 1e-5);
+    assert!((s.site.water_volume_m3() - water - added).abs() < 1e-10);
+    for (a, b) in before.into_iter().zip(mass(&s.site)) {
+        assert!((a - b).abs() < 1e-7, "source created solids: {a} -> {b}");
+    }
+    assert_eq!(gold, s.site.remaining_gold());
+    assert!(s.site.hydraulic.impact_dirty);
+}

@@ -370,9 +370,9 @@ pub fn update(
             HudText::Objective=>{
                 if game.demo { "FLOWING DEMO\n\nPaydirt and water are flowing.\nP pump · O feed · arrows set rates.\nNew shift starts a fresh claim.".into() }
                 else if s.sluice.concentrate.gold_g>=GOLD_TARGET_G {format!("FIRST GOLD RECOVERED\n\n{:.2} g from your claim.\nKeep digging, or save your shift.",s.sluice.concentrate.gold_g)}
-                else if s.sluice.placement.is_none(){"01   BUILD YOUR SETUP\n\nWalk to the yellow hopper.\nB previews the sluice; click to place.".into()}
-                else if s.site.excavated.volume()<0.01{"02   BREAK GROUND\n\nEnter the excavator. Lower the\nbucket into the bank and hold Space.".into()}
-                else if s.delivered_m3<0.01{"03   FEED THE HOPPER\n\nLift the full bucket, swing left,\nand hold J over the hopper.".into()}
+                else if s.site.excavated.volume()<0.01{"01   WORK THE BANK\n\nEnter the cab. Hold Space while\nmoving the bucket through soil.\nG tucks the stick; Y curls the bucket.".into()}
+                else if s.delivered_m3<0.01{"02   LOAD THE HOPPER\n\nLift the bucket and swing over\nthe yellow hopper. Hold J to dump.".into()}
+                else if s.sluice.placement.is_none(){"03   CONNECT THE SLUICE\n\nWalk to the yellow hopper.\nB previews the sluice; click to place.".into()}
                 else if s.sluice.processed_m3<0.01{"04   START WASHING\n\nWalk to the sluice. P starts water,\nO opens the feed gate.".into()}
                 else{format!("05   LIFT THE MATS\n\nStop feed with O, let it clear,\nstop water with P, then C to collect.\nTarget: {GOLD_TARGET_G:.0} g")}
             },
@@ -386,7 +386,15 @@ pub fn update(
                 }else if foot {
                     format!("WASD walk   ·   Click to capture mouse / shovel   ·   Esc release   ·   E / Tab cab   ·   B place   ·   Shovel: click   ·   Hand load: {:.1} L",s.player.hand.volume()*1000.0)
                 }else{
-                    format!("WASD tracks   ·   Q / E swing   ·   R / F boom   ·   T / G stick   ·   Y / H curl   ·   Space cut   ·   J dump   |   Bucket {:.0}%",s.machine.bucket.volume()/mining_sim::machine::BUCKET_CAPACITY*100.0)
+                    let status=match s.machine.digging.reason {
+                        mining_sim::machine::DigLimit::None=>if s.machine.digging.excavated_m3>1e-9 {"Cutting"}else{"Move the bucket while holding Space to cut"},
+                        mining_sim::machine::DigLimit::Ground=>"Ground contact; hold Space to cut",
+                        mining_sim::machine::DigLimit::Bedrock=>"Bedrock contact; lift or tuck the bucket",
+                        mining_sim::machine::DigLimit::Capacity=>"Bucket full; lift and dump",
+                        mining_sim::machine::DigLimit::Force=>"Digging force limit; take a shallower cut",
+                        mining_sim::machine::DigLimit::Power=>"Hydraulic power limit",
+                    };
+                    format!("WASD tracks · Q / E swing · R / F boom · T / G stick · Y / H curl · Space cut · J dump\nBucket {:.0}% · Soil {:.1} kN · {}",s.machine.bucket.volume()/mining_sim::machine::BUCKET_CAPACITY*100.0,s.machine.digging.requested_force_n/1000.,status)
                 }
             },
             HudText::Message=>s.message.clone(),

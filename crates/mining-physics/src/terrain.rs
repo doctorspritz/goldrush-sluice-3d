@@ -33,17 +33,17 @@ impl Hydraulics {
     }
     pub(super) fn step_terrain(&mut self, s: &mut Session, dt: f32) -> Result<(), String> {
         let h = &self.terrain;
-        let w = &mut s.site.world;
         // Excavation/deposition and the pump edit the most recent readback. Only
         // geology/depth are uploaded here: preserve momentum and every separate
         // suspension channel. Full upload_from_world would silently zero three.
-        w.add_inflow(
+        let added = s.site.add_clean_inflow(
             Vec3::new(Site::river_center(30.5), 0.0, 30.5),
             0.12,
             0.8,
             dt,
         );
-        s.water_balance.external_inflow_m3 += (0.12_f32 * dt) as f64;
+        s.water_balance.external_inflow_m3 += added;
+        let w = &mut s.site.world;
         h.upload_terrain_only(&self.queue, w);
         if s.site.hydraulic.impact_dirty {
             self.queue.write_buffer(
