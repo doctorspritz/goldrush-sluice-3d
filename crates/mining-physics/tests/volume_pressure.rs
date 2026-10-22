@@ -57,9 +57,10 @@ fn volume_source_matches_linear_continuity_and_preserves_free_surfaces() {
     let moving = buffer(&device, &[0; 4], false);
     let divergence = buffer(&device, &[0; 4], false);
     let status = buffer(&device, &[0; 16], false);
+    let markers = buffer(&device, bytemuck::cast_slice(&[1u32]), false);
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
-        entries: &[0, 2, 4, 5, 6].map(|binding| wgpu::BindGroupLayoutEntry {
+        entries: &[0, 2, 4, 5, 6, 7].map(|binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
             ty: wgpu::BindingType::Buffer {
@@ -67,7 +68,7 @@ fn volume_source_matches_linear_continuity_and_preserves_free_surfaces() {
                     wgpu::BufferBindingType::Uniform
                 } else {
                     wgpu::BufferBindingType::Storage {
-                        read_only: binding == 2 || binding == 4,
+                        read_only: binding == 2 || binding == 4 || binding == 7,
                     }
                 },
                 has_dynamic_offset: false,
@@ -99,6 +100,10 @@ fn volume_source_matches_linear_continuity_and_preserves_free_surfaces() {
             wgpu::BindGroupEntry {
                 binding: 6,
                 resource: status.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: markers.as_entire_binding(),
             },
         ],
     });
@@ -184,6 +189,18 @@ fn volume_source_matches_linear_continuity_and_preserves_free_surfaces() {
             }
         }
     }
+    // A carried-water halo is not a new occupied volume cell. It must not
+    // create suction merely because the pressure stencil now includes it.
+    queue.write_buffer(&markers, 0, bytemuck::cast_slice(&[0u32]));
+    let (rhs, flag) = run(0, 4., 0.01, 1., 3.);
+    assert_eq!((rhs, flag), (3., 0));
+    let (rhs, flag) = run(0, 12., 0.01, 1., 3.);
+    assert_eq!(flag, 0);
+    assert!(
+        (rhs + 47.).abs() < 1e-5,
+        "halo still corrects positive excess"
+    );
+    queue.write_buffer(&markers, 0, bytemuck::cast_slice(&[1u32]));
     for (volume, dt, strength) in [
         (0., 0.01, 1.),
         (-1., 0.01, 1.),

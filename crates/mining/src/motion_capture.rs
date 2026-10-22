@@ -204,7 +204,9 @@ pub fn update(
             .filter(|p| p.path().extension().is_some_and(|p| p == "png"))
             .count();
         if finished.elapsed().as_secs_f64() > 1. && written == capture.frames.len() {
-            let report = serde_json::json!({"source":"native Bevy screenshot, actual GPU output; capture overhead affects cadence","wall_seconds":capture.recording.unwrap().elapsed().as_secs_f64(),"frames":capture.frames,"water_presentation":water.presentation_report(),"water_balance_error_m3":game.session.water_balance_error_m3(),"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
+            let (passed, advancing_intervals) =
+                recording_status(&capture.frames, capture.frozen, game.session.paused);
+            let report = serde_json::json!({"source":"native Bevy screenshot, actual GPU output; capture overhead affects cadence","passed":passed,"expected_frozen":capture.frozen,"paused":game.session.paused,"session_message":game.session.message,"advancing_intervals":advancing_intervals,"wall_seconds":capture.recording.unwrap().elapsed().as_secs_f64(),"frames":capture.frames,"water_presentation":water.presentation_report(),"water_balance_error_m3":game.session.water_balance_error_m3(),"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
             std::fs::write(
                 directory.join("frames.json"),
                 serde_json::to_vec(&report).unwrap(),
@@ -215,7 +217,17 @@ pub fn update(
                 written,
                 directory.display()
             );
-            exit.write(AppExit::Success);
+            if !passed {
+                eprintln!(
+                    "MOTION CAPTURE FAILED: paused={}, advancing_intervals={}, message={}",
+                    game.session.paused, advancing_intervals, game.session.message
+                );
+            }
+            exit.write(if passed {
+                AppExit::Success
+            } else {
+                AppExit::error()
+            });
             capture.directory = None;
         } else if finished.elapsed().as_secs_f64() > 10. {
             eprintln!(
@@ -257,7 +269,7 @@ pub fn update(
     let sluice = &game.session.sluice;
     let tracks = water_tracks(sluice, &capture.ids);
     let name = format!("frame-{:04}.png", capture.frames.len());
-    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"water_debug":capture.water_debug,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3});
+    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"paused":game.session.paused,"session_message":game.session.message,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"water_debug":capture.water_debug,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3});
     capture.frames.push(record);
     commands
         .spawn(Screenshot::primary_window())
@@ -304,5 +316,79 @@ mod tests {
     fn fresh_claim_motion_capture_does_not_require_an_installed_sluice() {
         let session = mining_sim::Session::new();
         assert!(super::water_tracks(&session.sluice, &Default::default()).is_empty());
+    }
+}
+
+fn recording_status(frames: &[serde_json::Value], frozen: bool, paused: bool) -> (bool, usize) {
+    let Some(times) = frames
+        .iter()
+        .map(|r| r.get("sim_time").and_then(serde_json::Value::as_f64))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return (false, 0);
+    };
+    let advancing = times.windows(2).filter(|p| p[1] > p[0]).count();
+    let monotone = times.windows(2).all(|p| p[1] >= p[0]);
+    let passed = times.len() >= 2
+        && monotone
+        && if frozen {
+            advancing == 0
+        } else {
+            !paused && advancing > 0
+        };
+    (passed, advancing)
+}
+
+#[cfg(test)]
+mod recording_tests {
+    use super::recording_status;
+    fn frames(times: &[f64]) -> Vec<serde_json::Value> {
+        times
+            .iter()
+            .map(|t| serde_json::json!({"sim_time":t}))
+            .collect()
+    }
+    #[test]
+    fn live_capture_rejects_static_or_missing_progress() {
+        assert_eq!(
+            recording_status(&frames(&[1., 1., 1.]), false, false),
+            (false, 0)
+        );
+        assert_eq!(recording_status(&[], false, false), (false, 0));
+        assert_eq!(
+            recording_status(&[serde_json::json!({})], false, false),
+            (false, 0)
+        );
+    }
+    #[test]
+    fn frozen_capture_requires_a_constant_known_clock() {
+        assert_eq!(recording_status(&frames(&[1., 1.]), true, true), (true, 0));
+        assert_eq!(recording_status(&frames(&[1., 1.]), true, false), (true, 0));
+        assert_eq!(
+            recording_status(&frames(&[1., 1.1]), true, false),
+            (false, 1)
+        );
+        assert_eq!(
+            recording_status(&[serde_json::json!({}), serde_json::json!({})], true, false),
+            (false, 0)
+        );
+    }
+    #[test]
+    fn live_capture_records_monotone_progress_and_holds() {
+        assert_eq!(
+            recording_status(&frames(&[1., 1.1, 1.1, 1.2]), false, false),
+            (true, 2)
+        );
+    }
+    #[test]
+    fn paused_or_rewound_capture_is_not_a_pass() {
+        assert_eq!(
+            recording_status(&frames(&[1., 1.1]), false, true),
+            (false, 1)
+        );
+        assert_eq!(
+            recording_status(&frames(&[1., 0.9, 1.]), false, false),
+            (false, 1)
+        );
     }
 }

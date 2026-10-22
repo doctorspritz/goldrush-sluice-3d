@@ -38,6 +38,13 @@ fn checked_add(index:u32,value:f32) {
  if !finite(value) || abs(value)>WIDE_MAX_UNITS/f32(max(params.count,1u)) {fail(1u);return;}
  wide_add(index,value);
 }
+// Reflected stencil entries can share a destination. Bound the whole-particle
+// moment before weighting; the positive quadratic weights sum to at most one,
+// so folded contributions retain the signed-64 accumulator margin.
+fn scatter_add(index:u32,value:f32,particle_moment:f32) {
+ if !finite(particle_moment) || abs(particle_moment)>WIDE_MAX_UNITS/f32(max(params.count,1u)) {fail(1u);return;}
+ checked_add(index,value);
+}
 fn weight(x:f32)->f32 {
  let a=abs(x);if a<.5 {return .75-a*a;}if a<1.5 {return .5*(1.5-a)*(1.5-a);}return 0.;
 }
@@ -76,16 +83,18 @@ fn scatter(@builtin(global_invocation_id) invocation:vec3<u32>) {
   let center=vec3<i32>(floor(grid_position+vec3(.5)));let frac=grid_position-vec3<f32>(center);
   for(var dz=-1;dz<=1;dz++) {for(var dy=-1;dy<=1;dy++) {for(var dx=-1;dx<=1;dx++) {
    let delta=vec3(dx,dy,dz);let q=center+delta;
-   if any(q<vec3(0)) || any(q>=vec3<i32>(shape)) {continue;}
+   let reflected=mac_wall_sample(q,axis,u32(params.sediment.pad));
+   if !reflected.valid {continue;}
+   let destination=reflected.node;
    let w=weight(frac.x-f32(dx))*weight(frac.y-f32(dy))*weight(frac.z-f32(dz));if w<=0. {continue;}
    let offset=(vec3<f32>(q)+stagger)*params.cell_size-p.xyz;
    let body=select(0.,params.gravity*params.dt,axis==1u);
-   let velocity=velocities[id][axis]+dot(rows[axis],offset)+select(0.,body,solid);
-   let v=volume*w;let index=1u+8u*(face_base+(u32(q.z)*shape.y+u32(q.y))*shape.x+u32(q.x));
+   let velocity=(velocities[id][axis]+dot(rows[axis],offset)+select(0.,body,solid))*reflected.sign;
+   let v=volume*w;let index=1u+8u*(face_base+(u32(destination.z)*shape.y+u32(destination.y))*shape.x+u32(destination.x));
    if solid {
-    checked_add(index+2u,v);checked_add(index+3u,v*bc.x);checked_add(index+4u,v*rho*bc.x);
-    checked_add(index+5u,v*rho*bc.x*velocity);checked_add(index+6u,v*bc.y/rho);checked_add(index+7u,v*bc.y*velocity);
-   } else {checked_add(index,v);checked_add(index+1u,v*velocity);}
+    scatter_add(index+2u,v,volume);scatter_add(index+3u,v*bc.x,volume*bc.x);scatter_add(index+4u,v*rho*bc.x,volume*rho*bc.x);
+    scatter_add(index+5u,v*rho*bc.x*velocity,volume*rho*bc.x*velocity);scatter_add(index+6u,v*bc.y/rho,volume*bc.y/rho);scatter_add(index+7u,v*bc.y*velocity,volume*bc.y*velocity);
+   } else {scatter_add(index,v,volume);scatter_add(index+1u,v*velocity,volume*velocity);}
   }}}
   face_base+=shape.x*shape.y*shape.z;
  }

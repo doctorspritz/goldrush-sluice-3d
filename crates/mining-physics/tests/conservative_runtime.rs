@@ -565,3 +565,300 @@ fn force_free_apic_flip_blends_preserve_angular_momentum_without_creating_energy
         "force-free transfer violated angular/energy budget"
     );
 }
+
+fn wall_cloud(wall: u32) -> Vec<Vec3> {
+    let normal = wall as usize / 2;
+    let mut points = Vec::new();
+    for a in 0..6 {
+        for b in 0..8 {
+            for c in 0..8 {
+                let mut p = Vec3::ZERO;
+                let distance = (a as f32 + 0.5) * 0.005;
+                p[normal] = if wall.is_multiple_of(2) {
+                    distance
+                } else {
+                    0.12 - distance
+                };
+                p[(normal + 1) % 3] = 0.04 + (b as f32 + 0.5) * 0.005;
+                p[(normal + 2) % 3] = 0.04 + (c as f32 + 0.5) * 0.005;
+                points.push(p);
+            }
+        }
+    }
+    points
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn closed_wall_transfer_preserves_compatible_affine_flow_without_adding_energy() {
+    let (device, queue) = device();
+    let mut results = Vec::new();
+    for wall in 0..6u32 {
+        for blend in [0., 0.97, 1.] {
+            let mut p = wall_cloud(wall);
+            let normal = wall as usize / 2;
+            let tangent = (normal + 1) % 3;
+            let mut sim = configured(&device, p.len());
+            sim.open_boundaries = 63 & !(1 << wall);
+            sim.flip_ratio = blend;
+            sim.density_projection_enabled = false;
+            let plane = if wall.is_multiple_of(2) { 0. } else { 0.12 };
+            let mut diagonal = Vec3::ZERO;
+            diagonal[normal] = 0.3;
+            diagonal[tangent] = -0.3;
+            let affine = Mat3::from_diagonal(diagonal);
+            let mut v: Vec<_> = p
+                .iter()
+                .map(|p| {
+                    let mut v = Vec3::splat(0.1);
+                    v[normal] = 0.3 * (p[normal] - plane);
+                    v[tangent] = 0.1 - 0.3 * (p[tangent] - 0.06);
+                    v
+                })
+                .collect();
+            let expected = v.clone();
+            let mut c = vec![affine; p.len()];
+            let rho = vec![1.; p.len()];
+            let weights = vec![1.; p.len()];
+            sim.set_particle_volumes(weights.clone());
+            let before = generalized_budget(&p, &v, &c, &weights);
+            sim.step(
+                &device,
+                &queue,
+                &mut p,
+                &mut v,
+                &mut c,
+                &rho,
+                &[0; 12 * 12 * 12],
+                None,
+                None,
+                1e-7,
+                0.,
+                0.,
+                0,
+            );
+            assert!(sim.take_phase_error().is_none());
+            let velocity_error = v
+                .iter()
+                .zip(&expected)
+                .map(|(a, b)| (*a - *b).length())
+                .fold(0f32, f32::max);
+            let affine_error = c
+                .iter()
+                .map(|c| {
+                    (c.x_axis - affine.x_axis)
+                        .length()
+                        .max((c.y_axis - affine.y_axis).length())
+                        .max((c.z_axis - affine.z_axis).length())
+                })
+                .fold(0f32, f32::max);
+            let energy_ratio = generalized_budget(&p, &v, &c, &weights).1 / before.1;
+            results.push(serde_json::json!({"wall":wall,"blend":blend,"velocity_error":velocity_error,"affine_error":affine_error,"energy_ratio":energy_ratio,
+            "passed":velocity_error<2e-6&&affine_error<2e-5&&energy_ratio<=1.000002}));
+        }
+    }
+    eprintln!(
+        "compatible wall affine cases={}: {}",
+        results.len(),
+        serde_json::to_string(&results).unwrap()
+    );
+    if let Ok(path) = std::env::var("SLUICE_WALL_AFFINE_REPORT") {
+        std::fs::write(path, serde_json::to_vec_pretty(&results).unwrap()).unwrap();
+    }
+    assert!(
+        results.iter().all(|r| r["passed"] == true),
+        "closed-wall APIC transfer distorted an admissible affine field or added energy"
+    );
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn freefall_parallel_to_closed_walls_retains_full_gravity_and_phase_comotion() {
+    let (device, queue) = device();
+    let mut results = Vec::new();
+    for wall in [0u32, 1, 4, 5] {
+        for dt in [1. / 120., 1. / 240.] {
+            let mut p = wall_cloud(wall);
+            let nw = p.len();
+            for i in 0..24 {
+                p.push(p[i * 13] + Vec3::splat(0.0001));
+            }
+            let mut rho = vec![1.; p.len()];
+            for (i, r) in rho[nw..].iter_mut().enumerate() {
+                *r = if i % 2 == 0 { 2.65 } else { 19.3 };
+            }
+            let mut weights = vec![1.; nw];
+            weights.extend([1e-4; 24]);
+            let mut sim = configured(&device, p.len());
+            sim.open_boundaries = 63 & !(1 << wall);
+            sim.density_projection_enabled = false;
+            sim.set_particle_volumes(weights);
+            sim.upload_grain_diameters(&queue, nw, &[0.0002; 24]);
+            let mut v = vec![Vec3::new(0., 0.2, 0.); p.len()];
+            let mut c = vec![Mat3::ZERO; p.len()];
+            sim.step(
+                &device,
+                &queue,
+                &mut p,
+                &mut v,
+                &mut c,
+                &rho,
+                &[0; 12 * 12 * 12],
+                None,
+                None,
+                dt,
+                -9.81,
+                0.,
+                80,
+            );
+            assert!(sim.take_phase_error().is_none());
+            let expected = Vec3::new(0., 0.2 - 9.81 * dt, 0.);
+            let water_error = v[..nw]
+                .iter()
+                .map(|v| (*v - expected).length())
+                .fold(0f32, f32::max);
+            let grain_error = v[nw..]
+                .iter()
+                .map(|v| (*v - expected).length())
+                .fold(0f32, f32::max);
+            results.push(serde_json::json!({"wall":wall,"dt":dt,"water_error":water_error,"grain_error":grain_error,"passed":water_error<2e-6&&grain_error<2e-6}));
+        }
+    }
+    eprintln!(
+        "wall-parallel freefall: {}",
+        serde_json::to_string(&results).unwrap()
+    );
+    if let Ok(path) = std::env::var("SLUICE_WALL_FREEFALL_REPORT") {
+        std::fs::write(path, serde_json::to_vec_pretty(&results).unwrap()).unwrap();
+    }
+    assert!(
+        results.iter().all(|r| r["passed"] == true),
+        "wall extension changed physical gravity or separated comoving phases"
+    );
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn unrepresentable_water_carrier_refuses_without_publishing_state() {
+    let (device, queue) = device();
+    let mut p = cloud();
+    let mut sim = configured(&device, p.len());
+    sim.set_particle_volumes(vec![1e-20; p.len()]);
+    let mut v = vec![Vec3::new(0.03, 0.01, -0.02); p.len()];
+    let mut c = vec![Mat3::ZERO; p.len()];
+    let before = (p.clone(), v.clone(), c.clone());
+    let rho = vec![1.; p.len()];
+    sim.step(
+        &device,
+        &queue,
+        &mut p,
+        &mut v,
+        &mut c,
+        &rho,
+        &[0; 12 * 12 * 12],
+        None,
+        None,
+        1. / 120.,
+        -9.81,
+        0.,
+        80,
+    );
+    let flag = sim
+        .take_phase_error()
+        .expect("unrepresentable occupied water was accepted");
+    assert_eq!(flag & 4, 4);
+    assert_eq!(
+        (p, v, c),
+        before,
+        "refused support published transient particle state"
+    );
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn sparse_free_surface_pressure_has_closed_linear_and_angular_impulses() {
+    let (device, queue) = device();
+    let mut results = Vec::new();
+    for nw in [1usize, 7, 53] {
+        for shift in [0.49, 0.51] {
+            for blend in [0., 0.97] {
+                let mut p: Vec<_> = (0..nw)
+                    .map(|i| {
+                        Vec3::new(
+                            4. + shift + ((i * 7) % 17) as f32 * 0.11,
+                            4. + shift + ((i * 11) % 19) as f32 * 0.09,
+                            4. + shift + ((i * 13) % 23) as f32 * 0.07,
+                        ) * 0.01
+                    })
+                    .collect();
+                let ns = nw.div_ceil(2);
+                for i in 0..ns {
+                    p.push(p[i] + Vec3::new(0.0001, -0.0001, 0.00005));
+                }
+                let mut rho = vec![1.; p.len()];
+                for (i, r) in rho[nw..].iter_mut().enumerate() {
+                    *r = if i % 2 == 0 { 2.65 } else { 19.3 };
+                }
+                let mut weights: Vec<_> = (0..nw).map(|i| 0.5 + (i % 5) as f32 * 0.25).collect();
+                weights.extend(vec![0.1; ns]);
+                let mass: Vec<_> = rho.iter().zip(&weights).map(|(r, v)| r * v).collect();
+                let mut v: Vec<_> = (0..p.len())
+                    .map(|i| {
+                        if i < nw {
+                            Vec3::new(0.03 + 0.007 * (i as f32).sin(), 0.01, -0.02)
+                        } else {
+                            Vec3::new(-0.01, 0.005, 0.01)
+                        }
+                    })
+                    .collect();
+                let mut c = vec![Mat3::ZERO; p.len()];
+                let initial_p = momentum(&p, &v, &rho, &weights).0;
+                let initial = generalized_budget(&p, &v, &c, &mass);
+                let mut sim = configured(&device, p.len());
+                sim.flip_ratio = blend;
+                sim.density_projection_enabled = false;
+                sim.set_particle_volumes(weights.clone());
+                sim.upload_grain_diameters(&queue, nw, &vec![0.0002; ns]);
+                sim.step(
+                    &device,
+                    &queue,
+                    &mut p,
+                    &mut v,
+                    &mut c,
+                    &rho,
+                    &[0; 12 * 12 * 12],
+                    None,
+                    None,
+                    1. / 120.,
+                    0.,
+                    0.,
+                    80,
+                );
+                assert!(sim.take_phase_error().is_none());
+                let linear_error =
+                    (momentum(&p, &v, &rho, &weights).0 - initial_p).length() / initial_p.length();
+                let final_budget = generalized_budget(&p, &v, &c, &mass);
+                let angular_error = (final_budget.0 - initial.0).length();
+                let max_speed = v.iter().map(|v| v.length()).fold(0f32, f32::max);
+                let energy_ratio = final_budget.1 / initial.1;
+                results.push(
+                    serde_json::json!({"water":nw,"grains":ns,"shift":shift,"blend":blend,
+            "linear_error":linear_error,"angular_error":angular_error,"max_speed":max_speed,
+            "energy_ratio_observed":energy_ratio,"energy_gate_passed":energy_ratio<=1.000002,
+            "momentum_passed":linear_error<1e-6&&angular_error<1e-6&&max_speed<0.5}),
+                );
+            }
+        }
+    }
+    eprintln!(
+        "sparse pressure support budgets: {}",
+        serde_json::to_string(&results).unwrap()
+    );
+    if let Ok(path) = std::env::var("SLUICE_SPARSE_PRESSURE_REPORT") {
+        std::fs::write(path, serde_json::to_vec_pretty(&results).unwrap()).unwrap();
+    }
+    assert!(
+        results.iter().all(|r| r["momentum_passed"] == true),
+        "sparse free-surface pressure introduced net impulse or reached clipping"
+    );
+}

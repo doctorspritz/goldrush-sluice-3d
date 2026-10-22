@@ -11,6 +11,9 @@ fn main() {
     } else {
         mining_physics::Hydraulics::new().unwrap()
     };
+    if args.iter().any(|a| a == "--conservative") {
+        solver = solver.with_conservative_phases();
+    }
     let warmup: u32 = args.get(4).and_then(|n| n.parse().ok()).unwrap_or(0);
     for _ in 0..warmup {
         s.step(Controls::default());

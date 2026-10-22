@@ -178,14 +178,23 @@ fn add_density_rhs(@builtin(global_invocation_id) id:vec3<u32>) {
         atomicOr(&volume_status[0],16u);return;
     }
     var excess=moving-params.rest_density;
-    let q=vec3<i32>(id);var surface=false;
+    let q=vec3<i32>(id);var surface=!volume_home_water(q);
     for(var axis=0u;axis<3u;axis++) {
         var unit=vec3(0);unit[axis]=1;
-        surface=surface || phase_cell_type(q+unit)==CELL_AIR || phase_cell_type(q-unit)==CELL_AIR;
+        surface=surface || !volume_home_water(q+unit) || !volume_home_water(q-unit);
     }
     if surface {excess=max(excess,0.);}
     let volume_rate=strength*excess/(params.rest_density*params.dt);
     let result=velocity_divergence[index]-volume_rate;
     if !source_finite(volume_rate) || !source_finite(result) {atomicOr(&volume_status[0],16u);return;}
     velocity_divergence[index]=result;
+}
+
+@group(0) @binding(7) var<storage,read> volume_water_markers:array<u32>;
+fn volume_home_water(q:vec3<i32>)->bool {
+ let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
+ let kind=phase_cell_type(q);
+ if kind==CELL_SOLID {return true;}
+ if any(q<vec3(0)) || any(q>=shape) {return false;}
+ return volume_water_markers[cell_index(u32(q.x),u32(q.y),u32(q.z))]>0u;
 }

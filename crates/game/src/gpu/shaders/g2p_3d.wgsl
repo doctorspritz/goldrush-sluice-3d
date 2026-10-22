@@ -167,22 +167,25 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_u.z + dk;
-        if (nk < 0 || nk >= depth) { continue; }
+        if !phase && (nk < 0 || nk >= depth) { continue; }
         let wz = quadratic_bspline_1d(frac_u.z - f32(dk));
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
             let nj = base_u.y + dj;
-            if (nj < 0 || nj >= height) { continue; }
+            if !phase && (nj < 0 || nj >= height) { continue; }
             let wy = quadratic_bspline_1d(frac_u.y - f32(dj));
 
             for (var di: i32 = -1; di <= 1; di++) {
                 let ni = base_u.x + di;
-                if (ni < 0 || ni > width) { continue; }  // U has width+1 columns
+                if !phase && (ni < 0 || ni > width) { continue; }  // U has width+1 columns
 
                 let w = quadratic_bspline_1d(frac_u.x - f32(di)) * wy * wz;
                 if (w <= 0.0) { continue; }
 
-                let idx = u_index(ni, nj, nk);
+                var reflected=MacWallSample(vec3(ni,nj,nk),1.,true);
+                if phase {reflected=mac_wall_sample(reflected.node,0u,params._pad1);}
+                if !reflected.valid {continue;}
+                let idx = u_index(reflected.node.x, reflected.node.y, reflected.node.z);
                 let offset = vec3<f32>(
                     f32(ni) * cell_size - pos.x,
                     (f32(nj) + 0.5) * cell_size - pos.y,
@@ -193,15 +196,19 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 if phase {
                     let body=select(0.,-sediment_params.gravity*params.dt,0u==1u);
                     let predictor=old_particle_vel.x+dot(c_col0[id.x],offset)+body;
-                    u_val=phase_face_velocity(0u,idx,u_val,predictor,density,id.x);
-                    u_old=phase_water(0u,idx);
+                    u_val=reflected.sign*phase_face_velocity(0u,idx,u_val,predictor*reflected.sign,density,id.x);
+                    u_old=reflected.sign*phase_water(0u,idx);
                 }
                 new_velocity.x += w * u_val;
                 old_grid_vel.x += w * u_old;
                 weight_sum.x += w;
                 if is_sediment && !phase {water_velocity.x += w * water_grid_u[idx];}
-                new_c_row0 += offset * (w * u_val * d_inv);
-                if phase && !is_sediment {old_grid_c0 += offset * (w * u_old * d_inv);}
+                // Use the same local reference in both affine sums. A constant
+                // velocity cancels analytically; centering avoids amplifying its
+                // floating point first-moment residue by 4/h^2 at walls.
+                let affine_reference=select(0.,old_particle_vel.x,phase && !is_sediment);
+                new_c_row0 += offset * (w * (u_val-affine_reference) * d_inv);
+                if phase && !is_sediment {old_grid_c0 += offset * (w * (u_old-old_particle_vel.x) * d_inv);}
             }
         }
     }
@@ -213,23 +220,26 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_v.z + dk;
-        if (nk < 0 || nk >= depth) { continue; }
+        if !phase && (nk < 0 || nk >= depth) { continue; }
         let wz = quadratic_bspline_1d(frac_v.z - f32(dk));
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
             let nj = base_v.y + dj;
-            if (nj < 0 || nj > height) { continue; }  // V has height+1 rows
+            if !phase && (nj < 0 || nj > height) { continue; }  // V has height+1 rows
 
             let wy = quadratic_bspline_1d(frac_v.y - f32(dj));
 
             for (var di: i32 = -1; di <= 1; di++) {
                 let ni = base_v.x + di;
-                if (ni < 0 || ni >= width) { continue; }
+                if !phase && (ni < 0 || ni >= width) { continue; }
 
                 let w = quadratic_bspline_1d(frac_v.x - f32(di)) * wy * wz;
                 if (w <= 0.0) { continue; }
 
-                let idx = v_index(ni, nj, nk);
+                var reflected=MacWallSample(vec3(ni,nj,nk),1.,true);
+                if phase {reflected=mac_wall_sample(reflected.node,1u,params._pad1);}
+                if !reflected.valid {continue;}
+                let idx = v_index(reflected.node.x, reflected.node.y, reflected.node.z);
                 let offset = vec3<f32>(
                     (f32(ni) + 0.5) * cell_size - pos.x,
                     f32(nj) * cell_size - pos.y,
@@ -240,15 +250,19 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 if phase {
                     let body=select(0.,-sediment_params.gravity*params.dt,1u==1u);
                     let predictor=old_particle_vel.y+dot(c_col1[id.x],offset)+body;
-                    v_val=phase_face_velocity(1u,idx,v_val,predictor,density,id.x);
-                    v_old=phase_water(1u,idx);
+                    v_val=reflected.sign*phase_face_velocity(1u,idx,v_val,predictor*reflected.sign,density,id.x);
+                    v_old=reflected.sign*phase_water(1u,idx);
                 }
                 new_velocity.y += w * v_val;
                 old_grid_vel.y += w * v_old;
                 weight_sum.y += w;
                 if is_sediment && !phase {water_velocity.y += w * water_grid_v[idx];}
-                new_c_row1 += offset * (w * v_val * d_inv);
-                if phase && !is_sediment {old_grid_c1 += offset * (w * v_old * d_inv);}
+                // Use the same local reference in both affine sums. A constant
+                // velocity cancels analytically; centering avoids amplifying its
+                // floating point first-moment residue by 4/h^2 at walls.
+                let affine_reference=select(0.,old_particle_vel.y,phase && !is_sediment);
+                new_c_row1 += offset * (w * (v_val-affine_reference) * d_inv);
+                if phase && !is_sediment {old_grid_c1 += offset * (w * (v_old-old_particle_vel.y) * d_inv);}
             }
         }
     }
@@ -260,22 +274,25 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_w.z + dk;
-        if (nk < 0 || nk > depth) { continue; }  // W has depth+1 layers
+        if !phase && (nk < 0 || nk > depth) { continue; }  // W has depth+1 layers
         let wz = quadratic_bspline_1d(frac_w.z - f32(dk));
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
             let nj = base_w.y + dj;
-            if (nj < 0 || nj >= height) { continue; }
+            if !phase && (nj < 0 || nj >= height) { continue; }
             let wy = quadratic_bspline_1d(frac_w.y - f32(dj));
 
             for (var di: i32 = -1; di <= 1; di++) {
                 let ni = base_w.x + di;
-                if (ni < 0 || ni >= width) { continue; }
+                if !phase && (ni < 0 || ni >= width) { continue; }
 
                 let w = quadratic_bspline_1d(frac_w.x - f32(di)) * wy * wz;
                 if (w <= 0.0) { continue; }
 
-                let idx = w_index(ni, nj, nk);
+                var reflected=MacWallSample(vec3(ni,nj,nk),1.,true);
+                if phase {reflected=mac_wall_sample(reflected.node,2u,params._pad1);}
+                if !reflected.valid {continue;}
+                let idx = w_index(reflected.node.x, reflected.node.y, reflected.node.z);
                 let offset = vec3<f32>(
                     (f32(ni) + 0.5) * cell_size - pos.x,
                     (f32(nj) + 0.5) * cell_size - pos.y,
@@ -286,15 +303,19 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 if phase {
                     let body=select(0.,-sediment_params.gravity*params.dt,2u==1u);
                     let predictor=old_particle_vel.z+dot(c_col2[id.x],offset)+body;
-                    w_val=phase_face_velocity(2u,idx,w_val,predictor,density,id.x);
-                    w_old=phase_water(2u,idx);
+                    w_val=reflected.sign*phase_face_velocity(2u,idx,w_val,predictor*reflected.sign,density,id.x);
+                    w_old=reflected.sign*phase_water(2u,idx);
                 }
                 new_velocity.z += w * w_val;
                 old_grid_vel.z += w * w_old;
                 weight_sum.z += w;
                 if is_sediment && !phase {water_velocity.z += w * water_grid_w[idx];}
-                new_c_row2 += offset * (w * w_val * d_inv);
-                if phase && !is_sediment {old_grid_c2 += offset * (w * w_old * d_inv);}
+                // Use the same local reference in both affine sums. A constant
+                // velocity cancels analytically; centering avoids amplifying its
+                // floating point first-moment residue by 4/h^2 at walls.
+                let affine_reference=select(0.,old_particle_vel.z,phase && !is_sediment);
+                new_c_row2 += offset * (w * (w_val-affine_reference) * d_inv);
+                if phase && !is_sediment {old_grid_c2 += offset * (w * (w_old-old_particle_vel.z) * d_inv);}
             }
         }
     }

@@ -781,6 +781,46 @@ impl Hydraulics {
                 let residual = l.dem.complete_static_contacts(&sdf, &wetness);
                 l.dem.contact_stage_ms[0] += correction_started.elapsed().as_secs_f64() * 1000.;
                 if residual > 0.01 {
+                    if let Ok(path) = std::env::var("SLUICE_CONTACT_FAILURE_DUMP") {
+                        let mut worst = None;
+                        let mut maximum = 0f32;
+                        for (index, body) in l.dem.clumps.iter().enumerate() {
+                            let template = &l.dem.templates[body.template_idx];
+                            for (sphere, offset) in template.local_offsets.iter().enumerate() {
+                                let point = body.position + body.rotation * *offset;
+                                let (distance, gradient) = sim3d::clump::sample_sdf_with_gradient(
+                                    sdf.sdf,
+                                    point,
+                                    sdf.grid_offset,
+                                    sdf.grid_width,
+                                    sdf.grid_height,
+                                    sdf.grid_depth,
+                                    sdf.cell_size,
+                                );
+                                let relative = (template.particle_radius - distance)
+                                    / template.particle_radius;
+                                if relative > maximum {
+                                    maximum = relative;
+                                    worst = Some(
+                                        serde_json::json!({"index":index,"sphere":sphere,"position":body.position.to_array(),"velocity":body.velocity.to_array(),"rotation":body.rotation.to_array(),"angular_velocity":body.angular_velocity.to_array(),"point":point.to_array(),"distance":distance,"gradient":gradient.to_array(),"relative":relative,
+                                        "local_offsets":template.local_offsets.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"radius":template.particle_radius,"particle_mass":template.particle_mass,"mass":template.mass,"inertia_inv":template.inertia_inv_local.to_cols_array(),"bounding_radius":template.bounding_radius}),
+                                    );
+                                }
+                            }
+                        }
+                        eprintln!(
+                            "STATIC CONTACT FAILURE: sim={} substep={} worst={}",
+                            s.sim_time,
+                            substep,
+                            worst.as_ref().unwrap_or(&serde_json::Value::Null)
+                        );
+                        let report = serde_json::json!({"sim_time":s.sim_time,"substep":substep,"residual":residual,"worst":worst,"grid":[sdf.grid_width,sdf.grid_height,sdf.grid_depth],"cell_size":sdf.cell_size,"grid_offset":sdf.grid_offset.to_array(),"sdf":sdf.sdf});
+                        if let Err(error) =
+                            std::fs::write(path, serde_json::to_vec(&report).unwrap())
+                        {
+                            eprintln!("Contact diagnostic write failed: {error}");
+                        }
+                    }
                     return Err(format!("Static contacts did not converge (relative penetration {residual}); material retained"));
                 }
             }

@@ -207,8 +207,9 @@ impl PhaseTransfer3D {
             label: Some("Conservative phase transfer"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}\n{}",
+                    "{}\n{}\n{}\n{}",
                     include_str!("shaders/wide_sum.wgsl"),
+                    include_str!("shaders/mac_wall_3d.wgsl"),
                     include_str!("shaders/sample_sdf_3d.wgsl"),
                     include_str!("shaders/phase_transfer_3d.wgsl")
                 )
@@ -336,7 +337,12 @@ impl PhaseTransfer3D {
                 reference_volume,
                 capacity: self.capacity,
                 face_counts: self.face_counts,
-                sediment,
+                // Standalone phase operators and gather default to open faces.
+                // The runtime writes its actual mask after prepare.
+                sediment: SedimentParams3D {
+                    _pad: [63.],
+                    ..sediment
+                },
             }),
         );
     }
@@ -416,8 +422,8 @@ impl PhaseTransfer3D {
         pass.dispatch_workgroups(self.shape.into_iter().product::<u32>().div_ceil(128), 1, 1);
     }
 
-    /// Reuse the otherwise unused sediment padding for the volume boundary
-    /// mask. Call after prepare; physical drag never reads this padding.
+    /// Share the boundary mask between cell support and paired affine transfers.
+    /// Call after prepare; physical drag never reads this sediment padding.
     pub fn set_volume_boundaries(&self, queue: &wgpu::Queue, open: u32) {
         assert!(open <= 63);
         queue.write_buffer(
@@ -426,6 +432,71 @@ impl PhaseTransfer3D {
             bytemuck::bytes_of(&(open as f32)),
         );
     }
+    /// Classify pressure cells from actual carrier support, retaining solids.
+    pub fn pressure_support(
+        &self,
+        device: &wgpu::Device,
+        parameters: &wgpu::Buffer,
+        cell_types: &wgpu::Buffer,
+    ) -> (wgpu::ComputePipeline, wgpu::BindGroup) {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Carried water pressure support"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("shaders/wide_sum.wgsl"),
+                    include_str!("shaders/phase_pressure_cells_3d.wgsl")
+                )
+                .into(),
+            ),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Carried water pressure support"),
+            entries: &(0..3)
+                .map(|binding| wgpu::BindGroupLayoutEntry {
+                    binding,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: if binding == 0 {
+                            wgpu::BufferBindingType::Uniform
+                        } else {
+                            wgpu::BufferBindingType::Storage { read_only: false }
+                        },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                })
+                .collect::<Vec<_>>(),
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Carried water pressure support"),
+            layout: &layout,
+            entries: &[parameters, &self.moments, cell_types]
+                .into_iter()
+                .enumerate()
+                .map(|(binding, buffer)| wgpu::BindGroupEntry {
+                    binding: binding as u32,
+                    resource: buffer.as_entire_binding(),
+                })
+                .collect::<Vec<_>>(),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Carried water pressure support"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Carried water pressure support"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("classify"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        (pipeline, group)
+    }
+
     pub fn boundary_volume(
         &self,
         device: &wgpu::Device,
@@ -493,8 +564,9 @@ impl PhaseTransfer3D {
             label: Some("Boundary volume shader"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}\n{}",
+                    "{}\n{}\n{}\n{}",
                     include_str!("shaders/wide_sum.wgsl"),
+                    include_str!("shaders/mac_wall_3d.wgsl"),
                     include_str!("shaders/sample_sdf_3d.wgsl"),
                     include_str!("shaders/phase_transfer_3d.wgsl")
                 )

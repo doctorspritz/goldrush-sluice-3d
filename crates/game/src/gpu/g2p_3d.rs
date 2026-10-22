@@ -247,7 +247,14 @@ impl GpuG2p3D {
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("G2P 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/g2p_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("shaders/mac_wall_3d.wgsl"),
+                    include_str!("shaders/g2p_3d.wgsl")
+                )
+                .into(),
+            ),
         });
 
         // Staging buffers for readback
@@ -647,6 +654,16 @@ impl GpuG2p3D {
         }
     }
 
+    /// Set the boundary mask after uploading this step's shared parameters.
+    pub fn set_open_boundaries(&self, queue: &wgpu::Queue, open: u32) {
+        assert!(open <= 63);
+        queue.write_buffer(
+            &self.params_buffer,
+            (std::mem::size_of::<G2pParams3D>() - 4) as u64,
+            bytemuck::bytes_of(&open),
+        );
+    }
+
     /// Upload G2P params to GPU (particle data is shared with P2G).
     pub fn upload_params(
         &self,
@@ -672,7 +689,14 @@ impl GpuG2p3D {
             dt,
             max_velocity: 0.9 * cell_size / dt.max(1e-6), // Safety follows CFL, not an arbitrary 1 m/s sluice limit
             diameter_offset: self.max_particles as u32,
-            _padding: [u32::from(self.conservative_phase_exchange), 0],
+            _padding: [
+                u32::from(self.conservative_phase_exchange),
+                if self.conservative_phase_exchange {
+                    63
+                } else {
+                    0
+                },
+            ],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
         queue.write_buffer(

@@ -65,3 +65,5 @@ complete static nonpenetration after pairs. Runtime integration does not close S
 or the complete objective. See [the runtime evidence](../docs/playtests/2026-10-23-phase-runtime.md).
 
 See [the volume-stage evidence](../docs/playtests/2026-10-23-volume-constraint.md) for the passing controls and the failed hydrostatic gate. These are bounded physical prerequisites; Stages 2–6 remain open.
+
+The [domain-boundary checkpoint](../docs/playtests/2026-10-23-hydrostatic-boundary.md) pairs closed-domain APIC transfers and limits pressure cells to actual carrier support. Analytic wall/freefall and sparse pressure budgets pass. Computational-domain hydrostatics improve substantially, but fine-grid pressure convergence and actual voxel/SDF walls still fail; these remain Stage 4 prerequisites. This does not close the hydrostatic, phase-coupling or full-operation goals.

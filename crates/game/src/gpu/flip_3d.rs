@@ -203,6 +203,7 @@ pub struct GpuFlip3D {
     position_delta_z_buffer: wgpu::Buffer,
     density_error_pipeline: wgpu::ComputePipeline,
     volume_rhs: Option<(wgpu::ComputePipeline, wgpu::BindGroup)>,
+    pressure_support: Option<(wgpu::ComputePipeline, wgpu::BindGroup)>,
     boundary_volume: Option<super::phase_transfer_3d::BoundaryVolume3D>,
     density_error_bind_group: wgpu::BindGroup,
     density_error_params_buffer: wgpu::Buffer,
@@ -2321,7 +2322,7 @@ impl GpuFlip3D {
         let volume_rhs = conservative.then(|| {
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Conservative volume RHS layout"),
-                entries: &[0, 2, 4, 5, 6].map(|binding| wgpu::BindGroupLayoutEntry {
+                entries: &[0, 2, 4, 5, 6, 7].map(|binding| wgpu::BindGroupLayoutEntry {
                     binding,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
@@ -2329,7 +2330,7 @@ impl GpuFlip3D {
                             wgpu::BufferBindingType::Uniform
                         } else {
                             wgpu::BufferBindingType::Storage {
-                                read_only: binding == 2 || binding == 4,
+                                read_only: binding == 2 || binding == 4 || binding == 7,
                             }
                         },
                         has_dynamic_offset: false,
@@ -2361,6 +2362,10 @@ impl GpuFlip3D {
                     wgpu::BindGroupEntry {
                         binding: 6,
                         resource: phase_status.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: phase_cell_binding(false),
                     },
                 ],
             });
@@ -2777,6 +2782,13 @@ impl GpuFlip3D {
             ReadbackSlot::new(device, max_particles),
         ];
 
+        let pressure_support = phase_transfer.as_ref().map(|phase| {
+            phase.pressure_support(
+                device,
+                &fluid_cell_expand_params_buffer,
+                &pressure.cell_type_buffer,
+            )
+        });
         let boundary_volume = phase_transfer.as_ref().map(|phase| {
             phase.boundary_volume(
                 device,
@@ -2886,6 +2898,7 @@ impl GpuFlip3D {
             position_delta_z_buffer,
             density_error_pipeline,
             volume_rhs,
+            pressure_support,
             boundary_volume,
             density_error_bind_group,
             density_error_params_buffer,
@@ -3715,6 +3728,9 @@ impl GpuFlip3D {
             }
         }
 
+        if let Some(phase) = &self.phase_transfer {
+            phase.encode_transfer(&mut encoder, count);
+        }
         let fluid_cell_params = FluidCellExpandParams3D::new(
             self.width,
             self.height,
@@ -3736,8 +3752,13 @@ impl GpuFlip3D {
                 label: Some("Fluid Cell Expand 3D Pass"),
                 timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Fluid Cell Expand 3D Pass")),
             });
-            pass.set_pipeline(&self.fluid_cell_expand_pipeline);
-            pass.set_bind_group(0, &self.fluid_cell_expand_bind_group, &[]);
+            if let Some((pipeline, group)) = &self.pressure_support {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, group, &[]);
+            } else {
+                pass.set_pipeline(&self.fluid_cell_expand_pipeline);
+                pass.set_bind_group(0, &self.fluid_cell_expand_bind_group, &[]);
+            }
             let workgroups_x = self.width.div_ceil(8);
             let workgroups_y = self.height.div_ceil(8);
             let workgroups_z = self.depth.div_ceil(4);
@@ -3862,11 +3883,7 @@ impl GpuFlip3D {
             submit(encoder, "Density Correct 3D Pass");
         }
 
-        if let Some(phase) = &self.phase_transfer {
-            let mut encoder = encoder_for("Conservative phase transfer encoder");
-            phase.encode_transfer(&mut encoder, count);
-            submit(encoder, "Conservative phase transfer");
-        } else {
+        if self.phase_transfer.is_none() {
             let sediment_fraction_params = SedimentFractionParams3D::new(
                 self.width,
                 self.height,
@@ -4368,6 +4385,9 @@ impl GpuFlip3D {
             self.flip_ratio,
             sediment_params,
         );
+        if self.phase_transfer.is_some() {
+            self.g2p.set_open_boundaries(queue, self.open_boundaries);
+        }
 
         let mut encoder = encoder_for("FLIP 3D G2P Encoder");
         self.g2p
