@@ -65,7 +65,7 @@ The [reference manifest](reference-cases.json) records source provenance and blo
 | Interphase coupling | Equal/opposite local drag reaction; global closed momentum budget; porosity-aware pressure/continuity; single-grain and porous-block validation |
 | Contact and packing | Oblique impacts, energy/momentum, static support, wet/dry friction and rolling; dense-bed convergence; no unresolved wall penetration or tunnelling |
 | Geometry | Consistent water/grain boundaries; smooth/cut-cell ramp and matched riffles/mats; grid-resolution convergence |
-| Bulk representation | Parcel-resolution convergence without hitting the grain cap; preserved PSD, density, feed and solid volume |
+| Bulk representation | Parcel/grid-resolution convergence with delivered operating conditions and no numerical admission starvation; preserved PSD, density, feed and solid volume |
 | Fine gold | Measured shape-dependent drag/lift and wetting; the visual flake mesh is not a flake drag law |
 | Recovery | Low/normal/high flow across feed, slope, size and shape; true cleanup assay; repeatability; independent experimental holdouts |
 | Long operation | Stable scour/loading, surges, clogging, prolonged clear-water flow, live save/restore and finite mass balance |

@@ -370,6 +370,24 @@ pub fn update(
             HudText::Objective=>{
                 if game.demo { "FLOWING DEMO\n\nPaydirt and water are flowing.\nP pump · O feed · arrows set rates.\nNew shift starts a fresh claim.".into() }
                 else if s.sluice.concentrate.gold_g>=GOLD_TARGET_G {format!("FIRST GOLD RECOVERED\n\n{:.2} g from your claim.\nKeep digging, or save your shift.",s.sluice.concentrate.gold_g)}
+                else if s.sluice.placement.is_some() && s.sluice.pump_on && s.sluice.feed_on {"WASHING
+
+Pump and feed are enabled.
+O stops feed to flush the bed.
+Arrows adjust water and feed.".into()}
+                else if s.sluice.placement.is_some() && s.sluice.pump_on {"FLUSHING THE SLUICE
+
+Feed is off; let loose material clear.
+P stops water, then C lifts the mats.
+O opens feed to keep washing.".into()}
+                else if s.sluice.placement.is_some() && s.sluice.feed_on {"FEED GATE OPEN
+
+P starts water for washing.
+O closes feed before collection.".into()}
+                else if s.sluice.placement.is_some() && !s.sluice.grains.is_empty() {"PLANT STOPPED
+
+C collects settled material on mats.
+P restarts water; O opens feed.".into()}
                 else if s.site.excavated.volume()<0.01{"01   WORK THE BANK\n\nEnter the cab. Hold Space while\nmoving the bucket through soil.\nG tucks the stick; Y curls the bucket.".into()}
                 else if s.delivered_m3<0.01{"02   LOAD THE HOPPER\n\nLift the bucket and swing over\nthe yellow hopper. Hold J to dump.".into()}
                 else if s.sluice.placement.is_none(){"03   CONNECT THE SLUICE\n\nWalk to the yellow hopper.\nB previews the sluice; click to place.".into()}

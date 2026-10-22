@@ -245,6 +245,107 @@ pub struct GpuFlip3D {
 }
 
 impl GpuFlip3D {
+    /// Reallocate before a complete authoritative particle/grid upload.
+    /// Tunable coefficients, pressure warm starts, obstacle input and the
+    /// optional timer survive. No particle may be sampled from the replacement
+    /// buffers until the caller has uploaded all positions/velocities/APIC,
+    /// phase densities/volumes/diameters and grid/SDF input again.
+    pub fn reallocate_for_upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        max_particles: usize,
+    ) -> Result<(), String> {
+        if max_particles <= self.max_particles {
+            return Ok(());
+        }
+        if self.prepared_readback.is_some()
+            || self.readback_slots.iter().any(ReadbackSlot::is_pending)
+        {
+            return Err("Cannot resize particle storage during a pending readback".into());
+        }
+        let bytes = (max_particles as u64)
+            .checked_mul(16)
+            .ok_or("Particle storage size overflow")?;
+        let limits = device.limits();
+        // The combined position/velocity/APIC staging allocation holds five
+        // vectors per particle, even though storage bindings hold only one.
+        let staging_bytes = bytes
+            .checked_mul(5)
+            .ok_or("Particle staging size overflow")?;
+        if staging_bytes > limits.max_buffer_size
+            || bytes > limits.max_storage_buffer_binding_size as u64
+        {
+            return Err("Particle storage exceeds the adapter buffer limit".into());
+        }
+        let mut next = Self::new_with_transfer(
+            device,
+            self.width,
+            self.height,
+            self.depth,
+            self.cell_size,
+            max_particles,
+            self.paired_water_transfer,
+        );
+        next.open_boundaries = self.open_boundaries;
+        next.cpu_sediment_contacts = self.cpu_sediment_contacts;
+        next.flip_ratio = self.flip_ratio;
+        next.batch_submissions = self.batch_submissions;
+        next.slip_factor = self.slip_factor;
+        next.fluid_cell_expand_min_neighbors = self.fluid_cell_expand_min_neighbors;
+        next.vorticity_epsilon = self.vorticity_epsilon;
+        next.density_projection_enabled = self.density_projection_enabled;
+        next.pressure_diagnostics_enabled = self.pressure_diagnostics_enabled;
+        next.water_rest_particles = self.water_rest_particles;
+        next.water_rest_density = self.water_rest_density;
+        next.density_surface_clamp = self.density_surface_clamp;
+        next.density_projection_strength = self.density_projection_strength;
+        next.volume_iterations = self.volume_iterations;
+        next.sediment_rest_particles = self.sediment_rest_particles;
+        next.sediment_friction_threshold = self.sediment_friction_threshold;
+        next.sediment_friction_strength = self.sediment_friction_strength;
+        next.sediment_settling_velocity = self.sediment_settling_velocity;
+        next.sediment_vorticity_lift = self.sediment_vorticity_lift;
+        next.sediment_vorticity_threshold = self.sediment_vorticity_threshold;
+        next.sediment_drag_coefficient = self.sediment_drag_coefficient;
+        next.gold_density_threshold = self.gold_density_threshold;
+        next.gold_drag_multiplier = self.gold_drag_multiplier;
+        next.gold_settling_velocity = self.gold_settling_velocity;
+        next.gold_flake_lift = self.gold_flake_lift;
+        next.sediment_porosity_drag = self.sediment_porosity_drag;
+        next.use_sorted_p2g = self.use_sorted_p2g;
+        next.use_cell_centric_p2g = self.use_cell_centric_p2g;
+        next.pressure.cached_stencil = self.pressure.cached_stencil;
+        next.gravel_obstacle_count = self.gravel_obstacle_count;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("FLIP storage growth: retain pressure/obstacle state"),
+        });
+        encoder.copy_buffer_to_buffer(
+            &self.pressure.pressure_buffer,
+            0,
+            &next.pressure.pressure_buffer,
+            0,
+            self.pressure.pressure_buffer.size(),
+        );
+        if self.gravel_obstacle_count > 0 {
+            encoder.copy_buffer_to_buffer(
+                &self.gravel_obstacle_buffer,
+                0,
+                &next.gravel_obstacle_buffer,
+                0,
+                self.gravel_obstacle_buffer.size(),
+            );
+        }
+        queue.submit(Some(encoder.finish()));
+        next.device_timer = self.device_timer.take();
+        *self = next;
+        Ok(())
+    }
+
+    pub fn particle_capacity(&self) -> usize {
+        self.max_particles
+    }
+
     /// Create a new GPU 3D FLIP simulation
     pub fn new(
         device: &wgpu::Device,
@@ -1779,7 +1880,7 @@ impl GpuFlip3D {
         let gravel_obstacle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Gravel Obstacle Buffer"),
             size: (std::mem::size_of::<GravelObstacle>() * GRAVEL_OBSTACLE_MAX as usize) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let gravel_obstacle_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

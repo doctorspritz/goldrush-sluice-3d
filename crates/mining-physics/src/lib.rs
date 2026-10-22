@@ -4,6 +4,7 @@
 //! sediment coupling and GPU scheduling corrections.
 pub mod calibration;
 pub mod geometry;
+mod particle_storage;
 mod terrain;
 mod terrain_gold;
 pub mod worker;
@@ -43,6 +44,7 @@ pub struct Hydraulics {
     terrain_events: game::gpu::heightfield::TerrainEventRecorder,
     sluice: Option<LocalSluice>,
     terrain_loaded: bool,
+    initial_grain_storage: usize,
     pub adapter_name: String,
 }
 struct LocalSluice {
@@ -59,10 +61,25 @@ struct LocalSluice {
     restoring_contacts: bool,
     riffles_enabled: bool,
     cleanups: u32,
+    allocated_grains: usize,
+    storage_growths: u32,
+    storage_growth_encode_ms: f64,
 }
 impl Hydraulics {
     pub fn new() -> Result<Self, String> {
         pollster::block_on(Self::create())
+    }
+    /// Diagnostic reference allocation; physical admission and resolution are unchanged.
+    pub fn new_with_grain_storage(grains: usize) -> Result<Self, String> {
+        let mut solver = Self::new()?;
+        solver.initial_grain_storage = grains;
+        Ok(solver)
+    }
+    pub fn storage_diagnostics(&self) -> serde_json::Value {
+        self.sluice.as_ref().map_or(serde_json::Value::Null, |l| serde_json::json!({
+            "allocated_grains": l.allocated_grains, "allocated_particles": l.flip.particle_capacity(),
+            "growths": l.storage_growths, "growth_encode_ms": l.storage_growth_encode_ms
+        }))
     }
     /// Diagnostics use the same cell-centred geometry as the fluid solver.
     pub fn boundary_diagnostics(&self, s: &Session) -> serde_json::Value {
@@ -170,6 +187,7 @@ impl Hydraulics {
             terrain_events,
             sluice: None,
             terrain_loaded: false,
+            initial_grain_storage: mining_sim::sluice::INITIAL_GRAIN_STORAGE,
             adapter_name,
         })
     }
@@ -211,10 +229,10 @@ impl Hydraulics {
         }
         Ok(())
     }
-    fn local(&mut self, s: &Session) {
+    fn local(&mut self, s: &Session) -> Result<(), String> {
         let Some(p) = s.sluice.placement else {
             self.sluice = None;
-            return;
+            return Ok(());
         };
         if self.sluice.as_ref().is_some_and(|l| {
             l.slope == p.slope_deg
@@ -222,7 +240,7 @@ impl Hydraulics {
                 && l.riffles_enabled == s.sluice.riffles_enabled
                 && l.cleanups == s.sluice.cleanups
         }) {
-            return;
+            return Ok(());
         }
         let config = geometry::config(&s.sluice);
         let profile = s.sluice.profile;
@@ -241,13 +259,20 @@ impl Hydraulics {
             .iter()
             .map(|v| if *v { 2 } else { 0 })
             .collect::<Vec<_>>();
+        let limits = self.device.limits();
+        let allocated_grains = particle_storage::grain_capacity(
+            profile.capacity(),
+            s.sluice.grains.len(),
+            self.initial_grain_storage,
+            (limits.max_buffer_size / 5).min(limits.max_storage_buffer_binding_size as u64),
+        )?;
         let mut flip = GpuFlip3D::new(
             &self.device,
             simulation_width as u32,
             config.grid_height as u32,
             config.grid_depth as u32,
             dx,
-            profile.capacity() + mining_sim::sluice::MAX_GRAINS,
+            profile.capacity() + allocated_grains,
         );
         if std::env::var_os("SLUICE_PROFILE_GPU_TIMESTAMPS").is_some() {
             flip.enable_device_timestamps(&self.device, &self.queue);
@@ -287,13 +312,17 @@ impl Hydraulics {
             slope: p.slope_deg,
             profile,
             restoring_contacts: true,
+            allocated_grains,
+            storage_growths: 0,
+            storage_growth_encode_ms: 0.,
         });
+        Ok(())
     }
     fn step_sluice(&mut self, s: &mut Session, fluid_dt: f32) -> Result<(), String> {
         let prepared = std::time::Instant::now();
         // Migrate live saves containing particles beyond the old lip/buffer.
         mining_sim::outflow::release(&mut s.sluice);
-        self.local(s);
+        self.local(s)?;
         let Some(l) = &mut self.sluice else {
             return Ok(());
         };
@@ -366,6 +395,21 @@ impl Hydraulics {
         s.sluice.feed_water_credit_m3 =
             (s.sluice.feed_water_credit_m3 - feed_emitted as f64 * particle_m3).max(0.);
         s.sluice.emit_intake_grains(fluid_dt);
+        if s.sluice.grains.len() > l.allocated_grains {
+            let limits = self.device.limits();
+            let grains = particle_storage::grain_capacity(
+                profile.capacity(),
+                s.sluice.grains.len(),
+                self.initial_grain_storage,
+                (limits.max_buffer_size / 5).min(limits.max_storage_buffer_binding_size as u64),
+            )?;
+            let growth_started = std::time::Instant::now();
+            l.flip
+                .reallocate_for_upload(&self.device, &self.queue, profile.capacity() + grains)?;
+            l.allocated_grains = grains;
+            l.storage_growths += 1;
+            l.storage_growth_encode_ms += growth_started.elapsed().as_secs_f64() * 1000.;
+        }
         if s.sluice.water_credit_m3 + s.sluice.feed_water_credit_m3 > 0.02 {
             return Err(
                 "FLIP capacity reached: stop the pump; water was retained, not discarded".into(),

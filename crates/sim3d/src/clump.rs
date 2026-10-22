@@ -1348,10 +1348,9 @@ impl ClusterSimulation3D {
                 let words = count.div_ceil(64);
                 let axis_words =
                     (dims.x as usize + dims.y as usize + dims.z as usize).saturating_mul(words);
-                // Bound scratch storage to 8 MiB even for very elongated scenes.
+                // Bound active words in each mask to 8 MiB; Vec capacity may round up.
                 // The existing ordered hash path handles larger footprints.
                 if self.accelerated_contacts
-                    && count <= 8192
                     && (1..=1_000_000).contains(&capacity)
                     && axis_words <= 1_048_576
                 {
@@ -1374,120 +1373,135 @@ impl ClusterSimulation3D {
                     // Many gold grains share a riffle cell. Build its unchanged
                     // 27-cell candidate set once, rather than once per grain.
                     let rows = self.contact_occupied.len();
-                    // A 27-cell neighbourhood is exactly the intersection of
-                    // three dilated axis memberships. Build those masks once;
-                    // each occupied row then needs three loads rather than 27
-                    // neighbour unions per word. Candidate order is unchanged.
-                    let offsets = [0, dims.x as usize, (dims.x + dims.y) as usize];
-                    self.contact_members.resize(axis_words, 0);
-                    self.contact_members.fill(0);
-                    self.contact_candidates.resize(rows * words, 0);
-                    for (i, &p) in self.contact_cells.iter().enumerate() {
-                        let p = (p - min_cell).to_array();
-                        for axis in 0..3 {
-                            for delta in -1..=1 {
-                                let cell = offsets[axis] + (p[axis] + delta) as usize;
-                                self.contact_members[cell * words + i / 64] |= 1u64 << (i % 64);
-                            }
-                        }
-                    }
-                    for (row, &p) in self.contact_occupied.iter().enumerate() {
-                        let starts = [
-                            p.x as usize,
-                            offsets[1] + p.y as usize,
-                            offsets[2] + p.z as usize,
-                        ]
-                        .map(|cell| cell * words);
-                        let x = &self.contact_members[starts[0]..starts[0] + words];
-                        let y = &self.contact_members[starts[1]..starts[1] + words];
-                        let z = &self.contact_members[starts[2]..starts[2] + words];
-                        let target = &mut self.contact_candidates[row * words..(row + 1) * words];
-                        for (((target, x), y), z) in target.iter_mut().zip(x).zip(y).zip(z) {
-                            *target = *x & *y & *z;
-                        }
-                    }
-                    self.contact_lanes
-                        .resize(count.div_ceil(4), [glam::Vec4::ZERO; 4]);
-                    for i in 0..count {
-                        self.update_contact_lane(i);
-                    }
-                    for i in 0..count {
-                        let row = self.contact_rows[i];
-                        // Radius is fixed through this ordered contact sweep.
-                        // Position only changes after resolving a candidate, so
-                        // avoid rebroadcasting it for every rejected SIMD block.
-                        let radius = glam::Vec4::splat(
-                            self.templates[self.clumps[i].template_idx].bounding_radius,
-                        );
-                        let mut position =
-                            self.clumps[i].position.to_array().map(glam::Vec4::splat);
-                        for word in i / 64..words {
-                            let mut value = self.contact_candidates[row * words + word];
-                            if word == i / 64 {
-                                value &= if i % 64 == 63 {
-                                    0
-                                } else {
-                                    u64::MAX << ((i % 64) + 1)
-                                };
-                            }
-                            while value != 0 {
-                                let group = value.trailing_zeros() as usize / 4;
-                                let block = word * 16 + group;
-                                let mut mask = ((value >> (group * 4)) & 15) as u32;
-                                value &= !(15u64 << (group * 4));
-                                while mask != 0 {
-                                    let lane = self.contact_lanes[block];
-                                    let dx = lane[0] - position[0];
-                                    let dy = lane[1] - position[1];
-                                    let dz = lane[2] - position[2];
-                                    let r = lane[3] + radius;
-                                    // Conservative rounding margin; the original scalar
-                                    // narrow phase still makes the final rejection.
-                                    let limit = r * r * glam::Vec4::splat(1. + 8. * f32::EPSILON)
-                                        + glam::Vec4::splat(f32::MIN_POSITIVE);
-                                    let nearby =
-                                        ((dx * dx + dy * dy) + dz * dz).cmple(limit).bitmask()
-                                            & mask;
-                                    if nearby == 0 {
-                                        break;
-                                    }
-                                    let lane = nearby.trailing_zeros() as usize;
-                                    let j = block * 4 + lane;
-                                    mask &= !((1u32 << (lane + 1)) - 1);
-                                    self.resolve_dem_pair(i, j, percent);
-                                    position =
-                                        self.clumps[i].position.to_array().map(glam::Vec4::splat);
-                                    self.update_contact_lane(i);
-                                    self.update_contact_lane(j);
+                    // Bound both axis masks and the occupied-row matrix. This
+                    // also permits larger populations when few cells are used.
+                    if rows.saturating_mul(words) <= 1_048_576 {
+                        // A 27-cell neighbourhood is exactly the intersection of
+                        // three dilated axis memberships. Build those masks once;
+                        // each occupied row then needs three loads rather than 27
+                        // neighbour unions per word. Candidate order is unchanged.
+                        let offsets = [0, dims.x as usize, (dims.x + dims.y) as usize];
+                        self.contact_members.resize(axis_words, 0);
+                        self.contact_members.fill(0);
+                        self.contact_candidates.resize(rows * words, 0);
+                        for (i, &p) in self.contact_cells.iter().enumerate() {
+                            let p = (p - min_cell).to_array();
+                            for axis in 0..3 {
+                                for delta in -1..=1 {
+                                    let cell = offsets[axis] + (p[axis] + delta) as usize;
+                                    self.contact_members[cell * words + i / 64] |= 1u64 << (i % 64);
                                 }
                             }
                         }
+                        for (row, &p) in self.contact_occupied.iter().enumerate() {
+                            let starts = [
+                                p.x as usize,
+                                offsets[1] + p.y as usize,
+                                offsets[2] + p.z as usize,
+                            ]
+                            .map(|cell| cell * words);
+                            let x = &self.contact_members[starts[0]..starts[0] + words];
+                            let y = &self.contact_members[starts[1]..starts[1] + words];
+                            let z = &self.contact_members[starts[2]..starts[2] + words];
+                            let target =
+                                &mut self.contact_candidates[row * words..(row + 1) * words];
+                            for (((target, x), y), z) in target.iter_mut().zip(x).zip(y).zip(z) {
+                                *target = *x & *y & *z;
+                            }
+                        }
+                        self.contact_lanes
+                            .resize(count.div_ceil(4), [glam::Vec4::ZERO; 4]);
+                        for i in 0..count {
+                            self.update_contact_lane(i);
+                        }
+                        for i in 0..count {
+                            let row = self.contact_rows[i];
+                            // Radius is fixed through this ordered contact sweep.
+                            // Position only changes after resolving a candidate, so
+                            // avoid rebroadcasting it for every rejected SIMD block.
+                            let radius = glam::Vec4::splat(
+                                self.templates[self.clumps[i].template_idx].bounding_radius,
+                            );
+                            let mut position =
+                                self.clumps[i].position.to_array().map(glam::Vec4::splat);
+                            for word in i / 64..words {
+                                let mut value = self.contact_candidates[row * words + word];
+                                if word == i / 64 {
+                                    value &= if i % 64 == 63 {
+                                        0
+                                    } else {
+                                        u64::MAX << ((i % 64) + 1)
+                                    };
+                                }
+                                while value != 0 {
+                                    let group = value.trailing_zeros() as usize / 4;
+                                    let block = word * 16 + group;
+                                    let mut mask = ((value >> (group * 4)) & 15) as u32;
+                                    value &= !(15u64 << (group * 4));
+                                    while mask != 0 {
+                                        let lane = self.contact_lanes[block];
+                                        let dx = lane[0] - position[0];
+                                        let dy = lane[1] - position[1];
+                                        let dz = lane[2] - position[2];
+                                        let r = lane[3] + radius;
+                                        // Conservative rounding margin; the original scalar
+                                        // narrow phase still makes the final rejection.
+                                        let limit =
+                                            r * r * glam::Vec4::splat(1. + 8. * f32::EPSILON)
+                                                + glam::Vec4::splat(f32::MIN_POSITIVE);
+                                        let nearby =
+                                            ((dx * dx + dy * dy) + dz * dz).cmple(limit).bitmask()
+                                                & mask;
+                                        if nearby == 0 {
+                                            break;
+                                        }
+                                        let lane = nearby.trailing_zeros() as usize;
+                                        let j = block * 4 + lane;
+                                        mask &= !((1u32 << (lane + 1)) - 1);
+                                        self.resolve_dem_pair(i, j, percent);
+                                        position = self.clumps[i]
+                                            .position
+                                            .to_array()
+                                            .map(glam::Vec4::splat);
+                                        self.update_contact_lane(i);
+                                        self.update_contact_lane(j);
+                                    }
+                                }
+                            }
+                        }
+                        continue;
                     }
-                    continue;
-                } else {
-                    let mut cells: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
-                    for (i, c) in self.clumps.iter().enumerate() {
-                        let p = (c.position / diameter).floor().as_ivec3();
-                        cells.entry((p.x, p.y, p.z)).or_default().push(i);
-                    }
-                    for (i, c) in self.clumps.iter().enumerate() {
-                        let p = (c.position / diameter).floor().as_ivec3();
-                        for x in -1..=1 {
-                            for y in -1..=1 {
-                                for z in -1..=1 {
-                                    if let Some(indices) = cells.get(&(p.x + x, p.y + y, p.z + z)) {
-                                        for &j in indices {
-                                            if j > i {
-                                                pairs.push((i, j));
-                                            }
+                }
+                // Snapshot cell membership must remain the one from the start
+                // of the sweep, even after an earlier pair corrects a position.
+                // Per-source sorting is the same lexicographic pair order as
+                // the old global list, with at most O(N) candidate storage.
+                let mut cells: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
+                for (i, p) in self.contact_cells.iter().enumerate() {
+                    cells.entry((p.x, p.y, p.z)).or_default().push(i);
+                }
+                for i in 0..count {
+                    pairs.clear();
+                    let p = self.contact_cells[i];
+                    for x in -1..=1 {
+                        for y in -1..=1 {
+                            for z in -1..=1 {
+                                if let Some(indices) = cells.get(&(p.x + x, p.y + y, p.z + z)) {
+                                    for &j in indices {
+                                        if j > i {
+                                            pairs.push((i, j));
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                    pairs.sort_unstable();
+                    for &(a, b) in &pairs {
+                        self.resolve_dem_pair(a, b, percent);
+                    }
                 }
-                pairs.sort_unstable();
+                continue;
             }
             for &(i, j) in &pairs {
                 self.resolve_dem_pair(i, j, percent);
@@ -3223,6 +3237,149 @@ mod tests {
         for seed in [0, 17, 123] {
             assert_eq!(run(true, seed), run(false, seed));
         }
+    }
+
+    #[test]
+    fn streaming_hash_contacts_match_the_original_global_pair_order() {
+        let run = |original: bool| {
+            let mut sim = ClusterSimulation3D::new(Vec3::splat(-100.), Vec3::splat(100.));
+            sim.coulomb_contacts = true;
+            sim.accelerated_contacts = !original;
+            for shape in [ClumpShape3D::Tetra, ClumpShape3D::Cube2] {
+                sim.add_template(ClumpTemplate3D::generate(shape, 0.003, 0.02));
+            }
+            for i in 0..160 {
+                let p = if i == 159 {
+                    Vec3::new(90., 0., 0.)
+                } else {
+                    Vec3::new(
+                        (i * 37 % 101) as f32,
+                        (i * 19 % 101) as f32,
+                        (i * 13 % 101) as f32,
+                    ) * 0.00015
+                        - Vec3::splat(0.007)
+                };
+                let n = sim.spawn(i % 2, p, Vec3::new(0.1, -0.02, 0.03));
+                sim.clumps[n].rotation = Quat::from_rotation_y(i as f32 * 0.13);
+                sim.clumps[n].angular_velocity = Vec3::new(0.3, -0.1, 0.2);
+            }
+            sim.contact_wet = (0..160).map(|i| i % 3 != 0).collect();
+            if original {
+                let diameter = sim
+                    .templates
+                    .iter()
+                    .map(|t| t.bounding_radius * 2.)
+                    .fold(0.001_f32, f32::max);
+                for _ in 0..2 {
+                    let mut cells: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
+                    for (i, c) in sim.clumps.iter().enumerate() {
+                        let p = (c.position / diameter).floor().as_ivec3();
+                        cells.entry((p.x, p.y, p.z)).or_default().push(i);
+                    }
+                    let mut pairs = Vec::new();
+                    for (i, c) in sim.clumps.iter().enumerate() {
+                        let p = (c.position / diameter).floor().as_ivec3();
+                        for x in -1..=1 {
+                            for y in -1..=1 {
+                                for z in -1..=1 {
+                                    if let Some(indices) = cells.get(&(p.x + x, p.y + y, p.z + z)) {
+                                        for &j in indices {
+                                            if j > i {
+                                                pairs.push((i, j));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    pairs.sort_unstable();
+                    for (i, j) in pairs {
+                        sim.resolve_dem_pair(i, j, 0.75);
+                    }
+                }
+            } else {
+                sim.resolve_dem_penetrations(2);
+                assert!(sim.contact_pairs.capacity() <= 320);
+            }
+            sim.clumps
+                .into_iter()
+                .map(|c| (c.position, c.velocity, c.rotation, c.angular_velocity))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(run(true), run(false));
+    }
+
+    #[test]
+    fn an_oversized_occupied_row_matrix_streams_contacts_without_allocating_it() {
+        let mut sim = ClusterSimulation3D::new(Vec3::splat(-1.), Vec3::ONE);
+        sim.add_template(ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 1,
+                seed: 0,
+                style: IrregularStyle3D::Round,
+            },
+            0.00004,
+            0.01,
+        ));
+        for i in 0..8194 {
+            let p = Vec3::new((i % 20) as f32, ((i / 20) % 20) as f32, (i / 400) as f32) * 0.0012
+                + Vec3::splat(0.0003);
+            sim.spawn(0, p, Vec3::ZERO);
+        }
+        let before = sim.clumps.iter().map(|c| c.position).collect::<Vec<_>>();
+        sim.resolve_dem_penetrations(2);
+        assert!(sim.contact_candidates.is_empty() && sim.contact_members.is_empty());
+        assert!(sim.contact_pairs.capacity() <= 64);
+        assert_eq!(
+            sim.clumps.iter().map(|c| c.position).collect::<Vec<_>>(),
+            before
+        );
+        assert!(sim.clumps.iter().all(|c| c.velocity == Vec3::ZERO));
+    }
+
+    #[test]
+    fn more_than_8192_grains_keep_bounded_masks_and_exact_isolated_pair_contacts() {
+        let mut sim = ClusterSimulation3D::new(Vec3::splat(-1.), Vec3::ONE);
+        let template = ClumpTemplate3D::generate(
+            ClumpShape3D::Irregular {
+                count: 1,
+                seed: 0,
+                style: IrregularStyle3D::Round,
+            },
+            0.00004,
+            0.01,
+        );
+        sim.add_template(template.clone());
+        let mut expected = Vec::new();
+        for i in 0..4097 {
+            let center = Vec3::new((i % 20) as f32, ((i / 20) % 20) as f32, (i / 400) as f32)
+                * 0.0012
+                + Vec3::splat(0.0003);
+            let mut pair = ClusterSimulation3D::new(Vec3::splat(-1.), Vec3::ONE);
+            pair.accelerated_contacts = false;
+            pair.add_template(template.clone());
+            for sign in [-1., 1.] {
+                let p = center + Vec3::X * sign * 0.000025;
+                let v = -Vec3::X * sign * 0.1;
+                sim.spawn(0, p, v);
+                pair.spawn(0, p, v);
+            }
+            pair.resolve_dem_penetrations(2);
+            expected.extend(pair.clumps.into_iter().map(|c| (c.position, c.velocity)));
+        }
+        sim.resolve_dem_penetrations(2);
+        assert!(!sim.contact_candidates.is_empty());
+        assert!(
+            sim.contact_candidates.len() <= 1_048_576 && sim.contact_members.len() <= 1_048_576
+        );
+        assert_eq!(
+            sim.clumps
+                .iter()
+                .map(|c| (c.position, c.velocity))
+                .collect::<Vec<_>>(),
+            expected
+        );
     }
 
     #[test]

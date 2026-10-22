@@ -7,7 +7,10 @@ pub const CHANNEL_WIDTH: f32 = 0.38;
 pub const HOPPER_X: f32 = 14.6;
 pub const HOPPER_Z: f32 = 17.0;
 pub const PARCEL_VOLUME: f64 = 0.000002; // 2 mL weighted parcels, not 2-litre lumps
-pub const MAX_GRAINS: usize = 4096;
+/// Initial derived solver allocation, not a physical admission limit.
+pub const INITIAL_GRAIN_STORAGE: usize = 4096;
+/// Historical API alias; model admission no longer uses this value.
+pub const MAX_GRAINS: usize = INITIAL_GRAIN_STORAGE;
 pub const FLUID_CELL: f32 = 0.01;
 pub const WATER_PARTICLE_M3: f64 = (FLUID_CELL * FLUID_CELL * FLUID_CELL / 8.0) as f64;
 pub const MAX_WATER_PARTICLES: usize = 300_000;
@@ -385,13 +388,12 @@ impl Sluice {
         self.inlet.withdrawn.add(packet.suspension);
     }
     pub fn intake_has_room(&self) -> bool {
-        self.grains.len() + 5 <= MAX_GRAINS
-            && self.inlet.material().volume()
-                < self
-                    .parcel_volume()
-                    .min(PARCEL_VOLUME)
-                    .max(std::f64::consts::PI / 6. * 0.01_f64.powi(3))
-                    * crate::intake::ADMISSION_BATCH as f64
+        self.inlet.material().volume()
+            < self
+                .parcel_volume()
+                .min(PARCEL_VOLUME)
+                .max(std::f64::consts::PI / 6. * 0.01_f64.powi(3))
+                * crate::intake::ADMISSION_BATCH as f64
     }
     /// Called with precisely the water volume admitted to FLIP. Suspended
     /// material leaves the same carrier fraction and remains in inlet custody
@@ -409,16 +411,15 @@ impl Sluice {
         }
         self.inlet.emission_clock = (self.inlet.emission_clock + dt).min(0.25);
         let parcel_volume = self.parcel_volume().min(PARCEL_VOLUME);
-        if self.grains.len() + 5 > MAX_GRAINS
-            || (self.inlet.pending.material().volume() < parcel_volume
-                && self.inlet.emission_clock < 0.2499
-                && self.pump_on)
+        if self.inlet.pending.material().volume() < parcel_volume
+            && self.inlet.emission_clock < 0.2499
+            && self.pump_on
         {
             return;
         }
         // Match the terrain solver's four D50 values, rather than resampling
         // pumped fines as the dry hopper's much coarser alluvial grading.
-        let mut budget = crate::intake::ADMISSION_BATCH.min(MAX_GRAINS - self.grains.len());
+        let mut budget = crate::intake::ADMISSION_BATCH;
         while budget > 0 {
             let mut progressed = false;
             for (channel, diameter, kind) in [
@@ -583,13 +584,10 @@ impl Sluice {
             self.hopper.gold_g += self.pending_gold_g;
             self.pending_gold_g = 0.0;
         }
-        if self.feed_on && self.pump_on && water_available && self.grains.len() + 4 < MAX_GRAINS {
+        if self.feed_on && self.pump_on && water_available {
             self.feed_credit = (self.feed_credit + self.feed_m3s as f64 * dt as f64)
                 .min(self.parcel_volume() * if self.granular_packets { 32.0 } else { 2.0 });
-            while self.feed_credit >= self.parcel_volume()
-                && !self.hopper.is_empty()
-                && self.grains.len() + 4 < MAX_GRAINS
-            {
+            while self.feed_credit >= self.parcel_volume() && !self.hopper.is_empty() {
                 let moisture = self.hopper.pore_water_m3
                     * (self.parcel_volume() / self.hopper.volume().max(1e-30)).min(1.);
                 let room = self
@@ -771,12 +769,18 @@ impl Sluice {
         Ok(())
     }
     pub fn valid(&self) -> bool {
+        // Preserve the old contact-history allowance for old/small saves, then
+        // scale it with the actual population. File input has its own byte cap.
+        let contact_limit = self
+            .grains
+            .len()
+            .max(INITIAL_GRAIN_STORAGE)
+            .saturating_mul(20);
         self.hopper.valid()
             && self.inlet.valid()
             && self.tailings.valid()
             && self.concentrate.valid()
             && self.hopper.volume() <= 0.85001
-            && self.grains.len() <= MAX_GRAINS
             && self.water.len() + self.outflow.len() <= self.profile.capacity()
             && self.outflow.iter().all(|p| {
                 p.position.is_finite()
@@ -784,9 +788,9 @@ impl Sluice {
                     && p.velocity.is_finite()
                     && p.velocity.length() < 100.
             })
-            && self.contacts.spheres.len() < MAX_GRAINS * 20
-            && self.contacts.planes.len() < MAX_GRAINS * 20
-            && self.contacts.sdf.len() < MAX_GRAINS * 20
+            && self.contacts.spheres.len() < contact_limit
+            && self.contacts.planes.len() < contact_limit
+            && self.contacts.sdf.len() < contact_limit
             && self.contacts.spheres.iter().all(|(a, b, _, _, v)| {
                 *a < self.grains.len() && *b < self.grains.len() && v.is_finite()
             })

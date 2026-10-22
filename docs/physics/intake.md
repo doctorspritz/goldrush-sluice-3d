@@ -41,17 +41,13 @@ porosity, clay cohesion or a new soil calibration. The later
 [material-mass correction](material-mass.md) converts these conserved reference
 quantities to physical grain mass and volume when emitting DEM parcels.
 
-Full water/solid capacity applies backpressure **before** modifying the river.
-Unemitted water and solids remain stored. Source starvation supplies only actual
+A full water capacity or finite inlet custody buffer stops new withdrawal **before** modifying the river. The former 4,096-grain admission guard is removed: [derived particle storage grows](particle-storage.md), preserving the actual grain population and fluid state. Unemitted water and solids remain stored. Source starvation supplies only actual
 available water; the HUD shows delivered versus requested L/s. Saves retain the
 carrier, pending material, sequence and custody counters. Missing inlet state in
 old saves defaults to an empty buffer; their existing water credit is retained.
 Negative suspension and inconsistent saved inlet custody are rejected.
 
-The finite particle/buffer capacity is a numerical custody safeguard, **not a
-calibrated clogging or pump law**. Sustained dense input can still reach that
-limit. Maintaining delivery with physically derived restrictions and a validated
-dense-phase representation remains part of the full simulation goal.
+The remaining water/buffer bounds are numerical custody safeguards, **not calibrated clogging or pump laws**. Allocation requests are checked before construction; a refusal stops the worker with its material retained rather than silently reducing requested water at a grain quota. The planning bound does not establish dense-phase packing, local momentum closure, parcel convergence, unlimited save sizes or long-duration performance. Maintaining delivery with physically derived restrictions and a validated dense-phase representation remains part of the full simulation goal.
 
 This stage does **not** model hose hold-up/priming, pipe pressure or cavitation.
 The old specified inlet velocity is retained; pump/nozzle forces are external

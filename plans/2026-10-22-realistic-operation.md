@@ -32,3 +32,10 @@ The subgeometry material foundation now extends deposition to every positive wat
 [Residence-aware transport](../docs/physics/residence-transport.md) now integrates settling with each existing water substep, correcting the large fast-settler downstream bias without reaction microsteps. Manufactured grid/time profiles and actual-flow reference controls converge with unchanged material limits. This does not complete continuous shoreline, soil-water, compaction or constructed-pool convergence, and does not increase the playable 25 cm physical grid.
 
 The [batched GPU stage trace and exact P2G optimization](../docs/playtests/2026-10-22-gpu-throughput.md) separate device-pass cost from fenced profiling and ordinary/native throughput. Quantized-zero writes can be skipped with exact accumulator/full-state controls, but dense contacts and the remaining fluid work still prevent real time. This is a performance prerequisite; it does not close any remaining physical-model, construction, wash-plant, circuit or gameplay stage.
+
+The [particle-storage foundation](../docs/physics/particle-storage.md) removes the
+4,096-grain admission quota while retaining physical parcels, pressure/contact
+state and explicit resource refusal. Exact preallocated/grown and large-save
+controls support sustained-admission studies. The [23 October evidence](../docs/playtests/2026-10-23-grain-storage.md)
+separates that correction from dense-phase convergence, hydraulic restrictions,
+long-duration operation and real-time performance. Stages 2–6 remain open.

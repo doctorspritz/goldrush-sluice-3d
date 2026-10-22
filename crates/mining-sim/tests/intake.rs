@@ -2,7 +2,7 @@ use mining_sim::{
     intake::{IntakePacket, Suspension},
     session::Controls,
     site::{CELL, WIDTH},
-    sluice::{GrainKind, MAX_GRAINS},
+    sluice::{Grain, GrainKind, INITIAL_GRAIN_STORAGE},
     Material, Placement, Session, Site, Vec3, FIXED_DT,
 };
 
@@ -282,26 +282,36 @@ fn high_flow_session_preserves_both_domain_ticks_before_fluid_admission() {
 }
 
 #[test]
-fn grain_capacity_applies_backpressure_before_the_river_is_modified() {
-    let (mut s, p, _) = fixture();
-    let packet = s.site.withdraw_intake(p, 0.001);
-    s.sluice.accept_intake(packet);
-    s.sluice.admit_intake_water(packet.water_m3);
-    s.sluice.emit_intake_grains(0.25);
-    s.sluice
-        .grains
-        .resize(MAX_GRAINS, s.sluice.grains[0].clone());
-    let water = s.site.water_volume_m3();
-    let solids = suspended(&s.site);
-    s.step(Controls::default());
-    assert_eq!(s.site.water_volume_m3(), water);
-    assert_eq!(suspended(&s.site), solids);
-    assert_eq!(s.sluice.inlet.last_water_m3, 0.);
-    s.sluice.grains.clear();
-    s.sluice.inlet.pending = Suspension::default();
-    s.sluice.inlet.ready = Suspension::default();
+fn passing_initial_storage_does_not_throttle_conservative_intake() {
+    let (mut s, _, _) = fixture();
+    // An initial stocked bed tests admission independently of DEM motion.
+    let grain = Grain {
+        volume_resolved: true,
+        kind: GrainKind::Gravel,
+        position: Vec3::new(0.5, 0.2, 0.2),
+        velocity: Vec3::ZERO,
+        material: Material {
+            gravel_m3: 0.000002,
+            ..Default::default()
+        },
+        resting: true,
+        diameter_m: 0.002,
+        affine: glam::Mat3::ZERO,
+        rotation: glam::Quat::IDENTITY,
+        angular_velocity: Vec3::ZERO,
+    };
+    s.sluice.grains = vec![grain; INITIAL_GRAIN_STORAGE + 7];
+    let water = s.stored_water_m3();
+    let material = s.accounted_bulk_material_m3();
+    let gold = s.accounted_gold();
+    let source = s.site.water_volume_m3();
     s.step(Controls::default());
     assert!(s.sluice.inlet.last_water_m3 > 0.);
+    assert!(s.site.water_volume_m3() < source);
+    close(s.stored_water_m3(), water);
+    close(s.accounted_bulk_material_m3(), material);
+    close(s.accounted_gold(), gold);
+    assert!(s.sluice.grains.len() > INITIAL_GRAIN_STORAGE);
 }
 
 #[test]

@@ -395,4 +395,53 @@ mod tests {
         );
         std::fs::remove_file(path).unwrap();
     }
+    #[test]
+    fn a_storage_refusal_pauses_once_and_keeps_the_shift_saveable() {
+        struct RefusedStorage;
+        impl Solver for RefusedStorage {
+            fn step(&mut self, _: &mut Session) -> Result<(), String> {
+                Err("Particle storage request exceeds the planning/adapter budget".into())
+            }
+            fn restore(&mut self) {}
+        }
+        let mut session = Session::new();
+        session.player.hand =
+            session
+                .site
+                .dig(mining_sim::Vec3::new(21., 0., 18.), 0.3, 0.1, 0.005);
+        assert!(session.player.hand.volume() > 0.);
+        let hand = serde_json::to_string(&session.player.hand).unwrap();
+        let initial_gold = session.accounted_gold();
+        let mut worker = Worker::spawn(|| Ok(RefusedStorage), session).unwrap();
+        receive(&mut worker);
+        worker
+            .submit(Work {
+                advance: true,
+                ticks: 2,
+                ..Default::default()
+            })
+            .unwrap();
+        let stopped = receive(&mut worker);
+        assert!(stopped.session.paused && stopped.failure.as_deref().unwrap().contains("storage"));
+        assert!((stopped.session.sim_time - mining_sim::FIXED_DT as f64).abs() < 1e-9);
+        assert_eq!(
+            serde_json::to_string(&stopped.session.player.hand).unwrap(),
+            hand
+        );
+        assert!((stopped.session.accounted_gold() - initial_gold).abs() < 1e-9);
+        let saved = stopped.session.save_json().unwrap();
+        let restored = Session::load_json(&saved).unwrap();
+        assert_eq!(serde_json::to_string(&restored.player.hand).unwrap(), hand);
+        worker
+            .submit(Work {
+                advance: true,
+                ticks: 2,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            receive(&mut worker).session.sim_time,
+            stopped.session.sim_time
+        );
+    }
 }

@@ -138,3 +138,28 @@ fn cleanup_preserves_a_single_fine_quartz_grain_below_bulk_empty_threshold() {
     assert_eq!(s.concentrate.sand_m3, volume);
     assert!(s.grains.is_empty());
 }
+
+#[test]
+fn a_large_live_population_round_trips_without_resampling_or_losing_material() {
+    let mut s = Sluice::default();
+    s.placement = Some(Placement::suggested(&Site::new()));
+    s.grains = (0..mining_sim::sluice::INITIAL_GRAIN_STORAGE + 19)
+        .map(|i| {
+            let mut g = grain(0.4 + (i % 100) as f32 * 0.01, i % 3 == 0);
+            g.velocity = Vec3::new(i as f32 * 0.000001, 0.02, -0.03);
+            g.rotation = Quat::from_rotation_y(i as f32 * 0.007);
+            g.angular_velocity = Vec3::new(0.2, -0.1, 0.3);
+            g.affine = Mat3::from_diagonal(Vec3::new(0.001, 0.002, -0.003));
+            g
+        })
+        .collect();
+    assert!(s.valid());
+    let before = s.active_material();
+    let json = serde_json::to_string(&s).unwrap();
+    let restored: Sluice = serde_json::from_str(&json).unwrap();
+    assert!(restored.valid());
+    assert_eq!(serde_json::to_string(&restored).unwrap(), json);
+    assert_eq!(restored.grains.len(), s.grains.len());
+    assert_eq!(restored.active_material().volume(), before.volume());
+    assert_eq!(restored.active_material().gold_g, before.gold_g);
+}

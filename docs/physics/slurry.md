@@ -1,6 +1,6 @@
 # Weighted slurry and visible grain populations
 
-The simulation uses volume-weighted DEM parcels rather than one rigid body per physical grain. Under the current spherical-grain interpretation, one 2 mL parcel of 100 µm grains represents `2e-6 / (pi/6 * (100e-6)^3)`, approximately 3.82 million grain equivalents. A recovered gold grain remains an individual physical grain. These counts describe the model and do not measure the site's real particle-size distribution.
+The simulation uses volume-weighted DEM parcels rather than one rigid body per physical grain. Under the spherical-grain interpretation, 2 mL of actual solid volume in 100 µm grains represents `2e-6 / (pi/6 * (100e-6)^3)`, approximately 3.82 million grain equivalents. Reference-bulk parcel volume first converts through its constituent mass and mineral density to solid volume; it is not automatically that much solid. See the [material convention](material-mass.md). A recovered gold grain remains an individual physical grain. These counts describe the model and do not measure the site's real particle-size distribution.
 
 ## Feed grading and physics
 
@@ -10,7 +10,7 @@ The grading is a declared assumption, not calibrated geology. It does not includ
 
 ## Local suspension optics
 
-`mining_sim::slurry::SlurryField` is a read-only 3 cm reconstruction of actual channel water and moving fine parcels. Dense water samples use a volume histogram; fine parcels use trilinear deposition. Conservative separable smoothing retains the integrals of water volume, suspended fine volume and geometric grain cross section, including at field edges. Water particles sample this continuous local field. Settled material is excluded from suspended cloudiness.
+`mining_sim::slurry::SlurryField` is a read-only 3 cm reconstruction of actual channel water and moving fine parcels. Water and fine parcels use the same conservative trilinear deposition. Mixing a water histogram with linearly projected fines gave a false concentration change as a homogeneous suspension moved through optical cells; the [crest/projection correction](../playtests/2026-10-22-crest-reconstruction.md) documents the reproduced error. Conservative separable smoothing retains the integrals of water volume, suspended fine volume and geometric grain cross section, including at field edges. Water particles sample this continuous local field. Settled material is excluded from suspended cloudiness.
 
 For a spherical population, total cross section is `N*pi*d²/4 = 3*solid_volume/(2*d)`. The optical approximation uses `Q_ext=2` and extinction `2*cross_section/water_volume` in inverse metres. This accounts for represented size and volume, independently of how many render samples are displayed. RGB scattering remains an artistic approximation; this is not NTU calibration or a multiple-scattering radiative-transfer solution. The dependence of optical response on both concentration and grain size is consistent with [USGS laboratory observations](https://www.usgs.gov/publications/effects-suspended-sediment-concentration-and-grain-size-three-optical-turbidity).
 
@@ -22,7 +22,7 @@ The previous display showed at most 12 proxies per parcel and usually left much 
 
 ## What remains unresolved
 
-The independent collision budget remains 4,096 weighted parcels. A cloud of displayed grains does not add independent collisions, shear response or a resolved packed bed. The previously measured phase-momentum error, inflated coarse contact envelopes, dense-bed penetration and experimental recovery calibration remain open in `sluice-phase-coupling` and `sluice-calibrate`. Increasing the number of render grains cannot fix those equations. The [accuracy protocol](accuracy.md) defines the remaining physical gates.
+Particle storage now starts at 4,096 grain slots and grows geometrically while retaining every authoritative parcel, with an explicit allocation preflight and stop on refusal. This is derived numerical storage rather than a physical capacity or clogging law; see [storage and limits](particle-storage.md). A cloud of displayed grains does not add independent collisions, shear response or a resolved packed bed. The previously measured phase-momentum error, inflated coarse contact envelopes, dense-bed penetration and experimental recovery calibration remain open in `sluice-phase-coupling` and `sluice-calibrate`. Increasing the number of render grains cannot fix those equations. The [accuracy protocol](accuracy.md) defines the remaining physical gates.
 
 Read a saved population and reconstruction cost without advancing it:
 
