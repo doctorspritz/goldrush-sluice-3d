@@ -74,6 +74,8 @@ impl Hydraulics {
         );
     }
     pub(super) fn step_terrain(&mut self, s: &mut Session, dt: f32) -> Result<(), String> {
+        let profile = std::env::var_os("SLUICE_PROFILE_TERRAIN").is_some();
+        let profile_started = std::time::Instant::now();
         let h = &self.terrain;
         // Excavation/deposition and the pump edit the most recent readback. Only
         // geology/depth are uploaded here: preserve momentum and every separate
@@ -155,6 +157,7 @@ impl Hydraulics {
         // River bed descends toward -Z. The other borders are closed banks/upstream.
         let boundaries = if w.params.open_boundaries { 4 } else { 0 };
         h.update_water_params(&self.queue, dt, boundaries, w.params.manning_n, substeps);
+        let upload_ms = profile_started.elapsed().as_secs_f64() * 1000.;
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -215,6 +218,7 @@ impl Hydraulics {
             bytes * 12,
         );
         encoder.copy_buffer_to_buffer(&capture.buffer, 0, &staging, bytes * 35, capture.size);
+        let encode_ms = profile_started.elapsed().as_secs_f64() * 1000. - upload_ms;
         self.queue.submit(Some(encoder.finish()));
         let (tx, rx) = std::sync::mpsc::channel();
         staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
@@ -238,6 +242,7 @@ impl Hydraulics {
             }
             std::thread::sleep(std::time::Duration::from_micros(100));
         }
+        let wait_ms = profile_started.elapsed().as_secs_f64() * 1000. - upload_ms - encode_ms;
         let mapped = staging.slice(..).get_mapped_range();
         let mut arrays: Vec<Vec<f32>> = mapped
             .chunks(bytes as usize)
@@ -335,6 +340,8 @@ impl Hydraulics {
             w.water_flow_x[z * (WIDTH + 1) + x] = a.velocity_x[i];
             w.water_flow_z[z * WIDTH + x] = a.velocity_z[i];
         }
+        let decode_ms =
+            profile_started.elapsed().as_secs_f64() * 1000. - upload_ms - encode_ms - wait_ms;
         gold.replay(
             &mut s.site,
             &events,
@@ -343,6 +350,11 @@ impl Hydraulics {
             area,
             dt as f64,
         )?;
+        let gold_ms = profile_started.elapsed().as_secs_f64() * 1000.
+            - upload_ms
+            - encode_ms
+            - wait_ms
+            - decode_ms;
         s.site.project_terrain_water(&next_depth);
         let w = &mut s.site.world;
         let a = &mut s.site.hydraulic;
@@ -361,6 +373,13 @@ impl Hydraulics {
         a.steps += 1;
         s.site.revision += 1;
         s.site.reconcile_soil_water();
+        if profile {
+            let total_ms = profile_started.elapsed().as_secs_f64() * 1000.;
+            println!(
+                "TERRAIN WALL PROFILE {}",
+                serde_json::json!({"sim_time":s.sim_time,"substeps":substeps,"readback_bytes":staging.size(),"total_ms":total_ms,"upload_ms":upload_ms,"encode_ms":encode_ms,"submit_wait_ms":wait_ms,"decode_ms":decode_ms,"gold_ms":gold_ms,"project_reconcile_ms":total_ms-upload_ms-encode_ms-wait_ms-decode_ms-gold_ms})
+            );
+        }
         Ok(())
     }
 }
