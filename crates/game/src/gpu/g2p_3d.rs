@@ -584,6 +584,15 @@ impl GpuG2p3D {
 
     /// Encode G2P compute pass into command encoder
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, particle_count: u32) {
+        self.encode_profiled(encoder, particle_count, None);
+    }
+
+    pub fn encode_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        particle_count: u32,
+        timer: Option<&mut super::timing::GpuStageTimer>,
+    ) {
         encoder.copy_buffer_to_buffer(
             &self.densities_buffer,
             0,
@@ -593,13 +602,14 @@ impl GpuG2p3D {
         );
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("G2P 3D Pass"),
-            timestamp_writes: None,
+            timestamp_writes: timer.map(|timer| timer.pass("G2P 3D Pass")),
         });
         pass.set_pipeline(&self.g2p_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         let workgroups = particle_count.div_ceil(self.workgroup_size);
         pass.dispatch_workgroups(workgroups, 1, 1);
     }
+
 
     /// Download particle data from GPU
     pub fn download(

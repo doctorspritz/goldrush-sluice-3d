@@ -35,6 +35,8 @@ pub struct StepTimings {
 pub struct Hydraulics {
     pub timings: StepTimings,
     pub gpu_stages: std::collections::BTreeMap<String, f64>,
+    /// Compute-pass device milliseconds; opt-in, excluding copies/host/readback.
+    pub gpu_device_stages: std::collections::BTreeMap<String, f64>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     terrain: GpuHeightfield,
@@ -118,11 +120,25 @@ impl Hydraulics {
             .await
             .ok_or("No GPU adapter for the original simulation")?;
         let adapter_name = adapter.get_info().name;
+        let required_features = if std::env::var_os("SLUICE_PROFILE_GPU_TIMESTAMPS").is_some() {
+            if std::env::var_os("SLUICE_PROFILE_STAGES").is_some() {
+                return Err(
+                    "Choose batched GPU timestamps or serialized stage fences, not both".into(),
+                );
+            }
+            let required = game::gpu::timing::FEATURES;
+            if !adapter.features().contains(required) {
+                return Err("Adapter does not support GPU timestamp queries".into());
+            }
+            required
+        } else {
+            wgpu::Features::empty()
+        };
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("Original FLIP/APIC + heightfield physics"),
-                    required_features: wgpu::Features::empty(),
+                    required_features,
                     required_limits: adapter.limits(),
                     memory_hints: wgpu::MemoryHints::Performance,
                 },
@@ -147,6 +163,7 @@ impl Hydraulics {
         Ok(Self {
             timings: StepTimings::default(),
             gpu_stages: std::collections::BTreeMap::new(),
+            gpu_device_stages: std::collections::BTreeMap::new(),
             device,
             queue,
             terrain,
@@ -173,6 +190,7 @@ impl Hydraulics {
         }
         self.timings = StepTimings::default();
         self.gpu_stages.clear();
+        self.gpu_device_stages.clear();
         let interval = if s.sluice.granular_packets {
             FIXED_DT * 2.0
         } else {
@@ -231,6 +249,9 @@ impl Hydraulics {
             dx,
             profile.capacity() + mining_sim::sluice::MAX_GRAINS,
         );
+        if std::env::var_os("SLUICE_PROFILE_GPU_TIMESTAMPS").is_some() {
+            flip.enable_device_timestamps(&self.device, &self.queue);
+        }
         // CPU DEM owns solid friction. Do not add the shader's heuristic
         // low-speed damping or extra turbulence lift to those same contacts.
         flip.sediment_friction_strength = 0.0;
@@ -595,6 +616,9 @@ impl Hydraulics {
                     }
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
+            }
+            for (stage, ms) in l.flip.device_stage_timings(&self.device)? {
+                *self.gpu_device_stages.entry(stage.into()).or_default() += ms;
             }
             for (stage, ms) in l.flip.stage_timings() {
                 *self

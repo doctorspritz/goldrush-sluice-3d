@@ -12,6 +12,9 @@
 // Fixed-point scale: 10^5 gives ±21,474 range with 5 decimal digits precision
 // Reduced from 10^6 to prevent overflow with high particle concentrations (100k+)
 const SCALE: f32 = 100000.0;
+// Adding a quantised integer zero cannot alter an accumulator. The reference
+// specialization retains those writes for exact GPU and whole-step controls.
+override ELIDE_ZERO_ATOMICS: bool = true;
 
 // Kernel constants
 const BSPLINE_SUPPORT_RADIUS: f32 = 1.5;  // Support range [-1.5, 1.5] for quadratic B-spline
@@ -180,8 +183,14 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 // the original mixture transfer and a separate water-only field.
                 var accum_idx=idx;
                 if params._pad0!=0u && density<=1.0 {accum_idx+=water_offset((params.width+1u)*params.height*params.depth);}
-                atomicAdd(&u_sum[accum_idx],i32(momentum_x*SCALE));
-                atomicAdd(&u_weight[accum_idx],i32(mass_weight*w*SCALE));
+                let quantized_momentum = i32(momentum_x*SCALE);
+                let quantized_weight = i32(mass_weight*w*SCALE);
+                if !ELIDE_ZERO_ATOMICS || quantized_momentum != 0 {
+                    atomicAdd(&u_sum[accum_idx],quantized_momentum);
+                }
+                if !ELIDE_ZERO_ATOMICS || quantized_weight != 0 {
+                    atomicAdd(&u_weight[accum_idx],quantized_weight);
+                }
             }
         }
     }
@@ -242,8 +251,14 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 // the original mixture transfer and a separate water-only field.
                 var accum_idx=idx;
                 if params._pad0!=0u && density<=1.0 {accum_idx+=water_offset(params.width*(params.height+1u)*params.depth);}
-                atomicAdd(&v_sum[accum_idx],i32(momentum_y*SCALE));
-                atomicAdd(&v_weight[accum_idx],i32(mass_weight*w*SCALE));
+                let quantized_momentum = i32(momentum_y*SCALE);
+                let quantized_weight = i32(mass_weight*w*SCALE);
+                if !ELIDE_ZERO_ATOMICS || quantized_momentum != 0 {
+                    atomicAdd(&v_sum[accum_idx],quantized_momentum);
+                }
+                if !ELIDE_ZERO_ATOMICS || quantized_weight != 0 {
+                    atomicAdd(&v_weight[accum_idx],quantized_weight);
+                }
             }
         }
     }
@@ -304,8 +319,14 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 // the original mixture transfer and a separate water-only field.
                 var accum_idx=idx;
                 if params._pad0!=0u && density<=1.0 {accum_idx+=water_offset(params.width*params.height*(params.depth+1u));}
-                atomicAdd(&w_sum[accum_idx],i32(momentum_z*SCALE));
-                atomicAdd(&w_weight[accum_idx],i32(mass_weight*w*SCALE));
+                let quantized_momentum = i32(momentum_z*SCALE);
+                let quantized_weight = i32(mass_weight*w*SCALE);
+                if !ELIDE_ZERO_ATOMICS || quantized_momentum != 0 {
+                    atomicAdd(&w_sum[accum_idx],quantized_momentum);
+                }
+                if !ELIDE_ZERO_ATOMICS || quantized_weight != 0 {
+                    atomicAdd(&w_weight[accum_idx],quantized_weight);
+                }
             }
         }
     }

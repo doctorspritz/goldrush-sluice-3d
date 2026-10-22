@@ -659,6 +659,15 @@ impl GpuPressure3D {
 
     /// Encode full pressure solve: divergence → iterations → gradient
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, iterations: u32) {
+        self.encode_profiled(encoder, iterations, None);
+    }
+
+    pub fn encode_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        iterations: u32,
+        mut timer: Option<&mut super::timing::GpuStageTimer>,
+    ) {
         let workgroups_x = self.width.div_ceil(8);
         let workgroups_y = self.height.div_ceil(8);
         let workgroups_z = self.depth.div_ceil(4);
@@ -667,20 +676,25 @@ impl GpuPressure3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Divergence 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("Divergence 3D Pass")),
             });
             pass.set_pipeline(&self.divergence_pipeline);
             pass.set_bind_group(0, &self.divergence_bind_group, &[]);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
-        self.encode_iterations_only(encoder, iterations);
+        self.encode_iterations_only_profiled(
+            encoder,
+            iterations,
+            timer.as_deref_mut(),
+            "Velocity pressure sweeps",
+        );
 
         // Apply pressure gradient to U
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Gradient U 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("Gradient U 3D Pass")),
             });
             pass.set_pipeline(&self.gradient_u_pipeline);
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
@@ -692,7 +706,7 @@ impl GpuPressure3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Gradient V 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("Gradient V 3D Pass")),
             });
             pass.set_pipeline(&self.gradient_v_pipeline);
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
@@ -704,7 +718,7 @@ impl GpuPressure3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Gradient W 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer.map(|timer| timer.pass("Gradient W 3D Pass")),
             });
             pass.set_pipeline(&self.gradient_w_pipeline);
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
@@ -719,7 +733,16 @@ impl GpuPressure3D {
         encoder: &mut wgpu::CommandEncoder,
         iterations: u32,
     ) {
-        self.encode(encoder, iterations);
+        self.encode_with_pressure_restore_profiled(encoder, iterations, None);
+    }
+
+    pub fn encode_with_pressure_restore_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        iterations: u32,
+        mut timer: Option<&mut super::timing::GpuStageTimer>,
+    ) {
+        self.encode_profiled(encoder, iterations, timer.as_deref_mut());
         let byte_size = (self.width * self.height * self.depth * std::mem::size_of::<f32>() as u32) as u64;
         encoder.copy_buffer_to_buffer(
             &self.pressure_buffer,
@@ -728,7 +751,7 @@ impl GpuPressure3D {
             0,
             byte_size,
         );
-        self.encode(encoder, iterations);
+        self.encode_profiled(encoder, iterations, timer);
         encoder.copy_buffer_to_buffer(
             &self.pressure_backup_buffer,
             0,
@@ -737,6 +760,7 @@ impl GpuPressure3D {
             byte_size,
         );
     }
+
 
     /// Encode just the divergence pass (no pressure iterations or gradient apply).
     pub fn encode_divergence_only(&self, encoder: &mut wgpu::CommandEncoder) {
@@ -764,6 +788,16 @@ impl GpuPressure3D {
     /// - divergence_buffer is pre-filled with density error
     /// - We want the resulting pressure to apply to particle positions, not grid velocities
     pub fn encode_iterations_only(&self, encoder: &mut wgpu::CommandEncoder, iterations: u32) {
+        self.encode_iterations_only_profiled(encoder, iterations, None, "Pressure sweeps");
+    }
+
+    pub fn encode_iterations_only_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        iterations: u32,
+        mut timer: Option<&mut super::timing::GpuStageTimer>,
+        profile_label: &'static str,
+    ) {
         let workgroups_x = self.width.div_ceil(8);
         let workgroups_y = self.height.div_ceil(8);
         let workgroups_z = self.depth.div_ceil(4);
@@ -773,7 +807,7 @@ impl GpuPressure3D {
             // sweeps and their storage dependencies, without 2*N pass encoders.
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Ordered red/black pressure sweeps"),
-                timestamp_writes: None,
+                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass(profile_label)),
             });
             pass.set_bind_group(0, &self.pressure_bind_group, &[]);
             if self.cached_stencil {
@@ -794,7 +828,7 @@ impl GpuPressure3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Density Pressure Red 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass(profile_label)),
                 });
                 pass.set_pipeline(&self.pressure_red_pipeline);
                 pass.set_bind_group(0, &self.pressure_bind_group, &[]);
@@ -805,7 +839,7 @@ impl GpuPressure3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Density Pressure Black 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass(profile_label)),
                 });
                 pass.set_pipeline(&self.pressure_black_pipeline);
                 pass.set_bind_group(0, &self.pressure_bind_group, &[]);

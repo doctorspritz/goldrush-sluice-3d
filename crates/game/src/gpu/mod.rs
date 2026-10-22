@@ -16,6 +16,7 @@ pub mod pressure_3d;
 pub mod readback;
 pub mod sph_3d;
 pub mod sph_dfsph;
+pub mod timing;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

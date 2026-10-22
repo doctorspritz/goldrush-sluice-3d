@@ -652,12 +652,20 @@ impl GpuP2g3D {
                 push_constant_ranges: &[],
             });
 
+        let mut scatter_constants = std::collections::HashMap::new();
+        if !use_tiled_scatter && std::env::var("SLUICE_REFERENCE_P2G_ATOMICS").as_deref() == Ok("1")
+        {
+            scatter_constants.insert("ELIDE_ZERO_ATOMICS".into(), 0.);
+        }
         let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("P2G 3D Scatter Pipeline"),
             layout: Some(&scatter_pipeline_layout),
             module: &scatter_shader,
             entry_point: Some("scatter"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &scatter_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -835,13 +843,22 @@ impl GpuP2g3D {
 
     /// Encode P2G compute passes into command encoder
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, particle_count: u32) {
+        self.encode_profiled(encoder, particle_count, None);
+    }
+
+    pub fn encode_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        particle_count: u32,
+        mut timer: Option<&mut super::timing::GpuStageTimer>,
+    ) {
         self.clear_accumulators(encoder);
 
         // Scatter pass
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("P2G 3D Scatter Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("P2G 3D Scatter Pass")),
             });
             pass.set_pipeline(&self.scatter_pipeline);
             pass.set_bind_group(0, &self.scatter_bind_group, &[]);
@@ -853,7 +870,7 @@ impl GpuP2g3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("P2G 3D Divide U Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("P2G 3D Divide U Pass")),
             });
             pass.set_pipeline(&self.divide_u_pipeline);
             pass.set_bind_group(0, &self.divide_bind_group, &[]);
@@ -867,7 +884,7 @@ impl GpuP2g3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("P2G 3D Divide V Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("P2G 3D Divide V Pass")),
             });
             pass.set_pipeline(&self.divide_v_pipeline);
             pass.set_bind_group(0, &self.divide_bind_group, &[]);
@@ -881,7 +898,7 @@ impl GpuP2g3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("P2G 3D Divide W Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer.map(|timer| timer.pass("P2G 3D Divide W Pass")),
             });
             pass.set_pipeline(&self.divide_w_pipeline);
             pass.set_bind_group(0, &self.divide_bind_group, &[]);
@@ -891,6 +908,7 @@ impl GpuP2g3D {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
     }
+
 
     /// Grid buffer sizes
     pub fn grid_sizes(&self) -> (usize, usize, usize) {

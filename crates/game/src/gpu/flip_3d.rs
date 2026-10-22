@@ -39,6 +39,7 @@ pub struct PhysicsDiagnostics {
 /// GPU-accelerated 3D FLIP simulation
 pub struct GpuFlip3D {
     profile_stages: Vec<(&'static str, [f64; 2])>,
+    device_timer: Option<super::timing::GpuStageTimer>,
     // Grid dimensions
     pub width: u32,
     pub height: u32,
@@ -2219,6 +2220,7 @@ impl GpuFlip3D {
             cpu_sediment_contacts: false,
             flip_ratio: 0.95,
             profile_stages:Vec::new(),
+            device_timer: None,
             batch_submissions: true,
             paired_water_transfer,
             slip_factor: 1.0,
@@ -2636,6 +2638,20 @@ impl GpuFlip3D {
         self.schedule_readback(device, queue, count)
     }
 
+    /// Opt-in diagnostic: retain batched dispatches and collect timestamps
+    /// after the required particle readback, before the next profiled step.
+    pub fn enable_device_timestamps(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.device_timer = Some(super::timing::GpuStageTimer::new(device, queue));
+    }
+    pub fn device_stage_timings(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Result<Vec<(&'static str, f64)>, String> {
+        self.device_timer
+            .as_mut()
+            .map_or_else(|| Ok(Vec::new()), |timer| timer.collect(device))
+    }
+
     /// Volume weights scale P2G inertia while density remains a phase tag.
     pub fn stage_timings(&mut self) -> Vec<(&'static str, [f64; 2])> {
         std::mem::take(&mut self.profile_stages)
@@ -2887,6 +2903,11 @@ impl GpuFlip3D {
     ) -> u32 {
         let profiling = std::env::var_os("SLUICE_PROFILE_STAGES").is_some();
         let batched = self.batch_submissions && !profiling;
+        assert!(
+            self.device_timer.is_none() || batched,
+            "GPU timestamps require ordinary batched submissions"
+        );
+        let mut device_timer = self.device_timer.take();
         self.pressure.compact_iterations = self.batch_submissions;
         // Reuse one encoder for the ordered substep. Splitting it into many
         // command buffers adds Metal scheduling overhead without a dependency.
@@ -2972,7 +2993,7 @@ impl GpuFlip3D {
             } else {
                 // Use sorted P2G that reads from sorted particle buffers
                 self.sorted_p2g.prepare(queue, count, self.cell_size);
-                self.sorted_p2g.encode(&mut encoder, count);
+                self.sorted_p2g.encode_profiled(&mut encoder, count, device_timer.as_mut());
                 // Copy results from sorted_p2g to p2g buffers (rest of pipeline uses p2g buffers)
                 encoder.copy_buffer_to_buffer(
                     &self.sorted_p2g.grid_u_buffer,
@@ -3011,10 +3032,10 @@ impl GpuFlip3D {
                 );
             }
         } else {
-            self.p2g.encode(&mut encoder, count);
+            self.p2g.encode_profiled(&mut encoder, count, device_timer.as_mut());
         }
         if !self.paired_water_transfer || self.use_sorted_p2g {
-            self.water_p2g.encode(&mut encoder, count);
+            self.water_p2g.encode_profiled(&mut encoder, count, device_timer.as_mut());
             if self.paired_water_transfer {
                 for (source, destination, n) in [
                     (
@@ -3059,7 +3080,7 @@ impl GpuFlip3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Fluid Cell Expand 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Fluid Cell Expand 3D Pass")),
             });
             pass.set_pipeline(&self.fluid_cell_expand_pipeline);
             pass.set_bind_group(0, &self.fluid_cell_expand_bind_group, &[]);
@@ -3100,7 +3121,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Density Error 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Density Error 3D Pass")),
                 });
                 pass.set_pipeline(&self.density_error_pipeline);
                 pass.set_bind_group(0, &self.density_error_bind_group, &[]);
@@ -3126,7 +3147,7 @@ impl GpuFlip3D {
             let mut encoder = encoder_for("Density Pressure 3D Encoder");
             // Clear pressure before solving
             self.pressure.clear_pressure(&mut encoder);
-            self.pressure.encode_iterations_only(&mut encoder, self.volume_iterations);
+            self.pressure.encode_iterations_only_profiled(&mut encoder, self.volume_iterations, device_timer.as_mut(), "Density pressure sweeps");
             submit(encoder,"Density Pressure 3D Encoder");
 
             // 4. Convert pressure to position deltas on grid
@@ -3150,7 +3171,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Density Position Grid 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Density Position Grid 3D Pass")),
                 });
                 pass.set_pipeline(&self.density_position_grid_pipeline);
                 pass.set_bind_group(0, &self.density_position_grid_bind_group, &[]);
@@ -3182,7 +3203,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Density Correct 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Density Correct 3D Pass")),
                 });
                 pass.set_pipeline(&self.density_correct_pipeline);
                 pass.set_bind_group(0, &self.density_correct_bind_group, &[]);
@@ -3208,7 +3229,7 @@ impl GpuFlip3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Sediment Fraction 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Sediment Fraction 3D Pass")),
             });
             pass.set_pipeline(&self.sediment_fraction_pipeline);
             pass.set_bind_group(0, &self.sediment_fraction_bind_group, &[]);
@@ -3220,7 +3241,7 @@ impl GpuFlip3D {
         if self.gravel_obstacle_count > 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Gravel Porosity 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Gravel Porosity 3D Pass")),
             });
             pass.set_pipeline(&self.gravel_porosity_pipeline);
             pass.set_bind_group(0, &self.gravel_porosity_bind_group, &[]);
@@ -3252,7 +3273,7 @@ impl GpuFlip3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Sediment Pressure 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Sediment Pressure 3D Pass")),
             });
             pass.set_pipeline(&self.sediment_pressure_pipeline);
             pass.set_bind_group(0, &self.sediment_pressure_bind_group, &[]);
@@ -3314,7 +3335,7 @@ impl GpuFlip3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Gravity 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Gravity 3D Pass")),
             });
             pass.set_pipeline(&self.gravity_pipeline);
             pass.set_bind_group(0, &self.gravity_bind_group, &[]);
@@ -3341,7 +3362,7 @@ impl GpuFlip3D {
 
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Flow 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Flow 3D Pass")),
             });
             pass.set_pipeline(&self.flow_pipeline);
             pass.set_bind_group(0, &self.flow_bind_group, &[]);
@@ -3369,7 +3390,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Vorticity 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Vorticity 3D Pass")),
                 });
                 pass.set_pipeline(&self.vorticity_compute_pipeline);
                 pass.set_bind_group(0, &self.vorticity_compute_bind_group, &[]);
@@ -3395,7 +3416,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Vorticity Confine U 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Vorticity Confine U 3D Pass")),
                 });
                 pass.set_pipeline(&self.vorticity_confine_u_pipeline);
                 pass.set_bind_group(0, &self.vorticity_confine_bind_group, &[]);
@@ -3409,7 +3430,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Vorticity Confine V 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Vorticity Confine V 3D Pass")),
                 });
                 pass.set_pipeline(&self.vorticity_confine_v_pipeline);
                 pass.set_bind_group(0, &self.vorticity_confine_bind_group, &[]);
@@ -3423,7 +3444,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Vorticity Confine W 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Vorticity Confine W 3D Pass")),
                 });
                 pass.set_pipeline(&self.vorticity_confine_w_pipeline);
                 pass.set_bind_group(0, &self.vorticity_confine_bind_group, &[]);
@@ -3451,7 +3472,7 @@ impl GpuFlip3D {
         {
             let mut pass = bc_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("BC U 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("BC U 3D Pass")),
             });
             pass.set_pipeline(&self.bc_u_pipeline);
             pass.set_bind_group(0, &self.bc_bind_group, &[]);
@@ -3465,7 +3486,7 @@ impl GpuFlip3D {
         {
             let mut pass = bc_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("BC V 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("BC V 3D Pass")),
             });
             pass.set_pipeline(&self.bc_v_pipeline);
             pass.set_bind_group(0, &self.bc_bind_group, &[]);
@@ -3479,7 +3500,7 @@ impl GpuFlip3D {
         {
             let mut pass = bc_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("BC W 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("BC W 3D Pass")),
             });
             pass.set_pipeline(&self.bc_w_pipeline);
             pass.set_bind_group(0, &self.bc_bind_group, &[]);
@@ -3496,10 +3517,10 @@ impl GpuFlip3D {
         let mut pressure_encoder = encoder_for("FLIP 3D Pressure Encoder");
         if self.pressure_diagnostics_enabled {
             self.pressure
-                .encode_with_pressure_restore(&mut pressure_encoder, pressure_iterations);
+                .encode_with_pressure_restore_profiled(&mut pressure_encoder, pressure_iterations, device_timer.as_mut());
         } else {
             self.pressure
-                .encode(&mut pressure_encoder, pressure_iterations);
+                .encode_profiled(&mut pressure_encoder, pressure_iterations, device_timer.as_mut());
         }
 
         submit(pressure_encoder, "FLIP 3D Pressure Encoder");
@@ -3509,7 +3530,7 @@ impl GpuFlip3D {
         {
             let mut pass = bc_post_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("BC U 3D Post-Pressure Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("BC U 3D Post-Pressure Pass")),
             });
             pass.set_pipeline(&self.bc_u_pipeline);
             pass.set_bind_group(0, &self.bc_bind_group, &[]);
@@ -3521,7 +3542,7 @@ impl GpuFlip3D {
         {
             let mut pass = bc_post_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("BC V 3D Post-Pressure Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("BC V 3D Post-Pressure Pass")),
             });
             pass.set_pipeline(&self.bc_v_pipeline);
             pass.set_bind_group(0, &self.bc_bind_group, &[]);
@@ -3533,7 +3554,7 @@ impl GpuFlip3D {
         {
             let mut pass = bc_post_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("BC W 3D Post-Pressure Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("BC W 3D Post-Pressure Pass")),
             });
             pass.set_pipeline(&self.bc_w_pipeline);
             pass.set_bind_group(0, &self.bc_bind_group, &[]);
@@ -3562,7 +3583,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Porosity Drag U 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Porosity Drag U 3D Pass")),
                 });
                 pass.set_pipeline(&self.porosity_drag_u_pipeline);
                 pass.set_bind_group(0, &self.porosity_drag_bind_group, &[]);
@@ -3574,7 +3595,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Porosity Drag V 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Porosity Drag V 3D Pass")),
                 });
                 pass.set_pipeline(&self.porosity_drag_v_pipeline);
                 pass.set_bind_group(0, &self.porosity_drag_bind_group, &[]);
@@ -3586,7 +3607,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Porosity Drag W 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Porosity Drag W 3D Pass")),
                 });
                 pass.set_pipeline(&self.porosity_drag_w_pipeline);
                 pass.set_bind_group(0, &self.porosity_drag_bind_group, &[]);
@@ -3619,7 +3640,8 @@ impl GpuFlip3D {
             .upload_params(queue, count, self.cell_size, dt, self.flip_ratio, sediment_params);
 
         let mut encoder = encoder_for("FLIP 3D G2P Encoder");
-        self.g2p.encode(&mut encoder, g2p_count);
+        self.g2p
+            .encode_profiled(&mut encoder, g2p_count, device_timer.as_mut());
         submit(encoder, "FLIP 3D G2P Encoder");
 
         // ========== Sediment Density Projection (Granular Packing) ==========
@@ -3645,7 +3667,7 @@ impl GpuFlip3D {
                 {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                         label: Some("Sediment Cell Type 3D Pass"),
-                        timestamp_writes: None,
+                        timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Sediment Cell Type 3D Pass")),
                     });
                     pass.set_pipeline(&self.sediment_cell_type_pipeline);
                     pass.set_bind_group(0, &self.sediment_cell_type_bind_group, &[]);
@@ -3680,7 +3702,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Sediment Density Error 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Sediment Density Error 3D Pass")),
                 });
                 pass.set_pipeline(&self.sediment_density_error_pipeline);
                 pass.set_bind_group(0, &self.sediment_density_error_bind_group, &[]);
@@ -3694,7 +3716,7 @@ impl GpuFlip3D {
             let mut encoder = encoder_for("Sediment Density Pressure 3D Encoder");
             self.pressure.clear_pressure(&mut encoder);
             let sediment_iterations = 15;
-            self.pressure.encode_iterations_only(&mut encoder, sediment_iterations);
+            self.pressure.encode_iterations_only_profiled(&mut encoder, sediment_iterations, device_timer.as_mut(), "Sediment pressure sweeps");
             submit(encoder,"Sediment Density Pressure 3D Encoder");
 
             let grid_params = DensityPositionGridParams3D {
@@ -3717,7 +3739,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Sediment Position Grid 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Sediment Position Grid 3D Pass")),
                 });
                 pass.set_pipeline(&self.density_position_grid_pipeline);
                 pass.set_bind_group(0, &self.density_position_grid_bind_group, &[]);
@@ -3748,7 +3770,7 @@ impl GpuFlip3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Sediment Density Correct 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("Sediment Density Correct 3D Pass")),
                 });
                 pass.set_pipeline(&self.sediment_density_correct_pipeline);
                 pass.set_bind_group(0, &self.density_correct_bind_group, &[]);
@@ -3797,7 +3819,7 @@ impl GpuFlip3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("SDF Collision 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: device_timer.as_mut().map(|timer| timer.pass("SDF Collision 3D Pass")),
             });
             pass.set_pipeline(&self.sdf_collision_pipeline);
             pass.set_bind_group(0, &self.sdf_collision_bind_group, &[]);
@@ -3808,6 +3830,9 @@ impl GpuFlip3D {
 
         drop(submit);
         let mut encoder = pending_encoder.into_inner();
+        if let Some(timer) = device_timer.as_mut() {
+            timer.resolve(encoder.as_mut().expect("batched timestamp encoder"));
+        }
         let prepared = self.prepared_readback.take();
         if let Some((index, first, count)) = prepared {
             assert!(
@@ -3834,6 +3859,10 @@ impl GpuFlip3D {
         if let Some(encoder) = encoder {
             queue.submit(Some(encoder.finish()));
         }
+        if let Some(timer) = device_timer.as_mut() {
+            timer.begin_map();
+        }
+        self.device_timer = device_timer;
         if let Some((index, _, _)) = prepared {
             self.readback_slots[index].begin_map();
         }
