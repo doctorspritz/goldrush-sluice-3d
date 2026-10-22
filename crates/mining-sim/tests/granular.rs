@@ -126,7 +126,10 @@ fn cleanup_preserves_a_single_fine_quartz_grain_below_bulk_empty_threshold() {
     fine.diameter_m = 0.00008;
     fine.material.sand_m3 = std::f64::consts::PI / 6. * (fine.diameter_m as f64).powi(3);
     let volume = fine.material.sand_m3;
-    assert!(fine.material.is_empty(), "bulk tolerance exceeds a real fine grain");
+    assert!(
+        fine.material.is_empty(),
+        "bulk tolerance exceeds a real fine grain"
+    );
     s.grains.push(fine);
     let collected = s.cleanup().unwrap();
     assert_eq!(collected.sand_m3, volume);
