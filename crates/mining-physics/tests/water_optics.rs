@@ -281,7 +281,8 @@ fn shared_interface_uses_relative_depth_moments_without_moving_spray_or_hidden_w
 #[ignore = "requires real GPU; run explicitly with --ignored"]
 fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes() {
     let (device, queue) = device();
-    let texture = |format, bytes: &[f32], channels: u32| {
+    let mut textures = Vec::new();
+    let mut texture = |format, bytes: &[f32], channels: u32| {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
             size: wgpu::Extent3d {
@@ -306,7 +307,9 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
             },
             texture.size(),
         );
-        texture.create_view(&Default::default())
+        let view = texture.create_view(&Default::default());
+        textures.push(texture);
+        view
     };
     // Every other nearest particle changes from clear to extremely muddy.
     // The column underneath has the same 4 cm water / extinction 50 per metre.
@@ -436,7 +439,7 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
     let values = execute(
         &device,
         &queue,
-        source,
+        source.clone(),
         &[&group, &out_group],
         &[&layout, &out_layout],
         &buffer,
@@ -450,5 +453,47 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
             (value[3] - 0.8).abs() < 1e-6,
             "normal confidence jumped: {value:?}"
         );
+    }
+    // A subpixel camera shift must not expose alternating source texels as
+    // bright crest beads or opaque/clear mud islands. The low-frequency field
+    // is constant; independently, its area-weighted extinction is 50 / metre.
+    // Exercise both full-resolution phases and both half-resolution phases.
+    let raw = [1f32, -1., 0., 0.].repeat(64);
+    let moments: Vec<f32> = (0..64)
+        .flat_map(|i| [0.04, 0.04 * if i % 2 == 0 { 10. } else { 90. }])
+        .collect();
+    let normals: Vec<f32> = (0..64)
+        .flat_map(|i| [if i % 2 == 0 { 0.006 } else { -0.006 }, 0.008, 0., 0.01])
+        .collect();
+    for (index, data) in [(0, raw), (1, moments), (3, normals)] {
+        queue.write_texture(
+            textures[index].as_image_copy(),
+            bytemuck::cast_slice(&data),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(8 * textures[index].format().block_copy_size(None).unwrap()),
+                rows_per_image: None,
+            },
+            textures[index].size(),
+        );
+    }
+    let filtered = execute(
+        &device,
+        &queue,
+        source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [2, 2],
+    );
+    for y in 6..10 {
+        for x in 6..10 {
+            let value = &filtered[(y * 16 + x) * 4..][..4];
+            assert!(
+                (value[2] - 50.).abs() < 1.5,
+                "texel-phase mud island: {value:?}"
+            );
+            assert!(value[1] > 0.995, "texel-phase crest highlight: {value:?}");
+        }
     }
 }

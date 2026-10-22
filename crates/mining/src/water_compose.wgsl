@@ -27,24 +27,40 @@ fn sample_depth(pixel: vec2<f32>) -> vec2<f32> {
     }
     return vec2(total/max(weight,0.0001),weight);
 }
-// Reconstruction normals are independent of triangle/splat silhouettes. Keep
-// depth jumps and different water domains separate during local filtering.
-fn reconstructed_normal(pixel:vec2<f32>,depth:f32)->vec4<f32> {
+struct ChannelSurface {normal:vec4<f32>,column:vec2<f32>};
+// Gather every texel in the footprint. Striding over alternating texels makes
+// the surface and its turbidity change when the half-size pixel phase changes.
+// Share visibility tests between the two additive fields, before normalizing.
+fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
     var sum=vec3(0.);var weight=0.;
+    var column=vec2(0.);var column_weight=0.;
     let size=vec2<i32>(textureDimensions(surface_normals));
     let p=pixel*vec2<f32>(size)/u.viewport.xy-0.5;
     let center=vec2<i32>(round(p));
-    for(var y=-3;y<=3;y++){for(var x=-3;x<=3;x++){
-        let q=clamp(center+vec2(x,y)*2,vec2(0),size-vec2(1));
-        let raw=textureLoad(raw_depths,q,0);let normal=textureLoad(normal_sums,q,0);
-        if raw.r<=0. || raw.g>= -0.5 || normal.w<=0. {continue;}
+    let pixel_m=depth*4.*abs(u.view_from_clip[1].y)/u.viewport.y;
+    let radius=clamp(0.012/max(pixel_m,0.00001),2.5,5.);
+    for(var y=-4;y<=4;y++){for(var x=-4;x<=4;x++){
+        let q=clamp(center+vec2(x,y),vec2(0),size-vec2(1));
+        let raw=textureLoad(raw_depths,q,0);
+        if raw.r<=0. || raw.g>= -0.5 {continue;}
         let delta=(raw.r-depth)/0.035;
         let distance=vec2<f32>(q)-p;
         let w=exp(-dot(distance,distance)/24.-delta*delta);
+        let normal=textureLoad(normal_sums,q,0);
         sum+=normal.xyz*w;weight+=normal.w*w;
+        let cw=exp(-2.*dot(distance,distance)/(radius*radius)-delta*delta);
+        column+=textureLoad(fluid_thickness,q,0).rg*cw;column_weight+=cw;
     }}
-    if weight<=0.000001 || length(sum)<0.000001 {return vec4(0.);}
-    return vec4(normalize(sum),clamp(length(sum)/weight,0.,1.));
+    var out:ChannelSurface;
+    out.normal=vec4(0.);
+    if weight>0.000001 && length(sum)>0.000001 {
+        out.normal=vec4(normalize(sum),clamp(length(sum)/weight,0.,1.));
+    }
+    out.column=column/max(column_weight,0.000001);
+    return out;
+}
+fn reconstructed_normal(pixel:vec2<f32>,depth:f32)->vec4<f32> {
+    return channel_surface(pixel,depth).normal;
 }
 // Interpolate additive moments before dividing. Switching the front-most
 // particle must not switch the colour of an entire overlapping water column.
@@ -52,26 +68,7 @@ fn optical_column(pixel:vec2<f32>,depth:f32,channel:bool)->vec2<f32> {
     let size=vec2<i32>(textureDimensions(fluid_thickness));
     let p=pixel*vec2<f32>(size)/u.viewport.xy-0.5;
     if channel {
-        // Filter the additive water/extinction moments over the same local
-        // surface footprint as the reconstructed depth. Filtering their ratio
-        // would give a tiny muddy kernel the weight of a whole water column.
-        // Twelve millimetres resolves a plume without exposing each display
-        // kernel's colour. Depth/domain tests keep walls and spray separate.
-        let pixel_m=depth*4.*abs(u.view_from_clip[1].y)/u.viewport.y;
-        let radius=clamp(0.012/max(pixel_m,0.00001),2.5,5.);
-        let center=vec2<i32>(round(p));
-        var sum=vec2(0.);var weight=0.;
-        for(var y=-2;y<=2;y++){for(var x=-2;x<=2;x++){
-            let q=clamp(center+vec2(x,y)*2,vec2(0),size-vec2(1));
-            let raw=textureLoad(raw_depths,q,0);
-            if raw.r<=0. || raw.g>= -0.5 {continue;}
-            let delta=(raw.r-depth)/0.035;
-            let distance=vec2<f32>(q)-p;
-            let support=max(1.-dot(distance,distance)/(radius*radius),0.);
-            let w=support*support*support*exp(-delta*delta);
-            sum+=textureLoad(fluid_thickness,q,0).rg*w;weight+=w;
-        }}
-        return sum/max(weight,0.000001);
+        return channel_surface(pixel,depth).column;
     }
     let base=vec2<i32>(floor(p));let f=fract(p);
     var sum=vec2(0.);var weight=0.;
@@ -166,8 +163,11 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     normal = normalize((u.world_from_view * vec4(n,0.)).xyz);
     }
     var surface_confidence=0.;
+    var channel_column=vec2(0.);
     if in_channel {
-        let surface=reconstructed_normal(q,raw_depth);
+        let joined=channel_surface(q,raw_depth);
+        let surface=joined.normal;
+        channel_column=joined.column;
         surface_confidence=surface.w;
         if surface.w>0. {
             var surface_normal=surface.xyz;if dot(surface_normal,u.world_from_view[3].xyz-world.xyz)<0. {surface_normal = -surface_normal;}
@@ -201,7 +201,7 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     if opaque>0. && abs(opaque_view.w)>0.00001 { thickness=clamp(-opaque_view.z/opaque_view.w-depth,0.,0.5); }
     var column=vec2(0.);
     if !river {
-        column=optical_column(q,raw_depth,in_channel);
+        if in_channel {column=channel_column;} else {column=optical_column(q,raw_depth,false);}
         thickness=min(thickness,max(column.x,0.0002));
     }
     let optical=optical_sample.g;
@@ -225,7 +225,13 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
         scattering=(water_extinction*vec3(0.035,0.18,0.18)
             +mineral_extinction*vec3(0.22,0.16,0.095))/extinction;
     }
-    if !river {
+    if in_channel {
+        // Suspended particles scatter light throughout the water column. A
+        // Lambert term from each reconstructed surface bump paints false mud
+        // patches onto that volume. Use the diffuse environment irradiance;
+        // reflection, refraction and the sun still follow the actual surface.
+        scattering*=0.8;
+    } else if !river {
         scattering*=0.35+0.65*max(dot(normal,light),0.);
     }
     var background=original.rgb;
