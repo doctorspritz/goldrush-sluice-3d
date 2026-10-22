@@ -165,6 +165,7 @@ fn volume_repair_samples_the_faces_where_deltas_were_written() {
             bytes(&p),
             bytes(&[0.4f32, -0.2, 0.1, 0.]),
             bytes(&[1f32]),
+            bytes(&[0u32; 4]),
         ],
         &[5, 6],
         1,
@@ -193,6 +194,7 @@ fn contact(p: [f32; 4], v: [f32; 4], cells: Vec<u32>, open: u32) -> Vec<Vec<f32>
             bytes(&vec![0f32; (n * n) as usize]),
             bytes(&[1f32]),
             bytes(&cells),
+            bytes(&[0u32; 4]),
         ],
         &[1, 2],
         1,
@@ -239,5 +241,45 @@ fn every_open_face_allows_water_to_leave_without_a_false_sdf_contact() {
                 "open face {axis}/{side}: {result:?}"
             );
         }
+    }
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn represented_volume_uses_integrated_voxel_support_without_surface_suction() {
+    let source = include_str!("../../game/src/gpu/shaders/density_error_3d.wgsl").replace(
+        "PHASE_RUNTIME_ALLOWED:bool=false",
+        "PHASE_RUNTIME_ALLOWED:bool=true",
+    );
+    let reference = 8f32;
+    let fluid_kernel = reference * (2f32 / 3.).powi(3);
+    let dt = 0.01f32;
+    for (open, volume, expected) in [
+        (0u32, fluid_kernel, 0f32),
+        (63, fluid_kernel, 0.),
+        (
+            0,
+            fluid_kernel * 1.25,
+            (fluid_kernel * 0.25 / reference) / dt,
+        ),
+    ] {
+        let result = run(
+            &source,
+            "compute_density_error",
+            vec![
+                bytes(&[1u32, 1, 1, reference.to_bits(), dt.to_bits(), 1, open, 0]),
+                bytes(&[1i32]),
+                bytes(&[1u32]),
+                bytes(&[0f32]),
+                bytes(&[volume]),
+            ],
+            &[3],
+            1,
+        );
+        assert!(
+            (result[0][0] - expected).abs() < 1e-4,
+            "open={open} volume={volume}: {} vs {expected}",
+            result[0][0]
+        );
     }
 }

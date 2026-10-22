@@ -51,12 +51,12 @@ prerequisite; soil contact, construction, wet screening, complete water circuits
 calibration, real-time throughput and the full operator replay remain open.
 
 
-The [local phase-response foundation](../docs/physics/phase-response.md) now has
-an independent dense reference solve and real-GPU transfer/response/pressure/gather
-controls for momentum, APIC angular momentum and energy, freefall, rotation,
-particle order, capacity and explicit invalid-input refusal. It is not active
-in `GpuFlip3D` or the worker. The ordinary solver still has the measured phase
-budget errors. Integrating represented-volume position repair and matching masks,
-joined failure readback, storage/restore and porosity-aware closure is the next
-physical step before runtime and packed-bed calibration. This foundation does
-not close Stage 4, `sluice-phase-coupling` or the complete objective.
+The [local phase response](../docs/physics/phase-response.md) now extends through
+actual `GpuFlip3D` and the hydraulic worker in explicit `--conservative-phases`
+validation mode. Actual full-step linear budgets, freefall, represented-volume
+repair, storage growth/restore and refusal custody are checked; ordinary gameplay
+still uses the existing model. The next physical gates are the measured
+position-repair angular defect (`sluice-volume-constraint`), boundary/rest-state
+and numerical-clipping controls, then voidage-dependent drag and packed-bed
+convergence. Runtime integration does not close Stage 4, `sluice-phase-coupling`
+or the complete objective. See [the runtime evidence](../docs/playtests/2026-10-23-phase-runtime.md).

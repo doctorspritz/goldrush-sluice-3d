@@ -5,9 +5,20 @@ use mining_sim::{session::Controls, Action, Placement, Session, Vec3};
 #[test]
 #[ignore = "requires real Metal/Vulkan compute adapter; run with --ignored --nocapture"]
 fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
+    run_pipeline(false);
+}
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored --nocapture"]
+fn conservative_pipeline_survives_excavation_pumping_camera_and_live_restore() {
+    run_pipeline(true);
+}
+fn run_pipeline(conservative: bool) {
     let mut s = Session::new();
     let initial_mass = s.accounted_dry_mass_kg();
     let mut physics = Hydraulics::new().unwrap();
+    if conservative {
+        physics = physics.with_conservative_phases();
+    }
     let initial_layers = s.site.world.overburden_thickness.clone();
     let batch = s.site.dig(Vec3::new(19.0, 0.0, 22.0), 0.44, 0.3, 0.08);
     assert!(batch.volume() > 0.05);

@@ -79,7 +79,8 @@ enum ReadyState {
 /// Double-buffered async readback slot for particle data.
 ///
 /// Five planar copies share one mapping and completion callback. The bound
-/// remains 80 bytes per particle, with no change to positions, velocity or APIC.
+/// is 80 bytes per particle plus a 16-byte refusal-status tail. Status is
+/// inspected before exposing any position, velocity or APIC output.
 pub(crate) struct ReadbackSlot {
     data: StagingBuffer,
     capacity: usize,
@@ -91,7 +92,7 @@ impl ReadbackSlot {
     pub fn new(device: &wgpu::Device, max_particles: usize) -> Self {
         let buffer_size = (max_particles * std::mem::size_of::<[f32; 4]>()) as u64;
         Self {
-            data: StagingBuffer::new(device, "Particle readback staging", buffer_size * 5),
+            data: StagingBuffer::new(device, "Particle readback staging", buffer_size * 5 + 16),
             capacity: max_particles,
             count: 0,
             pending: false,
@@ -105,27 +106,15 @@ impl ReadbackSlot {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        positions: &wgpu::Buffer,
-        velocities: &wgpu::Buffer,
-        c_col0: &wgpu::Buffer,
-        c_col1: &wgpu::Buffer,
-        c_col2: &wgpu::Buffer,
+        sources: [&wgpu::Buffer; 5],
+        status: Option<&wgpu::Buffer>,
         first: usize,
         count: usize,
     ) -> bool {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Readback Copy Encoder"),
         });
-        if !self.encode_copy(
-            &mut encoder,
-            positions,
-            velocities,
-            c_col0,
-            c_col1,
-            c_col2,
-            first,
-            count,
-        ) {
+        if !self.encode_copy(&mut encoder, sources, status, first, count) {
             return false;
         }
         queue.submit(Some(encoder.finish()));
@@ -137,11 +126,8 @@ impl ReadbackSlot {
     pub fn encode_copy(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        positions: &wgpu::Buffer,
-        velocities: &wgpu::Buffer,
-        c_col0: &wgpu::Buffer,
-        c_col1: &wgpu::Buffer,
-        c_col2: &wgpu::Buffer,
+        sources: [&wgpu::Buffer; 5],
+        status: Option<&wgpu::Buffer>,
         first: usize,
         count: usize,
     ) -> bool {
@@ -151,10 +137,7 @@ impl ReadbackSlot {
         let count = count.min(self.capacity - first);
         let byte_size = (count * 16) as u64;
         let first_byte = (first * 16) as u64;
-        for (plane, source) in [positions, velocities, c_col0, c_col1, c_col2]
-            .into_iter()
-            .enumerate()
-        {
+        for (plane, source) in sources.into_iter().enumerate() {
             encoder.copy_buffer_to_buffer(
                 source,
                 first_byte,
@@ -163,13 +146,18 @@ impl ReadbackSlot {
                 byte_size,
             );
         }
+        if let Some(status) = status {
+            encoder.copy_buffer_to_buffer(status, 0, &self.data.buffer, byte_size * 5, 16);
+        } else {
+            encoder.clear_buffer(&self.data.buffer, byte_size * 5, Some(16));
+        }
         self.count = count;
         self.pending = true;
         true
     }
 
     pub fn begin_map(&mut self) {
-        self.data.start_map((self.count * 80) as u64);
+        self.data.start_map((self.count * 80 + 16) as u64);
     }
 
     /// Try to read all five staged planes from one completed mapping.
@@ -180,7 +168,7 @@ impl ReadbackSlot {
         positions_out: &mut [glam::Vec3],
         velocities_out: &mut [glam::Vec3],
         c_matrices_out: &mut [glam::Mat3],
-    ) -> Option<usize> {
+    ) -> Option<(usize, u32)> {
         if !self.pending {
             return None;
         }
@@ -201,18 +189,21 @@ impl ReadbackSlot {
             .min(velocities_out.len())
             .min(c_matrices_out.len());
 
+        let status;
         {
             let bytes = self
                 .data
                 .buffer
-                .slice(..(self.count * 80) as u64)
+                .slice(..(self.count * 80 + 16) as u64)
                 .get_mapped_range();
-            let planes: &[[f32; 4]] = bytemuck::cast_slice(&bytes);
+            let data_bytes = self.count * 80;
+            status = *bytemuck::from_bytes::<u32>(&bytes[data_bytes..data_bytes + 4]);
+            let planes: &[[f32; 4]] = bytemuck::cast_slice(&bytes[..data_bytes]);
             let vector = |plane: usize, i: usize| {
                 let v = planes[plane * self.count + i];
                 glam::Vec3::new(v[0], v[1], v[2])
             };
-            for i in 0..count {
+            for i in 0..if status == 0 { count } else { 0 } {
                 positions_out[i] = vector(0, i);
                 velocities_out[i] = vector(1, i);
                 c_matrices_out[i] = glam::Mat3::from_cols(vector(2, i), vector(3, i), vector(4, i));
@@ -222,7 +213,7 @@ impl ReadbackSlot {
 
         self.pending = false;
         self.count = 0;
-        Some(count)
+        Some((count, status))
     }
 
     /// Returns true if a readback is currently pending.

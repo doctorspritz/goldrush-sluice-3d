@@ -4,11 +4,23 @@ use mining_sim::sluice::INITIAL_GRAIN_STORAGE;
 const PARTICLE_PLANNING_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
 const PLANNED_BYTES_PER_PARTICLE: u64 = 1024;
 
+#[cfg(test)]
 pub(crate) fn grain_capacity(
     water: usize,
     needed: usize,
     minimum: usize,
     max_particle_vector_bytes: u64,
+) -> Result<usize, String> {
+    grain_capacity_with_extra(water, needed, minimum, max_particle_vector_bytes, 0, 0)
+}
+
+pub(crate) fn grain_capacity_with_extra(
+    water: usize,
+    needed: usize,
+    minimum: usize,
+    max_particle_vector_bytes: u64,
+    fixed_bytes: u64,
+    extra_bytes_per_particle: u64,
 ) -> Result<usize, String> {
     let grains = needed
         .max(minimum)
@@ -19,7 +31,10 @@ pub(crate) fn grain_capacity(
         .checked_add(grains)
         .ok_or("Particle storage count overflow")?;
     let count = u64::try_from(count).map_err(|_| "Particle storage count overflow")?;
-    if count.saturating_mul(PLANNED_BYTES_PER_PARTICLE) > PARTICLE_PLANNING_BUDGET_BYTES
+    let planned = count
+        .saturating_mul(PLANNED_BYTES_PER_PARTICLE.saturating_add(extra_bytes_per_particle))
+        .saturating_add(fixed_bytes);
+    if planned > PARTICLE_PLANNING_BUDGET_BYTES
         || count.saturating_mul(16) > max_particle_vector_bytes
     {
         return Err("Particle storage request exceeds the planning/adapter budget; simulation must pause with its material retained".into());
@@ -40,5 +55,12 @@ mod tests {
         assert!(grain_capacity(300_000, usize::MAX, 0, binding).is_err());
         assert!(grain_capacity(300_000, 4097, 0, 128).is_err());
         assert!(grain_capacity(300_000, 524_288, 0, binding).is_err());
+        assert!(
+            grain_capacity_with_extra(400_000, 8192, 0, binding, 128 * 1024 * 1024, 8).is_err()
+        );
+        assert_eq!(
+            grain_capacity_with_extra(300_000, 8192, 0, binding, 32 * 1024 * 1024, 8).unwrap(),
+            8192
+        );
     }
 }

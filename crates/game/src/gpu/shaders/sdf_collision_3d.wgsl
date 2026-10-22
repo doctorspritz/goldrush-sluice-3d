@@ -1,3 +1,5 @@
+override PHASE_RUNTIME_ALLOWED:bool=false;
+@group(0) @binding(7) var<storage,read> phase_status:array<u32>;
 // SDF Collision Shader (3D)
 //
 // Advects particles and resolves solid collisions using a precomputed SDF.
@@ -146,6 +148,7 @@ fn sample_bed_height(pos: vec3<f32>) -> f32 {
 
 @compute @workgroup_size(256)
 fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
+    if PHASE_RUNTIME_ALLOWED && phase_status[0]!=0u {return;}
     let pid = id.x;
     if (pid >= params.particle_count) {
         return;

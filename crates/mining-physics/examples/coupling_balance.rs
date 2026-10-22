@@ -6,6 +6,7 @@ use serde_json::json;
 
 fn main() {
     let output = std::env::args().nth(1).expect("output JSON");
+    let conservative = std::env::args().any(|a| a == "--conservative");
     let instance = wgpu::Instance::default();
     let adapter =
         pollster::block_on(instance.request_adapter(&Default::default())).expect("real GPU");
@@ -65,7 +66,11 @@ fn main() {
             true,
         ),
     ] {
-        let mut sim = GpuFlip3D::new(&device, 12, 12, 12, 0.01, 1024);
+        let mut sim = if conservative {
+            GpuFlip3D::new_conservative(&device, 12, 12, 12, 0.01, 1024).unwrap()
+        } else {
+            GpuFlip3D::new(&device, 12, 12, 12, 0.01, 1024)
+        };
         sim.open_boundaries = 63;
         sim.flip_ratio = flip;
         sim.density_projection_enabled = false;
@@ -134,6 +139,10 @@ fn main() {
             0.,
             pressure,
         );
+        assert!(
+            sim.take_phase_error().is_none(),
+            "phase response refused {name}"
+        );
         let after = momentum(&v);
         let fluid_change: DVec3 = v
             .iter()
@@ -155,6 +164,12 @@ fn main() {
                 (v.as_dvec3() - old.as_dvec3()) * (*rho as f64 * *volume as f64)
             })
             .sum();
+        if conservative {
+            assert!(
+                (after - before).length() / before.length() < 1e-6,
+                "full runtime momentum budget failed: {name}"
+            );
+        }
         let scale = fluid_change.length() + solid_change.length();
         println!(
             "{name}: residual={:.9} relative={:.9} water_dP={:.9} grain_dP={:.9}",

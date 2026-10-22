@@ -42,7 +42,11 @@ fn acknowledge(
 impl Runtime {
     pub fn new(session: mining_sim::Session) -> Result<Self, String> {
         Ok(Self {
-            worker: Worker::with_session(session)?,
+            worker: if std::env::args().any(|a| a == "--conservative-phases") {
+                Worker::with_session_conservative(session)?
+            } else {
+                Worker::with_session(session)?
+            },
             next_tick: Instant::now(),
             failed: false,
             sequence: 1,

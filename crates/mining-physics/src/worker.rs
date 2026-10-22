@@ -70,6 +70,12 @@ impl Worker {
     pub fn with_session(session: Session) -> Result<Self, String> {
         Self::spawn(Hydraulics::new, session)
     }
+    pub fn with_session_conservative(session: Session) -> Result<Self, String> {
+        Self::spawn(
+            || Hydraulics::new().map(Hydraulics::with_conservative_phases),
+            session,
+        )
+    }
     fn spawn<T: Solver + 'static>(
         create: impl FnOnce() -> Result<T, String> + Send + 'static,
         mut session: Session,

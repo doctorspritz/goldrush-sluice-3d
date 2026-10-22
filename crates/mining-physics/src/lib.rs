@@ -46,6 +46,7 @@ pub struct Hydraulics {
     sluice: Option<LocalSluice>,
     terrain_loaded: bool,
     initial_grain_storage: usize,
+    conservative_phases: bool,
     pub adapter_name: String,
 }
 struct LocalSluice {
@@ -69,6 +70,14 @@ struct LocalSluice {
 impl Hydraulics {
     pub fn new() -> Result<Self, String> {
         pollster::block_on(Self::create())
+    }
+    /// Explicit validation mode; gameplay's default changes only after physical
+    /// packing and operating trials. The worker retains this choice on restore.
+    pub fn with_conservative_phases(mut self) -> Self {
+        eprintln!("PHYSICS: conservative phase exchange validation mode; packed-bed calibration remains open");
+        self.conservative_phases = true;
+        self.sluice = None;
+        self
     }
     /// Diagnostic reference allocation; physical admission and resolution are unchanged.
     pub fn new_with_grain_storage(grains: usize) -> Result<Self, String> {
@@ -189,6 +198,7 @@ impl Hydraulics {
             sluice: None,
             terrain_loaded: false,
             initial_grain_storage: mining_sim::sluice::INITIAL_GRAIN_STORAGE,
+            conservative_phases: false,
             adapter_name,
         })
     }
@@ -218,7 +228,12 @@ impl Hydraulics {
         s.sluice.fluid_clock += FIXED_DT;
         if s.sluice.fluid_clock + 1e-6 >= interval {
             s.sluice.fluid_clock = (s.sluice.fluid_clock - interval).max(0.0);
-            self.step_sluice(s, interval)?;
+            let solver_steps = s.sluice.solver_steps;
+            if let Err(error) = self.step_sluice(s, interval) {
+                s.sluice.solver_steps = solver_steps;
+                self.sluice = None;
+                return Err(error);
+            }
         }
         s.site.hydraulic.clock += FIXED_DT;
         if s.site.hydraulic.clock >= 0.0499 {
@@ -261,20 +276,44 @@ impl Hydraulics {
             .map(|v| if *v { 2 } else { 0 })
             .collect::<Vec<_>>();
         let limits = self.device.limits();
-        let allocated_grains = particle_storage::grain_capacity(
+        let phase_fixed = if self.conservative_phases {
+            game::gpu::phase_transfer_3d::PhaseTransfer3D::storage_bytes([
+                simulation_width as u32,
+                config.grid_height as u32,
+                config.grid_depth as u32,
+            ])
+            .ok_or("Phase grid planning overflow")?
+        } else {
+            0
+        };
+        let allocated_grains = particle_storage::grain_capacity_with_extra(
             profile.capacity(),
             s.sluice.grains.len(),
             self.initial_grain_storage,
-            (limits.max_buffer_size / 5).min(limits.max_storage_buffer_binding_size as u64),
+            (limits.max_buffer_size.saturating_sub(16) / 5)
+                .min(limits.max_storage_buffer_binding_size as u64),
+            phase_fixed + 32,
+            if self.conservative_phases { 8 } else { 0 },
         )?;
-        let mut flip = GpuFlip3D::new(
-            &self.device,
-            simulation_width as u32,
-            config.grid_height as u32,
-            config.grid_depth as u32,
-            dx,
-            profile.capacity() + allocated_grains,
-        );
+        let mut flip = if self.conservative_phases {
+            GpuFlip3D::new_conservative(
+                &self.device,
+                simulation_width as u32,
+                config.grid_height as u32,
+                config.grid_depth as u32,
+                dx,
+                profile.capacity() + allocated_grains,
+            )?
+        } else {
+            GpuFlip3D::new(
+                &self.device,
+                simulation_width as u32,
+                config.grid_height as u32,
+                config.grid_depth as u32,
+                dx,
+                profile.capacity() + allocated_grains,
+            )
+        };
         if std::env::var_os("SLUICE_PROFILE_GPU_TIMESTAMPS").is_some() {
             flip.enable_device_timestamps(&self.device, &self.queue);
         }
@@ -398,11 +437,24 @@ impl Hydraulics {
         s.sluice.emit_intake_grains(fluid_dt);
         if s.sluice.grains.len() > l.allocated_grains {
             let limits = self.device.limits();
-            let grains = particle_storage::grain_capacity(
+            let fixed = if self.conservative_phases {
+                game::gpu::phase_transfer_3d::PhaseTransfer3D::storage_bytes([
+                    l.flip.width,
+                    l.flip.height,
+                    l.flip.depth,
+                ])
+                .ok_or("Phase grid planning overflow")?
+            } else {
+                0
+            };
+            let grains = particle_storage::grain_capacity_with_extra(
                 profile.capacity(),
                 s.sluice.grains.len(),
                 self.initial_grain_storage,
-                (limits.max_buffer_size / 5).min(limits.max_storage_buffer_binding_size as u64),
+                (limits.max_buffer_size.saturating_sub(16) / 5)
+                    .min(limits.max_storage_buffer_binding_size as u64),
+                fixed + 32,
+                if self.conservative_phases { 8 } else { 0 },
             )?;
             let growth_started = std::time::Instant::now();
             l.flip
@@ -572,12 +624,16 @@ impl Hydraulics {
         if s.sluice.granular_packets {
             for (i, fraction) in l.bed_fraction.iter_mut().enumerate() {
                 *fraction = fraction.clamp(0.0, 0.65);
-                if *fraction >= 0.58 {
+                if !self.conservative_phases && *fraction >= 0.58 {
                     l.cell_types[i] = 2;
                 }
             }
             l.flip.sediment_rest_particles = -1.0;
-            l.flip.sediment_porosity_drag = 150.0 * 1e-6 / 0.003_f32.powi(2);
+            l.flip.sediment_porosity_drag = if self.conservative_phases {
+                0.
+            } else {
+                150.0 * 1e-6 / 0.003_f32.powi(2)
+            };
             l.flip
                 .upload_sediment_fraction(&self.queue, &l.bed_fraction);
         }
@@ -655,6 +711,9 @@ impl Hydraulics {
                     ) == Some(count)
                     {
                         break;
+                    }
+                    if let Some(status) = l.flip.take_phase_error() {
+                        return Err(format!("Conservative phase response refused input (status {status}); material retained"));
                     }
                     if std::time::Instant::now() >= deadline {
                         return Err("Original FLIP range readback timed out".into());

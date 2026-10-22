@@ -1,3 +1,5 @@
+override PHASE_RUNTIME_ALLOWED:bool=false;
+@group(0) @binding(8) var<storage,read> phase_status:array<u32>;
 // Density Position Correction Shader (3D) - Blub-Style Trilinear Sampling
 //
 // Particles sample position deltas from grid using trilinear interpolation
@@ -169,6 +171,7 @@ fn trilinear_delta_z(pos: vec3<f32>) -> f32 {
 
 @compute @workgroup_size(256)
 fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
+    if PHASE_RUNTIME_ALLOWED && phase_status[0]!=0u {return;}
     let pid = id.x;
 
     if (pid >= params.particle_count) {

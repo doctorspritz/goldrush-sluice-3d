@@ -285,7 +285,20 @@ pub fn update(
                 && gold_error.abs() < 1e-6;
             let passed = passed && bulk_passed && mass_passed;
             v.flow_result = Some(passed);
-            let report = serde_json::json!({"passed":passed,"water_balance_error_m3":water_error,
+            let fluid_dt = mining_sim::FIXED_DT * if sluice.granular_packets { 2. } else { 1. }
+                / sluice.profile.substeps() as f32;
+            let cfl_speed = 0.9 * sluice.profile.cell() / fluid_dt;
+            let max_water_speed = sluice
+                .water
+                .iter()
+                .map(|p| p.velocity.length())
+                .fold(0., f32::max);
+            let near_cfl = sluice
+                .water
+                .iter()
+                .filter(|p| p.velocity.length() >= 0.999 * cfl_speed)
+                .count();
+            let mut report = serde_json::json!({"passed":passed,"water_balance_error_m3":water_error,
                 "bulk_material_error_m3":bulk_error,"initial_bulk_material_m3":initial_bulk,
                 "bulk_tolerance_m3":bulk_tolerance,"bulk_budget_passed":bulk_passed,
                 "dry_mass_error_kg":mass_error,"initial_dry_mass_kg":initial_mass,
@@ -306,6 +319,17 @@ pub fn update(
                     "water_presentation": water.presentation_report(),
                 "water_mean_downstream_ms":game.session.sluice.water_speed(),"fluid_surface_ready":crate::water::surface_ready(&water),
                     "outflow_particles":sluice.outflow.len(),"terrain_water_splats":water.terrain_count(),"terrain_fine_cells":water.terrain_fine_count(),"detail_revision":detail.revision,"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
+            report["phase_model"] =
+                serde_json::json!(if std::env::args().any(|a| a == "--conservative-phases") {
+                    "conservative-validation"
+                } else {
+                    "legacy"
+                });
+            report["failure"] = serde_json::json!(v.failure);
+            report["paused"] = serde_json::json!(game.session.paused);
+            report["max_water_speed_mps"] = serde_json::json!(max_water_speed);
+            report["water_cfl_speed_mps"] = serde_json::json!(cfl_speed);
+            report["water_near_cfl_limit"] = serde_json::json!(near_cfl);
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }

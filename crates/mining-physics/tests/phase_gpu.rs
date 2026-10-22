@@ -220,6 +220,8 @@ fn phase_transfer_pressure_and_gather_match_oracle_with_momentum_and_freefall_co
         phase.prepare(&queue, count as u32, dx, dt, gravity, 8., sed);
         gather.upload_params(&queue, count as u32, dx, dt, 0.97, sed);
         let mut e = device.create_command_encoder(&Default::default());
+        phase.encode_begin_step(&mut e);
+        phase.encode_cell_volume(&mut e, count as u32);
         phase.encode_transfer(&mut e, count as u32);
         queue.submit(Some(e.finish()));
         let base = grids.each_ref().map(|b| read(&device, &queue, b));
@@ -274,6 +276,49 @@ fn phase_transfer_pressure_and_gather_match_oracle_with_momentum_and_freefall_co
         let q0 = grids.each_ref().map(|b| read(&device, &queue, b));
         let auxiliary = phase.water.each_ref().map(|b| read(&device, &queue, b));
         let coefficients = phase.mobility.each_ref().map(|b| read(&device, &queue, b));
+        if label == "drag" {
+            let markers = PhaseTransfer3D::cell_count_offset(shape) as usize;
+            let density = PhaseTransfer3D::cell_volume_offset(shape) as usize;
+            let cells = (nx * ny * nz) as usize;
+            let marker_sum: u32 = auxiliary[0][markers..markers + cells]
+                .iter()
+                .map(|v| v.to_bits())
+                .sum();
+            assert_eq!(marker_sum, rho.iter().filter(|r| **r <= 1.).count() as u32);
+            let represented: f64 = auxiliary[0][density..density + cells]
+                .iter()
+                .map(|v| *v as f64)
+                .sum();
+            let expected: f64 = positions.iter().map(|p| p[3] as f64).sum();
+            assert!(
+                (represented - expected).abs() < 1e-5,
+                "represented total volume {represented} vs {expected}"
+            );
+            for z in 0..nz {
+                for y in 0..ny {
+                    for x in 0..nx {
+                        let point =
+                            DVec3::new(x as f64 + 0.5, y as f64 + 0.5, z as f64 + 0.5) * dx as f64;
+                        let oracle: f64 = positions
+                            .iter()
+                            .map(|p| {
+                                let delta = (point
+                                    - DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64))
+                                    / dx as f64;
+                                p[3] as f64 * weight(delta.x) * weight(delta.y) * weight(delta.z)
+                            })
+                            .sum();
+                        let index = ((z * ny + y) * nx + x) as usize;
+                        assert!(
+                            (auxiliary[0][density + index] as f64 - oracle).abs()
+                                < 5e-6 * oracle.max(1.),
+                            "cell represented volume {index}"
+                        );
+                    }
+                }
+            }
+        }
+
         for axis in 0..3 {
             let mut dims = shape;
             dims[axis] += 1;
@@ -502,5 +547,16 @@ fn phase_transfer_pressure_and_gather_match_oracle_with_momentum_and_freefall_co
             "{label} momentum error={error} / mass={total_mass}"
         );
         eprintln!("{label}: momentum residual {error:.9} / mass {total_mass:.6}");
+        if label == "drag" {
+            queue.write_buffer(&v, 0, bytemuck::bytes_of(&f32::NAN));
+            let mut encoder = device.create_command_encoder(&Default::default());
+            phase.encode_validate_particles(&mut encoder, count as u32);
+            queue.submit(Some(encoder.finish()));
+            assert_eq!(
+                read(&device, &queue, phase.status_buffer())[0].to_bits() & 8,
+                8,
+                "nonfinite output must be refused before advection"
+            );
+        }
     }
 }

@@ -47,7 +47,7 @@ their original order and precision.
 The allocation policy plans at 1 KiB per reserved particle, including the existing
 profile water reservation, against a 512 MiB planning budget. It also checks the
 adapter's storage-binding limit and its largest combined readback allocation:
-five 16-byte position/velocity/APIC vectors per reserved particle. Integer
+five 16-byte position/velocity/APIC vectors per reserved particle plus a 16-byte refusal tail. The optional conservative phase mode additionally plans its fixed grid, eight metadata bytes per particle and both readback tails (32 bytes total). Integer
 count/size overflow is rejected before construction. The public growth API checks
 the same largest-buffer condition independently. The GPU refusal control uses a
 device with reduced per-buffer limits where staging is the tighter constraint, without allocating the

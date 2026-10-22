@@ -29,7 +29,9 @@ struct Params {
 @group(0) @binding(15) var<storage,read_write> mobility_v:array<f32>;
 @group(0) @binding(16) var<storage,read_write> mobility_w:array<f32>;
 fn fail(bits:u32) {atomicOr(&wide_accumulators[0].low,bits);}
-fn finite(x:f32)->bool {return x==x && abs(x)<=3.402823e38;}
+// Integer exponent inspection remains reliable for NaNs under GPU floating
+// point optimisation; an ordered greater-than check alone misses them.
+fn finite(x:f32)->bool {return (bitcast<u32>(x)&0x7f800000u)!=0x7f800000u;}
 fn checked_add(index:u32,value:f32) {
  // Every logical face moment gets at most one contribution from each particle.
  // Count rather than reservation makes accepted results allocation independent.
@@ -60,7 +62,7 @@ fn scatter(@builtin(global_invocation_id) invocation:vec3<u32>) {
  let id=invocation.x;if id>=params.count {return;}
  let p=positions[id];let rho=metadata[id];let diameter=metadata[params.capacity+id];
  if !all(p==p) || !finite(p.x) || !finite(p.y) || !finite(p.z) || !finite(p.w)
-  || !finite(rho) || rho<1. || !finite(diameter) || !all(velocities[id]==velocities[id]) {fail(2u);return;}
+  || !finite(rho) || rho<1. || !finite(diameter) || !finite(velocities[id].x) || !finite(velocities[id].y) || !finite(velocities[id].z) {fail(2u);return;}
  let solid=rho>1.;let volume=select(p.w,1.,p.w<=0.);
  var bc=vec2(0.,1.);if solid {bc=relaxation(rho,diameter);}
  metadata[2u*params.capacity+id]=bc.x;metadata[3u*params.capacity+id]=bc.y;
@@ -125,7 +127,7 @@ fn assemble(@builtin(global_invocation_id) invocation:vec3<u32>) {
   q=(a*u0+wide_read(index+7u))/volume;
   mobility=scale/volume*(a*a/m+wide_read(index+6u));let kw=scale*a/m;
   aux=vec4(u0,kw/mobility,q,scale/mobility);
-  if !finite(q) || !finite(mobility) || mobility<=0. || !all(aux==aux) || any(abs(aux)>vec4(3.402823e38)) {
+  if !finite(q) || !finite(mobility) || mobility<=0. || !finite(aux.x) || !finite(aux.y) || !finite(aux.z) || !finite(aux.w) {
    fail(4u);aux=vec4(0.);mobility=0.;q=0.;
   }
  }
@@ -136,4 +138,50 @@ fn assemble(@builtin(global_invocation_id) invocation:vec3<u32>) {
 fn publish() {
  water_u[params.nu]=f32(atomicLoad(&wide_accumulators[0].low));
  mobility_u[0]=1.;mobility_v[0]=1.;mobility_w[0]=1.;
+}
+
+fn cell_moment_start()->u32 {return 1u+8u*(params.nu+params.nv+params.nw);}
+fn cell_marker_offset()->u32 {
+ let end=((params.nu+4u+63u)/64u)*64u+4u*params.nu;
+ return ((end+63u)/64u)*64u;
+}
+fn cell_volume_offset()->u32 {
+ return ((cell_marker_offset()+params.width*params.height*params.depth+63u)/64u)*64u;
+}
+@compute @workgroup_size(128)
+fn count_cells(@builtin(global_invocation_id) invocation:vec3<u32>) {
+ let id=invocation.x;if id>=params.count {return;}
+ let p=positions[id];let rho=metadata[id];
+ if !all(p==p) || !finite(p.x) || !finite(p.y) || !finite(p.z) || !finite(p.w) || !finite(rho) || rho<1. {fail(2u);return;}
+ let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
+ let home=vec3<i32>(floor(p.xyz/params.cell_size));
+ if rho<=1. && all(home>=vec3(0)) && all(home<shape) {
+  let index=(u32(home.z)*params.height+u32(home.y))*params.width+u32(home.x);
+  atomicAdd(&wide_accumulators[cell_moment_start()+2u*index].low,1u);
+ }
+ let volume=select(p.w,1.,p.w<=0.);
+ let q=p.xyz/params.cell_size-vec3(.5);let center=vec3<i32>(floor(q+vec3(.5)));let frac=q-vec3<f32>(center);
+ for(var dz=-1;dz<=1;dz++) {for(var dy=-1;dy<=1;dy++) {for(var dx=-1;dx<=1;dx++) {
+  let cell=center+vec3(dx,dy,dz);if any(cell<vec3(0)) || any(cell>=shape) {continue;}
+  let w=weight(frac.x-f32(dx))*weight(frac.y-f32(dy))*weight(frac.z-f32(dz));if w<=0. {continue;}
+  let index=(u32(cell.z)*params.height+u32(cell.y))*params.width+u32(cell.x);
+  checked_add(cell_moment_start()+2u*index+1u,volume*w);
+ }}}
+}
+@compute @workgroup_size(128)
+fn decode_cells(@builtin(global_invocation_id) invocation:vec3<u32>) {
+ let index=invocation.x;if index>=params.width*params.height*params.depth {return;}
+ let moment=cell_moment_start()+2u*index;
+ water_u[cell_marker_offset()+index]=bitcast<f32>(atomicLoad(&wide_accumulators[moment].low));
+ water_u[cell_volume_offset()+index]=wide_read(moment+1u);
+}
+
+@compute @workgroup_size(128)
+fn validate_particles(@builtin(global_invocation_id) invocation:vec3<u32>) {
+ let id=invocation.x;if id>=params.count {return;}
+ let fields=array<vec3<f32>,5>(positions[id].xyz,velocities[id],row0[id],row1[id],row2[id]);
+ for(var i=0u;i<5u;i++) {
+  let value=fields[i];
+  if !finite(value.x) || !finite(value.y) || !finite(value.z) {fail(8u);return;}
+ }
 }

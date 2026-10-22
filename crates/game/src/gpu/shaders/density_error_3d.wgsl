@@ -1,3 +1,5 @@
+override PHASE_RUNTIME_ALLOWED:bool=false;
+@group(0) @binding(4) var<storage,read> represented_volume:array<f32>;
 // Density Error Shader (3D)
 //
 // Computes density error from particle count per cell.
@@ -56,6 +58,8 @@ fn compute_density_error(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
+    if PHASE_RUNTIME_ALLOWED {density_error[idx]=phase_error(id);return;}
+
     // Start with particle count as base density
     // Note: blub computes actual density with trilinear weights, we use particle count
     var density = f32(particle_count[idx]);
@@ -109,4 +113,31 @@ fn compute_density_error(@builtin(global_invocation_id) id: vec3<u32>) {
     error = clamp(error, -200.0, 200.0);
 
     density_error[idx] = error;
+}
+
+// Quadratic-kernel integral over a unit voxel: 2/3 for the centre interval,
+// 1/6 for each neighbour. Include edges/corners, rather than a per-face guess.
+fn phase_cell_type(q:vec3<i32>)->u32 {
+    let bits=array<u32,3>(1u,4u,16u);
+    let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
+    for(var a=0u;a<3u;a++) {
+        if q[a]<0 {return select(CELL_SOLID,CELL_AIR,(params._pad2&bits[a])!=0u);}
+        if q[a]>=shape[a] {return select(CELL_SOLID,CELL_AIR,(params._pad2&(bits[a]*2u))!=0u);}
+    }
+    return cell_type[cell_index(u32(q.x),u32(q.y),u32(q.z))];
+}
+fn phase_error(id:vec3<u32>)->f32 {
+    let index=cell_index(id.x,id.y,id.z);var density=represented_volume[index];var air=false;
+    let center=vec3<i32>(id);
+    for(var z=-1;z<=1;z++) {for(var y=-1;y<=1;y++) {for(var x=-1;x<=1;x++) {
+        let ct=phase_cell_type(center+vec3(x,y,z));
+        if ct==CELL_SOLID {
+            let w=select(1./6.,2./3.,x==0)*select(1./6.,2./3.,y==0)*select(1./6.,2./3.,z==0);
+            density+=params.rest_density*w;
+        }
+        if abs(x)+abs(y)+abs(z)==1 && ct==CELL_AIR {air=true;}
+    }}}
+    var error=density/params.rest_density-1.;
+    if air {error=max(error,0.);}
+    return clamp(error/params.dt,-200.,200.);
 }

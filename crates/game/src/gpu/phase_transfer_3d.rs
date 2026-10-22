@@ -32,10 +32,13 @@ pub struct PhaseTransfer3D {
     /// Ready header followed by per-face pressure mobility. Shared with pressure.
     pub mobility: [wgpu::Buffer; 3],
     group: wgpu::BindGroup,
+    count_cells: wgpu::ComputePipeline,
+    decode_cells: wgpu::ComputePipeline,
     scatter: wgpu::ComputePipeline,
     normalise: wgpu::ComputePipeline,
     assemble: wgpu::ComputePipeline,
     publish: wgpu::ComputePipeline,
+    validate_particles: wgpu::ComputePipeline,
 }
 
 impl PhaseTransfer3D {
@@ -50,21 +53,72 @@ impl PhaseTransfer3D {
             nx.checked_mul(ny + 1)?.checked_mul(nz)?,
             nx.checked_mul(ny)?.checked_mul(nz + 1)?,
         ];
+        let cells = nx.checked_mul(ny)?.checked_mul(nz)?;
         let moment_bytes = faces
             .iter()
             .try_fold(0u64, |s, &n| s.checked_add(n))?
             .checked_mul(64)?
+            .checked_add(cells.checked_mul(16)?)?
             .checked_add(8)?
             .checked_add(std::mem::size_of::<Params>() as u64)?;
-        faces.into_iter().try_fold(moment_bytes, |s, n| {
-            let aux = Self::aux_offset(n)
-                .checked_add(n.checked_mul(4)?)?
-                .checked_mul(4)?;
-            s.checked_add(aux)?.checked_add((n + 1).checked_mul(4)?)
-        })
+        // Once checked above, these dimensions fit all intermediate layouts.
+        let water = Self::water_bytes(shape, faces);
+        faces
+            .into_iter()
+            .zip(water)
+            .try_fold(moment_bytes, |s, (n, aux)| {
+                s.checked_add(aux)?.checked_add((n + 1).checked_mul(4)?)
+            })
     }
     pub fn aux_offset(face_count: u64) -> u64 {
         (face_count + 4).div_ceil(64) * 64
+    }
+
+    pub fn cell_count_offset(shape: [u32; 3]) -> u64 {
+        let n = (u64::from(shape[0]) + 1) * u64::from(shape[1]) * u64::from(shape[2]);
+        (Self::aux_offset(n) + 4 * n).div_ceil(64) * 64
+    }
+    pub fn cell_volume_offset(shape: [u32; 3]) -> u64 {
+        let cells = shape.into_iter().map(u64::from).product::<u64>();
+        (Self::cell_count_offset(shape) + cells).div_ceil(64) * 64
+    }
+    fn water_bytes(shape: [u32; 3], face_counts: [u64; 3]) -> [u64; 3] {
+        let mut bytes = face_counts.map(|n| (Self::aux_offset(n) + 4 * n) * 4);
+        bytes[0] = (Self::cell_volume_offset(shape)
+            + shape.into_iter().map(u64::from).product::<u64>())
+            * 4;
+        bytes
+    }
+
+    /// Pure preflight for runtime allocation, before any particle/grid buffers.
+    pub fn preflight(
+        limits: &wgpu::Limits,
+        shape: [u32; 3],
+        capacity: usize,
+    ) -> Result<(), String> {
+        let _ = Self::storage_bytes(shape).ok_or("Phase grid size overflow")?;
+        if capacity == 0
+            || capacity > u32::MAX as usize
+            || limits.max_storage_buffers_per_shader_stage < 16
+        {
+            return Err("Phase particle count or storage binding limit".into());
+        }
+        let [nx, ny, nz] = shape.map(u64::from);
+        let cells = nx * ny * nz;
+        let faces = [(nx + 1) * ny * nz, nx * (ny + 1) * nz, nx * ny * (nz + 1)];
+        let total = faces.into_iter().sum::<u64>();
+        if total * 8 + cells * 2 > u32::MAX as u64 - 1 {
+            return Err("Phase moment index overflow".into());
+        }
+        let mut sizes = vec![total * 64 + cells * 16 + 8, capacity as u64 * 16];
+        sizes.extend(Self::water_bytes(shape, faces));
+        sizes.extend(faces.map(|n| (n + 1) * 4));
+        if sizes.into_iter().any(|n| {
+            n > limits.max_buffer_size || n > u64::from(limits.max_storage_buffer_binding_size)
+        }) {
+            return Err("Phase storage exceeds adapter binding/buffer limit".into());
+        }
+        Ok(())
     }
 
     /// Particle inputs are positions (xyz, represented volume), velocity, and
@@ -78,6 +132,7 @@ impl PhaseTransfer3D {
         metadata: &wgpu::Buffer,
         grids: [&wgpu::Buffer; 3],
     ) -> Result<Self, String> {
+        Self::preflight(&device.limits(), shape, capacity as usize)?;
         let required = Self::storage_bytes(shape).ok_or("phase grid size overflow")?;
         let limits = device.limits();
         if limits.max_storage_buffers_per_shader_stage < 16 {
@@ -92,15 +147,17 @@ impl PhaseTransfer3D {
             return Err("phase face index overflow".into());
         }
         let total_faces: u64 = face_sizes.iter().sum();
-        if total_faces > (u32::MAX as u64 - 1) / 8 {
+        let cell_count = nx * ny * nz;
+        if total_faces * 8 + cell_count * 2 > u32::MAX as u64 - 1 {
             return Err("phase moment index overflow".into());
         }
-        let moment_size = total_faces * 64 + 8;
+        let moment_size = total_faces * 64 + cell_count * 16 + 8;
+        let water_sizes = Self::water_bytes(shape, face_sizes);
         // Check every binding before allocating; this is a fixed-grid budget,
         // not an assertion about peak GPU residency or whole-process RSS.
         let mut sizes = vec![moment_size, 96];
-        for n in face_sizes {
-            sizes.push((Self::aux_offset(n) + 4 * n) * 4);
+        for (n, bytes) in face_sizes.into_iter().zip(water_sizes) {
+            sizes.push(bytes);
             sizes.push((n + 1) * 4);
         }
         if sizes.iter().any(|&n| {
@@ -133,13 +190,8 @@ impl PhaseTransfer3D {
             | wgpu::BufferUsages::COPY_SRC
             | wgpu::BufferUsages::COPY_DST;
         let moments = buffer("Conservative face sums", moment_size, storage);
-        let water = face_sizes.map(|n| {
-            buffer(
-                "Phase water base and response",
-                (Self::aux_offset(n) + 4 * n) * 4,
-                storage,
-            )
-        });
+        let water =
+            water_sizes.map(|bytes| buffer("Phase water base and response", bytes, storage));
         let mobility = face_sizes.map(|n| buffer("Phase pressure mobility", (n + 1) * 4, storage));
         let params = buffer(
             "Phase transfer parameters",
@@ -235,10 +287,13 @@ impl PhaseTransfer3D {
             water,
             mobility,
             group,
+            count_cells: pipeline("count_cells"),
+            decode_cells: pipeline("decode_cells"),
             scatter: pipeline("scatter"),
             normalise: pipeline("normalise"),
             assemble: pipeline("assemble"),
             publish: pipeline("publish"),
+            validate_particles: pipeline("validate_particles"),
         })
     }
     /// All force predictors must be formed before `encode_response`.
@@ -282,7 +337,11 @@ impl PhaseTransfer3D {
     /// Re-run after any particle position repair, using exactly the gather stencil.
     pub fn encode_transfer(&self, encoder: &mut wgpu::CommandEncoder, count: u32) {
         assert!(count <= self.capacity);
-        encoder.clear_buffer(&self.moments, 0, None);
+        encoder.clear_buffer(
+            &self.moments,
+            8,
+            Some(self.face_counts.into_iter().map(u64::from).sum::<u64>() * 64),
+        );
         for plane in &self.mobility {
             encoder.clear_buffer(plane, 0, Some(4));
         }
@@ -302,6 +361,33 @@ impl PhaseTransfer3D {
             1,
         );
     }
+    /// Begin a step without clearing refusal. The status stays sticky until
+    /// authoritative recovery constructs a fresh solver, including substeps
+    /// that intentionally have no particle readback.
+    pub fn encode_begin_step(&self, encoder: &mut wgpu::CommandEncoder) {
+        for p in &self.mobility {
+            encoder.clear_buffer(p, 0, Some(4));
+        }
+    }
+    /// Represented total volume and raw water markers use independent planes.
+    /// Re-run after any position correction before the phase transfer.
+    pub fn encode_cell_volume(&self, encoder: &mut wgpu::CommandEncoder, count: u32) {
+        assert!(count <= self.capacity);
+        let first = 8 + self.face_counts.into_iter().map(u64::from).sum::<u64>() * 64;
+        encoder.clear_buffer(&self.moments, first, None);
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("Phase represented cell volume"),
+            timestamp_writes: None,
+        });
+        pass.set_bind_group(0, &self.group, &[]);
+        pass.set_pipeline(&self.count_cells);
+        if count > 0 {
+            pass.dispatch_workgroups(count.div_ceil(128), 1, 1);
+        }
+        pass.set_pipeline(&self.decode_cells);
+        pass.dispatch_workgroups(self.shape.into_iter().product::<u32>().div_ceil(128), 1, 1);
+    }
+
     pub fn encode_response(&self, encoder: &mut wgpu::CommandEncoder) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Implicit phase response"),
@@ -317,6 +403,18 @@ impl PhaseTransfer3D {
         pass.set_pipeline(&self.publish);
         pass.dispatch_workgroups(1, 1, 1);
     }
+    /// Validate transient G2P output before any advection or CPU exposure.
+    pub fn encode_validate_particles(&self, encoder: &mut wgpu::CommandEncoder, count: u32) {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("Phase finite particle output"),
+            timestamp_writes: None,
+        });
+        pass.set_bind_group(0, &self.group, &[]);
+        pass.set_pipeline(&self.validate_particles);
+        if count > 0 {
+            pass.dispatch_workgroups(count.div_ceil(128), 1, 1);
+        }
+    }
     /// First u32 is an error bitfield. Join it to the ordinary particle readback
     /// before activating this operator in a worker; never silently ignore it.
     pub fn status_buffer(&self) -> &wgpu::Buffer {
@@ -330,7 +428,7 @@ mod tests {
     #[test]
     fn fixed_grid_budget_includes_headers_alignment_and_uniforms() {
         assert_eq!(std::mem::size_of::<Params>(), 96);
-        assert_eq!(PhaseTransfer3D::storage_bytes([1, 1, 1]), Some(1388));
+        assert_eq!(PhaseTransfer3D::storage_bytes([1, 1, 1]), Some(1888));
         assert_eq!(PhaseTransfer3D::aux_offset(60), 64);
         assert_eq!(PhaseTransfer3D::aux_offset(61), 128);
         assert_eq!(PhaseTransfer3D::storage_bytes([0, 8, 8]), None);
