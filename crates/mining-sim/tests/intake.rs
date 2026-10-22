@@ -11,6 +11,8 @@ fn close(a: f64, b: f64) {
 }
 fn fixture() -> (Session, Vec3, usize) {
     let mut s = Session::new();
+    // This fixture replaces the claim with impermeable bare rock.
+    s.site.soil_water = Default::default();
     for layer in [
         &mut s.site.world.bedrock_elevation,
         &mut s.site.world.paydirt_thickness,

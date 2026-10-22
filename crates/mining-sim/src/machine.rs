@@ -220,7 +220,7 @@ impl Excavator {
                 self.hydraulics.crowd_force_n
             };
             let capacity = (BUCKET_CAPACITY - self.bucket.volume()).max(0.);
-            let load_mass = self.bucket.mass_kg() as f32;
+            let load_mass = self.bucket.wet_mass_kg() as f32;
             let tool_power = self.hydraulics.tool_power_w;
             let motion = |f: f32| {
                 let mut m = candidate.clone();

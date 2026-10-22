@@ -36,6 +36,7 @@ fn new_grading_separates_fines_and_sand_without_changing_any_material() {
         sand_m3: 0.002,
         gravel_m3: 0.002,
         gold_g: 0.002,
+        ..Default::default()
     };
     s.initial_gold_g += s.sluice.hopper.gold_g;
     let before = s.sluice.active_material();

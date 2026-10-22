@@ -10,7 +10,7 @@ fn new_clock_roundtrips_without_rescaling_physical_age() {
     s.site.hydraulic.bed_exchange_error = vec![[1e-9, -1e-9, 2e-9, -2e-9]; WIDTH * WIDTH];
     let json = s.save_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 3);
+    assert_eq!(value["version"], 4);
     assert_eq!(
         value["site"]["hydraulic"]["settling_time_unit"],
         "microseconds"
@@ -34,11 +34,14 @@ fn new_clock_roundtrips_without_rescaling_physical_age() {
 #[test]
 fn version_two_tick_ages_migrate_once_with_unchanged_inventories() {
     let mut s = Session::new();
+    s.site.soil_water = Default::default();
+    s.water_balance.initial_stored_m3 = s.stored_water_m3();
     s.site.hydraulic.settling_time = (0..WIDTH * WIDTH)
         .map(|i| [0, 1, 10, 30, 255][i % 5])
         .collect();
     let mut old: serde_json::Value = serde_json::from_str(&s.save_json().unwrap()).unwrap();
     old["version"] = 2.into();
+    old["site"].as_object_mut().unwrap().remove("soil_water");
     old["site"]["hydraulic"]
         .as_object_mut()
         .unwrap()
@@ -73,7 +76,7 @@ fn version_two_tick_ages_migrate_once_with_unchanged_inventories() {
     let saved = loaded.save_json().unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&saved).unwrap()["version"],
-        3
+        4
     );
     let resumed = Session::load_json(&saved).unwrap();
     assert_eq!(

@@ -251,6 +251,7 @@ fn material_splitting_and_hopper_overflow_preserve_all_components() {
         sand_m3: 0.3,
         gravel_m3: 0.5,
         gold_g: 17.0,
+        ..Default::default()
     };
     let overflow = hopper.add_to_hopper(input);
     close(

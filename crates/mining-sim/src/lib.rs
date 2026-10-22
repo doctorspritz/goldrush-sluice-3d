@@ -9,6 +9,7 @@ pub mod session;
 pub mod site;
 pub mod sluice;
 pub mod slurry;
+pub mod soil_water;
 pub mod storage;
 pub mod water_balance;
 

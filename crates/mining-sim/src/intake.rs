@@ -38,6 +38,7 @@ impl Suspension {
             soil_m3: self.solid_m3[1],
             gravel_m3: self.solid_m3[2] + self.solid_m3[3],
             gold_g: self.gold_g,
+            ..Default::default()
         }
     }
     pub fn valid(self) -> bool {

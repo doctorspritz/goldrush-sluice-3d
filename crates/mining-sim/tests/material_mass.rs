@@ -36,6 +36,7 @@ fn bulk_inventory_and_physical_grains_have_the_same_dry_mass() {
             sand_m3: 0.03,
             gravel_m3: 0.04,
             gold_g: 7.,
+            ..Default::default()
         },
     ] {
         let expected = material.soil_m3 * 1800.
@@ -72,6 +73,7 @@ fn feeding_cannot_increase_the_mass_held_by_the_operation() {
         sand_m3: 0.002,
         gravel_m3: 0.001,
         gold_g: 0.0002,
+        ..Default::default()
     };
     let initial = s.hopper.mass_kg();
     for _ in 0..120 {

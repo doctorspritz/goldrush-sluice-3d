@@ -49,7 +49,7 @@ impl Default for MotionCapture {
             .map(|p| p[1].clone());
         assert!(
             view.as_deref()
-                .is_none_or(|v| matches!(v, "sluice" | "outlet" | "river" | "tailrace")),
+                .is_none_or(|v| matches!(v, "sluice" | "outlet" | "river" | "tailrace" | "bucket")),
             "capture view"
         );
         if let Some(dir) = &directory {
@@ -94,6 +94,19 @@ pub fn camera(
         return;
     }
     if capture.directory.is_none() {
+        return;
+    }
+    if capture.view.as_deref() == Some("bucket") {
+        let arm = game.session.machine.arm();
+        let forward = crate::app::bvec(arm.forward);
+        let right = Vec3::new(forward.z, 0., -forward.x);
+        let target = crate::app::bvec((arm.heel + arm.lip) * 0.5) + Vec3::Y * 0.13;
+        if let Ok(mut camera) = camera.single_mut() {
+            *camera = Transform::from_translation(
+                target + right * 1.25 + forward * 0.85 + Vec3::Y * 1.25,
+            )
+            .looking_at(target, Vec3::Y);
+        }
         return;
     }
     let Some(p) = game.session.sluice.placement else {

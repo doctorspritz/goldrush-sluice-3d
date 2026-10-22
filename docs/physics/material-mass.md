@@ -21,8 +21,8 @@ two copies of the same bookkeeping method.
 Terrain concentrations and historical `Suspension.solid_m3` fields retain their
 reference bulk meaning and serialized values. Channel optics use true grain
 volume and grain cross section; environmental optics convert each class before
-summing its physical concentration. Saves remain version 3, with existing v2/v3
-load handling; derived mass, contacts and subsequent trajectories are corrected.
+summing its physical concentration. The mass correction used version 3 with v2/v3
+load handling; [wet-soil custody](soil-water.md) now uses version 4 with v2/v3/v4 loading; derived mass, contacts and subsequent trajectories are corrected.
 
 The native benchmark adds a dry-mass gate alongside bulk, water and gold gates.
 A global one-ppm tolerance is relative to the whole site's inventory, so local
@@ -30,8 +30,9 @@ handoff controls and actual DEM masses remain necessary. The laboratory assay's
 quartz volumes are true mineral volumes; its report schema is 4 and explicitly
 records the volume basis and mass-budget start after tracer injection.
 
-This does not implement variable porosity, pore water, soil compaction, swelling,
-packed-bed rheology or conservative interphase momentum. Weighted parcel contacts
+The mass correction alone did not implement pore-water custody; that foundation
+is now covered by [wet soil](soil-water.md). Variable porosity, soil compaction, swelling,
+packed-bed rheology and conservative interphase momentum remain open. Weighted parcel contacts
 retain their assumed packing fraction of 0.60. Legacy unweighted individual-grain
 compatibility mode retains its older geometric solver treatment and is excluded
 from the registered weighted-mass proof. Standard demo/current emitted parcels

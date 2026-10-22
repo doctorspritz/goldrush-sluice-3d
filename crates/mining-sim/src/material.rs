@@ -15,6 +15,9 @@ pub struct Material {
     pub sand_m3: f64,
     pub gravel_m3: f64,
     pub gold_g: f64,
+    /// Water carried in the material's reference void space; never grain solids.
+    #[serde(default)]
+    pub pore_water_m3: f64,
 }
 
 impl Material {
@@ -22,10 +25,20 @@ impl Material {
         self.soil_m3 + self.sand_m3 + self.gravel_m3
     }
     pub fn is_empty(self) -> bool {
-        self.volume() < 1e-10 && self.gold_g < 1e-10
+        self.volume() < 1e-10 && self.gold_g < 1e-10 && self.pore_water_m3 < 1e-12
     }
     pub fn mass_kg(self) -> f64 {
         self.mineral_mass_kg() + self.gold_g / 1000.0
+    }
+    pub fn wet_mass_kg(self) -> f64 {
+        self.mass_kg() + self.pore_water_m3 * 1000.
+    }
+    /// Reference geometry remains fixed until physical compaction is modeled.
+    pub fn pore_volume_m3(self) -> f64 {
+        (self.volume() - self.solid_volume_m3()).max(0.)
+    }
+    pub fn saturation(self) -> f64 {
+        (self.pore_water_m3 / self.pore_volume_m3().max(1e-30)).clamp(0., 1.)
     }
     pub fn mineral_mass_kg(self) -> f64 {
         self.soil_m3 * REFERENCE_DRY_DENSITIES_KG_M3[1]
@@ -51,6 +64,7 @@ impl Material {
         self.sand_m3 += other.sand_m3;
         self.gravel_m3 += other.gravel_m3;
         self.gold_g += other.gold_g;
+        self.pore_water_m3 += other.pore_water_m3;
     }
     pub fn scaled(self, f: f64) -> Self {
         Self {
@@ -58,6 +72,7 @@ impl Material {
             sand_m3: self.sand_m3 * f,
             gravel_m3: self.gravel_m3 * f,
             gold_g: self.gold_g * f,
+            pore_water_m3: self.pore_water_m3 * f,
         }
     }
     pub fn take_fraction(&mut self, fraction: f64) -> Self {
@@ -73,8 +88,15 @@ impl Material {
         self.take_fraction(volume.max(0.0) / self.volume())
     }
     pub fn valid(self) -> bool {
-        [self.soil_m3, self.sand_m3, self.gravel_m3, self.gold_g]
-            .iter()
-            .all(|v| v.is_finite() && *v >= 0.0)
+        [
+            self.soil_m3,
+            self.sand_m3,
+            self.gravel_m3,
+            self.gold_g,
+            self.pore_water_m3,
+        ]
+        .iter()
+        .all(|v| v.is_finite() && *v >= 0.0)
+            && self.pore_water_m3 <= self.pore_volume_m3() + self.volume() * 1e-6 + 1e-12
     }
 }

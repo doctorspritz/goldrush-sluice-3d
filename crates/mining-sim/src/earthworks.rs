@@ -222,7 +222,7 @@ impl Site {
         let soil = take(self.world.overburden_thickness[i]);
         let gravel = take(self.world.gravel_thickness[i]);
         let paydirt = take(self.world.paydirt_thickness[i]);
-        Material {
+        let mut material = Material {
             soil_m3: soil * (CELL * CELL) as f64,
             sand_m3: sand * (CELL * CELL) as f64,
             gravel_m3: (gravel + paydirt) * (CELL * CELL) as f64,
@@ -231,12 +231,16 @@ impl Site {
             } else {
                 0.
             },
-        }
+            ..Default::default()
+        };
+        material.pore_water_m3 = material.pore_volume_m3() * self.column_saturation(i);
+        material
     }
     pub(crate) fn excavate_columns(&mut self, cuts: Vec<(usize, f32)>) -> Material {
         let mut batch = Material::default();
         for (i, depth) in cuts {
-            let material = self.column_material(i, depth);
+            let mut material = self.column_material(i, depth);
+            material.pore_water_m3 = self.take_pore_water(i, material.pore_water_m3);
             let mut left = depth.max(0.);
             let water = self.world.water_depth(i % WIDTH, i / WIDTH);
             for layer in [

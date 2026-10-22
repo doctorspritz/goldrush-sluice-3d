@@ -88,8 +88,11 @@ impl Session {
         let site = Site::new();
         let machine = Excavator::new(&site);
         let initial_gold_g = site.remaining_gold();
-        let water_balance =
-            crate::water_balance::WaterBalance::new(site.water_volume_m3(), 0., false);
+        let water_balance = crate::water_balance::WaterBalance::new(
+            site.water_volume_m3() + site.soil_water.stored_m3(),
+            0.,
+            false,
+        );
         let player = Player {
             position: Vec3::new(21.6, site.height(21.6, 17.0), 17.0),
             yaw: -std::f32::consts::FRAC_PI_2,
@@ -418,7 +421,8 @@ impl Session {
                 .saturating_sub(self.sluice.water.len() + self.sluice.outflow.len())
                 as f64
                 * self.sluice.profile.particle_m3()
-                - self.sluice.water_credit_m3;
+                - self.sluice.water_credit_m3
+                - self.sluice.feed_water_credit_m3;
             (self.sluice.flow_m3s * dt).min(room.max(0.0) as f32)
         } else {
             0.0
@@ -439,8 +443,8 @@ impl Session {
         };
         self.sluice.water_used_m3 += actual.water_m3;
         self.sluice.inlet.last_water_m3 = actual.water_m3;
-        self.sluice.feed(dt, fraction > 0.01);
         self.sluice.accept_intake(actual);
+        self.sluice.feed(dt, fraction > 0.01);
     }
 
     pub fn accounted_gold(&self) -> f64 {
@@ -481,16 +485,12 @@ impl Session {
         total
     }
     pub fn save_json(&self) -> Result<String, String> {
+        let mut site = self.site.snapshot();
+        site.normalize_bed_age();
         serde_json::to_string(&Save {
-            // Old binaries must not mistake microseconds for legacy tick counts.
-            version: if self.site.hydraulic.settling_time_unit
-                == crate::site::BedAgeUnit::Microseconds
-            {
-                3
-            } else {
-                2
-            },
-            site: self.site.snapshot(),
+            // Earlier binaries must reject moisture they cannot account for.
+            version: 4,
+            site,
             machine: self.machine.clone(),
             sluice: self.sluice.clone(),
             player: self.player.clone(),
@@ -507,15 +507,31 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if !matches!(s.version, 2 | 3) {
+        if !matches!(s.version, 2..=4) {
             return Err("Unsupported save version".into());
         }
         if !matches!(
             (s.version, s.site.bed_age_unit()),
             (2, crate::site::BedAgeUnit::Legacy20HzSteps)
-                | (3, crate::site::BedAgeUnit::Microseconds)
+                | (3 | 4, crate::site::BedAgeUnit::Microseconds)
         ) {
             return Err("Invalid saved terrain clock".into());
+        }
+        let carried_water = s.machine.bucket.pore_water_m3
+            + s.player.hand.pore_water_m3
+            + s.sluice.active_material().pore_water_m3
+            + s.sluice.tailings.pore_water_m3
+            + s.sluice.concentrate.pore_water_m3
+            + s.falling
+                .iter()
+                .map(|l| l.material.pore_water_m3)
+                .sum::<f64>();
+        if s.version < 4
+            && (s.site.soil_water_m3() > 0.
+                || carried_water > 0.
+                || s.sluice.feed_water_credit_m3 > 0.)
+        {
+            return Err("Legacy save contains unsupported soil water".into());
         }
         let site = Site::restore(s.site)?;
         if !s.machine.valid()
@@ -558,7 +574,10 @@ impl Session {
         }
         let water_balance = s.water_balance.unwrap_or_else(|| {
             crate::water_balance::WaterBalance::new(
-                site.water_volume_m3() + s.sluice.stored_water_m3(),
+                site.water_volume_m3()
+                    + site.soil_water.stored_m3()
+                    + s.sluice.stored_water_m3()
+                    + carried_water,
                 s.sim_time,
                 true,
             )
@@ -585,7 +604,19 @@ impl Session {
         Ok(session)
     }
     pub fn stored_water_m3(&self) -> f64 {
-        self.site.water_volume_m3() + self.sluice.stored_water_m3()
+        self.site.water_volume_m3()
+            + self.site.soil_water.stored_m3()
+            + self.sluice.stored_water_m3()
+            + self.machine.bucket.pore_water_m3
+            + self.player.hand.pore_water_m3
+            + self.sluice.active_material().pore_water_m3
+            + self.sluice.tailings.pore_water_m3
+            + self.sluice.concentrate.pore_water_m3
+            + self
+                .falling
+                .iter()
+                .map(|l| l.material.pore_water_m3)
+                .sum::<f64>()
     }
     pub fn water_balance_error_m3(&self) -> f64 {
         self.water_balance.error_m3(self.stored_water_m3())

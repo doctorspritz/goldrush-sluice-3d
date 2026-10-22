@@ -26,6 +26,7 @@ pub struct Site {
     pub revision: u64,
     pub excavated: Material,
     pub hydraulic: HeightfieldState,
+    pub soil_water: crate::soil_water::SoilWater,
 }
 
 /// Authoritative extra channels from the original GPU heightfield. Geology,
@@ -136,8 +137,16 @@ pub struct SiteSnapshot {
     excavated: Material,
     gravel: Vec<f32>,
     hydraulic: HeightfieldState,
+    #[serde(default)]
+    soil_water: crate::soil_water::SoilWater,
 }
 impl SiteSnapshot {
+    pub(crate) fn normalize_bed_age(&mut self) {
+        self.hydraulic.normalize_bed_age();
+    }
+    pub(crate) fn soil_water_m3(&self) -> f64 {
+        self.soil_water.stored_m3()
+    }
     pub(crate) fn bed_age_unit(&self) -> BedAgeUnit {
         self.hydraulic.settling_time_unit
     }
@@ -207,13 +216,16 @@ impl Site {
                 gold_g[i] = world.paydirt_thickness[i] as f64 * (CELL * CELL) as f64 * grade as f64;
             }
         }
-        Self {
+        let mut site = Self {
             world,
             gold_g,
             revision: 0,
             excavated: Material::default(),
             hydraulic: HeightfieldState::default(),
-        }
+            soil_water: Default::default(),
+        };
+        site.initialize_ponded_soil();
+        site
     }
     pub fn river_center(z: f32) -> f32 {
         6.4 + (z * 0.15).sin() * 0.7
@@ -278,11 +290,13 @@ impl Site {
                     * area;
             }
         }
-        crate::intake::Suspension {
+        let mut material = crate::intake::Suspension {
             solid_m3: volumes,
             gold_g: self.remaining_gold(),
         }
-        .material()
+        .material();
+        material.pore_water_m3 = self.soil_water.pore_m3.iter().sum();
+        material
     }
     /// Add the existing circular river source as clean water. Suspension is
     /// stored as concentration, so keeping C fixed would create dirt whenever
@@ -389,6 +403,7 @@ impl Site {
                 self.gold_g[i] += m.gold_g / 25.0;
                 self.world.water_surface[i] =
                     self.world.ground_height(i % WIDTH, i / WIDTH) + depth;
+                self.add_pore_water(i, m.pore_water_m3 / 25.);
             }
         }
         self.revision += 1;
@@ -491,6 +506,7 @@ impl Site {
             excavated: self.excavated,
             gravel: self.world.gravel_thickness.clone(),
             hydraulic: self.hydraulic.clone(),
+            soil_water: self.soil_water.clone(),
         }
     }
     pub fn restore(s: SiteSnapshot) -> Result<Self, String> {
@@ -525,6 +541,7 @@ impl Site {
                 .any(|v| !v.is_finite() || v.abs() > 100.0)
             || !s.excavated.valid()
             || !s.hydraulic.valid()
+            || !s.soil_water.valid()
         {
             return Err("Invalid site quantities".into());
         }
@@ -540,6 +557,12 @@ impl Site {
         site.excavated = s.excavated;
         site.world.gravel_thickness = s.gravel;
         site.hydraulic = s.hydraulic;
+        site.soil_water = s.soil_water;
+        for (i, water) in site.soil_water.pore_m3.iter().enumerate() {
+            if *water > site.column_pore_volume_m3(i) + 1e-10 {
+                return Err("Saved soil water exceeds pore capacity".into());
+            }
+        }
         site.hydraulic.normalize_bed_age();
         site.revision = 1;
         Ok(site)

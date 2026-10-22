@@ -23,6 +23,8 @@ pub struct Palette {
     pub chrome: Handle<StandardMaterial>,
     pub glass: Handle<StandardMaterial>,
     pub dirt: Handle<StandardMaterial>,
+    pub bucket_load: Handle<StandardMaterial>,
+    pub hopper_load: Handle<StandardMaterial>,
     pub sand: Handle<StandardMaterial>,
     pub gold: Handle<StandardMaterial>,
     pub blue: Handle<StandardMaterial>,
@@ -210,6 +212,8 @@ pub fn setup(
         chrome: material(&mut materials, Color::srgb(0.63, 0.70, 0.72), 0.20, 0.9),
         glass: materials.add(glass),
         dirt: material(&mut materials, Color::srgb(0.29, 0.17, 0.085), 0.96, 0.0),
+        bucket_load: material(&mut materials, Color::srgb(0.29, 0.17, 0.085), 0.96, 0.0),
+        hopper_load: material(&mut materials, Color::srgb(0.29, 0.17, 0.085), 0.96, 0.0),
         sand: material(&mut materials, Color::srgb(0.50, 0.38, 0.23), 0.9, 0.0),
         gold: material(&mut materials, Color::srgb(0.98, 0.66, 0.10), 0.23, 0.8),
         blue: material(&mut materials, Color::srgb(0.12, 0.23, 0.28), 0.85, 0.0),
@@ -734,7 +738,7 @@ fn machine(commands: &mut Commands, p: &Palette) {
     }
     commands.spawn((
         Mesh3d(p.sphere.clone()),
-        MeshMaterial3d(p.dirt.clone()),
+        MeshMaterial3d(p.bucket_load.clone()),
         Transform::default(),
         BucketFill,
     ));
@@ -901,7 +905,7 @@ fn equipment(commands: &mut Commands, meshes: &mut Assets<Mesh>, p: &Palette, si
     );
     commands.spawn((
         Mesh3d(p.sphere.clone()),
-        MeshMaterial3d(p.dirt.clone()),
+        MeshMaterial3d(p.hopper_load.clone()),
         Transform::default(),
         HopperFill,
     ));
@@ -1142,6 +1146,8 @@ pub fn sync_plant(
 )]
 pub fn sync_material(
     game: Res<Game>,
+    palette: Res<Palette>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut sets: ParamSet<(
         Query<(&mut Transform, &mut Visibility), With<HopperFill>>,
         Query<(&mut Transform, &mut Visibility), With<TailingsPile>>,
@@ -1149,6 +1155,26 @@ pub fn sync_material(
     )>,
 ) {
     let s = &game.session;
+    for (handle, load) in [
+        (&palette.bucket_load, s.machine.bucket),
+        (&palette.hopper_load, s.sluice.hopper),
+    ] {
+        // Continuous display response to actual carried moisture. The palette
+        // is an art approximation; it does not alter particles or soil strength.
+        let wet = load.saturation() as f32;
+        let color = Color::srgb(0.29 - 0.14 * wet, 0.17 - 0.07 * wet, 0.085 - 0.03 * wet);
+        let roughness = 0.96 - 0.35 * wet;
+        if materials
+            .get(handle)
+            .is_some_and(|m| m.base_color != color || m.perceptual_roughness != roughness)
+        {
+            if let Some(material) = materials.get_mut(handle) {
+                material.base_color = color;
+                material.perceptual_roughness = roughness;
+            }
+        }
+    }
+
     for (mut t, mut v) in &mut sets.p0() {
         let amount = (s.sluice.hopper.volume() / 0.85) as f32;
         *v = if amount > 0.001 {

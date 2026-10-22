@@ -267,6 +267,9 @@ pub struct Sluice {
     #[serde(default)]
     pub outflow: Vec<crate::outflow::OutflowParticle>,
     pub water_credit_m3: f64,
+    /// Moisture released at the paydirt chute, distinct from the pump carrier.
+    #[serde(default)]
+    pub feed_water_credit_m3: f64,
     #[serde(default)]
     pub inlet: crate::intake::Inlet,
     pub water_returned_m3: f64,
@@ -304,6 +307,7 @@ impl Default for Sluice {
             next_water_id: 0,
             outflow: Vec::new(),
             water_credit_m3: 0.0,
+            feed_water_credit_m3: 0.0,
             inlet: Default::default(),
             water_returned_m3: 0.0,
             solver_steps: 0,
@@ -499,6 +503,20 @@ impl Sluice {
             Vec3::new(0.4, 0., 0.)
         }
     }
+    /// The same finite chute footprint used by granular paydirt, in grid
+    /// coordinates. Released moisture starts here, not at the pump nozzle.
+    pub fn feed_water_position(&self, sequence: u64) -> Vec3 {
+        let sample = |factor: f64| ((sequence as f64 + 0.5) * factor).fract() as f32;
+        Vec3::new(
+            0.10 + 0.04 * sample(0.754877666),
+            (self.floor_cells() + 1) as f32 * self.profile.cell()
+                + 0.05
+                + 0.02 * sample(0.569840291),
+            (sample(0.618033989) - 0.5) * self.profile.width() * 0.70
+                + self.profile.width() * 0.5
+                + self.profile.cell(),
+        )
+    }
     /// Volume and positions come from FLIP; there is no analytic water-depth
     /// or sediment-capture model in the game layer.
     pub fn water_depth(&self) -> f32 {
@@ -515,6 +533,7 @@ impl Sluice {
     pub fn stored_water_m3(&self) -> f64 {
         (self.water.len() + self.outflow.len()) as f64 * self.profile.particle_m3()
             + self.water_credit_m3
+            + self.feed_water_credit_m3
     }
     pub fn grid_velocity_to_world(&self, v: Vec3) -> Vec3 {
         let p = self.placement.expect("placed water domain");
@@ -571,7 +590,25 @@ impl Sluice {
                 && !self.hopper.is_empty()
                 && self.grains.len() + 4 < MAX_GRAINS
             {
-                let m = self.hopper.take_volume(self.parcel_volume());
+                let moisture = self.hopper.pore_water_m3
+                    * (self.parcel_volume() / self.hopper.volume().max(1e-30)).min(1.);
+                let room = self
+                    .profile
+                    .capacity()
+                    .saturating_sub(self.water.len() + self.outflow.len())
+                    as f64
+                    * self.profile.particle_m3()
+                    - self.water_credit_m3
+                    - self.feed_water_credit_m3;
+                if moisture > room.max(0.) {
+                    break;
+                }
+                let mut m = self.hopper.take_volume(self.parcel_volume());
+                // Keep moisture at its own feed chute and source velocity.
+                // Never dilute the suspended river-intake carrier with it.
+                self.feed_water_credit_m3 += m.pore_water_m3;
+                self.water_used_m3 += m.pore_water_m3;
+                m.pore_water_m3 = 0.;
                 self.processed_m3 += m.volume();
                 self.feed_credit -= self.parcel_volume();
                 self.emit(m);
@@ -773,6 +810,8 @@ impl Sluice {
             && self.water_credit_m3.is_finite()
             && self.water_credit_m3 >= 0.0
             && self.water_credit_m3 < 1.0
+            && self.feed_water_credit_m3.is_finite()
+            && (0.0..1.0).contains(&self.feed_water_credit_m3)
             && self.water_returned_m3.is_finite()
             && self.water_returned_m3 >= 0.0
             && self.grains.iter().all(|g| {
@@ -782,6 +821,7 @@ impl Sluice {
                     && g.position.is_finite()
                     && g.velocity.is_finite()
                     && g.material.valid()
+                    && g.material.pore_water_m3 == 0.
                     && g.solid_volume() > 0.
                     && g.position.length() < 100.0
                     && g.velocity.length() < 100.0

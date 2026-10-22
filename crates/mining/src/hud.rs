@@ -394,7 +394,7 @@ pub fn update(
                         mining_sim::machine::DigLimit::Force=>"Digging force limit; take a shallower cut",
                         mining_sim::machine::DigLimit::Power=>"Hydraulic power limit",
                     };
-                    format!("WASD tracks · Q / E swing · R / F boom · T / G stick · Y / H curl · Space cut · J dump\nBucket {:.0}% · Soil {:.1} kN · {}",s.machine.bucket.volume()/mining_sim::machine::BUCKET_CAPACITY*100.0,s.machine.digging.requested_force_n/1000.,status)
+                    format!("WASD tracks · Q / E swing · R / F boom · T / G stick · Y / H curl · Space cut · J dump\nBucket {:.0}% · Load {:.0} kg · Soil {:.1} kN · {}",s.machine.bucket.volume()/mining_sim::machine::BUCKET_CAPACITY*100.0,s.machine.bucket.wet_mass_kg(),s.machine.digging.requested_force_n/1000.,status)
                 }
             },
             HudText::Message=>s.message.clone(),

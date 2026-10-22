@@ -275,11 +275,12 @@ impl Hydraulics {
         let dx = profile.cell();
         let particle_m3 = profile.particle_m3();
         let n = (s.sluice.water_credit_m3 / particle_m3).floor() as usize;
-        let emitted = n.min(
-            profile
-                .capacity()
-                .saturating_sub(s.sluice.water.len() + s.sluice.outflow.len()),
-        );
+        let available = profile
+            .capacity()
+            .saturating_sub(s.sluice.water.len() + s.sluice.outflow.len());
+        let feed_emitted =
+            ((s.sluice.feed_water_credit_m3 / particle_m3).floor() as usize).min(available);
+        let emitted = n.min(available - feed_emitted);
         for i in 0..emitted {
             // Water volume uses eight particles per cell. Each new particle represents
             // exactly dx^3/8 m3 withdrawn at the river intake by Session::step.
@@ -318,8 +319,25 @@ impl Hydraulics {
             });
         }
         s.sluice.admit_intake_water(emitted as f64 * particle_m3);
+        for i in 0..feed_emitted {
+            let sequence = s
+                .sluice
+                .solver_steps
+                .wrapping_mul(101)
+                .wrapping_add(i as u64);
+            let position = s.sluice.feed_water_position(sequence);
+            let id = s.sluice.allocate_water_id();
+            s.sluice.water.push(WaterParticle {
+                id,
+                position,
+                velocity: Vec3::new(0.4, 0., 0.),
+                affine: Mat3::ZERO,
+            });
+        }
+        s.sluice.feed_water_credit_m3 =
+            (s.sluice.feed_water_credit_m3 - feed_emitted as f64 * particle_m3).max(0.);
         s.sluice.emit_intake_grains(fluid_dt);
-        if s.sluice.water_credit_m3 > 0.02 {
+        if s.sluice.water_credit_m3 + s.sluice.feed_water_credit_m3 > 0.02 {
             return Err(
                 "FLIP capacity reached: stop the pump; water was retained, not discarded".into(),
             );

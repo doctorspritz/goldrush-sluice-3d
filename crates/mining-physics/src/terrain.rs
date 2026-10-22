@@ -327,6 +327,7 @@ impl Hydraulics {
         }
         a.steps += 1;
         s.site.revision += 1;
+        s.site.reconcile_soil_water();
         Ok(())
     }
 }
