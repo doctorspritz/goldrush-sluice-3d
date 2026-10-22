@@ -14,6 +14,8 @@ The grading is a declared assumption, not calibrated geology. It does not includ
 
 For a spherical population, total cross section is `N*pi*d²/4 = 3*solid_volume/(2*d)`. The optical approximation uses `Q_ext=2` and extinction `2*cross_section/water_volume` in inverse metres. This accounts for represented size and volume, independently of how many render samples are displayed. RGB scattering remains an artistic approximation; this is not NTU calibration or a multiple-scattering radiative-transfer solution. The dependence of optical response on both concentration and grain size is consistent with [USGS laboratory observations](https://www.usgs.gov/publications/effects-suspended-sediment-concentration-and-grain-size-three-optical-turbidity).
 
+The channel renderer adds two conservative streamwise binomial passes to the optical moments before sampling. This spreads unresolved weighted parcels into longer plumes while retaining water, fine volume and cross-section; it does not advect or diffuse physical sediment. Vertical and cross-stream strata keep their prior filter. The established outlet concentration is sampled before the extra channel reconstruction.
+
 Channel particles carry local extinction in the existing instance buffer. Terrain-water optics retain their existing concentration convention. Airborne outlet water uses the current nearby outlet concentration for presentation; individual airborne sediment mass and optical history are not transported by this change. Its water flight and mass transfer remain authoritative. This outlet approximation should be replaced alongside conserved airborne solids, rather than interpreting brown discharge as an additional material ledger.
 
 ## Bounded visible grains

@@ -78,7 +78,7 @@ impl WaterSplats {
                 })
                 .collect();
         points.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
-        points.into_iter().take(128).map(|(height,c,downstream,planarity)|serde_json::json!({"world":[c.x,c.y,c.z],"downstream_m":downstream,"height_m":height,"radius_m":c.w,"planarity":planarity})).collect()
+        points.into_iter().take(128).map(|(height,c,downstream,bulk_support)|serde_json::json!({"world":[c.x,c.y,c.z],"downstream_m":downstream,"height_m":height,"radius_m":c.w,"bulk_support":bulk_support})).collect()
     }
     pub fn presentation_report(&self) -> serde_json::Value {
         serde_json::json!({"surface_builds": self.builds,
@@ -903,8 +903,9 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
     let count = sluice.water.len() + sluice.outflow.len();
     let weight = count as f32 / count.clamp(1, MAX_SPLATS) as f32;
     let radius = sluice.profile.cell() * 0.85 * weight.cbrt();
-    let slurry = mining_sim::slurry::SlurryField::new(sluice);
+    let mut slurry = mining_sim::slurry::SlurryField::new(sluice);
     let outlet_extinction = slurry.outlet_extinction(sluice);
+    slurry.reconstruct_channel();
     // Select IDs before evaluating the optical field or transforming positions.
     let mut selected: Vec<_> = sluice
         .water
@@ -977,10 +978,12 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
             // millimetre spray does not inherit a two-centimetre bulk silhouette.
             // The accepted outlet reconstruction retains its existing support.
             let radius = if kind == 0. {
-                // A wider bulk reconstruction joins neighbouring crest samples.
-                // shape.x below renormalizes the kernel to its represented volume;
-                // detached spray and the accepted outlet keep their own support.
-                let radius = radius * (1.25 / 0.85);
+                // The connected density field joins neighbouring samples. Keep
+                // its support close to two sample spacings: the old broad
+                // envelope inflated and rounded riffle crests before filtering.
+                // Renormalization below retains the same represented volume;
+                // detached spray and the outlet keep their original support.
+                let radius = radius * (1.0 / 0.85);
                 let drop = (sluice.profile.particle_m3() * weight as f64 * 3.
                     / (4. * std::f64::consts::PI))
                     .cbrt() as f32;
@@ -1004,7 +1007,7 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
                                 * axes[2].length() as f64)) as f32,
                         extinction,
                         kind,
-                        if kind == 0. { kernel.planarity } else { 0. },
+                        if kind == 0. { kernel.bulk } else { 0. },
                     ],
                     axis_x: axis(axes[0], kernel.normal.x),
                     axis_y: axis(axes[1], kernel.normal.y),

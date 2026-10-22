@@ -68,24 +68,38 @@ impl SlurryField {
         // This is a presentation filter, not physical sediment diffusion.
         // Clamped destinations retain every projected water/fine/area integral.
         for axis in [0, 1, 2, 0, 2] {
-            let mut next = vec![Cell::default(); field.cells.len()];
-            for z in 0..dims[2] {
-                for y in 0..dims[1] {
-                    for x in 0..dims[0] {
-                        let p = [x, y, z];
-                        let value = field.cells[field.index(p)];
-                        for (offset, weight) in [(-1, 0.25), (0, 0.5), (1, 0.25)] {
-                            let mut q = p;
-                            q[axis] =
-                                (p[axis] as i32 + offset).clamp(0, dims[axis] as i32 - 1) as usize;
-                            next[field.index(q)].add(value, weight);
-                        }
+            field.filter_axis(axis);
+        }
+        field
+    }
+    /// Weighted fine parcels undersample the visible suspension. Reconstruct
+    /// their optical moments farther along the sluice's downstream coordinate,
+    /// rather than drawing each parcel as a round mud patch. This positive,
+    /// conservative presentation filter changes neither particle motion nor any
+    /// material ledger. Keep the established outlet sample before applying it.
+    pub fn reconstruct_channel(&mut self) {
+        for _ in 0..2 {
+            self.filter_axis(0);
+        }
+    }
+    fn filter_axis(&mut self, axis: usize) {
+        let dims = self.dims;
+        let mut next = vec![Cell::default(); self.cells.len()];
+        for z in 0..dims[2] {
+            for y in 0..dims[1] {
+                for x in 0..dims[0] {
+                    let p = [x, y, z];
+                    let value = self.cells[self.index(p)];
+                    for (offset, weight) in [(-1, 0.25), (0, 0.5), (1, 0.25)] {
+                        let mut q = p;
+                        q[axis] =
+                            (p[axis] as i32 + offset).clamp(0, dims[axis] as i32 - 1) as usize;
+                        next[self.index(q)].add(value, weight);
                     }
                 }
             }
-            field.cells = next;
         }
-        field
+        self.cells = next;
     }
     fn index(&self, p: [usize; 3]) -> usize {
         (p[2] * self.dims[1] + p[1]) * self.dims[0] + p[0]
@@ -170,4 +184,51 @@ pub fn diagnostics(s: &Sluice) -> serde_json::Value {
         "projection_fines_error_m3":fines-s.grains.iter().filter(|g|g.kind==GrainKind::Sand&&!g.resting).map(|g|g.solid_volume()).sum::<f64>(),
         "outlet_extinction_m1":field.outlet_extinction(s),"optical_grid_m":CELL_M,
         "optics_calibrated":false,"independently_resolved_grain_collisions":false})
+}
+
+#[cfg(test)]
+mod reconstruction_tests {
+    use super::*;
+
+    #[test]
+    fn channel_filter_preserves_positive_moments_and_vertical_stratification() {
+        for x in [0, 4, 8] {
+            let mut field = SlurryField {
+                dims: [9, 5, 9],
+                cells: vec![Cell::default(); 405],
+            };
+            let index = field.index([x, 2, 4]);
+            field.cells[index] = Cell {
+                water: 0.001,
+                fines: 0.00002,
+                area: 0.3,
+            };
+            field.reconstruct_channel();
+            let mut total = Cell::default();
+            let mut nonzero = 0;
+            for z in 0..9 {
+                for y in 0..5 {
+                    for q in 0..9 {
+                        let cell = field.cells[field.index([q, y, z])];
+                        assert!(cell.water >= 0. && cell.fines >= 0. && cell.area >= 0.);
+                        if cell.water > 0. {
+                            nonzero += 1;
+                            assert_eq!(
+                                (y, z),
+                                (2, 4),
+                                "cross-stream/bed stratification was changed"
+                            );
+                            assert!((cell.fines / cell.water - 0.02).abs() < 1e-14);
+                            assert!((cell.area / cell.water - 300.).abs() < 1e-10);
+                        }
+                        total.add(cell, 1.);
+                    }
+                }
+            }
+            assert!(nonzero >= 3, "parcel remains a point-like optical patch");
+            assert!((total.water - 0.001).abs() < 1e-17);
+            assert!((total.fines - 0.00002).abs() < 1e-18);
+            assert!((total.area - 0.3).abs() < 1e-14);
+        }
+    }
 }

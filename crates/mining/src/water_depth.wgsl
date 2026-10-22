@@ -126,6 +126,13 @@ fn kernel_density(point:vec3<f32>,center:vec3<f32>,ax:vec3<f32>,ay:vec3<f32>,az:
  let support=max(1.-dot(q,q),0.);
  return 6.5625*scale*support*support*support;
 }
+// A compact isolated drop has high normalized density even though it has no
+// connected-water support. It must not choose the interface for a whole bulk
+// column behind it. Confidence applies only to surface selection: the optical
+// volume integral and sparse ray/ellipsoid silhouette remain untouched.
+fn interface_density(density:f32,bulk_support:f32)->f32 {
+ return density*clamp(bulk_support,0.,1.);
+}
 // Fixed view-depth probes bracket a connected crest even when a sparse front
 // particle sits ahead of it. No extra particle pass or simulation grid is used.
 const PROFILE_DEPTHS:array<f32,8>=array(0.,0.002,0.005,0.009,0.015,0.023,0.035,0.051);
@@ -177,11 +184,11 @@ struct Column {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>,@loc
   // position to the floor would mislabel that density as 12 mm-deep water and
   // bury shallow films when resolving the interface.
   surface=vec2(
-   select(0.,kernel_density(eye+ray*t0,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),t0<=back),
-   select(0.,kernel_density(eye+ray*t1,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),t1<=back));
+   select(0.,interface_density(kernel_density(eye+ray*t0,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),v.surface.w),t0<=back),
+   select(0.,interface_density(kernel_density(eye+ray*t1,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),v.surface.w),t1<=back));
   for(var i=0u;i<8u;i++) {
    let t=(front.r+PROFILE_DEPTHS[i])/max(ray_scale,0.000001);
-   if t<=back {profile[i]=kernel_density(eye+ray*t,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x);}
+   if t<=back {profile[i]=interface_density(kernel_density(eye+ray*t,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),v.surface.w);}
   }
  }
  var out:Column;out.optical=vec4(path,path*v.shape.y,surface);out.normal=normal;

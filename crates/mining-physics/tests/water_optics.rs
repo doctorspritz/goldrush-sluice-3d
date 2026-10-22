@@ -866,3 +866,72 @@ fn joined_surface_motion_keeps_the_clipped_optical_column_and_sparse_path() {
         assert_eq!(v[3], 0.);
     }
 }
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn detached_front_drop_cannot_claim_the_bulk_interface_but_keeps_optical_volume() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 64);
+    let depth_source = include_str!("../../mining/src/water_depth.wgsl");
+    let helpers = &depth_source[depth_source.find("fn kernel_density(").unwrap()
+        ..depth_source.find("// Fixed view-depth probes").unwrap()];
+    let source = format!(
+        "{}\n{}\n{}",
+        include_str!("../../mining/src/water_blur.wgsl"),
+        helpers,
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+fn layered_profile(radius:f32,drop_support:f32,with_drop:bool)->array<f32,8> {
+ var density:array<f32,8>;
+ for(var i=0u;i<8u;i++) {
+  let p=vec3(0.,0.,1.+PROFILE_DEPTHS[i]);
+  density[i]=kernel_density(p,vec3(0.,0.,1.03),vec3(0.03,0.,0.),vec3(0.,0.03,0.),vec3(0.,0.,0.012),0.5);
+  if with_drop {density[i]+=interface_density(kernel_density(p,vec3(0.,0.,1.+radius),vec3(radius,0.,0.),vec3(0.,radius,0.),vec3(0.,0.,radius),1.),drop_support);}
+ }
+ return density;
+}
+fn crossing(d:array<f32,8>)->f32 {
+ return shared_surface_depth(vec2(1.,-1.),vec4(d[0],d[1],d[2],d[3]),vec4(d[4],d[5],d[6],d[7]));
+}
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let radius=0.0025+f32(p.y*8u+p.x)*0.00001;
+ // A normalized small front drop used to win the half-density crossing,
+ // despite being detached from the larger water layer behind it. Execute both
+ // the old negative control and the connected-support reconstruction.
+ result[p.y*8u+p.x]=vec4(crossing(layered_profile(radius,0.,true)),crossing(layered_profile(radius,1.,true)),crossing(layered_profile(radius,0.,false)),interface_density(6.5625,1.));
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    for v in values.as_chunks::<4>().0 {
+        assert!(
+            v[1] < 1.005,
+            "old front-drop crossing was not reproduced: {v:?}"
+        );
+        assert!(
+            v[0] > 1.015 && v[0] < 1.03,
+            "bulk surface did not survive: {v:?}"
+        );
+        assert!(
+            (v[0] - v[2]).abs() < 1e-6,
+            "detached drop changed the bulk interface: {v:?}"
+        );
+        assert_eq!(v[3], 6.5625, "fully supported water density was changed");
+    }
+}

@@ -246,15 +246,16 @@ fn visible_column_path(column:f32,view_gap:f32,channel:bool)->f32 {
         normal=normalize(normal+vec3(gradient.x,0.,gradient.y)*select(0.065*surface_confidence,0.055,river));
     }
     let fresnel=0.02+0.98*pow(1.-clamp(dot(normal,eye_world),0.,1.),5.);
-    let light=normalize(vec3(0.35,0.85,0.3));
+    // Match the scene sun (from -20,35,-15 toward 17,0,17). The
+    // disconnected channel highlight used to face the opposite river bank.
+    let light=normalize(select(vec3(0.35,0.85,0.3),vec3(-37.,35.,-32.),in_channel));
     let half_vector=normalize(light+eye_world);
-    // Unresolved normal variation broadens the sun lobe instead of producing
-    // a bright bead for each kernel. Scale its peak to retain the lobe energy.
-    // Confidence measures agreement of neighbouring gradients, not optical
-    // roughness. A single symmetric kernel can have perfect confidence, so
-    // using it to sharpen the sun creates a bright round cap on every crest.
-    // Keep a broad unresolved-wave lobe throughout connected channel water.
-    let exponent=select(96.,24.,in_channel);
+    // Broaden only unresolved variation measured across screen pixels. A
+    // fixed broad channel lobe painted a soft bright cap on every resolved
+    // standing wave. Normal confidence is not surface roughness.
+    let nx=dpdx(normal);let ny=dpdy(normal);
+    let variance=max(dot(nx,nx),dot(ny,ny));
+    let exponent=select(96.,96./(1.+96.*variance),in_channel);
     let specular=pow(max(dot(normal,half_vector),0.),exponent)*0.32*(exponent+2.)/98.;
     let reflection=reflect(-eye_world,normal);
     let sky=mix(vec3(0.19,0.25,0.24),vec3(0.48,0.66,0.76),smoothstep(-0.1,0.65,reflection.y));
