@@ -1,6 +1,91 @@
 //! Simulation dispatch methods for GPU heightfield.
 
+use super::buffers::WaterBuffers;
 use super::pipelines::{CoreBindGroups, SimulationPipelines};
+
+#[derive(Clone, Copy)]
+pub enum BedExchangeStage {
+    Settling,
+    Erosion,
+}
+
+fn copy_concentrations(
+    encoder: &mut wgpu::CommandEncoder,
+    water: &WaterBuffers,
+    size: u64,
+    to_next: bool,
+) {
+    for (current, next) in [
+        (&water.suspended_sediment, &water.suspended_sediment_next),
+        (
+            &water.suspended_overburden,
+            &water.suspended_overburden_next,
+        ),
+        (&water.suspended_gravel, &water.suspended_gravel_next),
+        (&water.suspended_paydirt, &water.suspended_paydirt_next),
+    ] {
+        let (source, destination) = if to_next {
+            (current, next)
+        } else {
+            (next, current)
+        };
+        encoder.copy_buffer_to_buffer(source, 0, destination, 0, size);
+    }
+}
+
+/// Snapshot immutable geometry, store the requested bed change, then reconcile
+/// suspension against the actual stored f32 bed delta in a separate pass.
+#[allow(clippy::too_many_arguments)]
+pub fn dispatch_bed_exchange_tile(
+    encoder: &mut wgpu::CommandEncoder,
+    pipelines: &SimulationPipelines,
+    bind_groups: &CoreBindGroups,
+    water: &WaterBuffers,
+    cells: u32,
+    tile_width: u32,
+    tile_depth: u32,
+    stage: BedExchangeStage,
+) {
+    dispatch_bed_exchange_passes(
+        encoder,
+        pipelines,
+        bind_groups,
+        tile_width,
+        tile_depth,
+        stage,
+    );
+    // Release the phase-local old-layer aliases, including inactive cells.
+    copy_concentrations(encoder, water, cells as u64 * 4, true);
+}
+
+fn dispatch_bed_exchange_passes(
+    encoder: &mut wgpu::CommandEncoder,
+    pipelines: &SimulationPipelines,
+    bind_groups: &CoreBindGroups,
+    tile_width: u32,
+    tile_depth: u32,
+    stage: BedExchangeStage,
+) {
+    let candidate = match stage {
+        BedExchangeStage::Settling => &pipelines.settling,
+        BedExchangeStage::Erosion => &pipelines.erosion,
+    };
+    for (pipeline, label) in [
+        (&pipelines.bed_snapshot, "Snapshot Bed Geometry"),
+        (candidate, "Store Candidate Bed Exchange"),
+        (&pipelines.bed_reconcile, "Reconcile Stored Bed Exchange"),
+    ] {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(label),
+            timestamp_writes: None,
+        });
+        pass.set_bind_group(0, &bind_groups.params, &[]);
+        pass.set_bind_group(1, &bind_groups.water, &[]);
+        pass.set_bind_group(2, &bind_groups.terrain, &[]);
+        pass.set_pipeline(pipeline);
+        pass.dispatch_workgroups(tile_width.div_ceil(16), tile_depth.div_ceil(16), 1);
+    }
+}
 
 /// Dispatch simulation for a specific tile region.
 #[allow(clippy::too_many_arguments)]
@@ -13,14 +98,7 @@ pub fn dispatch_simulation_tile(
     tile_width: u32,
     tile_depth: u32,
     water_substeps: u32,
-    suspended_sediment_buffer: &wgpu::Buffer,
-    suspended_sediment_next_buffer: &wgpu::Buffer,
-    suspended_overburden_buffer: &wgpu::Buffer,
-    suspended_overburden_next_buffer: &wgpu::Buffer,
-    suspended_gravel_buffer: &wgpu::Buffer,
-    suspended_gravel_next_buffer: &wgpu::Buffer,
-    suspended_paydirt_buffer: &wgpu::Buffer,
-    suspended_paydirt_next_buffer: &wgpu::Buffer,
+    water: &WaterBuffers,
 ) {
     let x_groups = tile_width.div_ceil(16);
     let z_groups = tile_depth.div_ceil(16);
@@ -42,10 +120,13 @@ pub fn dispatch_simulation_tile(
 
     let buffer_size = (width * depth) as u64 * std::mem::size_of::<f32>() as u64;
     encoder.clear_buffer(
-        suspended_sediment_next_buffer,
+        &water.suspended_sediment_next,
         buffer_size,
         Some(buffer_size * super::buffers::WATER_AUX_FLOATS as u64),
     );
+    // Transport writes only the active tile but copies the complete target.
+    // Preserve CPU edits and concentrations outside moving tile boundaries.
+    copy_concentrations(encoder, water, buffer_size, true);
     for _ in 0..water_substeps.max(1) {
         dispatch_step!("Update Surface", &pipelines.surface);
         dispatch_step!("Update Flux", &pipelines.flux);
@@ -56,21 +137,22 @@ pub fn dispatch_simulation_tile(
             "Conservative Sediment Transport",
             &pipelines.sediment_transport
         );
-        for (next, current) in [
-            (suspended_sediment_next_buffer, suspended_sediment_buffer),
-            (
-                suspended_overburden_next_buffer,
-                suspended_overburden_buffer,
-            ),
-            (suspended_gravel_next_buffer, suspended_gravel_buffer),
-            (suspended_paydirt_next_buffer, suspended_paydirt_buffer),
-        ] {
-            encoder.copy_buffer_to_buffer(next, 0, current, 0, buffer_size);
-        }
+        copy_concentrations(encoder, water, buffer_size, false);
     }
     // Geology evolves over the full step, after conservative water/material advection.
-    dispatch_step!("Update Settling", &pipelines.settling);
-    dispatch_step!("Update Erosion", &pipelines.erosion);
+    for stage in [BedExchangeStage::Settling, BedExchangeStage::Erosion] {
+        dispatch_bed_exchange_passes(
+            encoder,
+            pipelines,
+            bind_groups,
+            tile_width,
+            tile_depth,
+            stage,
+        );
+    }
+    // No transport runs between the two bed stages. The second snapshot
+    // replaces the first alias; restore the public targets only once at exit.
+    copy_concentrations(encoder, water, buffer_size, true);
 
     dispatch_collapse_tile(encoder, pipelines, bind_groups, tile_width, tile_depth);
 }

@@ -9,6 +9,8 @@ pub struct SimulationPipelines {
     pub donor_budget: wgpu::ComputePipeline,
     pub limit_flux: wgpu::ComputePipeline,
     pub depth: wgpu::ComputePipeline,
+    pub bed_snapshot: wgpu::ComputePipeline,
+    pub bed_reconcile: wgpu::ComputePipeline,
     pub settling: wgpu::ComputePipeline,
     pub erosion: wgpu::ComputePipeline,
     pub sediment_transport: wgpu::ComputePipeline,
@@ -354,6 +356,16 @@ pub fn create_simulation_pipelines(
         donor_budget: create_compute("Water Donor Budget", &water_shader, "donor_budget"),
         limit_flux: create_compute("Limit Shared Water Flux", &water_shader, "limit_flux"),
         depth: create_compute("Update Depth Pipeline", &water_shader, "update_depth"),
+        bed_snapshot: create_compute(
+            "Snapshot Bed Exchange",
+            &erosion_shader,
+            "snapshot_bed_exchange",
+        ),
+        bed_reconcile: create_compute(
+            "Reconcile Stored Bed Exchange",
+            &erosion_shader,
+            "reconcile_bed_exchange",
+        ),
         settling: create_compute(
             "Update Settling Pipeline",
             &erosion_shader,

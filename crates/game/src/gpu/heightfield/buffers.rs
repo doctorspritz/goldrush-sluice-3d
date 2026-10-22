@@ -113,6 +113,10 @@ pub struct WaterBuffers {
     pub flux_x: wgpu::Buffer,
     pub flux_z: wgpu::Buffer,
     pub suspended_sediment: wgpu::Buffer,
+    /// Concentration transport target. During a bed stage the four `_next`
+    /// prefixes temporarily hold immutable old layer thicknesses; the stage
+    /// restores current concentrations before returning. Aux slot 7 holds the
+    /// stage's immutable slope; water/export slots are unaffected.
     pub suspended_sediment_next: wgpu::Buffer,
     pub suspended_overburden: wgpu::Buffer,
     pub suspended_overburden_next: wgpu::Buffer,

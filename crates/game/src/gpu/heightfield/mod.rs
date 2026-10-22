@@ -20,6 +20,7 @@ pub use pipelines::{
     SimulationPipelines,
 };
 pub use rendering::{RenderResources, RenderUniforms};
+pub use simulation::BedExchangeStage;
 
 /// GPU-accelerated Heightfield Simulation.
 ///
@@ -291,14 +292,28 @@ impl GpuHeightfield {
             tile_width,
             tile_depth,
             substeps,
-            &self.water.suspended_sediment,
-            &self.water.suspended_sediment_next,
-            &self.water.suspended_overburden,
-            &self.water.suspended_overburden_next,
-            &self.water.suspended_gravel,
-            &self.water.suspended_gravel_next,
-            &self.water.suspended_paydirt,
-            &self.water.suspended_paydirt_next,
+            &self.water,
+        );
+    }
+
+    /// Run one complete bed stage without water transport or terrain collapse.
+    /// Parameters (including tile origin) must be uploaded before dispatch.
+    pub fn dispatch_bed_exchange_tile(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+        stage: BedExchangeStage,
+    ) {
+        simulation::dispatch_bed_exchange_tile(
+            encoder,
+            &self.simulation,
+            &self.bind_groups,
+            &self.water,
+            self.width * self.depth,
+            tile_width,
+            tile_depth,
+            stage,
         );
     }
 
