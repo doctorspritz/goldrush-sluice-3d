@@ -761,3 +761,50 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
     assert!((row(5) - 1.).abs() < 1e-6, "planar wave slope drifted");
     assert_eq!(row(6), 0., "dry coverage was invented");
 }
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn channel_wall_clipping_keeps_the_visible_slab_and_handles_parallel_rays() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 64);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_depth.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let i=p.y*8u+p.x;let angle=f32(i)*0.1;
+ let axis=vec3(cos(angle),0.,sin(angle));let center=vec3(14.,0.8,17.);
+ let plane=vec4(axis/0.19,-dot(axis,center)/0.19);
+ let interval=channel_interval(center-axis*0.7,axis,plane);
+ let inside=channel_interval(center,vec3(0.,1.,0.),plane);
+ let outside=channel_interval(center+axis,vec3(0.,1.,0.),plane);
+ result[i]=vec4(interval,select(0.,1.,inside.x<0. && inside.y>0.),select(0.,1.,outside.x>outside.y));
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    for value in values.as_chunks::<4>().0 {
+        assert!(
+            (value[0] - 0.51).abs() < 1e-5 && (value[1] - 0.89).abs() < 1e-5,
+            "{value:?}"
+        );
+        assert_eq!(value[2..], [1., 1.]);
+    }
+}

@@ -248,8 +248,12 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     let reflection=reflect(-eye_world,normal);
     let sky=mix(vec3(0.19,0.25,0.24),vec3(0.48,0.66,0.76),smoothstep(-0.1,0.65,reflection.y));
 
+    // Optical columns are integrated in world metres along the eye ray, not
+    // camera-Z metres. Mixing those units made oblique crests alternate
+    // between background and muddy scattering as the floor clip took over.
+    let ray_cosine=select(1.,max(-normalize(position).z,0.0001),in_channel);
     var thickness = 0.04;
-    if opaque>0. && abs(opaque_view.w)>0.00001 { thickness=clamp(-opaque_view.z/opaque_view.w-depth,0.,0.5); }
+    if opaque>0. && abs(opaque_view.w)>0.00001 { thickness=clamp((-opaque_view.z/opaque_view.w-depth)/ray_cosine,0.,0.5); }
     var column=vec2(0.);
     if !river {
         if in_channel {column=channel_column;} else {column=optical_column(q,raw_depth,false);}
@@ -286,7 +290,7 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
         scattering*=0.35+0.65*max(dot(normal,light),0.);
     }
     var background=original.rgb;
-    if river || in_channel {background=refracted_scene(q,normal,depth,thickness,background);}
+    if river || in_channel {background=refracted_scene(q,normal,depth,thickness*ray_cosine,background);}
     let body=background*transmission+scattering*(vec3(1.)-transmission);
     // A uniform 0.5 mm film stays fully covered. At a sloping bank use the
     // full-resolution contact and film gradients to soften only the last pixel.

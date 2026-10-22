@@ -937,7 +937,11 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
         .into_iter()
         .zip(kernels)
         .map(|((id, _p, v, kind, extinction), kernel)| {
-            let c = kernel.center;
+            let c = if kind == 0. {
+                kernel.channel_center
+            } else {
+                kernel.center
+            };
             let axes = if kind == 0. {
                 kernel.channel_axes()
             } else {
@@ -981,13 +985,39 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
                     axis_y: axis(axes[1], kernel.normal.y),
                     axis_z: axis(axes[2], kernel.normal.z),
                     slope_x: [0.; 4],
-                    slope_z: [0.; 4],
+                    // The lateral slab clips reconstruction at the physical
+                    // inner walls. Reuse unused channel fields/stride; outlet
+                    // and terrain attributes keep their existing meanings.
+                    slope_z: if kind == 0. && below_wall_top(sluice, _p) {
+                        let right = p.right() / (sluice.profile.width() * 0.5);
+                        [right.x, right.y, right.z, -right.dot(p.inlet)]
+                    } else {
+                        [0.; 4]
+                    },
                     flow_z: [0.; 4],
                     ..Default::default()
                 },
             )
         })
         .collect()
+}
+
+// Use the same finite, stepped wall height as collision/mesh geometry. A
+// splash above the wall must remain free to render outside the lateral slab.
+fn below_wall_top(sluice: &mining_sim::Sluice, world: Vec3) -> bool {
+    let Some(p) = sluice.placement else {
+        return false;
+    };
+    let config = mining_physics::geometry::config(sluice);
+    let origin = Vec3::from_array(p.inlet.to_array());
+    let x = (world - origin).dot(Vec3::from_array(p.forward().to_array()));
+    let column = (x / config.cell_size)
+        .floor()
+        .clamp(0., (config.grid_width - 1) as f32) as usize;
+    let top =
+        (config.floor_height_at(column) + config.riffle_height + config.wall_margin + 1) as f32;
+    let grid_height = world.y - origin.y + (sluice.floor_cells() + 1) as f32 * config.cell_size;
+    grid_height <= top * config.cell_size
 }
 
 fn sample_rank(mut id: u64) -> u64 {
@@ -1160,5 +1190,26 @@ mod tests {
         let b: std::collections::HashSet<_> = samples(&s.sluice).into_iter().map(|p| p.0).collect();
         assert!(a.difference(&b).all(|id| *id == removed));
         assert!(b.difference(&a).count() <= 1);
+    }
+    #[test]
+    fn reconstruction_clips_below_the_actual_wall_but_retains_above_wall_spray() {
+        let mut sluice = crate::demo::session().unwrap().sluice;
+        sluice.outflow.clear();
+        sluice.water.truncate(1);
+        let config = mining_physics::geometry::config(&sluice);
+        let x = 0.65;
+        let column = (x / config.cell_size) as usize;
+        let top = (config.floor_height_at(column) + config.riffle_height + config.wall_margin + 1)
+            as f32
+            * config.cell_size;
+        for (offset, clipped) in [(-0.001, true), (0.001, false)] {
+            sluice.water[0].position = mining_sim::Vec3::new(
+                x,
+                top + offset,
+                sluice.profile.width() * 0.5 + config.cell_size,
+            );
+            let data = samples(&sluice);
+            assert_eq!(data[0].1.slope_z != [0.; 4], clipped);
+        }
     }
 }

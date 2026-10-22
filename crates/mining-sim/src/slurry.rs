@@ -34,13 +34,16 @@ impl SlurryField {
             cells: vec![Cell::default(); dims.iter().product()],
         };
         for p in &s.water {
-            // Water already densely samples every wet cell. A conservative
-            // histogram avoids eight scatter operations per water particle;
-            // the binomial reconstruction and final sample remain continuous.
-            let q = (p.position / CELL_M).floor().to_array();
-            let cell = std::array::from_fn(|a| (q[a] as i32).clamp(0, dims[a] as i32 - 1) as usize);
-            let i = field.index(cell);
-            field.cells[i].water += s.profile.particle_m3();
+            // Project both phases with the same conservative stencil. A
+            // histogram for water and linear weights for fines shift their
+            // ratio as a uniformly mixed suspension crosses an optical cell.
+            field.deposit(
+                p.position,
+                Cell {
+                    water: s.profile.particle_m3(),
+                    ..Default::default()
+                },
+            );
         }
         for g in &s.grains {
             if g.kind != GrainKind::Sand || g.resting {

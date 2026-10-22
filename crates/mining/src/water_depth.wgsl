@@ -16,7 +16,8 @@ struct Varying {
  @location(5) @interpolate(flat) axis_z:vec3<f32>,
  @location(6) terrain:vec2<f32>,
  @location(7) velocity:vec2<f32>,
- @location(8) surface:vec4<f32>
+ @location(8) surface:vec4<f32>,
+ @location(9) @interpolate(flat) lateral:vec4<f32>
 };
 fn quad_value(values:vec4<f32>,uv:vec2<f32>)->f32 {
  return mix(mix(values.x,values.y,uv.x),mix(values.z,values.w,uv.x),uv.y);
@@ -55,7 +56,17 @@ fn quad_value(values:vec4<f32>,uv:vec2<f32>)->f32 {
   surface=vec4(normalize(vec3(-quad_value(p.slope_x,uv),1.,-quad_value(p.slope_z,uv))),1.);
  }
  var out:Varying;out.clip=u.clip_from_world*vec4(world,1.);out.world=world;
- out.center_radius=vec4(center,radius);out.shape=p.shape;out.axis_x=ax;out.axis_y=ay;out.axis_z=az;out.terrain=terrain;out.velocity=flow;out.surface=surface;return out;
+ out.center_radius=vec4(center,radius);out.shape=p.shape;out.axis_x=ax;out.axis_y=ay;out.axis_z=az;out.terrain=terrain;out.velocity=flow;out.surface=surface;out.lateral=p.slope_z;return out;
+}
+// Visible ray interval inside the actual channel walls. Kernel smoothing
+// never creates liquid on the outer steel face. A zero plane keeps non-channel
+// and legacy diagnostic instances unbounded; the accepted outlet bypasses it.
+fn channel_interval(eye:vec3<f32>,ray:vec3<f32>,plane:vec4<f32>)->vec2<f32> {
+ let o=dot(vec4(eye,1.),plane);let d=dot(ray,plane.xyz);
+ if abs(d)<0.000001 {
+  return select(vec2(1.,-1.),vec2(-1e20,1e20),abs(o)<=1.);
+ }
+ let a=(-1.-o)/d;let b=(1.-o)/d;return vec2(min(a,b),max(a,b));
 }
 struct Depth {@location(0) linear:vec4<f32>,@location(1) normal:vec4<f32>,@builtin(frag_depth) depth:f32};
 @fragment fn particle_depth(v:Varying)->Depth {
@@ -74,7 +85,13 @@ struct Depth {@location(0) linear:vec4<f32>,@location(1) normal:vec4<f32>,@built
   let d=vec3(dot(ray,v.axis_x)/dot(v.axis_x,v.axis_x),dot(ray,v.axis_y)/dot(v.axis_y,v.axis_y),dot(ray,v.axis_z)/dot(v.axis_z,v.axis_z));
   let a=dot(d,d);let closest=-dot(o,d)/a;let q=o+d*closest;let squared=1.-dot(q,q);
   if squared<0. {discard;}
-  let t=closest-sqrt(squared/a);if t<=0. {discard;}world=eye+ray*t;
+  var t=closest-sqrt(squared/a);
+  if v.shape.z==0. {
+   let interval=channel_interval(eye,ray,v.lateral);
+   t=max(t,interval.x);
+   if t>min(closest+sqrt(squared/a),interval.y) {discard;}
+  }
+  if t<=0. {discard;}world=eye+ray*t;
  }
  let clip=u.clip_from_world*vec4(world,1.);var out:Depth;
  out.linear=vec4(-(u.view_from_world*vec4(world,1.)).z,optical,v.velocity);out.normal=v.surface;
@@ -135,7 +152,9 @@ struct Column {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>};
   let ray_scale=-(u.view_from_world*vec4(ray,0.)).z;
   var back=closest+half;
   if z>0. {back=min(back,(-opaque.z/max(opaque.w,0.000001))/max(ray_scale,0.000001));}
-  let front_t=max(closest-half,0.);
+  let interval=channel_interval(eye,ray,v.lateral);
+  back=min(back,interval.y);
+  let front_t=max(max(closest-half,0.),interval.x);
   if back<=front_t {discard;}
   let support=sqrt(squared);
   path=column_integral(squared,a,clamp((front_t-closest)*sqrt(a),-support,support),clamp((back-closest)*sqrt(a),-support,support))*v.shape.x;

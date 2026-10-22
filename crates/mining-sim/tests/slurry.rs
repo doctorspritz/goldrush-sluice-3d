@@ -130,3 +130,25 @@ fn optics_depend_on_represented_volume_and_size_not_parcel_count() {
     }
     assert_eq!(SlurryField::new(&s).sample(p).1, 0.);
 }
+
+#[test]
+fn a_uniform_mixture_keeps_extinction_across_optical_cell_phases() {
+    let mut s = column();
+    let water = s.water.len() as f64 * s.profile.particle_m3();
+    let expected = 3. * s.grains[0].solid_volume() / (s.grains[0].diameter_m as f64 * water);
+    for i in 0..=24 {
+        let p = Vec3::new(0.60 + i as f32 * 0.00125, 0.28, 0.20);
+        for w in &mut s.water {
+            w.position = p;
+        }
+        s.grains[0].position = p;
+        let field = SlurryField::new(&s);
+        for offset in [-0.025, 0., 0.025] {
+            let beta = field.sample(p + Vec3::new(offset, 0., -offset * 0.3)).1 as f64;
+            assert!(
+                (beta / expected - 1.).abs() < 2e-6,
+                "phase {i}, offset {offset}: {beta} vs {expected}"
+            );
+        }
+    }
+}

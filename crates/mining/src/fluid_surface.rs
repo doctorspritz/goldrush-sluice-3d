@@ -25,6 +25,7 @@ fn outer(p: Vec3) -> Mat3 {
 pub(crate) struct Kernel {
     pub axes: [Vec3; 3],
     pub center: Vec3,
+    pub channel_center: Vec3,
     pub normal: Vec3,
     pub planarity: f32,
     /// Connected-neighbour support for rendering bulk water versus small spray.
@@ -69,6 +70,7 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32, sample_volume_m3: f64) -> Vec<
         m.square += outer(q);
     }
     let mut cache = HashMap::<[i32; 3], Kernel>::new();
+    let mut centroid_cache = HashMap::<[i32; 3], [(f32, Vec3); 8]>::new();
     points
         .iter()
         .map(|&p| {
@@ -124,6 +126,7 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32, sample_volume_m3: f64) -> Vec<
                     return Kernel {
                         axes: [Vec3::X, Vec3::Y, Vec3::Z],
                         center: p,
+                        channel_center: p,
                         normal: Vec3::Y,
                         planarity: 0.,
                         bulk: support,
@@ -150,17 +153,58 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32, sample_volume_m3: f64) -> Vec<
                         basis.z_axis * ratio.z,
                     ],
                     center: origin + mean,
+                    channel_center: origin + mean,
                     normal,
                     planarity,
                     bulk: support,
                 }
             });
+            // Continuous centroid relaxation joins the particle envelope at
+            // crests. Interpolate occupied-bin moments, not bin-selected
+            // centroids: a moving sample must not jump at an optical-cell edge.
+            // This is a bounded render displacement, with no solver writeback.
+            let grid = p / width - Vec3::splat(0.5);
+            let base = grid.floor().as_ivec3();
+            let f = grid - base.as_vec3();
+            let base_key = base.to_array();
+            let origin = center(base_key);
+            let corners = centroid_cache.entry(base_key).or_insert_with(|| {
+                std::array::from_fn(|n| {
+                    let k = [
+                        base_key[0] + (n & 1) as i32,
+                        base_key[1] + ((n >> 1) & 1) as i32,
+                        base_key[2] + ((n >> 2) & 1) as i32,
+                    ];
+                    bins.get(&k)
+                        .map(|m| (m.count, m.sum + (center(k) - origin) * m.count))
+                        .unwrap_or_default()
+                })
+            });
+            let mut mass = 0.;
+            let mut displacement = Vec3::ZERO;
+            for (n, &(count, sum)) in corners.iter().enumerate() {
+                let w = Vec3::new(
+                    if n & 1 == 0 { 1. - f.x } else { f.x },
+                    if n & 2 == 0 { 1. - f.y } else { f.y },
+                    if n & 4 == 0 { 1. - f.z } else { f.z },
+                )
+                .element_product();
+                mass += count * w;
+                displacement += (sum + (origin - p) * count) * w;
+            }
+            let occupancy = ((mass as f64 * sample_volume_m3 / (width as f64).powi(3) - 0.05)
+                / 0.45)
+                .clamp(0., 1.) as f32;
+            let support = occupancy * occupancy * (3. - 2. * occupancy);
+            let channel_center =
+                p + (displacement / mass.max(1e-8)).clamp_length_max(cell * 0.75) * (0.8 * support);
             Kernel {
                 axes: kernel.axes,
                 normal: kernel.normal,
                 planarity: kernel.planarity,
                 bulk: kernel.bulk,
                 center: p + (kernel.center - p).clamp_length_max(cell * 0.2) * 0.35,
+                channel_center,
             }
         })
         .collect()
@@ -283,5 +327,53 @@ mod tests {
             .map(|i| Vec3::new((i % 5) as f32 * 0.003, 0., (i / 5) as f32 * 0.003))
             .collect();
         assert!(kernels(&sheet, 0.01, 1.25e-7).iter().all(|k| k.bulk == 1.));
+    }
+    #[test]
+    fn channel_relaxation_reduces_sampling_noise_without_moving_water_or_spray() {
+        let points: Vec<_> = (-12..=12)
+            .flat_map(|x| {
+                (-12..=12).map(move |z| {
+                    Vec3::new(
+                        x as f32 * 0.003,
+                        0.15 + x as f32 * 0.0003 + if (x + z) % 2 == 0 { 0.003 } else { -0.003 },
+                        z as f32 * 0.003,
+                    )
+                })
+            })
+            .collect();
+        let saved = points.clone();
+        let data = kernels(&points, 0.01, 1.25e-7);
+        let mut before = 0.;
+        let mut after = 0.;
+        for (&p, k) in points.iter().zip(data) {
+            assert!((k.channel_center - p).length() <= 0.006001);
+            if p.x.abs() < 0.025 && p.z.abs() < 0.025 {
+                before += (p.y - (0.15 + 0.1 * p.x)).powi(2);
+                after += (k.channel_center.y - (0.15 + 0.1 * k.channel_center.x)).powi(2);
+            }
+        }
+        assert!(
+            after < before * 0.5,
+            "sampling residual {after} vs {before}"
+        );
+        assert_eq!(points, saved);
+        let p = Vec3::new(-0.2, 0.31, -0.02);
+        assert_eq!(kernels(&[p], 0.01, 1.25e-7)[0].channel_center, p);
+    }
+    #[test]
+    fn centroid_query_is_continuous_across_negative_and_positive_lattice_phases() {
+        let fixed: Vec<_> = (-15..=15)
+            .flat_map(|x| {
+                (-6..=6).map(move |z| Vec3::new(x as f32 * 0.002, 0.15, z as f32 * 0.002))
+            })
+            .collect();
+        for x in [-0.01, 0.01] {
+            let query = |offset: f32| {
+                let mut p = fixed.clone();
+                p.push(Vec3::new(x + offset, 0.153, 0.));
+                kernels(&p, 0.01, 1.25e-7).last().unwrap().channel_center
+            };
+            assert!((query(1e-6) - query(-1e-6)).length() < 1e-5);
+        }
     }
 }
