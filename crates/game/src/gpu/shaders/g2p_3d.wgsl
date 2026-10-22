@@ -16,6 +16,7 @@
 // Kernel constants
 const BSPLINE_SUPPORT_RADIUS: f32 = 1.5;  // Support range [-1.5, 1.5] for quadratic B-spline
 const EPSILON_METERS: f32 = 0.001;        // Small epsilon for numerical checks
+override PHASE_EXCHANGE_ALLOWED: bool=false;
 const GRAVITY: f32 = 9.81;                // Gravity magnitude (m/s²)
 
 struct Params {
@@ -104,12 +105,36 @@ fn cell_index(i: i32, j: i32, k: i32) -> u32 {
     return u32(k) * params.width * params.height + u32(j) * params.width + u32(i);
 }
 
+// Phase buffers retain the legacy pure-water plane before their auxiliary
+// plane. Ordinary callers never access beyond that original plane.
+fn phase_water(axis:u32,index:u32)->f32 {
+    if axis==0u {return water_grid_u[index];}
+    if axis==1u {return water_grid_v[index];}
+    return water_grid_w[index];
+}
+fn phase_face_velocity(axis:u32,index:u32,mixture:f32,predictor:f32,rho:f32,particle:u32)->f32 {
+    var n=(params.width+1u)*params.height*params.depth;
+    if axis==1u {n=params.width*(params.height+1u)*params.depth;}
+    if axis==2u {n=params.width*params.height*(params.depth+1u);}
+    let offset=((n+4u+63u)/64u)*64u+4u*index;
+    let u0=phase_water(axis,offset);let ratio=phase_water(axis,offset+1u);
+    let q0=phase_water(axis,offset+2u);let scale_ratio=phase_water(axis,offset+3u);
+    let dq=mixture-q0;
+    if rho<=1. {return u0+ratio*dq;}
+    let b=densities[2u*params.diameter_offset+particle];
+    let c=densities[3u*params.diameter_offset+particle];
+    if b<0. || scale_ratio==0. {return predictor;}
+    return c*predictor+b*(u0+ratio*dq)+c/rho*scale_ratio*dq;
+}
+
 @compute @workgroup_size(128)
 fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= params.particle_count) {
         return;
     }
 
+    let phase=PHASE_EXCHANGE_ALLOWED && params._pad0!=0u;
+    if phase && water_grid_u[(params.width+1u)*params.height*params.depth]!=0. {return;}
     let pos = positions[id.x];
     let old_particle_vel = velocities[id.x];
     let cell_size = params.cell_size;
@@ -157,24 +182,23 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 if (w <= 0.0) { continue; }
 
                 let idx = u_index(ni, nj, nk);
-                let u_val = grid_u[idx];
-                let u_old = grid_u_old[idx];
-
-                new_velocity.x += w * u_val;
-                old_grid_vel.x += w * u_old;
-                weight_sum.x += w;
-                if (is_sediment) {
-                    let u_water = water_grid_u[idx];
-                    water_velocity.x += w * u_water;
-                }
-
-                // C matrix: row 0 (from U velocity component)
-                // APIC: C[0,:] = Σ w * u * offset * d_inv
                 let offset = vec3<f32>(
                     f32(ni) * cell_size - pos.x,
                     (f32(nj) + 0.5) * cell_size - pos.y,
                     (f32(nk) + 0.5) * cell_size - pos.z
                 );
+                var u_val = grid_u[idx];
+                var u_old = grid_u_old[idx];
+                if phase {
+                    let body=select(0.,-sediment_params.gravity*params.dt,0u==1u);
+                    let predictor=old_particle_vel.x+dot(c_col0[id.x],offset)+body;
+                    u_val=phase_face_velocity(0u,idx,u_val,predictor,density,id.x);
+                    u_old=phase_water(0u,idx);
+                }
+                new_velocity.x += w * u_val;
+                old_grid_vel.x += w * u_old;
+                weight_sum.x += w;
+                if is_sediment && !phase {water_velocity.x += w * water_grid_u[idx];}
                 new_c_row0 += offset * (w * u_val * d_inv);
             }
         }
@@ -204,24 +228,23 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 if (w <= 0.0) { continue; }
 
                 let idx = v_index(ni, nj, nk);
-                let v_val = grid_v[idx];
-                let v_old = grid_v_old[idx];
-
-                new_velocity.y += w * v_val;
-                old_grid_vel.y += w * v_old;
-                weight_sum.y += w;
-                if (is_sediment) {
-                    let v_water = water_grid_v[idx];
-                    water_velocity.y += w * v_water;
-                }
-
-                // C matrix: row 1 (from V velocity component)
-                // APIC: C[1,:] = Σ w * v * offset * d_inv
                 let offset = vec3<f32>(
                     (f32(ni) + 0.5) * cell_size - pos.x,
                     f32(nj) * cell_size - pos.y,
                     (f32(nk) + 0.5) * cell_size - pos.z
                 );
+                var v_val = grid_v[idx];
+                var v_old = grid_v_old[idx];
+                if phase {
+                    let body=select(0.,-sediment_params.gravity*params.dt,1u==1u);
+                    let predictor=old_particle_vel.y+dot(c_col1[id.x],offset)+body;
+                    v_val=phase_face_velocity(1u,idx,v_val,predictor,density,id.x);
+                    v_old=phase_water(1u,idx);
+                }
+                new_velocity.y += w * v_val;
+                old_grid_vel.y += w * v_old;
+                weight_sum.y += w;
+                if is_sediment && !phase {water_velocity.y += w * water_grid_v[idx];}
                 new_c_row1 += offset * (w * v_val * d_inv);
             }
         }
@@ -250,24 +273,23 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 if (w <= 0.0) { continue; }
 
                 let idx = w_index(ni, nj, nk);
-                let w_val = grid_w[idx];
-                let w_old = grid_w_old[idx];
-
-                new_velocity.z += w * w_val;
-                old_grid_vel.z += w * w_old;
-                weight_sum.z += w;
-                if (is_sediment) {
-                    let w_water = water_grid_w[idx];
-                    water_velocity.z += w * w_water;
-                }
-
-                // C matrix: row 2 (from W velocity component)
-                // APIC: C[2,:] = Σ w * w * offset * d_inv
                 let offset = vec3<f32>(
                     (f32(ni) + 0.5) * cell_size - pos.x,
                     (f32(nj) + 0.5) * cell_size - pos.y,
                     f32(nk) * cell_size - pos.z
                 );
+                var w_val = grid_w[idx];
+                var w_old = grid_w_old[idx];
+                if phase {
+                    let body=select(0.,-sediment_params.gravity*params.dt,2u==1u);
+                    let predictor=old_particle_vel.z+dot(c_col2[id.x],offset)+body;
+                    w_val=phase_face_velocity(2u,idx,w_val,predictor,density,id.x);
+                    w_old=phase_water(2u,idx);
+                }
+                new_velocity.z += w * w_val;
+                old_grid_vel.z += w * w_old;
+                weight_sum.z += w;
+                if is_sediment && !phase {water_velocity.z += w * water_grid_w[idx];}
                 new_c_row2 += offset * (w * w_val * d_inv);
             }
         }
@@ -320,7 +342,9 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var final_velocity: vec3<f32>;
 
-    if (is_sediment) {
+    if is_sediment && phase {
+        final_velocity=new_velocity;
+    } else if (is_sediment) {
         // Exact integration of dv/dt = k * (water_velocity - v) - g_eff Y.
         // Archimedes: (weight - buoyancy) / mass = g * (1 - rho_water/rho_solid).
         // Multiplying gravity by relative density omitted the particle's mass.
@@ -364,7 +388,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     // ========== SEDIMENT: Friction for slow particles ==========
-    if (is_sediment) {
+    if is_sediment && !phase {
         // Friction: when slow, damp velocity (creates clustering/settling)
         let speed = length(final_velocity);
         if (speed < sediment_params.friction_threshold && speed > EPSILON_METERS) {

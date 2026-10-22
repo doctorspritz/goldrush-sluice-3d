@@ -1,7 +1,7 @@
 //! Closed momentum budget for zero-gravity interphase exchange. This is a
 //! diagnostic, not a recovery calibration or a prescribed target curve.
 use game::gpu::flip_3d::GpuFlip3D;
-use glam::{Mat3, Vec3};
+use glam::{DVec3, Mat3, Vec3};
 use serde_json::json;
 
 fn main() {
@@ -18,13 +18,56 @@ fn main() {
     ))
     .unwrap();
     let mut results = Vec::new();
-    for (name, solid, dt) in [
-        ("water_control", false, 1. / 120.),
-        ("mixed_120hz", true, 1. / 120.),
-        ("mixed_240hz", true, 1. / 240.),
+    for (name, solid, dt, pressure, flip, diameter, coincident) in [
+        ("water_transfer_flip", false, 1. / 120., 0, 1., 0., false),
+        ("water_transfer_pic", false, 1. / 120., 0, 0., 0., false),
+        ("water_transfer_blend", false, 1. / 120., 0, 0.97, 0., false),
+        ("water_pressure_flip", false, 1. / 120., 80, 1., 0., false),
+        (
+            "water_pressure_blend",
+            false,
+            1. / 120.,
+            80,
+            0.97,
+            0.,
+            false,
+        ),
+        (
+            "mixed_dry_transfer_flip",
+            true,
+            1. / 120.,
+            0,
+            1.,
+            -0.0003,
+            false,
+        ),
+        (
+            "mixed_dry_transfer_blend",
+            true,
+            1. / 120.,
+            0,
+            0.97,
+            -0.0003,
+            false,
+        ),
+        ("mixed_drag_flip", true, 1. / 120., 0, 1., 0.0003, false),
+        ("mixed_drag_blend", true, 1. / 120., 0, 0.97, 0.0003, false),
+        ("mixed_full_120hz", true, 1. / 120., 80, 0.97, 0.0003, false),
+        ("mixed_full_240hz", true, 1. / 240., 80, 0.97, 0.0003, false),
+        ("coincident_drag_flip", true, 1. / 120., 0, 1., 0.0003, true),
+        (
+            "coincident_drag_blend",
+            true,
+            1. / 120.,
+            0,
+            0.97,
+            0.0003,
+            true,
+        ),
     ] {
         let mut sim = GpuFlip3D::new(&device, 12, 12, 12, 0.01, 1024);
         sim.open_boundaries = 63;
+        sim.flip_ratio = flip;
         sim.density_projection_enabled = false;
         sim.vorticity_epsilon = 0.;
         sim.sediment_friction_strength = 0.;
@@ -51,6 +94,9 @@ fn main() {
                 }
             }
         }
+        if coincident {
+            p.fill(Vec3::splat(0.06));
+        }
         let nw = p.len();
         p.push(Vec3::splat(0.06));
         let mut v = vec![Vec3::X * 0.2; p.len()];
@@ -63,13 +109,13 @@ fn main() {
         let mut volumes = vec![1.; p.len()];
         volumes[nw] = 16.;
         sim.set_particle_volumes(volumes.clone());
-        sim.upload_grain_diameters(&queue, nw, &[if solid { 0.0003 } else { 0. }]);
+        sim.upload_grain_diameters(&queue, nw, &[diameter]);
         let momentum = |v: &[Vec3]| {
             v.iter()
                 .zip(&densities)
                 .zip(&volumes)
-                .map(|((v, rho), volume)| *v * (*rho * *volume))
-                .sum::<Vec3>()
+                .map(|((v, rho), volume)| v.as_dvec3() * (*rho as f64 * *volume as f64))
+                .sum::<DVec3>()
         };
         let before = momentum(&v);
         let old = v.clone();
@@ -86,21 +132,46 @@ fn main() {
             dt,
             0.,
             0.,
-            80,
+            pressure,
         );
         let after = momentum(&v);
-        let fluid_change: Vec3 = v[..nw].iter().zip(&old[..nw]).map(|(a, b)| *a - *b).sum();
-        let solid_change = (v[nw] - old[nw]) * densities[nw] * volumes[nw];
+        let fluid_change: DVec3 = v
+            .iter()
+            .zip(&old)
+            .zip(&densities)
+            .zip(&volumes)
+            .filter(|(((_, _), rho), _)| **rho <= 1.)
+            .map(|(((v, old), rho), volume)| {
+                (v.as_dvec3() - old.as_dvec3()) * (*rho as f64 * *volume as f64)
+            })
+            .sum();
+        let solid_change: DVec3 = v
+            .iter()
+            .zip(&old)
+            .zip(&densities)
+            .zip(&volumes)
+            .filter(|(((_, _), rho), _)| **rho > 1.)
+            .map(|(((v, old), rho), volume)| {
+                (v.as_dvec3() - old.as_dvec3()) * (*rho as f64 * *volume as f64)
+            })
+            .sum();
         let scale = fluid_change.length() + solid_change.length();
-        results.push(json!({"case":name,"dt":dt,"gravity":0,
+        println!(
+            "{name}: residual={:.9} relative={:.9} water_dP={:.9} grain_dP={:.9}",
+            (after - before).x,
+            (after - before).length() / before.length(),
+            fluid_change.x,
+            solid_change.x
+        );
+        results.push(json!({"case":name,"dt":dt,"gravity":0,"pressure_sweeps":pressure,"flip_ratio":flip,
+            "diameter":diameter,"coincident":coincident,
             "momentum_before_relative_mass_mps":before.to_array(),
             "momentum_after_relative_mass_mps":after.to_array(),
             "momentum_residual":(after-before).to_array(),
             "relative_to_initial_momentum":(after-before).length()/before.length(),
-            "exchange_imbalance_fraction":(fluid_change+solid_change).length()/scale.max(1e-12),
+            "combined_phase_imbalance_fraction":solid.then_some((fluid_change+solid_change).length()/scale.max(1e-12)),
             "fluid_momentum_change":fluid_change.to_array(),"solid_momentum_change":solid_change.to_array(),
             "solid_final_velocity":v[nw].to_array()}));
     }
     std::fs::write(output, serde_json::to_vec_pretty(&results).unwrap()).unwrap();
-    println!("{}", serde_json::to_string_pretty(&results).unwrap());
 }

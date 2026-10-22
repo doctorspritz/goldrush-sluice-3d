@@ -5,6 +5,7 @@
 pub mod calibration;
 pub mod geometry;
 mod particle_storage;
+pub mod phase_exchange;
 mod terrain;
 mod terrain_gold;
 pub mod worker;

@@ -87,6 +87,66 @@ impl GpuPressure3D {
         grid_v_buffer: &wgpu::Buffer,
         grid_w_buffer: &wgpu::Buffer,
     ) -> Self {
+        Self::new_impl(
+            device,
+            width,
+            height,
+            depth,
+            grid_u_buffer,
+            grid_v_buffer,
+            grid_w_buffer,
+            None,
+        )
+    }
+
+    /// Variable face mobility for a locally eliminated multi-phase response.
+    /// Each plane contains a ready header followed by its MAC coefficients.
+    /// A zero U header selects the unchanged constant-mobility path, allowing
+    /// position repair and phase projection in one ordered GPU submission.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_mobility(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        mobility: [&wgpu::Buffer; 3],
+    ) -> Self {
+        Self::new_impl(
+            device,
+            width,
+            height,
+            depth,
+            grid_u_buffer,
+            grid_v_buffer,
+            grid_w_buffer,
+            Some(mobility),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_impl(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        mobility: Option<[&wgpu::Buffer; 3]>,
+    ) -> Self {
+        let unused = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Constant pressure mobility header"),
+            contents: &[0; 16],
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let mobility_constants = std::collections::HashMap::from([(
+            "VARIABLE_MOBILITY_ALLOWED".to_string(),
+            f64::from(u32::from(mobility.is_some())),
+        )]);
+        let mobility = mobility.unwrap_or([&unused; 3]);
         let cell_count = (width * height * depth) as usize;
 
         // Create shaders
@@ -97,13 +157,25 @@ impl GpuPressure3D {
 
         let pressure_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Pressure 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/pressure_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("shaders/pressure_mobility.wgsl"),
+                    include_str!("shaders/pressure_3d.wgsl")
+                )
+                .into(),
+            ),
         });
 
         let gradient_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Pressure Gradient 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/pressure_gradient_3d.wgsl").into(),
+                format!(
+                    "{}\n{}",
+                    include_str!("shaders/pressure_mobility.wgsl"),
+                    include_str!("shaders/pressure_gradient_3d.wgsl")
+                )
+                .into(),
             ),
         });
 
@@ -294,6 +366,36 @@ impl GpuPressure3D {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -368,6 +470,36 @@ impl GpuPressure3D {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -427,6 +559,18 @@ impl GpuPressure3D {
                     binding: 4,
                     resource: stencil_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: mobility[0].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: mobility[1].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: mobility[2].as_entire_binding(),
+                },
             ],
         });
 
@@ -457,6 +601,18 @@ impl GpuPressure3D {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: grid_w_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: mobility[0].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: mobility[1].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: mobility[2].as_entire_binding(),
                 },
             ],
         });
@@ -492,7 +648,10 @@ impl GpuPressure3D {
                 layout: Some(&pressure_pipeline_layout),
                 module: &pressure_shader,
                 entry_point: Some("pressure_red"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -502,7 +661,10 @@ impl GpuPressure3D {
                 layout: Some(&pressure_pipeline_layout),
                 module: &pressure_shader,
                 entry_point: Some("pressure_black"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -519,7 +681,10 @@ impl GpuPressure3D {
                 layout: Some(&gradient_pipeline_layout),
                 module: &gradient_shader,
                 entry_point: Some("apply_gradient_u"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -529,7 +694,10 @@ impl GpuPressure3D {
                 layout: Some(&gradient_pipeline_layout),
                 module: &gradient_shader,
                 entry_point: Some("apply_gradient_v"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -539,7 +707,10 @@ impl GpuPressure3D {
                 layout: Some(&gradient_pipeline_layout),
                 module: &gradient_shader,
                 entry_point: Some("apply_gradient_w"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -549,7 +720,10 @@ impl GpuPressure3D {
                 layout: Some(layout),
                 module,
                 entry_point: Some(entry),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
                 cache: None,
             })
         };

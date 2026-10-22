@@ -84,7 +84,8 @@ impl Default for SedimentParams3D {
 
 /// GPU-based Grid-to-Particle transfer for 3D simulation
 pub struct GpuG2p3D {
-    particle_metadata_buffer: wgpu::Buffer,
+    particle_metadata_buffer: Arc<wgpu::Buffer>,
+    conservative_phase_exchange: bool,
     width: u32,
     height: u32,
     depth: u32,
@@ -148,12 +149,101 @@ impl GpuG2p3D {
         water_grid_w_buffer: &wgpu::Buffer,
         water_offsets: [u64; 3],
     ) -> Self {
-        let particle_metadata_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Grain density and diameter metadata"),
-            size: (max_particles * 8) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+        Self::new_with_metadata(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            positions_buffer,
+            velocities_buffer,
+            c_col0_buffer,
+            c_col1_buffer,
+            c_col2_buffer,
+            densities_buffer,
+            grid_u_buffer,
+            grid_v_buffer,
+            grid_w_buffer,
+            grid_u_old_buffer,
+            grid_v_old_buffer,
+            grid_w_old_buffer,
+            vorticity_mag_buffer,
+            water_grid_u_buffer,
+            water_grid_v_buffer,
+            water_grid_w_buffer,
+            water_offsets,
+            None,
+        )
+    }
+
+    /// Shared phase metadata must contain four capacity planes (rho,d,b,c).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_metadata(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        max_particles: usize,
+        positions_buffer: Arc<wgpu::Buffer>,
+        velocities_buffer: Arc<wgpu::Buffer>,
+        c_col0_buffer: Arc<wgpu::Buffer>,
+        c_col1_buffer: Arc<wgpu::Buffer>,
+        c_col2_buffer: Arc<wgpu::Buffer>,
+        densities_buffer: Arc<wgpu::Buffer>,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        grid_u_old_buffer: &wgpu::Buffer,
+        grid_v_old_buffer: &wgpu::Buffer,
+        grid_w_old_buffer: &wgpu::Buffer,
+        vorticity_mag_buffer: &wgpu::Buffer,
+        water_grid_u_buffer: &wgpu::Buffer,
+        water_grid_v_buffer: &wgpu::Buffer,
+        water_grid_w_buffer: &wgpu::Buffer,
+        water_offsets: [u64; 3],
+        metadata: Option<Arc<wgpu::Buffer>>,
+    ) -> Self {
+        let phase_buffers = metadata.is_some();
+        let water_sizes = [
+            ((width + 1) * height * depth) as u64,
+            (width * (height + 1) * depth) as u64,
+            (width * height * (depth + 1)) as u64,
+        ]
+        .map(|n| {
+            if phase_buffers {
+                ((n + 4).div_ceil(64) * 64 + 4 * n) * 4
+            } else {
+                n * 4
+            }
         });
+        if phase_buffers {
+            assert!(metadata.as_ref().unwrap().size() >= (max_particles as u64) * 16);
+            for (axis, buffer) in [
+                water_grid_u_buffer,
+                water_grid_v_buffer,
+                water_grid_w_buffer,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                assert!(
+                    buffer.size() >= water_offsets[axis] + water_sizes[axis],
+                    "phase gather auxiliary plane is truncated"
+                );
+            }
+        }
+        let particle_metadata_buffer = metadata.unwrap_or_else(|| {
+            Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Grain density and diameter metadata"),
+                size: (max_particles * 8) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }))
+        });
+        let phase_constants = std::collections::HashMap::from([(
+            "PHASE_EXCHANGE_ALLOWED".to_string(),
+            f64::from(u32::from(phase_buffers)),
+        )]);
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("G2P 3D Shader"),
@@ -471,7 +561,7 @@ impl GpuG2p3D {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: water_grid_u_buffer,
                         offset: water_offsets[0],
-                        size: std::num::NonZeroU64::new(((width + 1) * height * depth) as u64 * 4),
+                        size: std::num::NonZeroU64::new(water_sizes[0]),
                     }),
                 },
                 wgpu::BindGroupEntry {
@@ -479,7 +569,7 @@ impl GpuG2p3D {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: water_grid_v_buffer,
                         offset: water_offsets[1],
-                        size: std::num::NonZeroU64::new((width * (height + 1) * depth) as u64 * 4),
+                        size: std::num::NonZeroU64::new(water_sizes[1]),
                     }),
                 },
                 wgpu::BindGroupEntry {
@@ -487,7 +577,7 @@ impl GpuG2p3D {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: water_grid_w_buffer,
                         offset: water_offsets[2],
-                        size: std::num::NonZeroU64::new((width * height * (depth + 1)) as u64 * 4),
+                        size: std::num::NonZeroU64::new(water_sizes[2]),
                     }),
                 },
             ],
@@ -505,12 +595,16 @@ impl GpuG2p3D {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("g2p"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &phase_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
         Self {
             particle_metadata_buffer,
+            conservative_phase_exchange: false,
             width,
             height,
             depth,
@@ -535,6 +629,14 @@ impl GpuG2p3D {
 
     /// Metadata shares the original density binding: keep the storage-buffer
     /// requirement at 16 rather than excluding adapters with that limit.
+    pub fn set_conservative_phase_exchange(&mut self, enabled: bool) {
+        assert!(
+            !enabled || self.particle_metadata_buffer.size() >= (self.max_particles as u64) * 16,
+            "phase gather requires shared four-plane metadata"
+        );
+        self.conservative_phase_exchange = enabled;
+    }
+
     pub fn upload_grain_diameters(&self, queue: &wgpu::Queue, first: usize, values: &[f32]) {
         if !values.is_empty() {
             queue.write_buffer(
@@ -570,7 +672,7 @@ impl GpuG2p3D {
             dt,
             max_velocity: 0.9 * cell_size / dt.max(1e-6), // Safety follows CFL, not an arbitrary 1 m/s sluice limit
             diameter_offset: self.max_particles as u32,
-            _padding: [0; 2],
+            _padding: [u32::from(self.conservative_phase_exchange), 0],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
         queue.write_buffer(

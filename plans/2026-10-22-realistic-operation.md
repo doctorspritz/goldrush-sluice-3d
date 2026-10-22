@@ -49,3 +49,14 @@ shadow lighting. This is Stage 6 art progress, not closure of Stage 6 or any
 physical stage. Conservative interphase momentum remains the next physical
 prerequisite; soil contact, construction, wet screening, complete water circuits,
 calibration, real-time throughput and the full operator replay remain open.
+
+
+The [local phase-response foundation](../docs/physics/phase-response.md) now has
+an independent dense reference solve and real-GPU transfer/response/pressure/gather
+controls for momentum, APIC angular momentum and energy, freefall, rotation,
+particle order, capacity and explicit invalid-input refusal. It is not active
+in `GpuFlip3D` or the worker. The ordinary solver still has the measured phase
+budget errors. Integrating represented-volume position repair and matching masks,
+joined failure readback, storage/restore and porosity-aware closure is the next
+physical step before runtime and packed-bed calibration. This foundation does
+not close Stage 4, `sluice-phase-coupling` or the complete objective.
