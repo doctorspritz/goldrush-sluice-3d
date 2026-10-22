@@ -1,5 +1,5 @@
 // Read-only physical events. Every record is vec4: old h / limited X / Z /
-// boundary volume, or post-bed paydirt geometry / precision / C / water depth.
+// boundary volume, or pre/post-scour geometry / precision / C / water depth.
 struct Event { cells:u32, offset:u32, bed:u32, pad:u32 }
 @group(0) @binding(0) var<storage,read> depth:array<f32>;
 @group(0) @binding(1) var<storage,read> flux_x:array<f32>;

@@ -1317,3 +1317,593 @@ fn provenance_records_actual_substeps_without_changing_any_physical_channel() {
         println!("READ-ONLY EVENTS boundaries={boundaries}: four actual water substeps and separate bed stages; physical channels bit-identical");
     }
 }
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored --test-threads=1"]
+fn moving_shallow_paydirt_settles_during_its_actual_transport_residence() {
+    use game::gpu::heightfield::TerrainEventRecorder;
+    let f = Fixture::new();
+    for b in f.layers() {
+        f.fill(b, 0.125);
+    }
+    f.fill(&f.h.water.depth, 0.0008);
+    f.fill(&f.h.water.velocity_x, 2.);
+    let pulse: Vec<f32> = (0..CELLS)
+        .map(|i| if i % N == N / 2 { 0.01 } else { 0. })
+        .collect();
+    f.write(&f.h.water.suspended_paydirt, &pulse);
+    let recorder = TerrainEventRecorder::new(&f.device, &f.h.water, &f.h.geology);
+    let capture = recorder.capture(&f.device, CELLS as u32, 2);
+    f.h.update_water_params(&f.queue, 0.05, 0, 0.036, 2);
+    let mut encoder = f.device.create_command_encoder(&Default::default());
+    f.h.dispatch_water_substeps_traced(&mut encoder, 2, &recorder, &capture);
+    f.queue.submit(Some(encoder.finish()));
+    let raw = f.read_range(&capture.buffer, 0, (capture.size / 4) as usize);
+    let events = raw.as_chunks::<4>().0;
+    let depth = f.read(&f.h.water.depth);
+    let c = f.read(&f.h.water.suspended_paydirt);
+    let layer = f.read(&f.h.geology.paydirt);
+    let low = f.read_range(&f.h.geology.bed_remainder, 0, CELLS * 4);
+    let row = N / 2;
+    let receiver = row * N + N / 2 + 1;
+    let ws = (4. * 9.81 * 0.002 * 1650_f64 / (3. * 1000. * 0.44)).sqrt();
+    let mut mobile = vec![0.; N];
+    mobile[N / 2] = 0.01_f32 as f64 * 0.0008_f32 as f64;
+    let mut deposited = vec![0.; N];
+    for step in 0..2 {
+        let current = &events[step * CELLS + row * N..step * CELLS + (row + 1) * N];
+        let next_h: Vec<f64> = (0..N)
+            .map(|x| {
+                if step == 0 {
+                    events[CELLS + row * N + x][0] as f64
+                } else {
+                    depth[row * N + x] as f64
+                }
+            })
+            .collect();
+        let h: Vec<f64> = (0..N)
+            .map(|x| (current[x][0] as f64 + next_h[x]) * 0.5)
+            .collect();
+        let q: Vec<f64> = current.iter().map(|v| v[1] as f64 / AREA / 0.025).collect();
+        let derivative = |m: &[f64]| -> (Vec<f64>, Vec<f64>) {
+            let mut flow = vec![0.; N];
+            let mut sink = vec![0.; N];
+            for x in 0..N {
+                sink[x] = ws * m[x] / h[x].max(1e-30);
+                flow[x] -= sink[x];
+            }
+            for x in 0..N - 1 {
+                let donor = if q[x] >= 0. { x } else { x + 1 };
+                let flux = q[x] * m[donor] / h[donor].max(1e-30);
+                flow[x] -= flux;
+                flow[x + 1] += flux;
+            }
+            (flow, sink)
+        };
+        let dt = 0.025 / 512.;
+        for _ in 0..512 {
+            let (a, sa) = derivative(&mobile);
+            let (b, sb) = derivative(
+                &(0..N)
+                    .map(|i| mobile[i] + 0.5 * dt * a[i])
+                    .collect::<Vec<_>>(),
+            );
+            let (c, sc) = derivative(
+                &(0..N)
+                    .map(|i| mobile[i] + 0.5 * dt * b[i])
+                    .collect::<Vec<_>>(),
+            );
+            let (d, sd) = derivative(&(0..N).map(|i| mobile[i] + dt * c[i]).collect::<Vec<_>>());
+            for i in 0..N {
+                mobile[i] += dt * (a[i] + 2. * b[i] + 2. * c[i] + d[i]) / 6.;
+                deposited[i] += dt * (sa[i] + 2. * sb[i] + 2. * sc[i] + sd[i]) / 6.;
+            }
+        }
+    }
+    let expected = mobile[N / 2 + 1] + deposited[N / 2 + 1];
+    let actual = (layer[receiver] as f64 - 0.125)
+        + low[receiver * 4 + 3] as f64
+        + c[receiver] as f64 * depth[receiver] as f64;
+    println!("RESIDENCE actual_receiver_height={actual} continuous_reference={expected} relative_error={} settling_time_s={}",(actual/expected-1.).abs(),0.0008/ws);
+    assert!(
+        (actual / expected - 1.).abs() < 0.05,
+        "full-tick advection overtransports fast settling paydirt"
+    );
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored --test-threads=1"]
+fn reactive_transport_converges_to_translated_decaying_and_deposited_gaussian_profiles() {
+    // Independently prescribed steady clean-inlet / open-outlet flow. The
+    // analytic ADR profile supplies both the mobile and deposited reference.
+    // This isolates transport convergence from the hydraulic approximation.
+    let f = Fixture::new();
+    let (extent, speed, h0, total, sigma) = (8_f64, 0.5_f64, 0.1_f64, 0.5_f64, 0.4_f64);
+    let ws = (4. * 9.81 * 0.002 * 1650_f64 / (3. * 1000. * 0.44)).sqrt();
+    let k = ws / h0;
+    let initial = |x: f64| 0.01 * (-0.5 * ((x - 2.) / sigma).powi(2)).exp();
+    let average = |x: f64, dx: f64, t: f64| {
+        let mut sum = 0.;
+        for p in 0..=8 {
+            let weight = if p == 0 || p == 8 {
+                1.
+            } else if p % 2 == 0 {
+                2.
+            } else {
+                4.
+            };
+            sum += weight * initial(x + dx * (p as f64 / 8. - 0.5) - speed * t);
+        }
+        sum / 24.
+    };
+    let mut errors = Vec::new();
+    for size in [32_usize, 64, 128] {
+        let cell = (extent / size as f64) as f32;
+        let n = size * size;
+        let area = (cell as f64).powi(2);
+        let steps = size / 8;
+        let dt = total / steps as f64;
+        let h = GpuHeightfield::new(
+            &f.device,
+            size as u32,
+            size as u32,
+            cell,
+            0.,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+        );
+        for b in [
+            &h.geology.sediment,
+            &h.geology.overburden,
+            &h.geology.gravel,
+            &h.geology.paydirt,
+        ] {
+            f.write(b, &vec![0.125; n]);
+        }
+        f.write(&h.water.depth, &vec![h0 as f32; n]);
+        let c: Vec<f32> = (0..n)
+            .map(|i| {
+                average(
+                    (i % size) as f64 * cell as f64 + 0.5 * cell as f64,
+                    cell as f64,
+                    0.,
+                ) as f32
+            })
+            .collect();
+        f.write(&h.water.suspended_paydirt, &c);
+        let q = (speed * h0 * cell as f64 * dt) as f32;
+        let flux: Vec<f32> = (0..n)
+            .map(|i| if i % size + 1 == size { 0. } else { q })
+            .collect();
+        f.write(&h.water.flux_x, &flux);
+        let mut aux = vec![0_f32; n * 13];
+        for i in 0..n {
+            let a = n + i * 12;
+            aux[a] = h0 as f32;
+            if i % size + 1 == size {
+                aux[a + 2] = q;
+            }
+        }
+        f.write(&h.water.suspended_sediment_next, &aux);
+        h.update_water_params(&f.queue, dt as f32, 2, 0., 1);
+        let mut encoder = f.device.create_command_encoder(&Default::default());
+        for _ in 0..steps {
+            {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&h.simulation.sediment_transport);
+                pass.set_bind_group(0, &h.bind_groups.params, &[]);
+                pass.set_bind_group(1, &h.bind_groups.water, &[]);
+                pass.set_bind_group(2, &h.bind_groups.terrain, &[]);
+                pass.dispatch_workgroups((size as u32).div_ceil(16), (size as u32).div_ceil(16), 1);
+            }
+            for (next, current) in [
+                (
+                    &h.water.suspended_sediment_next,
+                    &h.water.suspended_sediment,
+                ),
+                (
+                    &h.water.suspended_overburden_next,
+                    &h.water.suspended_overburden,
+                ),
+                (&h.water.suspended_gravel_next, &h.water.suspended_gravel),
+                (&h.water.suspended_paydirt_next, &h.water.suspended_paydirt),
+            ] {
+                encoder.copy_buffer_to_buffer(next, 0, current, 0, (n * 4) as u64);
+            }
+        }
+        f.queue.submit(Some(encoder.finish()));
+        let c_after = f.read_range(&h.water.suspended_paydirt, 0, n);
+        let layer = f.read_range(&h.geology.paydirt, 0, n);
+        let low = f.read_range(&h.geology.bed_remainder, 0, n * 4);
+        let aux = f.read_range(&h.water.suspended_sediment_next, (n * 4) as u64, n * 12);
+        let mut mobile_error = 0.;
+        let mut bed_error = 0.;
+        let mut reference_mobile = 0.;
+        let mut reference_bed = 0.;
+        let row = size / 2;
+        for x in 0..size {
+            let at = (x as f64 + 0.5) * cell as f64;
+            let exact_mobile = average(at, cell as f64, total) * (-k * total).exp() * h0;
+            let mut integral = 0.;
+            for p in 0..=128 {
+                let t = total * p as f64 / 128.;
+                let weight = if p == 0 || p == 128 {
+                    1.
+                } else if p % 2 == 0 {
+                    2.
+                } else {
+                    4.
+                };
+                integral += weight * k * h0 * average(at, cell as f64, t) * (-k * t).exp();
+            }
+            let exact_bed = integral * total / (3. * 128.);
+            let i = row * size + x;
+            mobile_error += (c_after[i] as f64 * h0 - exact_mobile).abs();
+            bed_error += ((layer[i] as f64 - 0.125) + low[i * 4 + 3] as f64 - exact_bed).abs();
+            reference_mobile += exact_mobile;
+            reference_bed += exact_bed;
+        }
+        let initial_mass = c
+            .iter()
+            .map(|c| *c as f64 * h0 as f32 as f64 * area)
+            .sum::<f64>();
+        let final_mass = (0..n)
+            .map(|i| {
+                c_after[i] as f64 * h0 as f32 as f64 * area
+                    + (layer[i] as f64 - 0.125) * area
+                    + low[i * 4 + 3] as f64 * area
+                    + aux[i * 12 + 11] as f64
+            })
+            .sum::<f64>();
+        assert!(
+            (final_mass - initial_mass).abs() < initial_mass * 1e-6,
+            "moving reaction material budget at {size}: {}",
+            final_mass - initial_mass
+        );
+        let mobile_error = mobile_error / reference_mobile;
+        let bed_error = bed_error / reference_bed;
+        println!("ADR GAUSSIAN size={size} dx={cell} dt={dt} mobile_l1={mobile_error} bed_l1={bed_error} mobile_budget_relative={}",(final_mass-initial_mass)/initial_mass);
+        errors.push((mobile_error, bed_error));
+    }
+    assert!(
+        errors[1].0 < errors[0].0 * 0.7 && errors[2].0 < errors[1].0 * 0.7,
+        "mobile spatial/time convergence: {errors:?}"
+    );
+    assert!(
+        errors[1].1 < errors[0].1 * 0.7 && errors[2].1 < errors[1].1 * 0.7,
+        "deposited spatial/time convergence: {errors:?}"
+    );
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored --test-threads=1"]
+fn full_reactive_steps_match_quiet_columns_and_exact_zero_time_without_losing_material() {
+    let f = Fixture::new();
+    let mut worst_c = 0_f64;
+    let mut worst_mass = 0_f64;
+    for h0 in [1e-7_f32, 0.00025, 0.001001, 0.1] {
+        for steps in [1, 2, 8] {
+            for dt in [0_f32, 0.0001] {
+                for b in f.layers() {
+                    f.fill(b, 0.125);
+                }
+                f.clear_exchange_error();
+                f.fill(&f.h.water.depth, h0);
+                f.fill(&f.h.water.velocity_x, 0.);
+                f.fill(&f.h.water.velocity_z, 0.);
+                let initial = [0.1_f32, 0.09, 0.08, 0.07];
+                for (b, c) in f.concentrations().into_iter().zip(initial) {
+                    f.fill(b, c);
+                }
+                f.h.update_water_params(&f.queue, dt, 0, 0.036, steps);
+                let mut encoder = f.device.create_command_encoder(&Default::default());
+                f.h.dispatch_water_substeps(&mut encoder, steps);
+                f.queue.submit(Some(encoder.finish()));
+                let low = f.read_range(&f.h.geology.bed_remainder, 0, CELLS * 4);
+                let depth = f.read(&f.h.water.depth);
+                for (ch, (cb, layer)) in f.concentrations().into_iter().zip(f.layers()).enumerate()
+                {
+                    let c = f.read(cb);
+                    let bed = f.read(layer);
+                    let d = [0.0001, 0.001, 0.01, 0.002][ch];
+                    let stokes = 9.81 * 1650. * d * d / (18. * 0.001);
+                    let turbulent = (4. * 9.81 * d * 1650_f64 / (3. * 1000. * 0.44)).sqrt();
+                    let ws = if d < 0.0001 {
+                        stokes
+                    } else if d > 0.001 {
+                        turbulent
+                    } else {
+                        let t = (d - 0.0001) / 0.0009;
+                        stokes * (1. - t) + turbulent * t
+                    };
+                    let expected = initial[ch] as f64 * (-ws * dt as f64 / h0 as f64).exp();
+                    let c_error = c
+                        .iter()
+                        .map(|v| (*v as f64 - expected).abs() / initial[ch] as f64)
+                        .fold(0_f64, f64::max);
+                    let error = (0..CELLS)
+                        .map(|i| {
+                            ((bed[i] as f64 - 0.125)
+                                + low[i * 4 + ch] as f64
+                                + c[i] as f64 * depth[i] as f64
+                                - initial[ch] as f64 * h0 as f64)
+                                * AREA
+                        })
+                        .sum::<f64>();
+                    let mass_error =
+                        error.abs() / (initial[ch] as f64 * h0 as f64 * AREA * CELLS as f64);
+                    assert!(
+                        c_error < 1e-6,
+                        "quiet C error h={h0} steps={steps} dt={dt} ch={ch}: {c_error}"
+                    );
+                    assert!(
+                        mass_error < 1e-6,
+                        "quiet material h={h0} steps={steps} dt={dt} ch={ch}: {mass_error}"
+                    );
+                    if dt == 0. {
+                        assert!(c.iter().all(|v| *v == initial[ch]));
+                        assert!(bed.iter().all(|v| *v == 0.125));
+                    }
+                    worst_c = worst_c.max(c_error);
+                    worst_mass = worst_mass.max(mass_error);
+                }
+            }
+        }
+    }
+    println!("FULL REACTIVE QUIET maximum_C_relative={worst_c} maximum_mobile_budget_relative={worst_mass}");
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored --test-threads=1"]
+fn reactive_cross_depth_arrivals_match_time_quadrature_for_every_class() {
+    for gravity in [9.81, 0.] {
+        let f = Fixture::new();
+        for b in f.layers() {
+            f.fill(b, 0.125);
+        }
+        let donor = 16 * N + 16;
+        let receiver = donor + 1;
+        let dt = 0.025_f32;
+        let (old_a, old_b, new_a, new_b) = (0.01_f32, 0.005_f32, 0.008_f32, 0.007_f32);
+        let mut depths = vec![0.; CELLS];
+        depths[donor] = new_a;
+        depths[receiver] = new_b;
+        f.write(&f.h.water.depth, &depths);
+        let mut q = vec![0.; CELLS];
+        q[donor] = 0.002 * AREA as f32;
+        f.write(&f.h.water.flux_x, &q);
+        let mut aux = vec![0.; CELLS * 13];
+        aux[CELLS + donor * 12] = old_a;
+        aux[CELLS + receiver * 12] = old_b;
+        f.write(&f.h.water.suspended_sediment_next, &aux);
+        for (ch, b) in f.concentrations().into_iter().enumerate() {
+            let mut c = vec![0.; CELLS];
+            c[donor] = 0.01 * (ch + 1) as f32;
+            f.write(b, &c);
+        }
+        f.h.update_water_params(&f.queue, dt, 0, 0.036, 1);
+        f.queue.write_buffer(
+            &f.h.params_buffer,
+            40,
+            bytemuck::bytes_of(&(gravity as f32)),
+        );
+        let mut encoder = f.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&f.h.simulation.sediment_transport);
+            pass.set_bind_group(0, &f.h.bind_groups.params, &[]);
+            pass.set_bind_group(1, &f.h.bind_groups.water, &[]);
+            pass.set_bind_group(2, &f.h.bind_groups.terrain, &[]);
+            pass.dispatch_workgroups(2, 2, 1);
+        }
+        f.queue.submit(Some(encoder.finish()));
+        let low = f.read_range(&f.h.geology.bed_remainder, 0, CELLS * 4);
+        for (ch, (target, layer)) in f.targets().into_iter().zip(f.layers()).enumerate() {
+            let c = f.read(target);
+            let bed = f.read(layer);
+            let initial_c = (0.01_f32 * (ch + 1) as f32) as f64;
+            let old = initial_c * old_a as f64;
+            let d = [0.0001, 0.001, 0.01, 0.002][ch];
+            let stokes = gravity * 1650. * d * d / (18. * 0.001);
+            let turbulent = (4. * gravity * d * 1650_f64 / (3. * 1000. * 0.44)).sqrt();
+            let ws = if d < 0.0001 {
+                stokes
+            } else if d > 0.001 {
+                turbulent
+            } else {
+                let t = (d - 0.0001) / 0.0009;
+                stokes * (1. - t) + turbulent * t
+            };
+            let a = ws * dt as f64 / (0.5 * (old_a + new_a)) as f64;
+            let b = ws * dt as f64 / (0.5 * (old_b + new_b)) as f64;
+            let mut arrival = 0.;
+            let mut departure = 0.;
+            for p in 0..=1024 {
+                let t = p as f64 / 1024.;
+                let w = if p == 0 || p == 1024 {
+                    1.
+                } else if p % 2 == 0 {
+                    2.
+                } else {
+                    4.
+                };
+                arrival += w * (-a * t - b * (1. - t)).exp();
+                departure += w * (-a * t).exp();
+            }
+            let entering = initial_c * q[donor] as f64 / AREA * departure / (3. * 1024.);
+            let surviving = initial_c * q[donor] as f64 / AREA * arrival / (3. * 1024.);
+            let actual_mobile = c[receiver] as f64 * new_b as f64;
+            let actual_bed = bed[receiver] as f64 - 0.125 + low[receiver * 4 + ch] as f64;
+            assert!(
+                (actual_mobile - surviving).abs() < old * 1e-6,
+                "cross-depth mobile {ch}"
+            );
+            assert!(
+                (actual_bed - (entering - surviving)).abs() < old * 1e-6,
+                "cross-depth bed {ch}"
+            );
+            let total = c[donor] as f64 * new_a as f64 + actual_mobile + bed[donor] as f64 - 0.125
+                + low[donor * 4 + ch] as f64
+                + actual_bed;
+            assert!(
+                (total - old).abs() < old * 1e-6,
+                "cross-depth material {ch}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored --test-threads=1"]
+fn fixed_grid_reactive_time_refinement_matches_independent_poisson_reference() {
+    let f = Fixture::new();
+    let size = 64_usize;
+    let n = size * size;
+    let cell = 0.125_f32;
+    let h0 = 0.1_f32;
+    let (speed, total, sigma) = (0.5_f64, 0.5_f64, 0.4_f64);
+    let area = (cell as f64).powi(2);
+    let k = (4. * 9.81 * 0.002 * 1650_f64 / (3. * 1000. * 0.44)).sqrt() / h0 as f64;
+    let initial: Vec<f32> = (0..size)
+        .map(|x| {
+            let mut sum = 0.;
+            for p in 0..=8 {
+                let at = (x as f64 + p as f64 / 8.) * cell as f64;
+                let w = if p == 0 || p == 8 {
+                    1.
+                } else if p % 2 == 0 {
+                    2.
+                } else {
+                    4.
+                };
+                sum += w * 0.01 * (-0.5 * ((at - 2.) / sigma).powi(2)).exp();
+            }
+            (sum / 24.) as f32
+        })
+        .collect();
+    let exact = |x: usize, t: f64| {
+        // Exact semidiscrete donor-cell solution, independent of Euler steps.
+        let lambda = speed * t / cell as f64;
+        let mut weight = (-lambda).exp();
+        let mut sum = 0.;
+        for j in 0..=x {
+            sum += weight * initial[x - j] as f64;
+            weight *= lambda / (j + 1) as f64;
+        }
+        sum * (-k * t).exp() * h0 as f64
+    };
+    let mut errors = Vec::new();
+    for steps in [4, 8, 16] {
+        let dt = total / steps as f64;
+        let h = GpuHeightfield::new(
+            &f.device,
+            size as u32,
+            size as u32,
+            cell,
+            0.,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+        );
+        for b in [
+            &h.geology.sediment,
+            &h.geology.overburden,
+            &h.geology.gravel,
+            &h.geology.paydirt,
+        ] {
+            f.write(b, &vec![0.125; n]);
+        }
+        f.write(&h.water.depth, &vec![h0; n]);
+        f.write(
+            &h.water.suspended_paydirt,
+            &(0..n).map(|i| initial[i % size]).collect::<Vec<_>>(),
+        );
+        let q = (speed * h0 as f64 * cell as f64 * dt) as f32;
+        let flow: Vec<f32> = (0..n)
+            .map(|i| if i % size + 1 == size { 0. } else { q })
+            .collect();
+        f.write(&h.water.flux_x, &flow);
+        let mut aux = vec![0.; n * 13];
+        for i in 0..n {
+            aux[n + i * 12] = h0;
+            if i % size + 1 == size {
+                aux[n + i * 12 + 2] = q;
+            }
+        }
+        f.write(&h.water.suspended_sediment_next, &aux);
+        h.update_water_params(&f.queue, dt as f32, 2, 0., 1);
+        let mut encoder = f.device.create_command_encoder(&Default::default());
+        for _ in 0..steps {
+            {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&h.simulation.sediment_transport);
+                pass.set_bind_group(0, &h.bind_groups.params, &[]);
+                pass.set_bind_group(1, &h.bind_groups.water, &[]);
+                pass.set_bind_group(2, &h.bind_groups.terrain, &[]);
+                pass.dispatch_workgroups(4, 4, 1);
+            }
+            for (next, current) in [
+                (
+                    &h.water.suspended_sediment_next,
+                    &h.water.suspended_sediment,
+                ),
+                (
+                    &h.water.suspended_overburden_next,
+                    &h.water.suspended_overburden,
+                ),
+                (&h.water.suspended_gravel_next, &h.water.suspended_gravel),
+                (&h.water.suspended_paydirt_next, &h.water.suspended_paydirt),
+            ] {
+                encoder.copy_buffer_to_buffer(next, 0, current, 0, (n * 4) as u64);
+            }
+        }
+        f.queue.submit(Some(encoder.finish()));
+        let c = f.read_range(&h.water.suspended_paydirt, 0, n);
+        let bed = f.read_range(&h.geology.paydirt, 0, n);
+        let low = f.read_range(&h.geology.bed_remainder, 0, n * 4);
+        let mut mobile_error = 0.;
+        let mut bed_error = 0.;
+        let mut mobile_ref = 0.;
+        let mut bed_ref = 0.;
+        for x in 0..size {
+            let i = (size / 2) * size + x;
+            let m = exact(x, total);
+            let mut b = 0.;
+            for p in 0..=256 {
+                let t = total * p as f64 / 256.;
+                let w = if p == 0 || p == 256 {
+                    1.
+                } else if p % 2 == 0 {
+                    2.
+                } else {
+                    4.
+                };
+                b += w * k * exact(x, t);
+            }
+            b *= total / (3. * 256.);
+            mobile_error += (c[i] as f64 * h0 as f64 - m).abs();
+            bed_error += (bed[i] as f64 - 0.125 + low[i * 4 + 3] as f64 - b).abs();
+            mobile_ref += m;
+            bed_ref += b;
+        }
+        let m = mobile_error / mobile_ref;
+        let b = bed_error / bed_ref;
+        let initial_mass = initial
+            .iter()
+            .map(|c| *c as f64 * h0 as f64 * area * size as f64)
+            .sum::<f64>();
+        let final_mass = (0..n)
+            .map(|i| {
+                ((c[i] as f64 * h0 as f64) + (bed[i] as f64 - 0.125) + low[i * 4 + 3] as f64) * area
+            })
+            .sum::<f64>();
+        assert!((final_mass - initial_mass).abs() < initial_mass * 1e-6);
+        println!("ADR TIME fixed_dx={cell} dt={dt} mobile_l1={m} bed_l1={b}");
+        errors.push((m, b));
+    }
+    assert!(
+        errors[1].0 < errors[0].0 * 0.7 && errors[2].0 < errors[1].0 * 0.7,
+        "fixed-grid mobile time convergence {errors:?}"
+    );
+    assert!(
+        errors[1].1 < errors[0].1 * 0.7 && errors[2].1 < errors[1].1 * 0.7,
+        "fixed-grid bed time convergence {errors:?}"
+    );
+}

@@ -341,6 +341,7 @@ impl Hydraulics {
             substeps as usize,
             &retained_bed_precision,
             area,
+            dt as f64,
         )?;
         s.site.project_terrain_water(&next_depth);
         let w = &mut s.site.world;

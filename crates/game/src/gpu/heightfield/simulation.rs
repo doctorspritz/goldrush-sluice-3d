@@ -147,25 +147,24 @@ pub fn dispatch_simulation_tile(
         );
         copy_concentrations(encoder, water, buffer_size, false);
     }
-    // Geology evolves over the full step, after conservative water/material advection.
-    for (event, stage) in [BedExchangeStage::Settling, BedExchangeStage::Erosion]
-        .into_iter()
-        .enumerate()
-    {
-        dispatch_bed_exchange_passes(
-            encoder,
-            pipelines,
-            bind_groups,
-            tile_width,
-            tile_depth,
-            stage,
-        );
-        if let Some((recorder, capture)) = events {
-            recorder.record(encoder, capture, water_substeps.max(1) + event as u32);
-        }
+    // Settling is integrated with each transport residence. Capture the bed
+    // before the remaining full-tick scour, then its reconciled result.
+    if let Some((recorder, capture)) = events {
+        recorder.record(encoder, capture, water_substeps.max(1));
     }
-    // No transport runs between the two bed stages. The second snapshot
-    // replaces the first alias; restore the public targets only once at exit.
+    dispatch_bed_exchange_passes(
+        encoder,
+        pipelines,
+        bind_groups,
+        tile_width,
+        tile_depth,
+        BedExchangeStage::Erosion,
+    );
+    if let Some((recorder, capture)) = events {
+        recorder.record(encoder, capture, water_substeps.max(1) + 1);
+    }
+    // Scour borrowed the targets for immutable geometry; release those aliases
+    // and restore public concentrations before returning.
     copy_concentrations(encoder, water, buffer_size, true);
 
     dispatch_collapse_tile(encoder, pipelines, bind_groups, tile_width, tile_depth);
