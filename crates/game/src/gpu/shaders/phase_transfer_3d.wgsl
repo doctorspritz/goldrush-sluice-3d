@@ -75,6 +75,7 @@ fn scatter(@builtin(global_invocation_id) invocation:vec3<u32>) {
  metadata[2u*params.capacity+id]=bc.x;metadata[3u*params.capacity+id]=bc.y;
  if solid && bc.x<0. {return;}
  let rows=mat3x3<f32>(row0[id],row1[id],row2[id]);
+ let walls=voxel_wall_bounds(p.xyz);
  var face_base=0u;
  for(var axis=0u;axis<3u;axis++) {
   var stagger=vec3(.5);stagger[axis]=0.;
@@ -83,7 +84,7 @@ fn scatter(@builtin(global_invocation_id) invocation:vec3<u32>) {
   let center=vec3<i32>(floor(grid_position+vec3(.5)));let frac=grid_position-vec3<f32>(center);
   for(var dz=-1;dz<=1;dz++) {for(var dy=-1;dy<=1;dy++) {for(var dx=-1;dx<=1;dx++) {
    let delta=vec3(dx,dy,dz);let q=center+delta;
-   let reflected=mac_wall_sample(q,axis,u32(params.sediment.pad));
+   let reflected=voxel_wall_sample(mac_wall_sample(q,axis,u32(params.sediment.pad)),axis,walls);
    if !reflected.valid {continue;}
    let destination=reflected.node;
    let w=weight(frac.x-f32(dx))*weight(frac.y-f32(dy))*weight(frac.z-f32(dz));if w<=0. {continue;}
@@ -270,3 +271,19 @@ fn count_cells_reflected(@builtin(global_invocation_id) invocation:vec3<u32>) {
 
 @group(0) @binding(18) var<storage,read> sdf:array<f32>;
 fn cell_index(i:u32,j:u32,k:u32)->u32 {return (k*params.height+j)*params.width+i;}
+
+// Reuse the upper bit of the raw marker plane for immutable solid geometry.
+// Count <= capacity; the 16-byte metadata binding bounds capacity below 2^28.
+// The volume plane and all authoritative material counts retain their meaning.
+fn voxel_geometry_solid(q:vec3<i32>)->bool {
+ let n=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
+ if any(q<vec3(0)) || any(q>=n) {return false;}
+ return (bitcast<u32>(water_u[cell_marker_offset()+volume_cell_index(q)])&0x80000000u)!=0u;
+}
+@compute @workgroup_size(128)
+fn publish_voxel_geometry(@builtin(global_invocation_id) q:vec3<u32>) {
+ let i=q.x;if i>=params.width*params.height*params.depth {return;}
+ let index=cell_marker_offset()+i;
+ let count=bitcast<u32>(water_u[index])&0x7fffffffu;
+ water_u[index]=bitcast<f32>(count|select(0u,0x80000000u,volume_cell_types[i]==2u));
+}

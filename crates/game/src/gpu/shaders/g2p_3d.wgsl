@@ -136,6 +136,8 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     let phase=PHASE_EXCHANGE_ALLOWED && params._pad0!=0u;
     if phase && water_grid_u[(params.width+1u)*params.height*params.depth]!=0. {return;}
     let pos = positions[id.x];
+    var voxel_bounds=VoxelWallBounds(vec3(0),vec3<i32>(i32(params.width),i32(params.height),i32(params.depth)));
+    if phase {voxel_bounds=voxel_wall_bounds(pos);}
     let old_particle_vel = velocities[id.x];
     let cell_size = params.cell_size;
     let density = densities[id.x];
@@ -183,7 +185,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 if (w <= 0.0) { continue; }
 
                 var reflected=MacWallSample(vec3(ni,nj,nk),1.,true);
-                if phase {reflected=mac_wall_sample(reflected.node,0u,params._pad1);}
+                if phase {reflected=voxel_wall_sample(mac_wall_sample(reflected.node,0u,params._pad1),0u,voxel_bounds);}
                 if !reflected.valid {continue;}
                 let idx = u_index(reflected.node.x, reflected.node.y, reflected.node.z);
                 let offset = vec3<f32>(
@@ -237,7 +239,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 if (w <= 0.0) { continue; }
 
                 var reflected=MacWallSample(vec3(ni,nj,nk),1.,true);
-                if phase {reflected=mac_wall_sample(reflected.node,1u,params._pad1);}
+                if phase {reflected=voxel_wall_sample(mac_wall_sample(reflected.node,1u,params._pad1),1u,voxel_bounds);}
                 if !reflected.valid {continue;}
                 let idx = v_index(reflected.node.x, reflected.node.y, reflected.node.z);
                 let offset = vec3<f32>(
@@ -290,7 +292,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 if (w <= 0.0) { continue; }
 
                 var reflected=MacWallSample(vec3(ni,nj,nk),1.,true);
-                if phase {reflected=mac_wall_sample(reflected.node,2u,params._pad1);}
+                if phase {reflected=voxel_wall_sample(mac_wall_sample(reflected.node,2u,params._pad1),2u,voxel_bounds);}
                 if !reflected.valid {continue;}
                 let idx = w_index(reflected.node.x, reflected.node.y, reflected.node.z);
                 let offset = vec3<f32>(
@@ -479,4 +481,13 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // ========== Write velocity ==========
     velocities[id.x] = final_velocity;
+}
+
+fn voxel_geometry_solid(q:vec3<i32>)->bool {
+ let n=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
+ if any(q<vec3(0)) || any(q>=n) {return false;}
+ let nu=(params.width+1u)*params.height*params.depth;
+ let auxiliary=((nu+4u+63u)/64u)*64u;
+ let markers=((auxiliary+4u*nu+63u)/64u)*64u;
+ return (bitcast<u32>(water_grid_u[markers+cell_index(q.x,q.y,q.z)])&0x80000000u)!=0u;
 }

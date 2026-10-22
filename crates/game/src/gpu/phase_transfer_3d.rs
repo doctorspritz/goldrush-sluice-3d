@@ -22,6 +22,7 @@ struct Params {
 
 pub struct BoundaryVolume3D {
     pipeline: wgpu::ComputePipeline,
+    geometry: wgpu::ComputePipeline,
     group: wgpu::BindGroup,
 }
 
@@ -79,6 +80,8 @@ impl PhaseTransfer3D {
         (face_count + 4).div_ceil(64) * 64
     }
 
+    /// Raw water-home counts in the low 31 bits; runtime publishes immutable
+    /// solid geometry in the high bit. Standalone transfers retain raw counts.
     pub fn cell_count_offset(shape: [u32; 3]) -> u64 {
         let n = (u64::from(shape[0]) + 1) * u64::from(shape[1]) * u64::from(shape[2]);
         (Self::aux_offset(n) + 4 * n).div_ceil(64) * 64
@@ -420,6 +423,11 @@ impl PhaseTransfer3D {
         pass.set_bind_group(0, &self.group, &[]);
         pass.set_pipeline(&self.decode_cells);
         pass.dispatch_workgroups(self.shape.into_iter().product::<u32>().div_ceil(128), 1, 1);
+        if let Some(boundary) = boundary {
+            pass.set_bind_group(0, &boundary.group, &[]);
+            pass.set_pipeline(&boundary.geometry);
+            pass.dispatch_workgroups(self.shape.into_iter().product::<u32>().div_ceil(128), 1, 1);
+        }
     }
 
     /// Share the boundary mask between cell support and paired affine transfers.
@@ -513,7 +521,7 @@ impl PhaseTransfer3D {
         assert!(sdf.size() >= self.shape.into_iter().map(u64::from).product::<u64>() * 4);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Boundary volume layout"),
-            entries: &[0, 1, 6, 7, 17, 18].map(|binding| wgpu::BindGroupLayoutEntry {
+            entries: &[0, 1, 6, 7, 11, 17, 18].map(|binding| wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
@@ -551,6 +559,10 @@ impl PhaseTransfer3D {
                     resource: self.moments.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: self.water[0].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
                     binding: 17,
                     resource: cell_types.as_entire_binding(),
                 },
@@ -586,7 +598,19 @@ impl PhaseTransfer3D {
             compilation_options: Default::default(),
             cache: None,
         });
-        BoundaryVolume3D { pipeline, group }
+        let geometry = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Publish immutable voxel geometry"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("publish_voxel_geometry"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        BoundaryVolume3D {
+            pipeline,
+            geometry,
+            group,
+        }
     }
 
     pub fn encode_response(&self, encoder: &mut wgpu::CommandEncoder) {

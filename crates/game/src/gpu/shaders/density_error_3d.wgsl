@@ -196,5 +196,5 @@ fn volume_home_water(q:vec3<i32>)->bool {
  let kind=phase_cell_type(q);
  if kind==CELL_SOLID {return true;}
  if any(q<vec3(0)) || any(q>=shape) {return false;}
- return volume_water_markers[cell_index(u32(q.x),u32(q.y),u32(q.z))]>0u;
+ return (volume_water_markers[cell_index(u32(q.x),u32(q.y),u32(q.z))]&0x7fffffffu)>0u;
 }

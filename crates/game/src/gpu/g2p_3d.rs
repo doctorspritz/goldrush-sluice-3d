@@ -204,7 +204,7 @@ impl GpuG2p3D {
         metadata: Option<Arc<wgpu::Buffer>>,
     ) -> Self {
         let phase_buffers = metadata.is_some();
-        let water_sizes = [
+        let mut water_sizes = [
             ((width + 1) * height * depth) as u64,
             (width * (height + 1) * depth) as u64,
             (width * height * (depth + 1)) as u64,
@@ -217,6 +217,14 @@ impl GpuG2p3D {
             }
         });
         if phase_buffers {
+            // Paired voxel reflection reads immutable solid flags after the
+            // response plane. Binding only that earlier prefix silently made
+            // every geometry query out of bounds in the gather shader.
+            let cells = u64::from(width) * u64::from(height) * u64::from(depth);
+            water_sizes[0] = (super::phase_transfer_3d::PhaseTransfer3D::cell_count_offset([
+                width, height, depth,
+            ]) + cells)
+                * 4;
             assert!(metadata.as_ref().unwrap().size() >= (max_particles as u64) * 16);
             for (axis, buffer) in [
                 water_grid_u_buffer,
@@ -228,7 +236,7 @@ impl GpuG2p3D {
             {
                 assert!(
                     buffer.size() >= water_offsets[axis] + water_sizes[axis],
-                    "phase gather auxiliary plane is truncated"
+                    "phase gather response or solid-marker plane is truncated"
                 );
             }
         }

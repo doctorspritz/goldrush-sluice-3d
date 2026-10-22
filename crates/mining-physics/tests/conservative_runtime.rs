@@ -588,21 +588,52 @@ fn wall_cloud(wall: u32) -> Vec<Vec3> {
     points
 }
 
-#[test]
-#[ignore = "requires real GPU; run explicitly with --ignored"]
-fn closed_wall_transfer_preserves_compatible_affine_flow_without_adding_energy() {
+fn wall_fixture(wall: u32, voxel: bool) -> (Vec<Vec3>, Vec<u32>, f32, u32) {
+    let mut p = wall_cloud(wall);
+    let normal = wall as usize / 2;
+    let lower = wall.is_multiple_of(2);
+    let mut cells = vec![0; 12 * 12 * 12];
+    if voxel {
+        for p in &mut p {
+            p[normal] += if lower { 0.01 } else { -0.01 };
+        }
+        for z in 0..12 {
+            for y in 0..12 {
+                for x in 0..12 {
+                    if [x, y, z][normal] == if lower { 0 } else { 11 } {
+                        cells[(z * 12 + y) * 12 + x] = 2;
+                    }
+                }
+            }
+        }
+    }
+    let plane = if lower {
+        if voxel {
+            0.01
+        } else {
+            0.
+        }
+    } else if voxel {
+        0.11
+    } else {
+        0.12
+    };
+    (p, cells, plane, if voxel { 63 } else { 63 & !(1 << wall) })
+}
+
+fn wall_affine_cases(voxel: bool) -> Vec<serde_json::Value> {
     let (device, queue) = device();
     let mut results = Vec::new();
     for wall in 0..6u32 {
         for blend in [0., 0.97, 1.] {
-            let mut p = wall_cloud(wall);
+            let (mut p, cells, wall_plane, open) = wall_fixture(wall, voxel);
             let normal = wall as usize / 2;
             let tangent = (normal + 1) % 3;
             let mut sim = configured(&device, p.len());
-            sim.open_boundaries = 63 & !(1 << wall);
+            sim.open_boundaries = open;
             sim.flip_ratio = blend;
             sim.density_projection_enabled = false;
-            let plane = if wall.is_multiple_of(2) { 0. } else { 0.12 };
+            let plane = wall_plane;
             let mut diagonal = Vec3::ZERO;
             diagonal[normal] = 0.3;
             diagonal[tangent] = -0.3;
@@ -623,19 +654,7 @@ fn closed_wall_transfer_preserves_compatible_affine_flow_without_adding_energy()
             sim.set_particle_volumes(weights.clone());
             let before = generalized_budget(&p, &v, &c, &weights);
             sim.step(
-                &device,
-                &queue,
-                &mut p,
-                &mut v,
-                &mut c,
-                &rho,
-                &[0; 12 * 12 * 12],
-                None,
-                None,
-                1e-7,
-                0.,
-                0.,
-                0,
+                &device, &queue, &mut p, &mut v, &mut c, &rho, &cells, None, None, 1e-7, 0., 0., 0,
             );
             assert!(sim.take_phase_error().is_none());
             let velocity_error = v
@@ -653,10 +672,17 @@ fn closed_wall_transfer_preserves_compatible_affine_flow_without_adding_energy()
                 })
                 .fold(0f32, f32::max);
             let energy_ratio = generalized_budget(&p, &v, &c, &weights).1 / before.1;
-            results.push(serde_json::json!({"wall":wall,"blend":blend,"velocity_error":velocity_error,"affine_error":affine_error,"energy_ratio":energy_ratio,
+            results.push(serde_json::json!({"voxel":voxel,"wall":wall,"blend":blend,"velocity_error":velocity_error,"affine_error":affine_error,"energy_ratio":energy_ratio,
             "passed":velocity_error<2e-6&&affine_error<2e-5&&energy_ratio<=1.000002}));
         }
     }
+    results
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn closed_wall_transfer_preserves_compatible_affine_flow_without_adding_energy() {
+    let results = wall_affine_cases(false);
     eprintln!(
         "compatible wall affine cases={}: {}",
         results.len(),
@@ -673,12 +699,28 @@ fn closed_wall_transfer_preserves_compatible_affine_flow_without_adding_energy()
 
 #[test]
 #[ignore = "requires real GPU; run explicitly with --ignored"]
-fn freefall_parallel_to_closed_walls_retains_full_gravity_and_phase_comotion() {
+fn voxel_wall_transfer_preserves_compatible_affine_flow_without_adding_energy() {
+    let results = wall_affine_cases(true);
+    eprintln!(
+        "compatible wall affine cases={}: {}",
+        results.len(),
+        serde_json::to_string(&results).unwrap()
+    );
+    if let Ok(path) = std::env::var("SLUICE_VOXEL_AFFINE_REPORT") {
+        std::fs::write(path, serde_json::to_vec_pretty(&results).unwrap()).unwrap();
+    }
+    assert!(
+        results.iter().all(|r| r["passed"] == true),
+        "closed-wall APIC transfer distorted an admissible affine field or added energy"
+    );
+}
+
+fn wall_freefall_cases(voxel: bool) -> Vec<serde_json::Value> {
     let (device, queue) = device();
     let mut results = Vec::new();
     for wall in [0u32, 1, 4, 5] {
         for dt in [1. / 120., 1. / 240.] {
-            let mut p = wall_cloud(wall);
+            let (mut p, cells, _wall_plane, open) = wall_fixture(wall, voxel);
             let nw = p.len();
             for i in 0..24 {
                 p.push(p[i * 13] + Vec3::splat(0.0001));
@@ -690,25 +732,14 @@ fn freefall_parallel_to_closed_walls_retains_full_gravity_and_phase_comotion() {
             let mut weights = vec![1.; nw];
             weights.extend([1e-4; 24]);
             let mut sim = configured(&device, p.len());
-            sim.open_boundaries = 63 & !(1 << wall);
+            sim.open_boundaries = open;
             sim.density_projection_enabled = false;
             sim.set_particle_volumes(weights);
             sim.upload_grain_diameters(&queue, nw, &[0.0002; 24]);
             let mut v = vec![Vec3::new(0., 0.2, 0.); p.len()];
             let mut c = vec![Mat3::ZERO; p.len()];
             sim.step(
-                &device,
-                &queue,
-                &mut p,
-                &mut v,
-                &mut c,
-                &rho,
-                &[0; 12 * 12 * 12],
-                None,
-                None,
-                dt,
-                -9.81,
-                0.,
+                &device, &queue, &mut p, &mut v, &mut c, &rho, &cells, None, None, dt, -9.81, 0.,
                 80,
             );
             assert!(sim.take_phase_error().is_none());
@@ -721,14 +752,38 @@ fn freefall_parallel_to_closed_walls_retains_full_gravity_and_phase_comotion() {
                 .iter()
                 .map(|v| (*v - expected).length())
                 .fold(0f32, f32::max);
-            results.push(serde_json::json!({"wall":wall,"dt":dt,"water_error":water_error,"grain_error":grain_error,"passed":water_error<2e-6&&grain_error<2e-6}));
+            results.push(serde_json::json!({"voxel":voxel,"wall":wall,"dt":dt,"water_error":water_error,"grain_error":grain_error,"passed":water_error<2e-6&&grain_error<2e-6}));
         }
     }
+    results
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn freefall_parallel_to_closed_walls_retains_full_gravity_and_phase_comotion() {
+    let results = wall_freefall_cases(false);
     eprintln!(
         "wall-parallel freefall: {}",
         serde_json::to_string(&results).unwrap()
     );
     if let Ok(path) = std::env::var("SLUICE_WALL_FREEFALL_REPORT") {
+        std::fs::write(path, serde_json::to_vec_pretty(&results).unwrap()).unwrap();
+    }
+    assert!(
+        results.iter().all(|r| r["passed"] == true),
+        "wall extension changed physical gravity or separated comoving phases"
+    );
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn freefall_parallel_to_voxel_walls_retains_full_gravity_and_phase_comotion() {
+    let results = wall_freefall_cases(true);
+    eprintln!(
+        "wall-parallel freefall: {}",
+        serde_json::to_string(&results).unwrap()
+    );
+    if let Ok(path) = std::env::var("SLUICE_VOXEL_FREEFALL_REPORT") {
         std::fs::write(path, serde_json::to_vec_pretty(&results).unwrap()).unwrap();
     }
     assert!(
@@ -860,5 +915,59 @@ fn sparse_free_surface_pressure_has_closed_linear_and_angular_impulses() {
     assert!(
         results.iter().all(|r| r["momentum_passed"] == true),
         "sparse free-surface pressure introduced net impulse or reached clipping"
+    );
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn voxel_wall_shear_preserves_tangent_momentum_without_creating_energy() {
+    let (device, queue) = device();
+    let mut results = Vec::new();
+    for wall in 0..6u32 {
+        for blend in [0., 0.97, 1.] {
+            let (mut p, cells, _, open) = wall_fixture(wall, true);
+            let normal = wall as usize / 2;
+            let a = (normal + 1) % 3;
+            let b = (normal + 2) % 3;
+            let mut v: Vec<_> = p
+                .iter()
+                .map(|p| {
+                    let mut v = Vec3::ZERO;
+                    v[a] = 0.12 + 0.04 * (70. * p[b]).sin();
+                    v[b] = 0.08 + 0.03 * (80. * p[a]).cos();
+                    v
+                })
+                .collect();
+            let weights: Vec<f32> = (0..p.len()).map(|i| 0.7 + 0.3 * (i % 3) as f32).collect();
+            let mut c = vec![Mat3::ZERO; p.len()];
+            let rho = vec![1.; p.len()];
+            let before = generalized_budget(&p, &v, &c, &weights).1;
+            let momentum_before = momentum(&p, &v, &rho, &weights).0;
+            let mut sim = configured(&device, p.len());
+            sim.open_boundaries = open;
+            sim.flip_ratio = blend;
+            sim.density_projection_enabled = false;
+            sim.set_particle_volumes(weights.clone());
+            sim.step(
+                &device, &queue, &mut p, &mut v, &mut c, &rho, &cells, None, None, 1e-7, 0., 0., 0,
+            );
+            assert!(sim.take_phase_error().is_none());
+            let ratio = generalized_budget(&p, &v, &c, &weights).1 / before;
+            let delta = momentum(&p, &v, &rho, &weights).0 - momentum_before;
+            let tangent_error =
+                (delta[a].powi(2) + delta[b].powi(2)).sqrt() / momentum_before.length();
+            results.push(serde_json::json!({"wall":wall,"blend":blend,"energy_ratio":ratio,"tangent_error":tangent_error,"passed":ratio<=1.000002&&tangent_error<2e-6}));
+        }
+    }
+    if let Ok(path) = std::env::var("SLUICE_VOXEL_SHEAR_REPORT") {
+        std::fs::write(path, serde_json::to_vec_pretty(&results).unwrap()).unwrap();
+    }
+    eprintln!(
+        "voxel shear budgets: {}",
+        serde_json::to_string(&results).unwrap()
+    );
+    assert!(
+        results.iter().all(|r| r["passed"] == true),
+        "wall transfer creates energy or loses tangent momentum"
     );
 }
