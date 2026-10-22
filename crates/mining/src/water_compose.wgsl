@@ -34,13 +34,13 @@ fn reconstructed_normal(pixel:vec2<f32>,depth:f32)->vec4<f32> {
     let size=vec2<i32>(textureDimensions(surface_normals));
     let p=pixel*vec2<f32>(size)/u.viewport.xy-0.5;
     let center=vec2<i32>(round(p));
-    for(var y=-1;y<=1;y++){for(var x=-1;x<=1;x++){
-        let q=clamp(center+vec2(x,y),vec2(0),size-vec2(1));
+    for(var y=-2;y<=2;y++){for(var x=-2;x<=2;x++){
+        let q=clamp(center+vec2(x,y)*2,vec2(0),size-vec2(1));
         let raw=textureLoad(raw_depths,q,0);let normal=textureLoad(normal_sums,q,0);
         if raw.r<=0. || raw.g>= -0.5 || normal.w<=0. {continue;}
         let delta=(raw.r-depth)/0.035;
         let distance=vec2<f32>(q)-p;
-        let w=exp(-dot(distance,distance)*0.5-delta*delta);
+        let w=exp(-dot(distance,distance)/8.-delta*delta);
         sum+=normal.xyz*w;weight+=normal.w*w;
     }}
     if weight<=0.000001 || length(sum)<0.000001 {return vec4(0.);}
@@ -168,7 +168,10 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     let fresnel=0.02+0.98*pow(1.-clamp(dot(normal,eye_world),0.,1.),5.);
     let light=normalize(vec3(0.35,0.85,0.3));
     let half_vector=normalize(light+eye_world);
-    let specular=pow(max(dot(normal,half_vector),0.),96.)*0.32;
+    // Unresolved normal variation broadens the sun lobe instead of producing
+    // a bright bead for each kernel. Scale its peak to retain the lobe energy.
+    let exponent=select(96.,mix(12.,96.,pow(surface_confidence,8.)),in_channel);
+    let specular=pow(max(dot(normal,half_vector),0.),exponent)*0.32*(exponent+2.)/98.;
     let reflection=reflect(-eye_world,normal);
     let sky=mix(vec3(0.19,0.25,0.24),vec3(0.48,0.66,0.76),smoothstep(-0.1,0.65,reflection.y));
 
@@ -191,10 +194,16 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     let extinction=vec3(0.8,0.24,0.12)+vec3(0.5625,1.,1.5)*beta*transport;
     let transmission=exp(-extinction*thickness);
     var scattering=mix(vec3(0.035,0.18,0.18),vec3(0.22,0.13,0.055),clamp(beta/120.,0.,1.));
+    if in_channel {
+        // Mix water and mineral source terms by their extinction, rather than
+        // applying a second arbitrary concentration-to-colour threshold. The
+        // Beer-Lambert column already controls how much suspended dirt is seen.
+        let water_extinction=vec3(0.8,0.24,0.12);
+        let mineral_extinction=vec3(0.5625,1.,1.5)*beta*transport;
+        scattering=(water_extinction*vec3(0.035,0.18,0.18)
+            +mineral_extinction*vec3(0.22,0.16,0.095))/extinction;
+    }
     if !river {
-        // Even opaque slurry receives changing incident light across a wave.
-        // A constant unlit source term made its surface read as flat mud paint.
-        // Keep this optical model continuous as channel water leaves the lip.
         scattering*=0.35+0.65*max(dot(normal,light),0.);
     }
     var background=original.rgb;

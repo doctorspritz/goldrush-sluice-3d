@@ -156,6 +156,127 @@ fn softened_columns_preserve_volume_and_add_across_clipping_planes() {
 
 #[test]
 #[ignore = "requires real GPU; run explicitly with --ignored"]
+fn overlapping_interface_gradient_matches_independent_density_derivative() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 64);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_depth.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let x=(f32(p.y*8u+p.x)-31.5)*0.0003;
+ let point=vec3(x,0.006,0.);
+ let ax=vec3(0.016,0.,0.);let ay=vec3(0.,0.012,0.);let az=vec3(0.,0.,0.02);
+ let a=density_gradient(point,vec3(-0.006,0.,0.),ax,ay,az,0.2);
+ let b=density_gradient(point,vec3(0.006,0.,0.),ax,ay,az,0.2);
+ result[p.y*8u+p.x]=vec4(a+b,0.);
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    // Differentiate the scalar kernel independently in f64, including the
+    // ellipsoid metric and both overlapping volumes. No nearest normal enters.
+    let density = |p: [f64; 3]| {
+        [-0.006, 0.006]
+            .into_iter()
+            .map(|cx| {
+                let r2 =
+                    ((p[0] - cx) / 0.016).powi(2) + (p[1] / 0.012).powi(2) + (p[2] / 0.02).powi(2);
+                6.5625 * 0.2 * (1. - r2).max(0.).powi(3)
+            })
+            .sum::<f64>()
+    };
+    let mut previous: Option<[f64; 3]> = None;
+    for (i, gradient) in values.chunks_exact(4).enumerate() {
+        let p = [(i as f64 - 31.5) * 0.0003, 0.006, 0.];
+        let mut direction = [0.; 3];
+        for axis in 0..3 {
+            let (mut a, mut b) = (p, p);
+            a[axis] -= 1e-7;
+            b[axis] += 1e-7;
+            let derivative = (density(a) - density(b)) / 2e-7;
+            assert!((gradient[axis] as f64 - derivative).abs() < 0.001);
+            direction[axis] = gradient[axis] as f64;
+        }
+        let length = direction.iter().map(|v| v * v).sum::<f64>().sqrt();
+        direction.iter_mut().for_each(|v| *v /= length);
+        assert!(direction[1] > 0.8, "joined crest normal: {direction:?}");
+        if let Some(previous) = previous {
+            let dot = direction
+                .iter()
+                .zip(previous)
+                .map(|(a, b)| a * b)
+                .sum::<f64>();
+            assert!(dot > 0.998, "normal discontinuity: {dot}");
+        }
+        previous = Some(direction);
+    }
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn shared_interface_uses_relative_depth_moments_without_moving_spray_or_hidden_water() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 64);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_blur.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let scale=f32(p.y*8u+p.x+1u);
+ // A shared front at 3 m, with equal weighted offsets of 2 and 6 mm.
+ let moments=(vec2(0.002*0.01,0.01)+vec2(0.006*0.01,0.01))*scale;
+ result[p.y*8u+p.x]=vec4(
+  shared_surface_depth(vec2(3.,-1.),moments),
+  shared_surface_depth(vec2(3.,1.),moments),
+  shared_surface_depth(vec2(0.,-1.),moments),
+  shared_surface_depth(vec2(3.,-1.),vec2(0.)));
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    for value in values.chunks_exact(4) {
+        assert!((value[0] - 3.004).abs() < 1e-6, "{value:?}");
+        assert_eq!(value[1..], [3., 0., 3.]);
+    }
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
 fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes() {
     let (device, queue) = device();
     let texture = |format, bytes: &[f32], channels: u32| {

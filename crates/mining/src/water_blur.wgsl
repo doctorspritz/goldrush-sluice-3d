@@ -3,6 +3,15 @@ struct Screen { @builtin(position) position: vec4<f32> };
 @vertex fn fullscreen(@builtin(vertex_index) id: u32) -> Screen { var s: Screen; let xy = vec2(f32((id << 1u) & 2u), f32(id & 2u)); s.position = vec4(xy * 2.0 - 1.0, 0.0, 1.0); return s; }
 @group(0) @binding(0) var depths: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> u: Uniforms;
+@group(0) @binding(2) var columns:texture_2d<f32>;
+fn shared_surface_depth(raw:vec2<f32>,moments:vec2<f32>)->f32 {
+    if raw.x<=0. || raw.y>= -0.5 || moments.y<=0.000001 {return raw.x;}
+    return raw.x+clamp(moments.x/moments.y,0.,0.012);
+}
+@fragment fn reconstruct(s:Screen)->@location(0) f32 {
+    let q=vec2<i32>(s.position.xy);
+    return shared_surface_depth(textureLoad(depths,q,0).rg,textureLoad(columns,q,0).ba);
+}
 fn smooth_depth(pixel: vec2<i32>, direction: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(depths)); let center = textureLoad(depths,pixel,0).r;
     if center <= 0. { return 0.; }

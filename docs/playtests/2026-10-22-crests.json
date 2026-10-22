@@ -1,0 +1,83 @@
+{
+  "artifact_root": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-2026-10-22",
+  "isolated_base": "71a195bf71dbae2c8f5ac8ed43fbdba8c06912b1",
+  "requested_scope": "blobby crest and muddy patches",
+  "before": {
+    "mean_fps": 55.339495022435095,
+    "p95_frame_ms": 30.325416,
+    "simulation_wall_ratio": 0.7259831868574654,
+    "water_balance_error_m3": -1.1246836567835317e-05,
+    "sluice_water_balance_error_m3": 0.0,
+    "gold_balance_error_g": 4.547473508864641e-12,
+    "passed": false
+  },
+  "after": {
+    "mean_fps": 54.27372720986206,
+    "p95_frame_ms": 30.550791,
+    "simulation_wall_ratio": 0.7089604951193959,
+    "water_balance_error_m3": -1.0331968933741109e-05,
+    "sluice_water_balance_error_m3": 0.0,
+    "gold_balance_error_g": 2.2737367544323206e-12,
+    "passed": false
+  },
+  "relative_fps_change_percent": -1.9258719512004308,
+  "native_sluice": {
+    "frames": 136,
+    "wall_interval_seconds": 7.948346,
+    "sim_start": 43.400002263486385,
+    "sim_end": 49.333335906267166,
+    "water_balance_error_m3": -9.065702570865142e-06,
+    "gold_balance_error_g": 3.637978807091713e-12,
+    "water_presentation": {
+      "buffer_underrun_frames": 2,
+      "interpolation_alpha": 0.04342939704656601,
+      "max_capture_ms": 1.1090410000000002,
+      "max_surface_build_ms": 60.967042,
+      "mean_capture_ms": 0.35584354426229486,
+      "mean_surface_build_ms": 21.191110848684207,
+      "paired_render_particles": 66059,
+      "presented_sim_time": 50.068116924514584,
+      "surface_builds": 304
+    },
+    "exit_code": 0
+  },
+  "source": {
+    "base": "71a195bf71dbae2c8f5ac8ed43fbdba8c06912b1",
+    "overlay": {
+      "crates/mining/src/water.rs": "2e3ef79ac335e22394c0eaf3402892da65d805217d19b2765a320584b2a420b5",
+      "crates/mining/src/water_depth.wgsl": "022ac1b85ef1b9618c71452ffa367ea6830fa95d9eb822417846f2d487d0ed8d",
+      "crates/mining/src/water_blur.wgsl": "93e5fa76477e7e2f18e0181b854afc1c45f4222a63f6d503f9afcdcb79bee8bc",
+      "crates/mining/src/water_compose.wgsl": "4016e977930e43ed51abdda8541dc6540d09d8da7258099c2049b304200cd242",
+      "crates/mining-physics/tests/water_optics.rs": "869bd6d7b52f10ca058dc4dcd057395fe28f6b1bf85eba5ba8b65787e79acb2a"
+    },
+    "scope": "Water rendering only; excludes unfinished earthworks",
+    "binary_sha256": "eb553dae2605626e5e2a761463b9000efdf7ec30e9a75b1a165b3259e5f24498",
+    "capture_source_note": "Sluice and benchmark binary differs only in omission of the later reconstruction pipeline error-check list entry. Exact reviewed source/binary identity is in sluice-capture-source.json; final outlet capture uses final source.",
+    "app_path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-2026-10-22/app/First Bend.app"
+  },
+  "checks": {
+    "application_tests_passed": 30,
+    "application_tests_ignored": 1,
+    "explicit_gpu_tests_passed": 4,
+    "strict_clippy": true,
+    "scoped_rustfmt": true
+  },
+  "visual_review": "Twelve native temporal samples and full-resolution native frames inspected. Continuous ridge highlights and softer slurry transitions improved relative to baseline; grain stippling, some isolated beads and environment art remain. First gradient-only trial rejected visually.",
+  "limits": [
+    "Sluice and fine-sediment physics unchanged",
+    "Optical colours and coefficients are presentation approximations, not calibrated soil measurements",
+    "Native captures are renderer-owned, not manual operator input",
+    "Real-time physical-throughput gate still fails in both benchmark runs",
+    "Surface geometry is a bounded screen-space reconstruction, not exact particle iso-volume"
+  ],
+  "native_outlet": {
+    "frames": 67,
+    "wall_interval_seconds": 3.97721325,
+    "water_balance_error_m3": -8.71946680547353e-06,
+    "gold_balance_error_g": 5.4569682106375694e-12,
+    "exit_code": 0,
+    "visual_review": "Six native temporal samples inspected; accepted falling outlet remains. Detached outlines and coarse return-channel art remain visible."
+  },
+  "new_crash_reports": [],
+  "preserved_unrelated_wip_paths": 14
+}

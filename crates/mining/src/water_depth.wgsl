@@ -92,7 +92,16 @@ fn column_primitive(l:f32,s:f32)->f32 {
 fn column_integral(s:f32,a:f32,lo:f32,hi:f32)->f32 {
  return max(6.5625*(column_primitive(hi,s)-column_primitive(lo,s))/sqrt(a),0.);
 }
-struct Column {@location(0) optical:vec2<f32>,@location(1) normal:vec4<f32>};
+// Outward gradient of the normalized 3D poly6 density. Summing gradients
+// reconstructs the interface of overlapping water, including volumetric crests;
+// a covariance plane is only a reliable normal for a thin sheet.
+fn density_gradient(point:vec3<f32>,center:vec3<f32>,ax:vec3<f32>,ay:vec3<f32>,az:vec3<f32>,volume_scale:f32)->vec3<f32> {
+ let r=point-center;
+ let q=vec3(dot(r,ax)/dot(ax,ax),dot(r,ay)/dot(ay,ay),dot(r,az)/dot(az,az));
+ let support=max(1.-dot(q,q),0.);
+ return (ax*q.x/dot(ax,ax)+ay*q.y/dot(ay,ay)+az*q.z/dot(az,az))*(39.375*volume_scale*support*support);
+}
+struct Column {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>};
 @fragment fn particle_thickness(v:Varying)->Column {
  let eye=u.world_from_view[3].xyz;let ray=normalize(v.world-eye);let origin=eye-v.center_radius.xyz;
  let o=vec3(dot(origin,v.axis_x)/dot(v.axis_x,v.axis_x),dot(origin,v.axis_y)/dot(v.axis_y,v.axis_y),dot(origin,v.axis_z)/dot(v.axis_z,v.axis_z));
@@ -106,6 +115,7 @@ struct Column {@location(0) optical:vec2<f32>,@location(1) normal:vec4<f32>};
  let half=sqrt(squared/a);
  var path=2.*half*v.shape.x;
  var normal=vec4(0.);
+ var surface=vec2(0.);
  if channel {
   // Integrate only the visible water column. A submerged kernel behind a
   // riffle/wall cannot contribute sediment to the water in front of it.
@@ -121,13 +131,18 @@ struct Column {@location(0) optical:vec2<f32>,@location(1) normal:vec4<f32>};
   if back<=front_t {discard;}
   let support=sqrt(squared);
   path=column_integral(squared,a,clamp((front_t-closest)*sqrt(a),-support,support),clamp((back-closest)*sqrt(a),-support,support))*v.shape.x;
-  let delta=(front_t*ray_scale-front.r)/0.025;
-  let weight=path*exp(-delta*delta);
-  var n=v.surface.xyz;
-  if dot(n,eye-v.center_radius.xyz)<0. {n = -n;}
-  // XYZ sums trusted normals; W sums all front-surface support. Their ratio
-  // measures both planarity and agreement, without a nearest-particle gate.
-  normal=vec4(n*weight*clamp(v.surface.w,0.,1.),weight);
+  // Probe just inside the visible interface, where a compact kernel has a
+  // nonzero gradient. The probe is bounded by the opaque surface, so hidden
+  // slurry or water behind the equipment cannot supply a surface normal.
+  let inset=min(0.004,0.35*min(length(v.axis_x),min(length(v.axis_y),length(v.axis_z))));
+  let probe=min(front.r/max(ray_scale,0.000001)+inset,back);
+  let gradient=density_gradient(eye+ray*probe,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x);
+  normal=vec4(gradient,length(gradient));
+  // Reconstruct one interface from the visible front layer of overlapping
+  // kernels. Relative depth moments retain submillimetre precision in f16.
+  let offset=max(front_t*ray_scale-front.r,0.);
+  let weight=path*exp(-pow(offset/0.012,2.));
+  surface=vec2(offset*weight,weight);
  }
- var out:Column;out.optical=vec2(path,path*v.shape.y);out.normal=normal;return out;
+ var out:Column;out.optical=vec4(path,path*v.shape.y,surface);out.normal=normal;return out;
 }

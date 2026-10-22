@@ -210,6 +210,7 @@ struct FluidPipelines {
     compose: BindGroupLayout,
     depth_id: CachedRenderPipelineId,
     thickness_id: CachedRenderPipelineId,
+    reconstruct_id: CachedRenderPipelineId,
     blur_x: CachedRenderPipelineId,
     blur_y: CachedRenderPipelineId,
     compose_id: CachedRenderPipelineId,
@@ -259,6 +260,7 @@ fn init_pipelines(
             (
                 texture_2d(TextureSampleType::Float { filterable: false }),
                 uniform_buffer::<FluidUniforms>(false),
+                texture_2d(TextureSampleType::Float { filterable: false }),
             ),
         ),
     );
@@ -359,7 +361,15 @@ fn init_pipelines(
         &thickness_particles,
         "particle_vertex",
         "particle_thickness",
-        TextureFormat::Rg16Float,
+        TextureFormat::Rgba16Float,
+        None,
+    );
+    let reconstruct_id = make(
+        blur_shader.clone(),
+        &blur,
+        "fullscreen",
+        "reconstruct",
+        TextureFormat::R32Float,
         None,
     );
     let blur_x = make(
@@ -393,6 +403,7 @@ fn init_pipelines(
         compose,
         depth_id,
         thickness_id,
+        reconstruct_id,
         blur_x,
         blur_y,
         compose_id,
@@ -530,7 +541,7 @@ fn prepare_views(
             depth: texture("fluid depth test", TextureFormat::Depth32Float, size),
             thickness: texture(
                 "fluid optical depth moments",
-                TextureFormat::Rg16Float,
+                TextureFormat::Rgba16Float,
                 size,
             ),
             normal_sums: texture(
@@ -572,6 +583,7 @@ impl ViewNode for FluidNode {
         for id in [
             settings.depth_id,
             settings.thickness_id,
+            settings.reconstruct_id,
             settings.blur_x,
             settings.blur_y,
             settings.compose_id,
@@ -583,13 +595,22 @@ impl ViewNode for FluidNode {
                 return Ok(());
             }
         }
-        let (Some(depth), Some(thickness), Some(blur_x), Some(blur_y), Some(compose)) = (
+        let (
+            Some(depth),
+            Some(thickness),
+            Some(reconstruct),
+            Some(blur_x),
+            Some(blur_y),
+            Some(compose),
+        ) = (
             cache.get_render_pipeline(settings.depth_id),
             cache.get_render_pipeline(settings.thickness_id),
+            cache.get_render_pipeline(settings.reconstruct_id),
             cache.get_render_pipeline(settings.blur_x),
             cache.get_render_pipeline(settings.blur_y),
             cache.get_render_pipeline(settings.compose_id),
-        ) else {
+        )
+        else {
             return Ok(());
         };
         let Some(uniform) = target.uniform.binding() else {
@@ -615,7 +636,7 @@ impl ViewNode for FluidNode {
             device.create_bind_group(
                 "fluid blur inputs",
                 &settings.blur,
-                &BindGroupEntries::sequential((texture, uniform.clone())),
+                &BindGroupEntries::sequential((texture, uniform.clone(), &target.thickness)),
             )
         };
         let raw_group = blur_group(&target.raw);
@@ -713,10 +734,26 @@ impl ViewNode for FluidNode {
             pass.set_bind_group(0, &thickness_group, &[]);
             pass.draw(0..6, 0..particles.count);
         }
+        // Resolve a shared front layer before the existing two bilateral
+        // iterations. Outlet/river depth is unchanged by this channel pass.
+        {
+            let mut pass = context
+                .command_encoder()
+                .begin_render_pass(&RenderPassDescriptor {
+                    label: Some("fluid overlapping interface"),
+                    color_attachments: &[color(&target.pong)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            pass.set_pipeline(reconstruct);
+            pass.set_bind_group(0, &raw_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
         // Two separable bilateral iterations smooth shared fluid normals, without
         // averaging across a depth jump or expanding water into empty pixels.
         for (pipeline, group, output) in [
-            (blur_x, &raw_group, &target.ping),
+            (blur_x, &pong_group, &target.ping),
             (blur_y, &ping_group, &target.pong),
             (blur_x, &pong_group, &target.ping),
             (blur_y, &ping_group, &target.pong),
