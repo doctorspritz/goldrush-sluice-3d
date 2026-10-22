@@ -393,7 +393,11 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
         &[0., 0.008, 0., 0.01].repeat(64),
         4,
     );
-    let joined_depth = texture(wgpu::TextureFormat::R32Float, &[1.; 64], 1);
+    let joined_depth = texture(
+        wgpu::TextureFormat::Rgba32Float,
+        &[1., 0.04, 2., 2.].repeat(64),
+        4,
+    );
     let mut uniforms = [0f32; 72];
     uniforms[16] = 1.;
     uniforms[22] = -1.;
@@ -516,6 +520,19 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
             textures[index].size(),
         );
     }
+    let filtered_moments: Vec<f32> = (0..64)
+        .flat_map(|i| [1., 0.04, 0.04 * if i % 2 == 0 { 10. } else { 90. }, 2.])
+        .collect();
+    queue.write_texture(
+        textures[4].as_image_copy(),
+        bytemuck::cast_slice(&filtered_moments),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(128),
+            rows_per_image: None,
+        },
+        textures[4].size(),
+    );
     let filtered = execute(
         &device,
         &queue,
@@ -551,6 +568,20 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
         },
         textures[1].size(),
     );
+    let packed_edge: Vec<f32> = edge_moments
+        .chunks_exact(2)
+        .flat_map(|m| [1., m[0], m[1], 2.])
+        .collect();
+    queue.write_texture(
+        textures[4].as_image_copy(),
+        bytemuck::cast_slice(&packed_edge),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(128),
+            rows_per_image: None,
+        },
+        textures[4].size(),
+    );
     let boundary_source = source.replace(
         "let column=optical_column(vec2<f32>(p.xy)+0.5,1.,true);",
         "let column=optical_column(vec2(7.9999+f32(p.x)*0.0002,8.),1.,true);",
@@ -575,10 +606,10 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
     // Deliberately biased kernel gradients must not bend a known geometric
     // plane back toward individual particle domes.
     let plane_depth: Vec<f32> = (0..64)
-        .map(|i| {
+        .flat_map(|i| {
             let x = ((i % 8) as f32 + 0.5) / 8. * 2. - 1.;
             let y = 1. - ((i / 8) as f32 + 0.5) / 8. * 2.;
-            1. / (1. - 0.2 * 0.1 * x + 0.1 * 0.1 * y)
+            [1. / (1. - 0.2 * 0.1 * x + 0.1 * 0.1 * y), 0.04, 2., 2.]
         })
         .collect();
     queue.write_texture(
@@ -586,42 +617,46 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
         bytemuck::cast_slice(&plane_depth),
         wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: Some(32),
-            rows_per_image: None,
-        },
-        textures[4].size(),
-    );
-    queue.write_texture(
-        textures[3].as_image_copy(),
-        bytemuck::cast_slice(&[0.006f32, 0.008, 0., 0.01].repeat(64)),
-        wgpu::ImageDataLayout {
-            offset: 0,
             bytes_per_row: Some(128),
             rows_per_image: None,
         },
-        textures[3].size(),
+        textures[4].size(),
     );
     let plane_source = source.replace(
         "vec4(column.x,n.y,column.y/max(column.x,0.000001),n.w)",
         "vec4(n.xyz,n.w)",
     );
-    let plane = execute(
-        &device,
-        &queue,
-        plane_source,
-        &[&group, &out_group],
-        &[&layout, &out_layout],
-        &buffer,
-        [2, 2],
-    );
     let expected = glam::Vec3::new(0.2, 1., 0.1).normalize();
-    for y in 6..10 {
-        for x in 6..10 {
-            let n = glam::Vec3::from_slice(&plane[(y * 16 + x) * 4..][..3]);
-            assert!(
-                n.is_finite() && n.dot(expected) > 0.99999,
-                "shared wave slope lost: {n:?} vs {expected:?}"
-            );
+    // A biased gradient and a missing front gradient must both retain the
+    // independently known plane. The latter reproduces a delayed bulk crest.
+    for gradient in [[0.006f32, 0.008, 0., 0.01], [0.; 4]] {
+        queue.write_texture(
+            textures[3].as_image_copy(),
+            bytemuck::cast_slice(&gradient.repeat(64)),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(128),
+                rows_per_image: None,
+            },
+            textures[3].size(),
+        );
+        let plane = execute(
+            &device,
+            &queue,
+            plane_source.clone(),
+            &[&group, &out_group],
+            &[&layout, &out_layout],
+            &buffer,
+            [2, 2],
+        );
+        for y in 6..10 {
+            for x in 6..10 {
+                let n = glam::Vec3::from_slice(&plane[(y * 16 + x) * 4..][..3]);
+                assert!(
+                    n.is_finite() && n.dot(expected) > 0.99999,
+                    "shared wave slope lost: {n:?} vs {expected:?}"
+                );
+            }
         }
     }
 }
@@ -632,7 +667,7 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
     let (device, queue) = device();
     let mut textures = Vec::new();
     for (slot, format, channels) in [
-        (0, wgpu::TextureFormat::R32Float, 1),
+        (0, wgpu::TextureFormat::Rgba32Float, 4),
         (2, wgpu::TextureFormat::Rgba32Float, 4),
         (3, wgpu::TextureFormat::Rgba32Float, 4),
         (4, wgpu::TextureFormat::Rgba32Float, 4),
@@ -654,14 +689,34 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
         let values: Vec<f32> = (0..256)
             .flat_map(|i| {
                 let (x, y) = (i % 32, i / 32);
-                if channels == 1 {
-                    vec![match y {
+                if slot == 0 {
+                    let depth = match y {
                         4 => 1.125,
-                        5 => 1. + (x as f32 - 16.) * 0.001,
+                        5 => 1. / (1. + (x as f32 - 16.) * 0.01),
                         6 if x == 16 => 0.,
+                        3 | 7 => {
+                            1. / (1. + (x as f32 - 16.) * 0.015) + if x == 16 { 0.02 } else { 0. }
+                        }
                         _ if x == 16 => 1.02,
                         _ => 1.,
-                    }]
+                    };
+                    let path = 0.02 + (x as f32) * 0.001;
+                    let beta = if y == 4 {
+                        if x % 2 == 0 {
+                            10.
+                        } else {
+                            90.
+                        }
+                    } else {
+                        50.
+                    };
+                    if (y == 1 || y == 2) && x == 18 {
+                        // A neighbouring detached outlet column must not lend
+                        // its optical material to channel reconstruction.
+                        vec![depth, 0.5, 5000., 0.]
+                    } else {
+                        vec![depth, path, path * beta, if y == 0 { 0. } else { 2. }]
+                    }
                 } else {
                     let density = [0., 0.0499, 0.0501, 0.5, 0.5, 0.5, 0.5, 0.25][y];
                     if slot == 2 {
@@ -758,7 +813,7 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
         r#"
 @group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
 @compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
- result[p.y*8u+p.x]=vec4(smooth_depth(vec2(16,i32(p.y)),vec2(1,0)),0.,0.,0.);
+ result[p.y*8u+p.x]=smooth_surface(vec2(16,i32(p.y)),vec2(1,0));
 }"#
     );
     let values = execute(
@@ -788,12 +843,45 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
     );
     assert!(
         row(3) > 1. && row(3) < row(0),
-        "connected dome was not reduced"
+        "connected dome was not reduced: connected={}, flat-outlet={}",
+        row(3),
+        row(0)
+    );
+    // Independent old bilateral reference on a steep projective plane with
+    // a small kernel cap. Range weighting around centre depth retains the cap.
+    let mut old_sum = 0.;
+    let mut old_weight = 0.;
+    for i in -11i32..=11 {
+        let d = 1. / (1. + i as f64 * 0.015) + if i == 0 { 0.02 } else { 0. };
+        let w = (-(i * i) as f64 / 48. - ((d - 1.02) / 0.045).powi(2)).exp();
+        old_sum += d * w;
+        old_weight += w;
+    }
+    assert!(
+        (row(3) - 1.).abs() < 0.8 * (old_sum / old_weight - 1.).abs(),
+        "oblique-plane range weighting retained the crest cap"
     );
     assert!((row(2) - row(1)).abs() < 1e-6, "density transition popped");
     assert!((row(4) - 1.125).abs() < 1e-6, "uniform film moved");
     assert!((row(5) - 1.).abs() < 1e-6, "planar wave slope drifted");
     assert_eq!(row(6), 0., "dry coverage was invented");
+    for y in [1usize, 2, 3, 5, 7] {
+        let v = &values[y * 8 * 4..][..4];
+        assert!(
+            (v[2] / v[1] - 50.).abs() < 0.0001,
+            "homogeneous mixture changed: {v:?}"
+        );
+    }
+    let v = &values[4 * 8 * 4..][..4];
+    assert!(
+        (v[2] / v[1] - 50.).abs() < 1.,
+        "opacity was not filtered with the interface: {v:?}"
+    );
+    assert_eq!(
+        &values[6 * 8 * 4..][..4],
+        &[0.; 4],
+        "dry pixel acquired optical material"
+    );
     assert!(
         (row(7) - row(3)).abs() < 1e-6,
         "delayed bulk crest was filtered as a detached drop"

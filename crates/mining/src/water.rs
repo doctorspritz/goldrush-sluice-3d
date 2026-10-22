@@ -379,7 +379,7 @@ fn init_pipelines(
         &blur,
         "fullscreen",
         "reconstruct",
-        TextureFormat::R32Float,
+        TextureFormat::Rgba32Float,
         None,
     );
     let blur_x = make(
@@ -387,7 +387,7 @@ fn init_pipelines(
         &blur,
         "fullscreen",
         "blur_x",
-        TextureFormat::R32Float,
+        TextureFormat::Rgba32Float,
         None,
     );
     let blur_y = make(
@@ -395,7 +395,7 @@ fn init_pipelines(
         &blur,
         "fullscreen",
         "blur_y",
-        TextureFormat::R32Float,
+        TextureFormat::Rgba32Float,
         None,
     );
     let compose_id = make(
@@ -546,8 +546,8 @@ fn prepare_views(
             river_normals: texture("river normal and film", TextureFormat::Rgba16Float, full),
             river_depth: texture("river depth test", TextureFormat::Depth32Float, full),
             raw: texture("fluid raw depth", TextureFormat::Rgba32Float, size),
-            ping: texture("fluid blur ping", TextureFormat::R32Float, size),
-            pong: texture("fluid blur pong", TextureFormat::R32Float, size),
+            ping: texture("fluid blur ping", TextureFormat::Rgba32Float, size),
+            pong: texture("fluid blur pong", TextureFormat::Rgba32Float, size),
             depth: texture("fluid depth test", TextureFormat::Depth32Float, size),
             thickness: texture(
                 "fluid optical depth moments",

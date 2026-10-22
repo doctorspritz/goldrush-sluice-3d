@@ -48,7 +48,8 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         // A profile spans 51 mm and the local filter another 35 mm. A
         // different surface outside that range cannot contribute optics.
         if abs(raw.r-depth)>0.086 {continue;}
-        let shared_depth=textureLoad(depths,q,0).r;
+        let filtered=textureLoad(depths,q,0);
+        let shared_depth=filtered.r;
         if shared_depth<=0. {continue;}
         let delta=(shared_depth-depth)/0.035;
         let distance=vec2<f32>(q)-p;
@@ -69,7 +70,9 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
             cross_depth+=distance*z*pw;plane_weight+=pw;
         }
         let cw=taper*exp(-2.*dot(distance,distance)/(radius*radius)-delta*delta);
-        column+=textureLoad(fluid_thickness,q,0).rg*cw;column_weight+=cw;
+        // The same four passes already reconstructed these additive moments
+        // with the interface. Keep the ratio until after the final gather.
+        column+=filtered.gb*cw;column_weight+=cw;
     }}
     var out:ChannelSurface;
     out.normal=vec4(0.);
@@ -79,7 +82,7 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
     // Fit a local plane through the joined depth field. Differencing adjacent
     // half-size texels magnifies subpixel phase; fitting the whole footprint
     // preserves the travelling wave slope without each kernel's shiny dome.
-    if plane_weight>0.000001 && out.normal.w>0. {
+    if plane_weight>0.000001 {
         let mean=position_sum/plane_weight;
         let cov=second/plane_weight-vec3(mean.x*mean.x,mean.x*mean.y,mean.y*mean.y);
         let rhs=cross_depth/plane_weight-mean.xy*mean.z;
@@ -92,11 +95,13 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
             let dy=view_point(pixel+vec2(0.,step.y),depth+mean.z+slope.y)-origin;
             var n=normalize(cross(dy,dx));if n.z<0. {n = -n;}
             var world_n=normalize((u.world_from_view*vec4(n,0.)).xyz);
-            if dot(world_n,out.normal.xyz)<0. {world_n = -world_n;}
+            if dot(world_n,(u.world_from_view*vec4(-origin,0.)).xyz)<0. {world_n = -world_n;}
             // The fitted shared interface owns the connected-water normal.
             // Mixing a kernel gradient back in restores a dome highlight for
             // each particle, even when the reconstructed surface is smooth.
-            out.normal=vec4(world_n,out.normal.w);
+            // A front spray kernel may have no gradient where the connected
+            // layer starts. Its missing gradient must not veto a valid fit.
+            out.normal=vec4(world_n,select(1.,out.normal.w,out.normal.w>0.));
         }
     }
     out.column=column/max(column_weight,0.000001);
