@@ -270,7 +270,12 @@ mod tests {
         let mut reference = 0.;
         for level in 0..MIPS {
             let (pixels, next) = bytes.split_at(width * height * 4);
-            let cover = pixels.chunks_exact(4).filter(|p| p[3] >= 128).count() as f32
+            let cover = pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| p[3] >= 128)
+                .count() as f32
                 / (width * height) as f32;
             if level == 0 {
                 reference = cover;

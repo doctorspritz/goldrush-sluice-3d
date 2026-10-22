@@ -866,5 +866,13 @@
     "2026-10-23-volume-constraint.mp4": "30f05eca5a2f4cac6b8b790a201d62520b58fbe110ef63958713ec31e95698e1",
     "2026-10-23-volume-constraint.views.png": "f2782fd5ca3d581389c791096dc8925ddebfe7257eec976d5d8020462a9256a9",
     "2026-10-23-volume-constraint.sluice.png": "7d994b86e754b014085aa6cfb02f0d0ccf316e6e776a1efb13c2778a403345fd"
+  },
+  "native_checkpoint": "4f3e7ce0cf454e2db0d9e6ef3b81fee7ab2fdd12",
+  "ci_followup": {
+    "test_only_file": "crates/mining/src/foliage.rs",
+    "change": "fixed-array iteration for newer chunks_exact_to_as_chunks Clippy rule",
+    "existing_foliage_checks_passed": 2,
+    "strict_maintained_clippy_passed": true,
+    "production_code_changed": false
   }
 }
