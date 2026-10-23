@@ -28,6 +28,63 @@ use super::{chunk_at, stage_batch, SharedCtx, BODY_BATCH};
 #[allow(clippy::unnecessary_cast)]
 const MAX_ROTATION: Real = core::f64::consts::FRAC_PI_4 as Real;
 
+// Explicitly opted-in free clods only. A Lie midpoint orientation step uses
+// the constant world angular momentum between impulses. Intermediate doubles
+// avoid injecting f32 principal-frame round-trip noise into tiny SI inertias.
+// Unlike a body-only midpoint rule, both momentum direction and pose advance
+// together. Energy conservation is checked by refinement, not assumed exact.
+#[cfg(feature = "dim3")]
+fn midpoint_rotation(
+    angular: crate::math::AngVector,
+    rotation: &mut crate::math::Rotation,
+    principal_frame: crate::math::Rotation,
+    principal_inertia: crate::math::AngVector,
+    dt: Real,
+    max_angle: Real,
+) -> crate::math::AngVector {
+    use glamx::{DQuat, DVec3};
+    // No torque-free rotation occurs at zero spin. Preserve the exact pose
+    // instead of normalizing and round-tripping its principal frame at rest.
+    if angular.length_squared() == 0.0 {
+        return angular;
+    }
+    let frame = DQuat::from_array(principal_frame.to_array().map(|x| x as f64)).normalize();
+    let body = DQuat::from_array(rotation.to_array().map(|x| x as f64)).normalize();
+    let mut q = body * frame;
+    let omega0 = DVec3::from_array(angular.to_array().map(|x| x as f64));
+    let inertia = DVec3::from_array(principal_inertia.to_array().map(|x| x as f64));
+    let inverse = DVec3::ONE / inertia;
+    let momentum = q * (inertia * (q.inverse() * omega0));
+    let velocity = |q: DQuat| q * (inverse * (q.inverse() * momentum));
+    // Bound the inner angular increment using |L|/I_min, not by clipping
+    // angular velocity or discarding physical time. The 512-step ceiling is
+    // a finite integration-work budget; extreme cases need their own accuracy
+    // controls rather than a claim of universally exact free-body dynamics.
+    let steps = (momentum.length() * inverse.max_element() * dt as f64 / max_angle as f64)
+        .ceil()
+        .clamp(1.0, 512.0) as usize;
+    let h = dt as f64 / steps as f64;
+    for _ in 0..steps {
+        let start = q;
+        let mut omega = velocity(start);
+        for _ in 0..8 {
+            let half = (DQuat::from_scaled_axis(omega * (0.5 * h)) * start).normalize();
+            let next = velocity(half);
+            let converged =
+                (next - omega).length_squared() <= 1e-26 * (1.0 + next.length_squared());
+            omega = next;
+            if converged {
+                break;
+            }
+        }
+        q = (DQuat::from_scaled_axis(omega * h) * start).normalize();
+    }
+    let body = (q * frame.inverse()).normalize();
+    *rotation = crate::math::Rotation::from_array(body.to_array().map(|x| x as Real));
+    let result = velocity(q);
+    crate::math::AngVector::from_array(result.to_array().map(|x| x as Real))
+}
+
 /// The stage machine executed by every worker. See [`SharedCtx`] for the safety contract.
 pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
     let sync = ctx.sync;
@@ -296,7 +353,11 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                         #[cfg(feature = "dim3")]
                         if has_gyroscopic {
                             let gyro = vs.solver_gyro[i];
-                            if gyro.enabled {
+                            if gyro.enabled
+                                && (vs.solver_bodies.flags[i] & SOLVER_BODY_ALLOW_FAST_ROTATION
+                                    == 0
+                                    || gyro.inv_principal_inertia.min_element() <= 0.0)
+                            {
                                 // World-space principal axes = body rotation ∘ principal frame.
                                 let principal_axes =
                                     vs.solver_bodies.poses[i].rotation * gyro.principal_frame;
@@ -682,16 +743,53 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                         }
 
                         let vels = vs.solver_bodies.vels[i];
+                        #[cfg(feature = "dim3")]
+                        let gyro = vs.solver_gyro[i];
                         let pose = &mut vs.solver_bodies.poses[i];
                         let new_vels = RigidBodyVelocity {
                             linvel: vels.linear,
                             angvel: vels.angular,
                         };
-                        new_vels.integrate_linearized(
-                            params.dt,
-                            &mut pose.translation,
-                            &mut pose.rotation,
-                        );
+                        #[cfg(feature = "dim3")]
+                        let exact_rotation =
+                            vs.solver_bodies.flags[i] & SOLVER_BODY_ALLOW_FAST_ROTATION != 0;
+                        #[cfg(feature = "dim2")]
+                        let exact_rotation = false;
+                        if exact_rotation {
+                            #[cfg(feature = "dim3")]
+                            {
+                                if gyro.enabled && gyro.inv_principal_inertia.min_element() > 0.0 {
+                                    // Integrate after the contact impulses. Carry
+                                    // their actual angular momentum through the
+                                    // free rotation interval, without applying
+                                    // the old first-order gyro increment twice.
+                                    vs.solver_bodies.vels[i].angular = midpoint_rotation(
+                                        new_vels.angvel,
+                                        &mut pose.rotation,
+                                        gyro.principal_frame,
+                                        gyro.principal_inertia,
+                                        params.dt,
+                                        // 0.1 rad at the 240 Hz mechanical default.
+                                        // Tie this accuracy bound to the full
+                                        // physical timestep: refinement must not
+                                        // silently remove inner angular stages.
+                                        24.0 * base_params.dt,
+                                    );
+                                } else {
+                                    pose.rotation = (crate::math::Rotation::from_scaled_axis(
+                                        new_vels.angvel * params.dt,
+                                    ) * pose.rotation)
+                                        .normalize();
+                                }
+                                pose.translation += new_vels.linvel * params.dt;
+                            }
+                        } else {
+                            new_vels.integrate_linearized(
+                                params.dt,
+                                &mut pose.translation,
+                                &mut pose.rotation,
+                            );
+                        }
                     }
                     done += claimed_len;
                 }

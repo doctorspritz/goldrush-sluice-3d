@@ -607,4 +607,143 @@ fn small_fast_spin_has_finite_low_point_speed_and_closed_free_motion() {
         (after.2 - before.2).abs() < before.2 * 0.0001 + 1e-8,
         "free spin invented or erased energy"
     );
+    let expected = glam::DQuat::from_axis_angle(DVec3::Y, 100.);
+    let actual = soil.clods[0].rotation.as_dquat().normalize();
+    let error = expected.inverse() * actual;
+    let phase_error = 2. * error.xyz().length().atan2(error.w.abs());
+    println!("principal spin phase error={phase_error} rad");
+    assert!(
+        phase_error < 1e-4,
+        "principal spin orientation lagged analytic motion"
+    );
+}
+
+fn asymmetric_clod(speed: f32) -> Clod {
+    let mut c = Clod::prism(
+        Material {
+            sand_m3: 0.09 * 0.04 * 0.03 * 0.5,
+            ..Default::default()
+        },
+        prism(0.09, 0.04, 0.03),
+    )
+    .unwrap();
+    c.center = Vec3::new(25., 10., 25.);
+    c.rotation = Quat::from_rotation_x(0.31) * Quat::from_rotation_y(-0.4);
+    c.angular_velocity = c.rotation * (Vec3::new(12., 17., 23.) * speed);
+    c
+}
+fn torque_free_reference(initial: &Clod, steps: usize) -> (glam::DQuat, DVec3) {
+    let inertia = initial.moments().inertia();
+    let mut q = initial.rotation.as_dquat().normalize();
+    let momentum = q * (inertia * (q.inverse() * initial.angular_velocity.as_dvec3()));
+    // Independent f64 quaternion RK4 at constant WORLD angular momentum.
+    // This does not call the production exponential-midpoint implementation.
+    let derivative = |q: glam::DQuat| {
+        let q = q.normalize();
+        let omega = q * (inertia.inverse() * (q.inverse() * momentum));
+        glam::DQuat::from_xyzw(omega.x, omega.y, omega.z, 0.) * q * 0.5
+    };
+    let h = 0.5 / steps as f64;
+    for _ in 0..steps {
+        let a = derivative(q);
+        let b = derivative(q + a * (h * 0.5));
+        let c = derivative(q + b * (h * 0.5));
+        let d = derivative(q + c * h);
+        q = (q + (a + b * 2. + c * 2. + d) * (h / 6.)).normalize();
+    }
+    (q, momentum)
+}
+fn rotation_distance(a: glam::DQuat, b: glam::DQuat) -> f64 {
+    let d = a.inverse() * b;
+    2. * d.xyz().length().atan2(d.w.abs())
+}
+fn measure_tumbling(initial: &Clod, reference: glam::DQuat, momentum: DVec3, hz: u16) -> [f64; 3] {
+    let mut m = machine();
+    m.tracks.mechanical_hz = hz;
+    m.articulation.as_mut().unwrap().stiffness_nm_rad = [0.; 4];
+    m.articulation.as_mut().unwrap().damping_nms_rad = [0.; 4];
+    let mut soil = ActiveSoil::from_clods(vec![initial.clone()]).unwrap();
+    let before = soil.totals(Vec3::ZERO);
+    for _ in 0..hz / 2 {
+        articulation::step_soil(
+            &mut m,
+            MachineInput::default(),
+            1. / hz as f32,
+            &Environment::free(Vec3::ZERO),
+            &mut soil,
+        )
+        .unwrap();
+    }
+    let after = soil.totals(Vec3::ZERO);
+    let angle = rotation_distance(reference, soil.clods[0].rotation.as_dquat().normalize());
+    let de = (after.kinetic_j - before.kinetic_j).abs() / before.kinetic_j;
+    let dl = (after.angular_nms - momentum).length() / momentum.length();
+    assert_eq!(soil.clods[0].material(), initial.material());
+    assert!(after.momentum_ns.length() < 1e-10);
+    assert!(soil.clods[0].center == initial.center);
+    println!("TUMBLING speed={} hz={hz} orientation_rad={angle} relative_energy={de} relative_momentum={dl}",initial.angular_velocity.length());
+    [angle, de, dl]
+}
+#[test]
+fn asymmetric_clod_tumbling_matches_independent_torque_free_reference() {
+    let initial = asymmetric_clod(1.);
+    let (reference, momentum) = torque_free_reference(&initial, 8192);
+    assert!(rotation_distance(reference, torque_free_reference(&initial, 4096).0) < 1e-9);
+    let measured: [_; 4] =
+        [120, 240, 480, 960].map(|hz| measure_tumbling(&initial, reference, momentum, hz));
+    for e in measured {
+        assert!(
+            e[0] < 5e-4 && e[1] < 5e-6 && e[2] < 5e-6,
+            "torque-free error {e:?}"
+        );
+    }
+    // Angular accuracy scales with mechanical time, so 480/960 Hz exhibit
+    // second-order phase convergence. Every coarse case stays checked.
+    assert!(measured[3][0] < measured[2][0] * 0.35);
+}
+#[test]
+fn asymmetric_fast_clod_tumbling_retains_full_time_and_invariant_budgets() {
+    let initial = asymmetric_clod(6.);
+    assert!(initial.valid());
+    let (reference, momentum) = torque_free_reference(&initial, 32768);
+    assert!(rotation_distance(reference, torque_free_reference(&initial, 16384).0) < 1e-8);
+    let measured: [_; 3] =
+        [240, 480, 960].map(|hz| measure_tumbling(&initial, reference, momentum, hz));
+    for e in measured {
+        assert!(
+            e[0] < 0.005 && e[1] < 1e-5 && e[2] < 5e-6,
+            "fast torque-free error {e:?}"
+        );
+    }
+    assert!(measured[2][0] < measured[0][0] * 0.8);
+}
+
+#[test]
+fn unforced_zero_spin_clods_preserve_exact_pose_across_world_rebuilds() {
+    for rotation in [
+        Quat::IDENTITY,
+        Quat::from_rotation_x(0.31) * Quat::from_rotation_y(-0.4),
+    ] {
+        let mut initial = asymmetric_clod(0.);
+        initial.rotation = rotation;
+        let mut m = machine();
+        m.articulation.as_mut().unwrap().stiffness_nm_rad = [0.; 4];
+        m.articulation.as_mut().unwrap().damping_nms_rad = [0.; 4];
+        let mut soil = ActiveSoil::from_clods(vec![initial.clone()]).unwrap();
+        for _ in 0..120 {
+            articulation::step_soil(
+                &mut m,
+                MachineInput::default(),
+                1. / 240.,
+                &Environment::free(Vec3::ZERO),
+                &mut soil,
+            )
+            .unwrap();
+        }
+        assert_eq!(soil.clods[0].center, initial.center);
+        assert_eq!(soil.clods[0].rotation, initial.rotation);
+        assert_eq!(soil.clods[0].velocity, Vec3::ZERO);
+        assert_eq!(soil.clods[0].angular_velocity, Vec3::ZERO);
+        assert_eq!(soil.material(), initial.material());
+    }
 }
