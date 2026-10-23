@@ -394,7 +394,7 @@ fn session_exchange_preserves_material_water_gold_and_exact_saved_continuation()
     assert!((s.stored_water_m3() - water).abs() < 1e-9);
     let json = s.save_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 8);
+    assert_eq!(value["version"], 10);
     let mut restored = Session::load_json(&json).unwrap();
     for _ in 0..30 {
         s.step(Default::default());
@@ -437,7 +437,7 @@ fn versioned_material_state_and_invalid_mass_moments_are_rejected() {
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&ordinary.save_json().unwrap()).unwrap()
             ["version"],
-        7
+        10
     );
 }
 #[test]

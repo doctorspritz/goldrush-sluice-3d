@@ -49,14 +49,15 @@ fn five_body_mass_and_forward_geometry_match_the_declared_machine() {
         m.tracks.tilt = Quat::from_rotation_x(0.2) * Quat::from_rotation_z(-0.15);
         m.bucket.gravel_m3 = load;
         m.bucket.pore_water_m3 = load * 0.2;
+        m.enable_articulation().unwrap();
         let arm = m.arm();
         let up = m.up();
         let uq = m.upper_rotation();
-        let bq = uq * Quat::from_rotation_x(-arm.angle);
-        let heel = Vec3::new(0., -0.2375, -0.01);
-        let lip = Vec3::new(0., -0.23, 1.065);
-        let fq = Quat::from_rotation_arc(Vec3::Z, (lip - heel).normalize());
-        let bucket = arm.wrist + bq * ((heel + lip) * 0.5 + fq * Vec3::Y * 0.025);
+        let bq = m.bucket_rotation();
+        let moments = mining_sim::bucket::geometry().steel.combine(
+            mining_sim::bucket::geometry().fill_moments(m.bucket.volume(), m.bucket.wet_mass_kg()),
+        );
+        let bucket = arm.wrist + bq * moments.center.as_vec3();
         let payload = m.bucket.wet_mass_kg() as f32;
         let mass = 8690. + payload;
         let com = ((m.position + up * 0.325) * 2600.
@@ -474,7 +475,7 @@ fn complete_dynamic_and_elastic_state_survives_session_save_and_exact_continuati
     }
     let saved = s.save_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&saved).unwrap();
-    assert_eq!(value["version"], 7);
+    assert_eq!(value["version"], 10);
     let mut restored = Session::load_json(&saved).unwrap();
     for _ in 0..30 {
         s.step(input);
@@ -646,4 +647,34 @@ fn explicit_external_wrench_work_is_included_in_the_passivity_ledger() {
     assert!(f.external_work_j > 0.);
     assert!(f.passivity_inputs_accounted);
     assert!(f.kinetic_j + f.elastic_j <= f.external_work_j + 0.0001);
+}
+
+#[test]
+fn shell_model_is_explicit_and_cannot_be_loaded_under_a_legacy_format() {
+    let mut s = mining_sim::Session::new();
+    s.machine.enable_articulation().unwrap();
+    let value: serde_json::Value = serde_json::from_str(&s.save_json().unwrap()).unwrap();
+    assert_eq!(value["version"], 10);
+    assert_eq!(value["machine"]["articulation"]["bucket_model"], "ShellV1");
+    for version in [6, 7, 8, 9] {
+        let mut bad = value.clone();
+        bad["version"] = version.into();
+        assert!(mining_sim::Session::load_json(&bad.to_string()).is_err());
+    }
+    let mut bad = value.clone();
+    bad["machine"]["articulation"]["bucket_model"] = "LegacyFloor".into();
+    assert!(mining_sim::Session::load_json(&bad.to_string()).is_err());
+    bad["machine"]["articulation"]
+        .as_object_mut()
+        .unwrap()
+        .remove("bucket_model");
+    assert!(mining_sim::Session::load_json(&bad.to_string()).is_err());
+    let saved = s.save_json().unwrap();
+    assert_eq!(
+        mining_sim::Session::load_json(&saved)
+            .unwrap()
+            .save_json()
+            .unwrap(),
+        saved
+    );
 }

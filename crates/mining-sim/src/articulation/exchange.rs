@@ -66,7 +66,7 @@ fn make_model(m: &mut Excavator) -> Result<Model, String> {
     Model::new(m, &Environment::free(Vec3::ZERO), &state)
 }
 pub fn payload_frame(m: &Excavator) -> (DVec3, DQuat) {
-    let q = m.upper_rotation() * Quat::from_rotation_x(-m.arm().angle);
+    let q = m.bucket_rotation();
     (
         m.arm().wrist.as_dvec3(),
         DQuat::from_xyzw(q.x as f64, q.y as f64, q.z as f64, q.w as f64).normalize(),
@@ -243,23 +243,33 @@ pub fn capture_payload(
     }
     let (wrist, q) = payload_frame(m);
     let local = q.inverse() * (parcel.state.center - wrist);
-    let floor = steel_moments();
-    let fq = DQuat::from_rotation_arc(DVec3::Z, DVec3::new(0., 0.0075, 1.075).normalize());
-    let p = fq.inverse() * (local - floor.center);
-    if p.x.abs() > 0.41 || !(0.0249..=0.65).contains(&p.y) || p.z.abs() > 0.5376 {
-        return Err("Source parcel is outside the bucket capture envelope".into());
-    }
-    let local_moments = parcel
-        .state
-        .moments
-        .transformed(local, q.inverse() * parcel.state.rotation);
-    let r = DMat3::from_quat(fq);
-    let c = r.transpose() * local_moments.second * r / local_moments.mass_kg;
-    let variance = DVec3::new(c.x_axis.x, c.y_axis.y, c.z_axis.z);
-    let low = DVec3::new(-0.41, 0.0249, -0.5376);
-    let high = DVec3::new(0.41, 0.65, 0.5376);
-    if (variance - (high - p) * (p - low)).max_element() > 1e-10 {
-        return Err("Source spatial moments cannot fit the bucket envelope".into());
+    if m.articulation.as_ref().unwrap().bucket_model == crate::bucket::Model::ShellV1 {
+        let local_moments = parcel
+            .state
+            .moments
+            .transformed(local, q.inverse() * parcel.state.rotation);
+        if !crate::bucket::geometry().accepts_moments(local_moments) {
+            return Err("Source spatial moments cannot fit the hollow bucket".into());
+        }
+    } else {
+        let floor = steel_moments(crate::bucket::Model::LegacyFloor);
+        let fq = DQuat::from_rotation_arc(DVec3::Z, DVec3::new(0., 0.0075, 1.075).normalize());
+        let p = fq.inverse() * (local - floor.center);
+        if p.x.abs() > 0.41 || !(0.0249..=0.65).contains(&p.y) || p.z.abs() > 0.5376 {
+            return Err("Source parcel is outside the bucket capture envelope".into());
+        }
+        let local_moments = parcel
+            .state
+            .moments
+            .transformed(local, q.inverse() * parcel.state.rotation);
+        let r = DMat3::from_quat(fq);
+        let c = r.transpose() * local_moments.second * r / local_moments.mass_kg;
+        let variance = DVec3::new(c.x_axis.x, c.y_axis.y, c.z_axis.z);
+        let low = DVec3::new(-0.41, 0.0249, -0.5376);
+        let high = DVec3::new(0.41, 0.65, 0.5376);
+        if (variance - (high - p) * (p - low)).max_element() > 1e-10 {
+            return Err("Source spatial moments cannot fit the bucket envelope".into());
+        }
     }
     let mut original = m.clone();
     let old = make_model(&mut original)?;

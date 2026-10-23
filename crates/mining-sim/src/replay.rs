@@ -405,3 +405,58 @@ pub fn earthworks_receipt(s: &Session, r: &OperatorReplay) -> Result<String, Str
         "water_balance_error_m3":water_error,"gold_balance_error_g":gold_error,"machine":s.machine,
         "soil_model":"25 cm heightfield, swept floor geometry, generic passive blade pressure; not calibrated continuum soil or machine dynamics"})).map_err(|e|e.to_string())
 }
+
+/// Bounded validation stroke for the prepared drained-soil bank. This supplies
+/// ordinary joystick axes only: no pose, material or contact edits. A grade
+/// controller keeps actual steel clear of the lowered, still-solid substrate.
+pub fn soil_trial_controls(s: &Session, elapsed: f64) -> MachineInput {
+    if s.active_soil.is_none() || s.machine.bucket_model() != crate::bucket::Model::ShellV1 {
+        return MachineInput::default();
+    }
+    let arm = s.machine.arm();
+    let q = s.machine.bucket_rotation();
+    let clearance = crate::bucket::geometry()
+        .parts
+        .iter()
+        .flat_map(|p| &p.vertices)
+        .map(|v| arm.wrist + q * *v)
+        .map(|p| p.y - s.site.height(p.x, p.z))
+        .fold(f32::INFINITY, f32::min);
+    let grade = if clearance > 0.04 {
+        -1.
+    } else if clearance < 0.015 {
+        1.
+    } else {
+        0.
+    };
+    if elapsed < 0.3 {
+        MachineInput::default()
+    } else if elapsed < 2.0 {
+        MachineInput {
+            stick: -0.7,
+            curl: 0.25,
+            boom: grade,
+            ..Default::default()
+        }
+    } else if elapsed < 3.7 {
+        MachineInput {
+            curl: 1.,
+            boom: grade,
+            ..Default::default()
+        }
+    } else if elapsed < 5.7 {
+        MachineInput {
+            boom: 1.,
+            ..Default::default()
+        }
+    } else if elapsed < 6.3 {
+        MachineInput::default()
+    } else if elapsed < 10.5 {
+        MachineInput {
+            curl: -1.,
+            ..Default::default()
+        }
+    } else {
+        MachineInput::default()
+    }
+}

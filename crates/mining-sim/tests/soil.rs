@@ -124,10 +124,9 @@ fn activation_errors_are_transactional_and_wet_contact_is_explicitly_refused() {
 fn finite_soil_collision_reacts_on_the_floating_bucket_with_closed_momentum() {
     let mut m = machine();
     let arm = m.arm();
-    let bucket_q = m.upper_rotation() * Quat::from_rotation_x(-arm.angle);
-    let fq = Quat::from_rotation_arc(Vec3::Z, Vec3::new(0., 0.0075, 1.075).normalize());
-    let q = bucket_q * fq;
-    let floor = (arm.heel + arm.lip) * 0.5 + q * Vec3::Y * 0.025;
+    let bucket_q = m.bucket_rotation();
+    let q = bucket_q;
+    let floor = arm.wrist + q * Vec3::new(0., -0.20, 0.5);
     let mut clod = Clod::prism(
         Material {
             sand_m3: 0.004,
@@ -272,7 +271,7 @@ fn moving_soil_owns_material_and_v9_continuation_rejects_wrong_formats() {
     );
     let encoded = s.save_json().unwrap();
     let mut v: serde_json::Value = serde_json::from_str(&encoded).unwrap();
-    assert_eq!(v["version"], 9);
+    assert_eq!(v["version"], 10);
     let mut restored = Session::load_json(&encoded).unwrap();
     assert_eq!(s.save_json().unwrap(), restored.save_json().unwrap());
     for _ in 0..10 {
@@ -281,11 +280,11 @@ fn moving_soil_owns_material_and_v9_continuation_rejects_wrong_formats() {
     }
     assert!(!s.paused);
     assert_eq!(s.save_json().unwrap(), restored.save_json().unwrap());
-    for version in [6, 7, 8] {
+    for version in [6, 7, 8, 9] {
         v["version"] = serde_json::json!(version);
         assert!(Session::load_json(&v.to_string()).is_err());
     }
-    v["version"] = serde_json::json!(9);
+    v["version"] = serde_json::json!(10);
     v["active_soil"]["clods"][0]["vertices"][0][0] = serde_json::json!(20.);
     assert!(Session::load_json(&v.to_string()).is_err());
 }
@@ -374,4 +373,117 @@ fn soil_trial_rebuilds_an_already_selected_stationary_articulation_before_time_z
     moving.machine.enable_articulation().unwrap();
     moving.machine.articulation.as_mut().unwrap().velocity[0] = 0.1;
     assert!(moving.prepare_soil_trial().is_err());
+}
+
+#[test]
+fn shell_cheek_impacts_recoil_the_machine_without_inventing_momentum_or_energy() {
+    for direction in [-1., 1.] {
+        let mut m = machine();
+        assert_eq!(m.bucket_model(), mining_sim::bucket::Model::ShellV1);
+        let arm = m.arm();
+        let q = m.bucket_rotation();
+        let mut clod = Clod::prism(
+            Material {
+                soil_m3: 0.08 * 0.08 * 0.06 * 0.5,
+                ..Default::default()
+            },
+            prism(0.08, 0.08, 0.06),
+        )
+        .unwrap();
+        clod.center = arm.wrist + q * (clod.center + Vec3::new(-0.04, -0.12, 0.4));
+        clod.rotation = q;
+        clod.velocity = q * Vec3::X * (direction * 2.);
+        let mut soil = ActiveSoil::from_clods(vec![clod]).unwrap();
+        let before = totals(&m, &soil);
+        let mut contacts = 0;
+        for _ in 0..120 {
+            articulation::step_soil(
+                &mut m,
+                MachineInput::default(),
+                1. / 240.,
+                &Environment::free(Vec3::ZERO),
+                &mut soil,
+            )
+            .unwrap();
+            contacts += soil.feedback.bucket_contacts;
+        }
+        let after = totals(&m, &soil);
+        println!(
+            "cheek sign={direction} contacts={contacts} dP={} dL={} energy={} -> {}",
+            (after.0 - before.0).length(),
+            (after.1 - before.1).length(),
+            before.2,
+            after.2
+        );
+        assert!(contacts > 0);
+        assert!((after.0 - before.0).length() < 0.003);
+        assert!((after.1 - before.1).length() < 0.03);
+        assert!(after.2 <= before.2 + 0.01);
+        assert!(
+            m.articulation
+                .as_ref()
+                .unwrap()
+                .feedback
+                .linear_momentum_ns
+                .length()
+                > 0.1
+        );
+    }
+}
+
+#[test]
+fn actual_bank_clods_are_scooped_held_airborne_and_emptied_by_the_open_shell() {
+    let mut s = Session::new();
+    s.prepare_soil_trial().unwrap();
+    s.player.mode = mining_sim::ControlMode::Excavator;
+    let source = s.active_soil.as_ref().unwrap().material();
+    let mut held = f64::INFINITY;
+    for _ in 0..660 {
+        let input = mining_sim::replay::soil_trial_controls(&s, s.sim_time);
+        s.step(mining_sim::session::Controls {
+            machine: input,
+            ..Default::default()
+        });
+        assert!(!s.paused, "{}", s.message);
+        assert!(
+            s.machine.bucket.is_empty(),
+            "independent soil was captured into scalar custody"
+        );
+        assert_eq!(s.active_soil.as_ref().unwrap().material(), source);
+        if (5.7..6.3).contains(&s.sim_time) {
+            let soil = s.active_soil.as_ref().unwrap();
+            let contents = mining_sim::bucket::estimated_soil_contents(&s.machine, soil);
+            held = held.min(contents.volume());
+            assert!(
+                contents.volume() > 0.001,
+                "no meaningful load held clear of the bank"
+            );
+            let (w, q) = articulation::payload_frame(&s.machine);
+            for c in &soil.clods {
+                if mining_sim::bucket::geometry().contains(q.inverse() * (c.center.as_dvec3() - w))
+                {
+                    assert!(
+                        c.vertices().iter().all(|v| {
+                            let p = c.center + c.rotation * (*v);
+                            p.y - s.site.height(p.x, p.z) > 0.25
+                        }),
+                        "counted clod was still supported by the bank"
+                    );
+                }
+            }
+        }
+    }
+    let empty =
+        mining_sim::bucket::estimated_soil_contents(&s.machine, s.active_soil.as_ref().unwrap());
+    println!(
+        "real-bank minimum held={} L, final contents={} L",
+        held * 1000.,
+        empty.volume() * 1000.
+    );
+    assert_eq!(
+        empty.volume(),
+        0.,
+        "opening did not release all counted clods"
+    );
+    assert_eq!(source, s.active_soil.as_ref().unwrap().material());
 }

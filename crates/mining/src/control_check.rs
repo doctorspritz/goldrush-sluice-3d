@@ -22,6 +22,7 @@ pub struct Check {
     mechanism_motion: bool,
     payload_motion: bool,
     soil_motion: bool,
+    soil_saved: bool,
 }
 impl Check {
     pub fn from_args() -> Self {
@@ -78,26 +79,18 @@ pub fn inject(
     }
     check.frame += 1;
     if check.soil_motion {
-        // Only ordinary Bevy keys after the finite initial condition. No soil
-        // injection, terrain edits, pose teleports or prescribed cut transaction.
-        let (press, release) = match check.frame {
-            181 => (Some(KeyCode::Tab), None),
-            182 => (None, Some(KeyCode::Tab)),
-            200 => (Some(KeyCode::KeyF), None),
-            400 => (Some(KeyCode::KeyY), Some(KeyCode::KeyF)),
-            500 => (Some(KeyCode::KeyG), None),
-            650 => (Some(KeyCode::KeyR), Some(KeyCode::KeyG)),
-            651 => (None, Some(KeyCode::KeyY)),
-            850 => (None, Some(KeyCode::KeyR)),
-            750 => (Some(KeyCode::F5), None),
-            751 => (None, Some(KeyCode::F5)),
-            _ => (None, None),
-        };
-        if let Some(key) = release {
-            keys.release(key);
+        // Enter through the ordinary key handler; the analog validation stroke
+        // below uses the same latched joystick packet and worker as gameplay.
+        if check.frame == 2 {
+            keys.press(KeyCode::Tab);
         }
-        if let Some(key) = press {
-            keys.press(key);
+        if check.frame == 3 {
+            keys.release(KeyCode::Tab);
+        }
+        keys.release(KeyCode::F5);
+        if game.session.sim_time >= 5.7 && !check.soil_saved {
+            keys.press(KeyCode::F5);
+            check.soil_saved = true;
         }
         return;
     }
@@ -405,5 +398,17 @@ pub fn observe(
             }
         }
         _ => {}
+    }
+}
+
+/// Opt-in physical replay, separate from the native keyboard/toolbar checks.
+/// It never writes a machine pose, soil body, material inventory or solver state.
+pub fn soil_stroke(check: Res<Check>, mut game: ResMut<Game>) {
+    if check.soil_motion && game.session.player.mode == ControlMode::Excavator {
+        let input = mining_sim::replay::soil_trial_controls(&game.session, game.session.sim_time);
+        game.latch_controls(mining_sim::session::Controls {
+            machine: input,
+            ..Default::default()
+        });
     }
 }

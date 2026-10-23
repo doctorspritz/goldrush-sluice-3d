@@ -19,12 +19,12 @@ fn articulated_machine_survives_original_water_pipeline_and_full_live_restore() 
 }
 #[test]
 #[ignore = "requires real GPU; explicitly run with --ignored --nocapture"]
-fn spatial_payload_exchange_survives_the_water_pipeline_and_v8_restore() {
+fn spatial_payload_exchange_survives_the_water_pipeline_and_shell_restore() {
     run_pipeline(false, true, true, false);
 }
 #[test]
 #[ignore = "requires actual GPU; run explicitly with --ignored"]
-fn moving_soil_survives_original_water_pipeline_and_v9_restore() {
+fn moving_soil_survives_original_water_pipeline_and_shell_restore() {
     run_pipeline(false, true, false, true);
 }
 fn run_pipeline(conservative: bool, articulated: bool, exchange: bool, soil: bool) {
@@ -132,12 +132,8 @@ fn run_pipeline(conservative: bool, articulated: bool, exchange: bool, soil: boo
             assert_eq!(
                 serde_json::from_str::<serde_json::Value>(&s.save_json().unwrap()).unwrap()
                     ["version"],
-                if soil {
-                    9
-                } else if exchange {
-                    8
-                } else if articulated {
-                    7
+                if soil || exchange || articulated {
+                    10
                 } else {
                     6
                 }
@@ -146,7 +142,7 @@ fn run_pipeline(conservative: bool, articulated: bool, exchange: bool, soil: boo
                 assert_eq!(
                     serde_json::from_str::<serde_json::Value>(&s.save_json().unwrap()).unwrap()
                         ["version"],
-                    8
+                    10
                 );
             }
 

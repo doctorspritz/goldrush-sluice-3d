@@ -516,12 +516,12 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&loaded.session.save_json().unwrap())
                 .unwrap()["version"],
-            7
+            10
         );
         std::fs::remove_file(path).unwrap();
     }
     #[test]
-    fn finite_payload_release_and_v8_live_load_keep_motion_and_custody() {
+    fn finite_payload_release_and_shell_live_load_keep_motion_and_custody() {
         let mut session = Session::new();
         let material = session
             .site
@@ -550,7 +550,7 @@ mod tests {
         let state = saved.session.save_json().unwrap();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&state).unwrap()["version"],
-            8
+            10
         );
         worker
             .submit(Work {

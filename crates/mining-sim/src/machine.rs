@@ -129,6 +129,25 @@ impl Excavator {
         }
         machine
     }
+    pub fn bucket_model(&self) -> crate::bucket::Model {
+        self.articulation
+            .as_ref()
+            .map_or(crate::bucket::Model::LegacyFloor, |a| a.bucket_model())
+    }
+    pub fn bucket_rotation(&self) -> glam::Quat {
+        let shell = self.bucket_model() == crate::bucket::Model::ShellV1;
+        let angle = if shell {
+            self.boom + self.stick - self.curl + std::f32::consts::FRAC_PI_2
+        } else {
+            self.boom + self.stick + self.curl
+        };
+        let q = self.upper_rotation() * glam::Quat::from_rotation_x(-angle);
+        if shell {
+            q * glam::Quat::from_rotation_y(std::f32::consts::PI)
+        } else {
+            q
+        }
+    }
     pub fn forward(&self) -> Vec3 {
         self.chassis_rotation() * Vec3::Z
     }
@@ -141,16 +160,40 @@ impl Excavator {
         let segment = |angle: f32, len: f32| f * (angle.cos() * len) + up * (angle.sin() * len);
         let elbow = shoulder + segment(self.boom, BOOM_LENGTH);
         let wrist = elbow + segment(self.boom + self.stick, STICK_LENGTH);
-        let angle = self.boom + self.stick + self.curl;
+        let shell = self.bucket_model() == crate::bucket::Model::ShellV1;
+        let angle = if shell {
+            self.boom + self.stick - self.curl + std::f32::consts::FRAC_PI_2
+        } else {
+            self.boom + self.stick + self.curl
+        };
         // Match the rendered bucket floor and tooth tips, including the
         // vertical offset; the old lip was an unrelated point on the arm axis.
         let bucket_point = |y: f32, z: f32| {
+            if shell {
+                return wrist + self.bucket_rotation() * Vec3::new(0., y, z);
+            }
             wrist
                 + f * (z * angle.cos() - y * angle.sin())
                 + up * (y * angle.cos() + z * angle.sin())
         };
-        let lip = bucket_point(-0.23, 1.065);
-        let heel = bucket_point(-0.2375, -0.01);
+        let lip = if shell {
+            wrist + self.bucket_rotation() * crate::bucket::TOOTH_TIP
+        } else {
+            bucket_point(-0.23, 1.065)
+        };
+        let heel = if self.bucket_model() == crate::bucket::Model::ShellV1 {
+            let geometry = crate::bucket::geometry();
+            let point = geometry
+                .parts
+                .iter()
+                .filter(|p| !p.tooth)
+                .flat_map(|p| p.vertices.iter())
+                .min_by(|a, b| a.y.total_cmp(&b.y).then(a.z.total_cmp(&b.z)))
+                .unwrap();
+            bucket_point(point.y, point.z)
+        } else {
+            bucket_point(-0.2375, -0.01)
+        };
         ArmPose {
             shoulder,
             elbow,

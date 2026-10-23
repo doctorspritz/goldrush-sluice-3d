@@ -1,5 +1,6 @@
 //! Persistent, fixed-step mining domain. Rendering and camera state live outside this crate.
 pub mod articulation;
+pub mod bucket;
 pub mod earthworks;
 pub mod intake;
 pub mod machine;

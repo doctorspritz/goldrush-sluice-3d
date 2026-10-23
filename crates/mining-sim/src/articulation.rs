@@ -21,9 +21,11 @@ const AXIS: usize = 3; // A revolute joint's own free angular X coordinate.
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Articulation {
+    #[serde(default, skip_serializing_if = "crate::bucket::Model::is_legacy")]
+    bucket_model: crate::bucket::Model,
     /// Root COM linear/world angular velocity, then the four joint rates.
     pub velocity: [f32; 10],
-    /// Swing, -boom, -stick, -curl in each hinge's own coordinate frame.
+    /// Swing, -boom, -stick, then +curl for ShellV1 or -curl for LegacyFloor.
     pub coordinates: [f32; 4],
     /// Finite elastic actuator references; not prescribed body positions.
     pub reference: [f32; 4],
@@ -101,6 +103,9 @@ impl Environment<'_> {
 }
 
 impl Articulation {
+    pub fn bucket_model(&self) -> crate::bucket::Model {
+        self.bucket_model
+    }
     pub fn valid(&self) -> bool {
         self.velocity
             .iter()
@@ -135,7 +140,14 @@ impl Articulation {
                 < 0.00001
             && (self.coordinates[1] + machine.boom).abs() < 0.000001
             && (self.coordinates[2] + machine.stick).abs() < 0.000001
-            && (self.coordinates[3] + machine.curl).abs() < 0.000001
+            && (self.coordinates[3]
+                - if self.bucket_model == crate::bucket::Model::ShellV1 {
+                    machine.curl
+                } else {
+                    -machine.curl
+                })
+            .abs()
+                < 0.000001
             && Vec3::from_slice(&self.velocity[3..6]).distance(machine.tracks.angular_velocity)
                 < 0.00001
             && self.feedback.center_of_mass.is_finite()
@@ -210,9 +222,10 @@ impl Excavator {
             self.swing.sin().atan2(self.swing.cos()),
             -self.boom,
             -self.stick,
-            -self.curl,
+            self.curl,
         ];
         self.articulation = Some(Articulation {
+            bucket_model: crate::bucket::Model::ShellV1,
             velocity: [0.; 10],
             coordinates: coords,
             reference: coords,
@@ -296,9 +309,22 @@ fn command(
         input.swing * 0.65,
         -input.boom * 0.42,
         -input.stick * 0.55,
-        -input.curl * 0.90,
+        if state.bucket_model == crate::bucket::Model::ShellV1 {
+            input.curl * 0.90
+        } else {
+            -input.curl * 0.90
+        },
     ];
-    let ranges = [(-20., 20.), (-1.20, 0.24), (0.15, 2.15), (-1.45, 1.70)];
+    let ranges = [
+        (-20., 20.),
+        (-1.20, 0.24),
+        (0.15, 2.15),
+        if state.bucket_model == crate::bucket::Model::ShellV1 {
+            (-1.70, 1.45)
+        } else {
+            (-1.45, 1.70)
+        },
+    ];
     let before = state.reference;
     let candidate = |fraction: f32| {
         let mut target = before;
@@ -377,13 +403,28 @@ impl Model {
         let arm = m.arm();
         let boom = upper * Quat::from_rotation_x(-m.boom);
         let stick = boom * Quat::from_rotation_x(-m.stick);
-        let bucket = stick * Quat::from_rotation_x(-m.curl);
+        let bucket = if s.bucket_model == crate::bucket::Model::ShellV1 {
+            m.bucket_rotation()
+        } else {
+            stick * Quat::from_rotation_x(-m.curl)
+        };
         let heel = Vec3::new(0., -0.2375, -0.01);
         let lip = Vec3::new(0., -0.23, 1.065);
         let floor_q = Quat::from_rotation_arc(Vec3::Z, (lip - heel).normalize());
         let floor_center = (heel + lip) * 0.5 + floor_q * Vec3::Y * 0.025;
-        let bucket_com = if let Some(payload) = s.payload_moments {
-            steel_moments().combine(payload).center.as_vec3()
+        let shell = s.bucket_model == crate::bucket::Model::ShellV1;
+        let bucket_moments = if shell {
+            Some(steel_moments(s.bucket_model).combine(carried_moments(m)))
+        } else {
+            None
+        };
+        let bucket_com = if let Some(moments) = bucket_moments {
+            moments.center.as_vec3()
+        } else if let Some(payload) = s.payload_moments {
+            steel_moments(s.bucket_model)
+                .combine(payload)
+                .center
+                .as_vec3()
         } else {
             floor_center
         };
@@ -467,7 +508,16 @@ impl Model {
                 .can_sleep(false)
                 .ccd_enabled(true);
             if i == 4 {
-                if let Some(payload) = s.payload_moments {
+                if let Some(moments) = bucket_moments {
+                    builder =
+                        builder.additional_mass_properties(r::MassProperties::with_inertia_matrix(
+                            rv(moments.center.as_vec3() - bucket_com),
+                            moments.mass_kg as f32,
+                            r::Matrix::from_cols_array(
+                                &moments.inertia().to_cols_array().map(|x| x as f32),
+                            ),
+                        ));
+                } else if let Some(payload) = s.payload_moments {
                     builder =
                         builder.additional_mass_properties(r::MassProperties::with_inertia_matrix(
                             rv(payload.center.as_vec3() - bucket_com),
@@ -529,17 +579,27 @@ impl Model {
             )
             .mass(840.),
         );
-        attach(
-            4,
-            r::ColliderBuilder::cuboid(0.41, 0.025, (lip - heel).length() * 0.5)
-                .position(pose(floor_center - bucket_com, floor_q))
-                .mass(if s.payload_moments.is_some() {
-                    250.
-                } else {
-                    250. + s.payload_kg
-                })
-                .user_data(3),
-        );
+        if shell {
+            attach(
+                4,
+                r::ColliderBuilder::new(crate::bucket::geometry().shape())
+                    .translation(rv(-bucket_com))
+                    .density(0.)
+                    .user_data(3),
+            );
+        } else {
+            attach(
+                4,
+                r::ColliderBuilder::cuboid(0.41, 0.025, (lip - heel).length() * 0.5)
+                    .position(pose(floor_center - bucket_com, floor_q))
+                    .mass(if s.payload_moments.is_some() {
+                        250.
+                    } else {
+                        250. + s.payload_kg
+                    })
+                    .user_data(3),
+            );
+        }
         for b in bodies {
             world.bodies[b].recompute_mass_properties_from_colliders(&world.colliders);
         }
@@ -563,7 +623,7 @@ impl Model {
             None,
             Some([-1.20, 0.24]),
             Some([0.15, 2.15]),
-            Some([-1.45, 1.70]),
+            Some(if shell { [-1.70, 1.45] } else { [-1.45, 1.70] }),
         ];
         let mut joints = Vec::new();
         for i in 0..4 {
@@ -575,6 +635,11 @@ impl Model {
                     .motor_model(r::MotorModel::ForceBased)
                     .motor_position(s.reference[i], s.stiffness_nm_rad[i], s.damping_nms_rad[i])
                     .motor_max_force(limits[i]);
+            if shell && i == 3 {
+                let mount = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+                    * Quat::from_rotation_y(std::f32::consts::PI);
+                j.0.data.local_frame2.rotation = pose(Vec3::ZERO, mount.inverse()).rotation;
+            }
             if let Some(range) = ranges[i] {
                 j = j.limits(range);
             }
@@ -904,7 +969,11 @@ fn step_inner(
     m.swing = s.coordinates[0].rem_euclid(std::f32::consts::TAU);
     m.boom = -s.coordinates[1];
     m.stick = -s.coordinates[2];
-    m.curl = -s.coordinates[3];
+    m.curl = if s.bucket_model == crate::bucket::Model::ShellV1 {
+        s.coordinates[3]
+    } else {
+        -s.coordinates[3]
+    };
     m.tracks.velocity = feedback.linear_momentum_ns / feedback.mass_kg as f32;
     m.tracks.angular_velocity = sv(root.angvel());
     m.distance_m += Vec3::new(m.position.x - old.x, 0., m.position.z - old.z).length();
@@ -989,7 +1058,10 @@ fn step_inner(
     Ok(())
 }
 
-fn steel_moments() -> crate::payload::MassMoments {
+fn steel_moments(model: crate::bucket::Model) -> crate::payload::MassMoments {
+    if model == crate::bucket::Model::ShellV1 {
+        return crate::bucket::geometry().steel;
+    }
     let heel = DVec3::new(0., -0.2375, -0.01);
     let lip = DVec3::new(0., -0.23, 1.065);
     let q = DQuat::from_rotation_arc(DVec3::Z, (lip - heel).normalize());
@@ -1002,6 +1074,63 @@ fn steel_moments() -> crate::payload::MassMoments {
 }
 fn carried_moments(m: &Excavator) -> crate::payload::MassMoments {
     let s = m.articulation.as_ref().unwrap();
-    s.payload_moments
-        .unwrap_or_else(|| steel_moments().scaled(m.bucket.wet_mass_kg() / 250.))
+    s.payload_moments.unwrap_or_else(|| {
+        if s.bucket_model == crate::bucket::Model::ShellV1 {
+            crate::bucket::geometry().fill_moments(m.bucket.volume(), m.bucket.wet_mass_kg())
+        } else {
+            steel_moments(s.bucket_model).scaled(m.bucket.wet_mass_kg() / 250.)
+        }
+    })
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use super::*;
+    #[test]
+    fn registered_shell_vertices_follow_the_same_hinged_frame_as_the_mesh() {
+        for [boom, stick, curl, load] in [[0.8, -1.3, -0.2, 0.], [0.4, -1.8, 0.7, 0.1]] {
+            let mut m = Excavator::new(&Site::new());
+            m.position = Vec3::new(16., 10., 16.);
+            m.heading = 0.7;
+            m.swing = 0.4;
+            m.boom = boom;
+            m.stick = stick;
+            m.curl = curl;
+            m.tracks.tilt = Quat::from_rotation_x(0.2) * Quat::from_rotation_z(-0.15);
+            m.bucket.soil_m3 = load as f64;
+            m.enable_articulation().unwrap();
+            let state = m.articulation.as_ref().unwrap().clone();
+            let model = Model::new(&mut m, &Environment::free(Vec3::ZERO), &state).unwrap();
+            let body = &model.world.bodies[model.bodies[4]];
+            let collider = &model.world.colliders[body.colliders()[0]];
+            let local = collider.position_wrt_parent().unwrap();
+            let frame = body.position() * local;
+            let compound = collider.shape().as_compound().unwrap();
+            let g = crate::bucket::geometry();
+            assert_eq!(compound.shapes().len(), g.parts.len());
+            for ((pose, shape), part) in compound.shapes().iter().zip(&g.parts) {
+                let hull = shape.as_convex_polyhedron().unwrap();
+                for vertex in &part.vertices {
+                    let actual = frame * (*pose * rv(*vertex));
+                    let expected = m.arm().wrist + m.bucket_rotation() * *vertex;
+                    assert!(sv(actual).distance(expected) < 0.00001);
+                    assert!(hull
+                        .points()
+                        .iter()
+                        .any(|p| sv(*p).distance(*vertex) < 1e-7));
+                }
+            }
+            let expected = g.steel.combine(carried_moments(&m));
+            assert!((body.mass() as f64 - expected.mass_kg).abs() < 0.001);
+            let com = m.arm().wrist + m.bucket_rotation() * expected.center.as_vec3();
+            assert!(sv(body.center_of_mass()).distance(com) < 0.00001);
+            let registered = body.mass_properties().effective_angular_inertia();
+            let q = m.bucket_rotation().as_dquat();
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                let actual = sv(registered * rv(axis)).as_dvec3();
+                let expected = q * (expected.inertia() * (q.inverse() * axis.as_dvec3()));
+                assert!((actual - expected).length() < 0.0002);
+            }
+        }
+    }
 }

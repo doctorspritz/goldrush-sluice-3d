@@ -593,12 +593,12 @@ impl Session {
         }
         let clearance = |m: &Excavator| {
             let a = m.arm();
-            [a.heel, a.lip]
-                .into_iter()
-                .flat_map(|p| {
-                    [-0.5, 0., 0.5]
-                        .map(|side| p + a.right * (side * crate::earthworks::BUCKET_WIDTH_M))
-                })
+            let q = m.bucket_rotation();
+            crate::bucket::geometry()
+                .parts
+                .iter()
+                .flat_map(|p| p.vertices.iter())
+                .map(|v| a.wrist + q * (*v))
                 .map(|p| p.y - self.site.height(p.x, p.z))
                 .fold(f32::INFINITY, f32::min)
         };
@@ -613,6 +613,7 @@ impl Session {
         // The CLI may already have selected articulation. Rebuild its initial
         // zero-rate chart after preparing the initial boom angle, before time 0.
         m.articulation = None;
+        m.enable_articulation()?;
         let (mut lo, mut hi) = (-0.24, 1.20);
         m.boom = lo;
         if clearance(&m) >= 0.015 {
@@ -631,9 +632,12 @@ impl Session {
             }
         }
         m.boom = hi;
+        m.articulation = None;
         m.enable_articulation()?;
         let a = m.arm();
-        let c = (a.heel + a.lip) * 0.5;
+        // A backhoe pulls the cutting lip toward the machine. Activate the
+        // bank in front of that open mouth, not beneath the closed shell.
+        let c = a.lip - m.forward() * 0.35;
         let mut nodes = Vec::new();
         for z in 1..crate::site::WIDTH - 1 {
             for x in 1..crate::site::WIDTH - 1 {
@@ -649,7 +653,7 @@ impl Session {
         self.machine = m;
         self.site = site;
         self.active_soil = Some(soil);
-        self.message="Drained frictional soil trial: move the actual bucket with R/F, T/G, Y/H. Cohesion, wet contact and retention are not calibrated.".into();
+        self.message="Drained frictional soil trial: move the actual bucket with R/F, T/G, Y/H. Shell contacts retain and spill independent clods; soil strength, cohesion and wet contact are not calibrated.".into();
         Ok(())
     }
     pub fn activate_soil(
@@ -725,7 +729,14 @@ impl Session {
         site.normalize_bed_age();
         serde_json::to_string(&Save {
             // v8 preserves spatial payload/rigid parcels and boundary receipts.
-            version: if self.active_soil.is_some() {
+            version: if self
+                .machine
+                .articulation
+                .as_ref()
+                .is_some_and(|a| a.bucket_model() == crate::bucket::Model::ShellV1)
+            {
+                10
+            } else if self.active_soil.is_some() {
                 9
             } else if self.uses_material_motion() {
                 8
@@ -753,13 +764,13 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if !matches!(s.version, 2..=9) {
+        if !matches!(s.version, 2..=10) {
             return Err("Unsupported save version".into());
         }
         if !matches!(
             (s.version, s.site.bed_age_unit()),
             (2, crate::site::BedAgeUnit::Legacy20HzSteps)
-                | (3..=9, crate::site::BedAgeUnit::Microseconds)
+                | (3..=10, crate::site::BedAgeUnit::Microseconds)
         ) {
             return Err("Invalid saved terrain clock".into());
         }
@@ -793,11 +804,17 @@ impl Session {
             .is_some_and(|a| a.payload_moments.is_some() || a.exchange.is_some())
             || s.falling.iter().any(|l| l.rigid.is_some())
             || s.material_motion.is_some();
-        if (s.version < 7 && s.machine.articulation.is_some())
+        let shell = s
+            .machine
+            .articulation
+            .as_ref()
+            .is_some_and(|a| a.bucket_model() == crate::bucket::Model::ShellV1);
+        if (s.version == 10) != shell
+            || (s.version < 7 && s.machine.articulation.is_some())
             || (s.version == 7 && s.machine.articulation.is_none())
             || (s.version < 8 && advanced)
             || (s.version == 8 && !advanced)
-            || (s.version == 9) != s.active_soil.is_some()
+            || (s.version < 10 && (s.version == 9) != s.active_soil.is_some())
             || (s.active_soil.is_some() && s.machine.articulation.is_none())
         {
             return Err("Saved material dynamics do not match the format version".into());

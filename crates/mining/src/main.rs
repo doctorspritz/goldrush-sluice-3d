@@ -118,7 +118,7 @@ fn main() -> AppExit {
                 runtime::receive,
                 control_check::inject,
                 hud::buttons,
-                app::input,
+                (app::input, control_check::soil_stroke).chain(),
                 app::cursor,
                 control_check::observe,
                 (app::camera, motion_capture::camera).chain(),

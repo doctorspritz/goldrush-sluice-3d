@@ -369,7 +369,7 @@ pub fn update(
             HudText::Mode=>format!("{}  /  {}",if foot{"ON FOOT"}else{"EXCAVATOR"},if s.player.third_person{"EXTERNAL VIEW"}else{"FIRST PERSON"}),
             HudText::Numbers=>format!("{:.2} g",s.sluice.concentrate.gold_g),
             HudText::Objective=>{
-                if s.active_soil.is_some() {"SOIL CONTACT TRIAL\n\nMove the bucket into the bank.\nR/F boom · T/G stick · Y/H curl.\nWet soil and bucket retention\nstill need work.".into()}
+                if s.active_soil.is_some() {"SOIL CONTACT TRIAL\n\nMove the bucket into the bank.\nR/F boom · T/G stick · Y/H curl.\nDrained frictional soil.\nWet/cohesive mud uncalibrated.".into()}
                 else if s.machine.articulation.is_some() { "MECHANISM VALIDATION\n\nDrive, swing and move the arm.\nWatch load and pump feedback.\nDigging and dumping unavailable.".into() }
                 else if game.demo { "FLOWING DEMO\n\nPaydirt and water are flowing.\nP pump · O feed · arrows set rates.\nNew shift starts a fresh claim.".into() }
                 else if s.sluice.concentrate.gold_g>=GOLD_TARGET_G {format!("FIRST GOLD RECOVERED\n\n{:.2} g from your claim.\nKeep digging, or save your shift.",s.sluice.concentrate.gold_g)}
@@ -418,7 +418,7 @@ P restarts water; O opens feed.".into()}
                         mining_sim::machine::DigLimit::Power=>"Hydraulic power limit",
                     };
                     if let Some(soil)=&s.active_soil {
-                        format!("DRAINED SOIL TRIAL · R/F boom · T/G stick · Y/H bucket\nBank {:.0} L · {:.0} kg · {} bucket contacts",soil.material().volume()*1000.,soil.material().wet_mass_kg(),soil.feedback.bucket_contacts)
+                        format!("DRAINED SOIL TRIAL · R/F boom · T/G stick · Y/H bucket\nActive {:.0} L · {:.0} kg · Bucket ~{:.1} L · {} contacts",soil.material().volume()*1000.,soil.material().wet_mass_kg(),mining_sim::bucket::estimated_soil_contents(&s.machine,soil).volume()*1000.,soil.feedback.bucket_contacts)
                     } else if let Some(a)=&s.machine.articulation {
                         let status=if a.feedback.failure.is_some() {"Mechanism paused"}
                             else if a.feedback.command_fraction<0.999 {"Pump power limit · digging/dumping unavailable"}

@@ -61,6 +61,8 @@ pub(crate) struct Link {
 #[derive(Component)]
 pub(crate) struct BucketFill;
 #[derive(Component)]
+pub(crate) struct BucketGeometry(mining_sim::bucket::Model);
+#[derive(Component)]
 pub(crate) struct PersonPart {
     local: Transform,
     limb: u8,
@@ -120,12 +122,15 @@ fn mounted(
     let local = Transform::from_translation(position)
         .with_scale(size)
         .with_rotation(rotation);
-    commands.spawn((
+    let mut entity = commands.spawn((
         Mesh3d(p.cube.clone()),
         MeshMaterial3d(mat),
         local,
         Mounted { mount, local },
     ));
+    if matches!(mount, Mount::Bucket) {
+        entity.insert(BucketGeometry(mining_sim::bucket::Model::LegacyFloor));
+    }
 }
 fn cylinder_between(
     commands: &mut Commands,
@@ -268,7 +273,7 @@ pub fn setup(
         &p,
         &game.session.site,
     );
-    machine(&mut commands, &p);
+    machine(&mut commands, &mut meshes, &p);
     person(&mut commands, &p);
     equipment(&mut commands, &mut meshes, &p, &game.session.site);
     commands.insert_resource(PlantRevision::default());
@@ -503,7 +508,7 @@ fn vegetation(
     }
 }
 
-fn machine(commands: &mut Commands, p: &Palette) {
+fn machine(commands: &mut Commands, meshes: &mut Assets<Mesh>, p: &Palette) {
     for side in [-1.0, 1.0] {
         mounted(
             commands,
@@ -745,6 +750,37 @@ fn machine(commands: &mut Commands, p: &Palette) {
             p.chrome.clone(),
             Quat::IDENTITY,
         );
+    }
+    // Contacts, mass integration and presentation share these exact vertices.
+    for part in &mining_sim::bucket::geometry().parts {
+        let mut positions = Vec::new();
+        let mut normals = Vec::new();
+        for f in &part.triangles {
+            let v = f.map(|i| bvec(part.vertices[i as usize]));
+            let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize();
+            positions.extend(v.map(|p| p.to_array()));
+            normals.extend([n.to_array(); 3]);
+        }
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+        );
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(if part.tooth {
+                p.chrome.clone()
+            } else {
+                p.steel.clone()
+            }),
+            Transform::default(),
+            Mounted {
+                mount: Mount::Bucket,
+                local: Transform::IDENTITY,
+            },
+            BucketGeometry(mining_sim::bucket::Model::ShellV1),
+        ));
     }
     commands.spawn((
         Mesh3d(p.sphere.clone()),
@@ -1011,7 +1047,12 @@ pub fn sync_terrain(
 pub fn sync_machine(
     game: Res<Game>,
     mut sets: ParamSet<(
-        Query<(&Mounted, &mut Transform)>,
+        Query<(
+            &Mounted,
+            &mut Transform,
+            &mut Visibility,
+            Option<&BucketGeometry>,
+        )>,
         Query<(&Link, &mut Transform)>,
         Query<(&mut Transform, &mut Visibility), With<BucketFill>>,
         Query<(&PersonPart, &mut Transform, &mut Visibility)>,
@@ -1025,9 +1066,20 @@ pub fn sync_machine(
     let upper = Transform::from_translation(bvec(m.position))
         .with_rotation(Quat::from_array(m.upper_rotation().to_array()));
     let bucket = Transform::from_translation(bvec(arm.wrist)).with_rotation(
-        Quat::from_array(m.upper_rotation().to_array()) * Quat::from_rotation_x(-arm.angle),
+        if m.bucket_model() == mining_sim::bucket::Model::ShellV1 {
+            Quat::from_array(m.bucket_rotation().to_array())
+        } else {
+            Quat::from_array(m.upper_rotation().to_array()) * Quat::from_rotation_x(-arm.angle)
+        },
     );
-    for (part, mut transform) in &mut sets.p0() {
+    for (part, mut transform, mut visibility, geometry) in &mut sets.p0() {
+        if let Some(geometry) = geometry {
+            *visibility = if geometry.0 == m.bucket_model() {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+        }
         *transform = match part.mount {
             Mount::Chassis => chassis,
             Mount::Upper => upper,
