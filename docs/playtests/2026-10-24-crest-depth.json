@@ -1,0 +1,170 @@
+{
+  "base_commit": "93b5db2283e69b7ca28c243d5114b20246b87f47",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-upsampling-20261024",
+  "changed_sources": {
+    "crates/mining/src/water_compose.wgsl": {
+      "before": "70ba9fd671bfa1d6148cfe208d6bed69a1dccd54acea91826ff5d3d839cfa077",
+      "after": "605835b23e56dab4ecd743ecbf13791155b3db6814feeebcbaace850f2a0ec24"
+    },
+    "crates/mining-physics/tests/water_optics.rs": {
+      "before": "7294cee84113985a923ea961458ec4bf795e5b14accbd5a643a57ecca37ec52a",
+      "after": "745ae119fb6cd173abbf121025f244dc9b2652fe6a9889ece4e8651f98eb76eb"
+    }
+  },
+  "other_build_sources_unchanged": 695,
+  "full_source_manifest_sha256": "ec6c0e2259b3c8fc450f3e72b09ae5c98931a6188e1a4c19c7ab24f0c3e9e8ee",
+  "saved_input_sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42",
+  "binary": {
+    "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-upsampling-20261024/final-app/First Bend.app/Contents/MacOS/mining",
+    "sha256": "88f543a09d542c3f5a2d813e139cb46b5135763919a5dfff12840add7659a0bc"
+  },
+  "negative_control": {
+    "sampled_depth_m": 2.9126215,
+    "analytic_depth_m": 3.0,
+    "absolute_error_m": 0.0873785,
+    "failed_before_fix": true
+  },
+  "final_grazing_plane_error_bound_m": 1e-05,
+  "gpu_controls": "all four full-resolution phases, nearest-reference crossover, analytic normal, uniform and separated suspension, genuine channel-layer step, dry edge and channel/outlet isolation",
+  "app_cpu_checks": 51,
+  "app_ignored_checks": 1,
+  "executed_gpu_optics_checks": 10,
+  "quality": [
+    {
+      "check": "gpu-final",
+      "exit": 0
+    },
+    {
+      "check": "app-cpu",
+      "exit": 0
+    },
+    {
+      "check": "clippy",
+      "exit": 0
+    },
+    {
+      "check": "format",
+      "exit": 0
+    },
+    {
+      "check": "package",
+      "exit": 0
+    }
+  ],
+  "frozen_matched_fields": [
+    "sim_time",
+    "fluid_clock",
+    "solver_steps",
+    "tracks",
+    "machine",
+    "excavated_m3",
+    "delivered_m3",
+    "flow",
+    "surface",
+    "active_soil",
+    "material_motion"
+  ],
+  "frozen_views": {
+    "sluice-final": true,
+    "sluice-normal": true,
+    "sluice-sediment": true,
+    "outlet-final": true,
+    "river-final": true
+  },
+  "image_comparison": {
+    "sluice-final": {
+      "changed_rgb_pixels": 1118,
+      "max_channel_difference": 32
+    },
+    "sluice-normal": {
+      "changed_rgb_pixels": 320,
+      "max_channel_difference": 50
+    },
+    "sluice-sediment": {
+      "changed_rgb_pixels": 283,
+      "max_channel_difference": 22
+    },
+    "outlet-final": {
+      "changed_rgb_pixels": 471,
+      "max_channel_difference": 13
+    },
+    "river-final": {
+      "changed_rgb_pixels": 0,
+      "max_channel_difference": 0
+    }
+  },
+  "motion": {
+    "source_frames": 67,
+    "physical_advances": 56,
+    "presentation_advances": 66,
+    "recording_underruns": 0,
+    "sim_seconds": 1.8666667640209198,
+    "wall_seconds": 5.99840975,
+    "physical_snapshot_holds": 10,
+    "outlet_control_crop_whxy": [
+      280,
+      230,
+      700,
+      540
+    ],
+    "outlet_control_identical": true,
+    "review_indices": [
+      0,
+      13,
+      26,
+      40,
+      53,
+      66
+    ],
+    "full_midpoint": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-upsampling-20261024/motion/frame-0033.png",
+    "encoded_frames": 366,
+    "max_first_display_delay_ms": 16.27033300000047,
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "r_frame_rate": "60/1",
+          "duration": "6.100000",
+          "nb_frames": "366"
+        }
+      ]
+    }
+  },
+  "benchmarks": {
+    "before": {
+      "mean_fps": 55.77265738449469,
+      "p95_frame_ms": 25.882958000000002,
+      "simulation_wall_ratio": 0.3181785196226557,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "bulk_material_error_m3": 3.3083102835007594e-07,
+      "dry_mass_budget_passed": true,
+      "dry_mass_error_kg": 0.0005955079104751348,
+      "gold_balance_error_g": 4.547473508864641e-13,
+      "water_balance_error_m3": -7.811004735458482e-06,
+      "sluice_water_balance_error_m3": 0.0
+    },
+    "after": {
+      "mean_fps": 55.75829572497853,
+      "p95_frame_ms": 26.001334,
+      "simulation_wall_ratio": 0.32151380764627746,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "bulk_material_error_m3": 3.345547838762286e-07,
+      "dry_mass_budget_passed": true,
+      "dry_mass_error_kg": 0.0006022178567945957,
+      "gold_balance_error_g": 1.3642420526593924e-12,
+      "water_balance_error_m3": -7.818506364998257e-06,
+      "sluice_water_balance_error_m3": 0.0
+    }
+  },
+  "delivered_media": {
+    "docs/playtests/2026-10-24-crest-depth.png": "ec9ebb79fc1e0632cc3e3db7ca37ff9a12501ca53261bb4fe0774d9557e14c1c",
+    "docs/playtests/2026-10-24-crest-depth.motion.png": "edd489f84ef7b467406bd799323a9aff45b420aa3b37a00e6c8b687d0db7eed5",
+    "docs/playtests/2026-10-24-crest-depth.mp4": "96eaed63fcf6407fb46be732e97933693ac2e92e119dab653078e6a5e7b81b5b"
+  },
+  "review_scope": "Six temporal samples, full native midpoint, matched frozen final/normal/extinction views. Whole video/manual OS input not reviewed.",
+  "remaining_visual_limits": "The native visual difference is small. Broad waves, occasional rounded spray, coarse grain stippling, river opacity/art and sediment calibration remain.",
+  "full_goal_complete": false
+}

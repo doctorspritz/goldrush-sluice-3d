@@ -1451,10 +1451,16 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
         r#"
 @group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
 @compute @workgroup_size(1) fn probe() {
- for(var y=0u;y<2u;y++){for(var x=0u;x<2u;x++){
-  let pixel=vec2(32.5)+vec2(f32(x),f32(y));
+ let xs=array(32.5,33.5,32.9998,33.0002);
+ for(var y=0u;y<2u;y++){for(var x=0u;x<4u;x++){
+  let pixel=vec2(xs[x],32.5+f32(y));
   let sampled=sample_depth(pixel);
-  result[y*2u+x]=channel_surface(pixel,sampled.x).normal;
+  let i=(y*4u+x)*2u;
+  result[i]=channel_surface(pixel,sampled.x).normal;
+  // Independent plane intersection, including all full-size pixel phases.
+  let texel_x=pixel.x*0.5-0.5;
+  let analytic=1./(1./3.+0.04*(texel_x-15.75));
+  result[i+1u]=vec4(sampled,analytic,0.);
  }}
 }"#
     );
@@ -1469,7 +1475,18 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
     );
     // Plane 1 = 3.2 X - (1/3 - .01) Z, derived from the projection.
     let expected = glam::Vec3::new(-3.2, 0., 1. / 3. - 0.01).normalize();
-    for value in narrow[..16].chunks_exact(4) {
+    for pair in narrow[..64].chunks_exact(8) {
+        let value = &pair[..4];
+        assert!(
+            (pair[4] - pair[6]).abs() < 0.00001,
+            "grazing plane became a depth step: sampled={}, analytic={}",
+            pair[4],
+            pair[6]
+        );
+        assert!(
+            (pair[5] - 1.).abs() < 0.000001,
+            "connected sheet lost coverage"
+        );
         let error = (glam::Vec3::from_slice(value) - expected).length();
         assert!(
             error < 0.001,
@@ -1510,7 +1527,7 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
     let edge = execute(
         &device,
         &queue,
-        source,
+        source.clone(),
         &[&group, &out_group],
         &[&layout, &out_layout],
         &buffer,
@@ -1529,6 +1546,57 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
             (edge[i * 4 + 1] - expected[1]).abs() < 0.000001,
             "layer coverage changed"
         );
+    }
+    // A genuine 40 cm gap between two channel layers must stay sharp. A
+    // one-sided secant across this jump would incorrectly fit a steep sheet.
+    // Also retain a dry edge: interpolation can cover the last subpixel, but
+    // cannot create a new full texel of water beyond it.
+    for dry in [false, true] {
+        let values = field(&|x, _| {
+            if x < 16. {
+                [1., 0.04, 2., 2.]
+            } else if dry {
+                [0.; 4]
+            } else {
+                [1.4, 0.04, 2., 2.]
+            }
+        });
+        queue.write_texture(
+            joined.as_image_copy(),
+            bytemuck::cast_slice(&values),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            joined.size(),
+        );
+        let edge = execute(
+            &device,
+            &queue,
+            source.clone(),
+            &[&group, &out_group],
+            &[&layout, &out_layout],
+            &buffer,
+            [8, 8],
+        );
+        let expected = if dry {
+            [[1., 1.], [1., 0.75], [1., 0.25], [0., 0.]]
+        } else {
+            [[1., 1.], [1., 0.75], [1.4, 0.75], [1.4, 1.]]
+        };
+        for (i, expected) in expected.iter().enumerate() {
+            assert!(
+                (edge[i * 4] - expected[0]).abs() < 0.000001,
+                "layer/dry edge depth changed: dry={dry}, index={i}, value={:?}",
+                &edge[i * 4..i * 4 + 2]
+            );
+            assert!(
+                (edge[i * 4 + 1] - expected[1]).abs() < 0.000001,
+                "layer/dry edge coverage changed: dry={dry}, index={i}, value={:?}",
+                &edge[i * 4..i * 4 + 2]
+            );
+        }
     }
 }
 

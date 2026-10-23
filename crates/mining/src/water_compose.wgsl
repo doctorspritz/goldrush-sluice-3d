@@ -20,18 +20,51 @@ fn sample_depth(pixel: vec2<f32>) -> vec2<f32> {
     let weights = array<f32,4>((1.-f.x)*(1.-f.y),f.x*(1.-f.y),(1.-f.x)*f.y,f.x*f.y);
     let reference = textureLoad(depths,clamp(vec2<i32>(round(p)),vec2(0),vec2<i32>(textureDimensions(depths))-vec2(1)),0);
     let channel=reference.a>0.5;
+    var inverse_slope=vec2(0.);var normal_per_depth=1.;
+    if channel && reference.r>0. {
+        // A steep continuous crest can change camera depth by much more than
+        // the edge threshold in one texel. Limit two-sided reciprocal-depth
+        // slopes so real layer steps cannot masquerade as a tilted sheet.
+        let size=vec2<i32>(textureDimensions(depths));
+        let center=clamp(vec2<i32>(round(p)),vec2(0),size-vec2(1));
+        for(var axis=0u;axis<2u;axis++) {
+            let offset=select(vec2(1,0),vec2(0,1),axis==1u);
+            let a=center-offset;let b=center+offset;
+            if any(a<vec2(0)) || any(b>=size) {continue;}
+            let left=textureLoad(depths,a,0);let right=textureLoad(depths,b,0);
+            if left.r>0. && right.r>0. && left.a>0.5 && right.a>0.5 {
+                let dl=1./reference.r-1./left.r;
+                let dr=1./right.r-1./reference.r;
+                inverse_slope[axis]=select(0.,sign(dl)*min(abs(dl),abs(dr)),dl*dr>0.);
+            }
+        }
+        let origin=view_point(pixel,reference.r);let ray=origin/reference.r;
+        let step=u.viewport.xy/vec2<f32>(size);
+        let tx=view_point(pixel+vec2(step.x,0.),reference.r)-origin
+            -ray*(reference.r*reference.r*inverse_slope.x);
+        let ty=view_point(pixel+vec2(0.,step.y),reference.r)-origin
+            -ray*(reference.r*reference.r*inverse_slope.y);
+        normal_per_depth=max(abs(dot(ray,normalize(cross(ty,tx)))),0.0001);
+    }
     var total = 0.; var weight = 0.;var inverse_depth=0.;
     for (var i=0u; i<4u; i++) {
         let tap=textureLoad(depths,clamp(q+offsets[i],vec2(0),vec2<i32>(textureDimensions(depths))-vec2(1)),0);
         let d=tap.r;
-        if d>0. && (reference.r<=0. || abs(d-reference.r)<u.viewport.z*2.) {
-            // The connected interface uses reciprocal view depth: interpolating
-            // depth itself curves a projective plane at each half-size texel.
-            // Do not borrow depth from a neighbouring detached outlet column.
-            // Detached water retains its accepted arithmetic upsampling path.
-            if channel && tap.a<=0.5 {continue;}
-            total += d*weights[i]; weight += weights[i];inverse_depth+=weights[i]/d;
+        if d<=0. {continue;}
+        var range_weight=1.;
+        if channel {
+            if tap.a<=0.5 {continue;}
+            let distance=vec2<f32>(q+offsets[i])-round(p);
+            let expected=1./max(1./reference.r+dot(inverse_slope,distance),0.000001);
+            let residual=abs(d-expected)*normal_per_depth;
+            // Taper geometric discontinuities; a hard camera-Z cutoff made
+            // both coverage and the visible muddy path jump at pixel phases.
+            range_weight=1.-smoothstep(u.viewport.z,u.viewport.z*2.,residual);
+        } else if reference.r>0. && abs(d-reference.r)>=u.viewport.z*2. {
+            continue;
         }
+        let w=weights[i]*range_weight;
+        total += d*w;weight += w;inverse_depth+=w/d;
     }
     return vec2(select(total/max(weight,0.0001),weight/max(inverse_depth,0.000001),channel),weight);
 }
@@ -302,16 +335,6 @@ fn channel_sun(normal:vec3<f32>,eye:vec3<f32>,light:vec3<f32>,variance:f32)->f32
         if clip.z/clip.w <= opaque + 0.000001 {return original;}
     }
     var normal=normalize(select(textureLoad(surface_normals,raw_pixel,0).xyz,river_surface.xyz,river));
-    if !river {
-    let left = sample_depth(q-vec2(1.,0.)).x; let right = sample_depth(q+vec2(1.,0.)).x;
-    let up = sample_depth(q-vec2(0.,1.)).x; let down = sample_depth(q+vec2(0.,1.)).x;
-    var dx = view_point(q+vec2(1.,0.),select(depth,right,right>0.)) - position;
-    var dy = view_point(q+vec2(0.,1.),select(depth,down,down>0.)) - position;
-    if left > 0. && (right <= 0. || abs(left-depth)<abs(right-depth)) { dx = position-view_point(q-vec2(1.,0.),left); }
-    if up > 0. && (down <= 0. || abs(up-depth)<abs(down-depth)) { dy = position-view_point(q-vec2(0.,1.),up); }
-    var n = normalize(cross(dy,dx)); if n.z < 0. { n = -n; }
-    normal = normalize((u.world_from_view * vec4(n,0.)).xyz);
-    }
     var surface_confidence=0.;
     var channel_column=vec2(0.);
     if in_channel {
@@ -323,6 +346,18 @@ fn channel_sun(normal:vec3<f32>,eye:vec3<f32>,light:vec3<f32>,variance:f32)->f32
             var surface_normal=surface.xyz;if dot(surface_normal,u.world_from_view[3].xyz-world.xyz)<0. {surface_normal = -surface_normal;}
             normal=surface_normal;
         }
+    }
+    // A valid joined normal already owns the connected surface. Only compute
+    // the four extra depth samples for detached water or a failed sheet fit.
+    if !river && (!in_channel || surface_confidence<=0.) {
+    let left = sample_depth(q-vec2(1.,0.)).x; let right = sample_depth(q+vec2(1.,0.)).x;
+    let up = sample_depth(q-vec2(0.,1.)).x; let down = sample_depth(q+vec2(0.,1.)).x;
+    var dx = view_point(q+vec2(1.,0.),select(depth,right,right>0.)) - position;
+    var dy = view_point(q+vec2(0.,1.),select(depth,down,down>0.)) - position;
+    if left > 0. && (right <= 0. || abs(left-depth)<abs(right-depth)) { dx = position-view_point(q-vec2(1.,0.),left); }
+    if up > 0. && (down <= 0. || abs(up-depth)<abs(down-depth)) { dy = position-view_point(q-vec2(0.,1.),up); }
+    var n = normalize(cross(dy,dx)); if n.z < 0. { n = -n; }
+    normal = normalize((u.world_from_view * vec4(n,0.)).xyz);
     }
     let flow=optical_sample.ba;
     // Dual-phase advection blends at resets, so a varying flow field cannot
