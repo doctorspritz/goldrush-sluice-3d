@@ -55,7 +55,14 @@ impl Kernel {
         axes
     }
 }
-pub(crate) fn kernels(points: &[Vec3], cell: f32, sample_volume_m3: f64) -> Vec<Kernel> {
+pub(crate) fn kernels(
+    points: &[Vec3],
+    cell: f32,
+    sample_volume_m3: f64,
+    channel: &[bool],
+) -> Vec<Kernel> {
+    assert_eq!(points.len(), channel.len());
+    let mut field = ChannelField::new(points, cell);
     let width = cell * 2.;
     let key = |p: Vec3| (p / width).floor().as_ivec3().to_array();
     let center =
@@ -73,7 +80,8 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32, sample_volume_m3: f64) -> Vec<
     let mut centroid_cache = HashMap::<[i32; 3], [(f32, Vec3); 8]>::new();
     points
         .iter()
-        .map(|&p| {
+        .enumerate()
+        .map(|(index, &p)| {
             let k = key(p);
             let kernel = *cache.entry(k).or_insert_with(|| {
                 let origin = center(k);
@@ -159,6 +167,11 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32, sample_volume_m3: f64) -> Vec<
                     bulk: support,
                 }
             });
+            // Warm the legacy PCA cache in its original particle order: its
+            // sparse-bin representative must stay identical for outlet drops.
+            if channel[index] {
+                return field.sample(p, cell, sample_volume_m3);
+            }
             // Continuous centroid relaxation joins the particle envelope at
             // crests. Interpolate occupied-bin moments, not bin-selected
             // centroids: a moving sample must not jump at an optical-cell edge.
@@ -215,6 +228,192 @@ pub(crate) fn kernels(points: &[Vec3], cell: f32, sample_volume_m3: f64) -> Vec<
         })
         .collect()
 }
+// Deposit and query continuous moments instead of selecting one bin's PCA.
+// A hard bin lookup changes the ellipsoid as a particle crosses a cell face,
+// even when its physical trajectory and represented volume are continuous.
+struct ChannelField {
+    nodes: HashMap<[i32; 3], Moments>,
+    neighbourhoods: HashMap<[i32; 3], Moments>,
+    stencils: HashMap<[i32; 3], [(Moments, Moments); 8]>,
+    width: f32,
+}
+impl Moments {
+    fn translated(self, offset: Vec3) -> Self {
+        Self {
+            count: self.count,
+            sum: self.sum + offset * self.count,
+            square: self.square
+                + outer(offset) * self.count
+                + Mat3::from_cols(
+                    self.sum * offset.x,
+                    self.sum * offset.y,
+                    self.sum * offset.z,
+                )
+                + Mat3::from_cols(
+                    offset * self.sum.x,
+                    offset * self.sum.y,
+                    offset * self.sum.z,
+                ),
+        }
+    }
+    fn accumulate(&mut self, other: Self, weight: f32) {
+        self.count += other.count * weight;
+        self.sum += other.sum * weight;
+        self.square += other.square * weight;
+    }
+}
+fn stencil(p: Vec3, width: f32) -> [([i32; 3], f32); 8] {
+    let grid = p / width - Vec3::splat(0.5);
+    let base = grid.floor().as_ivec3();
+    let f = grid - base.as_vec3();
+    std::array::from_fn(|n| {
+        let d = IVec3::new((n & 1) as i32, ((n >> 1) & 1) as i32, ((n >> 2) & 1) as i32);
+        let weight = Vec3::new(
+            if d.x == 0 { 1. - f.x } else { f.x },
+            if d.y == 0 { 1. - f.y } else { f.y },
+            if d.z == 0 { 1. - f.z } else { f.z },
+        )
+        .element_product();
+        ((base + d).to_array(), weight)
+    })
+}
+impl ChannelField {
+    fn center(&self, k: [i32; 3]) -> Vec3 {
+        (Vec3::from_array(k.map(|i| i as f32)) + Vec3::splat(0.5)) * self.width
+    }
+    fn new(points: &[Vec3], cell: f32) -> Self {
+        let mut out = Self {
+            nodes: HashMap::new(),
+            neighbourhoods: HashMap::new(),
+            stencils: HashMap::new(),
+            width: cell * 2.,
+        };
+        for &p in points {
+            for (k, weight) in stencil(p, out.width) {
+                if weight <= 0. {
+                    continue;
+                }
+                let q = p - out.center(k);
+                out.nodes.entry(k).or_default().accumulate(
+                    Moments {
+                        count: 1.,
+                        sum: q,
+                        square: outer(q),
+                    },
+                    weight,
+                );
+            }
+        }
+        out
+    }
+    fn sample(&mut self, p: Vec3, cell: f32, volume: f64) -> Kernel {
+        let grid = p / self.width - Vec3::splat(0.5);
+        let base = grid.floor().as_ivec3().to_array();
+        let origin = self.center(base);
+        let corners = if let Some(m) = self.stencils.get(&base) {
+            *m
+        } else {
+            let corners = std::array::from_fn(|n| {
+                let k = [
+                    base[0] + (n & 1) as i32,
+                    base[1] + ((n >> 1) & 1) as i32,
+                    base[2] + ((n >> 2) & 1) as i32,
+                ];
+                let center = self.center(k);
+                let local = self.nodes.get(&k).copied().unwrap_or_default();
+                let total = if let Some(m) = self.neighbourhoods.get(&k) {
+                    *m
+                } else {
+                    let mut m = Moments::default();
+                    for z in -1..=1 {
+                        for y in -1..=1 {
+                            for x in -1..=1 {
+                                let key = [k[0] + x, k[1] + y, k[2] + z];
+                                if let Some(n) = self.nodes.get(&key) {
+                                    m.accumulate(n.translated(self.center(key) - center), 1.);
+                                }
+                            }
+                        }
+                    }
+                    self.neighbourhoods.insert(k, m);
+                    m
+                };
+                (
+                    local.translated(center - origin),
+                    total.translated(center - origin),
+                )
+            });
+            self.stencils.insert(base, corners);
+            corners
+        };
+        let mut local = Moments::default();
+        let mut total = Moments::default();
+        for ((_, weight), (a, b)) in stencil(p, self.width).into_iter().zip(corners) {
+            local.accumulate(a, weight);
+            total.accumulate(b, weight);
+        }
+        let local = local.translated(origin - p);
+        let total = total.translated(origin - p);
+        let mean = total.sum / total.count.max(1e-8);
+        let (basis, variance) = eigen(total.square / total.count.max(1e-8) - outer(mean));
+        let spread = variance.max(Vec3::splat(cell * cell * 0.25));
+        let footprint = std::f64::consts::TAU.powf(1.5)
+            * ((spread.x as f64) * spread.y as f64 * spread.z as f64).sqrt();
+        let density = (total.count as f64 * volume / footprint) as f32;
+        let smooth = |t: f32| {
+            let t = t.clamp(0., 1.);
+            t * t * (3. - 2. * t)
+        };
+        let occupancy = smooth((density - 0.05) / 0.45);
+        let neighbours = smooth((total.count - 1.) / 11.);
+        let local_density = (local.count as f64 * volume / (self.width as f64).powi(3)) as f32;
+        let bulk = occupancy * neighbours * smooth((local_density - 0.025) / 0.02);
+        let values = variance.to_array();
+        let mut sorted = [0usize, 1, 2];
+        sorted.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
+        let mut normal = basis.col(sorted[0]);
+        if normal.y < 0. {
+            normal = -normal;
+        }
+        let planarity =
+            (1. - values[sorted[0]].max(0.) / values[sorted[1]].max(1e-10)).clamp(0., 1.);
+        // Continuous deposition broadens the density stencil. A front spray
+        // point must still lie near that measured layer before borrowing its
+        // bulk silhouette. Use the actual moment spread, not a velocity cap.
+        let sigma = values[sorted[0]].max(0.).sqrt();
+        let proximity = smooth(
+            ((2.5 * sigma).max(cell * 0.75) - normal.dot(mean).abs()) / sigma.max(cell * 0.25),
+        );
+        // An isotropic volume has no distinguished layer normal. Suppress the
+        // distance gate there; otherwise tiny eigenvector changes can falsely
+        // classify a compact, fully filled cloud as detached spray.
+        let layer = smooth((planarity - 0.1) / 0.4);
+        let bulk = bulk * (1. - layer * (1. - proximity));
+        let floor = variance.max_element().max(1e-10) * 0.16;
+        let positive = variance.max(Vec3::splat(floor));
+        let scale = Vec3::new(positive.x.sqrt(), positive.y.sqrt(), positive.z.sqrt());
+        let geometric = scale.element_product().cbrt().max(1e-10);
+        let ratio = (scale / geometric).clamp(Vec3::splat(0.45), Vec3::splat(1.8));
+        // Sparse water keeps spherical support. Blend continuously near twelve
+        // neighbours so crossing that former hard threshold cannot pop a drop.
+        let anisotropy = smooth((total.count - 4.) / 8.);
+        let ratio = Vec3::ONE.lerp(ratio, anisotropy);
+        Kernel {
+            axes: [
+                basis.x_axis * ratio.x,
+                basis.y_axis * ratio.y,
+                basis.z_axis * ratio.z,
+            ],
+            center: p,
+            channel_center: p
+                + (local.sum / local.count.max(1e-8)).clamp_length_max(cell * 0.75)
+                    * (0.8 * smooth((local_density - 0.05) / 0.45)),
+            normal,
+            planarity: planarity * anisotropy,
+            bulk,
+        }
+    }
+}
 /// Fixed small symmetric Jacobi solve. Eigenvectors remain orthonormal even for
 /// nearly isotropic water; no velocity-directed stretching or solver changes.
 fn eigen(m: Mat3) -> (Mat3, Vec3) {
@@ -265,6 +464,9 @@ fn eigen(m: Mat3) -> (Mat3, Vec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn kernels(points: &[Vec3], cell: f32, volume: f64) -> Vec<Kernel> {
+        super::kernels(points, cell, volume, &vec![true; points.len()])
+    }
     #[test]
     fn rotated_covariance_reconstruction_retains_orthogonal_axes() {
         let rotation = Mat3::from_rotation_z(0.63) * Mat3::from_rotation_y(0.27);
@@ -323,7 +525,11 @@ mod tests {
         // Coincident subdivision changes sampling, not represented occupancy.
         let split: Vec<_> = compact.iter().flat_map(|p| [*p, *p]).collect();
         let divided = kernels(&split, 0.01, 6.25e-8);
-        assert!(divided.iter().all(|k| k.bulk == 1.));
+        assert!(
+            divided.iter().all(|k| k.bulk == 1.),
+            "subdivided minimum bulk {}",
+            divided.iter().map(|k| k.bulk).fold(1_f32, f32::min)
+        );
     }
     #[test]
     fn spray_above_a_dense_sheet_does_not_borrow_its_bulk_silhouette() {
@@ -406,5 +612,44 @@ mod tests {
             };
             assert!((query(1e-6) - query(-1e-6)).length() < 1e-5);
         }
+    }
+    #[test]
+    fn curved_channel_shape_is_continuous_across_reconstruction_cells() {
+        let shape = |k: Kernel| {
+            k.channel_axes()
+                .into_iter()
+                .map(outer)
+                .fold(Mat3::ZERO, |a, b| a + b)
+        };
+        let sheet: Vec<_> = (-18..=18)
+            .flat_map(|x| {
+                (-10..=10).map(move |z| {
+                    let x = x as f32 * 0.003;
+                    let z = z as f32 * 0.003;
+                    Vec3::new(x, 0.15 + 0.12 * x + 7. * x * x + 2. * z * z, z)
+                })
+            })
+            .collect();
+        let mut worst = 0_f32;
+        for x in [-0.04, -0.02, 0., 0.02, 0.04] {
+            let at = |dx: f32| {
+                let mut p = sheet.clone();
+                p.push(Vec3::new(x + dx, 0.15 + 0.12 * x + 7. * x * x, 0.));
+                *kernels(&p, 0.01, 1.25e-7).last().unwrap()
+            };
+            let a = at(-1e-7);
+            let b = at(1e-7);
+            let error = (shape(a) - shape(b))
+                .to_cols_array()
+                .into_iter()
+                .map(f32::abs)
+                .fold(0_f32, f32::max);
+            worst = worst.max(error);
+            println!(
+                "boundary {x}: shape jump {error}, support {} -> {}",
+                a.bulk, b.bulk
+            );
+        }
+        assert!(worst < 0.001, "reconstruction-cell shape jump {worst}");
     }
 }

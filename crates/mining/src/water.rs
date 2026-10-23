@@ -26,6 +26,16 @@ use std::sync::{
     Arc,
 };
 
+fn fatal_pipeline_error(error: &bevy::shader::PipelineCacheError) -> bool {
+    // Match Bevy's retryable asset states. A queued embedded shader may be
+    // extracted one frame after the pipeline; this is not a compile failure.
+    !matches!(
+        error,
+        bevy::shader::PipelineCacheError::ShaderNotLoaded(_)
+            | bevy::shader::PipelineCacheError::ShaderImportNotYetAvailable
+    )
+}
+
 const MAX_SPLATS: usize = 65_536;
 const MAX_RENDER_SPLATS: usize = MAX_SPLATS * 2;
 type PresentationKey = (u64, u32, Option<(mining_sim::Vec3, f32, f32)>);
@@ -601,6 +611,9 @@ impl ViewNode for FluidNode {
             settings.compose_id,
         ] {
             if let CachedPipelineState::Err(error) = cache.get_render_pipeline_state(id) {
+                if !fatal_pipeline_error(error) {
+                    return Ok(());
+                }
                 if health.swap(2, Ordering::AcqRel) != 2 {
                     eprintln!("WATER RENDER FAILED: {error}");
                 }
@@ -958,6 +971,10 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
         &points,
         sluice.profile.cell(),
         sluice.profile.particle_m3() * weight as f64,
+        &sampled
+            .iter()
+            .map(|(_, _, _, kind, _)| *kind == 0.)
+            .collect::<Vec<_>>(),
     );
     sampled
         .into_iter()
@@ -1062,6 +1079,20 @@ fn instances(sluice: &mining_sim::Sluice) -> Vec<InstanceData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pending_shader_assets_wait_but_real_compilation_errors_fail() {
+        use bevy::shader::PipelineCacheError;
+        assert!(!fatal_pipeline_error(&PipelineCacheError::ShaderNotLoaded(
+            Handle::<Shader>::default().id()
+        )));
+        assert!(!fatal_pipeline_error(
+            &PipelineCacheError::ShaderImportNotYetAvailable
+        ));
+        assert!(fatal_pipeline_error(
+            &PipelineCacheError::CreateShaderModule("invalid shader".into())
+        ));
+    }
+
     #[test]
     #[ignore = "bounded render profiling; run explicitly with --ignored --nocapture"]
     fn profile_surface_reconstruction_and_correspondence() {
