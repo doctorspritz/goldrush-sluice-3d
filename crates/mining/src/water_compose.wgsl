@@ -98,6 +98,29 @@ fn channel_axis(pixel:vec2<i32>,direction:vec2<i32>,size:vec2<i32>,depth:f32)->v
     return vec4(slope*confidence,(lo+hi)*0.5,
                 curvature*confidence,confidence);
 }
+// Axis stencils cannot see mixed curvature. Without this term an oblique
+// crest has a different normal/optical footprint from the same crest viewed
+// along a screen axis. Require all four diagonal samples to agree with one
+// curved sheet, so an unrelated layer cannot supply its missing curvature.
+fn channel_cross(pixel:vec2<i32>,size:vec2<i32>,origin:f32,slope:vec2<f32>,curvature:vec2<f32>)->f32 {
+    let offsets=array<vec2<i32>,4>(vec2(-3,-3),vec2(3,-3),vec2(-3,3),vec2(3,3));
+    var values:array<f32,4>;var mixed=0.;
+    for(var i=0u;i<4u;i++) {
+        let q=pixel+offsets[i];
+        if any(q<vec2(0)) || any(q>=size) {return 0.;}
+        let tap=textureLoad(depths,q,0);
+        if tap.r<=0. || tap.a<=0.5 {return 0.;}
+        let offset=vec2<f32>(offsets[i]);
+        values[i]=1./tap.r-origin-dot(slope,offset)-0.5*dot(curvature,offset*offset);
+        mixed+=values[i]/(offset.x*offset.y)*0.25;
+    }
+    var error=0.;
+    for(var i=0u;i<4u;i++) {
+        error=max(error,abs(values[i]-mixed*f32(offsets[i].x*offsets[i].y)));
+    }
+    let tolerance=max(max(abs(slope.x),abs(slope.y))*1.5,0.00001);
+    return mixed*(1.-smoothstep(tolerance,tolerance*2.,error));
+}
 struct ChannelSurface {normal:vec4<f32>,column:vec2<f32>};
 // Gather every texel in the footprint. Striding over alternating texels makes
 // the surface and its turbidity change when the half-size pixel phase changes.
@@ -113,13 +136,18 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
     // normal samples about that sheet, rather than about the camera-Z depth
     // of one pixel. The latter cuts a continuous crest into opacity islands.
     var inverse_origin=1./depth;var inverse_slope=vec2(0.);var inverse_curvature=vec2(0.);
-    var anchors=0.;var anchor_sum=0.;var anchor_weight=0.;
+    var anchors=0.;var anchor_sum=0.;var anchor_weight=0.;var curvature_confidence=1.;
     for(var axis=0u;axis<2u;axis++) {
         let direction=select(vec2(1,0),vec2(0,1),axis==1u);
         let tangent=channel_axis(center,direction,size,depth);
         inverse_slope[axis]=tangent.x;inverse_curvature[axis]=tangent.z;
         anchor_sum+=tangent.y*tangent.w;anchor_weight+=tangent.w;
         anchors+=select(0.,1.,tangent.w==1.);
+        curvature_confidence=min(curvature_confidence,tangent.w);
+    }
+    var mixed_curvature=0.;
+    if curvature_confidence>0. {
+        mixed_curvature=channel_cross(center,size,anchor_sum/anchor_weight,inverse_slope,inverse_curvature)*curvature_confidence;
     }
     if anchor_weight>0. {
         // Translate the quadratic and its tangent together to the actual
@@ -127,9 +155,9 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         // on either side of a half-size texel phase boundary.
         let offset=p-vec2<f32>(center);
         let fitted=anchor_sum/anchor_weight+dot(inverse_slope,offset)
-            +0.5*dot(inverse_curvature,offset*offset);
+            +0.5*dot(inverse_curvature,offset*offset)+mixed_curvature*offset.x*offset.y;
         inverse_origin=mix(1./depth,fitted,min(anchor_weight,1.));
-        inverse_slope+=inverse_curvature*offset;
+        inverse_slope+=inverse_curvature*offset+mixed_curvature*offset.yx;
     }
     // One screen texel spans much more liquid along a grazing sheet than
     // across it. Use its projective tangent metric for every final gather,
@@ -158,7 +186,7 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         let raw=textureLoad(raw_depths,q,0);
         if raw.r<=0. || raw.g>= -0.5 {continue;}
         let distance=vec2<f32>(q)-p;
-        let expected=1./max(inverse_origin+dot(inverse_slope,distance)+0.5*dot(inverse_curvature,distance*distance),0.000001);
+        let expected=1./max(inverse_origin+dot(inverse_slope,distance)+0.5*dot(inverse_curvature,distance*distance)+mixed_curvature*distance.x*distance.y,0.000001);
         // A profile spans 51 mm and the local filter another 35 mm. Taper
         // this visibility gate instead of switching whole muddy texels on/off.
         let visibility=1.-smoothstep(0.051,0.086,abs(raw.r-expected));
@@ -185,7 +213,8 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
             let fit_edge=clamp(1.-abs(residual)/0.070,0.,1.);
             let fit_window=fit_edge*fit_edge*fit_edge*(fit_edge*(fit_edge*6.-15.)+10.);
             let pw=taper*fit_window*exp(-max(dot(distance,distance)/12.,normal_spatial)-delta*delta);
-            let z=1./shared_depth-1./depth-0.5*dot(inverse_curvature,distance*distance);
+            let z=1./shared_depth-1./depth-0.5*dot(inverse_curvature,distance*distance)
+                -mixed_curvature*distance.x*distance.y;
             position_sum+=vec3(distance,z)*pw;
             second+=vec3(distance.x*distance.x,distance.x*distance.y,distance.y*distance.y)*pw;
             cross_depth+=distance*z*pw;plane_weight+=pw;

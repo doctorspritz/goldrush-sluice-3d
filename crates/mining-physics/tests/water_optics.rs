@@ -1494,115 +1494,132 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
     // A resolved curved sheet is not a particle bump. Match its local
     // analytic tangent and a smoothly varying optical path, through subpixel
     // phases, rather than borrowing a plane fitted beyond the crest.
-    let curved_depth = |x: f32, y: f32| {
-        let x = x - 16.;
-        1. / (1. + 0.015 * x + 0.007 * (y - 16.) + 0.0015 * x * x)
-    };
-    for (texture, values) in [
-        (&raw, field(&|x, y| [curved_depth(x, y), -1., 0., 0.])),
-        (
-            &joined,
-            field(&|x, y| {
-                let path = 0.04 + 0.0015 * (x - 16.) + 0.0006 * (y - 16.);
-                [curved_depth(x, y), path, path * 250., 2.]
-            }),
-        ),
-    ] {
-        queue.write_texture(
-            texture.as_image_copy(),
-            bytemuck::cast_slice(&values),
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(32 * 16),
-                rows_per_image: None,
-            },
-            texture.size(),
-        );
-    }
-    let curved_source = format!(
-        "{}\n{}",
-        include_str!("../../mining/src/water_compose.wgsl"),
-        r#"
+    // Exercise both an axis-aligned crest and one oblique to the screen.
+    for (cross, yy) in [(0f32, 0f32), (0.003, 0.0015), (-0.003, 0.0015)] {
+        let curved_depth = |x: f32, y: f32| {
+            let x = x - 16.;
+            1. / (1.
+                + 0.015 * x
+                + 0.007 * (y - 16.)
+                + 0.0015 * x * x
+                + cross * x * (y - 16.)
+                + yy * (y - 16.) * (y - 16.))
+        };
+        for (texture, values) in [
+            (&raw, field(&|x, y| [curved_depth(x, y), -1., 0., 0.])),
+            (
+                &joined,
+                field(&|x, y| {
+                    let path = 0.04 + 0.0015 * (x - 16.) + 0.0006 * (y - 16.);
+                    [curved_depth(x, y), path, path * 250., 2.]
+                }),
+            ),
+        ] {
+            queue.write_texture(
+                texture.as_image_copy(),
+                bytemuck::cast_slice(&values),
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(32 * 16),
+                    rows_per_image: None,
+                },
+                texture.size(),
+            );
+        }
+        let curved_source = format!(
+            "{}\n{}",
+            include_str!("../../mining/src/water_compose.wgsl"),
+            r#"
 @group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
 @compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
  let pixel=vec2<f32>(p.xy)+vec2(24.5,24.5);
  let q=pixel*0.5-0.5;
  let x=q.x-16.;
- let depth=1./(1.+0.015*x+0.007*(q.y-16.)+0.0015*x*x);
+ let depth=1./(1.+0.015*x+0.007*(q.y-16.)+0.0015*x*x+CROSS*x*(q.y-16.)+YY*(q.y-16.)*(q.y-16.));
  let joined=channel_surface(pixel,depth);
  let i=(p.y*64u+p.x)*2u;
  result[i]=joined.normal;
  result[i+1u]=vec4(joined.column,joined.column.y/max(joined.column.x,0.000001),depth);
 }"#
-    );
-    let curved = execute(
-        &device,
-        &queue,
-        curved_source,
-        &[&group, &out_group],
-        &[&layout, &out_layout],
-        &buffer,
-        [2, 2],
-    );
-    let point = |px: f64, py: f64| {
-        let x = px * 0.5 - 0.5 - 16.;
-        let y = py * 0.5 - 0.5 - 16.;
-        let depth = 1. / (1. + 0.015 * x + 0.007 * y + 0.0015 * x * x);
-        glam::DVec3::new(
-            0.2 * (px / 32. - 1.) * depth,
-            0.2 * (1. - py / 32.) * depth,
-            -depth,
-        )
-    };
-    let mut curved_normal_error = 0f64;
-    let mut curved_path_error = 0f64;
-    for y in 0..16 {
-        for x in 0..16 {
-            let i = (y * 64 + x) * 8;
-            let v = &curved[i..i + 8];
-            let px = x as f64 + 24.5;
-            let py = y as f64 + 24.5;
-            let dx = point(px + 0.0001, py) - point(px - 0.0001, py);
-            let dy = point(px, py + 0.0001) - point(px, py - 0.0001);
-            let expected = dy.cross(dx).normalize();
-            let error =
-                (glam::DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64) - expected).length();
-            curved_normal_error = curved_normal_error.max(error);
-            let path = 0.04 + 0.0015 * (px * 0.5 - 16.5) + 0.0006 * (py * 0.5 - 16.5);
-            curved_path_error = curved_path_error.max((v[4] as f64 - path).abs() / path);
-            assert!(
-                (v[6] - 250.).abs() < 0.001,
-                "curved uniform slurry changed concentration: {v:?}"
-            );
+            .replace("CROSS", &cross.to_string())
+            .replace("YY", &yy.to_string())
+        );
+        let curved = execute(
+            &device,
+            &queue,
+            curved_source,
+            &[&group, &out_group],
+            &[&layout, &out_layout],
+            &buffer,
+            [2, 2],
+        );
+        let point = |px: f64, py: f64| {
+            let x = px * 0.5 - 0.5 - 16.;
+            let y = py * 0.5 - 0.5 - 16.;
+            let depth = 1.
+                / (1.
+                    + 0.015 * x
+                    + 0.007 * y
+                    + 0.0015 * x * x
+                    + cross as f64 * x * y
+                    + yy as f64 * y * y);
+            glam::DVec3::new(
+                0.2 * (px / 32. - 1.) * depth,
+                0.2 * (1. - py / 32.) * depth,
+                -depth,
+            )
+        };
+        let mut curved_normal_error = 0f64;
+        let mut curved_path_error = 0f64;
+        for y in 0..16 {
+            for x in 0..16 {
+                let i = (y * 64 + x) * 8;
+                let v = &curved[i..i + 8];
+                let px = x as f64 + 24.5;
+                let py = y as f64 + 24.5;
+                let dx = point(px + 0.0001, py) - point(px - 0.0001, py);
+                let dy = point(px, py + 0.0001) - point(px, py - 0.0001);
+                let expected = dy.cross(dx).normalize();
+                let error =
+                    (glam::DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64) - expected).length();
+                curved_normal_error = curved_normal_error.max(error);
+                let path = 0.04 + 0.0015 * (px * 0.5 - 16.5) + 0.0006 * (py * 0.5 - 16.5);
+                curved_path_error = curved_path_error.max((v[4] as f64 - path).abs() / path);
+                assert!(
+                    (v[6] - 250.).abs() < 0.001,
+                    "curved uniform slurry changed concentration: {v:?}"
+                );
+            }
         }
+        println!("curved sheet cross={cross} yy={yy} max normal error={curved_normal_error}, optical path relative error={curved_path_error}");
+        assert!(
+            curved_normal_error < 0.001,
+            "resolved crest acquired false normals: {curved_normal_error}"
+        );
+        assert!(
+            curved_path_error < 0.002,
+            "curved slurry acquired optical patches: {curved_path_error}"
+        );
     }
-    println!("curved sheet max normal error={curved_normal_error}, optical path relative error={curved_path_error}");
-    assert!(
-        curved_normal_error < 0.001,
-        "resolved crest acquired false normals: {curved_normal_error}"
-    );
-    assert!(
-        curved_path_error < 0.002,
-        "curved slurry acquired optical patches: {curved_path_error}"
-    );
 
     // Two genuinely separate flat layers must keep their independent normals
     // and optical columns, even when the old opposite-side secant suggested
     // an inclined sheet through the step. Probe exact half-size texel centres
     // so the test does not confuse deliberate coverage antialiasing with bleed.
-    for axis in 0..2 {
+    for axis in 0..3 {
+        let back = |x: f32, y: f32| [x, y, (x + y) * 0.5][axis] >= 16.;
         for (texture, values) in [
             (
                 &raw,
                 field(&|x, y| {
-                    let back = [x, y][axis] >= 16.;
+                    let back = back(x, y);
                     [if back { 1.12 } else { 1. }, -1., 0., 0.]
                 }),
             ),
             (
                 &joined,
                 field(&|x, y| {
-                    let back = [x, y][axis] >= 16.;
+                    let back = back(x, y);
                     [
                         if back { 1.12 } else { 1. },
                         0.04,
@@ -1630,7 +1647,8 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
 @group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
 @compute @workgroup_size(8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {{
  let index=12u+p.x;
- let texel=select(vec2(index,16u),vec2(16u,index),{axis}u==1u);
+ var texel=select(vec2(index,16u),vec2(16u,index),{axis}u==1u);
+ if {axis}u==2u {{texel=vec2(index,index);}}
  let pixel=(vec2<f32>(texel)+0.5)*2.;
  let depth=select(1.,1.12,index>=16u);
  let joined=channel_surface(pixel,sample_depth(pixel).x);
