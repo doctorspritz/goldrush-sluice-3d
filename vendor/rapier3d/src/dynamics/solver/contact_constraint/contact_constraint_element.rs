@@ -3,29 +3,68 @@
 /// solution (K+alpha I)lambda=K old-v, with alpha>=0. Positive-definite K
 /// makes the radius monotone and ||K old-v||/limit bounds the root above.
 #[cfg(feature="dim3")]
-pub(super) fn friction_disk<N:ScalarType>(k11:N,k22:N,k12:N,old:na::Vector2<N>,v:na::Vector2<N>,limit:N)->na::Vector2<N> {
-    let b=na::vector![k11*old.x+k12*old.y-v.x,k12*old.x+k22*old.y-v.y];
-    let inverse=crate::utils::simd_inv(k11*k22-k12*k12);
-    let trial=na::vector![(k22*b.x-k12*b.y)*inverse,(k11*b.y-k12*b.x)*inverse];
-    let sliding=(trial.x*trial.x+trial.y*trial.y).simd_gt(limit*limit);
-    if !sliding.any() {return trial;}
-    let positive=limit.simd_gt(N::zero());
-    let bx=b.x.select(positive,N::zero());let by=b.y.select(positive,N::zero());
-    let safe_limit=limit.select(positive,N::one());
-    let mut low=N::zero();let mut high=(bx*bx+by*by).simd_sqrt()/safe_limit;
-    let solve=|alpha:N| {
-        let a=k11+alpha;let d=k22+alpha;
-        let inv=crate::utils::simd_inv(a*d-k12*k12);
-        na::vector![(d*bx-k12*by)*inv,(a*by-k12*bx)*inv]
+pub(super) fn friction_disk<N: ScalarType>(
+    k11: N,
+    k22: N,
+    k12: N,
+    old: na::Vector2<N>,
+    v: na::Vector2<N>,
+    limit: N,
+) -> na::Vector2<N> {
+    // Unilateral contacts often have zero normal impulse in every SIMD lane.
+    // Their Coulomb disk is exactly {0}; no inverse mass or root solve is needed.
+    // Return the new impulse, not from the caller: its old warm-start impulse
+    // must still be removed from both bodies by the ordinary delta update.
+    let positive = limit.simd_gt(N::zero());
+    if !positive.any() {
+        return na::Vector2::zeros();
+    }
+    let b = na::vector![
+        k11 * old.x + k12 * old.y - v.x,
+        k12 * old.x + k22 * old.y - v.y
+    ];
+    let inverse = crate::utils::simd_inv(k11 * k22 - k12 * k12);
+    let trial = na::vector![
+        (k22 * b.x - k12 * b.y) * inverse,
+        (k11 * b.y - k12 * b.x) * inverse
+    ];
+    let sliding = (trial.x * trial.x + trial.y * trial.y).simd_gt(limit * limit);
+    if !sliding.any() {
+        return trial;
+    }
+    // A frictionless lane can be outside its zero-radius disk while every
+    // positive-radius lane sticks. It must not trigger 24 bisections for all
+    // lanes. Mixed batches containing real sliding keep the original solve.
+    if !(sliding & positive).any() {
+        return na::vector![
+            trial.x.select(positive, N::zero()),
+            trial.y.select(positive, N::zero())
+        ];
+    }
+    let bx = b.x.select(positive, N::zero());
+    let by = b.y.select(positive, N::zero());
+    let safe_limit = limit.select(positive, N::one());
+    let mut low = N::zero();
+    let mut high = (bx * bx + by * by).simd_sqrt() / safe_limit;
+    let solve = |alpha: N| {
+        let a = k11 + alpha;
+        let d = k22 + alpha;
+        let inv = crate::utils::simd_inv(a * d - k12 * k12);
+        na::vector![(d * bx - k12 * by) * inv, (a * by - k12 * bx) * inv]
     };
     for _ in 0..24 {
-        let mid=(low+high)*N::splat(0.5);let p=solve(mid);
-        let outside=(p.x*p.x+p.y*p.y).simd_gt(limit*limit);
-        low=mid.select(outside,low);high=high.select(outside,mid);
+        let mid = (low + high) * N::splat(0.5);
+        let p = solve(mid);
+        let outside = (p.x * p.x + p.y * p.y).simd_gt(limit * limit);
+        low = mid.select(outside, low);
+        high = high.select(outside, mid);
     }
     // Feasible-side root, followed only by a floating-point norm guard.
-    let boundary=solve(high).simd_cap_magnitude(limit);
-    na::vector![boundary.x.select(sliding,trial.x),boundary.y.select(sliding,trial.y)]
+    let boundary = solve(high).simd_cap_magnitude(limit);
+    na::vector![
+        boundary.x.select(sliding, trial.x),
+        boundary.y.select(sliding, trial.y)
+    ]
 }
 use crate::dynamics::solver::SolverVel;
 use crate::math::{DIM, TangentImpulse};
@@ -999,5 +1038,120 @@ mod maximum_dissipation_tests {
         assert_eq!(p,na::vector![0.,0.]);
         let p=friction_disk(2f32,3.,0.2,na::vector![0.,0.],na::vector![-0.1,0.2],100.);
         assert!((na::vector![2.*p.x+0.2*p.y-0.1,0.2*p.x+3.*p.y+0.2]).norm()<1e-6);
+    }
+}
+
+#[cfg(all(test, feature = "dim3"))]
+mod friction_batch_tests {
+    use super::{ScalarType, friction_disk};
+    use crate::math::{Real, SIMD_WIDTH, SimdReal};
+    use simba::simd::{SimdBool, SimdValue};
+
+    // Retained pre-optimization implementation is an arithmetic differential
+    // control. Independent energy/slip tests above remain the physical oracle.
+    fn legacy_friction_disk<N: ScalarType>(
+        k11: N,
+        k22: N,
+        k12: N,
+        old: na::Vector2<N>,
+        v: na::Vector2<N>,
+        limit: N,
+    ) -> na::Vector2<N> {
+        let b = na::vector![
+            k11 * old.x + k12 * old.y - v.x,
+            k12 * old.x + k22 * old.y - v.y
+        ];
+        let inverse = crate::utils::simd_inv(k11 * k22 - k12 * k12);
+        let trial = na::vector![
+            (k22 * b.x - k12 * b.y) * inverse,
+            (k11 * b.y - k12 * b.x) * inverse
+        ];
+        let sliding = (trial.x * trial.x + trial.y * trial.y).simd_gt(limit * limit);
+        if !sliding.any() {
+            return trial;
+        }
+        let positive = limit.simd_gt(N::zero());
+        let bx = b.x.select(positive, N::zero());
+        let by = b.y.select(positive, N::zero());
+        let safe_limit = limit.select(positive, N::one());
+        let mut low = N::zero();
+        let mut high = (bx * bx + by * by).simd_sqrt() / safe_limit;
+        let solve = |alpha: N| {
+            let a = k11 + alpha;
+            let d = k22 + alpha;
+            let inv = crate::utils::simd_inv(a * d - k12 * k12);
+            na::vector![(d * bx - k12 * by) * inv, (a * by - k12 * bx) * inv]
+        };
+        for _ in 0..24 {
+            let mid = (low + high) * N::splat(0.5);
+            let p = solve(mid);
+            let outside = (p.x * p.x + p.y * p.y).simd_gt(limit * limit);
+            low = mid.select(outside, low);
+            high = high.select(outside, mid);
+        }
+        // Feasible-side root, followed only by a floating-point norm guard.
+        let boundary = solve(high).simd_cap_magnitude(limit);
+        na::vector![
+            boundary.x.select(sliding, trial.x),
+            boundary.y.select(sliding, trial.y)
+        ]
+    }
+
+    #[test]
+    fn mixed_contact_lanes_preserve_the_full_projection() {
+        // [k11,k22,k12,old_x,old_y,v_x,v_y,limit]. Include zero-radius
+        // lanes with a previous impulse, sticking lanes and actual sliding.
+        let cases: [[Real; 8]; 8] = [
+            [2., 3., 0.2, 0.1, -0.1, -3., 4., 0.],
+            [2., 3., 0.2, 0., 0., -0.1, 0.2, 10.],
+            [1., 9., 0.3, 0., 0., -2., -2., 0.4],
+            [9., 1., -0.7, 0.2, -0.1, 3., 4., 0.3],
+            [2., 2., 0., 0., 0., -0.6, -0.8, 0.5],
+            [0.002, 30., 0.01, 0.5, 0.2, 1., -1., 0.0001],
+            [1., 1., 0., 0., 0., 0., 0., 0.],
+            [2., 3., 0.2, 0.1, -0.1, -0.01, 0.02, 100.],
+        ];
+        for batch in 0..512 {
+            let lanes: [[Real; 8]; SIMD_WIDTH] = std::array::from_fn(|i| {
+                // Uniform zero/sticking batches exercise the new shortcuts;
+                // interleaved combinations exercise lane isolation.
+                if batch < 8 {
+                    cases[batch]
+                } else {
+                    cases[(batch + i * (batch / 8)) % cases.len()]
+                }
+            });
+            let pack = |field| {
+                SimdReal::from(std::array::from_fn::<_, SIMD_WIDTH, _>(|i| lanes[i][field]))
+            };
+            let old = na::vector![pack(3), pack(4)];
+            let v = na::vector![pack(5), pack(6)];
+            let actual = friction_disk(pack(0), pack(1), pack(2), old, v, pack(7));
+            let expected = legacy_friction_disk(pack(0), pack(1), pack(2), old, v, pack(7));
+            for lane in 0..SIMD_WIDTH {
+                for axis in 0..2 {
+                    let a = actual[axis].extract(lane);
+                    let b = expected[axis].extract(lane);
+                    assert!(a.is_finite() && b.is_finite());
+                    assert_eq!(a, b, "batch={batch} lane={lane} axis={axis}");
+                    if a != 0. {
+                        assert_eq!(a.to_bits(), b.to_bits());
+                    }
+                }
+                let c = lanes[lane];
+                let scalar = friction_disk(
+                    c[0],
+                    c[1],
+                    c[2],
+                    na::vector![c[3], c[4]],
+                    na::vector![c[5], c[6]],
+                    c[7],
+                );
+                // SIMD may take a boundary solve because another lane slides;
+                // compare its physical result with the scalar policy too.
+                assert!((actual.x.extract(lane) - scalar.x).abs() <= 1e-6);
+                assert!((actual.y.extract(lane) - scalar.y).abs() <= 1e-6);
+            }
+        }
     }
 }

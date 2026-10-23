@@ -337,5 +337,11 @@
     "tests/unsync_callbacks.rs": "b824ac5d840827901c9ba0e8692ad8072ff64093106c310d81488994808afe89",
     "tests/whole_island_sleep.rs": "9ab06fe9a1efbd833324cb441440768e647654417e2fc3354719754c64281917",
     "tests/zero_dt_step.rs": "5739f4c3cb6eb5c12b0ecbe5822477a2b6e762d78d0c2a83f5d8174a048b74de"
-  }
+  },
+  "local_optimizations": [
+    {
+      "file": "src/dynamics/solver/contact_constraint/contact_constraint_element.rs",
+      "scope": "Exact zero-radius and mixed frictionless/sticking SIMD shortcuts in the opt-in metric projection. The caller still applies the complete impulse delta. Batches containing positive-radius sliding retain the original 24 bisections and feasible-side result. Ordinary default-false arithmetic and published original-file hashes remain unchanged."
+    }
+  ]
 }
