@@ -173,6 +173,25 @@ fn smooth_surface(pixel:vec2<i32>,direction:vec2<i32>)->vec4<f32> {
     return smooth_surface_inner(pixel,direction,true);
 }
 fn geometry_surface(pixel:vec2<i32>,direction:vec2<i32>)->vec4<f32> {
+    let center=textureLoad(depths,pixel,0);
+    if center.r>0. && center.a>0.5 {
+        let near=textureLoad(density_near,pixel,0);
+        let far=textureLoad(density_far,pixel,0);
+        let peak=max(max(max(near.x,near.y),max(near.z,near.w)),
+                     max(max(far.x,far.y),max(far.z,far.w)));
+        let connected=smoothstep(0.05,0.5,peak)*smoothstep(0.1,0.7,center.a-1.);
+        if connected>0. {
+            // Broad shoulder fits retain a parabola but flatten resolved
+            // travelling ridges before the final normal/optical gather. Use
+            // the compact high-order filter for a supported connected sheet.
+            // It removes sampling noise without repeatedly widening the wave;
+            // water/sediment moments retain their separate conservative pass.
+            let depth=resolved_depth(pixel,direction,center);
+            if connected==1. {return vec4(depth,center.gba);}
+            let sparse=smooth_surface_inner(pixel,direction,false);
+            return vec4(mix(sparse.r,depth,connected),sparse.gba);
+        }
+    }
     return smooth_surface_inner(pixel,direction,false);
 }
 // Reject unresolved alternating texels without broadening a resolved crest.

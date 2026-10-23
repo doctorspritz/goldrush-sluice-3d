@@ -971,6 +971,72 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
         resolved[0]
     );
 
+    // A non-quadratic travelling ridge is resolved geometry too. The broad
+    // shoulder model can reproduce a parabola while flattening this wave.
+    // Judge the production geometry pass, before the compositor sees it.
+    for axis in 0..2 {
+        for phase in [0f32, 0.25, 0.5, 0.75] {
+            let ridge: Vec<f32> = (0..256)
+                .flat_map(|i| {
+                    let x = if axis == 0 {
+                        (i % 32) as f32 - 16.
+                    } else {
+                        (i / 32) as f32 - 4.
+                    } - phase;
+                    let inverse = 1. + 0.02 * (x * std::f32::consts::TAU / 12.).cos();
+                    [1. / inverse, 0.04, 10., 2.]
+                })
+                .collect();
+            queue.write_texture(
+                textures[0].as_image_copy(),
+                bytemuck::cast_slice(&ridge),
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(32 * 16),
+                    rows_per_image: None,
+                },
+                textures[0].size(),
+            );
+            let wave = execute(
+                &device,
+                &queue,
+                source.replace(
+                    "smooth_surface(vec2(16,i32(p.y)),vec2(1,0))",
+                    if axis == 0 {
+                        "geometry_surface(vec2(16,4),vec2(1,0))"
+                    } else {
+                        "geometry_surface(vec2(16,4),vec2(0,1))"
+                    },
+                ),
+                &[&group, &out_group],
+                &[&layout, &out_layout],
+                &buffer,
+                [1, 1],
+            );
+            let expected = 1. / (1. + 0.02 * (phase * std::f32::consts::TAU / 12.).cos());
+            let error = (wave[0] - expected).abs();
+            println!("resolved travelling ridge axis={axis} phase={phase} geometry error={error}m");
+            assert!(
+                error < 0.00002,
+                "resolved travelling ridge rounded: axis={axis}, phase={phase}, error={error}m"
+            );
+            assert!(
+                (wave[2] / wave[1] - 250.).abs() < 0.001,
+                "ridge acquired a muddy patch"
+            );
+        }
+    }
+    queue.write_texture(
+        textures[0].as_image_copy(),
+        bytemuck::cast_slice(&crest),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(32 * 16),
+            rows_per_image: None,
+        },
+        textures[0].size(),
+    );
+
     let crest_polish = source.replace(
         "smooth_surface(vec2(16,i32(p.y)),vec2(1,0))",
         "optical_surface(vec2(16,4),vec2(1,0))",
