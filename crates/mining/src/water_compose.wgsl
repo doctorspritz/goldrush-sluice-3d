@@ -38,6 +38,26 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
     let size=vec2<i32>(textureDimensions(surface_normals));
     let p=pixel*vec2<f32>(size)/u.viewport.xy-0.5;
     let center=vec2<i32>(round(p));
+    // Inverse view depth is affine on an inclined sheet. Reject optical and
+    // normal samples about that sheet, rather than about the camera-Z depth
+    // of one pixel. The latter cuts a continuous crest into opacity islands.
+    var inverse_origin=1./depth;var inverse_slope=vec2(0.);
+    var anchors=0.;var anchor_sum=0.;
+    for(var axis=0u;axis<2u;axis++) {
+        let offset=select(vec2(3,0),vec2(0,3),axis==1u);
+        let a=clamp(center-offset,vec2(0),size-vec2(1));
+        let b=clamp(center+offset,vec2(0),size-vec2(1));
+        let left=textureLoad(depths,a,0);let right=textureLoad(depths,b,0);
+        let span=f32((b-a)[axis]);
+        if left.r>0. && right.r>0. && left.a>0.5 && right.a>0.5 && span>0. {
+            let slope=(1./right.r-1./left.r)/span;
+            inverse_slope[axis]=slope;
+            anchor_sum+=(1./left.r+1./right.r)*0.5
+                +slope*(f32(center[axis])-f32(a[axis]+b[axis])*0.5);
+            anchors+=1.;
+        }
+    }
+    if anchors>0. {inverse_origin=anchor_sum/anchors+dot(inverse_slope,p-vec2<f32>(center));}
     let pixel_m=depth*4.*abs(u.view_from_clip[1].y)/u.viewport.y;
     let radius=clamp(0.030/max(pixel_m,0.00001),2.5,5.);
     for(var y=-4;y<=4;y++){for(var x=-4;x<=4;x++){
@@ -45,26 +65,27 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         if any(q<vec2(0)) || any(q>=size) {continue;}
         let raw=textureLoad(raw_depths,q,0);
         if raw.r<=0. || raw.g>= -0.5 {continue;}
-        // A profile spans 51 mm and the local filter another 35 mm. A
-        // different surface outside that range cannot contribute optics.
-        if abs(raw.r-depth)>0.086 {continue;}
+        let distance=vec2<f32>(q)-p;
+        let expected=1./max(inverse_origin+dot(inverse_slope,distance),0.000001);
+        // A profile spans 51 mm and the local filter another 35 mm. Taper
+        // this visibility gate instead of switching whole muddy texels on/off.
+        let visibility=1.-smoothstep(0.051,0.086,abs(raw.r-expected));
         let filtered=textureLoad(depths,q,0);
         let shared_depth=filtered.r;
         if shared_depth<=0. {continue;}
-        let delta=(shared_depth-depth)/0.035;
-        let distance=vec2<f32>(q)-p;
+        let delta=(shared_depth-expected)/0.035;
         // A truncated Gaussian has nonzero weight at the gathered edge:
         // rounding the footprint centre then switches an entire row/column.
         // Compact C2 support reaches zero before a texel can enter or leave.
         let edge=clamp(vec2(4.5)-abs(distance),vec2(0.),vec2(1.));
         let window=edge*edge*edge*(edge*(edge*6.-vec2(15.))+vec2(10.));
-        let taper=window.x*window.y;
+        let taper=window.x*window.y*visibility;
         let w=taper*exp(-dot(distance,distance)/24.-delta*delta);
         let normal=textureLoad(normal_sums,q,0);
         sum+=normal.xyz*w;weight+=normal.w*w;
-        if abs(shared_depth-depth)<0.035 {
+        if abs(shared_depth-expected)<0.035 {
             let pw=taper*exp(-dot(distance,distance)/12.-delta*delta);
-            let z=shared_depth-depth;
+            let z=1./shared_depth-1./depth;
             position_sum+=vec3(distance,z)*pw;
             second+=vec3(distance.x*distance.x,distance.x*distance.y,distance.y*distance.y)*pw;
             cross_depth+=distance*z*pw;plane_weight+=pw;
@@ -90,9 +111,12 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         if determinant>0.001 {
             let slope=vec2(cov.z*rhs.x-cov.y*rhs.y,cov.x*rhs.y-cov.y*rhs.x)/determinant;
             let step=u.viewport.xy/vec2<f32>(size);
-            let origin=view_point(pixel,depth+mean.z);
-            let dx=view_point(pixel+vec2(step.x,0.),depth+mean.z+slope.x)-origin;
-            let dy=view_point(pixel+vec2(0.,step.y),depth+mean.z+slope.y)-origin;
+            // Fit reciprocal depth, then unproject its tangent. Fitting raw
+            // depth curves a truly planar sheet and adds false cap highlights.
+            let inverse_depth=1./depth+mean.z-dot(slope,mean.xy);
+            let origin=view_point(pixel,1./max(inverse_depth,0.000001));
+            let dx=view_point(pixel+vec2(step.x,0.),1./max(inverse_depth+slope.x,0.000001))-origin;
+            let dy=view_point(pixel+vec2(0.,step.y),1./max(inverse_depth+slope.y,0.000001))-origin;
             var n=normalize(cross(dy,dx));if n.z<0. {n = -n;}
             var world_n=normalize((u.world_from_view*vec4(n,0.)).xyz);
             if dot(world_n,(u.world_from_view*vec4(-origin,0.)).xyz)<0. {world_n = -world_n;}

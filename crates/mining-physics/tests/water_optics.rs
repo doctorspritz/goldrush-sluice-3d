@@ -1048,3 +1048,172 @@ fn crossing(d:array<f32,8>)->f32 {
         assert_eq!(v[3], 6.5625, "fully supported water density was changed");
     }
 }
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
+    let (device, queue) = device();
+    let texture = |values: Vec<f32>| {
+        let t = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("inclined water control"),
+            size: wgpu::Extent3d {
+                width: 32,
+                height: 32,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            t.as_image_copy(),
+            bytemuck::cast_slice(&values),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            t.size(),
+        );
+        t
+    };
+    let field = |f: &dyn Fn(f32, f32) -> [f32; 4]| {
+        (0..32)
+            .flat_map(|y| (0..32).flat_map(move |x| f(x as f32, y as f32)))
+            .collect()
+    };
+    let depth = |x: f32, y: f32| 1. / (1. + 0.015 * (x - 16.) + 0.007 * (y - 16.));
+    let raw = texture(field(&|x, y| [depth(x, y), -1., 0., 0.]));
+    // A uniform suspension over a varying path must retain the same beta.
+    let joined = texture(field(&|x, y| {
+        let path = 0.02 + 0.001 * x + 0.0003 * y;
+        [depth(x, y), path, path * 250., 2.]
+    }));
+    let moments = texture(field(&|_, _| [0.04, 10., 0., 0.]));
+    let normals = texture(field(&|_, _| [0., 0., 0.8, 1.]));
+    let views: Vec<_> = [&joined, &raw, &moments, &normals, &normals]
+        .map(|t| t.create_view(&Default::default()))
+        .into();
+    let mut uniforms = [0f32; 72];
+    for i in [16, 21, 26, 31] {
+        uniforms[i] = 1.;
+    }
+    uniforms[32] = 0.2;
+    uniforms[37] = 0.2;
+    uniforms[42] = -1.;
+    uniforms[47] = 1.;
+    uniforms[64] = 64.;
+    uniforms[65] = 64.;
+    uniforms[66] = 0.045;
+    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&uniforms),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let bindings = [1, 3, 4, 5, 6, 9];
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &bindings.map(|binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: if binding == 3 {
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                }
+            } else {
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                }
+            },
+            count: None,
+        }),
+    });
+    let mut index = 0;
+    let entries: Vec<_> = bindings
+        .into_iter()
+        .map(|binding| {
+            let resource = if binding == 3 {
+                uniform.as_entire_binding()
+            } else {
+                let view = &views[index];
+                index += 1;
+                wgpu::BindingResource::TextureView(view)
+            };
+            wgpu::BindGroupEntry { binding, resource }
+        })
+        .collect();
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &layout,
+        entries: &entries,
+    });
+    let (buffer, out_layout, out_group) = output(&device, 64 * 64 * 2);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let pixel=vec2<f32>(p.xy)+0.5;
+ let q=pixel*0.5-0.5;
+ let depth=1./(1.+0.015*(q.x-16.)+0.007*(q.y-16.));
+ let joined=channel_surface(pixel,depth);
+ let i=(p.y*64u+p.x)*2u;
+ result[i]=joined.normal;
+ result[i+1u]=vec4(joined.column,joined.column.y/max(joined.column.x,0.000001),0.);
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [8, 8],
+    );
+    // Analytic world plane: 1.2 X - .56 Y - .989 Z = 1.
+    // The sign below faces the eye. It comes from the projection, not a fitted
+    // reference or a copy of the production stencil.
+    let length = (1.2f64 * 1.2 + 0.56 * 0.56 + 0.989 * 0.989).sqrt();
+    let expected = [-1.2 / length, 0.56 / length, 0.989 / length];
+    let mut max_error = 0f64;
+    for y in 16..48 {
+        for x in 16..48 {
+            let i = (y * 64 + x) * 8;
+            let v = &values[i..i + 8];
+            assert!(v.iter().all(|v| v.is_finite()));
+            let error = (0..3)
+                .map(|a| (v[a] as f64 - expected[a]).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            max_error = max_error.max(error);
+            assert!(
+                error < 0.00015,
+                "inclined sheet acquired a cap: {x},{y}: {v:?}, error={error}"
+            );
+            assert!(
+                (v[6] - 250.).abs() < 0.001,
+                "uniform slurry acquired a patch: {v:?}"
+            );
+            // Probe all four full-resolution pixel phases, including their
+            // offset from the half-size depth texel. A linear path on this
+            // sheet must not develop an optical island from range weighting.
+            let qx = (x as f64 + 0.5) * 0.5 - 0.5;
+            let qy = (y as f64 + 0.5) * 0.5 - 0.5;
+            let path = 0.02 + 0.001 * qx + 0.0003 * qy;
+            assert!(
+                (v[4] as f64 - path).abs() < 0.00002,
+                "inclined path acquired a patch: {x},{y}: {v:?}, expected={path}"
+            );
+        }
+    }
+    println!("inclined-sheet maximum analytic normal error: {max_error}");
+}
