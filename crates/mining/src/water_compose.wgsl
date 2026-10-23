@@ -189,7 +189,8 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         let expected=1./max(inverse_origin+dot(inverse_slope,distance)+0.5*dot(inverse_curvature,distance*distance)+mixed_curvature*distance.x*distance.y,0.000001);
         // A profile spans 51 mm and the local filter another 35 mm. Taper
         // this visibility gate instead of switching whole muddy texels on/off.
-        let visibility=1.-smoothstep(0.051,0.086,abs(raw.r-expected));
+        let reach=0.051*max(-raw.g,1.);
+        let visibility=1.-smoothstep(reach,reach+0.035,abs(raw.r-expected));
         let filtered=textureLoad(depths,q,0);
         let shared_depth=filtered.r;
         if shared_depth<=0. {continue;}

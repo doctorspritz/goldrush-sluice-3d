@@ -16,13 +16,13 @@ fn shared_surface_depth(raw:vec2<f32>,near:vec4<f32>,far:vec4<f32>)->f32 {
         if density[i]>=iso {
             if i==0u {return raw.x;}
             let t=clamp((iso-density[i-1u])/max(density[i]-density[i-1u],0.000001),0.,1.);
-            return raw.x+mix(PROFILE_DEPTHS[i-1u],PROFILE_DEPTHS[i],t);
+            return raw.x+mix(PROFILE_DEPTHS[i-1u],PROFILE_DEPTHS[i],t)*max(-raw.y,1.);
         }
         if density[i]>peak {peak=density[i];peak_depth=PROFILE_DEPTHS[i];}
     }
     // Retain a dilute film continuously as peak density approaches the level
     // set. Opaque geometry already clips every probe; never sample below it.
-    return raw.x+peak_depth*smoothstep(0.05,iso,peak);
+    return raw.x+peak_depth*max(-raw.y,1.)*smoothstep(0.05,iso,peak);
 }
 // Keep depth and the two additive optical moments in one reconstruction.
 // Dividing/filtering opacity separately leaves particle-sized mud patches on
@@ -142,7 +142,7 @@ fn smooth_surface_inner(pixel: vec2<i32>, direction: vec2<i32>,exchange:bool) ->
         let tangent=ray.xyz/max(-ray.z,0.000001)*(next_z-z)+direction_view*next_z;
         tangent_step2=dot(tangent,tangent);
     }
-    var total = vec4(0.); var weights = 0.;var inverse_depth=0.;
+    var total = vec4(0.); var weights = 0.;var residual_depth=0.;
     for (var i = -11; i <= 11; i++) {
         if abs(i)>7 && bulk==0. {continue;}
         let q = clamp(pixel + direction * i, vec2(0),size-vec2(1)); let sample = textureLoad(depths,q,0);
@@ -152,12 +152,18 @@ fn smooth_surface_inner(pixel: vec2<i32>, direction: vec2<i32>,exchange:bool) ->
         let tail=select(bulk,1.,abs(i)<=7);
         let spatial=max(f32(i*i)/mix(24.,48.,bulk),f32(i*i)*tangent_step2*bulk/(0.030*0.030));
         let weight = tail*exp(-spatial - distance*distance);
-        total += sample*weight; weights += weight;inverse_depth+=weight/sample.r;
+        total += sample*weight; weights += weight;
+        // Filter only the unresolved residual. Averaging the quadratic itself
+        // lowers narrow crests and spreads their shoulders on every pass.
+        // A resolved projective crest should survive exactly, like a plane.
+        let fitted_inverse=plane_origin+slope*f32(i)+0.5*curvature*f32(i*i);
+        residual_depth+=(1./sample.r-fitted_inverse)*weight;
     }
     let filtered=total/max(weights,0.0001);
     var moments=filtered.gb;
     if center.a>0.5 {moments=center.gb;if exchange {moments=optical_exchange(pixel,direction,center);}}
-    return vec4(mix(filtered.r,weights/max(inverse_depth,0.000001),bulk),moments,center.a);
+    let fitted_depth=1./max(plane_origin+residual_depth/max(weights,0.0001),0.000001);
+    return vec4(mix(filtered.r,fitted_depth,bulk),moments,center.a);
 }
 // Establish the shared geometry before using its distances to exchange optics.
 // Four geometry filters retain the original shape. Two final optical-only

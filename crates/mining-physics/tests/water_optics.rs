@@ -933,6 +933,44 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
         "delayed bulk crest was filtered as a detached drop"
     );
 
+    // A resolved narrow crest is curvature, not kernel noise. The complete
+    // geometry filter must reproduce it rather than widening each shoulder.
+    let crest: Vec<f32> = (0..256)
+        .flat_map(|i| {
+            let x = (i % 32) as f32 - 16.;
+            [1. / (1. - 0.0005 * x * x), 0.04, 2., 2.]
+        })
+        .collect();
+    queue.write_texture(
+        textures[0].as_image_copy(),
+        bytemuck::cast_slice(&crest),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(32 * 16),
+            rows_per_image: None,
+        },
+        textures[0].size(),
+    );
+    let crest_source = source.replace(
+        "smooth_surface(vec2(16,i32(p.y)),vec2(1,0))",
+        "geometry_surface(vec2(16,4),vec2(1,0))",
+    );
+    let resolved = execute(
+        &device,
+        &queue,
+        crest_source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [1, 1],
+    );
+    println!("resolved crest depth error={}", (resolved[0] - 1.).abs());
+    assert!(
+        (resolved[0] - 1.).abs() < 0.000002,
+        "resolved crest broadened: {}",
+        resolved[0]
+    );
+
     // Real projection, distant sheet: one half-resolution texel spans 50 mm.
     // Measure the response to an optical impulse independently in metres.
     // A fixed 23-pixel blur spreads that impulse across decimetres of water.
@@ -2334,4 +2372,81 @@ fn dielectric_sun_is_finite_reciprocal_and_concentrated_at_reflection() {
         values[2] < values[0] * 0.05,
         "roughness increased peak energy"
     );
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn grazing_profile_reaches_connected_water_without_moving_spray_or_empty_pixels() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 64);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_blur.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let scale=2.+f32(p.x)*0.5;var density:array<f32,8>;
+ // Independent linear density ramp: its half-density crossing is 100 mm
+ // behind the envelope. The old 51 mm camera-Z search cannot see it.
+ for(var i=0u;i<8u;i++) {density[i]=max(10.*(PROFILE_DEPTHS[i]*scale-0.05),0.);}
+ let near=vec4(density[0],density[1],density[2],density[3]);
+ let far=vec4(density[4],density[5],density[6],density[7]);
+ result[p.y*8u+p.x]=vec4(shared_surface_depth(vec2(1.,-scale),near,far),
+  shared_surface_depth(vec2(1.,1.),near,far),
+  shared_surface_depth(vec2(1.,-scale),vec4(0.),vec4(0.)),scale);
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    for value in values.as_chunks::<4>().0 {
+        assert!(
+            (value[0] - 1.1).abs() < 0.000002,
+            "grazing sheet remained a front blob: {value:?}"
+        );
+        assert_eq!(value[1], 1., "outlet/spray moved");
+        assert_eq!(value[2], 1., "empty density acquired a sheet");
+    }
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_depth.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let c=0.05+f32(p.x)*0.12;let ray=vec3(sqrt(1.-c*c),-c,0.);
+ result[p.y*8u+p.x]=vec4(channel_profile_scale(ray,vec3(0.,1.,0.),0.8),c,0.,0.);
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    for value in values.as_chunks::<4>().0 {
+        let expected = (0.8 / value[1].max(0.15)).max(1.);
+        assert!(
+            (value[0] - expected).abs() < 1e-6,
+            "wrong normal-distance search scale: {value:?}"
+        );
+        assert!(value[0] >= 1. && value[0] <= 0.8 / 0.15 + 1e-6);
+    }
 }

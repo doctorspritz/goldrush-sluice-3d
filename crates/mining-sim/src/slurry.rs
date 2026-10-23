@@ -79,12 +79,12 @@ impl SlurryField {
     /// material ledger. Keep the established outlet sample before applying it.
     pub fn reconstruct_channel(&mut self) {
         // Including the two projection passes, this gives an approximately
-        // 8 cm streamwise standard deviation, versus 3 cm across the channel.
+        // 12 cm streamwise standard deviation, versus 3 cm across the channel.
         // The weighted fine parcels undersample a continuous suspension: their
         // optical footprint should form a streak, not a round dirt clod. All
         // three additive moments use the same positive conservative stencil.
         // Vertical stratification and the separately sampled outlet stay intact.
-        for _ in 0..12 {
+        for _ in 0..30 {
             self.filter_axis(0);
         }
     }
@@ -236,6 +236,52 @@ pub fn diagnostics(s: &Sluice) -> serde_json::Value {
 #[cfg(test)]
 mod reconstruction_tests {
     use super::*;
+
+    #[test]
+    fn fine_parcel_footprint_is_streamwise_and_keeps_a_broad_plume() {
+        // Interior impulse measures the real footprint independently of colour.
+        let mut field = SlurryField {
+            dims: [101, 1, 1],
+            cells: vec![Cell::default(); 101],
+        };
+        field.cells[50] = Cell {
+            water: 1.,
+            fines: 0.02,
+            area: 300.,
+        };
+        field.reconstruct_channel();
+        let total: f64 = field.cells.iter().map(|c| c.water).sum();
+        let variance: f64 = field
+            .cells
+            .iter()
+            .enumerate()
+            .map(|(x, c)| c.water * ((x as f64 - 50.) * CELL_M as f64).powi(2))
+            .sum::<f64>()
+            / total;
+        // Each conservative [1/4,1/2,1/4] pass has variance dx^2/2.
+        assert!((variance - 30. * (CELL_M as f64).powi(2) / 2.).abs() < 1e-12);
+        assert!((total - 1.).abs() < 1e-13);
+        for cell in &field.cells {
+            assert!(cell.water >= 0. && cell.fines >= 0. && cell.area >= 0.);
+            if cell.water > 0. {
+                assert!((cell.fines / cell.water - 0.02).abs() < 1e-12);
+                assert!((cell.area / cell.water - 300.).abs() < 1e-9);
+            }
+        }
+        // A lengthwise concentration gradient must survive reconstruction:
+        // removing parcel noise must not turn real plumes into uniform colour.
+        for (x, cell) in field.cells.iter_mut().enumerate() {
+            *cell = Cell {
+                water: 1.,
+                fines: x as f64 * 0.001,
+                area: x as f64,
+            };
+        }
+        field.reconstruct_channel();
+        for x in 32..69 {
+            assert!((field.cells[x].fines / field.cells[x].water - x as f64 * 0.001).abs() < 1e-12);
+        }
+    }
 
     #[test]
     fn channel_filter_preserves_positive_moments_and_vertical_stratification() {

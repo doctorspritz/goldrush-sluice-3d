@@ -13,10 +13,17 @@ if [[ -z "$task_git" ]]; then task_target="${SLUICE_TARGET_DIR:-$task_repo/targe
 task_toolchain=stable
 if rustup run nightly rustc --version >/dev/null 2>&1; then task_toolchain=nightly; fi
 cargo "+$task_toolchain" build -p mining --profile playable --jobs "${SLUICE_BUILD_JOBS:-1}" --locked --target-dir "$task_target"
+# A failed rust-objcopy strip can leave cargo successful with a data file.
+# Reject that output before signing or replacing a playable app bundle.
+if ! /usr/bin/file -b "$task_target/playable/mining" | /usr/bin/grep -q 'Mach-O .* executable'; then
+  echo "Cargo output is not a Mach-O executable; app packaging stopped." >&2
+  exit 1
+fi
 task_output="${1:-$task_target/bundles}"
 task_app="$task_output/First Bend.app"
 mkdir -p "$task_app/Contents/MacOS"
-cp "$task_target/playable/mining" "$task_app/Contents/MacOS/mining"
+cp -c "$task_target/playable/mining" "$task_app/Contents/MacOS/mining" \
+  || cp "$task_target/playable/mining" "$task_app/Contents/MacOS/mining"
 chmod +x "$task_app/Contents/MacOS/mining"
 cat > "$task_app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

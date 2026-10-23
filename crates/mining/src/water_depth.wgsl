@@ -68,6 +68,9 @@ fn channel_interval(eye:vec3<f32>,ray:vec3<f32>,plane:vec4<f32>)->vec2<f32> {
  }
  let a=(-1.-o)/d;let b=(1.-o)/d;return vec2(min(a,b),max(a,b));
 }
+fn channel_profile_scale(ray:vec3<f32>,normal:vec3<f32>,view_cos:f32)->f32 {
+ return max(1.,view_cos/max(abs(dot(ray,normalize(normal))),0.15));
+}
 struct Depth {@location(0) linear:vec4<f32>,@location(1) normal:vec4<f32>,@builtin(frag_depth) depth:f32};
 @fragment fn particle_depth(v:Varying)->Depth {
  // Negative tags identify the channel; positive tags carry the airborne
@@ -94,6 +97,15 @@ struct Depth {@location(0) linear:vec4<f32>,@location(1) normal:vec4<f32>,@built
   if t<=0. {discard;}world=eye+ray*t;
  }
  let clip=u.clip_from_world*vec4(world,1.);var out:Depth;
+ // The profile samples normal-distance bands. At a grazing angle a fixed
+ // camera-Z search stops in the front kernel, before reaching the joined sheet.
+ // Store one shared scale on the nearest envelope so all overlapping kernels
+ // evaluate identical probe positions; channel concentration lives in columns.
+ if v.shape.z==0. {
+  let ray=normalize(world-u.world_from_view[3].xyz);
+  let view_cos= -(u.view_from_world*vec4(ray,0.)).z;
+  optical= -channel_profile_scale(ray,v.surface.xyz,view_cos);
+ }
  out.linear=vec4(-(u.view_from_world*vec4(world,1.)).z,optical,v.velocity);out.normal=v.surface;
  // River alpha carries physical vertical depth, not view-ray thickness.
  if v.shape.z==1. {out.normal.w=v.terrain.x;}
@@ -187,7 +199,7 @@ struct Column {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>,@loc
    select(0.,interface_density(kernel_density(eye+ray*t0,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),v.surface.w),t0<=back),
    select(0.,interface_density(kernel_density(eye+ray*t1,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),v.surface.w),t1<=back));
   for(var i=0u;i<8u;i++) {
-   let t=(front.r+PROFILE_DEPTHS[i])/max(ray_scale,0.000001);
+   let t=(front.r+PROFILE_DEPTHS[i]*max(-front.g,1.))/max(ray_scale,0.000001);
    if t<=back {profile[i]=interface_density(kernel_density(eye+ray*t,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x),v.surface.w);}
   }
  }
