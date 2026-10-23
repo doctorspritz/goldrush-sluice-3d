@@ -1552,9 +1552,14 @@ impl ClusterSimulation3D {
                                         let limit =
                                             r * r * glam::Vec4::splat(1. + 8. * f32::EPSILON)
                                                 + glam::Vec4::splat(f32::MIN_POSITIVE);
-                                        let nearby =
-                                            ((dx * dx + dy * dy) + dz * dz).cmple(limit).bitmask()
-                                                & mask;
+                                        let overlaps = ((dx * dx + dy * dy) + dz * dz).cmple(limit);
+                                        // Reject empty overlap vectors before scalar lane extraction.
+                                        // Reduce the vector first; extracting four lane bits is only
+                                        // needed when at least one overlap can survive rejection.
+                                        if !overlaps.any() {
+                                            break;
+                                        }
+                                        let nearby = overlaps.bitmask() & mask;
                                         if nearby == 0 {
                                             break;
                                         }
@@ -3426,6 +3431,117 @@ mod tests {
         };
         for seed in [0, 17, 123] {
             assert_eq!(run(true, seed), run(false, seed));
+        }
+    }
+
+    #[test]
+    fn ordered_contacts_match_reference_after_population_and_template_edits() {
+        let make = |accelerated| {
+            let mut sim = ClusterSimulation3D::new(Vec3::splat(-1.), Vec3::ONE);
+            sim.accelerated_contacts = accelerated;
+            for (shape, radius, mass) in [
+                (
+                    ClumpShape3D::Irregular {
+                        count: 1,
+                        seed: 0,
+                        style: IrregularStyle3D::Round,
+                    },
+                    0.004,
+                    0.002,
+                ),
+                (ClumpShape3D::Flat4, 0.002, 0.0063),
+                (ClumpShape3D::Tetra, 0.003, 0.010),
+                (ClumpShape3D::Cube2, 0.002, 0.),
+            ] {
+                sim.add_template(ClumpTemplate3D::generate(shape, radius, mass));
+            }
+            for i in 0..63 {
+                sim.spawn(i % 4, Vec3::ZERO, Vec3::ZERO);
+            }
+            sim
+        };
+        let mut accelerated = make(true);
+        let mut reference = make(false);
+        let sdf = [10.; 8];
+        let params = SdfParams {
+            sdf: &sdf,
+            grid_width: 2,
+            grid_height: 2,
+            grid_depth: 2,
+            cell_size: 1.,
+            grid_offset: Vec3::splat(-0.5),
+        };
+        let snapshot = |sim: &ClusterSimulation3D| {
+            sim.clumps
+                .iter()
+                .map(|c| {
+                    (
+                        c.position.to_array().map(f32::to_bits),
+                        c.velocity.to_array().map(f32::to_bits),
+                        c.rotation.to_array().map(f32::to_bits),
+                        c.angular_velocity.to_array().map(f32::to_bits),
+                        c.template_idx,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        for tick in 0..8 {
+            for sim in [&mut accelerated, &mut reference] {
+                match tick {
+                    1 => {
+                        sim.spawn(1, Vec3::ZERO, Vec3::ZERO);
+                        sim.spawn(2, Vec3::ZERO, Vec3::ZERO);
+                    }
+                    2 => {
+                        sim.clumps.swap_remove(7);
+                    }
+                    3 => {
+                        sim.clumps.remove(0);
+                    }
+                    4 => {
+                        sim.templates[1] =
+                            ClumpTemplate3D::generate(ClumpShape3D::Tetra, 0.0021, 0.005);
+                    }
+                    _ => {}
+                }
+                sim.coulomb_contacts = tick != 5;
+                for (i, c) in sim.clumps.iter_mut().enumerate() {
+                    c.position = Vec3::new(
+                        (i * 37 % 101) as f32,
+                        (i * 19 % 101) as f32,
+                        (i * 13 % 101) as f32,
+                    ) * 0.00025
+                        - Vec3::splat(0.012);
+                    c.velocity = Vec3::new(
+                        (i % 7) as f32 - 3.,
+                        (i % 5) as f32 - 2.,
+                        (i % 3) as f32 - 1.,
+                    ) * 0.03;
+                    c.rotation = Quat::from_rotation_x(i as f32 * 0.11 + tick as f32 * 0.19)
+                        * Quat::from_rotation_y(i as f32 * 0.07 - tick as f32 * 0.23);
+                    c.angular_velocity = Vec3::new(0.2, -0.1, 0.3);
+                }
+                let wet: Vec<_> = (0..sim.clumps.len()).map(|i| (i + tick) % 3 != 0).collect();
+                sim.collision_response_with_wetness(1. / 120., &params, &wet);
+                assert!(sim.clumps.iter().all(|c| c.position.is_finite()
+                    && c.velocity.is_finite()
+                    && c.rotation.is_finite()
+                    && c.angular_velocity.is_finite()));
+            }
+            assert_eq!(
+                snapshot(&accelerated),
+                snapshot(&reference),
+                "response changed after edit/rotation at tick {tick}"
+            );
+            if tick != 5 {
+                assert!(
+                    accelerated
+                        .clumps
+                        .iter()
+                        .any(|c| (c.angular_velocity - Vec3::new(0.2, -0.1, 0.3)).length() > 0.01),
+                    "fixture had no rotational contact response"
+                );
+            }
         }
     }
 

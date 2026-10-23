@@ -1,0 +1,550 @@
+{
+  "scope": "Exact-state CPU grain-contact rejection optimization; broader real-time, rendering, digging and game goals remain active.",
+  "baseline_head": "b6207a0a4f5358817ddac304608d15f8d3d66f5b",
+  "production_change": "Vector any-overlap reduction bypasses scalar lane-mask extraction only for an empty overlap vector. All comparisons, tolerance, pair order and responses remain.",
+  "controlled": {
+    "baseline": {
+      "mean_pairs_ms": 24.730127445833332,
+      "mean_wall_seconds": 5.979978854,
+      "mean_simulation_wall_ratio": 0.3344525487381208
+    },
+    "candidate": {
+      "mean_pairs_ms": 22.364080524999995,
+      "mean_wall_seconds": 5.721047583,
+      "mean_simulation_wall_ratio": 0.3495871102387184
+    },
+    "pairs_time_reduction_fraction": 0.09567467559622234,
+    "throughput_improvement_fraction": 0.04525174515099328,
+    "all_four_complete_physical_states_equal": true,
+    "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+    "normalization": "Sort only three unordered contact-history arrays by tuple keys; no particle/grain reordering, field removal or float tolerance. Canonical JSON object keys, signed zero retained. Complete state archive retained per unique hash; raw current-turn outputs removed only after roundtrip archive verification."
+  },
+  "controlled_runs": [
+    {
+      "name": "a1",
+      "kind": "baseline",
+      "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+      "raw_state_sha256": "8f3ae323db9b046b8d91b8812881aa836b02d155bf07c052983f2531fe5917aa",
+      "complete_canonical_state_archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-mask-20261024/state-e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d.json.gz",
+      "archive_sha256": "8c23d36ccdddc7d17ed591570ad668530ed6f78055ac5257ce1881146128083b",
+      "timings_ms": {
+        "dem": 26.510972216666655,
+        "dem_pairs": 24.653709408333338,
+        "dem_sdf": 1.8293361416666665,
+        "finish": 1.2710875500000003,
+        "fluid_and_readback": 17.127620808333337,
+        "prepare": 1.50914305,
+        "terrain": 1.781304491666667
+      },
+      "wall_seconds": 5.961516,
+      "simulation_wall_ratio": 0.33548515248606703,
+      "water_particles": 116139,
+      "grains": 4430,
+      "bulk_material_error_m3": 9.766102948560729e-08,
+      "dry_mass_error_kg": 0.00017585570458322763,
+      "gold_balance_error_g": 8.640199666842818e-12,
+      "water_balance_error_m3": 0.0
+    },
+    {
+      "name": "b1",
+      "kind": "candidate",
+      "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+      "raw_state_sha256": "41bc4282230a9811c2eb32007b26f229618cf80de60989eeb3b5594c5ce32532",
+      "complete_canonical_state_archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-mask-20261024/state-e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d.json.gz",
+      "archive_sha256": "8c23d36ccdddc7d17ed591570ad668530ed6f78055ac5257ce1881146128083b",
+      "timings_ms": {
+        "dem": 24.103965608333333,
+        "dem_pairs": 22.247701049999996,
+        "dem_sdf": 1.8266885500000003,
+        "finish": 1.3111399,
+        "fluid_and_readback": 17.45763019166667,
+        "prepare": 1.5073600583333338,
+        "terrain": 1.7509385083333333
+      },
+      "wall_seconds": 5.712573708,
+      "simulation_wall_ratio": 0.35010491007009487,
+      "water_particles": 116139,
+      "grains": 4430,
+      "bulk_material_error_m3": 9.766102948560729e-08,
+      "dry_mass_error_kg": 0.00017585570458322763,
+      "gold_balance_error_g": 8.640199666842818e-12,
+      "water_balance_error_m3": 0.0
+    },
+    {
+      "name": "b2",
+      "kind": "candidate",
+      "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+      "raw_state_sha256": "12353c7498d22a512f05d73a23ed91f06ad24b42940eed91591b9e2a2568dff7",
+      "complete_canonical_state_archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-mask-20261024/state-e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d.json.gz",
+      "archive_sha256": "8c23d36ccdddc7d17ed591570ad668530ed6f78055ac5257ce1881146128083b",
+      "timings_ms": {
+        "dem": 24.323110041666673,
+        "dem_pairs": 22.480459999999994,
+        "dem_sdf": 1.8165406500000005,
+        "finish": 1.3171600833333332,
+        "fluid_and_readback": 17.314555966666667,
+        "prepare": 1.545016708333334,
+        "terrain": 1.7323257
+      },
+      "wall_seconds": 5.729521458,
+      "simulation_wall_ratio": 0.34906931040734196,
+      "water_particles": 116139,
+      "grains": 4430,
+      "bulk_material_error_m3": 9.766102948560729e-08,
+      "dry_mass_error_kg": 0.00017585570458322763,
+      "gold_balance_error_g": 8.640199666842818e-12,
+      "water_balance_error_m3": 0.0
+    },
+    {
+      "name": "a2",
+      "kind": "baseline",
+      "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+      "raw_state_sha256": "d8580a7c9e280fa09e431138a27f3cd7d2780730631ed805d2494ff8e9b9336f",
+      "complete_canonical_state_archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-mask-20261024/state-e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d.json.gz",
+      "archive_sha256": "8c23d36ccdddc7d17ed591570ad668530ed6f78055ac5257ce1881146128083b",
+      "timings_ms": {
+        "dem": 26.645868749999998,
+        "dem_pairs": 24.806545483333327,
+        "dem_sdf": 1.8127249749999998,
+        "finish": 1.2990843583333336,
+        "fluid_and_readback": 17.249638233333332,
+        "prepare": 1.5388041249999997,
+        "terrain": 1.7549538333333337
+      },
+      "wall_seconds": 5.998441708,
+      "simulation_wall_ratio": 0.3334199449901745,
+      "water_particles": 116139,
+      "grains": 4430,
+      "bulk_material_error_m3": 9.766102948560729e-08,
+      "dry_mass_error_kg": 0.00017585570458322763,
+      "gold_balance_error_g": 8.640199666842818e-12,
+      "water_balance_error_m3": 0.0
+    }
+  ],
+  "final_binary_proof": {
+    "final_binary_identical_to_benchmarked": true,
+    "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d"
+  },
+  "binaries": {
+    "baseline": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-mask-20261024/baseline-flow-probe",
+      "sha256": "b826bdebe5d07fc2b4ab87d4f1d4360ce53fecc34c1bd05244bdfbd9fcfa5fee"
+    },
+    "load": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/storage-final-2026-10-23/grown.json.save.json",
+      "sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42"
+    },
+    "candidate": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-mask-20261024/candidate-flow-probe",
+      "sha256": "0b38c5a029e684420e8ebc8cafc6a50e5be8ba6423d8b593b08ea8c3b91b7bda"
+    },
+    "final": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-mask-20261024/final-flow-probe",
+      "sha256": "0b38c5a029e684420e8ebc8cafc6a50e5be8ba6423d8b593b08ea8c3b91b7bda"
+    }
+  },
+  "native_binaries": {
+    "before": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-mud-fix-20261024/final-app/First Bend.app/Contents/MacOS/mining",
+      "sha256": "67d531e283d0a51c5ee1b6e154d3ad82cd47bd62907dfd1ef7591e9c072aa2f3"
+    },
+    "after": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-mask-20261024/final-app/First Bend.app/Contents/MacOS/mining",
+      "sha256": "db6b49c915e1b0b1dcda6bcb19a11103f9b5b5e98f0799b81d918b59ad1972c8"
+    },
+    "load": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/storage-final-2026-10-23/grown.json.save.json",
+      "sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42"
+    }
+  },
+  "quality": [
+    {
+      "name": "format",
+      "exit": 0
+    },
+    {
+      "name": "final-sim3d",
+      "exit": 0
+    },
+    {
+      "name": "gpu-pipeline",
+      "exit": 0
+    },
+    {
+      "name": "app",
+      "exit": 0
+    },
+    {
+      "name": "sim3d-clippy",
+      "exit": 0
+    },
+    {
+      "name": "clippy",
+      "exit": 0
+    },
+    {
+      "name": "format-check",
+      "exit": 0
+    },
+    {
+      "name": "maintained-format-check",
+      "exit": 0
+    },
+    {
+      "name": "final-probe-build",
+      "exit": 0
+    },
+    {
+      "name": "package",
+      "exit": 0
+    }
+  ],
+  "executed_tests": {
+    "sim3d": 130,
+    "application": 51,
+    "real_gpu_original_pipeline": 5,
+    "application_profiling_ignored": 1
+  },
+  "lint_audit": {
+    "sim3d_standard_clippy_exit": 0,
+    "existing_library_warning_count": 10,
+    "warning_locations": [
+      [
+        "crates/sim3d/src/test_geometry.rs",
+        137
+      ],
+      [
+        "crates/sim3d/src/test_geometry.rs",
+        360
+      ],
+      [
+        "crates/sim3d/src/test_geometry.rs",
+        367
+      ],
+      [
+        "crates/sim3d/src/transfer.rs",
+        565
+      ],
+      [
+        "crates/sim3d/src/world/terrain.rs",
+        76
+      ],
+      [
+        "crates/sim3d/src/world/mod.rs",
+        402
+      ],
+      [
+        "crates/sim3d/src/world/mod.rs",
+        869
+      ],
+      [
+        "crates/sim3d/src/world/mod.rs",
+        1081
+      ],
+      [
+        "crates/sim3d/src/world/mod.rs",
+        1880
+      ],
+      [
+        "crates/sim3d/src/world/mod.rs",
+        1886
+      ]
+    ],
+    "new_changed_lines_have_no_diagnostics": true,
+    "maintained_mining_and_physics_strict_clippy_exit": 0
+  },
+  "frozen_physics": [
+    {
+      "view": "sluice",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "4c3993a004574ad49bf47524908d6f6d684ce947f3d1b24135aff977490b4933",
+      "after_manifest_sha256": "471580bc34c53f18e5bbce97d58319386da870d46878a380c3f69bc0f05190a8"
+    },
+    {
+      "view": "outlet",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "4cd70f70d777dd7b2c9fa67e37f23df42083ccea3e742239157cf005f94bd013",
+      "after_manifest_sha256": "c3359f47d16d46cdc89f97e38f673c896225b2e6db4509a6c4355709151ee19e"
+    },
+    {
+      "view": "river",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "3fab27a7694e6015da08d5a4d9fe2e93f64785e737e90d9de9b449de57b48371",
+      "after_manifest_sha256": "796bbd0468863d417a32abc5cc4376e44eb9431043546201c26cc4b647237799"
+    }
+  ],
+  "native_images": {
+    "sluice": {
+      "changed_rgb_pixels": 0,
+      "max_channel_difference": 0
+    },
+    "outlet": {
+      "changed_rgb_pixels": 0,
+      "max_channel_difference": 0
+    },
+    "river": {
+      "changed_rgb_pixels": 0,
+      "max_channel_difference": 0
+    }
+  },
+  "motion": {
+    "source_frames": 34,
+    "presentation_advances": 33,
+    "worker_advances": 29,
+    "presentation_buffer_underruns": 0,
+    "wall_seconds": 2.9944212090000004,
+    "sim_seconds": 0.966666717082262,
+    "max_surface_build_ms": 81.443833,
+    "review_indices": [
+      0,
+      7,
+      13,
+      20,
+      26,
+      33
+    ],
+    "video_display_frames": 186,
+    "whole_video_playback_reviewed": false
+  },
+  "all_34_temporal_crops_and_six_full_samples_reviewed": true,
+  "whole_video_playback_reviewed": false,
+  "manual_controls_verified": false,
+  "native_benchmark": {
+    "before": {
+      "mean_fps": 55.89651342980153,
+      "p95_frame_ms": 25.235917,
+      "simulation_wall_ratio": 0.3264006243547299,
+      "passed": false,
+      "worker_mean_ms": 102.18224551020417,
+      "worker_phases_mean_ms": [
+        3.082698964285716,
+        35.99015640816327,
+        53.41358316836734,
+        2.5803120867346934,
+        3.658498326530612
+      ],
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.832080584080359e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 1.000444171950221e-11,
+      "all_non_realtime_requirements_passed": true
+    },
+    "after": {
+      "mean_fps": 55.67031281835291,
+      "p95_frame_ms": 25.430916,
+      "simulation_wall_ratio": 0.334859624074935,
+      "passed": false,
+      "worker_mean_ms": 99.37643969651738,
+      "worker_phases_mean_ms": [
+        3.1022257761194023,
+        37.85932757213931,
+        48.7849874577114,
+        2.6049531641791046,
+        3.5396753731343282
+      ],
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.810807950647813e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 6.366462912410498e-12,
+      "all_non_realtime_requirements_passed": true
+    }
+  },
+  "native_physical_throughput_gain_fraction": 0.02591600349088785,
+  "changed_build_sources": [
+    "crates/sim3d/src/clump.rs"
+  ],
+  "tested_sources_sha256": "36e1a7931fc3344b14bd35b91f54fa0367d988b56f8a748bbefe573f0aba1282",
+  "superseded_generated_app_archives": {
+    "protected_current_app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-mud-fix-20261024/final-app/First Bend.app/Contents/MacOS/mining",
+    "protected_sha256": "67d531e283d0a51c5ee1b6e154d3ad82cd47bd62907dfd1ef7591e9c072aa2f3",
+    "archived": [
+      {
+        "original_app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/optical-flux-20261024/final/final-app/First Bend.app",
+        "archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/optical-flux-20261024/final/final-app/First Bend.app.zip",
+        "archive_sha256": "03e5ec627c9ce43b3bd098de83bbf63d03a434f94ac84c180047683c5ad4b72a",
+        "verified_source_receipt": "crest-mud-fix-20261024/final-binaries.json",
+        "executable_sha256": "334c98a25dc07b942948667604527468e465aba88f9c6983e5f1d7238ece5b46",
+        "entries": {
+          "First Bend.app/Contents/Info.plist": {
+            "sha256": "e4c31407acdcdc2247627f35a23f874add0b3a13d270c65c0e8af6cdd843bc83",
+            "bytes": 708
+          },
+          "First Bend.app/Contents/_CodeSignature/CodeResources": {
+            "sha256": "6686de10a28a2fe11b36cbb86dcbacc827cfc4ea116b4dabf1845e5aee629e9b",
+            "bytes": 2200
+          },
+          "First Bend.app/Contents/MacOS/mining": {
+            "sha256": "334c98a25dc07b942948667604527468e465aba88f9c6983e5f1d7238ece5b46",
+            "bytes": 105499056
+          }
+        },
+        "restore_command": [
+          "ditto",
+          "-xk",
+          "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/optical-flux-20261024/final/final-app/First Bend.app.zip",
+          "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/optical-flux-20261024/final/final-app"
+        ],
+        "complete_file_contents_verified": true
+      },
+      {
+        "original_app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/final-app/First Bend.app",
+        "archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/final-app/First Bend.app.zip",
+        "archive_sha256": "57c2df3ea22748992ccdd87d51f9cee86762024bd45b6423ceac8db95cb4fa34",
+        "verified_source_receipt": "optical-flux-20261024/final/binaries.json",
+        "executable_sha256": "19bf2131832c375759ab98ab4a189659ca003a10000e3fbddc994b402ed7d471",
+        "entries": {
+          "First Bend.app/Contents/Info.plist": {
+            "sha256": "e4c31407acdcdc2247627f35a23f874add0b3a13d270c65c0e8af6cdd843bc83",
+            "bytes": 708
+          },
+          "First Bend.app/Contents/_CodeSignature/CodeResources": {
+            "sha256": "6686de10a28a2fe11b36cbb86dcbacc827cfc4ea116b4dabf1845e5aee629e9b",
+            "bytes": 2200
+          },
+          "First Bend.app/Contents/MacOS/mining": {
+            "sha256": "19bf2131832c375759ab98ab4a189659ca003a10000e3fbddc994b402ed7d471",
+            "bytes": 105484640
+          }
+        },
+        "restore_command": [
+          "ditto",
+          "-xk",
+          "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/final-app/First Bend.app.zip",
+          "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/final-app"
+        ],
+        "complete_file_contents_verified": true
+      },
+      {
+        "original_app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-curvature-20261024/final/final-app/First Bend.app",
+        "archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-curvature-20261024/final/final-app/First Bend.app.zip",
+        "archive_sha256": "da378b924160c4aaa67b346662dd2abc056f37ea95fcac1bf3cf8e9b6392504d",
+        "verified_source_receipt": "crest-curvature-20261024/final/binaries.json",
+        "executable_sha256": "862032d4706c5d0053878dc3dcb198a777216872d68d2c3cafca41b2b481fe1a",
+        "entries": {
+          "First Bend.app/Contents/Info.plist": {
+            "sha256": "e4c31407acdcdc2247627f35a23f874add0b3a13d270c65c0e8af6cdd843bc83",
+            "bytes": 708
+          },
+          "First Bend.app/Contents/_CodeSignature/CodeResources": {
+            "sha256": "6686de10a28a2fe11b36cbb86dcbacc827cfc4ea116b4dabf1845e5aee629e9b",
+            "bytes": 2200
+          },
+          "First Bend.app/Contents/MacOS/mining": {
+            "sha256": "862032d4706c5d0053878dc3dcb198a777216872d68d2c3cafca41b2b481fe1a",
+            "bytes": 105484576
+          }
+        },
+        "restore_command": [
+          "ditto",
+          "-xk",
+          "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-curvature-20261024/final/final-app/First Bend.app.zip",
+          "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-curvature-20261024/final/final-app"
+        ],
+        "complete_file_contents_verified": true
+      },
+      {
+        "original_app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-final-edge-20261024/final-app/First Bend.app",
+        "archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-final-edge-20261024/final-app/First Bend.app.zip",
+        "archive_sha256": "0ae85a5d6efd0c678b0120b65246ea421a1b109b6cbc7f291dcf8fd5931fcb2b",
+        "verified_source_receipt": "crest-curvature-20261024/final/binaries.json",
+        "executable_sha256": "996e966b018db002b7dfb73c6f64f869b372ce64d2ff370d017d89ee20733af9",
+        "entries": {
+          "First Bend.app/Contents/Info.plist": {
+            "sha256": "e4c31407acdcdc2247627f35a23f874add0b3a13d270c65c0e8af6cdd843bc83",
+            "bytes": 708
+          },
+          "First Bend.app/Contents/_CodeSignature/CodeResources": {
+            "sha256": "6686de10a28a2fe11b36cbb86dcbacc827cfc4ea116b4dabf1845e5aee629e9b",
+            "bytes": 2200
+          },
+          "First Bend.app/Contents/MacOS/mining": {
+            "sha256": "996e966b018db002b7dfb73c6f64f869b372ce64d2ff370d017d89ee20733af9",
+            "bytes": 105484576
+          }
+        },
+        "restore_command": [
+          "ditto",
+          "-xk",
+          "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-final-edge-20261024/final-app/First Bend.app.zip",
+          "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-final-edge-20261024/final-app"
+        ],
+        "complete_file_contents_verified": true
+      }
+    ]
+  },
+  "cleanup": {
+    "owned_game_compiler_encoder": 0,
+    "agent_browser": 0,
+    "playwright_tests": 0,
+    "chrome_for_testing": 0,
+    "shared_mcp_left_untouched": 14,
+    "shared_node_left_untouched": 56,
+    "log_sha256": "8ec92e0b1f2c041a2eb0268648a0311c4e84da956698d201238803004bacda56"
+  },
+  "all_heavy_jobs_sequential": true,
+  "no_new_panic_full_or_WindowServer_report": true,
+  "full_water_art_complete": false,
+  "full_game_goal_complete": false,
+  "limitations": [
+    "Native simulation remains about0.335x real time; these short windows do not prove a general performance gain on all loads/hardware.",
+    "Ten existing sim3d library lint warnings lie outside changed lines; no warning-free sim3d claim.",
+    "Not a full-workspace or manual input verification. Existing long full-bank soil replay timeout was not rerun.",
+    "The physical models, pressure convergence, water art, soil coupling and complete mining loop remain unfinished."
+  ],
+  "evidence_hashes": {
+    "baseline-disassembly.txt": "b01e8165366c3b7e87dd4566e151e7e7acb6e58d447402f2612563b53620842e",
+    "candidate-disassembly.txt": "df9a472107dd48018cad51eb4d93b304030503a37399c04e0635a034c6cb56ef",
+    "final-disassembly.txt": "fb3e7fcd984b6b900c2a62dd83813f94808bc3232607ad376221401f2214a153",
+    "candidate-tests.log": "e86a405092cc71d9d82daba1abfe1f93a4ca9c511059b0ec879d47ffb787b0ae",
+    "final-sim3d.log": "e8e5207066bdb2ee2bf5bda507a646921a0f1c1c53e0c46562a2594596909710",
+    "gpu-pipeline.log": "5a89d19c3f837bcf097fa4d7e6a32080a9d57f8bdc901820e8480ae13e4b45cb",
+    "app.log": "29cfa2dd1a0dd64ea41b783590c25ec8570024b52c0da12f2aa3dcaf655656ca",
+    "sim3d-clippy.log": "d2f874645e640d9214a1fb733e1596e75dfcc9393b5e59cc8eaed8e617c835dd",
+    "clippy.log": "79bb7ef81db10398af342841f20f0addbb6627784f91b5ff0ebfeb88cb27d849",
+    "package.log": "3ff8924a0f924314cb7814e2f7093b12e2993f9b0e7d481ee28489cb96fc85f2",
+    "all-temporal.jpg": "c5a49194a3f7a871c2eb1b24300c8f51c37e1390c34a4cd70160156dadfd3b0c",
+    "motion-review.jpg": "620ddf94aefb4d21e52782160f550160b3442b55a4dcb331b4817971b60d6d9c",
+    "motion.mp4": "05bd659950264133cbb121fe2938c1405a5786b100dd5117e77ed769bd7942e0",
+    "motion/frames.json": "d375fbc245f0603e0e1db7964da9cacb471b0d58e3b409136fad8deb9caaec08"
+  },
+  "water_solver_sources_changed": false,
+  "rendering_sources_changed": false,
+  "gameplay_sources_changed": false,
+  "grain_contact_implementation_changed": true,
+  "physical_equations_or_parameters_changed": false
+}
