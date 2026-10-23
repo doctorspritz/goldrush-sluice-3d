@@ -20,6 +20,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo +stable fmt --package mining --package mining-sim --package mining-physics --check
       - run: cargo +stable test -p mining -p mining-sim -p mining-physics --release --locked --jobs 2
+      - name: Retained soil mechanics and contact-history bounds
+        run: cargo +stable test -p mining-sim --features contact-history --lib --release --locked --jobs 2 -- --test-threads=1
+      - name: Contact-history API lint
+        run: cargo +stable clippy -p mining-sim --features contact-history --all-targets --no-deps --locked --jobs 2 -- -D warnings
       - run: cargo +stable check -p mining --all-targets --locked --jobs 2
       - run: cargo +stable clippy -p mining-sim -p mining-physics -p mining --all-targets --no-deps --locked --jobs 2 -- -D warnings
 

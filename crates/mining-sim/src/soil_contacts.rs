@@ -16,8 +16,11 @@ use rapier3d::{
 type Manifold = q::ContactManifold<ContactManifoldData, ContactData>;
 const TOUCH_EPS: f32 = 1e-5;
 struct StablePolyContacts;
-pub(crate) fn configure(world: &mut r::PhysicsWorld) {
+pub(crate) fn restore_dispatcher(world: &mut r::PhysicsWorld) {
     world.narrow_phase.set_query_dispatcher(StablePolyContacts);
+}
+pub(crate) fn configure(world: &mut r::PhysicsWorld) {
+    restore_dispatcher(world);
     // New rigid clods and substrate approach the noncompliant unilateral
     // limit. Ordinary game pile springs admit centimetres of penetration under
     // excavator loads, enough to cross the thin terrain collision surface.

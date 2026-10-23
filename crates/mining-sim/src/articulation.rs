@@ -393,6 +393,7 @@ struct Model {
     world: r::PhysicsWorld,
     bodies: [r::RigidBodyHandle; 5],
     joints: [r::MultibodyJointHandle; 4],
+    soil_handles: Vec<r::RigidBodyHandle>,
     gravity: Vec3,
 }
 impl Model {
@@ -672,6 +673,7 @@ impl Model {
             world,
             bodies,
             joints,
+            soil_handles: Vec::new(),
             gravity: env.gravity,
         };
         result.set_velocity(&s.velocity);
@@ -807,20 +809,19 @@ pub fn step_soil(
     *soil = candidate;
     Ok(())
 }
-fn step_inner(
-    m: &mut Excavator,
+fn checked_state(
+    m: &Excavator,
     input: MachineInput,
     dt: f32,
     env: &Environment<'_>,
-    mut soil: Option<&mut crate::soil::ActiveSoil>,
-) -> Result<(), String> {
+) -> Result<Articulation, String> {
     if !dt.is_finite() || dt <= 0. || dt > 0.05 || !env.gravity.is_finite() {
         return Err("Invalid articulated timestep/gravity".into());
     }
     if !parameters_valid(m) {
         return Err("Invalid mechanism parameters".into());
     }
-    let mut s = m
+    let s = m
         .articulation
         .as_ref()
         .ok_or("Articulation was not enabled")?
@@ -839,10 +840,18 @@ fn step_inner(
     if axes.iter().any(|x| !x.is_finite() || x.abs() > 1.) {
         return Err("Invalid articulated input".into());
     }
+    Ok(s)
+}
+fn build_model(
+    m: &mut Excavator,
+    env: &Environment<'_>,
+    s: &Articulation,
+    mut soil: Option<&mut crate::soil::ActiveSoil>,
+) -> Result<Model, String> {
     let ground = soil
         .as_deref_mut()
         .and_then(|soil| env.site.map(|site| soil.ground(site)));
-    let mut model = Model::with_ground(m, env, &s, ground)?;
+    let mut model = Model::with_ground(m, env, s, ground)?;
     model
         .world
         .integration_parameters
@@ -850,17 +859,38 @@ fn step_inner(
     if soil.is_some() && s.bucket_model == crate::bucket::Model::MountedShellV2 {
         crate::soil_contacts::configure(&mut model.world);
     }
-    let mut soil_handles = Vec::new();
-    if let Some(soil) = soil.as_deref_mut() {
+    if let Some(soil) = soil {
         for clod in &mut soil.clods {
             let handle = if s.bucket_model == crate::bucket::Model::MountedShellV2 {
                 clod.insert_precise(&mut model.world)?
             } else {
                 clod.insert(&mut model.world)?
             };
-            soil_handles.push(handle);
+            model.soil_handles.push(handle);
         }
     }
+    Ok(model)
+}
+fn step_inner(
+    m: &mut Excavator,
+    input: MachineInput,
+    dt: f32,
+    env: &Environment<'_>,
+    mut soil: Option<&mut crate::soil::ActiveSoil>,
+) -> Result<(), String> {
+    let s = checked_state(m, input, dt, env)?;
+    let mut model = build_model(m, env, &s, soil.as_deref_mut())?;
+    advance_model(m, input, dt, env, soil, s, &mut model)
+}
+fn advance_model(
+    m: &mut Excavator,
+    input: MachineInput,
+    dt: f32,
+    env: &Environment<'_>,
+    soil: Option<&mut crate::soil::ActiveSoil>,
+    mut s: Articulation,
+    model: &mut Model,
+) -> Result<(), String> {
     let soil_before = soil.as_deref().map(|s| s.totals(env.gravity));
     let before = model.feedback(&s, &m.hydraulics);
     let before_frames = model.bodies.map(|h| {
@@ -1022,7 +1052,11 @@ fn step_inner(
             .to_degrees(),
     };
     if let Some(soil) = soil {
-        for (clod, handle) in soil.clods.iter_mut().zip(soil_handles) {
+        for (clod, handle) in soil
+            .clods
+            .iter_mut()
+            .zip(model.soil_handles.iter().copied())
+        {
             clod.read(&model.world.bodies[handle]);
         }
         let a = soil_before.unwrap();
@@ -1209,3 +1243,9 @@ mod shell_tests {
         }
     }
 }
+
+#[cfg(all(test, feature = "contact-history"))]
+mod history_tests;
+
+#[cfg(feature = "contact-history")]
+pub mod retained;

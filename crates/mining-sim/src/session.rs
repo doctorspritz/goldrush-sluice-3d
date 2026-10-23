@@ -338,13 +338,8 @@ impl Session {
         }
         true
     }
-    pub fn step(&mut self, input: Controls) {
-        if self.paused {
-            return;
-        }
-        let dt = FIXED_DT;
-        self.sim_time += dt as f64;
-        self.player.tool_swing = (self.player.tool_swing - dt * 2.8).max(0.0);
+    /// Actual equipment collision boxes shared by gameplay and mechanical trials.
+    pub fn mechanical_obstacles(&self) -> Vec<crate::tracks::Obstacle> {
         let hopper = Sluice::hopper_position(&self.site);
         let mut obstacles = vec![crate::tracks::Obstacle {
             center: hopper + Vec3::Y * 0.35,
@@ -377,6 +372,16 @@ impl Session {
                 ),
             });
         }
+        obstacles
+    }
+    pub fn step(&mut self, input: Controls) {
+        if self.paused {
+            return;
+        }
+        let dt = FIXED_DT;
+        self.sim_time += dt as f64;
+        self.player.tool_swing = (self.player.tool_swing - dt * 2.8).max(0.0);
+        let obstacles = self.mechanical_obstacles();
         if self.player.mode == ControlMode::Excavator {
             // Equipment, rather than camera focus, owns the running simulation.
             let old_yaw = self.machine.heading + self.machine.swing;

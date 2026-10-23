@@ -1,0 +1,26 @@
+`mining_sim::articulation::retained::RetainedSoil` is an explicit retained-world mechanical experiment behind the `contact-history` Cargo feature. It owns the actual articulated machine/controller, finite moving soil, body/joint handle maps and numerical contact world. The same `advance_model` function advances the existing rebuilt-world path and this experiment. No separate force law, reduced clod population, slower physical clock or prescribed bucket trajectory is introduced.
+
+The default Session and game still rebuild their mechanical world. Existing save versions 2–11 retain that model. This experiment is not enabled by `--active-soil`, and its timing does not measure native rendering or the combined water/terrain solver.
+
+The owner keeps its live physics/collision/CCD workspaces between valid steps. Clones preserve the numerical sets while rebuilding derived workspaces. Machine and clod state are published only after a valid mechanical result; an unexpected invalid result poisons the numerical owner and refuses further steps/saves. Invalid inputs, changed geometry and unsupported wet contact are refused before advancing. Geometry is checked against actual terrain heights, gravity and equipment boxes rather than trusting a revision counter alone. A terrain revision with identical geometry is harmless; changed geometry needs a future explicit collider/material transaction.
+
+The public controller keeps a wrapped swing coordinate. Before torque is applied, its reference is lifted onto the live multibody's coordinate chart; both public coordinate and reference are wrapped together afterwards by the shared step. The live body's pose is not rewritten to wrap its angle. This preserves saved continuation through the tested crossing of pi. It does not establish long-duration angle precision or convergence of the existing actuator model.
+
+The mechanical `step` takes `MachineInput`, physical dt and an `Environment`. It does not burn Session fuel, advance GPU water/terrain, perform scalar cut/dump transfers, activate additional soil or move static equipment. Empty external-load lists and the mounted-shell drained-soil model are currently required. Read-only access exposes the last valid canonical machine and soil. Broader environment and custody changes must be implemented before this owner can replace the game's mechanical path.
+
+The binary boundary starts with eight bytes `SLUICERS` and a little-endian u16 version, currently 1. A fixed-integer, little-endian Bincode payload contains exact canonical machine/controller and soil JSON strings, matching terrain/box/gravity data, all application handles and the complete [numerical contact boundary](contact-history.md). JSON strings avoid Bincode's incompatibility with conditional canonical JSON fields. The combined payload is limited to 64 MiB and trailing bytes are rejected; refusal never down-samples physical bodies.
+
+Restoration checks canonical material/mechanism validity, the supplied environment, declared contact policy, deterministic handle maps/counts, integration parameters, collider shapes/materials and corresponding body state. Consistency tolerances (1 mm translation, 0.0002 quaternion-component norm and 0.01 m/s or rad/s velocity) admit roundoff in independently reconstructed canonical linkage frames; they do not rewrite any engine state or claim that physical errors are that small. This remains an engine-produced boundary, not a validator for arbitrary edited engine graphs or an admitted Session save.
+
+Run the maintained recorded-command comparison with one job:
+
+```bash
+cargo +nightly build -p mining-sim --features contact-history \
+  --example retained_soil_replay --profile playable --locked --jobs 1
+gzip -dc docs/playtests/fixtures/2026-10-24-soil-stroke.commands.json.gz | \
+  target/playable/examples/retained_soil_replay retained /tmp/fresh-bank-run 1080 240
+```
+
+Use the active shared target path when building from a worktree. Modes `cold`, `retained` and `restore` run identical recorded commands against the same full bank and fixed terrain; the last mode restores the complete owner at every one-second checkpoint. Each output directory must be fresh. Separate startup, stepping and checkpoint times prevent save cost from being confused with solve cost. The reported loop total runs through metrics creation; an optional final diagnostic boundary file is written afterwards. An approximate held-volume diagnostic samples actual clod containment; it is not a calibrated bucket-yield measurement.
+
+The [checkpoint report](../playtests/2026-10-24-retained-soil.md) records physical controls, complete continuation, default-path equivalence, loaded refinement and measured CPU timing. Free contact, powered actuation and a loaded bank have different error budgets; a passing impact test does not prove bulk convergence. Positive coupled-energy residuals, loaded timestep dependence, continuous activation, wet/cohesive mud, changing geometry, Session admission and native real-time throughput remain acceptance work. Pads, shaker decks, sluice buildup, constructed settling pools and the remaining staged operation stay open.
