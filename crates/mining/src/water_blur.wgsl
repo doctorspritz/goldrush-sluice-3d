@@ -40,24 +40,32 @@ fn shared_surface_depth(raw:vec2<f32>,near:vec4<f32>,far:vec4<f32>)->f32 {
 // one-sided slope; a flat layer step has no matching tangent across its gap.
 // Blend uncertain fits back to the centre instead of switching the whole
 // reconstruction at a curvature threshold.
-fn sheet_axis(pixel:vec2<i32>,direction:vec2<i32>,size:vec2<i32>,center:f32)->vec2<f32> {
+fn sheet_axis(pixel:vec2<i32>,direction:vec2<i32>,size:vec2<i32>,center:f32)->vec4<f32> {
     let a=clamp(pixel-direction*6,vec2(0),size-vec2(1));
     let b=clamp(pixel-direction*3,vec2(0),size-vec2(1));
     let c=clamp(pixel+direction*3,vec2(0),size-vec2(1));
     let d=clamp(pixel+direction*6,vec2(0),size-vec2(1));
     let av=textureLoad(depths,a,0);let bv=textureLoad(depths,b,0);
     let cv=textureLoad(depths,c,0);let dv=textureLoad(depths,d,0);
-    let ab=dot(vec2<f32>(b-a),vec2<f32>(direction));
-    let cd=dot(vec2<f32>(d-c),vec2<f32>(direction));
-    if min(min(av.r,bv.r),min(cv.r,dv.r))<=0. ||
-       min(min(av.a,bv.a),min(cv.a,dv.a))<=0.5 || min(ab,cd)<=0. {return vec2(0.,1./center);}
-    let dl=(1./bv.r-1./av.r)/ab;let dr=(1./dv.r-1./cv.r)/cd;
-    let slope=select(0.,sign(dl)*min(abs(dl),abs(dr)),dl*dr>=0.);
-    let lo=1./bv.r+slope*dot(vec2<f32>(pixel-b),vec2<f32>(direction));
-    let hi=1./cv.r-slope*dot(vec2<f32>(c-pixel),vec2<f32>(direction));
-    let tolerance=max(abs(slope)*1.5,0.00001);
+    // Clamped border stencils do not have the symmetric quadratic metric.
+    if any(a!=pixel-direction*6) || any(d!=pixel+direction*6) ||
+       min(min(av.r,bv.r),min(cv.r,dv.r))<=0. ||
+       min(min(av.a,bv.a),min(cv.a,dv.a))<=0.5 {
+        return vec4(0.,1./center,0.,0.);
+    }
+    let dl=(1./bv.r-1./av.r)/3.;let dr=(1./dv.r-1./cv.r)/3.;
+    let slope=(dl+dr)*0.5;
+    let curvature=(dr-dl)/9.;
+    // Evaluate both one-sided fits at the centre. A genuine flat layer
+    // step disagrees here; a smooth crest has opposite slopes and curvature.
+    // The old minmod plane discarded that curvature and flattened the fit
+    // toward the shoulders, fragmenting its normal and optical footprint.
+    let lo=1./bv.r+3.*slope-4.5*curvature;
+    let hi=1./cv.r-3.*slope-4.5*curvature;
+    let tolerance=max(max(abs(dl),abs(dr))*1.5,0.00001);
     let confidence=1.-smoothstep(tolerance,tolerance*2.,abs(lo-hi));
-    return vec2(slope*confidence,mix(1./center,(lo+hi)*0.5,confidence));
+    return vec4(slope*confidence,mix(1./center,(lo+hi)*0.5,confidence),
+                curvature*confidence,confidence);
 }
 fn smooth_surface(pixel: vec2<i32>, direction: vec2<i32>) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(depths)); let center = textureLoad(depths,pixel,0);
@@ -79,10 +87,10 @@ fn smooth_surface(pixel: vec2<i32>, direction: vec2<i32>) -> vec4<f32> {
     // keeps the small kernel domes. Fit a projective tangent (inverse depth is
     // affine on a plane), then reject residuals about it. Detached water keeps
     // its original range test and arithmetic depth filter.
-    var slope=0.;var plane_origin=1./center.r;
+    var slope=0.;var curvature=0.;var plane_origin=1./center.r;
     if bulk>0. && center.a>0.5 {
         let tangent=sheet_axis(pixel,direction,size,center.r);
-        slope=tangent.x;plane_origin=tangent.y;
+        slope=tangent.x;plane_origin=tangent.y;curvature=tangent.z;
     }
     // A fixed pixel radius becomes a broad, round mound at grazing angles.
     // Bound connected-water diffusion to a 30 mm tangent footprint per pass.
@@ -103,7 +111,7 @@ fn smooth_surface(pixel: vec2<i32>, direction: vec2<i32>) -> vec4<f32> {
         if abs(i)>7 && bulk==0. {continue;}
         let q = clamp(pixel + direction * i, vec2(0),size-vec2(1)); let sample = textureLoad(depths,q,0);
         if sample.r <= 0. || (sample.a>0.5)!=(center.a>0.5) { continue; }
-        let expected=1./max(plane_origin+slope*f32(i),0.000001);
+        let expected=1./max(plane_origin+slope*f32(i)+0.5*curvature*f32(i*i),0.000001);
         let distance = (sample.r-mix(center.r,expected,bulk))/u.viewport.z;
         let tail=select(bulk,1.,abs(i)<=7);
         let spatial=max(f32(i*i)/mix(24.,48.,bulk),f32(i*i)*tangent_step2*bulk/(0.030*0.030));

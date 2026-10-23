@@ -71,24 +71,32 @@ fn sample_depth(pixel: vec2<f32>) -> vec2<f32> {
 // A secant through two separate layers is not a water tangent. Compare
 // one-sided reciprocal-depth slopes outside the centre kernel, and use the
 // agreement of their extrapolated planes as continuous fit confidence.
-fn channel_axis(pixel:vec2<i32>,direction:vec2<i32>,size:vec2<i32>,depth:f32)->vec3<f32> {
+fn channel_axis(pixel:vec2<i32>,direction:vec2<i32>,size:vec2<i32>,depth:f32)->vec4<f32> {
     let a=clamp(pixel-direction*6,vec2(0),size-vec2(1));
     let b=clamp(pixel-direction*3,vec2(0),size-vec2(1));
     let c=clamp(pixel+direction*3,vec2(0),size-vec2(1));
     let d=clamp(pixel+direction*6,vec2(0),size-vec2(1));
     let av=textureLoad(depths,a,0);let bv=textureLoad(depths,b,0);
     let cv=textureLoad(depths,c,0);let dv=textureLoad(depths,d,0);
-    let ab=dot(vec2<f32>(b-a),vec2<f32>(direction));
-    let cd=dot(vec2<f32>(d-c),vec2<f32>(direction));
-    if min(min(av.r,bv.r),min(cv.r,dv.r))<=0. ||
-       min(min(av.a,bv.a),min(cv.a,dv.a))<=0.5 || min(ab,cd)<=0. {return vec3(0.,1./depth,0.);}
-    let dl=(1./bv.r-1./av.r)/ab;let dr=(1./dv.r-1./cv.r)/cd;
-    let slope=select(0.,sign(dl)*min(abs(dl),abs(dr)),dl*dr>=0.);
-    let lo=1./bv.r+slope*dot(vec2<f32>(pixel-b),vec2<f32>(direction));
-    let hi=1./cv.r-slope*dot(vec2<f32>(c-pixel),vec2<f32>(direction));
-    let tolerance=max(abs(slope)*1.5,0.00001);
+    // Clamped border stencils do not have the symmetric quadratic metric.
+    if any(a!=pixel-direction*6) || any(d!=pixel+direction*6) ||
+       min(min(av.r,bv.r),min(cv.r,dv.r))<=0. ||
+       min(min(av.a,bv.a),min(cv.a,dv.a))<=0.5 {
+        return vec4(0.,1./depth,0.,0.);
+    }
+    let dl=(1./bv.r-1./av.r)/3.;let dr=(1./dv.r-1./cv.r)/3.;
+    let slope=(dl+dr)*0.5;
+    let curvature=(dr-dl)/9.;
+    // Evaluate both one-sided fits at the centre. A genuine flat layer
+    // step disagrees here; a smooth crest has opposite slopes and curvature.
+    // The old minmod plane discarded that curvature and flattened the fit
+    // toward the shoulders, fragmenting its normal and optical footprint.
+    let lo=1./bv.r+3.*slope-4.5*curvature;
+    let hi=1./cv.r-3.*slope-4.5*curvature;
+    let tolerance=max(max(abs(dl),abs(dr))*1.5,0.00001);
     let confidence=1.-smoothstep(tolerance,tolerance*2.,abs(lo-hi));
-    return vec3(slope*confidence,(lo+hi)*0.5,confidence);
+    return vec4(slope*confidence,(lo+hi)*0.5,
+                curvature*confidence,confidence);
 }
 struct ChannelSurface {normal:vec4<f32>,column:vec2<f32>};
 // Gather every texel in the footprint. Striding over alternating texels makes
@@ -104,18 +112,24 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
     // Inverse view depth is affine on an inclined sheet. Reject optical and
     // normal samples about that sheet, rather than about the camera-Z depth
     // of one pixel. The latter cuts a continuous crest into opacity islands.
-    var inverse_origin=1./depth;var inverse_slope=vec2(0.);
+    var inverse_origin=1./depth;var inverse_slope=vec2(0.);var inverse_curvature=vec2(0.);
     var anchors=0.;var anchor_sum=0.;var anchor_weight=0.;
     for(var axis=0u;axis<2u;axis++) {
         let direction=select(vec2(1,0),vec2(0,1),axis==1u);
         let tangent=channel_axis(center,direction,size,depth);
-        inverse_slope[axis]=tangent.x;
-        anchor_sum+=tangent.y*tangent.z;anchor_weight+=tangent.z;
-        anchors+=select(0.,1.,tangent.z==1.);
+        inverse_slope[axis]=tangent.x;inverse_curvature[axis]=tangent.z;
+        anchor_sum+=tangent.y*tangent.w;anchor_weight+=tangent.w;
+        anchors+=select(0.,1.,tangent.w==1.);
     }
     if anchor_weight>0. {
-        let fitted=anchor_sum/anchor_weight+dot(inverse_slope,p-vec2<f32>(center));
+        // Translate the quadratic and its tangent together to the actual
+        // full-size pixel. Moving just the intercept leaves a different slope
+        // on either side of a half-size texel phase boundary.
+        let offset=p-vec2<f32>(center);
+        let fitted=anchor_sum/anchor_weight+dot(inverse_slope,offset)
+            +0.5*dot(inverse_curvature,offset*offset);
         inverse_origin=mix(1./depth,fitted,min(anchor_weight,1.));
+        inverse_slope+=inverse_curvature*offset;
     }
     // One screen texel spans much more liquid along a grazing sheet than
     // across it. Use its projective tangent metric for every final gather,
@@ -144,7 +158,7 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         let raw=textureLoad(raw_depths,q,0);
         if raw.r<=0. || raw.g>= -0.5 {continue;}
         let distance=vec2<f32>(q)-p;
-        let expected=1./max(inverse_origin+dot(inverse_slope,distance),0.000001);
+        let expected=1./max(inverse_origin+dot(inverse_slope,distance)+0.5*dot(inverse_curvature,distance*distance),0.000001);
         // A profile spans 51 mm and the local filter another 35 mm. Taper
         // this visibility gate instead of switching whole muddy texels on/off.
         let visibility=1.-smoothstep(0.051,0.086,abs(raw.r-expected));
@@ -171,7 +185,7 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
             let fit_edge=clamp(1.-abs(residual)/0.070,0.,1.);
             let fit_window=fit_edge*fit_edge*fit_edge*(fit_edge*(fit_edge*6.-15.)+10.);
             let pw=taper*fit_window*exp(-max(dot(distance,distance)/12.,normal_spatial)-delta*delta);
-            let z=1./shared_depth-1./depth;
+            let z=1./shared_depth-1./depth-0.5*dot(inverse_curvature,distance*distance);
             position_sum+=vec3(distance,z)*pw;
             second+=vec3(distance.x*distance.x,distance.x*distance.y,distance.y*distance.y)*pw;
             cross_depth+=distance*z*pw;plane_weight+=pw;
