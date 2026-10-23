@@ -42,8 +42,8 @@ fn run_pipeline(conservative: bool, articulated: bool, exchange: bool, soil: boo
         let (w, q) = mining_sim::articulation::payload_frame(&s.machine);
         let parcel = mining_sim::payload::RigidParcel::cuboid(
             batch,
-            w + q * glam::DVec3::new(0., -0.05, 0.45),
-            glam::DVec3::new(0.2, batch.volume() / (8. * 0.2 * 0.25), 0.25),
+            w + q * glam::DVec3::new(0., -0.60, 0.40),
+            glam::DVec3::new(0.24, batch.volume() / (8. * 0.24 * 0.18), 0.18),
             q,
             glam::DVec3::new(0.1, -0.2, 0.3),
             glam::DVec3::new(0., 0.3, 0.),
@@ -133,7 +133,7 @@ fn run_pipeline(conservative: bool, articulated: bool, exchange: bool, soil: boo
                 serde_json::from_str::<serde_json::Value>(&s.save_json().unwrap()).unwrap()
                     ["version"],
                 if soil || exchange || articulated {
-                    10
+                    11
                 } else {
                     6
                 }
@@ -142,7 +142,7 @@ fn run_pipeline(conservative: bool, articulated: bool, exchange: bool, soil: boo
                 assert_eq!(
                     serde_json::from_str::<serde_json::Value>(&s.save_json().unwrap()).unwrap()
                         ["version"],
-                    10
+                    11
                 );
             }
 

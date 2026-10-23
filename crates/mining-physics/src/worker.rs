@@ -516,7 +516,7 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&loaded.session.save_json().unwrap())
                 .unwrap()["version"],
-            10
+            11
         );
         std::fs::remove_file(path).unwrap();
     }
@@ -550,7 +550,7 @@ mod tests {
         let state = saved.session.save_json().unwrap();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&state).unwrap()["version"],
-            10
+            11
         );
         worker
             .submit(Work {

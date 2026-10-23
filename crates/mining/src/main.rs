@@ -47,8 +47,8 @@ fn main() -> AppExit {
         let (w, q) = mining_sim::articulation::payload_frame(&session.machine);
         let parcel = mining_sim::payload::RigidParcel::cuboid(
             material,
-            w + q * mining_sim::Vec3::new(0., -0.075, 0.53).as_dvec3(),
-            mining_sim::Vec3::new(0.30, (material.volume() / (8. * 0.30 * 0.40)) as f32, 0.40)
+            w + q * mining_sim::Vec3::new(0., -0.60, 0.40).as_dvec3(),
+            mining_sim::Vec3::new(0.30, (material.volume() / (8. * 0.30 * 0.23)) as f32, 0.23)
                 .as_dvec3(),
             q,
             Default::default(),

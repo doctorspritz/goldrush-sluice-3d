@@ -594,7 +594,8 @@ impl Session {
         let clearance = |m: &Excavator| {
             let a = m.arm();
             let q = m.bucket_rotation();
-            crate::bucket::geometry()
+            m.bucket_model()
+                .geometry()
                 .parts
                 .iter()
                 .flat_map(|p| p.vertices.iter())
@@ -635,15 +636,24 @@ impl Session {
         m.articulation = None;
         m.enable_articulation()?;
         let a = m.arm();
-        // A backhoe pulls the cutting lip toward the machine. Activate the
-        // bank in front of that open mouth, not beneath the closed shell.
-        let c = a.lip - m.forward() * 0.35;
+        // Activate the finite bank under the entire curved tool as well as
+        // its entry. Leaving rigid, unactivated soil under the belly blocks
+        // excavation before the lip can load the bank. All removed stock is
+        // retained as real clods at its original position before time zero.
+        let forward = Vec3::new(a.forward.x, 0., a.forward.z).normalize();
+        let right = Vec3::new(a.right.x, 0., a.right.z).normalize();
+        let origin = Vec3::new(a.wrist.x, 0., a.wrist.z);
+        let low = (a.lip - origin).dot(forward) - 0.85;
+        let high = (a.heel - origin).dot(forward) + 0.20;
         let mut nodes = Vec::new();
         for z in 1..crate::site::WIDTH - 1 {
             for x in 1..crate::site::WIDTH - 1 {
-                if (x as f32 * crate::site::CELL - c.x).abs() <= 0.45
-                    && (z as f32 * crate::site::CELL - c.z).abs() <= 0.5
-                {
+                let p = Vec3::new(
+                    x as f32 * crate::site::CELL,
+                    0.,
+                    z as f32 * crate::site::CELL,
+                ) - origin;
+                if p.dot(right).abs() <= 0.45 && (low..=high).contains(&p.dot(forward)) {
                     nodes.push((z * crate::site::WIDTH + x, 0.18));
                 }
             }
@@ -729,7 +739,9 @@ impl Session {
         site.normalize_bed_age();
         serde_json::to_string(&Save {
             // v8 preserves spatial payload/rigid parcels and boundary receipts.
-            version: if self
+            version: if self.machine.bucket_model() == crate::bucket::Model::MountedShellV2 {
+                11
+            } else if self
                 .machine
                 .articulation
                 .as_ref()
@@ -764,13 +776,13 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if !matches!(s.version, 2..=10) {
+        if !matches!(s.version, 2..=11) {
             return Err("Unsupported save version".into());
         }
         if !matches!(
             (s.version, s.site.bed_age_unit()),
             (2, crate::site::BedAgeUnit::Legacy20HzSteps)
-                | (3..=10, crate::site::BedAgeUnit::Microseconds)
+                | (3..=11, crate::site::BedAgeUnit::Microseconds)
         ) {
             return Err("Invalid saved terrain clock".into());
         }
@@ -808,8 +820,11 @@ impl Session {
             .machine
             .articulation
             .as_ref()
-            .is_some_and(|a| a.bucket_model() == crate::bucket::Model::ShellV1);
-        if (s.version == 10) != shell
+            .is_some_and(|a| a.bucket_model().is_shell());
+        if (s.version == 10) != (s.machine.bucket_model() == crate::bucket::Model::ShellV1)
+            || (s.version == 11)
+                != (s.machine.bucket_model() == crate::bucket::Model::MountedShellV2)
+            || (s.version >= 10 && !shell)
             || (s.version < 7 && s.machine.articulation.is_some())
             || (s.version == 7 && s.machine.articulation.is_none())
             || (s.version < 8 && advanced)

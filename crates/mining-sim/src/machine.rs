@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 pub const BUCKET_CAPACITY: f64 = 0.28;
 pub const BOOM_LENGTH: f32 = 3.0;
 pub const STICK_LENGTH: f32 = 2.3;
+pub const STICK_VISUAL_WIDTH_M: f32 = 0.22;
+pub const LINK_VISUAL_DEPTH_RATIO: f32 = 1.3;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct HydraulicLimits {
@@ -135,7 +137,7 @@ impl Excavator {
             .map_or(crate::bucket::Model::LegacyFloor, |a| a.bucket_model())
     }
     pub fn bucket_rotation(&self) -> glam::Quat {
-        let shell = self.bucket_model() == crate::bucket::Model::ShellV1;
+        let shell = self.bucket_model().is_shell();
         let angle = if shell {
             self.boom + self.stick - self.curl + std::f32::consts::FRAC_PI_2
         } else {
@@ -160,7 +162,7 @@ impl Excavator {
         let segment = |angle: f32, len: f32| f * (angle.cos() * len) + up * (angle.sin() * len);
         let elbow = shoulder + segment(self.boom, BOOM_LENGTH);
         let wrist = elbow + segment(self.boom + self.stick, STICK_LENGTH);
-        let shell = self.bucket_model() == crate::bucket::Model::ShellV1;
+        let shell = self.bucket_model().is_shell();
         let angle = if shell {
             self.boom + self.stick - self.curl + std::f32::consts::FRAC_PI_2
         } else {
@@ -177,12 +179,12 @@ impl Excavator {
                 + up * (y * angle.cos() + z * angle.sin())
         };
         let lip = if shell {
-            wrist + self.bucket_rotation() * crate::bucket::TOOTH_TIP
+            wrist + self.bucket_rotation() * self.bucket_model().geometry().tooth_tip
         } else {
             bucket_point(-0.23, 1.065)
         };
-        let heel = if self.bucket_model() == crate::bucket::Model::ShellV1 {
-            let geometry = crate::bucket::geometry();
+        let heel = if self.bucket_model().is_shell() {
+            let geometry = self.bucket_model().geometry();
             let point = geometry
                 .parts
                 .iter()

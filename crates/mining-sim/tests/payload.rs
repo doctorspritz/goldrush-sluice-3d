@@ -62,13 +62,13 @@ fn point_motion(m: &Excavator, p: DVec3) -> (DVec3, DVec3) {
 }
 fn incoming(m: &Excavator, mat: Material, moving: bool) -> RigidParcel {
     let (w, q) = articulation::payload_frame(m);
-    let center = w + q * DVec3::new(0., -0.05, 0.45);
+    let center = w + q * DVec3::new(0., -0.60, 0.40);
     let (mut v, mut omega) = point_motion(m, center);
     if moving {
         v += DVec3::new(1.2, -0.6, 0.8);
         omega += DVec3::new(0.3, -0.2, 0.1);
     }
-    let half = DVec3::new(0.2, mat.volume() / (8. * 0.2 * 0.25), 0.25);
+    let half = DVec3::new(0.24, mat.volume() / (8. * 0.24 * 0.18), 0.18);
     RigidParcel::cuboid(mat, center, half, q, v, omega).unwrap()
 }
 fn state(m: &Excavator) -> String {
@@ -394,7 +394,7 @@ fn session_exchange_preserves_material_water_gold_and_exact_saved_continuation()
     assert!((s.stored_water_m3() - water).abs() < 1e-9);
     let json = s.save_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 10);
+    assert_eq!(value["version"], 11);
     let mut restored = Session::load_json(&json).unwrap();
     for _ in 0..30 {
         s.step(Default::default());
@@ -437,7 +437,7 @@ fn versioned_material_state_and_invalid_mass_moments_are_rejected() {
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&ordinary.save_json().unwrap()).unwrap()
             ["version"],
-        10
+        11
     );
 }
 #[test]
@@ -555,7 +555,7 @@ fn positive_subthreshold_inventory_is_not_dropped_by_exchange() {
     let (w, q) = articulation::payload_frame(&m);
     let parcel = RigidParcel::cuboid(
         mat,
-        w + q * DVec3::new(0., -0.05, 0.45),
+        w + q * DVec3::new(0., -0.60, 0.40),
         DVec3::splat((mat.volume() / 8.).cbrt()),
         q,
         DVec3::ZERO,

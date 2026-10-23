@@ -12,7 +12,7 @@ use crate::dynamics::{
 use crate::geometry::{
     ColliderHandle, ColliderMassProps, ColliderParent, ColliderPosition, ColliderSet, ColliderShape,
 };
-use crate::math::{AngVector, Pose, Real, Rotation, Vector, rotation_from_angle};
+use crate::math::{rotation_from_angle, AngVector, Pose, Real, Rotation, Vector};
 use crate::utils::CrossProduct;
 
 #[cfg(feature = "dim2")]
@@ -1611,6 +1611,7 @@ impl RigidBody {
             mprops.principal_inertia(),
             mprops.inv_principal_inertia,
             dt,
+            self.ccd.allow_fast_rotation,
         )
     }
 }
@@ -2189,6 +2190,7 @@ pub(crate) fn gyroscopic_corrected_angvel(
     principal_inertia: AngVector,
     inv_principal_inertia: AngVector,
     dt: Real,
+    allow_fast_rotation: bool,
 ) -> AngVector {
     // NOTE: integrating the gyroscopic forces implicitly are both slower and
     //       very dissipative. Instead, we only keep the explicit term and
@@ -2202,7 +2204,15 @@ pub(crate) fn gyroscopic_corrected_angvel(
     if total_momentum_sqnorm != 0.0 {
         let capped_momentum =
             total_momentum * (curr_momentum.length_squared() / total_momentum_sqnorm).sqrt();
-        principal_axes * (inv_principal_inertia * capped_momentum)
+        if allow_fast_rotation {
+            // Apply only the gyroscopic increment. A principal-axis spin has
+            // zero increment; repeatedly transforming its full velocity into
+            // and out of a rounded f32 frame otherwise creates energy drift.
+            // Keep the established arithmetic for ordinary capped bodies.
+            angvel + principal_axes * (inv_principal_inertia * (capped_momentum - curr_momentum))
+        } else {
+            principal_axes * (inv_principal_inertia * capped_momentum)
+        }
     } else {
         angvel
     }

@@ -6,20 +6,20 @@ use core::sync::atomic::Ordering;
 
 #[cfg(feature = "dim3")]
 use crate::dynamics::rigid_body::gyroscopic_corrected_angvel;
-use crate::dynamics::solver::JointConstraintsSet;
 use crate::dynamics::solver::contact_constraint::ContactWithCoulombFrictionBuilder;
 #[cfg(feature = "dim3")]
 use crate::dynamics::solver::contact_constraint::ContactWithTwistFrictionBuilder;
 use crate::dynamics::solver::joint_constraint::GenericJointConstraintBuilder;
 use crate::dynamics::solver::solver_body::SOLVER_BODY_ALLOW_FAST_ROTATION;
 use crate::dynamics::solver::solver_contact_graph::ContactRef;
+use crate::dynamics::solver::JointConstraintsSet;
 use crate::dynamics::{JointGraphEdge, RigidBodyType, RigidBodyVelocity};
 use crate::geometry::ContactManifold;
 use crate::math::Real;
 use parry::math::SIMD_WIDTH;
 
 use super::solve::solve_pass;
-use super::{BODY_BATCH, SharedCtx, chunk_at, stage_batch};
+use super::{chunk_at, stage_batch, SharedCtx, BODY_BATCH};
 
 /// Per-full-step angular rotation cap (0.25π ≈ 45°): bodies without
 /// `allow_fast_rotation` get their angular velocity clamped each substep so the full-step
@@ -307,6 +307,8 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                                     gyro.principal_inertia,
                                     gyro.inv_principal_inertia,
                                     params.dt,
+                                    vs.solver_bodies.flags[i] & SOLVER_BODY_ALLOW_FAST_ROTATION
+                                        != 0,
                                 );
                             }
                         }

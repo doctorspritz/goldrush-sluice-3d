@@ -76,6 +76,10 @@ pub struct Clod {
     pub angular_velocity: Vec3,
     #[serde(skip)]
     shape: Option<r::SharedShape>,
+    /// Derived from immutable local geometry/material; pose and velocity do not
+    /// affect it. Recomputed deterministically after deserialization.
+    #[serde(skip)]
+    precise_properties: Option<r::MassProperties>,
 }
 impl Clod {
     pub fn prism(material: Material, vertices: [DVec3; 6]) -> Result<Self, String> {
@@ -97,6 +101,7 @@ impl Clod {
             velocity: Vec3::ZERO,
             angular_velocity: Vec3::ZERO,
             shape: None,
+            precise_properties: None,
         };
         if !body.valid() {
             return Err("Invalid soil shape or mass moments".into());
@@ -128,7 +133,13 @@ impl Clod {
             && self.velocity.is_finite()
             && self.velocity.length() < 100.
             && self.angular_velocity.is_finite()
-            && self.angular_velocity.length() < 100.
+            // Bound physical point speed, not an arbitrary angular rate.
+            // A centimetre clod can legitimately spin at 200 rad/s while its
+            // surface moves only a few m/s. Large or explosive motion still
+            // has the same 100 m/s bound as translation.
+            && self.vertices.iter().all(|p| {
+                (self.velocity + self.angular_velocity.cross(self.rotation * *p)).length() < 100.
+            })
             && self
                 .vertices
                 .iter()
@@ -149,26 +160,51 @@ impl Clod {
         &mut self,
         world: &mut r::PhysicsWorld,
     ) -> Result<r::RigidBodyHandle, String> {
+        self.insert_with_registration(world, false)
+    }
+    pub(crate) fn insert_precise(
+        &mut self,
+        world: &mut r::PhysicsWorld,
+    ) -> Result<r::RigidBodyHandle, String> {
+        self.insert_with_registration(world, true)
+    }
+    fn insert_with_registration(
+        &mut self,
+        world: &mut r::PhysicsWorld,
+        precise: bool,
+    ) -> Result<r::RigidBodyHandle, String> {
         if self.shape.is_none() {
             self.shape = Some(
                 r::SharedShape::convex_hull(&self.vertices.map(rv))
                     .ok_or("Invalid soil convex hull")?,
             );
         }
+        let properties = if precise {
+            let moments = self.moments;
+            *self
+                .precise_properties
+                .get_or_insert_with(|| precise_mass_properties(moments))
+        } else {
+            r::MassProperties::with_inertia_matrix(
+                r::Vector::ZERO,
+                self.moments.mass_kg as f32,
+                r::Matrix::from_cols_array(
+                    &self.moments.inertia().to_cols_array().map(|v| v as f32),
+                ),
+            )
+        };
         let h = world.insert_body(
             r::RigidBodyBuilder::dynamic()
                 .pose(pose(self.center, self.rotation))
                 .linvel(rv(self.velocity))
                 .angvel(rv(self.angular_velocity))
                 .can_sleep(false)
+                // The default full-step rotation cap silently discards spin
+                // energy above 45 degrees. New small clods are bounded by
+                // physical point speed and need their true angular motion.
+                .allow_fast_rotation(precise)
                 .ccd_enabled(true)
-                .additional_mass_properties(r::MassProperties::with_inertia_matrix(
-                    r::Vector::ZERO,
-                    self.moments.mass_kg as f32,
-                    r::Matrix::from_cols_array(
-                        &self.moments.inertia().to_cols_array().map(|v| v as f32),
-                    ),
-                )),
+                .additional_mass_properties(properties),
         );
         world.insert_collider(
             r::ColliderBuilder::new(self.shape.as_ref().unwrap().clone())
@@ -205,6 +241,70 @@ impl Clod {
             gravitational_j: -mass * gravity.as_dvec3().dot(self.center.as_dvec3()),
         }
     }
+}
+// Scale-independent symmetric Jacobi diagonalization. Starting from the
+// identity keeps already principal axes (including repeated eigenspaces) stable.
+// The pinned general eigensolver uses an absolute cross-product cutoff that is
+// inappropriate for small SI tensors. Exact geometry and mass remain unchanged.
+fn precise_mass_properties(moments: MassMoments) -> r::MassProperties {
+    let inertia = moments.inertia();
+    let scale = inertia
+        .to_cols_array()
+        .into_iter()
+        .map(f64::abs)
+        .fold(0., f64::max);
+    let mut a = (inertia / scale).to_cols_array_2d();
+    let mut v = DMat3::IDENTITY.to_cols_array_2d();
+    for _ in 0..12 {
+        for (p, q) in [(0, 1), (0, 2), (1, 2)] {
+            let apq = a[q][p];
+            if apq.abs() < 1e-14 {
+                continue;
+            }
+            let tau = (a[q][q] - a[p][p]) / (2. * apq);
+            let t = if tau >= 0. {
+                1. / (tau + (1. + tau * tau).sqrt())
+            } else {
+                -1. / (-tau + (1. + tau * tau).sqrt())
+            };
+            let c = 1. / (1. + t * t).sqrt();
+            let sn = t * c;
+            for row in &mut a {
+                let ap = row[p];
+                let aq = row[q];
+                row[p] = c * ap - sn * aq;
+                row[q] = sn * ap + c * aq;
+            }
+            for row in &mut v {
+                let ap = row[p];
+                let aq = row[q];
+                row[p] = c * ap - sn * aq;
+                row[q] = sn * ap + c * aq;
+            }
+            let (before, after) = a.split_at_mut(q);
+            for (ap, aq) in before[p].iter_mut().zip(&mut after[0]) {
+                let old_p = *ap;
+                let old_q = *aq;
+                *ap = c * old_p - sn * old_q;
+                *aq = sn * old_p + c * old_q;
+            }
+        }
+    }
+    let basis = DMat3::from_cols_array_2d(&v).transpose();
+    let frame = r::Rotation::from_mat3(&r::Matrix::from_cols_array(
+        &basis.to_cols_array().map(|x| x as f32),
+    ))
+    .normalize();
+    r::MassProperties::with_principal_inertia_frame(
+        r::Vector::ZERO,
+        moments.mass_kg as f32,
+        r::Vector::new(
+            (a[0][0] * scale) as f32,
+            (a[1][1] * scale) as f32,
+            (a[2][2] * scale) as f32,
+        ),
+        frame,
+    )
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Totals {
@@ -342,6 +442,27 @@ impl ActiveSoil {
     }
 }
 
+/// Vertical height of the actual two-triangle collision cell. The smoother
+/// bilinear site query can differ by centimetres across an activated pit and
+/// must not be used as a signed contact-penetration oracle.
+pub fn substrate_height(site: &Site, x: f32, z: f32) -> f32 {
+    let gx = (x / CELL).clamp(0., (WIDTH - 1) as f32);
+    let gz = (z / CELL).clamp(0., (WIDTH - 1) as f32);
+    let ix = (gx.floor() as usize).min(WIDTH - 2);
+    let iz = (gz.floor() as usize).min(WIDTH - 2);
+    let fx = gx - ix as f32;
+    let fz = gz - iz as f32;
+    let a = site.world.ground_height(ix, iz);
+    let b = site.world.ground_height(ix, iz + 1);
+    let c = site.world.ground_height(ix + 1, iz);
+    let d = site.world.ground_height(ix + 1, iz + 1);
+    if fx + fz <= 1. {
+        a + (c - a) * fx + (b - a) * fz
+    } else {
+        d + (b - d) * (1. - fx) + (c - d) * (1. - fz)
+    }
+}
+
 /// Activate the complete support of selected terrain nodes. Matching Parry's
 /// triangle diagonal makes the moving prisms fill exactly the removed surface
 /// layer, including boundary wedges. The substrate remains a real collider.
@@ -460,4 +581,177 @@ pub fn activate(
     }
     *site = candidate;
     Ok(soil)
+}
+
+#[cfg(test)]
+mod substrate_query_tests {
+    use super::*;
+    #[test]
+    fn contact_height_matches_actual_heightfield_rays_on_both_triangles() {
+        let mut site = Site::new();
+        let mut soil = activate(&mut site, &[(80 * WIDTH + 76, 0.18)], 2).unwrap();
+        let shape = soil.ground(&site);
+        let center = (WIDTH - 1) as f32 * CELL * 0.5;
+        let mut bilinear_error = 0f32;
+        for x in 75..78 {
+            for z in 79..82 {
+                for fx in [0.2, 0.6, 0.9] {
+                    for fz in [0.2, 0.6, 0.9] {
+                        let px = (x as f32 + fx) * CELL;
+                        let pz = (z as f32 + fz) * CELL;
+                        let ray = r::Ray::new(
+                            r::Vector::new(px - center, 10., pz - center),
+                            -r::Vector::Y,
+                        );
+                        let hit = shape.cast_local_ray(&ray, 20., true).unwrap();
+                        let actual = 10. - hit;
+                        let query = substrate_height(&site, px, pz);
+                        assert!(
+                            (query - actual).abs() < 0.00001,
+                            "triangle contact height disagrees: {query} vs {actual}"
+                        );
+                        bilinear_error = bilinear_error.max((site.height(px, pz) - actual).abs());
+                    }
+                }
+            }
+        }
+        assert!(
+            bilinear_error > 0.005,
+            "smooth-height negative control did not reproduce the pit mismatch"
+        );
+    }
+
+    #[test]
+    fn activated_bank_has_no_initial_contact_overlap() {
+        let mut s = crate::Session::new();
+        s.prepare_soil_trial().unwrap();
+        let soil = s.active_soil.as_mut().unwrap();
+        let ground = soil.ground(&s.site);
+        let mut world = r::PhysicsWorld::new();
+        crate::soil_contacts::configure(&mut world);
+        let center = (WIDTH - 1) as f32 * CELL * 0.5;
+        world.insert(
+            r::RigidBodyBuilder::fixed(),
+            r::ColliderBuilder::new(ground)
+                .translation(r::Vector::new(center, 0., center))
+                .user_data(10),
+        );
+        let mut initial = Vec::new();
+        for clod in &mut soil.clods {
+            let h = clod.insert(&mut world).unwrap();
+            initial.push((h, clod.center));
+        }
+        world.integration_parameters.dt = 0.;
+        world.step();
+        for (h, p) in initial {
+            assert_eq!(
+                world.bodies[h].translation().to_array(),
+                p.to_array(),
+                "zero-time query moved soil"
+            );
+        }
+        let mut total = 0;
+        let mut worst = 0f32;
+        let mut bad = 0;
+        for pair in world.narrow_phase.contact_pairs() {
+            for manifold in pair.solver_manifolds() {
+                for point in &manifold.points {
+                    assert!(point.dist.is_finite());
+                    total += 1;
+                    worst = worst.min(point.dist);
+                    bad += usize::from(point.dist < -0.00001);
+                }
+            }
+        }
+        assert!(total > 0, "no initial contacts were queried");
+        println!("initial bank contact overlap: worst={worst} bad_points={bad}");
+        assert!(
+            worst > -0.00001,
+            "finite bank starts with overlapping contact geometry"
+        );
+    }
+}
+
+#[cfg(test)]
+mod inertia_registration_tests {
+    use super::*;
+    fn prism(scale: f64, tapered: bool) -> Clod {
+        let turn = glam::DQuat::from_rotation_y(0.37);
+        let top = if tapered { [0.8, 1.2, 1.] } else { [1.; 3] };
+        let bottom = [
+            DVec3::ZERO,
+            DVec3::new(scale, 0., 0.),
+            DVec3::new(0., 0., scale),
+        ];
+        let vertices = std::array::from_fn(|i| {
+            let j = i % 3;
+            turn * (bottom[j]
+                + if i < 3 {
+                    DVec3::ZERO
+                } else {
+                    DVec3::Y * (scale * top[j])
+                })
+        });
+        let volume = prism_moments(vertices, 1.).unwrap().0;
+        Clod::prism(
+            Material {
+                sand_m3: volume,
+                ..Default::default()
+            },
+            vertices,
+        )
+        .unwrap()
+    }
+    fn relative_error(c: &mut Clod, precise: bool) -> f64 {
+        let mut world = r::PhysicsWorld::new();
+        let h = if precise {
+            c.insert_precise(&mut world)
+        } else {
+            c.insert(&mut world)
+        }
+        .unwrap();
+        let properties = &world.bodies[h].mass_properties().local_mprops;
+        let actual = DMat3::from_cols_array(
+            &properties
+                .reconstruct_inertia_matrix()
+                .to_cols_array()
+                .map(|x| x as f64),
+        );
+        let expected = c.moments().inertia();
+        assert!(
+            (properties.mass() as f64 - c.material().wet_mass_kg()).abs()
+                < c.material().wet_mass_kg() * 1e-6
+        );
+        let norm = expected
+            .to_cols_array()
+            .into_iter()
+            .map(f64::abs)
+            .fold(0., f64::max);
+        (actual - expected)
+            .to_cols_array()
+            .into_iter()
+            .map(f64::abs)
+            .fold(0., f64::max)
+            / norm
+    }
+    #[test]
+    fn small_clods_register_full_geometry_inertia_across_scales_and_repeated_moments() {
+        let mut maximum = 0f64;
+        for scale in [0.005, 0.02, 0.125, 0.5] {
+            for tapered in [false, true] {
+                let error = relative_error(&mut prism(scale, tapered), true);
+                maximum = maximum.max(error);
+                assert!(
+                    error < 1e-5,
+                    "scale={scale} tapered={tapered}: inertia error={error}"
+                );
+            }
+        }
+        let old = relative_error(&mut prism(0.02, false), false);
+        println!("clod inertia relative error: old={old}, precise maximum={maximum}");
+        assert!(
+            old > 0.05,
+            "old small-tensor negative control did not reproduce: {old}"
+        );
+    }
 }

@@ -126,7 +126,7 @@ fn finite_soil_collision_reacts_on_the_floating_bucket_with_closed_momentum() {
     let arm = m.arm();
     let bucket_q = m.bucket_rotation();
     let q = bucket_q;
-    let floor = arm.wrist + q * Vec3::new(0., -0.20, 0.5);
+    let floor = arm.wrist + q * Vec3::new(0., -0.65, 0.4);
     let mut clod = Clod::prism(
         Material {
             sand_m3: 0.004,
@@ -271,7 +271,7 @@ fn moving_soil_owns_material_and_v9_continuation_rejects_wrong_formats() {
     );
     let encoded = s.save_json().unwrap();
     let mut v: serde_json::Value = serde_json::from_str(&encoded).unwrap();
-    assert_eq!(v["version"], 10);
+    assert_eq!(v["version"], 11);
     let mut restored = Session::load_json(&encoded).unwrap();
     assert_eq!(s.save_json().unwrap(), restored.save_json().unwrap());
     for _ in 0..10 {
@@ -280,11 +280,20 @@ fn moving_soil_owns_material_and_v9_continuation_rejects_wrong_formats() {
     }
     assert!(!s.paused);
     assert_eq!(s.save_json().unwrap(), restored.save_json().unwrap());
-    for version in [6, 7, 8, 9] {
+    // The live copy has derived geometry/inertia caches now; a loaded copy
+    // reconstructs them. Cache lifetime must not change physical continuation.
+    let mut cold = Session::load_json(&s.save_json().unwrap()).unwrap();
+    for _ in 0..10 {
+        s.step(Default::default());
+        cold.step(Default::default());
+    }
+    assert!(!s.paused);
+    assert_eq!(s.save_json().unwrap(), cold.save_json().unwrap());
+    for version in [6, 7, 8, 9, 10] {
         v["version"] = serde_json::json!(version);
         assert!(Session::load_json(&v.to_string()).is_err());
     }
-    v["version"] = serde_json::json!(10);
+    v["version"] = serde_json::json!(11);
     v["active_soil"]["clods"][0]["vertices"][0][0] = serde_json::json!(20.);
     assert!(Session::load_json(&v.to_string()).is_err());
 }
@@ -379,7 +388,7 @@ fn soil_trial_rebuilds_an_already_selected_stationary_articulation_before_time_z
 fn shell_cheek_impacts_recoil_the_machine_without_inventing_momentum_or_energy() {
     for direction in [-1., 1.] {
         let mut m = machine();
-        assert_eq!(m.bucket_model(), mining_sim::bucket::Model::ShellV1);
+        assert_eq!(m.bucket_model(), mining_sim::bucket::Model::MountedShellV2);
         let arm = m.arm();
         let q = m.bucket_rotation();
         let mut clod = Clod::prism(
@@ -390,7 +399,7 @@ fn shell_cheek_impacts_recoil_the_machine_without_inventing_momentum_or_energy()
             prism(0.08, 0.08, 0.06),
         )
         .unwrap();
-        clod.center = arm.wrist + q * (clod.center + Vec3::new(-0.04, -0.12, 0.4));
+        clod.center = arm.wrist + q * (clod.center + Vec3::new(-0.04, -0.50, 0.4));
         clod.rotation = q;
         clod.velocity = q * Vec3::X * (direction * 2.);
         let mut soil = ActiveSoil::from_clods(vec![clod]).unwrap();
@@ -438,7 +447,7 @@ fn actual_bank_clods_are_scooped_held_airborne_and_emptied_by_the_open_shell() {
     s.player.mode = mining_sim::ControlMode::Excavator;
     let source = s.active_soil.as_ref().unwrap().material();
     let mut held = f64::INFINITY;
-    for _ in 0..660 {
+    for _ in 0..1080 {
         let input = mining_sim::replay::soil_trial_controls(&s, s.sim_time);
         s.step(mining_sim::session::Controls {
             machine: input,
@@ -450,7 +459,20 @@ fn actual_bank_clods_are_scooped_held_airborne_and_emptied_by_the_open_shell() {
             "independent soil was captured into scalar custody"
         );
         assert_eq!(s.active_soil.as_ref().unwrap().material(), source);
-        if (5.7..6.3).contains(&s.sim_time) {
+        for (i, clod) in s.active_soil.as_ref().unwrap().clods.iter().enumerate() {
+            let highest = clod
+                .vertices()
+                .iter()
+                .map(|v| clod.center + clod.rotation * *v)
+                .map(|p| p.y - soil::substrate_height(&s.site, p.x, p.z))
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert!(
+                highest > -0.025,
+                "clod {i} escaped the substrate during full cycle at {}: highest={highest}",
+                s.sim_time
+            );
+        }
+        if (9.0..10.0).contains(&s.sim_time) {
             let soil = s.active_soil.as_ref().unwrap();
             let contents = mining_sim::bucket::estimated_soil_contents(&s.machine, soil);
             held = held.min(contents.volume());
@@ -486,4 +508,103 @@ fn actual_bank_clods_are_scooped_held_airborne_and_emptied_by_the_open_shell() {
         "opening did not release all counted clods"
     );
     assert_eq!(source, s.active_soil.as_ref().unwrap().material());
+}
+
+#[test]
+fn delayed_operator_inputs_do_not_push_complete_clods_through_the_substrate() {
+    for (lag, refresh) in [(2, 1), (2, 2), (4, 2), (6, 2)] {
+        let mut s = Session::new();
+        s.prepare_soil_trial().unwrap();
+        s.player.mode = mining_sim::ControlMode::Excavator;
+        let source = s.active_soil.as_ref().unwrap().material();
+        let mut delayed = std::collections::VecDeque::new();
+        let mut latched = MachineInput::default();
+        for tick in 0..180 {
+            delayed.push_back(mining_sim::replay::soil_trial_controls(&s, s.sim_time));
+            let next = if delayed.len() > lag {
+                delayed.pop_front().unwrap()
+            } else {
+                MachineInput::default()
+            };
+            if tick % refresh == 0 {
+                latched = next;
+            }
+            s.step(mining_sim::session::Controls {
+                machine: latched,
+                ..Default::default()
+            });
+            assert!(!s.paused, "{}", s.message);
+            let soil = s.active_soil.as_ref().unwrap();
+            assert_eq!(soil.material(), source);
+            for (i, clod) in soil.clods.iter().enumerate() {
+                // Compare with the actual triangle surface, not the smoother
+                // bilinear presentation query. A complete body below this surface
+                // has escaped the substrate, even if its material still balances.
+                let highest = clod
+                    .vertices()
+                    .iter()
+                    .map(|p| clod.center + clod.rotation * *p)
+                    .map(|p| p.y - soil::substrate_height(&s.site, p.x, p.z))
+                    .fold(f32::NEG_INFINITY, f32::max);
+                assert!(
+                highest > -0.025,
+                "lag={lag} refresh={refresh} clod {i} passed through terrain at t={}: best vertex clearance={highest}",
+                s.sim_time
+            );
+            }
+        }
+    }
+}
+
+#[test]
+fn small_fast_spin_has_finite_low_point_speed_and_closed_free_motion() {
+    let mut m = machine();
+    m.articulation.as_mut().unwrap().stiffness_nm_rad = [0.; 4];
+    m.articulation.as_mut().unwrap().damping_nms_rad = [0.; 4];
+    let mut c = Clod::prism(
+        Material {
+            sand_m3: 0.02 * 0.02 * 0.02 * 0.5,
+            ..Default::default()
+        },
+        prism(0.02, 0.02, 0.02),
+    )
+    .unwrap();
+    c.center = Vec3::new(25., 10., 25.);
+    c.angular_velocity = Vec3::Y * 200.;
+    assert!(c.valid(), "a small clod at low surface speed was rejected");
+    let mut explosive = c.clone();
+    explosive.angular_velocity = Vec3::Y * 20000.;
+    assert!(!explosive.valid(), "surface-speed limit was lost");
+    let mut combined = c.clone();
+    combined.velocity = Vec3::X * 99.;
+    combined.angular_velocity = Vec3::Y * 1000.;
+    assert!(
+        !combined.valid(),
+        "combined translational and rotational point speed was not bounded"
+    );
+    let mut soil = ActiveSoil::from_clods(vec![c]).unwrap();
+    let before = totals(&m, &soil);
+    for _ in 0..120 {
+        articulation::step_soil(
+            &mut m,
+            MachineInput::default(),
+            1. / 240.,
+            &Environment::free(Vec3::ZERO),
+            &mut soil,
+        )
+        .unwrap();
+    }
+    let after = totals(&m, &soil);
+    assert!((after.0 - before.0).length() < 0.003);
+    assert!((after.1 - before.1).length() < 0.03);
+    println!(
+        "free spin total energy={} -> {}, clod energy={}",
+        before.2,
+        after.2,
+        soil.totals(Vec3::ZERO).kinetic_j
+    );
+    assert!(
+        (after.2 - before.2).abs() < before.2 * 0.0001 + 1e-8,
+        "free spin invented or erased energy"
+    );
 }

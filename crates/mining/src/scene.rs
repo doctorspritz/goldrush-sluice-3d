@@ -695,7 +695,12 @@ fn machine(commands: &mut Commands, meshes: &mut Assets<Mesh>, p: &Palette) {
     // Arm members and two parallel hydraulic rams are updated from actual joint positions.
     for (kind, width, offset, mat) in [
         (0, 0.30, 0.0, p.yellow.clone()),
-        (1, 0.22, 0.0, p.yellow.clone()),
+        (
+            1,
+            mining_sim::machine::STICK_VISUAL_WIDTH_M,
+            0.0,
+            p.yellow.clone(),
+        ),
         (0, 0.09, 0.24, p.dark.clone()),
         (0, 0.045, 0.24, p.chrome.clone()),
         (1, 0.065, -0.20, p.chrome.clone()),
@@ -752,35 +757,40 @@ fn machine(commands: &mut Commands, meshes: &mut Assets<Mesh>, p: &Palette) {
         );
     }
     // Contacts, mass integration and presentation share these exact vertices.
-    for part in &mining_sim::bucket::geometry().parts {
-        let mut positions = Vec::new();
-        let mut normals = Vec::new();
-        for f in &part.triangles {
-            let v = f.map(|i| bvec(part.vertices[i as usize]));
-            let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize();
-            positions.extend(v.map(|p| p.to_array()));
-            normals.extend([n.to_array(); 3]);
+    for model in [
+        mining_sim::bucket::Model::ShellV1,
+        mining_sim::bucket::Model::MountedShellV2,
+    ] {
+        for part in &model.geometry().parts {
+            let mut positions = Vec::new();
+            let mut normals = Vec::new();
+            for f in &part.triangles {
+                let v = f.map(|i| bvec(part.vertices[i as usize]));
+                let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize();
+                positions.extend(v.map(|p| p.to_array()));
+                normals.extend([n.to_array(); 3]);
+            }
+            let mut mesh = Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+            );
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+            commands.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(if part.tooth {
+                    p.chrome.clone()
+                } else {
+                    p.steel.clone()
+                }),
+                Transform::default(),
+                Mounted {
+                    mount: Mount::Bucket,
+                    local: Transform::IDENTITY,
+                },
+                BucketGeometry(model),
+            ));
         }
-        let mut mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-        );
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        commands.spawn((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(if part.tooth {
-                p.chrome.clone()
-            } else {
-                p.steel.clone()
-            }),
-            Transform::default(),
-            Mounted {
-                mount: Mount::Bucket,
-                local: Transform::IDENTITY,
-            },
-            BucketGeometry(mining_sim::bucket::Model::ShellV1),
-        ));
     }
     commands.spawn((
         Mesh3d(p.sphere.clone()),
@@ -1040,6 +1050,15 @@ pub fn sync_terrain(
     }
 }
 
+// Preserve the actual hinge-plane roll. A shortest-arc rotation points the
+// beam along the stick but twists its rectangular cross-section as the house
+// turns, invalidating the attachment clearance measured in that plane.
+fn stick_beam_rotation(direction: Vec3, right: Vec3) -> Quat {
+    let y = direction.normalize();
+    let x = (right - y * right.dot(y)).normalize();
+    Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y)))
+}
+
 #[allow(
     clippy::type_complexity,
     reason = "Bevy ParamSet expresses overlapping component access"
@@ -1066,7 +1085,7 @@ pub fn sync_machine(
     let upper = Transform::from_translation(bvec(m.position))
         .with_rotation(Quat::from_array(m.upper_rotation().to_array()));
     let bucket = Transform::from_translation(bvec(arm.wrist)).with_rotation(
-        if m.bucket_model() == mining_sim::bucket::Model::ShellV1 {
+        if m.bucket_model().is_shell() {
             Quat::from_array(m.bucket_rotation().to_array())
         } else {
             Quat::from_array(m.upper_rotation().to_array()) * Quat::from_rotation_x(-arm.angle)
@@ -1101,8 +1120,21 @@ pub fn sync_machine(
         }
         let delta = b - a;
         *transform = Transform::from_translation((a + b) * 0.5)
-            .with_rotation(Quat::from_rotation_arc(Vec3::Y, delta.normalize()))
-            .with_scale(Vec3::new(link.width, delta.length(), link.width * 1.3));
+            .with_rotation(
+                if m.bucket_model() == mining_sim::bucket::Model::MountedShellV2
+                    && link.kind == 1
+                    && link.offset == 0.
+                {
+                    stick_beam_rotation(delta, right)
+                } else {
+                    Quat::from_rotation_arc(Vec3::Y, delta.normalize())
+                },
+            )
+            .with_scale(Vec3::new(
+                link.width,
+                delta.length(),
+                link.width * mining_sim::machine::LINK_VISUAL_DEPTH_RATIO,
+            ));
     }
     for (mut t, mut v) in &mut sets.p2() {
         let fill = (m.bucket.volume() / mining_sim::machine::BUCKET_CAPACITY) as f32;
@@ -1580,5 +1612,41 @@ mod soil_render_tests {
             }
             assert!((volume - clod.geometry_volume_m3()).abs() < 1e-8);
         }
+    }
+}
+
+#[cfg(test)]
+mod machine_render_tests {
+    use super::*;
+    #[test]
+    fn mounted_stick_cross_section_keeps_the_physical_hinge_plane_on_tilt_and_swing() {
+        let mut old_twist = 0f32;
+        for (heading, swing, roll) in [(0.0, 0.0, 0.0_f32), (1.2, 0.7, 0.25), (2.4, -1.1, -0.3)] {
+            let mut m = mining_sim::Excavator::new(&mining_sim::Site::new());
+            m.heading = heading;
+            m.swing = swing;
+            m.tracks.tilt.x = 0.;
+            m.tracks.tilt.y = 0.;
+            m.tracks.tilt.z = (roll * 0.5).sin();
+            m.tracks.tilt.w = (roll * 0.5).cos();
+            m.boom = 0.4;
+            m.stick = -1.2;
+            m.enable_articulation().unwrap();
+            let arm = m.arm();
+            let direction = bvec(arm.wrist - arm.elbow).normalize();
+            let right = bvec(arm.right);
+            let q = stick_beam_rotation(direction, right);
+            assert!((q * Vec3::Y).distance(direction) < 1e-6);
+            assert!(
+                (q * Vec3::X).distance(right) < 1e-6,
+                "beam twisted out of its hinge plane"
+            );
+            let old = Quat::from_rotation_arc(Vec3::Y, direction);
+            old_twist = old_twist.max((old * Vec3::X).distance(right));
+        }
+        assert!(
+            old_twist > 0.5,
+            "old render-frame control did not reproduce twist"
+        );
     }
 }

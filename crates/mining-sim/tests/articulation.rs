@@ -475,7 +475,7 @@ fn complete_dynamic_and_elastic_state_survives_session_save_and_exact_continuati
     }
     let saved = s.save_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&saved).unwrap();
-    assert_eq!(value["version"], 10);
+    assert_eq!(value["version"], 11);
     let mut restored = Session::load_json(&saved).unwrap();
     for _ in 0..30 {
         s.step(input);
@@ -654,9 +654,12 @@ fn shell_model_is_explicit_and_cannot_be_loaded_under_a_legacy_format() {
     let mut s = mining_sim::Session::new();
     s.machine.enable_articulation().unwrap();
     let value: serde_json::Value = serde_json::from_str(&s.save_json().unwrap()).unwrap();
-    assert_eq!(value["version"], 10);
-    assert_eq!(value["machine"]["articulation"]["bucket_model"], "ShellV1");
-    for version in [6, 7, 8, 9] {
+    assert_eq!(value["version"], 11);
+    assert_eq!(
+        value["machine"]["articulation"]["bucket_model"],
+        "MountedShellV2"
+    );
+    for version in [6, 7, 8, 9, 10] {
         let mut bad = value.clone();
         bad["version"] = version.into();
         assert!(mining_sim::Session::load_json(&bad.to_string()).is_err());

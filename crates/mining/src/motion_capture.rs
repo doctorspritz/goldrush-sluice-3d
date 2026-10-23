@@ -22,6 +22,7 @@ pub struct MotionCapture {
     ids: HashSet<u64>,
     frames: Vec<serde_json::Value>,
     duration: f64,
+    end_sim_time: Option<f64>,
     interval: f64,
     frame_limit: usize,
     view: Option<String>,
@@ -47,8 +48,12 @@ impl Default for MotionCapture {
             );
             value
         };
-        let duration = number("--capture-seconds", 6., 90.);
+        let duration = number("--capture-seconds", 6., 180.);
         let hz = number("--capture-hz", 20., 40.);
+        let end_sim_time = args
+            .windows(2)
+            .find(|p| p[0] == "--capture-until-sim-time")
+            .map(|_| number("--capture-until-sim-time", 18., 120.));
         let view = args
             .windows(2)
             .find(|p| p[0] == "--capture-view")
@@ -62,7 +67,9 @@ impl Default for MotionCapture {
         );
         if let Some(dir) = &directory {
             assert!(
-                !dir.join("frames.json").exists(),
+                !dir.join("frames.json").exists()
+                    && !dir.join("frames.partial.jsonl").exists()
+                    && !dir.join("frame-0000.png").exists(),
                 "preserve existing motion evidence"
             );
             std::fs::create_dir_all(dir).expect("motion capture directory");
@@ -84,7 +91,12 @@ impl Default for MotionCapture {
             "water diagnostics require --capture-motion"
         );
         let frozen = directory.is_some() && args.iter().any(|a| a == "--freeze");
+        assert!(
+            !frozen || end_sim_time.is_none(),
+            "a physical-time capture endpoint cannot be frozen"
+        );
         Self {
+            end_sim_time,
             water_debug,
             frozen,
             water_only: directory.is_some() && args.iter().any(|a| a == "--capture-water-only"),
@@ -145,7 +157,7 @@ pub fn camera(
                 .reduce(|a, b| a + b)
                 .unwrap_or_default()
                 / soil.material().wet_mass_kg();
-            let shell = m.bucket_model() == mining_sim::bucket::Model::ShellV1;
+            let shell = m.bucket_model().is_shell();
             let target = crate::app::bvec(if shell {
                 center.as_vec3() * 0.5 + (arm.heel + arm.lip) * 0.25
             } else {
@@ -166,13 +178,19 @@ pub fn camera(
         let arm = game.session.machine.arm();
         let forward = crate::app::bvec(arm.forward);
         let right = Vec3::new(forward.z, 0., -forward.x);
-        let shell = game.session.machine.bucket_model() == mining_sim::bucket::Model::ShellV1;
+        let shell = game.session.machine.bucket_model().is_shell();
         let target = crate::app::bvec((arm.heel + arm.lip) * 0.5) + Vec3::Y * 0.13;
         if let Ok(mut camera) = camera.single_mut() {
-            *camera = Transform::from_translation(
-                target + right * 1.25 + forward * if shell { -0.85 } else { 0.85 } + Vec3::Y * 1.25,
-            )
-            .looking_at(target, Vec3::Y);
+            let mounted =
+                game.session.machine.bucket_model() == mining_sim::bucket::Model::MountedShellV2;
+            // The deeper mounted bowl hides its floor behind the near cheek
+            // from the old oblique inspection view. Look through the mouth.
+            let offset = if mounted {
+                right * 0.45 - forward * 0.35 + Vec3::Y * 2.2
+            } else {
+                right * 1.25 + forward * if shell { -0.85 } else { 0.85 } + Vec3::Y * 1.25
+            };
+            *camera = Transform::from_translation(target + offset).looking_at(target, Vec3::Y);
         }
         return;
     }
@@ -262,9 +280,17 @@ pub fn update(
             .filter(|p| p.path().extension().is_some_and(|p| p == "png"))
             .count();
         if finished.elapsed().as_secs_f64() > 1. && written == capture.frames.len() {
-            let (passed, advancing_intervals) =
+            let (base_passed, advancing_intervals) =
                 recording_status(&capture.frames, capture.frozen, game.session.paused);
-            let report = serde_json::json!({"source":"native Bevy screenshot, actual GPU output; capture overhead affects cadence","passed":passed,"expected_frozen":capture.frozen,"paused":game.session.paused,"session_message":game.session.message,"advancing_intervals":advancing_intervals,"wall_seconds":capture.recording.unwrap().elapsed().as_secs_f64(),"frames":capture.frames,"water_presentation":water.presentation_report(),"reference_bulk_m3":capture.initial_bulk,"accounted_bulk_m3":game.session.accounted_bulk_material_m3(),"reference_dry_mass_kg":capture.initial_dry_mass,"accounted_dry_mass_kg":game.session.accounted_dry_mass_kg(),"water_balance_error_m3":game.session.water_balance_error_m3(),"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
+            let end_reached = capture.end_sim_time.is_none_or(|t| {
+                capture
+                    .frames
+                    .last()
+                    .and_then(|f| f["sim_time"].as_f64())
+                    .is_some_and(|last| last >= t)
+            });
+            let passed = base_passed && end_reached;
+            let report = serde_json::json!({"source":"native Bevy screenshot, actual GPU output; capture overhead affects cadence","passed":passed,"requested_end_sim_time":capture.end_sim_time,"end_sim_time_reached":end_reached,"expected_frozen":capture.frozen,"paused":game.session.paused,"session_message":game.session.message,"advancing_intervals":advancing_intervals,"wall_seconds":capture.recording.unwrap().elapsed().as_secs_f64(),"frames":capture.frames,"water_presentation":water.presentation_report(),"reference_bulk_m3":capture.initial_bulk,"accounted_bulk_m3":game.session.accounted_bulk_material_m3(),"reference_dry_mass_kg":capture.initial_dry_mass,"accounted_dry_mass_kg":game.session.accounted_dry_mass_kg(),"water_balance_error_m3":game.session.water_balance_error_m3(),"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
             std::fs::write(
                 directory.join("frames.json"),
                 serde_json::to_vec(&report).unwrap(),
@@ -320,18 +346,59 @@ pub fn update(
         capture.finished = Some(Instant::now());
         return;
     }
-    if elapsed < capture.next {
+    let end_now = capture
+        .end_sim_time
+        .is_some_and(|t| game.session.sim_time >= t);
+    if elapsed < capture.next && !end_now {
         return;
     }
     capture.next = elapsed + capture.interval;
     let sluice = &game.session.sluice;
     let tracks = water_tracks(sluice, &capture.ids);
     let name = format!("frame-{:04}.png", capture.frames.len());
-    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"paused":game.session.paused,"session_message":game.session.message,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"water_debug":capture.water_debug,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"rigid_falling":game.session.falling.iter().filter(|l|l.rigid.is_some()).collect::<Vec<_>>(),"material_motion":game.session.material_motion,"soil_render":{"entities":soil_visuals.iter().count(),"visible":soil_visuals.iter().filter(|(_,v,_)|v.is_some_and(|v|v.get())).count(),"samples":soil_visuals.iter().take(3).map(|(t,v,m)|serde_json::json!({"translation":t.map(|t|t.translation().to_array()),"visible":v.map(|v|v.get()),"vertices":meshes.get(&m.0).map(|m|m.count_vertices()),"indexed":meshes.get(&m.0).map(|m|m.indices().is_some())})).collect::<Vec<_>>()},"active_soil":game.session.active_soil.as_ref().map(|s|serde_json::json!({"clods":s.clods.len(),"bucket_contents_estimate":mining_sim::bucket::estimated_soil_contents(&game.session.machine,s),"all_clods":if capture.frozen {Some(&s.clods)} else {None},"material":s.material(),"totals":s.totals(mining_sim::Vec3::new(0.,-9.81,0.)),"feedback":s.feedback,"sample":s.clods.iter().take(32).map(|c|serde_json::json!({"center":c.center,"rotation":c.rotation,"velocity":c.velocity,"angular_velocity":c.angular_velocity})).collect::<Vec<_>>()})),"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3});
+    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"paused":game.session.paused,"session_message":game.session.message,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"water_debug":capture.water_debug,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"rigid_falling":game.session.falling.iter().filter(|l|l.rigid.is_some()).collect::<Vec<_>>(),"material_motion":game.session.material_motion,"soil_render":{"entities":soil_visuals.iter().count(),"visible":soil_visuals.iter().filter(|(_,v,_)|v.is_some_and(|v|v.get())).count(),"samples":soil_visuals.iter().take(3).map(|(t,v,m)|serde_json::json!({"translation":t.map(|t|t.translation().to_array()),"visible":v.map(|v|v.get()),"vertices":meshes.get(&m.0).map(|m|m.count_vertices()),"indexed":meshes.get(&m.0).map(|m|m.indices().is_some())})).collect::<Vec<_>>()},"active_soil":game.session.active_soil.as_ref().map(|s|serde_json::json!({"clods":s.clods.len(),"bucket_contents_estimate":mining_sim::bucket::estimated_soil_contents(&game.session.machine,s),"all_clods":if capture.frozen {Some(&s.clods)} else {None},"terrain_support":soil_support_report(&game.session.site,s),"material":s.material(),"totals":s.totals(mining_sim::Vec3::new(0.,-9.81,0.)),"feedback":s.feedback,"sample":s.clods.iter().take(32).map(|c|serde_json::json!({"center":c.center,"rotation":c.rotation,"velocity":c.velocity,"angular_velocity":c.angular_velocity})).collect::<Vec<_>>()})),"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3});
+    // Retain physical timing/support evidence even if validation exits before
+    // the final capture report. This append is opt-in capture work only.
+    let mut line = serde_json::to_vec(&record).expect("partial motion record");
+    line.push(b'\n');
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join("frames.partial.jsonl"))
+        .expect("partial motion log")
+        .write_all(&line)
+        .expect("partial motion write");
     capture.frames.push(record);
+    if end_now {
+        capture.finished = Some(Instant::now());
+    }
     commands
         .spawn(Screenshot::primary_window())
         .observe(save_to_disk(directory.join(name)));
+}
+
+fn soil_support_report(
+    site: &mining_sim::Site,
+    soil: &mining_sim::soil::ActiveSoil,
+) -> serde_json::Value {
+    let mut worst = (f32::INFINITY, 0);
+    let mut lost = 0;
+    for (i, clod) in soil.clods.iter().enumerate() {
+        let highest = clod
+            .vertices()
+            .iter()
+            .map(|p| clod.center + clod.rotation * *p)
+            .map(|p| p.y - mining_sim::soil::substrate_height(site, p.x, p.z))
+            .fold(f32::NEG_INFINITY, f32::max);
+        if highest < worst.0 {
+            worst = (highest, i);
+        }
+        lost += usize::from(highest < -0.025);
+    }
+    let clod = &soil.clods[worst.1];
+    serde_json::json!({"minimum_highest_vertex_clearance_m":worst.0,"fully_below_terrain_25mm":lost,
+        "worst_clod_index":worst.1,"worst_center":clod.center,"worst_velocity":clod.velocity})
 }
 
 fn water_tracks(sluice: &mining_sim::Sluice, ids: &HashSet<u64>) -> Vec<serde_json::Value> {

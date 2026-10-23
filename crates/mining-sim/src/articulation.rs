@@ -141,7 +141,7 @@ impl Articulation {
             && (self.coordinates[1] + machine.boom).abs() < 0.000001
             && (self.coordinates[2] + machine.stick).abs() < 0.000001
             && (self.coordinates[3]
-                - if self.bucket_model == crate::bucket::Model::ShellV1 {
+                - if self.bucket_model.is_shell() {
                     machine.curl
                 } else {
                     -machine.curl
@@ -225,7 +225,7 @@ impl Excavator {
             self.curl,
         ];
         self.articulation = Some(Articulation {
-            bucket_model: crate::bucket::Model::ShellV1,
+            bucket_model: crate::bucket::Model::MountedShellV2,
             velocity: [0.; 10],
             coordinates: coords,
             reference: coords,
@@ -309,7 +309,7 @@ fn command(
         input.swing * 0.65,
         -input.boom * 0.42,
         -input.stick * 0.55,
-        if state.bucket_model == crate::bucket::Model::ShellV1 {
+        if state.bucket_model.is_shell() {
             input.curl * 0.90
         } else {
             -input.curl * 0.90
@@ -319,7 +319,7 @@ fn command(
         (-20., 20.),
         (-1.20, 0.24),
         (0.15, 2.15),
-        if state.bucket_model == crate::bucket::Model::ShellV1 {
+        if state.bucket_model.is_shell() {
             (-1.70, 1.45)
         } else {
             (-1.45, 1.70)
@@ -403,7 +403,7 @@ impl Model {
         let arm = m.arm();
         let boom = upper * Quat::from_rotation_x(-m.boom);
         let stick = boom * Quat::from_rotation_x(-m.stick);
-        let bucket = if s.bucket_model == crate::bucket::Model::ShellV1 {
+        let bucket = if s.bucket_model.is_shell() {
             m.bucket_rotation()
         } else {
             stick * Quat::from_rotation_x(-m.curl)
@@ -412,7 +412,7 @@ impl Model {
         let lip = Vec3::new(0., -0.23, 1.065);
         let floor_q = Quat::from_rotation_arc(Vec3::Z, (lip - heel).normalize());
         let floor_center = (heel + lip) * 0.5 + floor_q * Vec3::Y * 0.025;
-        let shell = s.bucket_model == crate::bucket::Model::ShellV1;
+        let shell = s.bucket_model.is_shell();
         let bucket_moments = if shell {
             Some(steel_moments(s.bucket_model).combine(carried_moments(m)))
         } else {
@@ -582,7 +582,7 @@ impl Model {
         if shell {
             attach(
                 4,
-                r::ColliderBuilder::new(crate::bucket::geometry().shape())
+                r::ColliderBuilder::new(s.bucket_model.geometry().shape())
                     .translation(rv(-bucket_com))
                     .density(0.)
                     .user_data(3),
@@ -779,7 +779,22 @@ pub fn step_soil(
     let mut candidate = soil.clone();
     step_inner(&mut machine, input, dt, env, Some(&mut candidate))?;
     if !machine.valid() || !candidate.valid() {
-        return Err("Moving-soil contact integration became invalid".into());
+        let clod = candidate
+            .clods
+            .iter()
+            .enumerate()
+            .find(|(_, c)| !c.valid())
+            .map(|(i, c)| {
+                (
+                    i,
+                    c.center,
+                    c.velocity.length(),
+                    c.angular_velocity.length(),
+                    c.rotation.length_squared(),
+                )
+            });
+        return Err(format!("Moving-soil contact integration became invalid: machine={} articulation={} tracks={} angles={:?} invalid_clod={clod:?}",
+            machine.valid(), machine.articulation.as_ref().is_some_and(|a| a.valid_for(&machine)), machine.tracks.valid(), [machine.boom, machine.stick, machine.curl]));
     }
     *m = machine;
     *soil = candidate;
@@ -825,10 +840,18 @@ fn step_inner(
         .world
         .integration_parameters
         .maximum_dissipation_friction = soil.is_some();
+    if soil.is_some() && s.bucket_model == crate::bucket::Model::MountedShellV2 {
+        crate::soil_contacts::configure(&mut model.world);
+    }
     let mut soil_handles = Vec::new();
     if let Some(soil) = soil.as_deref_mut() {
         for clod in &mut soil.clods {
-            soil_handles.push(clod.insert(&mut model.world)?);
+            let handle = if s.bucket_model == crate::bucket::Model::MountedShellV2 {
+                clod.insert_precise(&mut model.world)?
+            } else {
+                clod.insert(&mut model.world)?
+            };
+            soil_handles.push(handle);
         }
     }
     let soil_before = soil.as_deref().map(|s| s.totals(env.gravity));
@@ -969,7 +992,7 @@ fn step_inner(
     m.swing = s.coordinates[0].rem_euclid(std::f32::consts::TAU);
     m.boom = -s.coordinates[1];
     m.stick = -s.coordinates[2];
-    m.curl = if s.bucket_model == crate::bucket::Model::ShellV1 {
+    m.curl = if s.bucket_model.is_shell() {
         s.coordinates[3]
     } else {
         -s.coordinates[3]
@@ -1059,8 +1082,8 @@ fn step_inner(
 }
 
 fn steel_moments(model: crate::bucket::Model) -> crate::payload::MassMoments {
-    if model == crate::bucket::Model::ShellV1 {
-        return crate::bucket::geometry().steel;
+    if model.is_shell() {
+        return model.geometry().steel;
     }
     let heel = DVec3::new(0., -0.2375, -0.01);
     let lip = DVec3::new(0., -0.23, 1.065);
@@ -1075,8 +1098,10 @@ fn steel_moments(model: crate::bucket::Model) -> crate::payload::MassMoments {
 fn carried_moments(m: &Excavator) -> crate::payload::MassMoments {
     let s = m.articulation.as_ref().unwrap();
     s.payload_moments.unwrap_or_else(|| {
-        if s.bucket_model == crate::bucket::Model::ShellV1 {
-            crate::bucket::geometry().fill_moments(m.bucket.volume(), m.bucket.wet_mass_kg())
+        if s.bucket_model.is_shell() {
+            s.bucket_model
+                .geometry()
+                .fill_moments(m.bucket.volume(), m.bucket.wet_mass_kg())
         } else {
             steel_moments(s.bucket_model).scaled(m.bucket.wet_mass_kg() / 250.)
         }
@@ -1106,7 +1131,7 @@ mod shell_tests {
             let local = collider.position_wrt_parent().unwrap();
             let frame = body.position() * local;
             let compound = collider.shape().as_compound().unwrap();
-            let g = crate::bucket::geometry();
+            let g = m.bucket_model().geometry();
             assert_eq!(compound.shapes().len(), g.parts.len());
             for ((pose, shape), part) in compound.shapes().iter().zip(&g.parts) {
                 let hull = shape.as_convex_polyhedron().unwrap();

@@ -88,7 +88,13 @@ pub fn inject(
             keys.release(KeyCode::Tab);
         }
         keys.release(KeyCode::F5);
-        if game.session.sim_time >= 5.7 && !check.soil_saved {
+        let save_at =
+            if game.session.machine.bucket_model() == mining_sim::bucket::Model::MountedShellV2 {
+                9.4
+            } else {
+                5.7
+            };
+        if game.session.sim_time >= save_at && !check.soil_saved {
             keys.press(KeyCode::F5);
             check.soil_saved = true;
         }

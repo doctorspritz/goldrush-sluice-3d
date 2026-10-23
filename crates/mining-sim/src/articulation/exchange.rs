@@ -243,12 +243,12 @@ pub fn capture_payload(
     }
     let (wrist, q) = payload_frame(m);
     let local = q.inverse() * (parcel.state.center - wrist);
-    if m.articulation.as_ref().unwrap().bucket_model == crate::bucket::Model::ShellV1 {
+    if m.articulation.as_ref().unwrap().bucket_model.is_shell() {
         let local_moments = parcel
             .state
             .moments
             .transformed(local, q.inverse() * parcel.state.rotation);
-        if !crate::bucket::geometry().accepts_moments(local_moments) {
+        if !m.bucket_model().geometry().accepts_moments(local_moments) {
             return Err("Source spatial moments cannot fit the hollow bucket".into());
         }
     } else {

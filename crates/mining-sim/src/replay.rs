@@ -410,12 +410,15 @@ pub fn earthworks_receipt(s: &Session, r: &OperatorReplay) -> Result<String, Str
 /// ordinary joystick axes only: no pose, material or contact edits. A grade
 /// controller keeps actual steel clear of the lowered, still-solid substrate.
 pub fn soil_trial_controls(s: &Session, elapsed: f64) -> MachineInput {
-    if s.active_soil.is_none() || s.machine.bucket_model() != crate::bucket::Model::ShellV1 {
+    if s.active_soil.is_none() || !s.machine.bucket_model().is_shell() {
         return MachineInput::default();
     }
     let arm = s.machine.arm();
     let q = s.machine.bucket_rotation();
-    let clearance = crate::bucket::geometry()
+    let clearance = s
+        .machine
+        .bucket_model()
+        .geometry()
         .parts
         .iter()
         .flat_map(|p| &p.vertices)
@@ -429,6 +432,50 @@ pub fn soil_trial_controls(s: &Session, elapsed: f64) -> MachineInput {
     } else {
         0.
     };
+    if s.machine.bucket_model() == crate::bucket::Model::MountedShellV2 {
+        let n = s.machine.bucket_model().geometry().mouth_normal();
+        return if elapsed < 0.3 {
+            MachineInput::default()
+        } else if elapsed < 2.3 {
+            MachineInput {
+                stick: -0.7,
+                boom: grade,
+                curl: if arm.angle < 1.05 {
+                    -1.
+                } else if arm.angle > 1.15 {
+                    1.
+                } else {
+                    0.
+                },
+                ..Default::default()
+            }
+        } else if elapsed < 6.5 {
+            MachineInput {
+                curl: 1.,
+                boom: grade,
+                ..Default::default()
+            }
+        } else if elapsed < 9.0 {
+            MachineInput {
+                boom: 1.,
+                curl: if arm.angle + n.z.atan2(n.y) > 0.1 {
+                    1.
+                } else {
+                    0.
+                },
+                ..Default::default()
+            }
+        } else if elapsed < 10.0 {
+            MachineInput::default()
+        } else if elapsed < 16.5 {
+            MachineInput {
+                curl: -1.,
+                ..Default::default()
+            }
+        } else {
+            MachineInput::default()
+        };
+    }
     if elapsed < 0.3 {
         MachineInput::default()
     } else if elapsed < 2.0 {
