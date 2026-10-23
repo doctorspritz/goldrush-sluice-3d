@@ -971,6 +971,65 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
         resolved[0]
     );
 
+    let crest_polish = source.replace(
+        "smooth_surface(vec2(16,i32(p.y)),vec2(1,0))",
+        "optical_surface(vec2(16,4),vec2(1,0))",
+    );
+    let retained = execute(
+        &device,
+        &queue,
+        crest_polish,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [1, 1],
+    );
+    assert!(
+        (retained[0] - 1.).abs() < 0.000002,
+        "polish broadened a resolved crest"
+    );
+
+    // A resolved ridge must survive, but alternating sub-texel density noise
+    // is not a train of real wave crests. Exercise the final production polish
+    // independently of the local surface/tangent reconstruction.
+    let alias: Vec<f32> = (0..256)
+        .flat_map(|i| {
+            let inverse = 1. + if i % 2 == 0 { 0.001 } else { -0.001 };
+            [1. / inverse, 0.04, 2., 2.]
+        })
+        .collect();
+    queue.write_texture(
+        textures[0].as_image_copy(),
+        bytemuck::cast_slice(&alias),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(32 * 16),
+            rows_per_image: None,
+        },
+        textures[0].size(),
+    );
+    let alias_source = source.replace(
+        "smooth_surface(vec2(16,i32(p.y)),vec2(1,0))",
+        "optical_surface(vec2(16,4),vec2(1,0))",
+    );
+    let polished = execute(
+        &device,
+        &queue,
+        alias_source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [1, 1],
+    );
+    println!(
+        "sub-texel ripple depth error={} m",
+        (polished[0] - 1.).abs()
+    );
+    assert!(
+        (polished[0] - 1.).abs() < 0.000002,
+        "sub-texel noise became a visible ripple"
+    );
+
     // Real projection, distant sheet: one half-resolution texel spans 50 mm.
     // Measure the response to an optical impulse independently in metres.
     // A fixed 23-pixel blur spreads that impulse across decimetres of water.
@@ -1987,6 +2046,98 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
         assert!(
             curved_path_error < 0.002,
             "curved slurry acquired optical patches: {curved_path_error}"
+        );
+    }
+
+    // A travelling ridge is not quadratic across the distant shoulder stencil.
+    // Independently sample a sinusoidal reciprocal-depth surface and compare
+    // both its subpixel position and tangent, including an oblique crest.
+    for angle in [0f32, 0.57] {
+        let direction = (angle.cos(), angle.sin());
+        let ridge_depth = |x: f32, y: f32| {
+            let phase = 0.6 * (direction.0 * (x - 16.) + direction.1 * (y - 16.));
+            1. / (1. + 0.03 * phase.cos())
+        };
+        for (texture, values) in [
+            (&raw, field(&|x, y| [ridge_depth(x, y), -1., 0., 0.])),
+            (&joined, field(&|x, y| [ridge_depth(x, y), 0.04, 10., 2.])),
+        ] {
+            queue.write_texture(
+                texture.as_image_copy(),
+                bytemuck::cast_slice(&values),
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(32 * 16),
+                    rows_per_image: None,
+                },
+                texture.size(),
+            );
+        }
+        let ridge_source = format!(
+            "{}\n{}",
+            include_str!("../../mining/src/water_compose.wgsl"),
+            r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let pixel=vec2<f32>(p.xy)+vec2(24.5);
+ let sampled=sample_depth(pixel);
+ let joined=channel_surface(pixel,sampled.x);
+ let i=(p.y*64u+p.x)*2u;
+ result[i]=joined.normal;
+ result[i+1u]=vec4(sampled,joined.column);
+}"#
+        );
+        let ridge = execute(
+            &device,
+            &queue,
+            ridge_source,
+            &[&group, &out_group],
+            &[&layout, &out_layout],
+            &buffer,
+            [2, 2],
+        );
+        let point = |px: f64, py: f64| {
+            let x = px * 0.5 - 16.5;
+            let y = py * 0.5 - 16.5;
+            let phase = 0.6 * (direction.0 as f64 * x + direction.1 as f64 * y);
+            let depth = 1. / (1. + 0.03 * phase.cos());
+            glam::DVec3::new(
+                0.2 * (px / 32. - 1.) * depth,
+                0.2 * (1. - py / 32.) * depth,
+                -depth,
+            )
+        };
+        let mut depth_error = 0f64;
+        let mut normal_error = 0f64;
+        for y in 0..16 {
+            for x in 0..16 {
+                let i = (y * 64 + x) * 8;
+                let v = &ridge[i..i + 8];
+                let px = x as f64 + 24.5;
+                let py = y as f64 + 24.5;
+                let expected_point = point(px, py);
+                let dx = point(px + 0.0001, py) - point(px - 0.0001, py);
+                let dy = point(px, py + 0.0001) - point(px, py - 0.0001);
+                let expected_normal = dy.cross(dx).normalize();
+                depth_error = depth_error.max((v[4] as f64 + expected_point.z).abs());
+                normal_error = normal_error.max(
+                    (glam::DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64) - expected_normal)
+                        .length(),
+                );
+                assert!(
+                    (v[7] / v[6] - 250.).abs() < 0.001,
+                    "ridge changed uniform slurry: {v:?}"
+                );
+            }
+        }
+        println!("sinusoidal ridge angle={angle}: depth error={depth_error} m, normal error={normal_error}");
+        assert!(
+            depth_error < 0.0002,
+            "ridge position broadened between texels"
+        );
+        assert!(
+            normal_error < 0.04,
+            "ridge tangent borrowed the distant rounded shoulders"
         );
     }
 

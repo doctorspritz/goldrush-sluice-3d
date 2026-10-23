@@ -11,6 +11,60 @@ struct Screen { @builtin(position) position: vec4<f32> };
 @group(0) @binding(7) var river_depths:texture_2d<f32>;
 @group(0) @binding(8) var river_normals:texture_2d<f32>;
 @group(0) @binding(9) var normal_sums:texture_2d<f32>;
+// One interpolating sheet owns subpixel channel position and its tangent.
+// The wider shoulder fit is useful at sparse edges, but bends a resolved
+// non-quadratic ridge into a cap and gives its slurry a different visibility.
+struct ChannelPatch { inverse:f32, slope:vec2<f32>, curvature:vec3<f32>, confidence:f32 };
+fn cubic_value(t:f32)->vec4<f32> {
+    return vec4(-0.5*t+t*t-0.5*t*t*t,1.-2.5*t*t+1.5*t*t*t,
+                0.5*t+2.*t*t-1.5*t*t*t,-0.5*t*t+0.5*t*t*t);
+}
+fn cubic_slope(t:f32)->vec4<f32> {
+    return vec4(-0.5+2.*t-1.5*t*t,-5.*t+4.5*t*t,
+                0.5+4.*t-4.5*t*t,-t+1.5*t*t);
+}
+fn cubic_curvature(t:f32)->vec4<f32> {
+    return vec4(2.-3.*t,-5.+9.*t,4.-9.*t,-1.+3.*t);
+}
+fn channel_patch(pixel:vec2<f32>)->ChannelPatch {
+    var out:ChannelPatch;
+    let size=vec2<i32>(textureDimensions(depths));
+    let p=pixel*vec2<f32>(size)/u.viewport.xy-0.5;
+    let base=vec2<i32>(floor(p));let f=fract(p);
+    if any(base-vec2(1)<vec2(0)) || any(base+vec2(2)>=size) {return out;}
+    var rows:array<vec4<f32>,4>;var support=1.;
+    for(var y=0;y<4;y++){for(var x=0;x<4;x++){
+        let tap=textureLoad(depths,base+vec2(x-1,y-1),0);
+        if tap.r<=0. || tap.a<=0.5 {return out;}
+        rows[y][x]=1./tap.r;
+        support=min(support,smoothstep(0.1,0.7,tap.a-1.));
+    }}
+    let wx=cubic_value(f.x);let wy=cubic_value(f.y);
+    let dx=cubic_slope(f.x);let dy=cubic_slope(f.y);
+    let ddx=cubic_curvature(f.x);let ddy=cubic_curvature(f.y);
+    var values=vec4(0.);var slopes=vec4(0.);var curves=vec4(0.);
+    var third=0.;
+    for(var y=0;y<4;y++){
+        values[y]=dot(rows[y],wx);slopes[y]=dot(rows[y],dx);curves[y]=dot(rows[y],ddx);
+        third=max(third,abs(dot(rows[y],vec4(-1.,3.,-3.,1.))));
+    }
+    for(var x=0;x<4;x++){
+        third=max(third,abs(-rows[0][x]+3.*rows[1][x]-3.*rows[2][x]+rows[3][x]));
+    }
+    out.inverse=dot(values,wy);out.slope=vec2(dot(slopes,wy),dot(values,dy));
+    out.curvature=vec3(dot(curves,wy),dot(values,ddy),dot(slopes,dy));
+    if out.inverse<=0. {return out;}
+    let z=1./out.inverse;let origin=view_point(pixel,z);let ray=origin/z;
+    let step=u.viewport.xy/vec2<f32>(size);
+    let tx=view_point(pixel+vec2(step.x,0.),z)-origin-ray*(z*z*out.slope.x);
+    let ty=view_point(pixel+vec2(0.,step.y),z)-origin-ray*(z*z*out.slope.y);
+    // Measure the non-smooth part in metres normal to the sheet. A steep
+    // continuous plane passes; a real step between flat layers cannot supply
+    // a cubic tangent, new coverage, or another layer's muddy column.
+    let normal_per_inverse=z*z*abs(dot(ray,normalize(cross(ty,tx))));
+    out.confidence=support*(1.-smoothstep(0.005,0.025,third*normal_per_inverse));
+    return out;
+}
 // Bilateral upsampling keeps the half-resolution smoothing buffer from
 // producing two-pixel shading blocks. Empty pixels contribute only coverage.
 fn sample_depth(pixel: vec2<f32>) -> vec2<f32> {
@@ -66,7 +120,12 @@ fn sample_depth(pixel: vec2<f32>) -> vec2<f32> {
         let w=weights[i]*range_weight;
         total += d*w;weight += w;inverse_depth+=w/d;
     }
-    return vec2(select(total/max(weight,0.0001),weight/max(inverse_depth,0.000001),channel),weight);
+    var depth=select(total/max(weight,0.0001),weight/max(inverse_depth,0.000001),channel);
+    if channel && reference.r>0. && weight>0.9999 {
+        let sheet=channel_patch(pixel);
+        if sheet.confidence>0. {depth=mix(depth,1./sheet.inverse,sheet.confidence);}
+    }
+    return vec2(depth,weight);
 }
 // A secant through two separate layers is not a water tangent. Compare
 // one-sided reciprocal-depth slopes outside the centre kernel, and use the
@@ -158,6 +217,13 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
             +0.5*dot(inverse_curvature,offset*offset)+mixed_curvature*offset.x*offset.y;
         inverse_origin=mix(1./depth,fitted,min(anchor_weight,1.));
         inverse_slope+=inverse_curvature*offset+mixed_curvature*offset.yx;
+    }
+    let sheet=channel_patch(pixel);
+    if sheet.confidence>0. {
+        inverse_origin=mix(inverse_origin,sheet.inverse,sheet.confidence);
+        inverse_slope=mix(inverse_slope,sheet.slope,sheet.confidence);
+        inverse_curvature=mix(inverse_curvature,sheet.curvature.xy,sheet.confidence);
+        mixed_curvature=mix(mixed_curvature,sheet.curvature.z,sheet.confidence);
     }
     // One screen texel spans much more liquid along a grazing sheet than
     // across it. Use its projective tangent metric for every final gather,
@@ -268,6 +334,16 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
             // layer starts. Its missing gradient must not veto a valid fit.
             out.normal=vec4(world_n,select(1.,out.normal.w,out.normal.w>0.));
         }
+    }
+    if sheet.confidence>0. {
+        let z=1./sheet.inverse;let origin=view_point(pixel,z);let ray=origin/z;
+        let tx=view_point(pixel+vec2(step.x,0.),z)-origin-ray*(z*z*sheet.slope.x);
+        let ty=view_point(pixel+vec2(0.,step.y),z)-origin-ray*(z*z*sheet.slope.y);
+        var n=normalize(cross(ty,tx));if n.z<0. {n = -n;}
+        var world_n=normalize((u.world_from_view*vec4(n,0.)).xyz);
+        if dot(world_n,(u.world_from_view*vec4(-origin,0.)).xyz)<0. {world_n = -world_n;}
+        if out.normal.w>0. {world_n=normalize(mix(out.normal.xyz,world_n,sheet.confidence));}
+        out.normal=vec4(world_n,select(sheet.confidence,out.normal.w,out.normal.w>0.));
     }
     out.column=column/max(column_weight,0.000001);
     return out;

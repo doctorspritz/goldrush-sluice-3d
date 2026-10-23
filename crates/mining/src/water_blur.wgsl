@@ -166,19 +166,43 @@ fn smooth_surface_inner(pixel: vec2<i32>, direction: vec2<i32>,exchange:bool) ->
     return vec4(mix(filtered.r,fitted_depth,bulk),moments,center.a);
 }
 // Establish the shared geometry before using its distances to exchange optics.
-// Four geometry filters retain the original shape. Two final optical-only
-// passes reuse ping/pong and never add water coverage or re-filter the outlet.
+// Four geometry filters retain the original shape. Two final passes exchange
+// optics and polish unresolved depth noise, reusing ping/pong. They never add
+// water coverage or re-filter the outlet.
 fn smooth_surface(pixel:vec2<i32>,direction:vec2<i32>)->vec4<f32> {
     return smooth_surface_inner(pixel,direction,true);
 }
 fn geometry_surface(pixel:vec2<i32>,direction:vec2<i32>)->vec4<f32> {
     return smooth_surface_inner(pixel,direction,false);
 }
+// Reject unresolved alternating texels without broadening a resolved crest.
+// This compact sixth-difference filter exactly retains degree-five inverse
+// depth profiles. Its response is 1-sin(frequency/2)^6: a pixel-scale ripple
+// vanishes while a ten-texel wave retains over 99.9% of its amplitude.
+fn resolved_depth(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->f32 {
+    let size=vec2<i32>(textureDimensions(depths));
+    var values:array<f32,7>;var support=1.;var variation=0.;var jump=0.;
+    for(var i=0;i<7;i++) {
+        let q=pixel+direction*(i-3);
+        if any(q<vec2(0)) || any(q>=size) {return center.r;}
+        let tap=textureLoad(depths,q,0);
+        if tap.r<=0. || tap.a<=0.5 {return center.r;}
+        values[i]=1./tap.r;support=min(support,smoothstep(0.1,0.7,tap.a-1.));
+        if i>0 {let change=abs(values[i]-values[i-1]);variation+=change;jump=max(jump,change);}
+    }
+    // An isolated jump between layers owns most of the local variation.
+    // Alternating sampling noise does not. Do not smooth across that jump.
+    let continuous=1.-smoothstep(0.5,0.8,jump/max(variation,0.000001));
+    let sixth=(-values[0]+6.*values[1]-15.*values[2]+20.*values[3]
+               -15.*values[4]+6.*values[5]-values[6])/64.;
+    let inverse=1./center.r-sixth*support*continuous;
+    return select(center.r,1./max(inverse,0.000001),inverse>0.);
+}
 fn optical_surface(pixel:vec2<i32>,direction:vec2<i32>)->vec4<f32> {
     let center=textureLoad(depths,pixel,0);
     if center.r<=0. {return vec4(0.);}
     if center.a<=0.5 {return center;}
-    return vec4(center.r,optical_exchange(pixel,direction,center),center.a);
+    return vec4(resolved_depth(pixel,direction,center),optical_exchange(pixel,direction,center),center.a);
 }
 @fragment fn geometry_x(s:Screen)->@location(0) vec4<f32> {return geometry_surface(vec2<i32>(s.position.xy),vec2(1,0));}
 @fragment fn geometry_y(s:Screen)->@location(0) vec4<f32> {return geometry_surface(vec2<i32>(s.position.xy),vec2(0,1));}
