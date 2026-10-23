@@ -996,6 +996,129 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
         "connected blur spread across too much water: {spread} m"
     );
     println!("world-space optical impulse spread: {spread} m");
+    // A 2.7 mm normal displacement on this grazing plane spans 80 mm of
+    // camera depth. It is connected water, not a separate layer. The render
+    // footprint contains several samples of the same sheet; its depth and
+    // additive mineral column must be reconstructed together.
+    uniforms[32] = 0.008;
+    uniforms[37] = 0.002;
+    queue.write_buffer(&uniform, 0, bytemuck::cast_slice(&uniforms));
+    for slot in [2, 3] {
+        queue.write_texture(
+            textures[slot].as_image_copy(),
+            bytemuck::cast_slice(&[0.5f32; 1024]),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            textures[slot].size(),
+        );
+    }
+    let grazing: Vec<f32> = (0..256)
+        .flat_map(|i| {
+            let x = i % 32;
+            let z = 1. / (1. + (x as f32 - 16.) * 0.015) + if x == 16 { 0.08 } else { 0. };
+            [z, 0.04, 0.04 * if x == 16 { 1000. } else { 50. }, 2.]
+        })
+        .collect();
+    queue.write_texture(
+        textures[0].as_image_copy(),
+        bytemuck::cast_slice(&grazing),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(32 * 16),
+            rows_per_image: None,
+        },
+        textures[0].size(),
+    );
+    let grazing_values = execute(
+        &device,
+        &queue,
+        source.clone(),
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [1, 1],
+    );
+    let v = &grazing_values[0..4];
+    println!(
+        "grazing cap depth and extinction: {} m, {} /m",
+        v[0],
+        v[2] / v[1]
+    );
+    assert!(
+        (v[0] - 1.).abs() < 0.012,
+        "grazing millimetre cap was not joined to the sheet: {v:?}"
+    );
+    assert!(
+        v[2] / v[1] < 200.,
+        "grazing optical impulse survived as a mud patch: {v:?}"
+    );
+    // A real 40 cm layer step has flat samples on either side. Its secant is
+    // not a water tangent. Both sides must survive without invented depth or
+    // transferred suspension; the dry centre must remain empty too.
+    for dry in [false, true] {
+        let edge: Vec<f32> = (0..256)
+            .flat_map(|i| {
+                if i % 32 < 16 {
+                    [1., 0.04, 2., 2.]
+                } else if dry {
+                    [0.; 4]
+                } else {
+                    [1.4, 0.04, 36., 2.]
+                }
+            })
+            .collect();
+        queue.write_texture(
+            textures[0].as_image_copy(),
+            bytemuck::cast_slice(&edge),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            textures[0].size(),
+        );
+        let edge_source = source.replace("vec2(16,i32(p.y))", "vec2(15+i32(p.x % 2u),4)");
+        let values = execute(
+            &device,
+            &queue,
+            edge_source,
+            &[&group, &out_group],
+            &[&layout, &out_layout],
+            &buffer,
+            [1, 1],
+        );
+        assert!(
+            (values[0] - 1.).abs() < 0.000001 && (values[2] / values[1] - 50.).abs() < 0.001,
+            "front layer borrowed depth or mud: dry={dry}, {:?}",
+            &values[..4]
+        );
+        if dry {
+            assert_eq!(&values[4..8], &[0.; 4]);
+        } else {
+            assert!(
+                (values[4] - 1.4).abs() < 0.000001 && (values[6] / values[5] - 900.).abs() < 0.001,
+                "back layer borrowed depth or clear water: {:?}",
+                &values[4..8]
+            );
+        }
+    }
+    // Restore the preceding optical impulse fixture for the dilute transition.
+    queue.write_texture(
+        textures[0].as_image_copy(),
+        bytemuck::cast_slice(&impulse),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(32 * 16),
+            rows_per_image: None,
+        },
+        textures[0].size(),
+    );
+    uniforms[32] = 0.2;
+    uniforms[37] = 0.2;
+    queue.write_buffer(&uniform, 0, bytemuck::cast_slice(&uniforms));
 
     // The physical-footprint bound must fade in with connected density; the
     // first nonzero confidence must not switch the whole blur width at once.

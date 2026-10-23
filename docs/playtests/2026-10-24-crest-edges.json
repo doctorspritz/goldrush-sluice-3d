@@ -1,0 +1,161 @@
+{
+  "base_commit": "4d920f6ed5926b8a1ce0a5dc0c5fc90735caf1b5",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-range-20261024",
+  "changed_sources": {
+    "crates/mining/src/water_blur.wgsl": {
+      "before": "2cd95fbdadbc7b2903cc316e76a33e6b2e7600ae1e095d89e0cee2a6e82562ac",
+      "after": "062ce13fa035c4960668020f10fbc2b64c0c7e4d6e0677d4676f130605868c6a"
+    },
+    "crates/mining-physics/tests/water_optics.rs": {
+      "before": "745ae119fb6cd173abbf121025f244dc9b2652fe6a9889ece4e8651f98eb76eb",
+      "after": "ad21c4a8ad31d2547c4782740c13250be85e691491d43aaa6309ab270a7760a1"
+    }
+  },
+  "other_build_sources_unchanged": 697,
+  "tested_manifest_sha256": "ee97569e2dc835478df41bc1e594ef36fce3d956b86cdf28db3243ac659ffbf3",
+  "binary": {
+    "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-range-20261024/final-app/First Bend.app/Contents/MacOS/mining",
+    "sha256": "bed8c72a3a7215eaaa16be13abc1f9ff037ff9673844cdb7436b897a054fad87"
+  },
+  "saved_input_sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42",
+  "negative_control": {
+    "log_sha256": "6aa9125f3931a3b29fc2c0699f187afba723ff3f9ab147c551d8fab86cad86f9",
+    "old_front_depth_m": 1.0000709,
+    "expected_front_depth_m": 1.0,
+    "depth_error_bound_m": 1e-06,
+    "failed_before_fix": true
+  },
+  "rejected_trial": {
+    "log_sha256": "88ed69422884cd5a8a7e4ea792ca14dcb89ef4cfae0b225f3efc599a66eb39ed",
+    "geometric_range_impulse_extinction_m1": 313.601,
+    "maximum_accepted_m1": 200.0,
+    "included_in_final": false
+  },
+  "app_checks_passed": 51,
+  "app_checks_ignored": 1,
+  "explicit_gpu_optics_checks_passed": 10,
+  "quality": [
+    {
+      "check": "format",
+      "exit": 0
+    },
+    {
+      "check": "app-cpu",
+      "exit": 0
+    },
+    {
+      "check": "clippy",
+      "exit": 0
+    },
+    {
+      "check": "format-check",
+      "exit": 0
+    }
+  ],
+  "frozen_comparison": {
+    "fields": [
+      "sim_time",
+      "fluid_clock",
+      "solver_steps",
+      "tracks",
+      "machine",
+      "excavated_m3",
+      "delivered_m3",
+      "flow",
+      "surface",
+      "active_soil",
+      "material_motion"
+    ],
+    "views": {
+      "sluice-final": true,
+      "sluice-normal": true,
+      "sluice-sediment": true,
+      "outlet-final": true,
+      "river-final": true
+    }
+  },
+  "image_comparison": {
+    "sluice-final": {
+      "changed_rgb_pixels": 80539,
+      "max_channel_difference": 116
+    },
+    "sluice-normal": {
+      "changed_rgb_pixels": 122034,
+      "max_channel_difference": 204
+    },
+    "sluice-sediment": {
+      "changed_rgb_pixels": 35899,
+      "max_channel_difference": 112
+    },
+    "outlet-final": {
+      "changed_rgb_pixels": 19423,
+      "max_channel_difference": 114
+    },
+    "river-final": {
+      "changed_rgb_pixels": 0,
+      "max_channel_difference": 0
+    },
+    "outlet_crop_identical": true
+  },
+  "motion": {
+    "source_frames": 89,
+    "presentation_advances": 88,
+    "worker_advances": 73,
+    "recording_underruns": 0,
+    "wall_seconds": 7.968948125000001,
+    "sim_seconds": 2.433333460241556,
+    "review_indices": [
+      0,
+      18,
+      35,
+      53,
+      70,
+      88
+    ],
+    "video_frames": 484,
+    "midpoint": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-range-20261024/motion/frame-0044.png"
+  },
+  "benchmarks": {
+    "before": {
+      "mean_fps": 55.751886553325235,
+      "p95_frame_ms": 25.28575,
+      "simulation_wall_ratio": 0.3030766779246308,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.774149253236828e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 1.3642420526593924e-12
+    },
+    "after": {
+      "mean_fps": 55.97087886599901,
+      "p95_frame_ms": 25.927374999999998,
+      "simulation_wall_ratio": 0.32153344332792333,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.818506411183535e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 1.3642420526593924e-12
+    }
+  },
+  "delivered_media": {
+    "docs/playtests/2026-10-24-crest-edges.png": "69519ae563ff62ea154ef80dfe4bb45fdee1878cfa1248a392bf157b008a7208",
+    "docs/playtests/2026-10-24-crest-edges.motion.png": "4a83e12068997c20aeaae7bbcdc4dada0aaa9ff2cb761ab98273d533e2b5781f",
+    "docs/playtests/2026-10-24-crest-edges.mp4": "c0154e49d3a2beb75308bf99f8bdcaa1f00abe18aad9f317a1786079d16da25a"
+  },
+  "review_scope": "Matched frozen final/normal/extinction views, six native temporal samples and full midpoint. No whole-video or manual OS-input claim.",
+  "preserved_unfinished_files": {
+    "crates/mining-sim/src/articulation.rs": "0cf89af4c704b6504888200c676bdf1ba3f791882fcf877f0a3521e2feb001cf",
+    "crates/mining-sim/src/replay.rs": "4ec282730f4991091507b1a6a9b18f6c70b42579527171fd0adf0e9dfe03d278",
+    "crates/mining-sim/src/session.rs": "ffc687f0e3cd80e256da2c686f4d95fa88d8f86b1a979ad229875143e9671813",
+    "crates/mining-sim/tests/articulation.rs": "ee286139db2f2f17bbe8984e16ee91689cacffd08db5f2a5b95c7284523e6a45",
+    "crates/mining-sim/tests/soil.rs": "04aca686c9ac0ab55d4e3740cfe7e4123452250179b176459f6c1799687d1d74",
+    "crates/mining/src/control_check.rs": "e6731ab52e647ccc968c593f2114fdeba4799bfb5c0d0ca166f3d4740bf5706b",
+    "docs/physics/active-soil.md": "ba95933c246e534cfc002e0fd67aae32cbc5d3b5c27b87249c5f7fffd6c8d748",
+    "docs/physics/articulated-machine.md": "8b8672194ca47f48a9898200a0302a47aa51d2b7a1983fc53407ffa1d463c7dc",
+    "plans/2026-10-22-realistic-operation.md": "ed5f91c75ac4a4e82a301f67ec6c5fe444f3216bc2b1c9a01a1f32df3b5d57f3"
+  },
+  "remaining": "Coherent physical standing waves, some isolated rounded spray, grain stippling, sediment calibration, river/environment art and physical realtime performance.",
+  "full_goal_complete": false
+}

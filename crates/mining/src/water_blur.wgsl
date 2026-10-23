@@ -36,6 +36,29 @@ fn shared_surface_depth(raw:vec2<f32>,near:vec4<f32>,far:vec4<f32>)->f32 {
     let channel=select(0.,1.+smoothstep(0.05,0.5,peak),raw.g< -0.5);
     return vec4(shared_surface_depth(raw.rg,near,far),textureLoad(columns,q,0).rg,channel);
 }
+// Estimate the sheet outside the central kernel bump. Each side supplies a
+// one-sided slope; a flat layer step has no matching tangent across its gap.
+// Blend uncertain fits back to the centre instead of switching the whole
+// reconstruction at a curvature threshold.
+fn sheet_axis(pixel:vec2<i32>,direction:vec2<i32>,size:vec2<i32>,center:f32)->vec2<f32> {
+    let a=clamp(pixel-direction*6,vec2(0),size-vec2(1));
+    let b=clamp(pixel-direction*3,vec2(0),size-vec2(1));
+    let c=clamp(pixel+direction*3,vec2(0),size-vec2(1));
+    let d=clamp(pixel+direction*6,vec2(0),size-vec2(1));
+    let av=textureLoad(depths,a,0);let bv=textureLoad(depths,b,0);
+    let cv=textureLoad(depths,c,0);let dv=textureLoad(depths,d,0);
+    let ab=dot(vec2<f32>(b-a),vec2<f32>(direction));
+    let cd=dot(vec2<f32>(d-c),vec2<f32>(direction));
+    if min(min(av.r,bv.r),min(cv.r,dv.r))<=0. ||
+       min(min(av.a,bv.a),min(cv.a,dv.a))<=0.5 || min(ab,cd)<=0. {return vec2(0.,1./center);}
+    let dl=(1./bv.r-1./av.r)/ab;let dr=(1./dv.r-1./cv.r)/cd;
+    let slope=select(0.,sign(dl)*min(abs(dl),abs(dr)),dl*dr>=0.);
+    let lo=1./bv.r+slope*dot(vec2<f32>(pixel-b),vec2<f32>(direction));
+    let hi=1./cv.r-slope*dot(vec2<f32>(c-pixel),vec2<f32>(direction));
+    let tolerance=max(abs(slope)*1.5,0.00001);
+    let confidence=1.-smoothstep(tolerance,tolerance*2.,abs(lo-hi));
+    return vec2(slope*confidence,mix(1./center,(lo+hi)*0.5,confidence));
+}
 fn smooth_surface(pixel: vec2<i32>, direction: vec2<i32>) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(depths)); let center = textureLoad(depths,pixel,0);
     if center.r <= 0. { return vec4(0.); }
@@ -58,12 +81,8 @@ fn smooth_surface(pixel: vec2<i32>, direction: vec2<i32>) -> vec4<f32> {
     // its original range test and arithmetic depth filter.
     var slope=0.;var plane_origin=1./center.r;
     if bulk>0. && center.a>0.5 {
-        let left=textureLoad(depths,clamp(pixel-direction*6,vec2(0),size-vec2(1)),0);
-        let right=textureLoad(depths,clamp(pixel+direction*6,vec2(0),size-vec2(1)),0);
-        if left.r>0. && right.r>0. && left.a>0.5 && right.a>0.5 {
-            slope=(1./right.r-1./left.r)/12.;
-            plane_origin=(1./right.r+1./left.r)*0.5;
-        }
+        let tangent=sheet_axis(pixel,direction,size,center.r);
+        slope=tangent.x;plane_origin=tangent.y;
     }
     // A fixed pixel radius becomes a broad, round mound at grazing angles.
     // Bound connected-water diffusion to a 30 mm tangent footprint per pass.
