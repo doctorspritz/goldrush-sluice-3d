@@ -24,6 +24,12 @@ fn main() -> AppExit {
     // Keep Bevy's compute/IO pools bounded as well as the single solver worker.
     use bevy::app::{TaskPoolOptions, TaskPoolPlugin};
     let (mut session, demo) = demo::initial();
+    if std::env::args().any(|a| a == "--articulated-machine") {
+        session
+            .machine
+            .enable_articulation()
+            .expect("Articulated mechanism must initialize");
+    }
     session.sluice.ensure_water_ids();
     let game = app::Game {
         session,

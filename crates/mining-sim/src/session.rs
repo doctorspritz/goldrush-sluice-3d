@@ -266,7 +266,11 @@ impl Session {
             match a {
                 Action::EnterExit => {
                     self.message = if self.player.mode == ControlMode::Excavator {
-                        "Cab controls: R/F boom, T/G stick, Y/H curl. Hold Space to cut; J pours the bucket.".into()
+                        if self.machine.articulation.is_some() {
+                            "Cab controls: R/F boom, T/G stick, Y/H curl. Mechanism validation: digging and dumping unavailable.".into()
+                        } else {
+                            "Cab controls: R/F boom, T/G stick, Y/H curl. Hold Space to cut; J pours the bucket.".into()
+                        }
                     } else {
                         "Back on foot. Walk to the hopper to operate the plant.".into()
                     }
@@ -527,8 +531,12 @@ impl Session {
         let mut site = self.site.snapshot();
         site.normalize_bed_age();
         serde_json::to_string(&Save {
-            // Earlier binaries must reject the subgrid material they cannot account for.
-            version: 6,
+            // Ordinary shifts remain v6; v7 requires the complete articulated state.
+            version: if self.machine.articulation.is_some() {
+                7
+            } else {
+                6
+            },
             site,
             machine: self.machine.clone(),
             sluice: self.sluice.clone(),
@@ -546,13 +554,13 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if !matches!(s.version, 2..=6) {
+        if !matches!(s.version, 2..=7) {
             return Err("Unsupported save version".into());
         }
         if !matches!(
             (s.version, s.site.bed_age_unit()),
             (2, crate::site::BedAgeUnit::Legacy20HzSteps)
-                | (3..=6, crate::site::BedAgeUnit::Microseconds)
+                | (3..=7, crate::site::BedAgeUnit::Microseconds)
         ) {
             return Err("Invalid saved terrain clock".into());
         }
@@ -574,6 +582,9 @@ impl Session {
         }
         if s.version < 5 && (s.site.bed_remainder_m3() > 0. || s.site.has_projection_inventory()) {
             return Err("Legacy save contains unsupported subgrid bed inventory".into());
+        }
+        if (s.version == 7) != s.machine.articulation.is_some() {
+            return Err("Saved articulated mechanism does not match its format version".into());
         }
         if s.version < 6 && s.machine.tracks.carries_motion() {
             return Err("Legacy save contains unsupported machine dynamics".into());

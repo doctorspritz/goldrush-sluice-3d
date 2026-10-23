@@ -369,7 +369,8 @@ pub fn update(
             HudText::Mode=>format!("{}  /  {}",if foot{"ON FOOT"}else{"EXCAVATOR"},if s.player.third_person{"EXTERNAL VIEW"}else{"FIRST PERSON"}),
             HudText::Numbers=>format!("{:.2} g",s.sluice.concentrate.gold_g),
             HudText::Objective=>{
-                if game.demo { "FLOWING DEMO\n\nPaydirt and water are flowing.\nP pump · O feed · arrows set rates.\nNew shift starts a fresh claim.".into() }
+                if s.machine.articulation.is_some() { "MECHANISM VALIDATION\n\nDrive, swing and move the arm.\nWatch load and pump feedback.\nDigging and dumping unavailable.".into() }
+                else if game.demo { "FLOWING DEMO\n\nPaydirt and water are flowing.\nP pump · O feed · arrows set rates.\nNew shift starts a fresh claim.".into() }
                 else if s.sluice.concentrate.gold_g>=GOLD_TARGET_G {format!("FIRST GOLD RECOVERED\n\n{:.2} g from your claim.\nKeep digging, or save your shift.",s.sluice.concentrate.gold_g)}
                 else if s.sluice.placement.is_some() && s.sluice.pump_on && s.sluice.feed_on {"WASHING
 
@@ -406,6 +407,8 @@ P restarts water; O opens feed.".into()}
                     format!("WASD walk   ·   Click to capture mouse / shovel   ·   Esc release   ·   E / Tab cab   ·   B place   ·   Shovel: click   ·   Hand load: {:.1} L",s.player.hand.volume()*1000.0)
                 }else{
                     let status=match s.machine.digging.reason {
+                        mining_sim::machine::DigLimit::MechanismValidation=>"Mechanism validation: digging and dumping unavailable",
+                        mining_sim::machine::DigLimit::MechanicalFailure=>"Mechanism paused",
                         mining_sim::machine::DigLimit::None=>if s.machine.digging.excavated_m3>1e-9 {"Cutting"}else{"Move the bucket while holding Space to cut"},
                         mining_sim::machine::DigLimit::Ground=>"Ground contact; hold Space to cut",
                         mining_sim::machine::DigLimit::Bedrock=>"Bedrock contact; lift or tuck the bucket",
@@ -413,7 +416,14 @@ P restarts water; O opens feed.".into()}
                         mining_sim::machine::DigLimit::Force=>"Digging force limit; take a shallower cut",
                         mining_sim::machine::DigLimit::Power=>"Hydraulic power limit",
                     };
+                    if let Some(a)=&s.machine.articulation {
+                        let status=if a.feedback.failure.is_some() {"Mechanism paused"}
+                            else if a.feedback.command_fraction<0.999 {"Pump power limit · digging/dumping unavailable"}
+                            else {"Dynamic joints · digging/dumping unavailable"};
+                        format!("MECHANISM VALIDATION · WASD tracks · Q / E swing · R / F boom · T / G stick · Y / H curl\nPump {:.2} kW · Stored {:.1} J · Tilt {:.0}° · {}",s.machine.digging.tool_power_w/1000.,a.feedback.elastic_j,s.machine.tracks.feedback.tilt_deg,status)
+                    } else {
                     format!("WASD tracks · Q / E swing · R / F boom · T / G stick · Y / H curl · Space cut · J dump\nBucket {:.0}% · Load {:.0} kg · Tool {:.1} kN · Tilt {:.0}° · {}",s.machine.bucket.volume()/mining_sim::machine::BUCKET_CAPACITY*100.0,s.machine.bucket.wet_mass_kg(),s.machine.digging.requested_force_n/1000.,s.machine.tracks.feedback.tilt_deg,status)
+                    }
                 }
             },
             HudText::Message=>s.message.clone(),

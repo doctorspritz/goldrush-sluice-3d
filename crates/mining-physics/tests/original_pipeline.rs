@@ -5,15 +5,23 @@ use mining_sim::{session::Controls, Action, Placement, Session, Vec3};
 #[test]
 #[ignore = "requires real Metal/Vulkan compute adapter; run with --ignored --nocapture"]
 fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
-    run_pipeline(false);
+    run_pipeline(false, false);
 }
 #[test]
 #[ignore = "requires real GPU; run explicitly with --ignored --nocapture"]
 fn conservative_pipeline_survives_excavation_pumping_camera_and_live_restore() {
-    run_pipeline(true);
+    run_pipeline(true, false);
 }
-fn run_pipeline(conservative: bool) {
+#[test]
+#[ignore = "requires actual GPU; run explicitly with --ignored --nocapture"]
+fn articulated_machine_survives_original_water_pipeline_and_full_live_restore() {
+    run_pipeline(false, true);
+}
+fn run_pipeline(conservative: bool, articulated: bool) {
     let mut s = Session::new();
+    if articulated {
+        s.machine.enable_articulation().unwrap();
+    }
     let initial_mass = s.accounted_dry_mass_kg();
     let mut physics = Hydraulics::new().unwrap();
     if conservative {
@@ -79,7 +87,10 @@ fn run_pipeline(conservative: bool) {
                     .map(|v| v.abs())
                     .fold(0.0, f32::max)
             );
+            let machine = serde_json::to_string(&s.machine).unwrap();
             s = Session::load_json(&s.save_json().unwrap()).unwrap();
+            assert_eq!(serde_json::to_string(&s.machine).unwrap(), machine);
+            assert_eq!(s.machine.articulation.is_some(), articulated);
             physics.restore();
             assert_eq!(
                 positions,

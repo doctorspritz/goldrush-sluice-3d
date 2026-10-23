@@ -118,6 +118,15 @@ impl Worker {
                                     work.controls
                                 };
                                 session.step(controls);
+                                if let Some(error)=session.machine.articulation.as_ref().and_then(|s|s.feedback.failure.clone()) {
+                                    session.paused=true;
+                                    session.message=format!("Mechanism paused: {error}");
+                                    failure=Some(error);
+                                    break;
+                                }
+                                if session.machine.articulation.as_ref().is_some_and(|s|s.feedback.unsupported_transfer) {
+                                    session.message="Digging and dumping are unavailable in mechanism validation.".into();
+                                }
                                 if let Err(e) = solver.step(&mut session) {
                                     session.message = format!(
                                         "Simulation stopped: {e}. Save your shift with F5."
@@ -259,6 +268,12 @@ fn apply(session: &mut Session, solver: &mut impl Solver, commands: Vec<Command>
                 let _ = session.on_action(action);
             }
             Command::Reset(mut replacement) => {
+                if session.machine.articulation.is_some() {
+                    if let Err(e) = replacement.machine.enable_articulation() {
+                        session.message = format!("Mechanism reset failed: {e}");
+                        continue;
+                    }
+                }
                 replacement.site.revision = session.site.revision + 1;
                 *session = *replacement;
                 solver.restore();
@@ -280,6 +295,12 @@ fn apply(session: &mut Session, solver: &mut impl Solver, commands: Vec<Command>
             }
             Command::Load(path) => match storage::load(&path) {
                 Ok(mut restored) => {
+                    if session.machine.articulation.is_some() {
+                        if let Err(e) = restored.machine.enable_articulation() {
+                            session.message = format!("Load failed: {e}");
+                            continue;
+                        }
+                    }
                     restored.site.revision = session.site.revision + 1;
                     *session = restored;
                     solver.restore();
@@ -451,5 +472,43 @@ mod tests {
             receive(&mut worker).session.sim_time,
             stopped.session.sim_time
         );
+    }
+    #[test]
+    fn articulated_validation_survives_new_shift_and_explicit_legacy_load() {
+        let mut s = Session::new();
+        s.machine.enable_articulation().unwrap();
+        let mut worker = Worker::spawn(|| Ok(SlowSolver), s).unwrap();
+        receive(&mut worker);
+        worker
+            .submit(Work {
+                commands: vec![Command::Reset(Box::default())],
+                advance: true,
+                ..Default::default()
+            })
+            .unwrap();
+        let reset = receive(&mut worker);
+        assert!(reset.session.machine.articulation.is_some());
+        assert!(reset.session.machine.valid());
+        let path = std::env::temp_dir().join(format!(
+            "sluice-articulated-worker-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, Session::new().save_json().unwrap()).unwrap();
+        worker
+            .submit(Work {
+                commands: vec![Command::Load(path.clone())],
+                ..Default::default()
+            })
+            .unwrap();
+        let loaded = receive(&mut worker);
+        assert!(loaded.session.machine.articulation.is_some());
+        assert!(loaded.session.machine.valid());
+        assert_eq!(loaded.session.message, "Shift restored");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&loaded.session.save_json().unwrap())
+                .unwrap()["version"],
+            7
+        );
+        std::fs::remove_file(path).unwrap();
     }
 }

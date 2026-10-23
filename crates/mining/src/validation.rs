@@ -92,7 +92,8 @@ impl Default for Validation {
             flow_windows: Vec::new(),
             worker_ms: Vec::new(),
             worker_phases: [0.; 5],
-            input_check: std::env::args().any(|a| a == "--check-controls"),
+            input_check: std::env::args()
+                .any(|a| matches!(a.as_str(), "--check-controls" | "--mechanism-motion")),
             input_complete: false,
             capture,
             motion_capture: std::env::args().any(|a| a == "--capture-motion"),

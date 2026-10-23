@@ -31,6 +31,8 @@ pub enum DigLimit {
     Capacity,
     Force,
     Power,
+    MechanismValidation,
+    MechanicalFailure,
 }
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct DiggingFeedback {
@@ -73,6 +75,8 @@ pub struct Excavator {
     pub digging: DiggingFeedback,
     #[serde(default)]
     pub tracks: crate::tracks::TrackMotion,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub articulation: Option<crate::articulation::Articulation>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -104,6 +108,7 @@ impl Excavator {
             hydraulics: HydraulicLimits::default(),
             digging: DiggingFeedback::default(),
             tracks: crate::tracks::TrackMotion::default(),
+            articulation: None,
         };
         // A fresh machine starts with its actual floor and teeth clear of the
         // bank. Old saves retain their pose and may retreat from old contact.
@@ -202,8 +207,58 @@ impl Excavator {
         };
         let mut normal = 0.;
         let mut friction = 0f32;
+        let input = MachineInput {
+            drive: input.drive.clamp(-1., 1.),
+            steer: input.steer.clamp(-1., 1.),
+            swing: input.swing.clamp(-1., 1.),
+            boom: input.boom.clamp(-1., 1.),
+            stick: input.stick.clamp(-1., 1.),
+            curl: input.curl.clamp(-1., 1.),
+            ..input
+        };
         for _ in 0..steps {
-            self.step_mechanics(input, site, h, obstacles);
+            if self.articulation.is_some() {
+                let env = crate::articulation::Environment {
+                    gravity: Vec3::new(0., -9.81, 0.),
+                    site: Some(site),
+                    obstacles,
+                    loads: &[],
+                };
+                if let Err(error) = crate::articulation::step(self, input, h, &env) {
+                    self.articulation.as_mut().unwrap().feedback.failure = Some(error);
+                    self.digging = DiggingFeedback {
+                        limited: true,
+                        reason: DigLimit::MechanicalFailure,
+                        ..Default::default()
+                    };
+                    return None;
+                }
+                let feedback = &self.articulation.as_ref().unwrap().feedback;
+                self.digging = DiggingFeedback {
+                    tool_power_w: (feedback.pump_work_j / h as f64) as f32,
+                    accepted_fraction: feedback.command_fraction,
+                    limited: feedback.unsupported_transfer || feedback.command_fraction < 0.999,
+                    reason: if feedback.unsupported_transfer {
+                        DigLimit::MechanismValidation
+                    } else if feedback.command_fraction < 0.999 {
+                        DigLimit::Power
+                    } else {
+                        DigLimit::None
+                    },
+                    ..Default::default()
+                };
+                if self.engine_on && self.fuel_l > 0. {
+                    let activity = input.drive.abs()
+                        + input.steer.abs()
+                        + input.swing.abs()
+                        + input.boom.abs()
+                        + input.stick.abs()
+                        + input.curl.abs();
+                    self.fuel_l = (self.fuel_l - h * (0.0003 + activity.min(3.) * 0.001)).max(0.);
+                }
+            } else {
+                self.step_mechanics(input, site, h, obstacles);
+            }
             let f = self.digging;
             digging.soil_force_n = digging.soil_force_n.max(f.soil_force_n);
             digging.requested_force_n = digging.requested_force_n.max(f.requested_force_n);
@@ -220,7 +275,12 @@ impl Excavator {
         self.digging = digging;
         self.tracks.feedback.normal_force_n = normal;
         self.tracks.feedback.maximum_friction_ratio = friction;
-        if input.dump && self.engine_on && self.fuel_l > 0. && !self.bucket.is_empty() {
+        if self.articulation.is_none()
+            && input.dump
+            && self.engine_on
+            && self.fuel_l > 0.
+            && !self.bucket.is_empty()
+        {
             let arm = self.arm();
             return Some((
                 arm.wrist + arm.forward * 0.35 - arm.up * 0.10,
@@ -408,6 +468,13 @@ impl Excavator {
         None
     }
     pub fn valid(&self) -> bool {
+        // The dynamic solver may leave sub-milliradian limit error; keep the
+        // original model's exact domain while validating real, unclamped poses.
+        let epsilon = if self.articulation.is_some() {
+            0.001
+        } else {
+            0.
+        };
         Site::bounds(self.position, 0.0)
             && self.position.y.abs() < 100.0
             && [
@@ -421,9 +488,13 @@ impl Excavator {
             ]
             .iter()
             .all(|v| v.is_finite())
-            && (-0.24..=1.20).contains(&self.boom)
-            && (-2.15..=-0.15).contains(&self.stick)
-            && (-1.70..=1.45).contains(&self.curl)
+            && (-0.24 - epsilon..=1.20 + epsilon).contains(&self.boom)
+            && (-2.15 - epsilon..=-0.15 + epsilon).contains(&self.stick)
+            && (-1.70 - epsilon..=1.45 + epsilon).contains(&self.curl)
+            && self
+                .articulation
+                .as_ref()
+                .is_none_or(|state| state.valid_for(self))
             && (0.0..=45.0).contains(&self.fuel_l)
             && self.tracks.valid()
             && self.bucket.valid()

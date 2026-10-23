@@ -19,11 +19,20 @@ pub struct Check {
     joints: [f32; 3],
     clock: f64,
     finished: bool,
+    mechanism_motion: bool,
 }
 impl Check {
     pub fn from_args() -> Self {
         let args: Vec<_> = std::env::args().collect();
+        let mechanism_motion = args.iter().any(|a| a == "--mechanism-motion");
+        assert!(
+            !mechanism_motion
+                || (args.iter().any(|a| a == "--articulated-machine")
+                    && args.iter().any(|a| a == "--capture-motion")),
+            "mechanism-motion requires the articulated model and bounded motion capture"
+        );
         Self {
+            mechanism_motion,
             path: args
                 .iter()
                 .position(|a| a == "--check-controls")
@@ -47,10 +56,32 @@ pub fn inject(
     mut motion: ResMut<AccumulatedMouseMotion>,
     mut buttons: Query<(&HudButton, &mut Interaction)>,
 ) {
-    if check.path.is_none() || check.finished {
+    if (check.path.is_none() && !check.mechanism_motion) || check.finished {
         return;
     }
     check.frame += 1;
+    if check.mechanism_motion {
+        // Bounded native evidence uses ordinary Bevy keys. It never resets,
+        // pauses, teleports, cuts or injects material into the mechanism.
+        let (press, release) = match check.frame {
+            181 => (Some(KeyCode::Tab), None),
+            182 => (None, Some(KeyCode::Tab)),
+            200 => (Some(KeyCode::KeyR), None),
+            300 => (Some(KeyCode::KeyT), Some(KeyCode::KeyR)),
+            400 => (Some(KeyCode::KeyY), Some(KeyCode::KeyT)),
+            500 => (Some(KeyCode::KeyE), Some(KeyCode::KeyY)),
+            600 => (Some(KeyCode::KeyF), Some(KeyCode::KeyE)),
+            700 => (None, Some(KeyCode::KeyF)),
+            _ => (None, None),
+        };
+        if let Some(key) = release {
+            keys.release(key);
+        }
+        if let Some(key) = press {
+            keys.press(key);
+        }
+        return;
+    }
     if check.frame.is_multiple_of(120) {
         println!("NATIVE INPUT frame={}", check.frame);
     }

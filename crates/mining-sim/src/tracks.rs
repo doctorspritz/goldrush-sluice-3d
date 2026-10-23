@@ -18,10 +18,10 @@ pub const TRAVEL_SPEED: f32 = 5.1 / 3.6;
 const PATCH: usize = 65;
 
 #[derive(Clone, Debug)]
-struct Ground {
-    origin: [usize; 2],
+pub(crate) struct Ground {
+    pub(crate) origin: [usize; 2],
     heights: Vec<f32>,
-    shape: r::SharedShape,
+    pub(crate) shape: r::SharedShape,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
@@ -102,25 +102,25 @@ pub struct Obstacle {
     pub half_extents: Vec3,
 }
 
-fn rv(v: Vec3) -> r::Vector {
+pub(crate) fn rv(v: Vec3) -> r::Vector {
     r::Vector::from_array(v.to_array())
 }
-fn sv(v: r::Vector) -> Vec3 {
+pub(crate) fn sv(v: r::Vector) -> Vec3 {
     Vec3::from_array(v.to_array())
 }
-fn rr(q: Quat) -> r::Rotation {
+pub(crate) fn rr(q: Quat) -> r::Rotation {
     r::Rotation::from_xyzw(q.x, q.y, q.z, q.w)
 }
-fn sq(q: r::Rotation) -> Quat {
+pub(crate) fn sq(q: r::Rotation) -> Quat {
     Quat::from_xyzw(q.x, q.y, q.z, q.w)
 }
-fn pose(p: Vec3, q: Quat) -> r::Pose {
+pub(crate) fn pose(p: Vec3, q: Quat) -> r::Pose {
     r::Pose::from_parts(rv(p), rr(q))
 }
 
-struct Belts {
-    forward: r::Vector,
-    speed: [f32; 2],
+pub(crate) struct Belts {
+    pub(crate) forward: r::Vector,
+    pub(crate) speed: [f32; 2],
 }
 impl r::PhysicsHooks for Belts {
     fn modify_solver_contacts(&self, ctx: &mut r::ContactModificationContext) {
@@ -154,7 +154,7 @@ impl Excavator {
         self.chassis_rotation() * Vec3::Y
     }
 
-    fn ground(&mut self, site: &Site) -> Arc<Ground> {
+    pub(crate) fn ground(&mut self, site: &Site) -> Arc<Ground> {
         let origin = [self.position.x, self.position.z].map(|v| {
             ((v / CELL).floor() as i32 / 16 * 16 - 32).clamp(0, (WIDTH - PATCH) as i32) as usize
         });

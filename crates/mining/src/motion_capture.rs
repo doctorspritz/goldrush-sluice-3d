@@ -54,7 +54,7 @@ impl Default for MotionCapture {
         assert!(
             view.as_deref().is_none_or(|v| matches!(
                 v,
-                "sluice" | "outlet" | "river" | "tailrace" | "bucket" | "bank"
+                "sluice" | "outlet" | "river" | "tailrace" | "bucket" | "bank" | "machine"
             )),
             "capture view"
         );
@@ -119,6 +119,15 @@ pub fn camera(
         return;
     }
     if capture.directory.is_none() {
+        return;
+    }
+    if capture.view.as_deref() == Some("machine") {
+        let m = &game.session.machine;
+        let target = crate::app::bvec(m.position + m.forward() * 2.0) + Vec3::Y * 2.7;
+        if let Ok(mut camera) = camera.single_mut() {
+            *camera = Transform::from_translation(target + Vec3::new(9., 7., 10.))
+                .looking_at(target, Vec3::Y);
+        }
         return;
     }
     if capture.view.as_deref() == Some("bucket") {
