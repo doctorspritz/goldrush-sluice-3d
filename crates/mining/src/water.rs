@@ -225,6 +225,10 @@ struct FluidPipelines {
     depth_id: CachedRenderPipelineId,
     thickness_id: CachedRenderPipelineId,
     reconstruct_id: CachedRenderPipelineId,
+    geometry_x: CachedRenderPipelineId,
+    geometry_y: CachedRenderPipelineId,
+    optical_x: CachedRenderPipelineId,
+    optical_y: CachedRenderPipelineId,
     blur_x: CachedRenderPipelineId,
     blur_y: CachedRenderPipelineId,
     compose_id: CachedRenderPipelineId,
@@ -392,6 +396,38 @@ fn init_pipelines(
         TextureFormat::Rgba32Float,
         None,
     );
+    let geometry_x = make(
+        blur_shader.clone(),
+        &blur,
+        "fullscreen",
+        "geometry_x",
+        TextureFormat::Rgba32Float,
+        None,
+    );
+    let geometry_y = make(
+        blur_shader.clone(),
+        &blur,
+        "fullscreen",
+        "geometry_y",
+        TextureFormat::Rgba32Float,
+        None,
+    );
+    let optical_x = make(
+        blur_shader.clone(),
+        &blur,
+        "fullscreen",
+        "optical_x",
+        TextureFormat::Rgba32Float,
+        None,
+    );
+    let optical_y = make(
+        blur_shader.clone(),
+        &blur,
+        "fullscreen",
+        "optical_y",
+        TextureFormat::Rgba32Float,
+        None,
+    );
     let blur_x = make(
         blur_shader.clone(),
         &blur,
@@ -424,6 +460,10 @@ fn init_pipelines(
         depth_id,
         thickness_id,
         reconstruct_id,
+        geometry_x,
+        geometry_y,
+        optical_x,
+        optical_y,
         blur_x,
         blur_y,
         compose_id,
@@ -606,6 +646,10 @@ impl ViewNode for FluidNode {
             settings.depth_id,
             settings.thickness_id,
             settings.reconstruct_id,
+            settings.geometry_x,
+            settings.geometry_y,
+            settings.optical_x,
+            settings.optical_y,
             settings.blur_x,
             settings.blur_y,
             settings.compose_id,
@@ -624,6 +668,10 @@ impl ViewNode for FluidNode {
             Some(depth),
             Some(thickness),
             Some(reconstruct),
+            Some(geometry_x),
+            Some(geometry_y),
+            Some(optical_x),
+            Some(optical_y),
             Some(blur_x),
             Some(blur_y),
             Some(compose),
@@ -631,6 +679,10 @@ impl ViewNode for FluidNode {
             cache.get_render_pipeline(settings.depth_id),
             cache.get_render_pipeline(settings.thickness_id),
             cache.get_render_pipeline(settings.reconstruct_id),
+            cache.get_render_pipeline(settings.geometry_x),
+            cache.get_render_pipeline(settings.geometry_y),
+            cache.get_render_pipeline(settings.optical_x),
+            cache.get_render_pipeline(settings.optical_y),
             cache.get_render_pipeline(settings.blur_x),
             cache.get_render_pipeline(settings.blur_y),
             cache.get_render_pipeline(settings.compose_id),
@@ -786,13 +838,17 @@ impl ViewNode for FluidNode {
             pass.set_bind_group(0, &raw_group, &[]);
             pass.draw(0..3, 0..1);
         }
-        // Two separable bilateral iterations smooth shared fluid normals, without
-        // averaging across a depth jump or expanding water into empty pixels.
+        // Establish geometry, then exchange optical moments over that surface.
+        // Four original shape filters and four conservative optical exchanges
+        // share six draws and the existing targets. The outlet keeps exactly
+        // its original four filters; the optical-only draws copy it unchanged.
         for (pipeline, group, output) in [
+            (geometry_x, &pong_group, &target.ping),
+            (geometry_y, &ping_group, &target.pong),
             (blur_x, &pong_group, &target.ping),
             (blur_y, &ping_group, &target.pong),
-            (blur_x, &pong_group, &target.ping),
-            (blur_y, &ping_group, &target.pong),
+            (optical_x, &pong_group, &target.ping),
+            (optical_y, &ping_group, &target.pong),
         ] {
             let mut pass = context
                 .command_encoder()

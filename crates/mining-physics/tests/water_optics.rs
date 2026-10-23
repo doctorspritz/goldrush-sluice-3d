@@ -1051,10 +1051,153 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
         (v[0] - 1.).abs() < 0.012,
         "grazing millimetre cap was not joined to the sheet: {v:?}"
     );
-    assert!(
-        v[2] / v[1] < 200.,
-        "grazing optical impulse survived as a mud patch: {v:?}"
+    // Judge suppression at the final shared optical gather, rather than
+    // requiring an intermediate filter to throw the impulse's material away.
+    // Run the same six production stages, retaining the unchanged <200/m
+    // visible-crest bound alongside the independent integrated-volume checks.
+    let (stage_buffer, stage_layout, stage_group) = output(&device, 256);
+    let mut staged = grazing.clone();
+    for (function, direction) in [
+        ("geometry_surface", "vec2(1,0)"),
+        ("geometry_surface", "vec2(0,1)"),
+        ("smooth_surface", "vec2(1,0)"),
+        ("smooth_surface", "vec2(0,1)"),
+        ("optical_surface", "vec2(1,0)"),
+        ("optical_surface", "vec2(0,1)"),
+    ] {
+        let shader = include_str!("../../mining/src/water_blur.wgsl");
+        let stage_source = format!(
+            r#"{shader}
+
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {{
+ result[p.y*32u+p.x]={function}(vec2<i32>(p.xy),{direction});
+}}"#
+        );
+        staged = execute(
+            &device,
+            &queue,
+            stage_source,
+            &[&group, &stage_group],
+            &[&layout, &stage_layout],
+            &stage_buffer,
+            [4, 1],
+        );
+        queue.write_texture(
+            textures[0].as_image_copy(),
+            bytemuck::cast_slice(&staged),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            textures[0].size(),
+        );
+    }
+    let raw = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("fixed raw grazing envelope"),
+        size: textures[0].size(),
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let raw_values: Vec<f32> = grazing
+        .chunks_exact(4)
+        .flat_map(|v| [v[0], -1., 0., 0.])
+        .collect();
+    queue.write_texture(
+        raw.as_image_copy(),
+        bytemuck::cast_slice(&raw_values),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(32 * 16),
+            rows_per_image: None,
+        },
+        raw.size(),
     );
+    let raw_view = raw.create_view(&Default::default());
+    for i in [16, 21, 26, 31] {
+        uniforms[i] = 1.;
+    }
+    queue.write_buffer(&uniform, 0, bytemuck::cast_slice(&uniforms));
+    let bindings = [1, 3, 4, 5, 6, 9];
+    let gather_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &bindings.map(|binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: if binding == 3 {
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                }
+            } else {
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                }
+            },
+            count: None,
+        }),
+    });
+    let gather_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &gather_layout,
+        entries: &bindings.map(|binding| wgpu::BindGroupEntry {
+            binding,
+            resource: match binding {
+                3 => uniform.as_entire_binding(),
+                4 => wgpu::BindingResource::TextureView(&raw_view),
+                1 => wgpu::BindingResource::TextureView(&views[0]),
+                _ => wgpu::BindingResource::TextureView(&views[1]),
+            },
+        }),
+    });
+    let gather_source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let pixel=vec2(33.,9.);let depth=sample_depth(pixel).x;
+ let column=channel_surface(pixel,depth).column;
+ result[p.y*8u+p.x]=vec4(column.x,column.y/max(column.x,0.000001),depth,0.);
+}"#
+    );
+    let final_column = execute(
+        &device,
+        &queue,
+        gather_source,
+        &[&gather_group, &out_group],
+        &[&gather_layout, &out_layout],
+        &buffer,
+        [1, 1],
+    );
+    println!(
+        "final grazing optical path={}m, extinction={}/m",
+        final_column[0], final_column[1]
+    );
+    assert!(
+        final_column[1] < 200.,
+        "final grazing crest retained a mud patch: {:?}",
+        &final_column[..4]
+    );
+    for component in [1, 2] {
+        let before: f64 = grazing.chunks_exact(4).map(|v| v[component] as f64).sum();
+        let after: f64 = staged.chunks_exact(4).map(|v| v[component] as f64).sum();
+        let error = (after / before - 1.).abs();
+        println!("staged grazing ray-column component={component} relative sum error={error}");
+        assert!(
+            error < 0.000002,
+            "staged optical exchange changed additive moments: component={component} error={error}"
+        );
+    }
+
     // A real 40 cm layer step has flat samples on either side. Its secant is
     // not a water tangent. Both sides must survive without invented depth or
     // transferred suspension; the dry centre must remain empty too.
@@ -1152,6 +1295,213 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
             (transition[component] - transition[4 + component]).abs() < 0.000001,
             "physical blur footprint popped at dilute-film threshold"
         );
+    }
+    // A finite flat sheet has a constant projected pixel area, so the sum of
+    // its ray columns is proportional to optical volume. Filtering must not
+    // create water or mineral optical material at a thinning/dry crest edge.
+    uniforms[32] = 0.2;
+    uniforms[37] = 0.2;
+    queue.write_buffer(&uniform, 0, bytemuck::cast_slice(&uniforms));
+    for slot in [2, 3] {
+        queue.write_texture(
+            textures[slot].as_image_copy(),
+            bytemuck::cast_slice(&[0.5f32; 1024]),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            textures[slot].size(),
+        );
+    }
+    let (mass_buffer, mass_layout, mass_group) = output(&device, 256);
+    let mass_source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_blur.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ result[p.y*32u+p.x]=smooth_surface(vec2<i32>(p.xy),vec2(1,0));
+}"#
+    );
+    for phase in [0f32, 0.25, 0.5, 0.75] {
+        let sheet: Vec<f32> = (0..256)
+            .flat_map(|i| {
+                let x = (i % 32) as f32;
+                if !(2. ..=20.).contains(&x) {
+                    return [0.; 4];
+                }
+                let impulse = (-((x - 2. - phase) / 0.65).powi(2)).exp();
+                let path = 0.002 + 0.06 * impulse;
+                [1., path, path * (50. + 300. * impulse), 2.]
+            })
+            .collect();
+        queue.write_texture(
+            textures[0].as_image_copy(),
+            bytemuck::cast_slice(&sheet),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            textures[0].size(),
+        );
+        let filtered = execute(
+            &device,
+            &queue,
+            mass_source.clone(),
+            &[&group, &mass_group],
+            &[&layout, &mass_layout],
+            &mass_buffer,
+            [4, 1],
+        );
+        for component in [1, 2] {
+            let before: f64 = sheet.chunks_exact(4).map(|v| v[component] as f64).sum();
+            let after: f64 = filtered.chunks_exact(4).map(|v| v[component] as f64).sum();
+            let error = (after / before - 1.).abs();
+            println!("finite-sheet phase={phase} component={component} relative optical-volume error={error}");
+            assert!(error<0.000002,"finite edge changed optical material: phase={phase} component={component} before={before} after={after}");
+        }
+    }
+
+    // Two disconnected films can have the same camera depth but independent
+    // turbidity. A dry gap must not exchange their optical material. Include
+    // narrow films requiring multiple stencil reflections on both screen axes.
+    for axis in 0..2 {
+        let ranges = if axis == 0 {
+            [(2usize, 6usize), (10, 20)]
+        } else {
+            [(1, 2), (4, 6)]
+        };
+        let sheet: Vec<f32> = (0..256)
+            .flat_map(|i| {
+                let coordinate = if axis == 0 { i % 32 } else { i / 32 };
+                match ranges
+                    .iter()
+                    .position(|&(lo, hi)| (lo..=hi).contains(&coordinate))
+                {
+                    None => [0.; 4],
+                    Some(island) => {
+                        let path = 0.002 + 0.003 * (coordinate - ranges[island].0) as f32;
+                        [1., path, path * if island == 0 { 50. } else { 900. }, 2.]
+                    }
+                }
+            })
+            .collect();
+        queue.write_texture(
+            textures[0].as_image_copy(),
+            bytemuck::cast_slice(&sheet),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            textures[0].size(),
+        );
+        let source = if axis == 0 {
+            mass_source.clone()
+        } else {
+            mass_source.replace(
+                "smooth_surface(vec2<i32>(p.xy),vec2(1,0))",
+                "smooth_surface(vec2<i32>(p.xy),vec2(0,1))",
+            )
+        };
+        let filtered = execute(
+            &device,
+            &queue,
+            source,
+            &[&group, &mass_group],
+            &[&layout, &mass_layout],
+            &mass_buffer,
+            [4, 1],
+        );
+        for (index, v) in filtered.chunks_exact(4).enumerate() {
+            let coordinate = if axis == 0 { index % 32 } else { index / 32 };
+            let island = ranges
+                .iter()
+                .position(|&(lo, hi)| (lo..=hi).contains(&coordinate));
+            if let Some(island) = island {
+                let beta = if island == 0 { 50. } else { 900. };
+                assert!(
+                    (v[2] / v[1] - beta).abs() < 0.001,
+                    "dry gap exchanged turbidity: axis={axis} pixel={index} {v:?}"
+                );
+            } else {
+                assert_eq!(v, &[0.; 4], "optical reflection invented wet coverage");
+            }
+        }
+        for (island, &(lo, hi)) in ranges.iter().enumerate() {
+            for component in [1, 2] {
+                let sum = |data: &[f32]| {
+                    data.chunks_exact(4)
+                        .enumerate()
+                        .filter_map(|(i, v)| {
+                            let q = if axis == 0 { i % 32 } else { i / 32 };
+                            (lo..=hi).contains(&q).then_some(v[component] as f64)
+                        })
+                        .sum::<f64>()
+                };
+                let error = (sum(&filtered) / sum(&sheet) - 1.).abs();
+                println!("independent-film axis={axis} island={island} component={component} optical-volume error={error}");
+                assert!(error<0.000002,"independent film changed optical material: axis={axis} island={island} component={component}");
+            }
+        }
+    }
+    // A new, almost-empty wet texel must not abruptly redistribute the
+    // neighbouring established column. This checks the actual production GPU
+    // path, independently of the static integrated-volume requirement above.
+    let mut birth = Vec::new();
+    let mut birth_inputs = Vec::new();
+    for new_water in [0f32, 1e-12] {
+        let sheet: Vec<f32> = (0..256)
+            .flat_map(|i| {
+                let x = (i % 32) as f32;
+                if x == 1. && new_water > 0. {
+                    return [1., new_water, new_water * 50., 1.];
+                }
+                if !(2. ..=20.).contains(&x) {
+                    return [0.; 4];
+                }
+                let impulse = (-((x - 2.) / 0.65).powi(2)).exp();
+                let path = 0.002 + 0.06 * impulse;
+                [1., path, path * (50. + 300. * impulse), 2.]
+            })
+            .collect();
+        queue.write_texture(
+            textures[0].as_image_copy(),
+            bytemuck::cast_slice(&sheet),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            textures[0].size(),
+        );
+        birth.push(execute(
+            &device,
+            &queue,
+            mass_source.clone(),
+            &[&group, &mass_group],
+            &[&layout, &mass_layout],
+            &mass_buffer,
+            [4, 1],
+        ));
+        birth_inputs.push(sheet);
+    }
+    for component in [1, 2] {
+        let scale = birth_inputs[0]
+            .chunks_exact(4)
+            .map(|v| v[component])
+            .fold(0f32, f32::max);
+        let change = birth[0]
+            .chunks_exact(4)
+            .zip(birth[1].chunks_exact(4))
+            .enumerate()
+            .filter(|(i, _)| (2..=20).contains(&(i % 32)))
+            .map(|(_, (a, b))| (a[component] - b[component]).abs() / scale)
+            .fold(0f32, f32::max);
+        println!("wet-texel birth component={component} maximum relative existing-column change={change}");
+        assert!(change<0.000002,"negligible wet-texel birth popped an established optical column: component={component} change={change}");
     }
 }
 

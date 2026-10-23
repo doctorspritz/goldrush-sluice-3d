@@ -67,7 +67,43 @@ fn sheet_axis(pixel:vec2<i32>,direction:vec2<i32>,size:vec2<i32>,center:f32)->ve
     return vec4(slope*confidence,mix(1./center,(lo+hi)*0.5,confidence),
                 curvature*confidence,confidence);
 }
-fn smooth_surface(pixel: vec2<i32>, direction: vec2<i32>) -> vec4<f32> {
+// Symmetric pair exchange preserves the sum of both additive optical
+// moments on a flat finite sheet. The harmonic water support tends to zero
+// continuously as a film appears/disappears; no domain-sized reflection jump.
+fn optical_support(a:f32,b:f32)->f32 {
+    let total=a+b;
+    return clamp(select(0.,4.*(a*b)/max(total*total,1e-30),total>0.),0.,1.);
+}
+fn optical_point(pixel:vec2<i32>,size:vec2<i32>,depth:f32)->vec3<f32> {
+    let uv=(vec2<f32>(pixel)+0.5)/vec2<f32>(size);
+    let ray=u.view_from_clip*vec4(uv.x*2.-1.,1.-uv.y*2.,1.,1.);
+    return ray.xyz*(depth/max(-ray.z,0.000001));
+}
+fn optical_exchange(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->vec2<f32> {
+    let size=vec2<i32>(textureDimensions(depths));
+    let origin=optical_point(pixel,size,center.r);
+    var result=center.gb;
+    for(var side=0;side<2;side++) {
+        let sign=select(-1,1,side==1);
+        var previous=center;var connection=1.;
+        for(var distance=1;distance<=4;distance++) {
+            let q=pixel+direction*(sign*distance);
+            if any(q<vec2(0)) || any(q>=size) {break;}
+            let sample=textureLoad(depths,q,0);
+            if sample.r<=0. || sample.a<=0.5 {break;}
+            connection=min(connection,optical_support(previous.g,sample.g));
+            let delta=optical_point(q,size,sample.r)-origin;
+            // Eight neighbours, each at most 1/8: the update is positive.
+            // Its one-pass world-space RMS displacement is bounded by
+            // 45 mm/sqrt(e) < 30 mm, independent of the projected pixel size.
+            let weight=0.125*connection*exp(-dot(delta,delta)/(0.045*0.045));
+            result+=(sample.gb-center.gb)*weight;
+            previous=sample;
+        }
+    }
+    return result;
+}
+fn smooth_surface_inner(pixel: vec2<i32>, direction: vec2<i32>,exchange:bool) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(depths)); let center = textureLoad(depths,pixel,0);
     if center.r <= 0. { return vec4(0.); }
     // The summed density probes identify connected channel water. Its joined
@@ -119,7 +155,28 @@ fn smooth_surface(pixel: vec2<i32>, direction: vec2<i32>) -> vec4<f32> {
         total += sample*weight; weights += weight;inverse_depth+=weight/sample.r;
     }
     let filtered=total/max(weights,0.0001);
-    return vec4(mix(filtered.r,weights/max(inverse_depth,0.000001),bulk),filtered.gb,center.a);
+    var moments=filtered.gb;
+    if center.a>0.5 {moments=center.gb;if exchange {moments=optical_exchange(pixel,direction,center);}}
+    return vec4(mix(filtered.r,weights/max(inverse_depth,0.000001),bulk),moments,center.a);
 }
+// Establish the shared geometry before using its distances to exchange optics.
+// Four geometry filters retain the original shape. Two final optical-only
+// passes reuse ping/pong and never add water coverage or re-filter the outlet.
+fn smooth_surface(pixel:vec2<i32>,direction:vec2<i32>)->vec4<f32> {
+    return smooth_surface_inner(pixel,direction,true);
+}
+fn geometry_surface(pixel:vec2<i32>,direction:vec2<i32>)->vec4<f32> {
+    return smooth_surface_inner(pixel,direction,false);
+}
+fn optical_surface(pixel:vec2<i32>,direction:vec2<i32>)->vec4<f32> {
+    let center=textureLoad(depths,pixel,0);
+    if center.r<=0. {return vec4(0.);}
+    if center.a<=0.5 {return center;}
+    return vec4(center.r,optical_exchange(pixel,direction,center),center.a);
+}
+@fragment fn geometry_x(s:Screen)->@location(0) vec4<f32> {return geometry_surface(vec2<i32>(s.position.xy),vec2(1,0));}
+@fragment fn geometry_y(s:Screen)->@location(0) vec4<f32> {return geometry_surface(vec2<i32>(s.position.xy),vec2(0,1));}
+@fragment fn optical_x(s:Screen)->@location(0) vec4<f32> {return optical_surface(vec2<i32>(s.position.xy),vec2(1,0));}
+@fragment fn optical_y(s:Screen)->@location(0) vec4<f32> {return optical_surface(vec2<i32>(s.position.xy),vec2(0,1));}
 @fragment fn blur_x(s: Screen) -> @location(0) vec4<f32> { return smooth_surface(vec2<i32>(s.position.xy),vec2(1,0)); }
 @fragment fn blur_y(s: Screen) -> @location(0) vec4<f32> { return smooth_surface(vec2<i32>(s.position.xy),vec2(0,1)); }
