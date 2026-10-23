@@ -1491,6 +1491,89 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
     }
     println!("inclined-sheet maximum analytic normal error: {max_error}");
 
+    // Two genuinely separate flat layers must keep their independent normals
+    // and optical columns, even when the old opposite-side secant suggested
+    // an inclined sheet through the step. Probe exact half-size texel centres
+    // so the test does not confuse deliberate coverage antialiasing with bleed.
+    for axis in 0..2 {
+        for (texture, values) in [
+            (
+                &raw,
+                field(&|x, y| {
+                    let back = [x, y][axis] >= 16.;
+                    [if back { 1.12 } else { 1. }, -1., 0., 0.]
+                }),
+            ),
+            (
+                &joined,
+                field(&|x, y| {
+                    let back = [x, y][axis] >= 16.;
+                    [
+                        if back { 1.12 } else { 1. },
+                        0.04,
+                        0.04 * if back { 900. } else { 50. },
+                        2.,
+                    ]
+                }),
+            ),
+        ] {
+            queue.write_texture(
+                texture.as_image_copy(),
+                bytemuck::cast_slice(&values),
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(32 * 16),
+                    rows_per_image: None,
+                },
+                texture.size(),
+            );
+        }
+        let shader = include_str!("../../mining/src/water_compose.wgsl");
+        let edge_source = format!(
+            r#"{shader}
+
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {{
+ let index=12u+p.x;
+ let texel=select(vec2(index,16u),vec2(16u,index),{axis}u==1u);
+ let pixel=(vec2<f32>(texel)+0.5)*2.;
+ let depth=select(1.,1.12,index>=16u);
+ let joined=channel_surface(pixel,sample_depth(pixel).x);
+ result[p.x*2u]=joined.normal;
+ result[p.x*2u+1u]=vec4(joined.column,joined.column.y/joined.column.x,depth);
+}}"#
+        );
+        let values = execute(
+            &device,
+            &queue,
+            edge_source,
+            &[&group, &out_group],
+            &[&layout, &out_layout],
+            &buffer,
+            [1, 1],
+        );
+        for i in 0..8 {
+            let v = &values[i * 8..i * 8 + 8];
+            let beta = if i + 12 >= 16 { 900. } else { 50. };
+            let normal_error = (v[0] * v[0] + v[1] * v[1] + (v[2] - 1.).powi(2)).sqrt();
+            println!(
+                "layer edge axis={axis} texel={} normal_error={normal_error} beta={}",
+                i + 12,
+                v[6]
+            );
+            assert!(
+                (v[6] - beta).abs() < 0.001,
+                "separate water layers borrowed mud/clear water: axis={axis} texel={} {v:?}",
+                i + 12
+            );
+            assert!(
+                normal_error < 0.00015,
+                "flat layer acquired a false crest: axis={axis} texel={} {v:?}",
+                i + 12
+            );
+        }
+    }
+
     // A muddy stripe more than 12 cm away along a grazing sheet must not
     // tint the clear water at this pixel. The old circular image footprint
     // crossed that stripe despite the 30 mm optical reconstruction scale.

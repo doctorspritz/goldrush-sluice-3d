@@ -68,6 +68,28 @@ fn sample_depth(pixel: vec2<f32>) -> vec2<f32> {
     }
     return vec2(select(total/max(weight,0.0001),weight/max(inverse_depth,0.000001),channel),weight);
 }
+// A secant through two separate layers is not a water tangent. Compare
+// one-sided reciprocal-depth slopes outside the centre kernel, and use the
+// agreement of their extrapolated planes as continuous fit confidence.
+fn channel_axis(pixel:vec2<i32>,direction:vec2<i32>,size:vec2<i32>,depth:f32)->vec3<f32> {
+    let a=clamp(pixel-direction*6,vec2(0),size-vec2(1));
+    let b=clamp(pixel-direction*3,vec2(0),size-vec2(1));
+    let c=clamp(pixel+direction*3,vec2(0),size-vec2(1));
+    let d=clamp(pixel+direction*6,vec2(0),size-vec2(1));
+    let av=textureLoad(depths,a,0);let bv=textureLoad(depths,b,0);
+    let cv=textureLoad(depths,c,0);let dv=textureLoad(depths,d,0);
+    let ab=dot(vec2<f32>(b-a),vec2<f32>(direction));
+    let cd=dot(vec2<f32>(d-c),vec2<f32>(direction));
+    if min(min(av.r,bv.r),min(cv.r,dv.r))<=0. ||
+       min(min(av.a,bv.a),min(cv.a,dv.a))<=0.5 || min(ab,cd)<=0. {return vec3(0.,1./depth,0.);}
+    let dl=(1./bv.r-1./av.r)/ab;let dr=(1./dv.r-1./cv.r)/cd;
+    let slope=select(0.,sign(dl)*min(abs(dl),abs(dr)),dl*dr>=0.);
+    let lo=1./bv.r+slope*dot(vec2<f32>(pixel-b),vec2<f32>(direction));
+    let hi=1./cv.r-slope*dot(vec2<f32>(c-pixel),vec2<f32>(direction));
+    let tolerance=max(abs(slope)*1.5,0.00001);
+    let confidence=1.-smoothstep(tolerance,tolerance*2.,abs(lo-hi));
+    return vec3(slope*confidence,(lo+hi)*0.5,confidence);
+}
 struct ChannelSurface {normal:vec4<f32>,column:vec2<f32>};
 // Gather every texel in the footprint. Striding over alternating texels makes
 // the surface and its turbidity change when the half-size pixel phase changes.
@@ -83,22 +105,18 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
     // normal samples about that sheet, rather than about the camera-Z depth
     // of one pixel. The latter cuts a continuous crest into opacity islands.
     var inverse_origin=1./depth;var inverse_slope=vec2(0.);
-    var anchors=0.;var anchor_sum=0.;
+    var anchors=0.;var anchor_sum=0.;var anchor_weight=0.;
     for(var axis=0u;axis<2u;axis++) {
-        let offset=select(vec2(3,0),vec2(0,3),axis==1u);
-        let a=clamp(center-offset,vec2(0),size-vec2(1));
-        let b=clamp(center+offset,vec2(0),size-vec2(1));
-        let left=textureLoad(depths,a,0);let right=textureLoad(depths,b,0);
-        let span=f32((b-a)[axis]);
-        if left.r>0. && right.r>0. && left.a>0.5 && right.a>0.5 && span>0. {
-            let slope=(1./right.r-1./left.r)/span;
-            inverse_slope[axis]=slope;
-            anchor_sum+=(1./left.r+1./right.r)*0.5
-                +slope*(f32(center[axis])-f32(a[axis]+b[axis])*0.5);
-            anchors+=1.;
-        }
+        let direction=select(vec2(1,0),vec2(0,1),axis==1u);
+        let tangent=channel_axis(center,direction,size,depth);
+        inverse_slope[axis]=tangent.x;
+        anchor_sum+=tangent.y*tangent.z;anchor_weight+=tangent.z;
+        anchors+=select(0.,1.,tangent.z==1.);
     }
-    if anchors>0. {inverse_origin=anchor_sum/anchors+dot(inverse_slope,p-vec2<f32>(center));}
+    if anchor_weight>0. {
+        let fitted=anchor_sum/anchor_weight+dot(inverse_slope,p-vec2<f32>(center));
+        inverse_origin=mix(1./depth,fitted,min(anchor_weight,1.));
+    }
     // One screen texel spans much more liquid along a grazing sheet than
     // across it. Use its projective tangent metric for every final gather,
     // including normals and additive optical moments. A circular pixel filter
