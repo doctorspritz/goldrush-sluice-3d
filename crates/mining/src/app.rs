@@ -425,8 +425,9 @@ pub fn camera(
             (target - look * 9.0 + Vec3::Y * 4.5, target + look * 2.0)
         } else {
             let f = bvec(s.machine.arm().forward);
-            let right = Vec3::new(f.z, 0.0, -f.x);
-            let p = bvec(s.machine.position) + Vec3::Y * 2.18 - right * 0.64 + f * 0.18;
+            let right = bvec(s.machine.arm().right);
+            let p =
+                bvec(s.machine.position) + bvec(s.machine.up()) * 2.18 - right * 0.64 + f * 0.18;
             (p, p + look * 5.0)
         }
     } else if s.player.third_person {

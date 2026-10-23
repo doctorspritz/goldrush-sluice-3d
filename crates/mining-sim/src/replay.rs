@@ -13,6 +13,9 @@ pub struct OperatorReplay {
     dig_started: u32,
     dig_height: f32,
     drive_target_z: f32,
+    dig_position_z: f32,
+    dump_position_z: f32,
+    lift_stage: u8,
     loads: u32,
 }
 impl OperatorReplay {
@@ -38,6 +41,7 @@ impl OperatorReplay {
                 }
             }
             1 => {
+                self.dump_position_z = s.machine.position.z;
                 self.command(s, Action::EnterExit);
                 if s.player.third_person {
                     self.command(s, Action::Camera);
@@ -46,6 +50,7 @@ impl OperatorReplay {
             }
             2 | 10 => {
                 if self.ticks == 1 {
+                    self.dig_position_z = s.machine.position.z;
                     self.dig_step = 0;
                     self.dig_started = 1;
                     let lip = s.machine.arm().lip;
@@ -86,18 +91,32 @@ impl OperatorReplay {
                 }
             }
             3 | 11 => {
-                if seek_arm(s, &mut controls.machine, 1.0, -1.65, -0.2) {
+                if self.ticks == 1 {
+                    self.lift_stage = 0;
+                }
+                // Lift the loaded, closed bucket clear before opening/retracting
+                // it. Simultaneous old joint targets drove the heel back into
+                // the bank once actual chassis/contact reactions were present.
+                if self.lift_stage == 0 {
+                    controls.machine.boom = axis(1.1 - s.machine.boom, 0.42);
+                    if controls.machine.boom == 0. {
+                        self.lift_stage = 1;
+                    }
+                } else if self.lift_stage == 1 {
+                    if seek_arm(s, &mut controls.machine, 1.0, -1.65, -0.2) {
+                        self.lift_stage = 2;
+                    }
+                } else if s.machine.position.z > self.dump_position_z + 0.05 {
+                    // Carry the closed load back to the receiving pad instead
+                    // of extending beyond reach as the excavation face advances.
+                    controls.machine.drive = -1.;
+                    controls.machine.steer = (-s.machine.heading).sin() * 2.;
+                } else {
                     self.next();
                 }
             }
             4 | 12 => {
-                let target = Vec3::new(crate::sluice::HOPPER_X, 0., crate::sluice::HOPPER_Z)
-                    - s.machine.position;
-                if seek_swing(
-                    s,
-                    &mut controls.machine,
-                    target.x.atan2(target.z) - s.machine.heading,
-                ) {
+                if seek_hopper(s, &mut controls.machine) {
                     self.next();
                 }
             }
@@ -108,9 +127,19 @@ impl OperatorReplay {
                 controls.machine.dump = true;
                 if self.ticks >= 100 && s.machine.bucket.is_empty() && s.falling.is_empty() {
                     self.loads += 1;
-                    if self.phase == 13 && s.delivered_m3 < 0.4 && self.loads < 4 {
-                        self.phase = 6;
-                        self.ticks = 0;
+                    if self.phase == 13 && s.delivered_m3 < 0.4 {
+                        // Actual terrain evolution changes the volume of a
+                        // pass. Target delivered material, with a finite guard,
+                        // instead of assuming four scoops always suffice.
+                        if self.loads >= 12 {
+                            self.error = Some(format!(
+                                "Twelve finite loads delivered only {:.3} m3",
+                                s.delivered_m3
+                            ));
+                        } else {
+                            self.phase = 6;
+                            self.ticks = 0;
+                        }
                     } else {
                         self.next();
                     }
@@ -118,7 +147,7 @@ impl OperatorReplay {
             }
             6 => {
                 if self.ticks == 1 {
-                    self.drive_target_z = s.machine.position.z + 0.54;
+                    self.drive_target_z = self.dig_position_z + 0.54;
                 }
                 if seek_arm(s, &mut controls.machine, 0.95, -1.3, -0.2) {
                     self.next();
@@ -131,6 +160,7 @@ impl OperatorReplay {
             }
             8 => {
                 controls.machine.drive = 1.0;
+                controls.machine.steer = (-s.machine.heading).sin() * 2.;
                 if s.machine.position.z >= self.drive_target_z {
                     controls.machine.drive = 0.;
                     self.next();
@@ -249,6 +279,37 @@ fn seek_swing(s: &Session, i: &mut MachineInput, target: f32) -> bool {
     let error = d.sin().atan2(d.cos());
     i.swing = axis(error, 0.65);
     i.swing == 0.0
+}
+
+// Aim the real dump mouth above the finite hopper with ordinary joint axes.
+// Targets depend on the tilted chassis and current reach, rather than assuming
+// the same fixed transport angles reach the hopper after every advance.
+fn seek_hopper(s: &Session, i: &mut MachineInput) -> bool {
+    let target = Vec3::new(
+        crate::sluice::HOPPER_X,
+        crate::Sluice::hopper_top(&s.site) + 1.05,
+        crate::sluice::HOPPER_Z,
+    );
+    let local = s.machine.chassis_rotation().inverse() * (target - s.machine.position);
+    if !seek_swing(s, i, local.x.atan2(local.z)) {
+        return false;
+    }
+    // shoulder + dump offsets are 0.70 m forward and 1.55 m up.
+    let radial = local.x.hypot(local.z) - 0.70;
+    let height = local.y - 1.55;
+    let a = crate::machine::BOOM_LENGTH;
+    let b = crate::machine::STICK_LENGTH;
+    let stick = -((radial * radial + height * height - a * a - b * b) / (2. * a * b))
+        .clamp(-1., 1.)
+        .acos();
+    let boom = height.atan2(radial) - (b * stick.sin()).atan2(a + b * stick.cos());
+    seek_arm(
+        s,
+        i,
+        boom.clamp(-0.24, 1.20),
+        stick.clamp(-2.15, -0.15),
+        -0.2,
+    )
 }
 
 pub fn replay_receipt(s: &Session, r: &OperatorReplay) -> Result<String, String> {

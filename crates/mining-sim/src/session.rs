@@ -328,6 +328,38 @@ impl Session {
         let dt = FIXED_DT;
         self.sim_time += dt as f64;
         self.player.tool_swing = (self.player.tool_swing - dt * 2.8).max(0.0);
+        let hopper = Sluice::hopper_position(&self.site);
+        let mut obstacles = vec![crate::tracks::Obstacle {
+            center: hopper + Vec3::Y * 0.35,
+            rotation: glam::Quat::IDENTITY,
+            half_extents: Vec3::new(0.6, 0.25, 0.6),
+        }];
+        for side in [-1., 1.] {
+            for axis in [Vec3::X, Vec3::Z] {
+                obstacles.push(crate::tracks::Obstacle {
+                    center: hopper + Vec3::Y * 1.20 + axis * (side * 0.55),
+                    rotation: glam::Quat::IDENTITY,
+                    half_extents: if axis == Vec3::X {
+                        Vec3::new(0.025, 0.35, 0.55)
+                    } else {
+                        Vec3::new(0.55, 0.35, 0.025)
+                    },
+                });
+            }
+        }
+        if let Some(p) = self.sluice.placement {
+            let rotation = glam::Quat::from_rotation_y(p.yaw)
+                * glam::Quat::from_rotation_x(p.slope_deg.to_radians());
+            obstacles.push(crate::tracks::Obstacle {
+                center: p.to_world(Vec3::new(self.sluice.profile.length() * 0.5, -0.025, 0.)),
+                rotation,
+                half_extents: Vec3::new(
+                    self.sluice.profile.width() * 0.5 + 0.04,
+                    0.025,
+                    self.sluice.profile.length() * 0.5,
+                ),
+            });
+        }
         if self.player.mode == ControlMode::Excavator {
             // Equipment, rather than camera focus, owns the running simulation.
             let old_yaw = self.machine.heading + self.machine.swing;
@@ -352,7 +384,8 @@ impl Session {
                 machine_input.drive = 0.;
             }
             if let Some((position, velocity, material)) =
-                self.machine.step(machine_input, &mut self.site, dt)
+                self.machine
+                    .step_with_obstacles(machine_input, &mut self.site, dt, &obstacles)
             {
                 self.falling.push(FallingLoad {
                     position,
@@ -363,6 +396,12 @@ impl Session {
             self.player.yaw += self.machine.heading + self.machine.swing - old_yaw;
             self.player.position = self.machine.position + Vec3::Y * 1.9;
         } else {
+            self.machine.step_with_obstacles(
+                MachineInput::default(),
+                &mut self.site,
+                dt,
+                &obstacles,
+            );
             let forward = Vec3::new(self.player.yaw.sin(), 0.0, self.player.yaw.cos());
             // Bevy looks along local -Z: screen-right is forward × up.
             let right = forward.cross(Vec3::Y);
@@ -489,7 +528,7 @@ impl Session {
         site.normalize_bed_age();
         serde_json::to_string(&Save {
             // Earlier binaries must reject the subgrid material they cannot account for.
-            version: 5,
+            version: 6,
             site,
             machine: self.machine.clone(),
             sluice: self.sluice.clone(),
@@ -507,13 +546,13 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if !matches!(s.version, 2..=5) {
+        if !matches!(s.version, 2..=6) {
             return Err("Unsupported save version".into());
         }
         if !matches!(
             (s.version, s.site.bed_age_unit()),
             (2, crate::site::BedAgeUnit::Legacy20HzSteps)
-                | (3..=5, crate::site::BedAgeUnit::Microseconds)
+                | (3..=6, crate::site::BedAgeUnit::Microseconds)
         ) {
             return Err("Invalid saved terrain clock".into());
         }
@@ -535,6 +574,9 @@ impl Session {
         }
         if s.version < 5 && (s.site.bed_remainder_m3() > 0. || s.site.has_projection_inventory()) {
             return Err("Legacy save contains unsupported subgrid bed inventory".into());
+        }
+        if s.version < 6 && s.machine.tracks.carries_motion() {
+            return Err("Legacy save contains unsupported machine dynamics".into());
         }
         let site = Site::restore(s.site)?;
         if !s.machine.valid()

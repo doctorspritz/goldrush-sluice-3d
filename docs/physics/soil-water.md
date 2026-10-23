@@ -43,8 +43,8 @@ The complete water ledger includes soil pores, unresolved expelled surface water
 carried moisture, flowing channel water and world surface water. Sluice flowing
 water accounting starts when moisture is released from the hopper, so retained
 hopper moisture is not counted twice. The existing dry/reference-bulk and gold
-ledgers remain separate. Moisture was introduced in version 4. New saves are version 5 and older binaries reject them;
-current binaries accept versions 2–5 and retain the previous bed-age migration.
+ledgers remain separate. Moisture was introduced in version 4. New saves are version 6 and older binaries reject them;
+current binaries accept versions 2–6 and retain the previous bed-age migration.
 A legacy version carrying new moisture is rejected rather than silently losing
 water in an old reader.
 
@@ -57,3 +57,5 @@ requires hydraulic conductivity, suction and initial moisture; it also assumes a
 simplified front. No such calibrated infiltration or Richards solution is
 claimed here. Drying/rewetting of sediment-bearing thin films must be closed
 before adding water sinks; deposition now operates at every positive water depth using [counted precision stock](subgrid-bed.md). Under-1-mm rough-bed scour and continuous sloping shoreline convergence remain unresolved. New submerged deposits gain void capacity without automatic saturation: the current model does not draw surface water into that new capacity until a conservative infiltration model exists.
+
+The [machine-contact save contract](machine-contact.md) documents version 6 and stationary legacy-machine migration. The material and terrain-clock rules above remain in force.

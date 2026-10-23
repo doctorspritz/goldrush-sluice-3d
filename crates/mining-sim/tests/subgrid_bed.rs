@@ -81,7 +81,7 @@ fn legacy_saves_cannot_hide_new_inventory_and_invalid_subgrid_quantities_are_rej
         },
     );
     let value: serde_json::Value = serde_json::from_str(&s.save_json().unwrap()).unwrap();
-    assert_eq!(value["version"], 5);
+    assert_eq!(value["version"], 6);
     for version in [3, 4] {
         let mut old = value.clone();
         old["version"] = version.into();

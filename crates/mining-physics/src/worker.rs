@@ -317,7 +317,6 @@ mod tests {
     #[test]
     fn two_tick_packets_preserve_fixed_steps_and_apply_actions_once() {
         let session = Session::new();
-        let yaw = session.machine.heading + session.machine.swing;
         let mut worker = Worker::spawn(|| Ok(SlowSolver), session).unwrap();
         receive(&mut worker);
         worker
@@ -335,7 +334,10 @@ mod tests {
             frame.session.player.mode,
             mining_sim::ControlMode::Excavator
         );
-        assert!((frame.session.player.yaw - yaw - 0.3).abs() < 1e-6);
+        // The dynamic chassis can settle/rotate during both ticks. Look is
+        // relative to the resulting cab, and must still be applied once.
+        let cab_yaw = frame.session.machine.heading + frame.session.machine.swing;
+        assert!((frame.session.player.yaw - cab_yaw - 0.3).abs() < 1e-6);
     }
     #[test]
     fn slow_steps_are_bounded_and_pause_save_load_are_ordered() {

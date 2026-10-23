@@ -71,6 +71,8 @@ pub struct Excavator {
     pub hydraulics: HydraulicLimits,
     #[serde(default)]
     pub digging: DiggingFeedback,
+    #[serde(default)]
+    pub tracks: crate::tracks::TrackMotion,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -82,6 +84,8 @@ pub struct ArmPose {
     pub heel: Vec3,
     pub angle: f32,
     pub forward: Vec3,
+    pub right: Vec3,
+    pub up: Vec3,
 }
 
 impl Excavator {
@@ -99,12 +103,13 @@ impl Excavator {
             distance_m: 0.0,
             hydraulics: HydraulicLimits::default(),
             digging: DiggingFeedback::default(),
+            tracks: crate::tracks::TrackMotion::default(),
         };
         // A fresh machine starts with its actual floor and teeth clear of the
         // bank. Old saves retain their pose and may retreat from old contact.
         for _ in 0..72 {
             let pose = machine.arm();
-            let right = Vec3::new(pose.forward.z, 0., -pose.forward.x);
+            let right = pose.right;
             let clear = [0., 0.5, 1.].into_iter().all(|along| {
                 [-0.5, 0., 0.5].into_iter().all(|side| {
                     let p = pose.heel.lerp(pose.lip, along)
@@ -120,14 +125,15 @@ impl Excavator {
         machine
     }
     pub fn forward(&self) -> Vec3 {
-        Vec3::new(self.heading.sin(), 0.0, self.heading.cos())
+        self.chassis_rotation() * Vec3::Z
     }
     pub fn arm(&self) -> ArmPose {
-        let yaw = self.heading + self.swing;
-        let f = Vec3::new(yaw.sin(), 0.0, yaw.cos());
-        let shoulder = self.position + Vec3::Y * 1.65 + f * 0.35;
-        let segment =
-            |angle: f32, len: f32| f * (angle.cos() * len) + Vec3::Y * (angle.sin() * len);
+        let rotation = self.upper_rotation();
+        let f = rotation * Vec3::Z;
+        let up = rotation * Vec3::Y;
+        let right = rotation * Vec3::X;
+        let shoulder = self.position + up * 1.65 + f * 0.35;
+        let segment = |angle: f32, len: f32| f * (angle.cos() * len) + up * (angle.sin() * len);
         let elbow = shoulder + segment(self.boom, BOOM_LENGTH);
         let wrist = elbow + segment(self.boom + self.stick, STICK_LENGTH);
         let angle = self.boom + self.stick + self.curl;
@@ -136,7 +142,7 @@ impl Excavator {
         let bucket_point = |y: f32, z: f32| {
             wrist
                 + f * (z * angle.cos() - y * angle.sin())
-                + Vec3::Y * (y * angle.cos() + z * angle.sin())
+                + up * (y * angle.cos() + z * angle.sin())
         };
         let lip = bucket_point(-0.23, 1.065);
         let heel = bucket_point(-0.2375, -0.01);
@@ -148,6 +154,8 @@ impl Excavator {
             heel,
             angle,
             forward: f,
+            right,
+            up,
         }
     }
     pub fn step(
@@ -156,11 +164,83 @@ impl Excavator {
         site: &mut Site,
         dt: f32,
     ) -> Option<(Vec3, Vec3, Material)> {
-        self.digging = DiggingFeedback::default();
-        if !self.engine_on
-            || self.fuel_l <= 0.0
-            || !dt.is_finite()
+        self.step_with_obstacles(input, site, dt, &[])
+    }
+    pub fn step_with_obstacles(
+        &mut self,
+        input: MachineInput,
+        site: &mut Site,
+        dt: f32,
+        obstacles: &[crate::tracks::Obstacle],
+    ) -> Option<(Vec3, Vec3, Material)> {
+        if !dt.is_finite()
             || !(0. ..=0.05).contains(&dt)
+            || dt == 0.
+            || [
+                input.drive,
+                input.steer,
+                input.swing,
+                input.boom,
+                input.stick,
+                input.curl,
+            ]
+            .iter()
+            .any(|x| !x.is_finite())
+        {
+            return None;
+        }
+        // Contact, changing arm geometry and finite cuts share the mechanical
+        // timestep. Updating soil only after several rigid steps creates a
+        // frame-dependent resistance and can lift the chassis off an old cut.
+        let steps = (dt * self.tracks.mechanical_hz as f32 - 0.00001)
+            .ceil()
+            .max(1.) as usize;
+        let h = dt / steps as f32;
+        let mut digging = DiggingFeedback {
+            accepted_fraction: 1.,
+            ..Default::default()
+        };
+        let mut normal = 0.;
+        let mut friction = 0f32;
+        for _ in 0..steps {
+            self.step_mechanics(input, site, h, obstacles);
+            let f = self.digging;
+            digging.soil_force_n = digging.soil_force_n.max(f.soil_force_n);
+            digging.requested_force_n = digging.requested_force_n.max(f.requested_force_n);
+            digging.tool_power_w = digging.tool_power_w.max(f.tool_power_w);
+            digging.accepted_fraction = digging.accepted_fraction.min(f.accepted_fraction);
+            digging.excavated_m3 += f.excavated_m3;
+            if f.limited {
+                digging.limited = true;
+                digging.reason = f.reason;
+            }
+            normal += self.tracks.feedback.normal_force_n / steps as f32;
+            friction = friction.max(self.tracks.feedback.maximum_friction_ratio);
+        }
+        self.digging = digging;
+        self.tracks.feedback.normal_force_n = normal;
+        self.tracks.feedback.maximum_friction_ratio = friction;
+        if input.dump && self.engine_on && self.fuel_l > 0. && !self.bucket.is_empty() {
+            let arm = self.arm();
+            return Some((
+                arm.wrist + arm.forward * 0.35 - arm.up * 0.10,
+                arm.forward * 0.35,
+                self.bucket.take_volume((dt * 0.32) as f64),
+            ));
+        }
+        None
+    }
+    fn step_mechanics(
+        &mut self,
+        input: MachineInput,
+        site: &mut Site,
+        dt: f32,
+        obstacles: &[crate::tracks::Obstacle],
+    ) -> Option<(Vec3, Vec3, Material)> {
+        self.digging = DiggingFeedback::default();
+        if !dt.is_finite()
+            || !(0.0..=0.05).contains(&dt)
+            || dt == 0.
             || [
                 input.drive,
                 input.steer,
@@ -174,6 +254,12 @@ impl Excavator {
         {
             return None;
         }
+        let input = if !self.engine_on || self.fuel_l <= 0. {
+            MachineInput::default()
+        } else {
+            input
+        };
+        self.advance_tracks(input, site, dt, obstacles);
         let input = MachineInput {
             drive: input.drive.clamp(-1., 1.),
             steer: input.steer.clamp(-1., 1.),
@@ -191,18 +277,8 @@ impl Excavator {
             + input.boom.abs()
             + input.stick.abs()
             + input.curl.abs();
-        self.fuel_l = (self.fuel_l - dt * (0.0003 + activity.min(3.0) * 0.001)).max(0.0);
-        self.heading = (self.heading + input.steer * dt * 0.45).rem_euclid(std::f32::consts::TAU);
-        let next = self.position + self.forward() * input.drive * dt * 1.6;
-        if Site::bounds(next, 2.0) && site.water_depth(next.x, next.z) < 0.35 {
-            let heights = [(-0.85, -1.15), (0.85, -1.15), (-0.85, 1.15), (0.85, 1.15)]
-                .map(|(x, z)| site.height(next.x + x, next.z + z));
-            let min = heights.iter().copied().fold(f32::INFINITY, f32::min);
-            let max = heights.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            if max - min < 0.72 && (max - self.position.y).abs() < 0.70 {
-                self.distance_m += (next - self.position).length();
-                self.position = Vec3::new(next.x, max, next.z);
-            }
+        if self.engine_on && self.fuel_l > 0. {
+            self.fuel_l = (self.fuel_l - dt * (0.0003 + activity.min(3.0) * 0.001)).max(0.0);
         }
         self.swing = (self.swing + input.swing * dt * 0.65).rem_euclid(std::f32::consts::TAU);
         self.boom = (self.boom + input.boom * dt * 0.42).clamp(-0.24, 1.20);
@@ -241,6 +317,15 @@ impl Excavator {
                 m.curl = before.curl + (candidate.curl - before.curl) * f;
                 m
             };
+            let reaction = self.tracks.feedback.bucket_reaction_n;
+            let opposition = |arm: ArmPose| {
+                let d = ((arm.heel + arm.lip) - (from.heel + from.lip)) * 0.5;
+                if d.length_squared() > 1e-12 {
+                    (-reaction.dot(d.normalize())).max(0.)
+                } else {
+                    0.
+                }
+            };
             let check = |m: &Self| {
                 let arm = m.arm();
                 let mut plan = if cutting {
@@ -250,16 +335,31 @@ impl Excavator {
                 };
                 plan.rock_blocked |= site.bucket_blocked(from, arm, cutting);
                 let floor_travel = from.lip.distance(arm.lip).max(from.heel.distance(arm.heel));
+                let displacement = ((arm.heel + arm.lip) - (from.heel + from.lip)) * 0.5;
+                let opposing_force = opposition(arm);
+                // The prescribed joints must also pay gravitational lift of
+                // their links and work against the preceding contact reaction.
+                // This remains explicit mechanical coupling, not full hydraulics.
+                let gravity_work = 9.81
+                    * (1300.
+                        * ((arm.shoulder.y + arm.elbow.y) - (from.shoulder.y + from.elbow.y))
+                        * 0.5
+                        + 840.
+                            * ((arm.elbow.y + arm.wrist.y) - (from.elbow.y + from.wrist.y))
+                            * 0.5
+                        + (250. + load_mass) * (arm.wrist.y - from.wrist.y))
+                        .max(0.);
                 let work = plan.soil_force_n * floor_travel
-                    + load_mass * 9.81 * (arm.wrist.y - from.wrist.y).max(0.);
+                    + gravity_work
+                    + (-reaction.dot(displacement)).max(0.);
                 let valid = !plan.rock_blocked
                     && plan.material.volume() <= capacity + 1e-9
-                    && plan.soil_force_n <= force_limit
+                    && plan.soil_force_n + opposing_force <= force_limit
                     && work <= tool_power * dt;
                 (valid, plan, work / dt.max(1e-6))
             };
             let (requested_valid, requested_plan, requested_power) = check(self);
-            let requested_force = requested_plan.soil_force_n;
+            let requested_force = requested_plan.soil_force_n + opposition(self.arm());
             let reason = if requested_valid {
                 DigLimit::None
             } else if requested_plan.rock_blocked {
@@ -305,15 +405,6 @@ impl Excavator {
             let batch = site.apply_bucket_cut(plan);
             self.bucket.add(batch);
         }
-        let arm = self.arm();
-        if input.dump && !self.bucket.is_empty() {
-            // Opening the bucket releases its real contents at the bucket mouth.
-            return Some((
-                arm.wrist + arm.forward * 0.35 - Vec3::Y * 0.10,
-                arm.forward * 0.35,
-                self.bucket.take_volume((dt * 0.32) as f64),
-            ));
-        }
         None
     }
     pub fn valid(&self) -> bool {
@@ -334,6 +425,7 @@ impl Excavator {
             && (-2.15..=-0.15).contains(&self.stick)
             && (-1.70..=1.45).contains(&self.curl)
             && (0.0..=45.0).contains(&self.fuel_l)
+            && self.tracks.valid()
             && self.bucket.valid()
             && self.bucket.volume() <= BUCKET_CAPACITY + 1e-5
             && [

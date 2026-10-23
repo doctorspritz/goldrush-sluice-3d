@@ -503,13 +503,17 @@ fn machine(commands: &mut Commands, p: &Palette) {
             commands,
             p,
             Mount::Chassis,
-            Vec3::new(side * 0.93, 0.38, 0.0),
-            Vec3::new(0.55, 0.65, 3.25),
+            Vec3::new(side * mining_sim::tracks::TRACK_GAUGE * 0.5, 0.325, 0.0),
+            Vec3::new(
+                mining_sim::tracks::TRACK_WIDTH,
+                0.65,
+                mining_sim::tracks::TRACK_LENGTH,
+            ),
             p.dark.clone(),
             Quat::IDENTITY,
         );
         for i in 0..7 {
-            let local = Transform::from_xyz(side * 1.20, 0.38, -1.28 + i as f32 * 0.43)
+            let local = Transform::from_xyz(side * 1.18, 0.325, -1.18 + i as f32 * 0.393)
                 .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2))
                 .with_scale(Vec3::new(0.24, 0.045, 0.24));
             commands.spawn((
@@ -523,13 +527,17 @@ fn machine(commands: &mut Commands, p: &Palette) {
             ));
         }
         for i in 0..17 {
-            for y in [0.10, 0.69] {
+            for y in [0.0275, 0.6225] {
                 mounted(
                     commands,
                     p,
                     Mount::Chassis,
-                    Vec3::new(side * 0.93, y, -1.5 + i as f32 * 0.185),
-                    Vec3::new(0.59, 0.055, 0.10),
+                    Vec3::new(
+                        side * mining_sim::tracks::TRACK_GAUGE * 0.5,
+                        y,
+                        -1.37 + i as f32 * 0.17125,
+                    ),
+                    Vec3::new(mining_sim::tracks::TRACK_WIDTH, 0.055, 0.10),
                     p.steel.clone(),
                     Quat::IDENTITY,
                 );
@@ -1007,11 +1015,11 @@ pub fn sync_machine(
     let m = &s.machine;
     let arm = m.arm();
     let chassis = Transform::from_translation(bvec(m.position))
-        .with_rotation(Quat::from_rotation_y(m.heading));
+        .with_rotation(Quat::from_array(m.chassis_rotation().to_array()));
     let upper = Transform::from_translation(bvec(m.position))
-        .with_rotation(Quat::from_rotation_y(m.heading + m.swing));
+        .with_rotation(Quat::from_array(m.upper_rotation().to_array()));
     let bucket = Transform::from_translation(bvec(arm.wrist)).with_rotation(
-        Quat::from_rotation_y(m.heading + m.swing) * Quat::from_rotation_x(-arm.angle),
+        Quat::from_array(m.upper_rotation().to_array()) * Quat::from_rotation_x(-arm.angle),
     );
     for (part, mut transform) in &mut sets.p0() {
         *transform = match part.mount {
@@ -1021,7 +1029,7 @@ pub fn sync_machine(
         }
         .mul_transform(part.local);
     }
-    let right = Vec3::new(arm.forward.z, 0.0, -arm.forward.x);
+    let right = bvec(arm.right);
     for (link, mut transform) in &mut sets.p1() {
         let (mut a, mut b) = if link.kind == 0 {
             (bvec(arm.shoulder), bvec(arm.elbow))

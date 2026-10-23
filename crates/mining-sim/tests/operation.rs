@@ -60,16 +60,17 @@ fn placement_rejects_bad_support_overlap_and_disconnected_inlet() {
 #[test]
 fn bucket_cut_is_finite_capacity_limited_and_conserves_gold() {
     let mut s = Session::new();
-    s.on_action(Action::EnterExit).unwrap();
-    for _ in 0..100 {
-        s.step(Controls {
-            machine: MachineInput {
-                cut: true,
-                boom: -0.22,
-                ..Default::default()
-            },
-            ..Default::default()
-        });
+    // Actual contact makes the first shallow pass strip overburden. Follow
+    // ordinary scoop/crowd controls until they expose a gold-bearing load;
+    // lowering the boom alone no longer promises to pass through the bank.
+    let mut replay = mining_sim::replay::OperatorReplay::default();
+    for _ in 0..15_000 {
+        let controls = replay.controls(&mut s);
+        s.step(controls);
+        assert!(replay.error.is_none(), "{:?}", replay.error);
+        if s.machine.bucket.volume() > 0.02 && s.machine.bucket.gold_g > 0. {
+            break;
+        }
     }
     println!(
         "bucket {:?}, lip {:?}",

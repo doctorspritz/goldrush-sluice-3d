@@ -47,21 +47,13 @@ pub(crate) struct CutPlan {
 }
 
 fn floor_at(heel: Vec3, lip: Vec3, right: Vec3, p: Vec3) -> Option<f32> {
-    let along = Vec3::new(lip.x - heel.x, 0., lip.z - heel.z);
-    let length2 = along.length_squared();
-    if length2 < 1e-8 {
-        return None;
-    }
-    let offset = p - heel;
-    let t = Vec3::new(offset.x, 0., offset.z).dot(along) / length2;
-    if !(0. ..=1.).contains(&t) || offset.dot(right).abs() > BUCKET_WIDTH_M * 0.5 {
-        return None;
-    }
-    Some(heel.y + (lip.y - heel.y) * t)
+    let r = right * (BUCKET_WIDTH_M * 0.5);
+    vertical_hit(p, [heel - r, heel + r, lip + r])
+        .or_else(|| vertical_hit(p, [heel - r, lip + r, lip - r]))
 }
 
 fn floor_corners(pose: ArmPose) -> [Vec3; 4] {
-    let r = Vec3::new(pose.forward.z, 0., -pose.forward.x) * (BUCKET_WIDTH_M * 0.5);
+    let r = pose.right * (BUCKET_WIDTH_M * 0.5);
     [pose.heel - r, pose.heel + r, pose.lip + r, pose.lip - r]
 }
 fn swept_faces(from: ArmPose, to: ArmPose) -> [[Vec3; 3]; 12] {
@@ -109,8 +101,8 @@ impl Site {
     /// between lattice points cannot pass through rock. Existing penetrations
     /// may retreat, which also lets older saves leave an invalid contact.
     pub(crate) fn bucket_blocked(&self, from: ArmPose, to: ArmPose, cutting: bool) -> bool {
-        let r0 = Vec3::new(from.forward.z, 0., -from.forward.x);
-        let r1 = Vec3::new(to.forward.z, 0., -to.forward.x);
+        let r0 = from.right;
+        let r1 = to.right;
         let travel = from.lip.distance(to.lip).max(from.heel.distance(to.heel));
         let steps = (travel / (CELL * 0.25)).ceil().clamp(1., 64.) as usize;
         for along in [0., 0.5, 1.] {
@@ -143,8 +135,8 @@ impl Site {
         if travel < 1e-6 {
             return CutPlan::default();
         }
-        let r0 = Vec3::new(from.forward.z, 0., -from.forward.x);
-        let r1 = Vec3::new(to.forward.z, 0., -to.forward.x);
+        let r0 = from.right;
+        let r1 = to.right;
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
         for (pose, right) in [(from, r0), (to, r1)] {
