@@ -91,8 +91,12 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         let w=taper*exp(-dot(distance,distance)/24.-delta*delta);
         let normal=textureLoad(normal_sums,q,0);
         sum+=normal.xyz*w;weight+=normal.w*w;
-        if abs(shared_depth-expected)<0.035 {
-            let pw=taper*exp(-dot(distance,distance)/12.-delta*delta);
+        {
+            // A hard 35 mm inlier cutoff switched whole normal-fit rows as a
+            // crest moved. Compact C2 residual support keeps that fit continuous.
+            let fit_edge=clamp(1.-abs(shared_depth-expected)/0.070,0.,1.);
+            let fit_window=fit_edge*fit_edge*fit_edge*(fit_edge*(fit_edge*6.-15.)+10.);
+            let pw=taper*fit_window*exp(-dot(distance,distance)/12.-delta*delta);
             let z=1./shared_depth-1./depth;
             position_sum+=vec3(distance,z)*pw;
             second+=vec3(distance.x*distance.x,distance.x*distance.y,distance.y*distance.y)*pw;
@@ -198,10 +202,27 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
     }}
     return colour;
 }
-// Channel columns were clipped against opaque geometry during accumulation.
-// Reconstructing the visible interface must not change their optical depth.
+// Both inputs are distances along the eye ray. The particle volume integral
+// starts at the raw envelope; the joined interface can be farther back. A
+// visible liquid interval cannot contain more water than its geometric length.
+// Keep concentration when clipping: the caller scales both optical moments.
 fn visible_column_path(column:f32,view_gap:f32,channel:bool)->f32 {
-    return select(min(view_gap,max(column,0.0002)),max(column,0.),channel);
+    return min(max(view_gap,0.),select(max(column,0.0002),max(column,0.),channel));
+}
+// Dielectric GGX sun reflection. The old broad, additive Phong lobe lit every
+// standing wave like a plastic cap. Fresnel and masking bound reflected energy;
+// measured pixel normal variance supplies only unresolved slope roughness.
+fn channel_sun(normal:vec3<f32>,eye:vec3<f32>,light:vec3<f32>,variance:f32)->f32 {
+    let nv=max(dot(normal,eye),0.0001);let nl=max(dot(normal,light),0.);
+    if nl<=0. {return 0.;}
+    let h=normalize(eye+light);let nh=max(dot(normal,h),0.);let vh=max(dot(eye,h),0.);
+    let alpha2=clamp(0.0004+0.5*variance,0.0004,1.);
+    let d=1.+nh*nh*(alpha2-1.);
+    let distribution=alpha2/(3.14159265*d*d);
+    let masking=2.*nv/(nv+sqrt(alpha2+(1.-alpha2)*nv*nv))
+        *2.*nl/(nl+sqrt(alpha2+(1.-alpha2)*nl*nl));
+    let fresnel=0.02037+0.97963*pow(1.-vh,5.);
+    return distribution*masking*fresnel/(4.*nv)*0.6;
 }
 @fragment fn compose(s: Screen) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(s.position.xy); let original = textureLoad(scene,pixel,0);
@@ -292,8 +313,8 @@ fn visible_column_path(column:f32,view_gap:f32,channel:bool)->f32 {
     // standing wave. Normal confidence is not surface roughness.
     let nx=dpdx(normal);let ny=dpdy(normal);
     let variance=max(dot(nx,nx),dot(ny,ny));
-    let exponent=select(96.,96./(1.+96.*variance),in_channel);
-    let specular=pow(max(dot(normal,half_vector),0.),exponent)*0.32*(exponent+2.)/98.;
+    var specular=pow(max(dot(normal,half_vector),0.),96.)*0.32;
+    if in_channel {specular=channel_sun(normal,eye_world,light,variance);}
     let reflection=reflect(-eye_world,normal);
     let sky=mix(vec3(0.19,0.25,0.24),vec3(0.48,0.66,0.76),smoothstep(-0.1,0.65,reflection.y));
 
@@ -306,10 +327,12 @@ fn visible_column_path(column:f32,view_gap:f32,channel:bool)->f32 {
     var column=vec2(0.);
     if !river {
         if in_channel {column=channel_column;} else {column=optical_column(q,raw_depth,false);}
-        // The additive path is already clipped once against the opaque bed.
-        // Re-clipping it using the smoothed interface makes equal suspension
-        // columns change opacity as a crest is reconstructed in front of them.
-        thickness=visible_column_path(column.x,thickness,in_channel);
+        let visible=visible_column_path(column.x,thickness,in_channel);
+        // Clip water and mineral optical depth together. Never divide by the
+        // shortened path while retaining all of its old sediment: that creates
+        // dense tan patches where reconstructed crests meet shallow geometry.
+        if in_channel {column*=visible/max(column.x,0.000001);}
+        thickness=visible;
     }
     let optical=optical_sample.g;
     // River keeps its existing concentration convention. Channel extinction

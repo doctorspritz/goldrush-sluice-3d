@@ -659,6 +659,52 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
             }
         }
     }
+    // A moving row must leave a robust fit continuously. The previous hard
+    // 35 mm residual cutoff dropped the complete row at once, changing its
+    // highlight despite only 4 micrometres of geometric motion.
+    let continuity_source = source
+        .replace(
+            "let n=reconstructed_normal(vec2<f32>(p.xy)+0.5,1.);",
+            "let n=reconstructed_normal(vec2(8.,8.),1.);",
+        )
+        .replace(
+            "vec4(column.x,n.y,column.y/max(column.x,0.000001),n.w)",
+            "vec4(n.xyz,n.w)",
+        );
+    let mut normals_at_cutoff = Vec::new();
+    for shift in [-0.000002f32, 0.000002] {
+        let surface: Vec<f32> = (0..64)
+            .flat_map(|i| [if i % 8 == 5 { 1.035 + shift } else { 1. }, 0.04, 2., 2.])
+            .collect();
+        queue.write_texture(
+            textures[4].as_image_copy(),
+            bytemuck::cast_slice(&surface),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(128),
+                rows_per_image: None,
+            },
+            textures[4].size(),
+        );
+        let values = execute(
+            &device,
+            &queue,
+            continuity_source.clone(),
+            &[&group, &out_group],
+            &[&layout, &out_layout],
+            &buffer,
+            [2, 2],
+        );
+        normals_at_cutoff.push(glam::Vec3::from_slice(&values[..3]));
+    }
+    println!(
+        "normal-fit boundary vector change: {}",
+        (normals_at_cutoff[0] - normals_at_cutoff[1]).length()
+    );
+    assert!(
+        (normals_at_cutoff[0] - normals_at_cutoff[1]).length() < 0.0001,
+        "normal-fit cutoff popped: {normals_at_cutoff:?}"
+    );
 }
 
 #[test]
@@ -1035,7 +1081,7 @@ fn channel_wall_clipping_keeps_the_visible_slab_and_handles_parallel_rays() {
 
 #[test]
 #[ignore = "requires real GPU; run explicitly with --ignored"]
-fn joined_surface_motion_keeps_the_clipped_optical_column_and_sparse_path() {
+fn shallow_visible_columns_bound_optical_depth_without_changing_concentration() {
     let (device, queue) = device();
     let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
@@ -1054,8 +1100,8 @@ fn joined_surface_motion_keeps_the_clipped_optical_column_and_sparse_path() {
 @group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
 @compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
  let gap=f32(p.y*8u+p.x)*0.001;
- // Equal pre-clipped columns must transmit the same light, even if a joined
- // interface moves relative to the bed. The outlet retains its own clip.
+ // A 20 mm source column viewed through a shallower geometric interval
+ // cannot contain more optical water than fits before the opaque bed.
  let path=visible_column_path(0.02,gap,true);
  result[p.y*8u+p.x]=vec4(exp(-50.*path),path,
   visible_column_path(0.02,gap,false),visible_column_path(0.,gap,true));
@@ -1071,8 +1117,9 @@ fn joined_surface_motion_keeps_the_clipped_optical_column_and_sparse_path() {
         [1, 1],
     );
     for (i, v) in values.as_chunks::<4>().0.iter().enumerate() {
-        assert!((v[0] as f64 - (-1f64).exp()).abs() < 1e-6);
-        assert!((v[1] - 0.02).abs() < 1e-7);
+        let visible = (i as f64 * 0.001).min(0.02);
+        assert!((v[0] as f64 - (-50. * visible).exp()).abs() < 1e-6);
+        assert!((v[1] as f64 - visible).abs() < 1e-7);
         assert!((v[2] - (i as f32 * 0.001).min(0.02)).abs() < 1e-7);
         assert_eq!(v[3], 0.);
     }
@@ -1374,4 +1421,71 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
             "layer coverage changed"
         );
     }
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn dielectric_sun_is_finite_reciprocal_and_concentrated_at_reflection() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 64);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let a=f32(p.y*8u+p.x)*0.002;
+ let n=vec3(0.,1.,0.);let v=normalize(vec3(0.,1.,1.));
+ let l=normalize(vec3(a,1.,-1.));
+ result[p.y*8u+p.x]=vec4(channel_sun(n,v,l,0.),channel_sun(n,l,v,0.),channel_sun(n,v,l,0.02),channel_sun(n,v,-l,0.));
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    let expected_fresnel = 0.02037 + 0.97963 * (1. - std::f64::consts::FRAC_1_SQRT_2).powi(5);
+    let expected_mask = 2. / (1. + (1.0004f64).sqrt());
+    let expected = 1. / (std::f64::consts::PI * 0.0004) * expected_mask.powi(2) * expected_fresnel
+        / (4. * std::f64::consts::FRAC_1_SQRT_2)
+        * 0.6;
+    assert!(
+        (values[0] as f64 / expected - 1.).abs() < 0.001,
+        "dielectric peak: {} vs {expected}",
+        values[0]
+    );
+    for (i, v) in values.as_chunks::<4>().0.iter().enumerate() {
+        assert!(v.iter().all(|x| x.is_finite() && *x >= 0.));
+        let nl = 1. / (2. + (i as f64 * 0.002).powi(2)).sqrt();
+        assert!(
+            (v[0] as f64 / nl - v[1] as f64 / std::f64::consts::FRAC_1_SQRT_2).abs() < 0.0001,
+            "nonreciprocal reflection: {v:?}"
+        );
+        assert_eq!(v[3], 0.);
+        if i > 0 {
+            assert!(v[0] <= values[(i - 1) * 4] + 0.00001);
+        }
+    }
+    assert!(
+        values[63 * 4] < values[0] * 0.03,
+        "sun remained a broad crest cap"
+    );
+    assert!(
+        values[2] < values[0] * 0.05,
+        "roughness increased peak energy"
+    );
 }
