@@ -78,7 +78,13 @@ impl SlurryField {
     /// conservative presentation filter changes neither particle motion nor any
     /// material ledger. Keep the established outlet sample before applying it.
     pub fn reconstruct_channel(&mut self) {
-        for _ in 0..2 {
+        // Including the two projection passes, this gives an approximately
+        // 8 cm streamwise standard deviation, versus 3 cm across the channel.
+        // The weighted fine parcels undersample a continuous suspension: their
+        // optical footprint should form a streak, not a round dirt clod. All
+        // three additive moments use the same positive conservative stencil.
+        // Vertical stratification and the separately sampled outlet stay intact.
+        for _ in 0..12 {
             self.filter_axis(0);
         }
     }

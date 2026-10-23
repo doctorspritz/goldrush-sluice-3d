@@ -81,6 +81,12 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
                        2.*abs(u.view_from_clip[1].y)*depth/f32(size.y));
     let optical_radius=max(0.030,1.4*image_step);
     let normal_radius=max(0.045,1.4*image_step);
+    // A depth residual is along camera Z. Range rejection belongs to the
+    // liquid's local tangent plane; at grazing angles a centimetre of normal
+    // displacement can span many camera-depth centimetres. Camera-Z rejection
+    // breaks a curved sheet into isolated normal and turbidity caps.
+    let tangent_normal=normalize(cross(ty,tx));
+    let normal_per_depth=max(abs(dot(ray,tangent_normal)),0.0001);
     for(var y=-4;y<=4;y++){for(var x=-4;x<=4;x++){
         let q=center+vec2(x,y);
         if any(q<vec2(0)) || any(q>=size) {continue;}
@@ -94,7 +100,8 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         let filtered=textureLoad(depths,q,0);
         let shared_depth=filtered.r;
         if shared_depth<=0. {continue;}
-        let delta=(shared_depth-expected)/0.035;
+        let residual=(shared_depth-expected)*normal_per_depth;
+        let delta=residual/0.035;
         // A truncated Gaussian has nonzero weight at the gathered edge:
         // rounding the footprint centre then switches an entire row/column.
         // Compact C2 support reaches zero before a texel can enter or leave.
@@ -110,7 +117,7 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         {
             // A hard 35 mm inlier cutoff switched whole normal-fit rows as a
             // crest moved. Compact C2 residual support keeps that fit continuous.
-            let fit_edge=clamp(1.-abs(shared_depth-expected)/0.070,0.,1.);
+            let fit_edge=clamp(1.-abs(residual)/0.070,0.,1.);
             let fit_window=fit_edge*fit_edge*fit_edge*(fit_edge*(fit_edge*6.-15.)+10.);
             let pw=taper*fit_window*exp(-max(dot(distance,distance)/12.,normal_spatial)-delta*delta);
             let z=1./shared_depth-1./depth;
@@ -136,9 +143,19 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         let mean=position_sum/plane_weight;
         let cov=second/plane_weight-vec3(mean.x*mean.x,mean.x*mean.y,mean.y*mean.y);
         let rhs=cross_depth/plane_weight-mean.xy*mean.z;
-        let determinant=cov.x*cov.z-cov.y*cov.y;
-        if determinant>0.001 {
-            let slope=vec2(cov.z*rhs.x-cov.y*rhs.y,cov.x*rhs.y-cov.y*rhs.x)/determinant;
+        // A grazing footprint can be almost one-dimensional. A hard rank
+        // cutoff fell back to each particle's rounded gradient. Stabilize
+        // only the unresolved direction toward the independently sampled
+        // projective tangent; a well-resolved fit keeps its measured slope.
+        // Require both tangent anchors before stabilizing an under-resolved
+        // fit. Isolated spray has no such sheet and keeps its curved normal.
+        let regularizer=select(0.,max(max(cov.x,cov.z)*0.0001,0.000001),anchors==2.);
+        let fitted_cov=cov+vec3(regularizer,0.,regularizer);
+        let fitted_rhs=rhs+inverse_slope*regularizer;
+        let determinant=fitted_cov.x*fitted_cov.z-fitted_cov.y*fitted_cov.y;
+        if determinant>select(0.001,0.,anchors==2.) {
+            let slope=vec2(fitted_cov.z*fitted_rhs.x-fitted_cov.y*fitted_rhs.y,
+                           fitted_cov.x*fitted_rhs.y-fitted_cov.y*fitted_rhs.x)/determinant;
             let step=u.viewport.xy/vec2<f32>(size);
             // Fit reciprocal depth, then unproject its tangent. Fitting raw
             // depth curves a truly planar sheet and adds false cap highlights.

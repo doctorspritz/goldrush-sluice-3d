@@ -1424,6 +1424,59 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
         &grazing[..4]
     );
 
+    // At a grazing angle, a bounded world-space footprint resolves almost
+    // no horizontal span. Falling back to a kernel gradient turns this exact
+    // plane into a round cap. Check all four subpixel phases against the
+    // independently known geometric plane, with an intentionally wrong raw
+    // particle gradient. The stable fit must recover the unresolved slope.
+    let narrow_depth = |x: f32| 1. / (1. / 3. + 0.04 * (x - 15.75));
+    for (texture, values) in [
+        (&raw, field(&|x, _| [narrow_depth(x), -1., 0., 0.])),
+        (&joined, field(&|x, _| [narrow_depth(x), 0.04, 7.2, 2.])),
+    ] {
+        queue.write_texture(
+            texture.as_image_copy(),
+            bytemuck::cast_slice(&values),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            texture.size(),
+        );
+    }
+    let narrow_source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(1) fn probe() {
+ for(var y=0u;y<2u;y++){for(var x=0u;x<2u;x++){
+  let pixel=vec2(32.5)+vec2(f32(x),f32(y));
+  let sampled=sample_depth(pixel);
+  result[y*2u+x]=channel_surface(pixel,sampled.x).normal;
+ }}
+}"#
+    );
+    let narrow = execute(
+        &device,
+        &queue,
+        narrow_source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [1, 1],
+    );
+    // Plane 1 = 3.2 X - (1/3 - .01) Z, derived from the projection.
+    let expected = glam::Vec3::new(-3.2, 0., 1. / 3. - 0.01).normalize();
+    for value in narrow[..16].chunks_exact(4) {
+        let error = (glam::Vec3::from_slice(value) - expected).length();
+        assert!(
+            error < 0.001,
+            "grazing footprint fell back to a particle cap: {value:?}, error={error}"
+        );
+    }
+
     // Adjacent connected/outlet columns may be close in camera depth while
     // representing different layers. Upsampling the channel must not pull its
     // interface toward the outlet, even though the old range gate accepts it.
