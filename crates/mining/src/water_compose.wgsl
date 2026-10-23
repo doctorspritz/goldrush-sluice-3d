@@ -66,8 +66,21 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         }
     }
     if anchors>0. {inverse_origin=anchor_sum/anchors+dot(inverse_slope,p-vec2<f32>(center));}
-    let pixel_m=depth*4.*abs(u.view_from_clip[1].y)/u.viewport.y;
-    let radius=clamp(0.030/max(pixel_m,0.00001),2.5,5.);
+    // One screen texel spans much more liquid along a grazing sheet than
+    // across it. Use its projective tangent metric for every final gather,
+    // including normals and additive optical moments. A circular pixel filter
+    // otherwise turns thin wave ridges and suspension into broad round caps.
+    let step=u.viewport.xy/vec2<f32>(size);
+    let origin=view_point(pixel,depth);
+    let ray=origin/depth;
+    let tx=view_point(pixel+vec2(step.x,0.),depth)-origin-ray*(depth*depth*inverse_slope.x);
+    let ty=view_point(pixel+vec2(0.,step.y),depth)-origin-ray*(depth*depth*inverse_slope.y);
+    // The image-plane footprint is the minimum antialiasing support. Do not
+    // enlarge that support with the grazing-angle stretch we are correcting.
+    let image_step=max(2.*abs(u.view_from_clip[0].x)*depth/f32(size.x),
+                       2.*abs(u.view_from_clip[1].y)*depth/f32(size.y));
+    let optical_radius=max(0.030,1.4*image_step);
+    let normal_radius=max(0.045,1.4*image_step);
     for(var y=-4;y<=4;y++){for(var x=-4;x<=4;x++){
         let q=center+vec2(x,y);
         if any(q<vec2(0)) || any(q>=size) {continue;}
@@ -88,7 +101,10 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         let edge=clamp(vec2(4.5)-abs(distance),vec2(0.),vec2(1.));
         let window=edge*edge*edge*(edge*(edge*6.-vec2(15.))+vec2(10.));
         let taper=window.x*window.y*visibility;
-        let w=taper*exp(-dot(distance,distance)/24.-delta*delta);
+        let tangent=tx*distance.x+ty*distance.y;
+        let metric=dot(tangent,tangent);
+        let normal_spatial=max(dot(distance,distance)/24.,metric/(normal_radius*normal_radius));
+        let w=taper*exp(-normal_spatial-delta*delta);
         let normal=textureLoad(normal_sums,q,0);
         sum+=normal.xyz*w;weight+=normal.w*w;
         {
@@ -96,13 +112,14 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
             // crest moved. Compact C2 residual support keeps that fit continuous.
             let fit_edge=clamp(1.-abs(shared_depth-expected)/0.070,0.,1.);
             let fit_window=fit_edge*fit_edge*fit_edge*(fit_edge*(fit_edge*6.-15.)+10.);
-            let pw=taper*fit_window*exp(-dot(distance,distance)/12.-delta*delta);
+            let pw=taper*fit_window*exp(-max(dot(distance,distance)/12.,normal_spatial)-delta*delta);
             let z=1./shared_depth-1./depth;
             position_sum+=vec3(distance,z)*pw;
             second+=vec3(distance.x*distance.x,distance.x*distance.y,distance.y*distance.y)*pw;
             cross_depth+=distance*z*pw;plane_weight+=pw;
         }
-        let cw=taper*exp(-2.*dot(distance,distance)/(radius*radius)-delta*delta);
+        let optical_spatial=max(dot(distance,distance)/12.5,metric/(optical_radius*optical_radius));
+        let cw=taper*exp(-optical_spatial-delta*delta);
         // The same four passes already reconstructed these additive moments
         // with the interface. Keep the ratio until after the final gather.
         column+=filtered.gb*cw;column_weight+=cw;

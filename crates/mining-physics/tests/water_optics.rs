@@ -1368,6 +1368,62 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
     }
     println!("inclined-sheet maximum analytic normal error: {max_error}");
 
+    // A muddy stripe more than 12 cm away along a grazing sheet must not
+    // tint the clear water at this pixel. The old circular image footprint
+    // crossed that stripe despite the 30 mm optical reconstruction scale.
+    // All of the intervening depths lie exactly on the same geometric plane:
+    // a depth-discontinuity rejection cannot hide a footprint error here.
+    let grazing_depth = |y: f32| 1. / (1. + 0.04 * (y - 15.75));
+    for (texture, values) in [
+        (&raw, field(&|_, y| [grazing_depth(y), -1., 0., 0.])),
+        (
+            &joined,
+            field(&|_, y| {
+                let beta = if y == 19. { 500. } else { 10. };
+                [grazing_depth(y), 0.04, 0.04 * beta, 2.]
+            }),
+        ),
+    ] {
+        queue.write_texture(
+            texture.as_image_copy(),
+            bytemuck::cast_slice(&values),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            texture.size(),
+        );
+    }
+    let grazing_source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(1) fn probe() {
+ let column=channel_surface(vec2(32.5),1.).column;
+ result[0]=vec4(column,column.y/column.x,0.);
+}"#
+    );
+    let grazing = execute(
+        &device,
+        &queue,
+        grazing_source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [1, 1],
+    );
+    println!(
+        "grazing clear-water extinction beside distant mud: {}",
+        grazing[2]
+    );
+    assert!(
+        (grazing[2] - 10.).abs() < 0.1,
+        "distant mud crossed the world-space filter footprint: {:?}",
+        &grazing[..4]
+    );
+
     // Adjacent connected/outlet columns may be close in camera depth while
     // representing different layers. Upsampling the channel must not pull its
     // interface toward the outlet, even though the old range gate accepts it.
