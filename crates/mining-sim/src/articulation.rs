@@ -369,7 +369,14 @@ fn command(
     }
     let (target, pump, returned) = candidate(fraction);
     state.reference = target;
-    let relief = relieve(state, limits);
+    // The moving reference must act on the links before a pressure-relief
+    // return map removes excess strain. Truncating it here discards command
+    // work before any physical time elapses, causing timestep-dependent stalls.
+    let relief = if state.bucket_model == crate::bucket::Model::MountedShellV2 {
+        0.
+    } else {
+        relieve(state, limits)
+    };
     (pump, returned, relief, fraction)
 }
 
@@ -1111,6 +1118,49 @@ fn carried_moments(m: &Excavator) -> crate::payload::MassMoments {
 #[cfg(test)]
 mod shell_tests {
     use super::*;
+    #[test]
+    fn commanded_strain_reaches_the_links_before_a_relief_return_map() {
+        let mut m = Excavator::new(&Site::new());
+        m.enable_articulation().unwrap();
+        m.engine_on = true;
+        m.hydraulics.tool_power_w = 1e6;
+        let limits = torque_limits(&m);
+        let mut s = m.articulation.as_ref().unwrap().clone();
+        let initial = s.reference[3];
+        let (pump, returned, relief, fraction) = command(
+            &m,
+            &mut s,
+            MachineInput {
+                curl: 1.,
+                ..Default::default()
+            },
+            1. / 120.,
+        );
+        let strain = (s.reference[3] - s.coordinates[3]).abs() as f64;
+        let torque = limits[3] as f64;
+        let stiffness = s.stiffness_nm_rad[3] as f64;
+        assert_eq!(fraction, 1.);
+        assert_eq!(returned, 0.);
+        assert_eq!(
+            relief, 0.,
+            "command work was vented before mechanical response"
+        );
+        assert!((s.reference[3] - initial - 0.9 / 120.).abs() < 1e-7);
+        assert!(strain > torque / stiffness);
+        // Independent saturated-spring energy: area under the torque/strain
+        // curve, including its triangular elastic part and constant-torque tail.
+        let expected = torque * strain - 0.5 * torque * torque / stiffness;
+        assert!((pump - expected).abs() < 1e-7 * expected);
+        // If the links really remain stalled for the physical interval, the
+        // final return map vents exactly the excess constant-torque area.
+        let heat = relieve(&mut s, limits);
+        let expected_heat = torque * (strain - torque / stiffness);
+        assert!((heat - expected_heat).abs() < 0.02);
+        assert!(
+            (s.reference[3] - s.coordinates[3]).abs() <= limits[3] / s.stiffness_nm_rad[3] + 1e-7
+        );
+    }
+
     #[test]
     fn registered_shell_vertices_follow_the_same_hinged_frame_as_the_mesh() {
         for [boom, stick, curl, load] in [[0.8, -1.3, -0.2, 0.], [0.4, -1.8, 0.7, 0.1]] {

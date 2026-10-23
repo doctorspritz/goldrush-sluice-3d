@@ -415,6 +415,7 @@ pub fn soil_trial_controls(s: &Session, elapsed: f64) -> MachineInput {
     }
     let arm = s.machine.arm();
     let q = s.machine.bucket_rotation();
+    let mounted = s.machine.bucket_model() == crate::bucket::Model::MountedShellV2;
     let clearance = s
         .machine
         .bucket_model()
@@ -423,26 +424,51 @@ pub fn soil_trial_controls(s: &Session, elapsed: f64) -> MachineInput {
         .iter()
         .flat_map(|p| &p.vertices)
         .map(|v| arm.wrist + q * *v)
-        .map(|p| p.y - s.site.height(p.x, p.z))
+        .map(|p| {
+            p.y - if mounted {
+                crate::soil::substrate_height(&s.site, p.x, p.z)
+            } else {
+                s.site.height(p.x, p.z)
+            }
+        })
         .fold(f32::INFINITY, f32::min);
-    let grade = if clearance > 0.04 {
+    let grade: f32 = if clearance > 0.04 {
         -1.
     } else if clearance < 0.015 {
         1.
     } else {
         0.
     };
-    if s.machine.bucket_model() == crate::bucket::Model::MountedShellV2 {
-        let n = s.machine.bucket_model().geometry().mouth_normal();
+    if mounted {
+        let (rake_angle, mouth_pitch) = soil_trial_world_angles(&s.machine);
+        let entry_rake = soil_trial_entry_rake(s);
+        let aligned = (rake_angle - entry_rake).abs() <= 0.05;
+        // The steel meets the top of the clods before reaching the cleared
+        // substrate. Begin drawing on measured contact instead of continuing
+        // to press downward until the chassis jacks up. Actual stick progress
+        // retains that phase if the reaction unloads during entry. The 10% force
+        // cue and 0.50 rad draw are demo operator choices, not material laws.
+        let entered = clearance <= 0.04
+            || s.machine.stick < -1.31
+            || s.machine.tracks.feedback.bucket_reaction_n.length()
+                > s.machine.hydraulics.bucket_force_n * 0.1;
+        let working_grade = if entered { grade.max(0.) } else { grade };
         return if elapsed < 0.3 {
             MachineInput::default()
-        } else if elapsed < 2.3 {
+        } else if elapsed < 6.5 && s.machine.stick > -1.80 {
+            // Align the actual teeth to the bank, draw through a working
+            // stroke, then curl. A short 0.15 rad draw only skimmed this bank;
+            // the replay's 0.50 rad stroke uses ordinary rate-limited axes.
             MachineInput {
-                stick: -0.7,
-                boom: grade,
-                curl: if arm.angle < 1.05 {
+                stick: if entered && aligned { -0.7 } else { 0. },
+                boom: if aligned {
+                    working_grade
+                } else {
+                    grade.max(0.)
+                },
+                curl: if rake_angle < entry_rake - 0.05 {
                     -1.
-                } else if arm.angle > 1.15 {
+                } else if rake_angle > entry_rake + 0.05 {
                     1.
                 } else {
                     0.
@@ -452,17 +478,13 @@ pub fn soil_trial_controls(s: &Session, elapsed: f64) -> MachineInput {
         } else if elapsed < 6.5 {
             MachineInput {
                 curl: 1.,
-                boom: grade,
+                boom: working_grade,
                 ..Default::default()
             }
         } else if elapsed < 9.0 {
             MachineInput {
                 boom: 1.,
-                curl: if arm.angle + n.z.atan2(n.y) > 0.1 {
-                    1.
-                } else {
-                    0.
-                },
+                curl: if mouth_pitch > 0.1 { 1. } else { 0. },
                 ..Default::default()
             }
         } else if elapsed < 10.0 {
@@ -505,5 +527,146 @@ pub fn soil_trial_controls(s: &Session, elapsed: f64) -> MachineInput {
         }
     } else {
         MachineInput::default()
+    }
+}
+
+// Match the actual cutting tangent to the bank in the horizontal work plane.
+// A fixed chassis-frame bucket angle left the teeth above the belly on a slope.
+// The 0.08 rad attack is an operator's chosen shallow cut, not a soil parameter.
+fn soil_trial_entry_rake(s: &Session) -> f32 {
+    let arm = s.machine.arm();
+    let f = Vec3::new(arm.forward.x, 0., arm.forward.z).normalize_or_zero();
+    let step = crate::site::CELL * 0.5;
+    let a = arm.lip - f * step;
+    let b = arm.lip + f * step;
+    let grade = (crate::soil::substrate_height(&s.site, b.x, b.z)
+        - crate::soil::substrate_height(&s.site, a.x, a.z))
+    .atan2(2. * step);
+    let tooth = s.machine.bucket_model().geometry().cutting_direction();
+    tooth.y.atan2(tooth.z) + grade + 0.08
+}
+
+// The bucket rake and mouth tilt are measured against gravity in the arm's
+// horizontal work plane. Joint angles alone omit chassis pitch; chasing that
+// relative angle opened the teeth toward vertical as a loaded chassis tipped.
+fn soil_trial_world_angles(machine: &crate::Excavator) -> (f32, f32) {
+    let arm = machine.arm();
+    let forward = Vec3::new(arm.forward.x, 0., arm.forward.z).normalize_or_zero();
+    let rotation = machine.bucket_rotation();
+    let rake = rotation * -Vec3::Z;
+    let mouth = rotation * machine.bucket_model().geometry().mouth_normal();
+    (
+        rake.y.atan2(rake.dot(forward)),
+        (-mouth.dot(forward)).atan2(mouth.y),
+    )
+}
+
+#[cfg(test)]
+mod soil_controller_tests {
+    use super::*;
+    #[test]
+    fn bank_entry_puts_the_teeth_at_the_cutting_surface_on_the_actual_slope() {
+        let mut s = Session::new();
+        s.prepare_soil_trial().unwrap();
+        let target = soil_trial_entry_rake(&s);
+        let gap = |s: &Session| {
+            let arm = s.machine.arm();
+            let q = s.machine.bucket_rotation();
+            let mut tooth = f32::INFINITY;
+            let mut shell = f32::INFINITY;
+            for part in &s.machine.bucket_model().geometry().parts {
+                for v in &part.vertices {
+                    let p = arm.wrist + q * *v;
+                    let clearance = p.y - crate::soil::substrate_height(&s.site, p.x, p.z);
+                    if part.tooth {
+                        tooth = tooth.min(clearance)
+                    } else {
+                        shell = shell.min(clearance)
+                    }
+                }
+            }
+            tooth - shell
+        };
+        s.machine.curl = s.machine.boom + s.machine.stick + std::f32::consts::FRAC_PI_2 - 1.1;
+        let old_gap = gap(&s);
+        assert!(
+            old_gap > 0.02,
+            "sloping-bank defect was not reproduced: {old_gap}"
+        );
+        s.machine.curl = s.machine.boom + s.machine.stick + std::f32::consts::FRAC_PI_2 - target;
+        let corrected_gap = gap(&s);
+        assert!(
+            corrected_gap < 0.01,
+            "the belly still reaches soil before the teeth: {corrected_gap}"
+        );
+        println!("old tooth above first shell contact={old_gap}m, bank-aligned={corrected_gap}m, entry rake={target}rad");
+        let g = s.machine.bucket_model().geometry();
+        let direction = g.cutting_direction();
+        // Independent tangent of the declared circular floor's final segment.
+        let theta = 1.1 - 1.1 / 16.;
+        assert!(direction.distance(Vec3::new(0., f32::sin(theta), f32::cos(theta))) < 1e-6);
+    }
+    #[test]
+    fn bank_contact_starts_drawing_before_closing_and_releases_downward_input() {
+        let mut s = Session::new();
+        s.prepare_soil_trial().unwrap();
+        let entry_rake = soil_trial_entry_rake(&s);
+        s.machine.articulation = None;
+        s.machine.curl =
+            s.machine.boom + s.machine.stick + std::f32::consts::FRAC_PI_2 - entry_rake;
+        s.machine.enable_articulation().unwrap();
+        let approach = soil_trial_controls(&s, 0.4);
+        assert!(approach.boom < 0. && approach.stick == 0. && approach.curl == 0.);
+        s.machine.tracks.feedback.bucket_reaction_n =
+            Vec3::Y * (s.machine.hydraulics.bucket_force_n * 0.11);
+        let drawing = soil_trial_controls(&s, 0.5);
+        assert!(
+            drawing.stick < 0. && drawing.boom >= 0. && drawing.curl == 0.,
+            "contact must begin the draw, not close the bucket before the teeth enter"
+        );
+        s.machine.articulation = None;
+        s.machine.stick = -1.32;
+        s.machine.curl =
+            s.machine.boom + s.machine.stick + std::f32::consts::FRAC_PI_2 - entry_rake;
+        s.machine.enable_articulation().unwrap();
+        s.machine.tracks.feedback.bucket_reaction_n = Vec3::ZERO;
+        let released = soil_trial_controls(&s, 0.6);
+        assert!(
+            released.stick < 0. && released.boom >= 0. && released.curl == 0.,
+            "contact unloading restarted the downward entry phase"
+        );
+    }
+    #[test]
+    fn bank_entry_uses_world_rake_when_the_chassis_pitches() {
+        for yaw in [0., 0.7, 2.4] {
+            for pitch in [-0.3, 0., 0.6] {
+                let mut s = Session::new();
+                s.prepare_soil_trial().unwrap();
+                s.machine.articulation = None;
+                s.machine.heading = yaw;
+                s.machine.position.y += 10.;
+                s.machine.tracks.tilt = glam::Quat::from_rotation_x(-pitch);
+                s.machine.enable_articulation().unwrap();
+                assert!(s.machine.articulation.as_ref().unwrap().valid());
+                let relative = s.machine.arm().angle;
+                let (rake, mouth) = soil_trial_world_angles(&s.machine);
+                let n = s.machine.bucket_model().geometry().mouth_normal();
+                assert!(
+                    (rake - (relative + pitch)).abs() < 5e-6,
+                    "yaw={yaw}, pitch={pitch}, rake={rake}, relative={relative}"
+                );
+                assert!((mouth - (rake + n.z.atan2(n.y))).abs() < 5e-6);
+                if pitch > 0.5 {
+                    assert!(
+                        relative < 1.05,
+                        "fixture no longer reproduces the old opening command"
+                    );
+                    assert!(
+                        soil_trial_controls(&s, 0.4).curl > 0.,
+                        "tilted teeth kept opening toward vertical"
+                    );
+                }
+            }
+        }
     }
 }

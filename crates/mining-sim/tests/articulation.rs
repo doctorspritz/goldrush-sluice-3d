@@ -187,6 +187,66 @@ fn finite_pump_work_and_passive_elastic_actuators_do_not_invent_energy() {
     assert!(final_energy <= initial + 0.5);
 }
 #[test]
+fn relief_order_preserves_the_unloaded_tool_path_across_mechanical_steps() {
+    let mut session = mining_sim::Session::new();
+    session.prepare_soil_trial().unwrap();
+    let initial = session.machine;
+    let mut paths = Vec::new();
+    for hz in [240, 480, 960] {
+        let mut m = initial.clone();
+        m.engine_on = true;
+        m.tracks.mechanical_hz = hz;
+        let dt = 1. / hz as f32;
+        let mut path = Vec::new();
+        for _ in 0..60 {
+            for _ in 0..hz / 60 {
+                articulation::step(
+                    &mut m,
+                    MachineInput {
+                        curl: -1.,
+                        ..Default::default()
+                    },
+                    dt,
+                    &Environment::free(Vec3::ZERO),
+                )
+                .unwrap();
+                let s = m.articulation.as_ref().unwrap();
+                assert!(s.feedback.pump_work_j <= 30_000. * dt as f64 + 1e-6);
+                assert!(
+                    s.feedback.kinetic_j + s.feedback.elastic_j + s.relief_heat_j
+                        <= s.pump_energy_j + 1.
+                );
+                assert!(s.valid_for(&m));
+            }
+            let state = m.articulation.as_ref().unwrap();
+            path.push((state.coordinates, m.arm().lip));
+        }
+        // This particular unloaded stroke must not activate pressure relief.
+        // The old projection discarded 11.4 kJ before the 240 Hz links moved.
+        assert!(m.articulation.as_ref().unwrap().relief_heat_j < 0.01);
+        paths.push(path);
+    }
+    for pair in paths.windows(2) {
+        let mut angle_error = 0f32;
+        let mut lip_error = 0f32;
+        for (a, b) in pair[0].iter().zip(&pair[1]) {
+            for i in 0..4 {
+                angle_error = angle_error.max((a.0[i] - b.0[i]).abs());
+            }
+            lip_error = lip_error.max(a.1.distance(b.1));
+        }
+        eprintln!("unloaded sampled refinement: angle={angle_error} rad lip={lip_error} m");
+        // Absolute operator-path bounds; these do not establish force/rate or
+        // bulk-soil convergence, which require separate refinement controls.
+        assert!(
+            angle_error < 0.02,
+            "coarse actuator steps discarded tool motion"
+        );
+        assert!(lip_error < 0.025, "tool path is grossly timestep-dependent");
+    }
+}
+
+#[test]
 fn applied_bucket_force_has_the_complete_system_impulse_and_moment() {
     let mut m = machine(10.);
     let p = m.arm().lip;

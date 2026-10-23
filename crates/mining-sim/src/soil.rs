@@ -621,6 +621,83 @@ mod substrate_query_tests {
         );
     }
 
+    // Independent double-precision SAT over the actual registered hull points.
+    // All triples include each face normal, and all edge pairs include each
+    // edge cross. Extra chord axes cannot separate truly intersecting hulls.
+    fn hull_separation(a: &[DVec3], b: &[DVec3]) -> f64 {
+        let mut best = f64::NEG_INFINITY;
+        let mut axis = |n: DVec3| {
+            if n.length_squared() < 1e-24 {
+                return;
+            }
+            let n = n.normalize();
+            let lo = |p: &[DVec3]| p.iter().map(|p| p.dot(n)).fold(f64::INFINITY, f64::min);
+            let hi = |p: &[DVec3]| p.iter().map(|p| p.dot(n)).fold(f64::NEG_INFINITY, f64::max);
+            best = best.max(lo(b) - hi(a)).max(lo(a) - hi(b));
+        };
+        for points in [a, b] {
+            for i in 0..points.len() {
+                for j in i + 1..points.len() {
+                    for k in j + 1..points.len() {
+                        axis((points[j] - points[i]).cross(points[k] - points[i]));
+                    }
+                }
+            }
+        }
+        for i in 0..a.len() {
+            for j in i + 1..a.len() {
+                for k in 0..b.len() {
+                    for l in k + 1..b.len() {
+                        axis((a[j] - a[i]).cross(b[l] - b[k]));
+                    }
+                }
+            }
+        }
+        best
+    }
+    fn registered_points(c: &r::Collider) -> Vec<DVec3> {
+        let p = c.position();
+        let q = p.rotation.to_array();
+        let q = glam::DQuat::from_xyzw(q[0] as f64, q[1] as f64, q[2] as f64, q[3] as f64);
+        let t = DVec3::from_array(p.translation.to_array().map(f64::from));
+        c.shape()
+            .as_convex_polyhedron()
+            .unwrap()
+            .points()
+            .iter()
+            .map(|v| q * DVec3::from_array(v.to_array().map(f64::from)) + t)
+            .collect()
+    }
+    #[test]
+    fn independent_hull_oracle_detects_real_overlap_at_the_same_tolerance() {
+        let q = glam::DQuat::from_rotation_y(0.37) * glam::DQuat::from_rotation_z(0.7);
+        let origin = DVec3::new(18., 0.9, 22.);
+        let box_points: Vec<_> = [-0.05, 0.05]
+            .into_iter()
+            .flat_map(|x| {
+                [-0.05, 0.05]
+                    .into_iter()
+                    .flat_map(move |y| [-0.05, 0.05].map(move |z| DVec3::new(x, y, z)))
+            })
+            .collect();
+        let a: Vec<_> = box_points.iter().map(|p| origin + q * *p).collect();
+        for gap in [-0.0001, -0.00002, 0., 0.00002, 0.0001] {
+            let b: Vec<_> = box_points
+                .iter()
+                .map(|p| origin + q * (*p + DVec3::X * (0.1 + gap)))
+                .collect();
+            let measured = hull_separation(&a, &b);
+            assert!(
+                (measured - gap).abs() < 1e-11,
+                "independent known box gap={gap}, measured={measured}"
+            );
+            assert_eq!(
+                measured < -0.00001,
+                gap < -0.00001,
+                "actual overlap escaped the unchanged10um gate"
+            );
+        }
+    }
     #[test]
     fn activated_bank_has_no_initial_contact_overlap() {
         let mut s = crate::Session::new();
@@ -637,10 +714,22 @@ mod substrate_query_tests {
                 .user_data(10),
         );
         let mut initial = Vec::new();
+        // Every initial prism is contained in one terrain triangle. Its linear
+        // bottom is above that same triangle iff all its vertices are above it.
+        let mut ground_gap = f64::INFINITY;
         for clod in &mut soil.clods {
+            for v in clod.vertices() {
+                let p = clod.center.as_dvec3() + clod.rotation.as_dquat() * v.as_dvec3();
+                ground_gap =
+                    ground_gap.min(p.y - substrate_height(&s.site, p.x as f32, p.z as f32) as f64);
+            }
             let h = clod.insert(&mut world).unwrap();
             initial.push((h, clod.center));
         }
+        assert!(
+            ground_gap > -0.00001,
+            "initial prism intersects its substrate: {ground_gap}"
+        );
         world.integration_parameters.dt = 0.;
         world.step();
         for (h, p) in initial {
@@ -651,24 +740,36 @@ mod substrate_query_tests {
             );
         }
         let mut total = 0;
-        let mut worst = 0f32;
-        let mut bad = 0;
+        let mut reported_worst = 0f32;
+        let mut geometry_worst = f64::INFINITY;
+        let mut hull_pairs = 0;
         for pair in world.narrow_phase.contact_pairs() {
+            let a = &world.colliders[pair.collider1];
+            let b = &world.colliders[pair.collider2];
+            if a.shape().as_convex_polyhedron().is_some()
+                && b.shape().as_convex_polyhedron().is_some()
+            {
+                let gap = hull_separation(&registered_points(a), &registered_points(b));
+                geometry_worst = geometry_worst.min(gap);
+                hull_pairs += 1;
+                assert!(gap > -0.00001, "registered initial hulls overlap: {gap}");
+            }
             for manifold in pair.solver_manifolds() {
                 for point in &manifold.points {
                     assert!(point.dist.is_finite());
                     total += 1;
-                    worst = worst.min(point.dist);
-                    bad += usize::from(point.dist < -0.00001);
+                    reported_worst = reported_worst.min(point.dist);
                 }
             }
         }
-        assert!(total > 0, "no initial contacts were queried");
-        println!("initial bank contact overlap: worst={worst} bad_points={bad}");
         assert!(
-            worst > -0.00001,
-            "finite bank starts with overlapping contact geometry"
+            total > 0 && hull_pairs > 0,
+            "no initial contact/hull pairs were checked"
         );
+        // Keep the clipped solver estimate visible: it is not an independent
+        // geometry oracle. This bank reproduces a -17um estimate at zero true
+        // hull overlap. Real overlaps still fail the same10um geometry bound.
+        println!("initial bank: {hull_pairs} hull pairs, registered gap={geometry_worst}m, substrate gap={ground_gap}m, clipped-contact estimate={reported_worst}m");
     }
 }
 

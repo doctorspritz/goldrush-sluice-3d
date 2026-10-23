@@ -645,6 +645,12 @@ impl Session {
         let origin = Vec3::new(a.wrist.x, 0., a.wrist.z);
         let low = (a.lip - origin).dot(forward) - 0.85;
         let high = (a.heel - origin).dot(forward) + 0.20;
+        // Heightfield nodes influence neighbouring triangles. Selecting only
+        // centres inside the requested patch leaves a rigid interpolated
+        // shoulder under the side plates. Include the support stencil of the
+        // footprint; all additionally activated stock becomes actual clods.
+        let lateral_halo = crate::site::CELL * (right.x.abs() + right.z.abs());
+        let forward_halo = crate::site::CELL * (forward.x.abs() + forward.z.abs());
         let mut nodes = Vec::new();
         for z in 1..crate::site::WIDTH - 1 {
             for x in 1..crate::site::WIDTH - 1 {
@@ -653,7 +659,9 @@ impl Session {
                     0.,
                     z as f32 * crate::site::CELL,
                 ) - origin;
-                if p.dot(right).abs() <= 0.45 && (low..=high).contains(&p.dot(forward)) {
+                if p.dot(right).abs() <= 0.45 + lateral_halo
+                    && (low - forward_halo..=high + forward_halo).contains(&p.dot(forward))
+                {
                     nodes.push((z * crate::site::WIDTH + x, 0.18));
                 }
             }

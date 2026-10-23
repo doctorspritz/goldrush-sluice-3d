@@ -48,7 +48,9 @@ impl Default for MotionCapture {
             );
             value
         };
-        let duration = number("--capture-seconds", 6., 180.);
+        // Long physical checks can need more wall time without changing the
+        // solver cadence. The explicit opt-in recording remains bounded.
+        let duration = number("--capture-seconds", 6., 300.);
         let hz = number("--capture-hz", 20., 40.);
         let end_sim_time = args
             .windows(2)
@@ -186,7 +188,9 @@ pub fn camera(
             // The deeper mounted bowl hides its floor behind the near cheek
             // from the old oblique inspection view. Look through the mouth.
             let offset = if mounted {
-                right * 0.45 - forward * 0.35 + Vec3::Y * 2.2
+                // Keep the sightline outside the stick while looking through
+                // the mouth; the old centreline view hid a real retained load.
+                right * 0.95 - forward * 0.35 + Vec3::Y * 2.2
             } else {
                 right * 1.25 + forward * if shell { -0.85 } else { 0.85 } + Vec3::Y * 1.25
             };

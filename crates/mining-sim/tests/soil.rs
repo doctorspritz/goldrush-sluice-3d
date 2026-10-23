@@ -441,14 +441,74 @@ fn shell_cheek_impacts_recoil_the_machine_without_inventing_momentum_or_energy()
 }
 
 #[test]
+fn prepared_bank_activates_the_complete_interpolation_support_below_the_shell() {
+    for offset in [0., 0.11, -0.11] {
+        let mut s = Session::new();
+        s.machine.position.x += offset;
+        s.machine.position.y = s.site.height(s.machine.position.x, s.machine.position.z);
+        let original = s.site.clone();
+        let before = (
+            s.accounted_bulk_material_m3(),
+            s.accounted_dry_mass_kg(),
+            s.stored_water_m3(),
+            s.accounted_gold(),
+        );
+        s.prepare_soil_trial().unwrap();
+        let arm = s.machine.arm();
+        let rotation = s.machine.bucket_rotation();
+        let mut minimum_removed = f32::INFINITY;
+        for part in &s.machine.bucket_model().geometry().parts {
+            for local in &part.vertices {
+                let p = arm.wrist + rotation * (*local);
+                let removed = soil::substrate_height(&original, p.x, p.z)
+                    - soil::substrate_height(&s.site, p.x, p.z);
+                minimum_removed = minimum_removed.min(removed);
+                assert!(removed >= 0.18-0.000002,
+                    "rigid terrain shoulder under steel at {p:?}: activated depth={removed}, offset={offset}");
+            }
+        }
+        let after = (
+            s.accounted_bulk_material_m3(),
+            s.accounted_dry_mass_kg(),
+            s.stored_water_m3(),
+            s.accounted_gold(),
+        );
+        assert!(
+            (after.0 - before.0).abs() < 1e-8
+                && (after.1 - before.1).abs() < 1e-7
+                && (after.2 - before.2).abs() < 1e-8
+                && (after.3 - before.3).abs() < 1e-8
+        );
+        let soil = s.active_soil.as_ref().unwrap();
+        println!("offset={offset}, minimum activated depth under shell={minimum_removed}, clods={}, source_litres={}",soil.clods.len(),soil.material().volume()*1000.);
+    }
+}
+
+#[test]
 fn actual_bank_clods_are_scooped_held_airborne_and_emptied_by_the_open_shell() {
     let mut s = Session::new();
     s.prepare_soil_trial().unwrap();
     s.player.mode = mining_sim::ControlMode::Excavator;
     let source = s.active_soil.as_ref().unwrap().material();
     let mut held = f64::INFINITY;
-    for _ in 0..1080 {
+    for tick in 0..1080 {
         let input = mining_sim::replay::soil_trial_controls(&s, s.sim_time);
+        if tick % 60 == 0 {
+            let contents = mining_sim::bucket::estimated_soil_contents(
+                &s.machine,
+                s.active_soil.as_ref().unwrap(),
+            );
+            eprintln!("bank retained estimate={} L", contents.volume() * 1000.);
+            eprintln!(
+                "bank t={:.2}: boom={:.4} stick={:.4} curl={:.4} chassis_y={:.4} reaction={:.0} N",
+                s.sim_time,
+                s.machine.boom,
+                s.machine.stick,
+                s.machine.curl,
+                s.machine.position.y,
+                s.machine.tracks.feedback.bucket_reaction_n.length()
+            );
+        }
         s.step(mining_sim::session::Controls {
             machine: input,
             ..Default::default()

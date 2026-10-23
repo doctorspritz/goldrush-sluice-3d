@@ -342,6 +342,12 @@ impl Geometry {
     pub fn shape(&self) -> r::SharedShape {
         self.shape.clone()
     }
+    /// Physical cutting direction along the final inner-floor segment, from
+    /// tooth root toward the registered tip. This is a geometry query only.
+    pub fn cutting_direction(&self) -> Vec3 {
+        let edge = self.profile[self.profile.len() - 1] - self.profile[self.profile.len() - 2];
+        Vec3::new(0., edge.x as f32, edge.y as f32).normalize()
+    }
     pub fn mouth_normal(&self) -> Vec3 {
         let edge = self.profile[self.profile.len() - 1] - self.profile[0];
         Vec3::new(0., edge.y as f32, -edge.x as f32).normalize()
