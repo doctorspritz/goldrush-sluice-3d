@@ -1,0 +1,638 @@
+{
+  "base_commit": "655a0a2b4def1fbfb870745383a50793b31970d8",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-query-eval-20261024",
+  "source_proof": {
+    "changed_sources": [
+      "crates/sim3d/src/clump.rs",
+      "crates/sim3d/src/contact_grid.rs",
+      "crates/sim3d/src/lib.rs"
+    ],
+    "changed_source_sha256": {
+      "crates/sim3d/src/clump.rs": "8759e661ae860d1a6d1fbc45355e9c18c8a3151fd784d0e3146c3f6fbf327567",
+      "crates/sim3d/src/lib.rs": "d4958f4ec2970c87a0238f1e7945cb06782990bff8b7a03c10ab99f434137c35",
+      "crates/sim3d/src/contact_grid.rs": "24ec9f1f0b673fea0713c09017a054b77f44ae32d4a21794e70581939dbb156a"
+    },
+    "unchanged_tracked_sources": 748,
+    "all_rendering_and_fluid_terrain_force_sources_unchanged": true
+  },
+  "tested_sources_manifest_sha256": "2864cc5eaa615a2cecb42d1d4c1906cd994cadc0db30a04cecaf28050887cd9a",
+  "quality": [
+    {
+      "name": "sim3d-clippy",
+      "exit": 0
+    },
+    {
+      "name": "gpu-pipeline",
+      "exit": 0
+    },
+    {
+      "name": "app",
+      "exit": 0
+    },
+    {
+      "name": "clippy",
+      "exit": 0
+    },
+    {
+      "name": "format-check",
+      "exit": 0
+    },
+    {
+      "name": "maintained-format-check",
+      "exit": 0
+    },
+    {
+      "name": "final-probe-build",
+      "exit": 0
+    },
+    {
+      "name": "package",
+      "exit": 0
+    }
+  ],
+  "sim3d_tests_passed": 137,
+  "app_tests_passed": 51,
+  "app_profiling_ignored": 1,
+  "explicit_gpu_integration_passed": 5,
+  "sim3d_existing_warnings": 10,
+  "new_contact_module_lint_warnings": 0,
+  "negative_controls": [
+    {
+      "name": "stale-source-control",
+      "exit": 101,
+      "expected_exit": 101
+    },
+    {
+      "name": "stale-target-control",
+      "exit": 101,
+      "expected_exit": 101
+    },
+    {
+      "name": "final-sim3d-tests",
+      "exit": 0,
+      "expected_exit": 0
+    }
+  ],
+  "controlled_final": {
+    "baseline": {
+      "mean_pairs_ms": 22.259070208333338,
+      "mean_wall_seconds": 5.7115451455,
+      "mean_simulation_wall_ratio": 0.35016915844988206
+    },
+    "candidate": {
+      "mean_pairs_ms": 15.000258866666666,
+      "mean_wall_seconds": 4.7500485205,
+      "mean_simulation_wall_ratio": 0.4210483586223486
+    },
+    "pairs_time_reduction_fraction": 0.32610577502689764,
+    "throughput_improvement_fraction": 0.20241417172840803,
+    "all_four_complete_physical_states_equal": true,
+    "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+    "normalization": "Sort only three unordered contact-history arrays by tuple keys; no particle/grain reordering, field removal or float tolerance. Canonical JSON object keys, signed zero retained. Complete state archive retained per unique hash; raw current-turn outputs removed only after roundtrip archive verification."
+  },
+  "controlled_runs": [
+    {
+      "name": "a1",
+      "kind": "baseline",
+      "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+      "raw_state_sha256": "b192305ce829b3f0a26bcbd01843fc6ff3bedbe1ddbceb17cf38a14957ac499f",
+      "complete_canonical_state_archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-query-eval-20261024/final/state-e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d.json.gz",
+      "archive_sha256": "8c23d36ccdddc7d17ed591570ad668530ed6f78055ac5257ce1881146128083b",
+      "timings_ms": {
+        "dem": 24.029630166666664,
+        "dem_pairs": 22.159547958333334,
+        "dem_sdf": 1.8419776916666668,
+        "finish": 1.2911784833333335,
+        "fluid_and_readback": 17.557511091666665,
+        "prepare": 1.4994708333333329,
+        "terrain": 1.8239284833333331
+      },
+      "wall_seconds": 5.722117458,
+      "simulation_wall_ratio": 0.3495209804741007,
+      "water_particles": 116139,
+      "grains": 4430,
+      "bulk_material_error_m3": 9.766102948560729e-08,
+      "dry_mass_error_kg": 0.00017585570458322763,
+      "gold_balance_error_g": 8.640199666842818e-12,
+      "water_balance_error_m3": 0.0
+    },
+    {
+      "name": "b1",
+      "kind": "candidate",
+      "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+      "raw_state_sha256": "d33f2a8b7c714e626838a855ec095bef4f38f3b6f7d019b112e158c36f3cafea",
+      "complete_canonical_state_archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-query-eval-20261024/final/state-e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d.json.gz",
+      "archive_sha256": "8c23d36ccdddc7d17ed591570ad668530ed6f78055ac5257ce1881146128083b",
+      "timings_ms": {
+        "dem": 16.974847933333333,
+        "dem_pairs": 15.037020849999998,
+        "dem_sdf": 1.909877825,
+        "finish": 1.3083667000000005,
+        "fluid_and_readback": 16.514002424999997,
+        "prepare": 1.5161187416666666,
+        "terrain": 1.7638350999999999
+      },
+      "wall_seconds": 4.750616791,
+      "simulation_wall_ratio": 0.42099798663977916,
+      "water_particles": 116139,
+      "grains": 4430,
+      "bulk_material_error_m3": 9.766102948560729e-08,
+      "dry_mass_error_kg": 0.00017585570458322763,
+      "gold_balance_error_g": 8.640199666842818e-12,
+      "water_balance_error_m3": 0.0
+    },
+    {
+      "name": "b2",
+      "kind": "candidate",
+      "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+      "raw_state_sha256": "722d91f5e2f920645c921788463f3ff36a611b684941555d1da64cb08d6c4a52",
+      "complete_canonical_state_archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-query-eval-20261024/final/state-e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d.json.gz",
+      "archive_sha256": "8c23d36ccdddc7d17ed591570ad668530ed6f78055ac5257ce1881146128083b",
+      "timings_ms": {
+        "dem": 16.872637774999998,
+        "dem_pairs": 14.963496883333333,
+        "dem_sdf": 1.8826864666666665,
+        "finish": 1.3133531416666666,
+        "fluid_and_readback": 16.620654183333333,
+        "prepare": 1.5090194500000003,
+        "terrain": 1.762702766666667
+      },
+      "wall_seconds": 4.7494802499999995,
+      "simulation_wall_ratio": 0.421098730604918,
+      "water_particles": 116139,
+      "grains": 4430,
+      "bulk_material_error_m3": 9.766102948560729e-08,
+      "dry_mass_error_kg": 0.00017585570458322763,
+      "gold_balance_error_g": 8.640199666842818e-12,
+      "water_balance_error_m3": 0.0
+    },
+    {
+      "name": "a2",
+      "kind": "baseline",
+      "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+      "raw_state_sha256": "e19a950eb17f52df8c6b438adcf0f09e0b7c5d0f11951cc16f0efe40bb532dc2",
+      "complete_canonical_state_archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-query-eval-20261024/final/state-e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d.json.gz",
+      "archive_sha256": "8c23d36ccdddc7d17ed591570ad668530ed6f78055ac5257ce1881146128083b",
+      "timings_ms": {
+        "dem": 24.27295124166666,
+        "dem_pairs": 22.35859245833334,
+        "dem_sdf": 1.885064575,
+        "finish": 1.3013128583333333,
+        "fluid_and_readback": 17.107308999999997,
+        "prepare": 1.5314631749999994,
+        "terrain": 1.7982187500000004
+      },
+      "wall_seconds": 5.700972833,
+      "simulation_wall_ratio": 0.35081733642566343,
+      "water_particles": 116139,
+      "grains": 4430,
+      "bulk_material_error_m3": 9.766102948560729e-08,
+      "dry_mass_error_kg": 0.00017585570458322763,
+      "gold_balance_error_g": 8.640199666842818e-12,
+      "water_balance_error_m3": 0.0
+    }
+  ],
+  "rejected_hash_grid": {
+    "baseline": {
+      "mean_pairs_ms": 22.37015070416667,
+      "mean_wall_seconds": 5.7415256045,
+      "mean_simulation_wall_ratio": 0.3483405628840651
+    },
+    "candidate": {
+      "mean_pairs_ms": 24.827987475,
+      "mean_wall_seconds": 6.0470767500000004,
+      "mean_simulation_wall_ratio": 0.3307400007641223
+    },
+    "pairs_time_reduction_fraction": -0.10987126565828342,
+    "throughput_improvement_fraction": -0.050526880861131995,
+    "all_four_complete_physical_states_equal": true,
+    "physical_state_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+    "normalization": "Sort only three unordered contact-history arrays by tuple keys; no particle/grain reordering, field removal or float tolerance. Canonical JSON object keys, signed zero retained. Complete state archive retained per unique hash; raw current-turn outputs removed only after roundtrip archive verification."
+  },
+  "native_binaries": {
+    "before": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-patch-20261024/final-app/First Bend.app/Contents/MacOS/mining",
+      "sha256": "a0dcfca5c9e5c841e769d93f8ee9a8ea0236c051f64ecc772fb80b826c0f75f5"
+    },
+    "after": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-query-eval-20261024/final-app/First Bend.app/Contents/MacOS/mining",
+      "sha256": "2b7c7ca1a2c585b084061617215b74ff5e799fc2f58c209f5c92175ad6660050"
+    },
+    "load": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/storage-final-2026-10-23/grown.json.save.json",
+      "sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42"
+    }
+  },
+  "headless_binaries": {
+    "baseline": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-mask-20261024/final-flow-probe",
+      "sha256": "0b38c5a029e684420e8ebc8cafc6a50e5be8ba6423d8b593b08ea8c3b91b7bda"
+    },
+    "candidate": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-query-eval-20261024/final-flow-probe",
+      "sha256": "ba916b4f42ef3161004118c560da8a0907a2803d3423422ce74128b1a928e808"
+    },
+    "load": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/storage-final-2026-10-23/grown.json.save.json",
+      "sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42"
+    }
+  },
+  "before_native": {
+    "bulk_budget_passed": true,
+    "bulk_material_error_m3": 3.453749286563834e-07,
+    "bulk_tolerance_m3": 0.0004124674631849918,
+    "detail_revision": 4,
+    "displayed_grains": 17876,
+    "dry_mass_budget_passed": true,
+    "dry_mass_error_kg": 0.0006216936744749546,
+    "dry_mass_tolerance_kg": 0.8074216222448972,
+    "exported_gold_g": 4.8582809684600665,
+    "exported_material_m3": [
+      0.0,
+      0.9383073370530957,
+      0.0,
+      0.5332042481374764
+    ],
+    "failure": null,
+    "fluid_surface_ready": true,
+    "gold_balance_error_g": 6.366462912410498e-12,
+    "grains": 4763,
+    "initial_bulk_material_m3": 412.4674631849918,
+    "initial_dry_mass_kg": 807421.6222448973,
+    "inlet": {
+      "emission_clock": 0.03333333507180214,
+      "emitted": {
+        "gold_g": 0.022878839646777668,
+        "solid_m3": [
+          0.0,
+          0.00767336893524602,
+          0.0,
+          0.00248174856600591
+        ]
+      },
+      "last_water_m3": 6.249640136957169e-05,
+      "pending": {
+        "gold_g": 1.2214210907046758e-05,
+        "solid_m3": [
+          0.0,
+          5.804426252877443e-07,
+          0.0,
+          1.3360224932223387e-06
+        ]
+      },
+      "ready": {
+        "gold_g": 1.0065355952771374e-09,
+        "solid_m3": [
+          0.0,
+          4.783249346315827e-11,
+          0.0,
+          1.1009750902074403e-10
+        ]
+      },
+      "sequence": 8341,
+      "withdrawn": {
+        "gold_g": 0.022891054864220394,
+        "solid_m3": [
+          0.0,
+          0.007673949425703556,
+          0.0,
+          0.0024830846985966423
+        ]
+      }
+    },
+    "last_worker_tick_ms": 108.6095,
+    "max_water_speed_mps": 1.0800000429153442,
+    "mean_fps": 55.734016033039445,
+    "one_second_ratios": [
+      0.32836660065400414,
+      0.35863104895772924,
+      0.32969574894321513,
+      0.33270026370372613,
+      0.33090370383963075,
+      0.3319645638874607,
+      0.3333231010326646,
+      0.2989073597924978,
+      0.3319509410241264,
+      0.3325716094146647,
+      0.33019240929270577,
+      0.29463982974837355,
+      0.3308972027868043,
+      0.298909915992119,
+      0.3319022572205559,
+      0.33253451966814856,
+      0.36606467705369233,
+      0.3618284217875792,
+      0.36361853235736663
+    ],
+    "outflow_particles": 10493,
+    "p95_frame_ms": 25.314458000000002,
+    "passed": false,
+    "paused": false,
+    "phase_model": "legacy",
+    "simulation_seconds": 6.633333679288626,
+    "simulation_wall_ratio": 0.3315954510441323,
+    "sluice_water_balance_error_m3": 0.0,
+    "slurry": {
+      "feed_grading": "Alluvial",
+      "fine_parcels_below_200um": 120,
+      "independently_resolved_grain_collisions": false,
+      "optical_grid_m": 0.029999999329447746,
+      "optics_calibrated": false,
+      "outlet_extinction_m1": 121.62596130371094,
+      "projected_suspended_fines_m3": 0.00013698893095994317,
+      "projected_water_m3": 0.014504249963380268,
+      "projection_fines_error_m3": -2.439454888092385e-19,
+      "projection_water_error_m3": -2.0816681711721685e-17,
+      "represented_grains": 1711940579.4718592,
+      "solver_parcels": 4763
+    },
+    "stored_water_m3": 12.73950714326431,
+    "terrain_fine_cells": 357,
+    "terrain_water_splats": 2732,
+    "wall_seconds": 20.004296375,
+    "warmup_seconds": 5,
+    "water_balance": {
+      "baseline_sim_time": 0.0,
+      "boundary_outflow_m3": 13.193598158973394,
+      "external_inflow_m3": 11.819988631643355,
+      "initial_stored_m3": 14.113124481402338,
+      "legacy_baseline": false
+    },
+    "water_balance_error_m3": -7.81080798617495e-06,
+    "water_cfl_speed_mps": 1.0799999237060547,
+    "water_mean_downstream_ms": 0.388299822807312,
+    "water_near_cfl_limit": 316,
+    "water_particles": 116034,
+    "water_presentation": {
+      "buffer_underrun_frames": 0,
+      "interpolation_alpha": 0.1751272827386856,
+      "max_capture_ms": 1.2949579999999998,
+      "max_surface_build_ms": 86.69749999999999,
+      "mean_capture_ms": 0.3762413183673469,
+      "mean_surface_build_ms": 78.26753947131145,
+      "paired_render_particles": 66083,
+      "presented_sim_time": 98.4725093786254,
+      "surface_builds": 244
+    },
+    "worker_busy_fraction": 0.9999959158273571,
+    "worker_mean_ms": 100.52369182914575,
+    "worker_packets": 199,
+    "worker_phases_mean_ms": [
+      3.1497137437185945,
+      38.43455868844221,
+      49.13069610552763,
+      2.63426691959799,
+      3.6636894824120616
+    ]
+  },
+  "after_native": {
+    "bulk_budget_passed": true,
+    "bulk_material_error_m3": 4.1012611973201274e-07,
+    "bulk_tolerance_m3": 0.0004124674631849917,
+    "detail_revision": 4,
+    "displayed_grains": 18521,
+    "dry_mass_budget_passed": true,
+    "dry_mass_error_kg": 0.0007383194752037525,
+    "dry_mass_tolerance_kg": 0.807421622244897,
+    "exported_gold_g": 4.8675375503565474,
+    "exported_material_m3": [
+      0.0,
+      0.9471599325542348,
+      0.0,
+      0.5341976347424549
+    ],
+    "failure": null,
+    "fluid_surface_ready": true,
+    "gold_balance_error_g": -9.094947017729282e-13,
+    "grains": 4811,
+    "initial_bulk_material_m3": 412.4674631849917,
+    "initial_dry_mass_kg": 807421.6222448971,
+    "inlet": {
+      "emission_clock": 0.03333333507180214,
+      "emitted": {
+        "gold_g": 0.023268304127891423,
+        "solid_m3": [
+          0.0,
+          0.007691213218057689,
+          0.0,
+          0.002524333743147141
+        ]
+      },
+      "last_water_m3": 6.249640136957169e-05,
+      "pending": {
+        "gold_g": 1.2171499568539325e-05,
+        "solid_m3": [
+          0.0,
+          5.319288270748065e-07,
+          0.0,
+          1.3310516762119417e-06
+        ]
+      },
+      "ready": {
+        "gold_g": 4.725372846971389e-10,
+        "solid_m3": [
+          0.0,
+          2.0651210821049694e-11,
+          0.0,
+          5.167576446326734e-11
+        ]
+      },
+      "sequence": 8405,
+      "withdrawn": {
+        "gold_g": 0.02328047609999734,
+        "solid_m3": [
+          0.0,
+          0.007691745167535726,
+          0.0,
+          0.0025256648464991238
+        ]
+      }
+    },
+    "last_worker_tick_ms": 80.409833,
+    "max_water_speed_mps": 1.0800000429153442,
+    "mean_fps": 55.77299979648098,
+    "one_second_ratios": [
+      0.36343445097161364,
+      0.39710648776008933,
+      0.39646294380207114,
+      0.3658421996630776,
+      0.3970574775278515,
+      0.39659335021437364,
+      0.3643668629998347,
+      0.36123392337110855,
+      0.3635578571089527,
+      0.36310041949486743,
+      0.3986627068116261,
+      0.3326117495274217,
+      0.36468869018948336,
+      0.396627153129804,
+      0.4321919909094349,
+      0.4330919071951665,
+      0.39877786639558976,
+      0.39516395498502455,
+      0.3966843183261551
+    ],
+    "outflow_particles": 10631,
+    "p95_frame_ms": 26.6955,
+    "passed": false,
+    "paused": false,
+    "phase_model": "legacy",
+    "simulation_seconds": 7.666667066514492,
+    "simulation_wall_ratio": 0.38314540931460983,
+    "sluice_water_balance_error_m3": 0.0,
+    "slurry": {
+      "feed_grading": "Alluvial",
+      "fine_parcels_below_200um": 118,
+      "independently_resolved_grain_collisions": false,
+      "optical_grid_m": 0.029999999329447746,
+      "optics_calibrated": false,
+      "outlet_extinction_m1": 189.51576232910156,
+      "projected_suspended_fines_m3": 0.00013640080805549638,
+      "projected_water_m3": 0.014495374963402722,
+      "projection_fines_error_m3": 5.692061405548898e-19,
+      "projection_water_error_m3": 2.6020852139652106e-17,
+      "represented_grains": 1685422068.8453133,
+      "solver_parcels": 4811
+    },
+    "stored_water_m3": 12.747535735948729,
+    "terrain_fine_cells": 355,
+    "terrain_water_splats": 2730,
+    "wall_seconds": 20.009810584,
+    "warmup_seconds": 5,
+    "water_balance": {
+      "baseline_sim_time": 0.0,
+      "boundary_outflow_m3": 13.317569301224024,
+      "external_inflow_m3": 11.951988407410681,
+      "initial_stored_m3": 14.113124481402338,
+      "legacy_baseline": false
+    },
+    "water_balance_error_m3": -7.85164026595453e-06,
+    "water_cfl_speed_mps": 1.0799999237060547,
+    "water_mean_downstream_ms": 0.39184999465942383,
+    "water_near_cfl_limit": 335,
+    "water_particles": 115963,
+    "water_presentation": {
+      "buffer_underrun_frames": 0,
+      "interpolation_alpha": 0.1349717676639557,
+      "max_capture_ms": 0.914417,
+      "max_surface_build_ms": 109.69008299999999,
+      "mean_capture_ms": 0.35804602898550736,
+      "mean_surface_build_ms": 78.17169955272728,
+      "paired_render_particles": 66095,
+      "presented_sim_time": 99.537837583543,
+      "surface_builds": 275
+    },
+    "worker_busy_fraction": 0.9960176535072395,
+    "worker_mean_ms": 86.65271558695655,
+    "worker_packets": 230,
+    "worker_phases_mean_ms": [
+      3.1164525043478264,
+      39.86524802173913,
+      33.83321170869564,
+      2.591287669565219,
+      3.777360869565218
+    ]
+  },
+  "frozen_physics": [
+    {
+      "view": "sluice",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "33141d5888a4269a38cb3866137617635d310da92ae71e8fbbd5ebb282e7e5e7",
+      "after_manifest_sha256": "482e4abd5a815decd5c9ff330a3308333a30e05b5a1f2834455dcb813fe9edff"
+    },
+    {
+      "view": "outlet",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "c4f8cdafae3c920e7a2e42aa25f5ecc0556c646b632958c9132c6021163cefcd",
+      "after_manifest_sha256": "5afb434466aafa57c32fc277151d69762f724fc74ced7061bef72c9305cd9d29"
+    },
+    {
+      "view": "river",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "94d4a5e867afc91460bebc5a2e70df717790647e151e18e4e1711330f4982fe1",
+      "after_manifest_sha256": "960c8da6cd3214f1e893d04bbfd7e1b6e4ead1f05b692f3c0bbea787fa1d9592"
+    }
+  ],
+  "images": {
+    "sluice": {
+      "changed_rgb_pixels": 0,
+      "max_channel_difference": 0
+    },
+    "outlet": {
+      "changed_rgb_pixels": 0,
+      "max_channel_difference": 0
+    },
+    "river": {
+      "changed_rgb_pixels": 0,
+      "max_channel_difference": 0
+    }
+  },
+  "motion": {
+    "source_frames": 34,
+    "presentation_advances": 33,
+    "worker_advances": 33,
+    "presentation_buffer_underruns": 0,
+    "wall_seconds": 2.988437125,
+    "sim_seconds": 1.1000000573694706,
+    "max_surface_build_ms": 82.059959,
+    "review_indices": [
+      0,
+      7,
+      13,
+      20,
+      26,
+      33
+    ],
+    "video_display_frames": 185,
+    "whole_video_playback_reviewed": false
+  },
+  "review": "Reviewed all 34 temporal crops and six full native flow samples. Frozen sluice/outlet/river RGB matches the previously reviewed rendering build exactly. Whole-video playback and manual controls were not reviewed.",
+  "scratch_axis_mask_limit_bytes": 8388608,
+  "cleanup": {
+    "owned_game_compiler_encoder_browser_test_processes": 0,
+    "shared_playwright_mcp": 14,
+    "shared_node": 56,
+    "new_panic_or_windowserver_reports": 0
+  },
+  "media_sha256": {
+    "docs/playtests/2026-10-24-contact-axis.motion.jpg": "ad3229ba2ac557ad4e74c3271ff7e8b4ee4b80076eb90cc32fda71e1fd78e5b4",
+    "docs/playtests/2026-10-24-contact-axis.temporal.jpg": "3476dbc9d34f51669ef372e30cc8541ddc46a4103f39cbc569f5a959345f1e00",
+    "docs/playtests/2026-10-24-contact-axis.mp4": "b90032af1df6cdf8ef4ec776bffa254a76d993e7d36074af7d6d307ff1282fd9"
+  },
+  "full_game_goal_complete": false,
+  "full_water_art_complete": false,
+  "real_time_gate_passed": false
+}
