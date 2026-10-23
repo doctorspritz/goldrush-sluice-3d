@@ -757,7 +757,7 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
     let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(&uniforms),
-        usage: wgpu::BufferUsages::UNIFORM,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
@@ -819,7 +819,7 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
     let values = execute(
         &device,
         &queue,
-        source,
+        source.clone(),
         &[&group, &out_group],
         &[&layout, &out_layout],
         &buffer,
@@ -886,6 +886,104 @@ fn connected_surface_filter_suppresses_domes_without_popping_or_changing_outlet(
         (row(7) - row(3)).abs() < 1e-6,
         "delayed bulk crest was filtered as a detached drop"
     );
+
+    // Real projection, distant sheet: one half-resolution texel spans 50 mm.
+    // Measure the response to an optical impulse independently in metres.
+    // A fixed 23-pixel blur spreads that impulse across decimetres of water.
+    let impulse: Vec<f32> = (0..256)
+        .flat_map(|i| [4., 0.04, if i % 32 == 16 { 2.04 } else { 2. }, 2.])
+        .collect();
+    queue.write_texture(
+        textures[0].as_image_copy(),
+        bytemuck::cast_slice(&impulse),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(32 * 16),
+            rows_per_image: None,
+        },
+        textures[0].size(),
+    );
+    for slot in [2, 3] {
+        queue.write_texture(
+            textures[slot].as_image_copy(),
+            bytemuck::cast_slice(&[0.5f32; 1024]),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            textures[slot].size(),
+        );
+    }
+    uniforms[32] = 0.2;
+    uniforms[37] = 0.2;
+    uniforms[42] = -1.;
+    uniforms[47] = 1.;
+    uniforms[64] = 64.;
+    uniforms[65] = 16.;
+    queue.write_buffer(&uniform, 0, bytemuck::cast_slice(&uniforms));
+    let metric_source = source.replace("vec2(16,i32(p.y))", "vec2(12+i32(p.x),4)");
+    let metric = execute(
+        &device,
+        &queue,
+        metric_source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [1, 1],
+    );
+    let mut mass = 0f64;
+    let mut second = 0f64;
+    for x in 0..8 {
+        let v = &metric[x * 4..x * 4 + 4];
+        assert!(
+            (v[0] - 4.).abs() < 0.000001,
+            "plane moved under footprint control"
+        );
+        let response = (v[2] as f64 - 2.).max(0.);
+        mass += response;
+        second += response * ((x as f64 - 4.) * 0.05).powi(2);
+    }
+    let spread = (second / mass).sqrt();
+    assert!(
+        mass > 0.01 && spread < 0.030,
+        "connected blur spread across too much water: {spread} m"
+    );
+    println!("world-space optical impulse spread: {spread} m");
+
+    // The physical-footprint bound must fade in with connected density; the
+    // first nonzero confidence must not switch the whole blur width at once.
+    let transition: Vec<f32> = (0..256)
+        .flat_map(|i| [if i / 32 < 4 { 0.0499 } else { 0.0501 }; 4])
+        .collect();
+    for slot in [2, 3] {
+        queue.write_texture(
+            textures[slot].as_image_copy(),
+            bytemuck::cast_slice(&transition),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            textures[slot].size(),
+        );
+    }
+    let transition_source = source.replace("vec2(16,i32(p.y))", "vec2(16,3+i32(p.x % 2u))");
+    let transition = execute(
+        &device,
+        &queue,
+        transition_source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [1, 1],
+    );
+    for component in 0..4 {
+        assert!(
+            (transition[component] - transition[4 + component]).abs() < 0.000001,
+            "physical blur footprint popped at dilute-film threshold"
+        );
+    }
 }
 
 #[test]
@@ -1164,10 +1262,11 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
  let pixel=vec2<f32>(p.xy)+0.5;
  let q=pixel*0.5-0.5;
  let depth=1./(1.+0.015*(q.x-16.)+0.007*(q.y-16.));
- let joined=channel_surface(pixel,depth);
+ let sampled=sample_depth(pixel);
+ let joined=channel_surface(pixel,sampled.x);
  let i=(p.y*64u+p.x)*2u;
  result[i]=joined.normal;
- result[i+1u]=vec4(joined.column,joined.column.y/max(joined.column.x,0.000001),0.);
+ result[i+1u]=vec4(joined.column,joined.column.y/max(joined.column.x,0.000001),sampled.x-depth);
 }"#
     );
     let values = execute(
@@ -1203,6 +1302,11 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
                 (v[6] - 250.).abs() < 0.001,
                 "uniform slurry acquired a patch: {v:?}"
             );
+            assert!(
+                v[7].abs() < 0.000001,
+                "upsampling curved the water plane: {x},{y}: {}",
+                v[7]
+            );
             // Probe all four full-resolution pixel phases, including their
             // offset from the half-size depth texel. A linear path on this
             // sheet must not develop an optical island from range weighting.
@@ -1216,4 +1320,58 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
         }
     }
     println!("inclined-sheet maximum analytic normal error: {max_error}");
+
+    // Adjacent connected/outlet columns may be close in camera depth while
+    // representing different layers. Upsampling the channel must not pull its
+    // interface toward the outlet, even though the old range gate accepts it.
+    let layers = field(&|x, _| {
+        if x < 16. {
+            [1., 0.04, 2., 2.]
+        } else {
+            [1.06, 0.02, 0., 0.]
+        }
+    });
+    queue.write_texture(
+        joined.as_image_copy(),
+        bytemuck::cast_slice(&layers),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(32 * 16),
+            rows_per_image: None,
+        },
+        joined.size(),
+    );
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let sampled=sample_depth(vec2(30.5+f32(p.x),32.5));
+ result[p.y*64u+p.x]=vec4(sampled,0.,0.);
+}"#
+    );
+    let edge = execute(
+        &device,
+        &queue,
+        source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [8, 8],
+    );
+    for (i, expected) in [[1., 1.], [1., 0.75], [1.045, 1.], [1.06, 1.]]
+        .iter()
+        .enumerate()
+    {
+        assert!(
+            (edge[i * 4] - expected[0]).abs() < 0.000001,
+            "upsampling borrowed another layer: {i}: {:?}",
+            &edge[i * 4..i * 4 + 2]
+        );
+        assert!(
+            (edge[i * 4 + 1] - expected[1]).abs() < 0.000001,
+            "layer coverage changed"
+        );
+    }
 }

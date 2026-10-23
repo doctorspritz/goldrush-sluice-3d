@@ -11,7 +11,6 @@ struct Screen { @builtin(position) position: vec4<f32> };
 @group(0) @binding(7) var river_depths:texture_2d<f32>;
 @group(0) @binding(8) var river_normals:texture_2d<f32>;
 @group(0) @binding(9) var normal_sums:texture_2d<f32>;
-fn depth_at(q: vec2<i32>) -> f32 { return textureLoad(depths,clamp(q,vec2(0),vec2<i32>(textureDimensions(depths))-vec2(1)),0).r; }
 // Bilateral upsampling keeps the half-resolution smoothing buffer from
 // producing two-pixel shading blocks. Empty pixels contribute only coverage.
 fn sample_depth(pixel: vec2<f32>) -> vec2<f32> {
@@ -19,13 +18,22 @@ fn sample_depth(pixel: vec2<f32>) -> vec2<f32> {
     let q = vec2<i32>(floor(p)); let f = fract(p);
     let offsets = array<vec2<i32>,4>(vec2(0,0),vec2(1,0),vec2(0,1),vec2(1,1));
     let weights = array<f32,4>((1.-f.x)*(1.-f.y),f.x*(1.-f.y),(1.-f.x)*f.y,f.x*f.y);
-    let reference = depth_at(vec2<i32>(round(p)));
-    var total = 0.; var weight = 0.;
+    let reference = textureLoad(depths,clamp(vec2<i32>(round(p)),vec2(0),vec2<i32>(textureDimensions(depths))-vec2(1)),0);
+    let channel=reference.a>0.5;
+    var total = 0.; var weight = 0.;var inverse_depth=0.;
     for (var i=0u; i<4u; i++) {
-        let d = depth_at(q+offsets[i]);
-        if d>0. && (reference<=0. || abs(d-reference)<u.viewport.z*2.) { total += d*weights[i]; weight += weights[i]; }
+        let tap=textureLoad(depths,clamp(q+offsets[i],vec2(0),vec2<i32>(textureDimensions(depths))-vec2(1)),0);
+        let d=tap.r;
+        if d>0. && (reference.r<=0. || abs(d-reference.r)<u.viewport.z*2.) {
+            // The connected interface uses reciprocal view depth: interpolating
+            // depth itself curves a projective plane at each half-size texel.
+            // Do not borrow depth from a neighbouring detached outlet column.
+            // Detached water retains its accepted arithmetic upsampling path.
+            if channel && tap.a<=0.5 {continue;}
+            total += d*weights[i]; weight += weights[i];inverse_depth+=weights[i]/d;
+        }
     }
-    return vec2(total/max(weight,0.0001),weight);
+    return vec2(select(total/max(weight,0.0001),weight/max(inverse_depth,0.000001),channel),weight);
 }
 struct ChannelSurface {normal:vec4<f32>,column:vec2<f32>};
 // Gather every texel in the footprint. Striding over alternating texels makes

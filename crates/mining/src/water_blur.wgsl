@@ -65,6 +65,20 @@ fn smooth_surface(pixel: vec2<i32>, direction: vec2<i32>) -> vec4<f32> {
             plane_origin=(1./right.r+1./left.r)*0.5;
         }
     }
+    // A fixed pixel radius becomes a broad, round mound at grazing angles.
+    // Bound connected-water diffusion to a 30 mm tangent footprint per pass.
+    // The projective tangent includes both image spacing and sheet slope.
+    var tangent_step2=0.;
+    if bulk>0. && center.a>0.5 {
+        let uv=(vec2<f32>(pixel)+0.5)/vec2<f32>(size);
+        let ray=u.view_from_clip*vec4(uv.x*2.-1.,1.-uv.y*2.,1.,1.);
+        let direction_view=vec3(2.*u.view_from_clip[0].x*f32(direction.x)/f32(size.x),
+                              -2.*u.view_from_clip[1].y*f32(direction.y)/f32(size.y),0.);
+        let z=1./max(plane_origin,0.000001);
+        let next_z=1./max(plane_origin+slope,0.000001);
+        let tangent=ray.xyz/max(-ray.z,0.000001)*(next_z-z)+direction_view*next_z;
+        tangent_step2=dot(tangent,tangent);
+    }
     var total = vec4(0.); var weights = 0.;var inverse_depth=0.;
     for (var i = -11; i <= 11; i++) {
         if abs(i)>7 && bulk==0. {continue;}
@@ -73,7 +87,8 @@ fn smooth_surface(pixel: vec2<i32>, direction: vec2<i32>) -> vec4<f32> {
         let expected=1./max(plane_origin+slope*f32(i),0.000001);
         let distance = (sample.r-mix(center.r,expected,bulk))/u.viewport.z;
         let tail=select(bulk,1.,abs(i)<=7);
-        let weight = tail*exp(-f32(i*i)/mix(24.,48.,bulk) - distance*distance);
+        let spatial=max(f32(i*i)/mix(24.,48.,bulk),f32(i*i)*tangent_step2*bulk/(0.030*0.030));
+        let weight = tail*exp(-spatial - distance*distance);
         total += sample*weight; weights += weight;inverse_depth+=weight/sample.r;
     }
     let filtered=total/max(weights,0.0001);
