@@ -12,6 +12,8 @@ The [shoreline report](docs/playtests/2026-10-21-shoreline.md) records full-reso
 
 The [crest and muddy-patch correction](docs/playtests/2026-10-23-crest-patches.md) filters the visible interface and sediment optical columns together, reducing rounded crest highlights and isolated muddy islands. Matched native captures and motion record the improvement and remaining broad waves/grain speckling. The water, riffle and sediment solvers remain unchanged.
 
+The [spatial payload model](docs/physics/payload-exchange.md) and [checkpoint](docs/playtests/2026-10-23-payload-exchange.md) add momentum-aware finite load transactions to the optional articulated mechanism. Soil contact, retention and normal articulated digging remain under development.
+
 The [earthwork report](docs/playtests/2026-10-22-earthworks.md) records swept excavation, conservative terrain collapse, clean-source dilution, native digging/delivery and live save/restore. Digging with the terrain solver runs near real time; loaded-sluice throughput remains below real time and is reported separately in [current native checks](docs/playtests/2026-10-23-articulated-core.md). Full-circuit solid transport and finer physical soil are still open.
 
 **Environmental water now has a complete source/storage/discharge ledger.** Dry/wet digging and dumping preserve water, shared GPU face transfers respect each donor's total volume, and the river drains at its downhill edge. The regenerated demo has a graded return channel connecting the sluice discharge to the river. See the [repair measurements](docs/playtests/2026-10-21-environment-water-fix.md); the [earlier audit](docs/playtests/2026-10-21-environment-water-audit.md) remains a historical record.

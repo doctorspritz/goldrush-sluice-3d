@@ -43,8 +43,8 @@ The complete water ledger includes soil pores, unresolved expelled surface water
 carried moisture, flowing channel water and world surface water. Sluice flowing
 water accounting starts when moisture is released from the hopper, so retained
 hopper moisture is not counted twice. The existing dry/reference-bulk and gold
-ledgers remain separate. Moisture was introduced in version 4. Ordinary saves are version 6; articulated validation writes version 7. Older binaries reject unsupported versions;
-current binaries accept versions 2–7 and retain the previous bed-age migration.
+ledgers remain separate. Moisture was introduced in version 4. Ordinary saves are version 6; unexchanged articulated validation writes version 7; spatial material state writes version 8. Older binaries reject unsupported versions;
+current binaries accept versions 2–8 and retain the previous bed-age migration.
 A legacy version carrying new moisture is rejected rather than silently losing
 water in an old reader.
 
@@ -59,3 +59,5 @@ claimed here. Drying/rewetting of sediment-bearing thin films must be closed
 before adding water sinks; deposition now operates at every positive water depth using [counted precision stock](subgrid-bed.md). Under-1-mm rough-bed scour and continuous sloping shoreline convergence remain unresolved. New submerged deposits gain void capacity without automatic saturation: the current model does not draw surface water into that new capacity until a conservative infiltration model exists.
 
 The [machine-contact save contract](machine-contact.md) documents ordinary version 6, optional articulated version 7 and stationary legacy-machine migration. The material and terrain-clock rules above remain in force.
+
+The [spatial material save contract](payload-exchange.md) adds version 8 for payload moments, rigid parcels and boundary receipts. Existing material and terrain-clock migrations remain unchanged.

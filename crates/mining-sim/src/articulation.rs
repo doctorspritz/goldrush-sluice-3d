@@ -7,13 +7,16 @@ use crate::{
     },
     Excavator, MachineInput, Site, Vec3,
 };
-use glam::{DVec3, Quat};
+use glam::{DMat3, DQuat, DVec3, Quat};
 use rapier3d::prelude as r;
 use serde::{Deserialize, Serialize};
 
 const ROOT_COM_Y: f32 = (2600. * 0.325 + 700. * 0.70) / 3300.;
 const ROOT_COM: Vec3 = Vec3::new(0., ROOT_COM_Y, 0.);
 const UPPER_COM: Vec3 = Vec3::new(0., 1.10, -0.1);
+mod exchange;
+pub use exchange::{capture_payload, payload_frame, release_payload, sample_payload};
+
 const AXIS: usize = 3; // A revolute joint's own free angular X coordinate.
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -27,6 +30,12 @@ pub struct Articulation {
     pub stiffness_nm_rad: [f32; 4],
     pub damping_nms_rad: [f32; 4],
     pub payload_kg: f32,
+    /// Actual carried spatial moments after an exchange. Absent v7 state
+    /// retains the original declared floor-distributed payload model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_moments: Option<crate::payload::MassMoments>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exchange: Option<crate::payload::ExchangeLedger>,
     pub pump_energy_j: f64,
     pub relief_heat_j: f64,
     pub feedback: Feedback,
@@ -118,7 +127,7 @@ impl Articulation {
     }
     pub fn valid_for(&self, machine: &Excavator) -> bool {
         self.valid()
-            && (self.payload_kg - machine.bucket.wet_mass_kg() as f32).abs() <= 0.01
+            && self.payload_kg == machine.bucket.wet_mass_kg() as f32
             && (self.coordinates[0] - machine.swing)
                 .sin()
                 .atan2((self.coordinates[0] - machine.swing).cos())
@@ -147,6 +156,14 @@ impl Articulation {
             .iter()
             .all(|x| x.is_finite())
             && (0. ..=1.).contains(&self.feedback.command_fraction)
+            && self.exchange.as_ref().is_none_or(|x| x.valid())
+            && self.payload_moments.is_none_or(|x| {
+                x.valid()
+                    && x.mass_kg > 0.
+                    && x.center.length() < 4.
+                    && (x.mass_kg - machine.bucket.wet_mass_kg()).abs() < 1e-9 * x.mass_kg.max(1.)
+                    && self.exchange.is_some()
+            })
             && torque_limits(machine).iter().enumerate().all(|(i, limit)| {
                 self.stiffness_nm_rad[i] == 0.
                     || (self.coordinates[i] - self.reference[i]).abs()
@@ -202,6 +219,8 @@ impl Excavator {
             stiffness_nm_rad: [20e6; 4],
             damping_nms_rad: [100_000.; 4],
             payload_kg: self.bucket.wet_mass_kg() as f32,
+            payload_moments: None,
+            exchange: None,
             pump_energy_j: 0.,
             relief_heat_j: 0.,
             feedback: Feedback::default(),
@@ -354,7 +373,12 @@ impl Model {
         let heel = Vec3::new(0., -0.2375, -0.01);
         let lip = Vec3::new(0., -0.23, 1.065);
         let floor_q = Quat::from_rotation_arc(Vec3::Z, (lip - heel).normalize());
-        let bucket_com = (heel + lip) * 0.5 + floor_q * Vec3::Y * 0.025;
+        let floor_center = (heel + lip) * 0.5 + floor_q * Vec3::Y * 0.025;
+        let bucket_com = if let Some(payload) = s.payload_moments {
+            steel_moments().combine(payload).center.as_vec3()
+        } else {
+            floor_center
+        };
         let mut world = r::PhysicsWorld::new();
         world.gravity = rv(env.gravity);
         world.integration_parameters = r::IntegrationParameters {
@@ -415,13 +439,24 @@ impl Model {
             pose(arm.elbow + stick * Vec3::Z * (STICK_LENGTH * 0.5), stick),
             pose(arm.wrist + bucket * bucket_com, bucket),
         ];
-        let bodies = poses.map(|p| {
-            world.insert_body(
-                r::RigidBodyBuilder::dynamic()
-                    .pose(p)
-                    .can_sleep(false)
-                    .ccd_enabled(true),
-            )
+        let bodies = std::array::from_fn(|i| {
+            let mut builder = r::RigidBodyBuilder::dynamic()
+                .pose(poses[i])
+                .can_sleep(false)
+                .ccd_enabled(true);
+            if i == 4 {
+                if let Some(payload) = s.payload_moments {
+                    builder =
+                        builder.additional_mass_properties(r::MassProperties::with_inertia_matrix(
+                            rv(payload.center.as_vec3() - bucket_com),
+                            payload.mass_kg as f32,
+                            r::Matrix::from_cols_array(
+                                &payload.inertia().to_cols_array().map(|x| x as f32),
+                            ),
+                        ));
+                }
+            }
+            world.insert_body(builder)
         });
         let mut attach = |part: usize, b: r::ColliderBuilder| {
             world.insert_collider(
@@ -475,8 +510,12 @@ impl Model {
         attach(
             4,
             r::ColliderBuilder::cuboid(0.41, 0.025, (lip - heel).length() * 0.5)
-                .position(pose(Vec3::ZERO, floor_q))
-                .mass(250. + s.payload_kg)
+                .position(pose(floor_center - bucket_com, floor_q))
+                .mass(if s.payload_moments.is_some() {
+                    250.
+                } else {
+                    250. + s.payload_kg
+                })
                 .user_data(3),
         );
         for b in bodies {
@@ -643,7 +682,7 @@ pub fn step(
         .as_ref()
         .ok_or("Articulation was not enabled")?
         .clone();
-    if !s.valid() || (s.payload_kg - m.bucket.wet_mass_kg() as f32).abs() > 0.01 {
+    if !s.valid_for(m) {
         return Err("Articulated state or constant payload changed outside custody".into());
     }
     let axes = [
@@ -818,4 +857,21 @@ pub fn step(
     s.feedback = feedback;
     m.articulation = Some(s);
     Ok(())
+}
+
+fn steel_moments() -> crate::payload::MassMoments {
+    let heel = DVec3::new(0., -0.2375, -0.01);
+    let lip = DVec3::new(0., -0.23, 1.065);
+    let q = DQuat::from_rotation_arc(DVec3::Z, (lip - heel).normalize());
+    crate::payload::MassMoments::cuboid(
+        250.,
+        (heel + lip) * 0.5 + q * DVec3::Y * 0.025,
+        DVec3::new(0.41, 0.025, (lip - heel).length() * 0.5),
+        q,
+    )
+}
+fn carried_moments(m: &Excavator) -> crate::payload::MassMoments {
+    let s = m.articulation.as_ref().unwrap();
+    s.payload_moments
+        .unwrap_or_else(|| steel_moments().scaled(m.bucket.wet_mass_kg() / 250.))
 }

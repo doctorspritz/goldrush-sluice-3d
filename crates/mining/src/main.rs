@@ -24,6 +24,45 @@ fn main() -> AppExit {
     // Keep Bevy's compute/IO pools bounded as well as the single solver worker.
     use bevy::app::{TaskPoolOptions, TaskPoolPlugin};
     let (mut session, demo) = demo::initial();
+    if std::env::args().any(|a| a == "--payload-motion") {
+        let args: Vec<_> = std::env::args().collect();
+        assert!(
+            ["--new-shift", "--articulated-machine", "--capture-motion"]
+                .iter()
+                .all(|s| args.iter().any(|a| a == s)),
+            "payload probe requires a bounded new-shift articulated capture"
+        );
+        assert!(
+            session.machine.bucket.is_empty(),
+            "payload probe starts empty before finite fixture preparation"
+        );
+        let material = session
+            .site
+            .dig(mining_sim::Vec3::new(19., 0., 20.), 0.4, 0.2, 0.08);
+        assert!(material.volume() > 0.01, "finite site fixture material");
+        session
+            .machine
+            .enable_articulation()
+            .expect("probe mechanism");
+        let (w, q) = mining_sim::articulation::payload_frame(&session.machine);
+        let parcel = mining_sim::payload::RigidParcel::cuboid(
+            material,
+            w + q * mining_sim::Vec3::new(0., -0.075, 0.53).as_dvec3(),
+            mining_sim::Vec3::new(0.30, (material.volume() / (8. * 0.30 * 0.40)) as f32, 0.40)
+                .as_dvec3(),
+            q,
+            Default::default(),
+            Default::default(),
+        )
+        .expect("finite volume fixture");
+        session.falling.push(parcel.into_falling());
+        session
+            .capture_rigid_load(0, 1.)
+            .expect("finite initial fixture capture");
+        session.message =
+            "Finite spatial-load initial condition; this probe is not a scoop/dump replay.".into();
+    }
+
     if std::env::args().any(|a| a == "--articulated-machine") {
         session
             .machine

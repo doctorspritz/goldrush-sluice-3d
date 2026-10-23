@@ -29,6 +29,8 @@ pub struct FallingLoad {
     pub position: Vec3,
     pub velocity: Vec3,
     pub material: Material,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rigid: Option<crate::payload::RigidState>,
 }
 #[derive(Clone, Copy, Debug)]
 pub enum Action {
@@ -63,6 +65,7 @@ pub struct Session {
     pub initial_gold_g: f64,
     pub delivered_m3: f64,
     pub water_balance: crate::water_balance::WaterBalance,
+    pub material_motion: Option<crate::payload::MaterialMotion>,
 }
 #[derive(Serialize, Deserialize)]
 struct Save {
@@ -77,6 +80,8 @@ struct Save {
     delivered_m3: f64,
     #[serde(default)]
     water_balance: Option<crate::water_balance::WaterBalance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    material_motion: Option<crate::payload::MaterialMotion>,
 }
 impl Default for Session {
     fn default() -> Self {
@@ -114,6 +119,7 @@ impl Session {
             initial_gold_g,
             delivered_m3: 0.0,
             water_balance,
+            material_motion: None,
         }
     }
     pub fn near_plant(&self) -> bool {
@@ -255,6 +261,7 @@ impl Session {
                         position,
                         velocity: forward * 0.7,
                         material: m,
+                        rigid: None,
                     });
                     Ok(())
                 }
@@ -395,6 +402,7 @@ impl Session {
                     position,
                     velocity,
                     material,
+                    rigid: None,
                 });
             }
             self.player.yaw += self.machine.heading + self.machine.swing - old_yaw;
@@ -430,8 +438,18 @@ impl Session {
         let mut impacts = Vec::new();
         for (i, load) in self.falling.iter_mut().enumerate() {
             let before = load.position;
-            load.velocity.y -= 9.81 * dt;
-            load.position += load.velocity * dt;
+            match load.advance_rigid(dt) {
+                Ok(true) => {}
+                Ok(false) => {
+                    load.velocity.y -= 9.81 * dt;
+                    load.position += load.velocity * dt;
+                }
+                Err(error) => {
+                    self.paused = true;
+                    self.message = format!("Material motion paused: {error}");
+                    return;
+                }
+            }
             let p = load.position;
             let over_hopper = (p.x - HOPPER_X).abs() < 0.85 && (p.z - HOPPER_Z).abs() < 0.85;
             if over_hopper && before.y >= top - 0.03 && p.y <= top {
@@ -442,6 +460,14 @@ impl Session {
         }
         for (i, hopper) in impacts.into_iter().rev() {
             let load = self.falling.swap_remove(i);
+            if let Some(parcel) = load.rigid_parcel() {
+                let motion = self.material_motion.get_or_insert_with(Default::default);
+                if hopper {
+                    motion.hopper.receive(&parcel);
+                } else {
+                    motion.terrain.receive(&parcel);
+                }
+            }
             if hopper {
                 let overflow = self.sluice.add_to_hopper(load.material);
                 self.delivered_m3 += load.material.volume() - overflow.volume();
@@ -527,12 +553,64 @@ impl Session {
         }
         total
     }
+    pub fn uses_material_motion(&self) -> bool {
+        self.machine
+            .articulation
+            .as_ref()
+            .is_some_and(|a| a.payload_moments.is_some() || a.exchange.is_some())
+            || self.falling.iter().any(|l| l.rigid.is_some())
+            || self.material_motion.is_some()
+    }
+    pub fn capture_rigid_load(
+        &mut self,
+        index: usize,
+        fraction: f64,
+    ) -> Result<crate::payload::ExchangeReport, String> {
+        let mut source = Some(
+            self.falling
+                .get(index)
+                .filter(|load| load.valid_rigid_state())
+                .and_then(FallingLoad::rigid_parcel)
+                .ok_or("No finite rigid load")?,
+        );
+        let report =
+            crate::articulation::capture_payload(&mut self.machine, &mut source, fraction)?;
+        if let Some(parcel) = source {
+            self.falling[index] = parcel.into_falling();
+        } else {
+            self.falling.remove(index);
+        }
+        Ok(report)
+    }
+    pub fn release_rigid_payload(
+        &mut self,
+        fraction: f64,
+    ) -> Result<crate::payload::ExchangeReport, String> {
+        if self.falling.len() >= 2048 {
+            return Err("No room for another finite material parcel".into());
+        }
+        let parcel = crate::articulation::release_payload(&mut self.machine, fraction)?;
+        let report = self
+            .machine
+            .articulation
+            .as_ref()
+            .unwrap()
+            .exchange
+            .as_ref()
+            .unwrap()
+            .last
+            .clone();
+        self.falling.push(parcel.into_falling());
+        Ok(report)
+    }
     pub fn save_json(&self) -> Result<String, String> {
         let mut site = self.site.snapshot();
         site.normalize_bed_age();
         serde_json::to_string(&Save {
-            // Ordinary shifts remain v6; v7 requires the complete articulated state.
-            version: if self.machine.articulation.is_some() {
+            // v8 preserves spatial payload/rigid parcels and boundary receipts.
+            version: if self.uses_material_motion() {
+                8
+            } else if self.machine.articulation.is_some() {
                 7
             } else {
                 6
@@ -546,6 +624,7 @@ impl Session {
             initial_gold_g: self.initial_gold_g,
             delivered_m3: self.delivered_m3,
             water_balance: Some(self.water_balance.clone()),
+            material_motion: self.material_motion.clone(),
         })
         .map_err(|e| e.to_string())
     }
@@ -554,13 +633,13 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if !matches!(s.version, 2..=7) {
+        if !matches!(s.version, 2..=8) {
             return Err("Unsupported save version".into());
         }
         if !matches!(
             (s.version, s.site.bed_age_unit()),
             (2, crate::site::BedAgeUnit::Legacy20HzSteps)
-                | (3..=7, crate::site::BedAgeUnit::Microseconds)
+                | (3..=8, crate::site::BedAgeUnit::Microseconds)
         ) {
             return Err("Invalid saved terrain clock".into());
         }
@@ -583,8 +662,21 @@ impl Session {
         if s.version < 5 && (s.site.bed_remainder_m3() > 0. || s.site.has_projection_inventory()) {
             return Err("Legacy save contains unsupported subgrid bed inventory".into());
         }
-        if (s.version == 7) != s.machine.articulation.is_some() {
-            return Err("Saved articulated mechanism does not match its format version".into());
+        let advanced = s
+            .machine
+            .articulation
+            .as_ref()
+            .is_some_and(|a| a.payload_moments.is_some() || a.exchange.is_some())
+            || s.falling.iter().any(|l| l.rigid.is_some())
+            || s.material_motion.is_some();
+        if (s.version < 7 && s.machine.articulation.is_some())
+            || (s.version == 7 && s.machine.articulation.is_none())
+            || (s.version == 8) != advanced
+        {
+            return Err("Saved material dynamics do not match the format version".into());
+        }
+        if s.material_motion.as_ref().is_some_and(|m| !m.valid()) {
+            return Err("Invalid material boundary receipt".into());
         }
         if s.version < 6 && s.machine.tracks.carries_motion() {
             return Err("Legacy save contains unsupported machine dynamics".into());
@@ -612,6 +704,7 @@ impl Session {
                 !l.position.is_finite()
                     || !l.velocity.is_finite()
                     || !l.material.valid()
+                    || !l.valid_rigid_state()
                     || l.position.length() > 1000.0
                     || l.velocity.length() > 100.0
             })
@@ -653,6 +746,7 @@ impl Session {
             initial_gold_g: s.initial_gold_g,
             delivered_m3: s.delivered_m3,
             water_balance,
+            material_motion: s.material_motion,
         };
         if (session.accounted_gold() - session.initial_gold_g).abs() > 1e-3 {
             return Err("Save has an inconsistent gold ledger".into());

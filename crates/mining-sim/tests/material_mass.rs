@@ -113,6 +113,7 @@ fn excavation_custody_deposition_and_save_preserve_component_dry_mass() {
         position: Vec3::new(20., 2., 20.),
         velocity: Vec3::ZERO,
         material: s.player.hand.take_fraction(0.3),
+        rigid: None,
     });
     assert!(s
         .sluice

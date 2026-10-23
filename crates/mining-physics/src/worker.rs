@@ -11,6 +11,9 @@ use std::{
 
 pub enum Command {
     Action(Action),
+    /// Explicit material-transaction probe/future soil contact admission; the
+    /// ordinary joystick dump remains unavailable in mechanism validation.
+    ReleaseRigidPayload(f64),
     Pause(bool),
     Water(f32),
     Feed(f32),
@@ -267,6 +270,12 @@ fn apply(session: &mut Session, solver: &mut impl Solver, commands: Vec<Command>
             Command::Action(action) => {
                 let _ = session.on_action(action);
             }
+            Command::ReleaseRigidPayload(fraction) => {
+                match session.release_rigid_payload(fraction) {
+                    Ok(_) => session.message="Finite payload release probe; ordinary digging and dumping remain unavailable.".into(),
+                    Err(e) => session.message=format!("Payload exchange refused: {e}"),
+                }
+            }
             Command::Reset(mut replacement) => {
                 if session.machine.articulation.is_some() {
                     if let Err(e) = replacement.machine.enable_articulation() {
@@ -509,6 +518,48 @@ mod tests {
                 .unwrap()["version"],
             7
         );
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn finite_payload_release_and_v8_live_load_keep_motion_and_custody() {
+        let mut session = Session::new();
+        let material = session
+            .site
+            .dig(mining_sim::Vec3::new(19., 0., 20.), 0.4, 0.2, 0.04);
+        session.machine.bucket.add(material);
+        session.machine.enable_articulation().unwrap();
+        let gold = session.accounted_gold();
+        let water = session.stored_water_m3();
+        let mut worker = Worker::spawn(|| Ok(SlowSolver), session).unwrap();
+        receive(&mut worker);
+        let path =
+            std::env::temp_dir().join(format!("sluice-payload-worker-{}.json", std::process::id()));
+        worker
+            .submit(Work {
+                commands: vec![
+                    Command::ReleaseRigidPayload(0.5),
+                    Command::Save(path.clone()),
+                ],
+                ..Default::default()
+            })
+            .unwrap();
+        let saved = receive(&mut worker);
+        assert_eq!(saved.session.falling.len(), 1);
+        assert!((saved.session.accounted_gold() - gold).abs() < 1e-9);
+        assert!((saved.session.stored_water_m3() - water).abs() < 1e-9);
+        let state = saved.session.save_json().unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&state).unwrap()["version"],
+            8
+        );
+        worker
+            .submit(Work {
+                commands: vec![Command::Load(path.clone())],
+                ..Default::default()
+            })
+            .unwrap();
+        let loaded = receive(&mut worker);
+        assert_eq!(loaded.session.save_json().unwrap(), state);
         std::fs::remove_file(path).unwrap();
     }
 }

@@ -5,24 +5,53 @@ use mining_sim::{session::Controls, Action, Placement, Session, Vec3};
 #[test]
 #[ignore = "requires real Metal/Vulkan compute adapter; run with --ignored --nocapture"]
 fn original_pipeline_survives_excavation_pumping_camera_and_live_restore() {
-    run_pipeline(false, false);
+    run_pipeline(false, false, false);
 }
 #[test]
 #[ignore = "requires real GPU; run explicitly with --ignored --nocapture"]
 fn conservative_pipeline_survives_excavation_pumping_camera_and_live_restore() {
-    run_pipeline(true, false);
+    run_pipeline(true, false, false);
 }
 #[test]
 #[ignore = "requires actual GPU; run explicitly with --ignored --nocapture"]
 fn articulated_machine_survives_original_water_pipeline_and_full_live_restore() {
-    run_pipeline(false, true);
+    run_pipeline(false, true, false);
 }
-fn run_pipeline(conservative: bool, articulated: bool) {
+#[test]
+#[ignore = "requires real GPU; explicitly run with --ignored --nocapture"]
+fn spatial_payload_exchange_survives_the_water_pipeline_and_v8_restore() {
+    run_pipeline(false, true, true);
+}
+fn run_pipeline(conservative: bool, articulated: bool, exchange: bool) {
     let mut s = Session::new();
     if articulated {
         s.machine.enable_articulation().unwrap();
     }
     let initial_mass = s.accounted_dry_mass_kg();
+    if exchange {
+        let batch = s.site.dig(Vec3::new(19., 0., 20.), 0.4, 0.2, 0.04);
+        let (w, q) = mining_sim::articulation::payload_frame(&s.machine);
+        let parcel = mining_sim::payload::RigidParcel::cuboid(
+            batch,
+            w + q * glam::DVec3::new(0., -0.05, 0.45),
+            glam::DVec3::new(0.2, batch.volume() / (8. * 0.2 * 0.25), 0.25),
+            q,
+            glam::DVec3::new(0.1, -0.2, 0.3),
+            glam::DVec3::new(0., 0.3, 0.),
+        )
+        .unwrap();
+        s.falling.push(parcel.into_falling());
+        s.capture_rigid_load(0, 1.).unwrap();
+        s.release_rigid_payload(0.3).unwrap();
+        assert!(s
+            .machine
+            .articulation
+            .as_ref()
+            .unwrap()
+            .payload_moments
+            .is_some());
+    }
+
     let mut physics = Hydraulics::new().unwrap();
     if conservative {
         physics = physics.with_conservative_phases();
@@ -88,8 +117,22 @@ fn run_pipeline(conservative: bool, articulated: bool) {
                     .fold(0.0, f32::max)
             );
             let machine = serde_json::to_string(&s.machine).unwrap();
+            let body_motion = serde_json::to_string(&s.material_motion).unwrap();
+            if exchange {
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(&s.save_json().unwrap()).unwrap()
+                        ["version"],
+                    8
+                );
+            }
+
             s = Session::load_json(&s.save_json().unwrap()).unwrap();
             assert_eq!(serde_json::to_string(&s.machine).unwrap(), machine);
+            assert_eq!(
+                serde_json::to_string(&s.material_motion).unwrap(),
+                body_motion
+            );
+
             assert_eq!(s.machine.articulation.is_some(), articulated);
             physics.restore();
             assert_eq!(

@@ -25,6 +25,8 @@ pub struct MotionCapture {
     interval: f64,
     frame_limit: usize,
     view: Option<String>,
+    initial_bulk: Option<f64>,
+    initial_dry_mass: Option<f64>,
 }
 impl Default for MotionCapture {
     fn default() -> Self {
@@ -97,6 +99,8 @@ impl Default for MotionCapture {
             interval: 1. / hz,
             frame_limit: (duration * hz).ceil() as usize,
             view,
+            initial_bulk: None,
+            initial_dry_mass: None,
         }
     }
 }
@@ -199,6 +203,10 @@ pub fn update(
     let Some(directory) = capture.directory.clone() else {
         return;
     };
+    if capture.initial_bulk.is_none() {
+        capture.initial_bulk = Some(game.session.accounted_bulk_material_m3());
+        capture.initial_dry_mass = Some(game.session.accounted_dry_mass_kg());
+    }
     if crate::water::surface_failed(&water) {
         exit.write(AppExit::error());
         return;
@@ -215,7 +223,7 @@ pub fn update(
         if finished.elapsed().as_secs_f64() > 1. && written == capture.frames.len() {
             let (passed, advancing_intervals) =
                 recording_status(&capture.frames, capture.frozen, game.session.paused);
-            let report = serde_json::json!({"source":"native Bevy screenshot, actual GPU output; capture overhead affects cadence","passed":passed,"expected_frozen":capture.frozen,"paused":game.session.paused,"session_message":game.session.message,"advancing_intervals":advancing_intervals,"wall_seconds":capture.recording.unwrap().elapsed().as_secs_f64(),"frames":capture.frames,"water_presentation":water.presentation_report(),"water_balance_error_m3":game.session.water_balance_error_m3(),"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
+            let report = serde_json::json!({"source":"native Bevy screenshot, actual GPU output; capture overhead affects cadence","passed":passed,"expected_frozen":capture.frozen,"paused":game.session.paused,"session_message":game.session.message,"advancing_intervals":advancing_intervals,"wall_seconds":capture.recording.unwrap().elapsed().as_secs_f64(),"frames":capture.frames,"water_presentation":water.presentation_report(),"reference_bulk_m3":capture.initial_bulk,"accounted_bulk_m3":game.session.accounted_bulk_material_m3(),"reference_dry_mass_kg":capture.initial_dry_mass,"accounted_dry_mass_kg":game.session.accounted_dry_mass_kg(),"water_balance_error_m3":game.session.water_balance_error_m3(),"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
             std::fs::write(
                 directory.join("frames.json"),
                 serde_json::to_vec(&report).unwrap(),
@@ -278,7 +286,7 @@ pub fn update(
     let sluice = &game.session.sluice;
     let tracks = water_tracks(sluice, &capture.ids);
     let name = format!("frame-{:04}.png", capture.frames.len());
-    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"paused":game.session.paused,"session_message":game.session.message,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"water_debug":capture.water_debug,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3});
+    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"paused":game.session.paused,"session_message":game.session.message,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"water_debug":capture.water_debug,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"rigid_falling":game.session.falling.iter().filter(|l|l.rigid.is_some()).collect::<Vec<_>>(),"material_motion":game.session.material_motion,"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3});
     capture.frames.push(record);
     commands
         .spawn(Screenshot::primary_window())

@@ -5,6 +5,7 @@ pub mod intake;
 pub mod machine;
 pub mod material;
 pub mod outflow;
+pub mod payload;
 pub mod replay;
 pub mod session;
 pub mod site;

@@ -420,7 +420,7 @@ P restarts water; O opens feed.".into()}
                         let status=if a.feedback.failure.is_some() {"Mechanism paused"}
                             else if a.feedback.command_fraction<0.999 {"Pump power limit · digging/dumping unavailable"}
                             else {"Dynamic joints · digging/dumping unavailable"};
-                        format!("MECHANISM VALIDATION · WASD tracks · Q / E swing · R / F boom · T / G stick · Y / H curl\nPump {:.2} kW · Stored {:.1} J · Tilt {:.0}° · {}",s.machine.digging.tool_power_w/1000.,a.feedback.elastic_j,s.machine.tracks.feedback.tilt_deg,status)
+                        format!("MECHANISM VALIDATION · WASD tracks · Q / E swing · R / F boom · T / G stick · Y / H curl\nLoad {:.0} kg · Pump {:.2} kW · Stored {:.1} J · Tilt {:.0}° · {}",s.machine.bucket.wet_mass_kg(),s.machine.digging.tool_power_w/1000.,a.feedback.elastic_j,s.machine.tracks.feedback.tilt_deg,status)
                     } else {
                     format!("WASD tracks · Q / E swing · R / F boom · T / G stick · Y / H curl · Space cut · J dump\nBucket {:.0}% · Load {:.0} kg · Tool {:.1} kN · Tilt {:.0}° · {}",s.machine.bucket.volume()/mining_sim::machine::BUCKET_CAPACITY*100.0,s.machine.bucket.wet_mass_kg(),s.machine.digging.requested_force_n/1000.,s.machine.tracks.feedback.tilt_deg,status)
                     }

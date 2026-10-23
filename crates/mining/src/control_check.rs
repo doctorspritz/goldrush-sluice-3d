@@ -20,6 +20,7 @@ pub struct Check {
     clock: f64,
     finished: bool,
     mechanism_motion: bool,
+    payload_motion: bool,
 }
 impl Check {
     pub fn from_args() -> Self {
@@ -33,6 +34,7 @@ impl Check {
         );
         Self {
             mechanism_motion,
+            payload_motion: args.iter().any(|a| a == "--payload-motion"),
             path: args
                 .iter()
                 .position(|a| a == "--check-controls")
@@ -51,15 +53,54 @@ impl Check {
 }
 pub fn inject(
     mut check: ResMut<Check>,
+    mut game: ResMut<Game>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut mouse: ResMut<ButtonInput<MouseButton>>,
     mut motion: ResMut<AccumulatedMouseMotion>,
     mut buttons: Query<(&HudButton, &mut Interaction)>,
 ) {
-    if (check.path.is_none() && !check.mechanism_motion) || check.finished {
+    if (check.path.is_none() && !check.mechanism_motion && !check.payload_motion) || check.finished
+    {
         return;
     }
     check.frame += 1;
+    if check.payload_motion {
+        // Open the bucket until gravity points away from its floor, then
+        // exercise separated free-flight events. Contact/retention is not
+        // bypassed into ordinary gameplay by this explicit fixture probe.
+        let (press, release) = match check.frame {
+            181 => (Some(KeyCode::Tab), None),
+            182 => (None, Some(KeyCode::Tab)),
+            200 => (Some(KeyCode::KeyR), None),
+            280 => (Some(KeyCode::KeyH), Some(KeyCode::KeyR)),
+            550 => (Some(KeyCode::KeyE), Some(KeyCode::KeyH)),
+            670 => (Some(KeyCode::F5), None),
+            671 => (None, Some(KeyCode::F5)),
+            800 => (None, Some(KeyCode::KeyE)),
+            _ => (None, None),
+        };
+        if let Some(key) = release {
+            keys.release(key);
+        }
+        if let Some(key) = press {
+            keys.press(key);
+        }
+        if check.frame == 650 || check.frame == 730 {
+            let m = &game.session.machine;
+            let arm = m.arm();
+            let normal = arm.up * arm.angle.cos() - arm.forward * arm.angle.sin();
+            if normal.y < -0.1 {
+                game.command(mining_physics::worker::Command::ReleaseRigidPayload(
+                    if check.frame == 650 { 0.5 } else { 1. },
+                ));
+            } else {
+                game.session.message =
+                    "Payload probe refused: bucket floor does not clear gravity-driven separation."
+                        .into();
+            }
+        }
+        return;
+    }
     if check.mechanism_motion {
         // Bounded native evidence uses ordinary Bevy keys. It never resets,
         // pauses, teleports, cuts or injects material into the mechanism.

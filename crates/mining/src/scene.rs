@@ -1053,11 +1053,22 @@ pub fn sync_machine(
         } else {
             Visibility::Hidden
         };
-        *t = bucket.mul_transform(Transform::from_xyz(0.0, -0.10, 0.4).with_scale(Vec3::new(
-            0.35,
-            0.18 * fill,
-            0.38,
-        )));
+        if let Some(moments) = m.articulation.as_ref().and_then(|a| a.payload_moments) {
+            let (q, e) = moments.visual_ellipsoid();
+            *t = bucket.mul_transform(
+                Transform::from_translation(bvec(moments.center.as_vec3()))
+                    .with_rotation(Quat::from_xyzw(
+                        q.x as f32, q.y as f32, q.z as f32, q.w as f32,
+                    ))
+                    .with_scale(bvec(e.as_vec3())),
+            );
+        } else {
+            *t = bucket.mul_transform(Transform::from_xyz(0.0, -0.10, 0.4).with_scale(Vec3::new(
+                0.35,
+                0.18 * fill,
+                0.38,
+            )));
+        }
     }
     let visible = s.player.mode == ControlMode::OnFoot && s.player.third_person;
     let person = Transform::from_translation(bvec(s.player.position))
@@ -1211,8 +1222,18 @@ pub fn sync_material(
         if let Some(load) = s.falling.get(parcel.index) {
             let size = (load.material.volume() as f32).cbrt() * 0.65;
             *v = Visibility::Visible;
-            *t = Transform::from_translation(bvec(load.position))
-                .with_scale(Vec3::splat(size.max(0.025)));
+            *t = if let Some(body) = &load.rigid {
+                let (axes, extent) = body.moments.visual_ellipsoid();
+                let q = body.rotation * axes;
+                Transform::from_translation(bvec(load.position))
+                    .with_rotation(Quat::from_xyzw(
+                        q.x as f32, q.y as f32, q.z as f32, q.w as f32,
+                    ))
+                    .with_scale(Vec3::new(extent.x as f32, extent.y as f32, extent.z as f32))
+            } else {
+                Transform::from_translation(bvec(load.position))
+                    .with_scale(Vec3::splat(size.max(0.025)))
+            };
         } else {
             *v = Visibility::Hidden;
         }
