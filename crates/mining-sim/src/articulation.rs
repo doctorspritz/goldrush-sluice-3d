@@ -364,6 +364,14 @@ struct Model {
 }
 impl Model {
     fn new(m: &mut Excavator, env: &Environment<'_>, s: &Articulation) -> Result<Self, String> {
+        Self::with_ground(m, env, s, None)
+    }
+    fn with_ground(
+        m: &mut Excavator,
+        env: &Environment<'_>,
+        s: &Articulation,
+        ground_override: Option<r::SharedShape>,
+    ) -> Result<Self, String> {
         let q = m.chassis_rotation();
         let upper = m.upper_rotation();
         let arm = m.arm();
@@ -392,15 +400,29 @@ impl Model {
             ..Default::default()
         };
         if let Some(site) = env.site {
-            let ground = m.ground(site);
-            let c = Vec3::new(
-                (ground.origin[0] as f32 + 32.) * crate::site::CELL,
-                0.,
-                (ground.origin[1] as f32 + 32.) * crate::site::CELL,
-            );
+            let (shape, c) = if let Some(shape) = ground_override {
+                (
+                    shape,
+                    Vec3::new(
+                        (crate::site::WIDTH - 1) as f32 * crate::site::CELL * 0.5,
+                        0.,
+                        (crate::site::WIDTH - 1) as f32 * crate::site::CELL * 0.5,
+                    ),
+                )
+            } else {
+                let ground = m.ground(site);
+                (
+                    ground.shape.clone(),
+                    Vec3::new(
+                        (ground.origin[0] as f32 + 32.) * crate::site::CELL,
+                        0.,
+                        (ground.origin[1] as f32 + 32.) * crate::site::CELL,
+                    ),
+                )
+            };
             world.insert(
                 r::RigidBodyBuilder::fixed(),
-                r::ColliderBuilder::new(ground.shape.clone())
+                r::ColliderBuilder::new(shape)
                     .translation(rv(c))
                     .friction(1.)
                     .user_data(10),
@@ -671,6 +693,40 @@ pub fn step(
     dt: f32,
     env: &Environment<'_>,
 ) -> Result<(), String> {
+    step_inner(m, input, dt, env, None)
+}
+/// Moving finite soil shares the very same constraint solve with all five
+/// machine bodies. No prescribed earth pressure or post-step impulse kick.
+pub fn step_soil(
+    m: &mut Excavator,
+    input: MachineInput,
+    dt: f32,
+    env: &Environment<'_>,
+    soil: &mut crate::soil::ActiveSoil,
+) -> Result<(), String> {
+    if !soil.valid() {
+        return Err("Invalid moving soil".into());
+    }
+    if env.site.is_some_and(|site| !soil.dry_contact(site)) {
+        return Err("Wet moving-soil contact is not coupled yet".into());
+    }
+    let mut machine = m.clone();
+    let mut candidate = soil.clone();
+    step_inner(&mut machine, input, dt, env, Some(&mut candidate))?;
+    if !machine.valid() || !candidate.valid() {
+        return Err("Moving-soil contact integration became invalid".into());
+    }
+    *m = machine;
+    *soil = candidate;
+    Ok(())
+}
+fn step_inner(
+    m: &mut Excavator,
+    input: MachineInput,
+    dt: f32,
+    env: &Environment<'_>,
+    mut soil: Option<&mut crate::soil::ActiveSoil>,
+) -> Result<(), String> {
     if !dt.is_finite() || dt <= 0. || dt > 0.05 || !env.gravity.is_finite() {
         return Err("Invalid articulated timestep/gravity".into());
     }
@@ -696,7 +752,21 @@ pub fn step(
     if axes.iter().any(|x| !x.is_finite() || x.abs() > 1.) {
         return Err("Invalid articulated input".into());
     }
-    let mut model = Model::new(m, env, &s)?;
+    let ground = soil
+        .as_deref_mut()
+        .and_then(|soil| env.site.map(|site| soil.ground(site)));
+    let mut model = Model::with_ground(m, env, &s, ground)?;
+    model
+        .world
+        .integration_parameters
+        .maximum_dissipation_friction = soil.is_some();
+    let mut soil_handles = Vec::new();
+    if let Some(soil) = soil.as_deref_mut() {
+        for clod in &mut soil.clods {
+            soil_handles.push(clod.insert(&mut model.world)?);
+        }
+    }
+    let soil_before = soil.as_deref().map(|s| s.totals(env.gravity));
     let before = model.feedback(&s, &m.hydraulics);
     let before_frames = model.bodies.map(|h| {
         let b = &model.world.bodies[h];
@@ -852,6 +922,66 @@ pub fn step(
             .acos()
             .to_degrees(),
     };
+    if let Some(soil) = soil {
+        for (clod, handle) in soil.clods.iter_mut().zip(soil_handles) {
+            clod.read(&model.world.bodies[handle]);
+        }
+        let a = soil_before.unwrap();
+        let b = soil.totals(env.gravity);
+        let mut contacts = 0;
+        let mut impulse = DVec3::ZERO;
+        let mut fixed_contact = false;
+        for pair in model.world.narrow_phase.contact_pairs() {
+            let ca = &model.world.colliders[pair.collider1];
+            let cb = &model.world.colliders[pair.collider2];
+            for manifold in pair.solver_manifolds() {
+                for point in &manifold.points {
+                    if point.data.impulse <= 0. {
+                        continue;
+                    }
+                    fixed_contact |= ca.parent().is_none_or(|h| model.world.bodies[h].is_fixed())
+                        || cb.parent().is_none_or(|h| model.world.bodies[h].is_fixed());
+                    if (ca.user_data == 3 && cb.user_data == 20)
+                        || (cb.user_data == 3 && ca.user_data == 20)
+                    {
+                        contacts += 1;
+                        // Normal impulse only. Tangential friction is still solved,
+                        // but is not mislabeled as an observed total tool wrench.
+                        impulse += sv(manifold.data.normal).as_dvec3()
+                            * point.data.impulse as f64
+                            * if ca.user_data == 3 { -1. } else { 1. };
+                    }
+                }
+            }
+        }
+        let dp = feedback.linear_momentum_ns.as_dvec3() - before.linear_momentum_ns.as_dvec3();
+        let dl = feedback.angular_momentum_nms.as_dvec3() - before.angular_momentum_nms.as_dvec3();
+        let mass = a.mass_kg + feedback.mass_kg;
+        let center = (before.center_of_mass.as_dvec3() * before.mass_kg
+            + feedback.center_of_mass.as_dvec3() * feedback.mass_kg
+            + a.first_kg_m
+            + b.first_kg_m)
+            / (2. * mass);
+        soil.feedback = crate::soil::ContactFeedback {
+            steps: soil.feedback.steps + 1,
+            bucket_contacts: contacts,
+            bucket_normal_impulse_ns: impulse,
+            machine_momentum_change_ns: dp,
+            soil_momentum_change_ns: b.momentum_ns - a.momentum_ns,
+            coupled_passivity_residual_j: feedback.passivity_residual_j
+                + b.kinetic_j
+                + b.gravitational_j
+                - a.kinetic_j
+                - a.gravitational_j,
+            closed_free_system: !fixed_contact && env.loads.is_empty() && !belt_source,
+            free_linear_residual_ns: dp + b.momentum_ns
+                - a.momentum_ns
+                - env.gravity.as_dvec3() * (mass * dt as f64),
+            free_angular_residual_nms: dl + b.angular_nms
+                - a.angular_nms
+                - center.cross(env.gravity.as_dvec3()) * (mass * dt as f64),
+        };
+    }
     s.pump_energy_j += pump;
     s.relief_heat_j += returned + relief_before + relief_after;
     s.feedback = feedback;

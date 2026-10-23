@@ -1,0 +1,463 @@
+//! Finite moving soil in the machine's contact world. This first constitutive
+//! case is frictional/drained: no cohesion, pore pressure or compaction law.
+use crate::{
+    payload::MassMoments,
+    site::{CELL, WIDTH},
+    tracks::{pose, rv, sq, sv},
+    Material, Site, Vec3,
+};
+use glam::{DMat3, DVec3, Quat};
+use rapier3d::prelude as r;
+use serde::{Deserialize, Serialize};
+
+pub const MAX_CLODS: usize = 2048;
+const TETS: [[usize; 4]; 3] = [[0, 1, 2, 5], [0, 1, 4, 5], [0, 3, 4, 5]];
+pub const FACES: [[usize; 3]; 8] = [
+    [0, 2, 1],
+    [3, 4, 5],
+    [0, 1, 4],
+    [0, 4, 3],
+    [1, 2, 5],
+    [1, 5, 4],
+    [2, 0, 3],
+    [2, 3, 5],
+];
+fn outer(p: DVec3) -> DMat3 {
+    DMat3::from_cols(p * p.x, p * p.y, p * p.z)
+}
+/// Exact uniform-density tetrahedral moments of a convex vertical prism.
+/// Three independent simplex integrals, with a nearby origin for conditioning.
+pub fn prism_moments(vertices: [DVec3; 6], mass: f64) -> Result<(f64, MassMoments), String> {
+    if !mass.is_finite() || mass <= 0. || vertices.iter().any(|v| !v.is_finite()) {
+        return Err("Invalid soil prism".into());
+    }
+    for i in 0..3 {
+        if ((vertices[i].x - vertices[i + 3].x).abs() + (vertices[i].z - vertices[i + 3].z).abs())
+            > 1e-10
+            || vertices[i + 3].y < vertices[i].y
+        {
+            return Err("Soil geometry must be a vertical convex prism".into());
+        }
+    }
+    let origin = vertices[0];
+    let p = vertices.map(|v| v - origin);
+    let mut volume = 0.;
+    let mut first = DVec3::ZERO;
+    let mut second = DMat3::ZERO;
+    for ids in TETS {
+        let v = ids.map(|i| p[i]);
+        let dv = (v[1] - v[0]).dot((v[2] - v[0]).cross(v[3] - v[0])).abs() / 6.;
+        let sum = v.into_iter().sum::<DVec3>();
+        volume += dv;
+        first += sum * (dv / 4.);
+        second += (v.into_iter().map(outer).sum::<DMat3>() + outer(sum)) * (dv / 20.);
+    }
+    if !volume.is_finite() || volume <= 1e-16 {
+        return Err("Unresolved soil prism volume".into());
+    }
+    let center = first / volume;
+    Ok((
+        volume,
+        MassMoments {
+            mass_kg: mass,
+            center: origin + center,
+            second: (second / volume - outer(center)) * mass,
+        },
+    ))
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Clod {
+    material: Material,
+    vertices: [Vec3; 6],
+    moments: MassMoments,
+    pub center: Vec3,
+    pub rotation: Quat,
+    pub velocity: Vec3,
+    pub angular_velocity: Vec3,
+    #[serde(skip)]
+    shape: Option<r::SharedShape>,
+}
+impl Clod {
+    pub fn prism(material: Material, vertices: [DVec3; 6]) -> Result<Self, String> {
+        if !material.valid() || material.volume() <= 0. {
+            return Err("Invalid soil material".into());
+        }
+        let (_, world_moments) = prism_moments(vertices, material.wet_mass_kg())?;
+        let local = vertices.map(|p| (p - world_moments.center).as_vec3());
+        // The f32 collider geometry owns registered inertia and the mesh;
+        // exact f64 finite stocks own the mass and material custody.
+        let (_, mut moments) = prism_moments(local.map(|v| v.as_dvec3()), material.wet_mass_kg())?;
+        moments.center = DVec3::ZERO;
+        let body = Self {
+            material,
+            vertices: local,
+            moments,
+            center: world_moments.center.as_vec3(),
+            rotation: Quat::IDENTITY,
+            velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            shape: None,
+        };
+        if !body.valid() {
+            return Err("Invalid soil shape or mass moments".into());
+        }
+        Ok(body)
+    }
+    pub fn material(&self) -> Material {
+        self.material
+    }
+    pub fn vertices(&self) -> &[Vec3; 6] {
+        &self.vertices
+    }
+    pub fn moments(&self) -> MassMoments {
+        self.moments
+    }
+    pub fn geometry_volume_m3(&self) -> f64 {
+        prism_moments(self.vertices.map(|v| v.as_dvec3()), 1.).map_or(0., |x| x.0)
+    }
+    pub fn valid(&self) -> bool {
+        self.material.valid()
+            && self.material.volume() > 0.
+            && self.material.wet_mass_kg() == self.moments.mass_kg
+            && self.moments.valid()
+            && self.moments.center == DVec3::ZERO
+            && self.center.is_finite()
+            && self.center.length() < 1000.
+            && self.rotation.is_finite()
+            && (self.rotation.length_squared() - 1.).abs() < 0.0001
+            && self.velocity.is_finite()
+            && self.velocity.length() < 100.
+            && self.angular_velocity.is_finite()
+            && self.angular_velocity.length() < 100.
+            && self
+                .vertices
+                .iter()
+                .all(|p| p.is_finite() && p.length() < 2.)
+            && prism_moments(
+                self.vertices.map(|v| v.as_dvec3()),
+                self.material.wet_mass_kg(),
+            )
+            .is_ok_and(|(_, m)| m.second == self.moments.second)
+    }
+    pub fn friction(&self) -> f32 {
+        let m = self.material;
+        ((m.sand_m3 * 30. + m.soil_m3 * 28. + m.gravel_m3 * 36.) / m.volume())
+            .to_radians()
+            .tan() as f32
+    }
+    pub(crate) fn insert(
+        &mut self,
+        world: &mut r::PhysicsWorld,
+    ) -> Result<r::RigidBodyHandle, String> {
+        if self.shape.is_none() {
+            self.shape = Some(
+                r::SharedShape::convex_hull(&self.vertices.map(rv))
+                    .ok_or("Invalid soil convex hull")?,
+            );
+        }
+        let h = world.insert_body(
+            r::RigidBodyBuilder::dynamic()
+                .pose(pose(self.center, self.rotation))
+                .linvel(rv(self.velocity))
+                .angvel(rv(self.angular_velocity))
+                .can_sleep(false)
+                .ccd_enabled(true)
+                .additional_mass_properties(r::MassProperties::with_inertia_matrix(
+                    r::Vector::ZERO,
+                    self.moments.mass_kg as f32,
+                    r::Matrix::from_cols_array(
+                        &self.moments.inertia().to_cols_array().map(|v| v as f32),
+                    ),
+                )),
+        );
+        world.insert_collider(
+            r::ColliderBuilder::new(self.shape.as_ref().unwrap().clone())
+                .density(0.)
+                .friction(self.friction())
+                .friction_combine_rule(r::CoefficientCombineRule::Min)
+                .restitution(0.)
+                .user_data(20),
+            Some(h),
+        );
+        world.bodies[h].recompute_mass_properties_from_colliders(&world.colliders);
+        Ok(h)
+    }
+    pub(crate) fn read(&mut self, body: &r::RigidBody) {
+        self.center = sv(body.translation());
+        self.rotation = sq(*body.rotation());
+        self.velocity = sv(body.linvel());
+        self.angular_velocity = sv(body.angvel());
+    }
+    pub fn totals(&self, gravity: Vec3) -> Totals {
+        let mass = self.moments.mass_kg;
+        let q = glam::DMat3::from_quat(self.rotation.as_dquat());
+        let i = q * self.moments.inertia() * q.transpose();
+        let w = self.angular_velocity.as_dvec3();
+        let v = self.velocity.as_dvec3();
+        let p = v * mass;
+        let spin = i * w;
+        Totals {
+            mass_kg: mass,
+            first_kg_m: self.center.as_dvec3() * mass,
+            momentum_ns: p,
+            angular_nms: self.center.as_dvec3().cross(p) + spin,
+            kinetic_j: 0.5 * (v.dot(p) + w.dot(spin)),
+            gravitational_j: -mass * gravity.as_dvec3().dot(self.center.as_dvec3()),
+        }
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Totals {
+    pub mass_kg: f64,
+    pub first_kg_m: DVec3,
+    pub momentum_ns: DVec3,
+    pub angular_nms: DVec3,
+    pub kinetic_j: f64,
+    pub gravitational_j: f64,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ContactFeedback {
+    pub steps: u64,
+    pub bucket_contacts: usize,
+    pub bucket_normal_impulse_ns: DVec3,
+    pub machine_momentum_change_ns: DVec3,
+    pub soil_momentum_change_ns: DVec3,
+    pub coupled_passivity_residual_j: f64,
+    /// Only true without fixed contacts, imposed external loads or driven belts.
+    pub closed_free_system: bool,
+    pub free_linear_residual_ns: DVec3,
+    pub free_angular_residual_nms: DVec3,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActiveSoil {
+    pub clods: Vec<Clod>,
+    pub source: Material,
+    pub geometry_volume_error_m3: f64,
+    pub feedback: ContactFeedback,
+    #[serde(skip)]
+    ground: Option<(u64, r::SharedShape)>,
+}
+impl ActiveSoil {
+    pub fn from_clods(clods: Vec<Clod>) -> Result<Self, String> {
+        let mut source = Material::default();
+        for c in &clods {
+            source.add(c.material);
+        }
+        let result = Self {
+            geometry_volume_error_m3: clods.iter().map(Clod::geometry_volume_m3).sum::<f64>()
+                - source.volume(),
+            clods,
+            source,
+            feedback: Default::default(),
+            ground: None,
+        };
+        if !result.valid() {
+            return Err("Invalid active soil".into());
+        }
+        Ok(result)
+    }
+    pub fn material(&self) -> Material {
+        let mut m = Material::default();
+        for c in &self.clods {
+            m.add(c.material);
+        }
+        m
+    }
+    pub fn valid(&self) -> bool {
+        let m = self.material();
+        let a = [m.soil_m3, m.sand_m3, m.gravel_m3, m.gold_g, m.pore_water_m3];
+        let b = [
+            self.source.soil_m3,
+            self.source.sand_m3,
+            self.source.gravel_m3,
+            self.source.gold_g,
+            self.source.pore_water_m3,
+        ];
+        !self.clods.is_empty()
+            && self.clods.len() <= MAX_CLODS
+            && self.source.valid()
+            && self.clods.iter().all(Clod::valid)
+            && self.geometry_volume_error_m3.is_finite()
+            && self.feedback.steps < 1_000_000_000_000
+            && a.into_iter()
+                .zip(b)
+                .all(|(a, b)| (a - b).abs() <= 1e-12 * (1. + b))
+            && self.feedback.bucket_normal_impulse_ns.is_finite()
+            && self.feedback.machine_momentum_change_ns.is_finite()
+            && self.feedback.soil_momentum_change_ns.is_finite()
+            && self.feedback.coupled_passivity_residual_j.is_finite()
+            && self.feedback.free_linear_residual_ns.is_finite()
+            && self.feedback.free_angular_residual_nms.is_finite()
+    }
+    pub fn totals(&self, gravity: Vec3) -> Totals {
+        let mut t = Totals::default();
+        for c in &self.clods {
+            let a = c.totals(gravity);
+            t.mass_kg += a.mass_kg;
+            t.first_kg_m += a.first_kg_m;
+            t.momentum_ns += a.momentum_ns;
+            t.angular_nms += a.angular_nms;
+            t.kinetic_j += a.kinetic_j;
+            t.gravitational_j += a.gravitational_j;
+        }
+        t
+    }
+    pub(crate) fn ground(&mut self, site: &Site) -> r::SharedShape {
+        if self
+            .ground
+            .as_ref()
+            .is_none_or(|(revision, _)| *revision != site.revision)
+        {
+            let heights = (0..WIDTH)
+                .flat_map(|x| (0..WIDTH).map(move |z| site.world.ground_height(x, z)))
+                .collect();
+            let shape = r::SharedShape::heightfield_with_flags(
+                r::Array2::new(WIDTH, WIDTH, heights),
+                r::Vector::new((WIDTH - 1) as f32 * CELL, 1., (WIDTH - 1) as f32 * CELL),
+                r::HeightFieldFlags::FIX_INTERNAL_EDGES,
+            );
+            self.ground = Some((site.revision, shape));
+        }
+        self.ground.as_ref().unwrap().1.clone()
+    }
+    /// Wet contact is deliberately refused until moving-solid displacement and
+    /// effective stress are coupled to the existing conservative flow solver.
+    pub fn dry_contact(&self, site: &Site) -> bool {
+        self.clods.iter().all(|c| {
+            let p = c.vertices.map(|v| c.center + c.rotation * v);
+            let min = p.into_iter().fold(Vec3::splat(f32::INFINITY), Vec3::min);
+            let max = p
+                .into_iter()
+                .fold(Vec3::splat(f32::NEG_INFINITY), Vec3::max);
+            let lo = (min / CELL).floor().as_ivec3();
+            let hi = (max / CELL).ceil().as_ivec3();
+            (lo.z.max(0)..=hi.z.min(WIDTH as i32 - 1)).all(|z| {
+                (lo.x.max(0)..=hi.x.min(WIDTH as i32 - 1)).all(|x| {
+                    let i = site.world.idx(x as usize, z as usize);
+                    site.world.water_depth(x as usize, z as usize) <= 1e-6
+                        || site.world.water_surface[i] < min.y - 0.001
+                })
+            })
+        })
+    }
+}
+
+/// Activate the complete support of selected terrain nodes. Matching Parry's
+/// triangle diagonal makes the moving prisms fill exactly the removed surface
+/// layer, including boundary wedges. The substrate remains a real collider.
+pub fn activate(
+    site: &mut Site,
+    nodes: &[(usize, f32)],
+    subdivisions: usize,
+) -> Result<ActiveSoil, String> {
+    if nodes.is_empty() || nodes.len() > 64 || !(1..=4).contains(&subdivisions) {
+        return Err("Bounded soil activation required".into());
+    }
+    let mut unique = std::collections::HashSet::new();
+    if nodes.iter().any(|&(i, d)| {
+        i >= WIDTH * WIDTH
+            || i % WIDTH < 1
+            || i % WIDTH >= WIDTH - 1
+            || i / WIDTH < 1
+            || i / WIDTH >= WIDTH - 1
+            || !unique.insert(i)
+            || !d.is_finite()
+            || d <= 0.
+            || d > 0.5
+    }) {
+        return Err("Invalid activation nodes/depth".into());
+    }
+    let mut candidate = site.clone();
+    let mut removed = vec![Material::default(); WIDTH * WIDTH];
+    let old = (0..WIDTH * WIDTH)
+        .map(|i| site.world.ground_height(i % WIDTH, i / WIDTH) as f64)
+        .collect::<Vec<_>>();
+    for &(i, d) in nodes {
+        removed[i] = candidate.excavate_columns(vec![(i, d)]);
+    }
+    let new = (0..WIDTH * WIDTH)
+        .map(|i| candidate.world.ground_height(i % WIDTH, i / WIDTH) as f64)
+        .collect::<Vec<_>>();
+    let mut clods = Vec::new();
+    let n = subdivisions;
+    for z in 0..WIDTH - 1 {
+        for x in 0..WIDTH - 1 {
+            let a = z * WIDTH + x;
+            let b = (z + 1) * WIDTH + x;
+            let c = z * WIDTH + x + 1;
+            let d = (z + 1) * WIDTH + x + 1;
+            for ids in [[a, b, c], [b, d, c]] {
+                if ids.iter().all(|&i| removed[i].volume() == 0.) {
+                    continue;
+                }
+                let point = |uv: [usize; 2], layer: f64| {
+                    let w = [
+                        1. - (uv[0] + uv[1]) as f64 / n as f64,
+                        uv[0] as f64 / n as f64,
+                        uv[1] as f64 / n as f64,
+                    ];
+                    let p = std::array::from_fn::<_, 3, _>(|k| {
+                        DVec3::new(
+                            (ids[k] % WIDTH) as f64 * CELL as f64,
+                            new[ids[k]] + (old[ids[k]] - new[ids[k]]) * layer,
+                            (ids[k] / WIDTH) as f64 * CELL as f64,
+                        )
+                    });
+                    p[0] * w[0] + p[1] * w[1] + p[2] * w[2]
+                };
+                let layers = ((ids.iter().map(|&i| old[i] - new[i]).fold(0., f64::max)
+                    / (CELL as f64 / n as f64))
+                    .ceil() as usize)
+                    .max(1);
+                for u in 0..n {
+                    for v in 0..n - u {
+                        let mut triangles = vec![[[u, v], [u + 1, v], [u, v + 1]]];
+                        if u + v + 1 < n {
+                            triangles.push([[u + 1, v], [u + 1, v + 1], [u, v + 1]]);
+                        }
+                        for tri in triangles {
+                            for layer in 0..layers {
+                                let mut material = Material::default();
+                                for uv in tri {
+                                    let w = [
+                                        1. - (uv[0] + uv[1]) as f64 / n as f64,
+                                        uv[0] as f64 / n as f64,
+                                        uv[1] as f64 / n as f64,
+                                    ];
+                                    for k in 0..3 {
+                                        material.add(
+                                            removed[ids[k]]
+                                                .scaled(w[k] / (6. * (n * n * layers) as f64)),
+                                        );
+                                    }
+                                }
+                                if material.volume() == 0. {
+                                    continue;
+                                }
+                                let vertices = std::array::from_fn(|i| {
+                                    point(tri[i % 3], (layer + i / 3) as f64 / layers as f64)
+                                });
+                                clods.push(Clod::prism(material, vertices)?);
+                                if clods.len() > MAX_CLODS {
+                                    return Err(
+                                        "Active soil capacity exceeded without changing terrain"
+                                            .into(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let soil = ActiveSoil::from_clods(clods)?;
+    if !soil.dry_contact(&candidate) {
+        return Err("Moving wet-soil displacement is not coupled yet".into());
+    }
+    if soil.geometry_volume_error_m3.abs() > 1e-4 * soil.source.volume() {
+        return Err("Terrain projection does not resolve this activation depth".into());
+    }
+    *site = candidate;
+    Ok(soil)
+}

@@ -56,7 +56,7 @@ impl Default for MotionCapture {
         assert!(
             view.as_deref().is_none_or(|v| matches!(
                 v,
-                "sluice" | "outlet" | "river" | "tailrace" | "bucket" | "bank" | "machine"
+                "sluice" | "outlet" | "river" | "tailrace" | "bucket" | "bank" | "machine" | "soil"
             )),
             "capture view"
         );
@@ -134,6 +134,30 @@ pub fn camera(
         }
         return;
     }
+    if capture.view.as_deref() == Some("soil") {
+        if let Some(soil) = &game.session.active_soil {
+            let m = &game.session.machine;
+            let arm = m.arm();
+            let center = soil
+                .clods
+                .iter()
+                .map(|c| c.center.as_dvec3() * c.material().wet_mass_kg())
+                .reduce(|a, b| a + b)
+                .unwrap_or_default()
+                / soil.material().wet_mass_kg();
+            let target = crate::app::bvec(center.as_vec3() * 0.75 + (arm.heel + arm.lip) * 0.125)
+                + Vec3::Y * 0.1;
+            let right = crate::app::bvec(m.upper_rotation() * mining_sim::Vec3::X);
+            let forward = crate::app::bvec(m.upper_rotation() * mining_sim::Vec3::Z);
+            if let Ok(mut camera) = camera.single_mut() {
+                *camera = Transform::from_translation(
+                    target + right * 2.3 + forward * 2. + Vec3::Y * 2.1,
+                )
+                .looking_at(target, Vec3::Y);
+            }
+        }
+        return;
+    }
     if capture.view.as_deref() == Some("bucket") {
         let arm = game.session.machine.arm();
         let forward = crate::app::bvec(arm.forward);
@@ -193,12 +217,24 @@ pub fn camera(
         *camera = Transform::from_translation(target + offset).looking_at(target, Vec3::Y);
     }
 }
+type SoilRenderQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Option<&'static GlobalTransform>,
+        Option<&'static ViewVisibility>,
+        &'static Mesh3d,
+    ),
+    With<crate::scene::SoilVisual>,
+>;
 pub fn update(
     mut commands: Commands,
     game: Res<crate::app::Game>,
     water: Res<crate::water::WaterSplats>,
     mut capture: ResMut<MotionCapture>,
     mut exit: MessageWriter<AppExit>,
+    soil_visuals: SoilRenderQuery,
+    meshes: Res<Assets<Mesh>>,
 ) {
     let Some(directory) = capture.directory.clone() else {
         return;
@@ -286,7 +322,7 @@ pub fn update(
     let sluice = &game.session.sluice;
     let tracks = water_tracks(sluice, &capture.ids);
     let name = format!("frame-{:04}.png", capture.frames.len());
-    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"paused":game.session.paused,"session_message":game.session.message,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"water_debug":capture.water_debug,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"rigid_falling":game.session.falling.iter().filter(|l|l.rigid.is_some()).collect::<Vec<_>>(),"material_motion":game.session.material_motion,"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3});
+    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"paused":game.session.paused,"session_message":game.session.message,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"water_debug":capture.water_debug,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"rigid_falling":game.session.falling.iter().filter(|l|l.rigid.is_some()).collect::<Vec<_>>(),"material_motion":game.session.material_motion,"soil_render":{"entities":soil_visuals.iter().count(),"visible":soil_visuals.iter().filter(|(_,v,_)|v.is_some_and(|v|v.get())).count(),"samples":soil_visuals.iter().take(3).map(|(t,v,m)|serde_json::json!({"translation":t.map(|t|t.translation().to_array()),"visible":v.map(|v|v.get()),"vertices":meshes.get(&m.0).map(|m|m.count_vertices()),"indexed":meshes.get(&m.0).map(|m|m.indices().is_some())})).collect::<Vec<_>>()},"active_soil":game.session.active_soil.as_ref().map(|s|serde_json::json!({"clods":s.clods.len(),"all_clods":if capture.frozen {Some(&s.clods)} else {None},"material":s.material(),"totals":s.totals(mining_sim::Vec3::new(0.,-9.81,0.)),"feedback":s.feedback,"sample":s.clods.iter().take(32).map(|c|serde_json::json!({"center":c.center,"rotation":c.rotation,"velocity":c.velocity,"angular_velocity":c.angular_velocity})).collect::<Vec<_>>()})),"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3});
     capture.frames.push(record);
     commands
         .spawn(Screenshot::primary_window())

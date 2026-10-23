@@ -132,3 +132,5 @@ Build a locally signed macOS application (fonts and scene assets are embedded):
 ```
 
 The app is written to the shared target directory under `bundles/First Bend.app`. This is a local development bundle, not a notarized distribution release.
+
+For the experimental finite bank/contact scene, run `SLUICE_SAVE_PATH=/tmp/first-bend-soil-trial.json scripts/play-mining.sh --new-shift --articulated-machine --active-soil`. Enter the cab with E/Tab and move the real links using R/F, T/G and Y/H. This drained frictional soil trial has a prepared finite bank; cohesive/wet-soil physics, full bucket retention and real-time throughput remain unfinished. See [the model and limits](docs/physics/active-soil.md).

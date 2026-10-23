@@ -69,6 +69,15 @@ fn main() -> AppExit {
             .enable_articulation()
             .expect("Articulated mechanism must initialize");
     }
+    if std::env::args().any(|a| a == "--active-soil") {
+        assert!(
+            std::env::args().any(|a| a == "--new-shift"),
+            "active-soil requires a fresh shift"
+        );
+        session
+            .prepare_soil_trial()
+            .expect("Finite soil trial must initialize");
+    }
     session.sluice.ensure_water_ids();
     let game = app::Game {
         session,
@@ -114,7 +123,7 @@ fn main() -> AppExit {
                 control_check::observe,
                 (app::camera, motion_capture::camera).chain(),
                 environment::update_detail,
-                scene::sync_machine,
+                (scene::sync_machine, scene::sync_soil).chain(),
                 scene::sync_terrain,
                 water::sync,
                 scene::sync_plant,

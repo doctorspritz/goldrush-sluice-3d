@@ -95,7 +95,10 @@ impl Default for Validation {
             input_check: std::env::args().any(|a| {
                 matches!(
                     a.as_str(),
-                    "--check-controls" | "--mechanism-motion" | "--payload-motion"
+                    "--check-controls"
+                        | "--mechanism-motion"
+                        | "--payload-motion"
+                        | "--soil-motion"
                 )
             }),
             input_complete: false,

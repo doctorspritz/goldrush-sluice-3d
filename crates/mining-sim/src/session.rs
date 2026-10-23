@@ -66,6 +66,7 @@ pub struct Session {
     pub delivered_m3: f64,
     pub water_balance: crate::water_balance::WaterBalance,
     pub material_motion: Option<crate::payload::MaterialMotion>,
+    pub active_soil: Option<crate::soil::ActiveSoil>,
 }
 #[derive(Serialize, Deserialize)]
 struct Save {
@@ -82,6 +83,8 @@ struct Save {
     water_balance: Option<crate::water_balance::WaterBalance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     material_motion: Option<crate::payload::MaterialMotion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    active_soil: Option<crate::soil::ActiveSoil>,
 }
 impl Default for Session {
     fn default() -> Self {
@@ -120,6 +123,7 @@ impl Session {
             delivered_m3: 0.0,
             water_balance,
             material_motion: None,
+            active_soil: None,
         }
     }
     pub fn near_plant(&self) -> bool {
@@ -273,7 +277,9 @@ impl Session {
             match a {
                 Action::EnterExit => {
                     self.message = if self.player.mode == ControlMode::Excavator {
-                        if self.machine.articulation.is_some() {
+                        if self.active_soil.is_some() {
+                            "Cab controls: R/F boom, T/G stick, Y/H curl. Move the bucket into the finite bank.".into()
+                        } else if self.machine.articulation.is_some() {
                             "Cab controls: R/F boom, T/G stick, Y/H curl. Mechanism validation: digging and dumping unavailable.".into()
                         } else {
                             "Cab controls: R/F boom, T/G stick, Y/H curl. Hold Space to cut; J pours the bucket.".into()
@@ -394,10 +400,13 @@ impl Session {
             if blocks_hopper || blocks_sluice {
                 machine_input.drive = 0.;
             }
-            if let Some((position, velocity, material)) =
-                self.machine
-                    .step_with_obstacles(machine_input, &mut self.site, dt, &obstacles)
-            {
+            if let Some((position, velocity, material)) = self.machine.step_with_soil(
+                machine_input,
+                &mut self.site,
+                dt,
+                &obstacles,
+                self.active_soil.as_mut(),
+            ) {
                 self.falling.push(FallingLoad {
                     position,
                     velocity,
@@ -408,11 +417,12 @@ impl Session {
             self.player.yaw += self.machine.heading + self.machine.swing - old_yaw;
             self.player.position = self.machine.position + Vec3::Y * 1.9;
         } else {
-            self.machine.step_with_obstacles(
+            self.machine.step_with_soil(
                 MachineInput::default(),
                 &mut self.site,
                 dt,
                 &obstacles,
+                self.active_soil.as_mut(),
             );
             let forward = Vec3::new(self.player.yaw.sin(), 0.0, self.player.yaw.cos());
             // Bevy looks along local -Z: screen-right is forward × up.
@@ -436,6 +446,18 @@ impl Session {
         }
         let top = Sluice::hopper_top(&self.site);
         let mut impacts = Vec::new();
+        if self.active_soil.is_some() {
+            if let Some(error) = self
+                .machine
+                .articulation
+                .as_ref()
+                .and_then(|a| a.feedback.failure.as_ref())
+            {
+                self.paused = true;
+                self.message = format!("Active soil stopped: {error}");
+                return;
+            }
+        }
         for (i, load) in self.falling.iter_mut().enumerate() {
             let before = load.position;
             match load.advance_rigid(dt) {
@@ -525,6 +547,10 @@ impl Session {
             + self.sluice.tailings.gold_g
             + self.sluice.concentrate.gold_g
             + self.falling.iter().map(|l| l.material.gold_g).sum::<f64>()
+            + self
+                .active_soil
+                .as_ref()
+                .map_or(0., |s| s.material().gold_g)
     }
     pub fn accounted_bulk_material_m3(&self) -> f64 {
         self.accounted_material().volume()
@@ -551,7 +577,98 @@ impl Session {
         for load in &self.falling {
             total.add(load.material);
         }
+        if let Some(soil) = &self.active_soil {
+            total.add(soil.material());
+        }
         total
+    }
+    /// Finite terrain-to-moving-soil activation. Cohesion and wet contacts are
+    /// intentionally not synthesized by the first frictional model.
+    /// Declared finite initial condition for interactive drained-soil checks.
+    /// The pose is prepared before the clock starts; subsequent motion uses
+    /// ordinary actuator commands and actual moving soil/steel contacts.
+    pub fn prepare_soil_trial(&mut self) -> Result<(), String> {
+        if self.sim_time != 0. || self.active_soil.is_some() || !self.machine.bucket.is_empty() {
+            return Err("Soil trial needs a fresh empty machine".into());
+        }
+        let clearance = |m: &Excavator| {
+            let a = m.arm();
+            [a.heel, a.lip]
+                .into_iter()
+                .flat_map(|p| {
+                    [-0.5, 0., 0.5]
+                        .map(|side| p + a.right * (side * crate::earthworks::BUCKET_WIDTH_M))
+                })
+                .map(|p| p.y - self.site.height(p.x, p.z))
+                .fold(f32::INFINITY, f32::min)
+        };
+        let mut m = self.machine.clone();
+        if m.tracks.carries_motion()
+            || m.articulation
+                .as_ref()
+                .is_some_and(|a| a.velocity.iter().any(|v| *v != 0.))
+        {
+            return Err("Soil trial cannot discard an initially moving machine".into());
+        }
+        // The CLI may already have selected articulation. Rebuild its initial
+        // zero-rate chart after preparing the initial boom angle, before time 0.
+        m.articulation = None;
+        let (mut lo, mut hi) = (-0.24, 1.20);
+        m.boom = lo;
+        if clearance(&m) >= 0.015 {
+            return Err("Soil trial cannot bracket the bank".into());
+        }
+        m.boom = hi;
+        if clearance(&m) <= 0.015 {
+            return Err("Soil trial cannot clear the bank".into());
+        }
+        for _ in 0..24 {
+            m.boom = (lo + hi) * 0.5;
+            if clearance(&m) < 0.015 {
+                lo = m.boom;
+            } else {
+                hi = m.boom;
+            }
+        }
+        m.boom = hi;
+        m.enable_articulation()?;
+        let a = m.arm();
+        let c = (a.heel + a.lip) * 0.5;
+        let mut nodes = Vec::new();
+        for z in 1..crate::site::WIDTH - 1 {
+            for x in 1..crate::site::WIDTH - 1 {
+                if (x as f32 * crate::site::CELL - c.x).abs() <= 0.45
+                    && (z as f32 * crate::site::CELL - c.z).abs() <= 0.5
+                {
+                    nodes.push((z * crate::site::WIDTH + x, 0.18));
+                }
+            }
+        }
+        let mut site = self.site.clone();
+        let soil = crate::soil::activate(&mut site, &nodes, 2)?;
+        self.machine = m;
+        self.site = site;
+        self.active_soil = Some(soil);
+        self.message="Drained frictional soil trial: move the actual bucket with R/F, T/G, Y/H. Cohesion, wet contact and retention are not calibrated.".into();
+        Ok(())
+    }
+    pub fn activate_soil(
+        &mut self,
+        nodes: &[(usize, f32)],
+        subdivisions: usize,
+    ) -> Result<(), String> {
+        if self.machine.articulation.is_none() {
+            return Err("Moving soil requires the articulated contact model".into());
+        }
+        let mut site = self.site.clone();
+        let mut soil = crate::soil::activate(&mut site, nodes, subdivisions)?;
+        if let Some(old) = &self.active_soil {
+            soil.clods.extend(old.clods.clone());
+            soil = crate::soil::ActiveSoil::from_clods(soil.clods)?;
+        }
+        self.site = site;
+        self.active_soil = Some(soil);
+        Ok(())
     }
     pub fn uses_material_motion(&self) -> bool {
         self.machine
@@ -608,7 +725,9 @@ impl Session {
         site.normalize_bed_age();
         serde_json::to_string(&Save {
             // v8 preserves spatial payload/rigid parcels and boundary receipts.
-            version: if self.uses_material_motion() {
+            version: if self.active_soil.is_some() {
+                9
+            } else if self.uses_material_motion() {
                 8
             } else if self.machine.articulation.is_some() {
                 7
@@ -625,6 +744,7 @@ impl Session {
             delivered_m3: self.delivered_m3,
             water_balance: Some(self.water_balance.clone()),
             material_motion: self.material_motion.clone(),
+            active_soil: self.active_soil.clone(),
         })
         .map_err(|e| e.to_string())
     }
@@ -633,17 +753,21 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if !matches!(s.version, 2..=8) {
+        if !matches!(s.version, 2..=9) {
             return Err("Unsupported save version".into());
         }
         if !matches!(
             (s.version, s.site.bed_age_unit()),
             (2, crate::site::BedAgeUnit::Legacy20HzSteps)
-                | (3..=8, crate::site::BedAgeUnit::Microseconds)
+                | (3..=9, crate::site::BedAgeUnit::Microseconds)
         ) {
             return Err("Invalid saved terrain clock".into());
         }
-        let carried_water = s.machine.bucket.pore_water_m3
+        let carried_water = s
+            .active_soil
+            .as_ref()
+            .map_or(0., |s| s.material().pore_water_m3)
+            + s.machine.bucket.pore_water_m3
             + s.player.hand.pore_water_m3
             + s.sluice.active_material().pore_water_m3
             + s.sluice.tailings.pore_water_m3
@@ -671,7 +795,10 @@ impl Session {
             || s.material_motion.is_some();
         if (s.version < 7 && s.machine.articulation.is_some())
             || (s.version == 7 && s.machine.articulation.is_none())
-            || (s.version == 8) != advanced
+            || (s.version < 8 && advanced)
+            || (s.version == 8 && !advanced)
+            || (s.version == 9) != s.active_soil.is_some()
+            || (s.active_soil.is_some() && s.machine.articulation.is_none())
         {
             return Err("Saved material dynamics do not match the format version".into());
         }
@@ -681,7 +808,16 @@ impl Session {
         if s.version < 6 && s.machine.tracks.carries_motion() {
             return Err("Legacy save contains unsupported machine dynamics".into());
         }
+        if s.active_soil.as_ref().is_some_and(|soil| !soil.valid()) {
+            return Err("Invalid saved moving soil".into());
+        }
         let site = Site::restore(s.site)?;
+        if s.active_soil
+            .as_ref()
+            .is_some_and(|soil| !soil.dry_contact(&site))
+        {
+            return Err("Saved moving soil has unsupported wet contact".into());
+        }
         if !s.machine.valid()
             || !s.sluice.valid()
             || !s.player.position.is_finite()
@@ -747,6 +883,7 @@ impl Session {
             delivered_m3: s.delivered_m3,
             water_balance,
             material_motion: s.material_motion,
+            active_soil: s.active_soil,
         };
         if (session.accounted_gold() - session.initial_gold_g).abs() > 1e-3 {
             return Err("Save has an inconsistent gold ledger".into());
@@ -755,6 +892,10 @@ impl Session {
     }
     pub fn stored_water_m3(&self) -> f64 {
         self.site.water_volume_m3()
+            + self
+                .active_soil
+                .as_ref()
+                .map_or(0., |s| s.material().pore_water_m3)
             + self.site.soil_water.stored_m3()
             + self.sluice.stored_water_m3()
             + self.machine.bucket.pore_water_m3

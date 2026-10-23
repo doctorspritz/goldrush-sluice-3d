@@ -23,6 +23,7 @@ pub struct Palette {
     pub chrome: Handle<StandardMaterial>,
     pub glass: Handle<StandardMaterial>,
     pub dirt: Handle<StandardMaterial>,
+    pub soil: Handle<StandardMaterial>,
     pub bucket_load: Handle<StandardMaterial>,
     pub hopper_load: Handle<StandardMaterial>,
     pub sand: Handle<StandardMaterial>,
@@ -202,6 +203,10 @@ pub fn setup(
         ..default()
     };
     glass.reflectance = 0.8;
+    let terrain_material = crate::ground_material::material(&mut images);
+    let mut soil_material = terrain_material.clone();
+    soil_material.base_color = Color::srgb(0.29, 0.17, 0.085);
+    soil_material.perceptual_roughness = 0.96;
     let p = Palette {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         sphere: meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap()),
@@ -212,6 +217,7 @@ pub fn setup(
         chrome: material(&mut materials, Color::srgb(0.63, 0.70, 0.72), 0.20, 0.9),
         glass: materials.add(glass),
         dirt: material(&mut materials, Color::srgb(0.29, 0.17, 0.085), 0.96, 0.0),
+        soil: materials.add(soil_material),
         bucket_load: material(&mut materials, Color::srgb(0.29, 0.17, 0.085), 0.96, 0.0),
         hopper_load: material(&mut materials, Color::srgb(0.29, 0.17, 0.085), 0.96, 0.0),
         sand: material(&mut materials, Color::srgb(0.50, 0.38, 0.23), 0.9, 0.0),
@@ -220,7 +226,7 @@ pub fn setup(
         skin: material(&mut materials, Color::srgb(0.64, 0.40, 0.24), 0.8, 0.0),
         white: material(&mut materials, Color::srgb(0.88, 0.84, 0.71), 0.8, 0.0),
     };
-    let terrain_mat = materials.add(crate::ground_material::material(&mut images));
+    let terrain_mat = materials.add(terrain_material);
     for z in (0..WIDTH - 1).step_by(16) {
         for x in (0..WIDTH - 1).step_by(16) {
             let mesh = terrain_mesh(&game.session.site, x, z, 1);
@@ -1333,5 +1339,194 @@ mod terrain_detail_tests {
         assert!(tangents
             .iter()
             .all(|t| (Vec3::new(t[0], t[1], t[2]).length() - 1.).abs() < 0.00001 && t[3] == -1.));
+    }
+}
+
+#[derive(Component)]
+pub(crate) struct SoilVisual {
+    index: usize,
+    generation: u64,
+    vertices: [SVec; 6],
+}
+/// Draw the actual convex clod geometry and solved pose, not decorative balls
+/// or an unaccounted pile. Geometry is rebuilt only on activation/load.
+pub fn sync_soil(
+    mut commands: Commands,
+    game: Res<Game>,
+    palette: Res<Palette>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut existing: Query<(Entity, &SoilVisual, &mut Transform)>,
+) {
+    let soil = game.session.active_soil.as_ref();
+    let mut visible = std::collections::HashSet::new();
+    for (entity, visual, mut transform) in &mut existing {
+        if let Some(clod) = soil.and_then(|s| s.clods.get(visual.index)).filter(|c| {
+            visual.generation == game.simulation_generation && visual.vertices == *c.vertices()
+        }) {
+            *transform =
+                Transform::from_translation(bvec(clod.center)).with_rotation(Quat::from_xyzw(
+                    clod.rotation.x,
+                    clod.rotation.y,
+                    clod.rotation.z,
+                    clod.rotation.w,
+                ));
+            visible.insert(visual.index);
+        } else {
+            commands.entity(entity).despawn();
+        }
+    }
+    let Some(soil) = soil else {
+        return;
+    };
+    for (index, clod) in soil
+        .clods
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !visible.contains(i))
+    {
+        let vertices = clod.vertices();
+        let mesh = soil_mesh(clod);
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(palette.soil.clone()),
+            Transform::from_translation(bvec(clod.center)).with_rotation(Quat::from_xyzw(
+                clod.rotation.x,
+                clod.rotation.y,
+                clod.rotation.z,
+                clod.rotation.w,
+            )),
+            SoilVisual {
+                index,
+                generation: game.simulation_generation,
+                vertices: *vertices,
+            },
+        ));
+    }
+}
+
+fn soil_mesh(clod: &mining_sim::soil::Clod) -> Mesh {
+    let vertices = clod.vertices();
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut tangents = Vec::new();
+    for face in mining_sim::soil::FACES {
+        let [a, mut b, mut c] = face.map(|i| vertices[i]);
+        let mut n = (b - a).cross(c - a);
+        if n.length_squared() < 1e-16 {
+            continue;
+        }
+        if n.dot((a + b + c) / 3.) < 0. {
+            std::mem::swap(&mut b, &mut c);
+            n = -n;
+        }
+        let n = n.normalize();
+        let t = (b - a).normalize();
+        let bitangent = n.cross(t);
+        for p in [a, b, c] {
+            positions.push(p.to_array());
+            normals.push(n.to_array());
+            uvs.push([p.dot(t), p.dot(bitangent)]);
+            tangents.push([t.x, t.y, t.z, 1.]);
+        }
+    }
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_indices(Indices::U32((0..positions.len() as u32).collect()));
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
+    mesh
+}
+#[cfg(test)]
+mod soil_render_tests {
+    use super::*;
+    use bevy::mesh::VertexAttributeValues;
+    #[test]
+    fn rendered_hull_encloses_the_same_physical_prism_with_outward_faces() {
+        let source = [
+            SVec::ZERO,
+            SVec::new(0.4, 0., 0.),
+            SVec::new(0., 0., 0.3),
+            SVec::new(0., 0.2, 0.),
+            SVec::new(0.4, 0.2, 0.),
+            SVec::new(0., 0.2, 0.3),
+        ];
+        for reverse in [false, true] {
+            let mut v = source;
+            if reverse {
+                v.swap(1, 2);
+                v.swap(4, 5);
+            }
+            let clod = mining_sim::soil::Clod::prism(
+                mining_sim::Material {
+                    soil_m3: 0.012,
+                    ..default()
+                },
+                v.map(|p| p.as_dvec3()),
+            )
+            .unwrap();
+            let mesh = soil_mesh(&clod);
+            let Some(VertexAttributeValues::Float32x3(positions)) =
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+            else {
+                panic!("render positions");
+            };
+            let Some(VertexAttributeValues::Float32x3(normals)) =
+                mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
+            else {
+                panic!("render normals");
+            };
+            assert_eq!(positions.len(), 24);
+            assert_eq!(mesh.indices().unwrap().len(), 24);
+            let Some(VertexAttributeValues::Float32x2(uvs)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0)
+            else {
+                panic!("soil UVs");
+            };
+            let Some(VertexAttributeValues::Float32x4(tangents)) =
+                mesh.attribute(Mesh::ATTRIBUTE_TANGENT)
+            else {
+                panic!("soil tangents");
+            };
+            let mut volume = 0.;
+            for (i, (face, normal)) in positions
+                .chunks_exact(3)
+                .zip(normals.chunks_exact(3))
+                .enumerate()
+            {
+                let p = face
+                    .iter()
+                    .map(|v| SVec::from_array(*v).as_dvec3())
+                    .collect::<Vec<_>>();
+                let cross = (p[1] - p[0]).cross(p[2] - p[0]);
+                assert!(cross.dot((p[0] + p[1] + p[2]) / 3.) > 0.);
+                assert!(
+                    cross
+                        .normalize()
+                        .dot(SVec::from_array(normal[0]).as_dvec3())
+                        > 0.99999
+                );
+                let uv = |n| Vec2::from_array(uvs[i * 3 + n]);
+                let du = uv(1) - uv(0);
+                let dv = uv(2) - uv(0);
+                let det = du.x * dv.y - du.y * dv.x;
+                assert!(det > 0., "normal map must retain outward handedness");
+                for n in [1, 2] {
+                    assert!(
+                        ((uv(n) - uv(0)).length() as f64 - (p[n] - p[0]).length()).abs() < 0.000001,
+                        "soil detail must retain metre scale"
+                    );
+                }
+                let t = ((p[1] - p[0]) * dv.y as f64 - (p[2] - p[0]) * du.y as f64) / det as f64;
+                let mapped_t =
+                    SVec::from_array(tangents[i * 3][..3].try_into().unwrap()).as_dvec3();
+                assert!(t.normalize().dot(mapped_t) > 0.99999 && tangents[i * 3][3] == 1.);
+                volume += p[0].dot(p[1].cross(p[2])) / 6.;
+            }
+            assert!((volume - clod.geometry_volume_m3()).abs() < 1e-8);
+        }
     }
 }

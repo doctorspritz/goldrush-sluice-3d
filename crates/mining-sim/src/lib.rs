@@ -11,6 +11,7 @@ pub mod session;
 pub mod site;
 pub mod sluice;
 pub mod slurry;
+pub mod soil;
 pub mod soil_water;
 pub mod storage;
 pub mod surface_bed;

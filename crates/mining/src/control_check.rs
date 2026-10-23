@@ -21,6 +21,7 @@ pub struct Check {
     finished: bool,
     mechanism_motion: bool,
     payload_motion: bool,
+    soil_motion: bool,
 }
 impl Check {
     pub fn from_args() -> Self {
@@ -32,9 +33,17 @@ impl Check {
                     && args.iter().any(|a| a == "--capture-motion")),
             "mechanism-motion requires the articulated model and bounded motion capture"
         );
+        assert!(
+            !args.iter().any(|a| a == "--soil-motion")
+                || ["--active-soil", "--new-shift", "--capture-motion"]
+                    .iter()
+                    .all(|flag| args.iter().any(|a| a == flag)),
+            "soil-motion requires finite active-soil setup and bounded capture"
+        );
         Self {
             mechanism_motion,
             payload_motion: args.iter().any(|a| a == "--payload-motion"),
+            soil_motion: args.iter().any(|a| a == "--soil-motion"),
             path: args
                 .iter()
                 .position(|a| a == "--check-controls")
@@ -59,11 +68,39 @@ pub fn inject(
     mut motion: ResMut<AccumulatedMouseMotion>,
     mut buttons: Query<(&HudButton, &mut Interaction)>,
 ) {
-    if (check.path.is_none() && !check.mechanism_motion && !check.payload_motion) || check.finished
+    if (check.path.is_none()
+        && !check.mechanism_motion
+        && !check.payload_motion
+        && !check.soil_motion)
+        || check.finished
     {
         return;
     }
     check.frame += 1;
+    if check.soil_motion {
+        // Only ordinary Bevy keys after the finite initial condition. No soil
+        // injection, terrain edits, pose teleports or prescribed cut transaction.
+        let (press, release) = match check.frame {
+            181 => (Some(KeyCode::Tab), None),
+            182 => (None, Some(KeyCode::Tab)),
+            200 => (Some(KeyCode::KeyF), None),
+            400 => (Some(KeyCode::KeyY), Some(KeyCode::KeyF)),
+            500 => (Some(KeyCode::KeyG), None),
+            650 => (Some(KeyCode::KeyR), Some(KeyCode::KeyG)),
+            651 => (None, Some(KeyCode::KeyY)),
+            850 => (None, Some(KeyCode::KeyR)),
+            750 => (Some(KeyCode::F5), None),
+            751 => (None, Some(KeyCode::F5)),
+            _ => (None, None),
+        };
+        if let Some(key) = release {
+            keys.release(key);
+        }
+        if let Some(key) = press {
+            keys.press(key);
+        }
+        return;
+    }
     if check.payload_motion {
         // Open the bucket until gravity points away from its floor, then
         // exercise separated free-flight events. Contact/retention is not

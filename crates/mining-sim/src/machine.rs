@@ -178,6 +178,16 @@ impl Excavator {
         dt: f32,
         obstacles: &[crate::tracks::Obstacle],
     ) -> Option<(Vec3, Vec3, Material)> {
+        self.step_with_soil(input, site, dt, obstacles, None)
+    }
+    pub fn step_with_soil(
+        &mut self,
+        input: MachineInput,
+        site: &mut Site,
+        dt: f32,
+        obstacles: &[crate::tracks::Obstacle],
+        mut soil: Option<&mut crate::soil::ActiveSoil>,
+    ) -> Option<(Vec3, Vec3, Material)> {
         if !dt.is_finite()
             || !(0. ..=0.05).contains(&dt)
             || dt == 0.
@@ -224,7 +234,12 @@ impl Excavator {
                     obstacles,
                     loads: &[],
                 };
-                if let Err(error) = crate::articulation::step(self, input, h, &env) {
+                let result = if let Some(soil) = soil.as_deref_mut() {
+                    crate::articulation::step_soil(self, input, h, &env, soil)
+                } else {
+                    crate::articulation::step(self, input, h, &env)
+                };
+                if let Err(error) = result {
                     self.articulation.as_mut().unwrap().feedback.failure = Some(error);
                     self.digging = DiggingFeedback {
                         limited: true,

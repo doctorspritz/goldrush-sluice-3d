@@ -30,3 +30,6 @@ opt-level = 3
 opt-level = 3
 [profile.playable.package.mining-physics]
 opt-level = 3
+
+[patch.crates-io]
+rapier3d = { path = "vendor/rapier3d" }
