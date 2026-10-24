@@ -226,6 +226,13 @@ impl RetainedSoil {
             .model
             .as_ref()
             .ok_or("Cannot save a poisoned retained world")?;
+        #[cfg(feature = "contact-work-audit")]
+        if m.world
+            .integration_parameters
+            .diagnostic_material_tangent_anchors
+        {
+            return Err("Unqualified diagnostic material tangent anchors cannot be saved".into());
+        }
         let boundary = ContactHistory::from_world(clone_world(&m.world), self.dispatcher);
         let saved = Saved {
             machine_json: serde_json::to_string(&self.machine).map_err(|e| e.to_string())?,

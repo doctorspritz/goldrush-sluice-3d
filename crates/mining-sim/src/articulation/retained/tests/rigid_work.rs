@@ -267,12 +267,16 @@ fn inspect_blocks(top: &mut [Value], oracle: &mut Oracle<'_>, inspect_geometry: 
 enum WorkTrial {
     SavedBaseline,
     FreshManifolds,
+    MaterialTangents,
+    FreshMaterialTangents,
 }
 impl WorkTrial {
     fn label(self) -> &'static str {
         match self {
             Self::SavedBaseline => "saved_policy_baseline",
             Self::FreshManifolds => "test_only_full_feature_refresh",
+            Self::MaterialTangents => "test_only_material_tangent_anchors",
+            Self::FreshMaterialTangents => "test_only_fresh_features_and_material_tangent_anchors",
         }
     }
 }
@@ -298,7 +302,75 @@ fn install_fresh_manifolds(owner: &mut RetainedSoil) -> Value {
             "before":before["normalized_contact_recycle_distance"],"after":0.},
         "all_other_integration_parameters_exact":true,"full_biased_friction_preserved":true})
 }
+fn install_trial(owner: &mut RetainedSoil, trial: WorkTrial) -> Value {
+    let fresh = matches!(
+        trial,
+        WorkTrial::FreshManifolds | WorkTrial::FreshMaterialTangents
+    );
+    let material = matches!(
+        trial,
+        WorkTrial::MaterialTangents | WorkTrial::FreshMaterialTangents
+    );
+    let mut changes = if fresh {
+        install_fresh_manifolds(owner)
+    } else {
+        json!({"dispatcher_changed":false,"integration_parameters_changed":false})
+    };
+    if material {
+        let world = &mut owner.model.as_mut().unwrap().world;
+        let before = world.integration_parameters;
+        assert!(!before.diagnostic_material_tangent_anchors);
+        world
+            .integration_parameters
+            .diagnostic_material_tangent_anchors = true;
+        let mut restored = world.integration_parameters;
+        restored.diagnostic_material_tangent_anchors = false;
+        assert_eq!(
+            restored, before,
+            "material-anchor trial changed another parameter"
+        );
+        let clone = clone_world(world);
+        assert!(
+            clone
+                .integration_parameters
+                .diagnostic_material_tangent_anchors,
+            "runtime clone dropped diagnostic selection"
+        );
+        changes["audit_only_material_tangent_anchors"] = json!(true);
+        changes["material_anchor_flag_is_serde_skipped"] = json!(true);
+        changes["save_refusal_required"] = json!(true);
+        changes["normal_geometry_jacobians_and_generic_twist_unchanged"] = json!(true);
+    }
+    changes
+}
 fn candidate_persistence_refusal(owner: &RetainedSoil, env: &Environment<'_>) -> Value {
+    if owner
+        .model
+        .as_ref()
+        .unwrap()
+        .world
+        .integration_parameters
+        .diagnostic_material_tangent_anchors
+    {
+        let error = owner.encode().unwrap_err();
+        assert!(
+            error.contains("material tangent anchors cannot be saved"),
+            "unexpected retained encode refusal: {error}"
+        );
+        let world = clone_world(&owner.model.as_ref().unwrap().world);
+        assert!(
+            world
+                .integration_parameters
+                .diagnostic_material_tangent_anchors
+        );
+        let boundary = ContactHistory::from_world(world, owner.dispatcher);
+        let direct_error = boundary.encode().unwrap_err();
+        assert!(direct_error.contains("material tangent anchors cannot be saved"));
+        return json!({"retained_encode_refused":true,"contact_history_encode_refused":true,
+            "runtime_clone_keeps_selection":true,"refusal":error,"direct_refusal":direct_error,
+            "ram_encode_attempted":true,"candidate_boundary_file_written":false,
+            "candidate_persistence_supported":false,"saved_continuation_claimed":false});
+    }
     // Encode only in RAM to exercise the existing admission boundary. Encoding
     // reinstalls the stored dispatcher in a clone; it is not candidate storage.
     let bytes = owner
@@ -327,6 +399,16 @@ fn saved_checked_bank_rigid_work() {
 fn saved_bank_fresh_manifold_work() {
     saved_bank_work_trial(WorkTrial::FreshManifolds);
 }
+#[test]
+#[ignore = "audit-only material tangent anchors on the exact saved complete bank"]
+fn saved_bank_material_tangent_work() {
+    saved_bank_work_trial(WorkTrial::MaterialTangents);
+}
+#[test]
+#[ignore = "audit-only material anchors plus full feature regeneration on the exact saved bank"]
+fn saved_bank_fresh_material_tangent_work() {
+    saved_bank_work_trial(WorkTrial::FreshMaterialTangents);
+}
 fn saved_bank_work_trial(trial: WorkTrial) {
     let session = bank();
     let obstacles = session.mechanical_obstacles();
@@ -345,11 +427,7 @@ fn saved_bank_work_trial(trial: WorkTrial) {
         std::env::var_os("SLUICE_RIGID_WORK").expect("fresh output directory"),
     );
     std::fs::create_dir(&output).unwrap();
-    let declared_changes = if trial == WorkTrial::FreshManifolds {
-        install_fresh_manifolds(&mut owner)
-    } else {
-        json!({"dispatcher_changed":false,"integration_parameters_changed":false})
-    };
+    let declared_changes = install_trial(&mut owner, trial);
     let initial_inventory = passive_inventory(&owner);
     let material_before = serde_json::to_string(&owner.soil().material()).unwrap();
     let parameters_before =
@@ -731,6 +809,19 @@ fn saved_rigid_work_primitive_pair_geometry() {
 #[test]
 #[ignore = "explicit complete fresh 300-step passive bank; no work collector and no candidate save"]
 fn complete_bank_fresh_manifold_trajectory() {
+    complete_bank_trajectory_trial(WorkTrial::FreshManifolds);
+}
+#[test]
+#[ignore = "audit-only material tangent anchors, full fresh 300-step bank, no work recorder or saves"]
+fn complete_bank_material_tangent_trajectory() {
+    complete_bank_trajectory_trial(WorkTrial::MaterialTangents);
+}
+#[test]
+#[ignore = "audit-only material anchors and regenerated features, full 300-step bank, no work recorder"]
+fn complete_bank_fresh_material_tangent_trajectory() {
+    complete_bank_trajectory_trial(WorkTrial::FreshMaterialTangents);
+}
+fn complete_bank_trajectory_trial(trial: WorkTrial) {
     let mut session = bank();
     session.machine.engine_on = false;
     session.machine.tracks.mechanical_hz = 480;
@@ -750,7 +841,7 @@ fn complete_bank_fresh_manifold_trajectory() {
         &env,
     )
     .unwrap();
-    let declared_changes = install_fresh_manifolds(&mut owner);
+    let declared_changes = install_trial(&mut owner, trial);
     let persistence_refusal = candidate_persistence_refusal(&owner, &env);
     let initial_inventory = passive_inventory(&owner);
     let material = serde_json::to_string(&owner.soil().material()).unwrap();
@@ -775,6 +866,20 @@ fn complete_bank_fresh_manifold_trajectory() {
             );
             break;
         }
+        assert_eq!(
+            owner
+                .model
+                .as_ref()
+                .unwrap()
+                .world
+                .integration_parameters
+                .diagnostic_material_tangent_anchors,
+            matches!(
+                trial,
+                WorkTrial::MaterialTangents | WorkTrial::FreshMaterialTangents
+            ),
+            "material tangent selection changed during trajectory"
+        );
         let inventory = passive_inventory(&owner);
         assert_eq!(
             inventory["physical_mass_kg"],
@@ -808,7 +913,7 @@ fn complete_bank_fresh_manifold_trajectory() {
     let final_persistence_refusal =
         (!owner.failed()).then(|| candidate_persistence_refusal(&owner, &env));
     let final_inventory = (!owner.failed()).then(|| passive_inventory(&owner));
-    let summary = json!({"trial":"test_only_full_feature_refresh_fresh_300_step_bank",
+    let summary = json!({"trial":format!("{}_fresh_300_step_bank",trial.label()),
         "fresh_start":true,"saved_failure_history_imported":false,"physical_replay_performed":true,
         "work_observer_enabled":false,"requested_steps":300,"accepted_steps":trajectory.len(),
         "trajectory_completed":completed,"actual_refusal":refusal,"initial_inventory":initial_inventory,"final_inventory":final_inventory,
@@ -830,5 +935,64 @@ fn complete_bank_fresh_manifold_trajectory() {
     assert!(
         maximum_feedback_error < 0.05,
         "independent and existing feedback energy disagree"
+    );
+}
+
+#[test]
+fn material_tangent_trial_refuses_both_save_boundaries_and_keeps_runtime_clone() {
+    let session = bank();
+    let obstacles = session.mechanical_obstacles();
+    let env = Environment {
+        gravity: -Vec3::Y * 9.81,
+        site: Some(&session.site),
+        obstacles: &obstacles,
+        loads: &[],
+    };
+    let mut owner =
+        RetainedSoil::new(session.machine.clone(), session.active_soil.unwrap(), &env).unwrap();
+    let legacy = owner.encode().unwrap();
+    assert!(
+        !owner
+            .model
+            .as_ref()
+            .unwrap()
+            .world
+            .integration_parameters
+            .diagnostic_material_tangent_anchors
+    );
+    let declared = install_trial(&mut owner, WorkTrial::MaterialTangents);
+    assert_eq!(declared["audit_only_material_tangent_anchors"], true);
+    assert_eq!(
+        candidate_persistence_refusal(&owner, &env)["retained_encode_refused"],
+        true
+    );
+    let clone = owner.clone();
+    assert!(
+        clone
+            .model
+            .as_ref()
+            .unwrap()
+            .world
+            .integration_parameters
+            .diagnostic_material_tangent_anchors
+    );
+    assert!(clone
+        .encode()
+        .unwrap_err()
+        .contains("material tangent anchors cannot be saved"));
+    let restored = RetainedSoil::decode(&legacy, &env).unwrap();
+    assert!(
+        !restored
+            .model
+            .as_ref()
+            .unwrap()
+            .world
+            .integration_parameters
+            .diagnostic_material_tangent_anchors
+    );
+    assert_eq!(
+        restored.encode().unwrap(),
+        legacy,
+        "legacy boundary bytes changed"
     );
 }

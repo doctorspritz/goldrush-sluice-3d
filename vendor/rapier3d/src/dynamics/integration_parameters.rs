@@ -289,8 +289,13 @@ pub struct IntegrationParameters {
     pub num_solver_iterations: usize,
     /// Opt-in Coulomb disk projection in the contact effective-mass metric.
     /// Defaults false to preserve existing worlds' numerical behavior.
-    #[cfg_attr(feature="serde-serialize",serde(default))]
+    #[cfg_attr(feature = "serde-serialize", serde(default))]
     pub maximum_dissipation_friction: bool,
+    /// Unqualified audit-only material-tangent-anchor trial. Never persisted.
+    /// Defaults false; the legacy contact equations remain selected.
+    #[cfg(feature = "contact-work-audit")]
+    #[cfg_attr(feature = "serde-serialize", serde(skip))]
+    pub diagnostic_material_tangent_anchors: bool,
     /// Number of internal Project Gauss Seidel (PGS) iterations run at each solver iteration (default: `1`).
     pub num_internal_pgs_iterations: usize,
     /// The number of stabilization iterations run at each solver iterations (default: `1`).
@@ -419,6 +424,8 @@ impl Default for IntegrationParameters {
             num_internal_stabilization_iterations: 1,
             num_solver_iterations: 4,
             maximum_dissipation_friction: false,
+            #[cfg(feature = "contact-work-audit")]
+            diagnostic_material_tangent_anchors: false,
             normalized_allowed_linear_error: 0.005,
             normalized_max_corrective_velocity: 3.0,
             // Four times the linear slop. A larger speculative

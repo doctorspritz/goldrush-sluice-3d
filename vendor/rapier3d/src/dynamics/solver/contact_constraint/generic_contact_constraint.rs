@@ -366,6 +366,12 @@ impl GenericContactConstraintBuilder {
                 }
             };
             let infos = CoulombContactPointInfos {
+                // This trial changes only rigid Coulomb tangent targets. The
+                // shared info type still needs inert fields for generic rows.
+                #[cfg(feature = "contact-work-audit")]
+                diagnostic_material_p1: Vector::ZERO,
+                #[cfg(feature = "contact-work-audit")]
+                diagnostic_material_p2: Vector::ZERO,
                 local_p1: local_point(multibody1.is_some(), solver_vel1, rb1, point),
                 local_p2: local_point(multibody2.is_some(), solver_vel2, rb2, point2),
                 tangent_vel: manifold_point.tangent_velocity,

@@ -69,6 +69,14 @@ impl ContactHistory {
         self.dispatcher
     }
     pub fn encode(&self) -> Result<Vec<u8>, String> {
+        #[cfg(feature = "contact-work-audit")]
+        if self
+            .world
+            .integration_parameters
+            .diagnostic_material_tangent_anchors
+        {
+            return Err("Unqualified diagnostic material tangent anchors cannot be saved".into());
+        }
         let payload = codec().serialize(&self.world).map_err(|e| e.to_string())?;
         let mut bytes = Vec::with_capacity(HEADER + payload.len());
         bytes.extend_from_slice(MAGIC);

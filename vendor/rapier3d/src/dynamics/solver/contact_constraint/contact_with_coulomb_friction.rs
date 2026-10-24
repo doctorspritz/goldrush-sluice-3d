@@ -29,6 +29,13 @@ pub struct CoulombContactPointInfos<N: ScalarType> {
     pub restitution_seed: N,
     pub local_p1: N::Vector,
     pub local_p2: N::Vector,
+    /// Actual source material witnesses in solver-body CoM coordinates. These
+    /// ride each body's rotation through every substep; unlike a static world
+    /// offset, they cannot invent slip under a subsequent common rigid motion.
+    #[cfg(feature = "contact-work-audit")]
+    pub diagnostic_material_p1: N::Vector,
+    #[cfg(feature = "contact-work-audit")]
+    pub diagnostic_material_p2: N::Vector,
     pub dist: N,
 }
 
@@ -39,6 +46,10 @@ impl<N: ScalarType> Default for CoulombContactPointInfos<N> {
             restitution_seed: N::zero(),
             local_p1: Default::default(),
             local_p2: Default::default(),
+            #[cfg(feature = "contact-work-audit")]
+            diagnostic_material_p1: Default::default(),
+            #[cfg(feature = "contact-work-audit")]
+            diagnostic_material_p2: Default::default(),
             dist: N::zero(),
         }
     }
@@ -317,6 +328,11 @@ impl ContactWithCoulombFrictionBuilder {
             // tracking); the base separation is reconstructed from the anchors above.
             out_builder.infos[k].local_p1 = poses1.inverse_transform_point(world_com1 + dp1);
             out_builder.infos[k].local_p2 = poses2.inverse_transform_point(world_com2 + dp2);
+            #[cfg(feature = "contact-work-audit")]
+            {
+                out_builder.infos[k].diagnostic_material_p1 = solver_contact.anchor1;
+                out_builder.infos[k].diagnostic_material_p2 = solver_contact.anchor2;
+            }
             out_builder.infos[k].tangent_vel = solver_contact.tangent_velocity;
             // Rebased so the per-substep tracking `info.dist + (p1 - p2)·n` is a pure delta
             // from the build-time poses (a base separation): with frozen arms, `p1 - p2`
@@ -459,8 +475,20 @@ impl ContactWithCoulombFrictionBuilder {
                 tangent_part.impulse_accumulator += tangent_part.impulse;
                 tangent_part.impulse *= warmstart_coeff;
 
+                let tangent_delta = p1 - p2;
+                #[cfg(feature = "contact-work-audit")]
+                let tangent_delta = if params.diagnostic_material_tangent_anchors {
+                    // Keep the real persistent tangential displacement. Do not
+                    // zero the initial error or subtract a frozen world offset:
+                    // the latter becomes non-objective again during TGS motion.
+                    poses1.transform_point(info.diagnostic_material_p1)
+                        + info.tangent_vel * solved_dt
+                        - poses2.transform_point(info.diagnostic_material_p2)
+                } else {
+                    tangent_delta
+                };
                 for j in 0..DIM - 1 {
-                    let bias = (p1 - p2).gdot(tangents1[j]) * inv_dt;
+                    let bias = tangent_delta.gdot(tangents1[j]) * inv_dt;
                     tangent_part.rhs[j] = tangent_part.rhs_wo_bias[j] + bias;
                 }
             }
