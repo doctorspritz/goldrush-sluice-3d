@@ -1,4 +1,4 @@
-//! Optional read-only work ledger for single-threaded articulated contacts.
+//! Optional read-only work ledger for single-threaded contact blocks.
 //!
 //! Net impulses in one fixed-pose contact block are paired with its midpoint
 //! velocity. This partitions block work by normal/tangent rows; it is not the
@@ -14,14 +14,20 @@ use std::cell::RefCell;
 use std::vec;
 use std::{format, vec::Vec};
 
+pub(crate) mod rigid_work;
+
 std::thread_local! {
     static RECORDING: RefCell<Option<WorkReport>> = const { RefCell::new(None) };
+    static COLLIDERS: RefCell<Option<std::collections::HashMap<crate::geometry::ColliderHandle, rigid_work::ColliderSnapshot>>> = const { RefCell::new(None) };
 }
 
 /// Contacts and fixed-stage energy observations from one diagnostic run.
 #[derive(Debug, Default, serde::Serialize)]
 pub struct WorkReport {
     contacts: Vec<ContactWork>,
+    rigid_contacts: Vec<rigid_work::RigidContactWork>,
+    rigid_scope: &'static str,
+    twist_selected_unobserved: bool,
     phases: Vec<PhaseEnergy>,
     islands: Vec<Vec<(u32, u32)>>,
 }
@@ -30,13 +36,38 @@ impl WorkReport {
     pub fn len(&self) -> usize {
         self.contacts.len()
     }
+    /// Number of observed non-padding rigid Coulomb lane/manifold blocks.
+    pub fn rigid_len(&self) -> usize {
+        self.rigid_contacts.len()
+    }
+    /// Iterate rigid lane/manifold records without cloning the full report.
+    pub fn iter_rigid_contacts(&self) -> impl Iterator<Item = &rigid_work::RigidContactWork> {
+        self.rigid_contacts.iter()
+    }
+    /// Iterate generic block records without cloning the full report.
+    pub fn iter_generic_contacts(&self) -> impl Iterator<Item = &ContactWork> {
+        self.contacts.iter()
+    }
+    /// Iterate the small fixed-stage energy observations.
+    pub fn iter_phases(&self) -> impl Iterator<Item = &PhaseEnergy> {
+        self.phases.iter()
+    }
+    /// Stable body-handle scope of each observed island.
+    pub fn islands(&self) -> &[Vec<(u32, u32)>] {
+        &self.islands
+    }
+    /// Whether the run selected twist contacts outside the rigid audit scope.
+    pub fn twist_selected_unobserved(&self) -> bool {
+        self.twist_selected_unobserved
+    }
     /// Whether no contact blocks were observed.
     pub fn is_empty(&self) -> bool {
         self.contacts.is_empty()
     }
 }
+/// Physical kinetic energy and mass-weighted position at one named solver stage.
 #[derive(Debug, serde::Serialize)]
-struct PhaseEnergy {
+pub struct PhaseEnergy {
     island: usize,
     label: &'static str,
     unbiased: bool,
@@ -49,6 +80,11 @@ struct PhaseEnergy {
 
 pub(crate) fn enabled() -> bool {
     RECORDING.with(|r| r.borrow().is_some())
+}
+
+/// Rigid diagnostics are explicitly selected by the collider-context recorder.
+pub(crate) fn rigid_enabled() -> bool {
+    enabled() && COLLIDERS.with(|c| c.borrow().is_some())
 }
 
 /// Serialized diagnostic for one fixed-pose generic contact solve block.
@@ -79,27 +115,60 @@ struct PointWork {
     normal_rhs_without_bias_m_s: f32,
 }
 
-/// Record generic contact blocks while executing `run`, without changing them.
+/// Record generic contact blocks and fixed-stage energy while executing `run`.
+/// Rigid collection is disabled; use [`record_with_colliders`] to select it.
 ///
 /// Only single-threaded builds and non-nested recording are admitted. A panic
 /// clears the collector. This is diagnostic overhead, never a timing mode.
 pub fn record<R>(run: impl FnOnce() -> R) -> (R, WorkReport) {
+    record_inner(None, run)
+}
+
+/// Record contacts with immutable collider parent/local-pose metadata captured
+/// before the run. Current world collider poses are derived at each rigid block
+/// from the live solver CoM, body local CoM and this collider-local transform.
+/// Collider attachments/local poses must remain unchanged during the run.
+pub fn record_with_colliders<R>(
+    colliders: &crate::geometry::ColliderSet,
+    run: impl FnOnce() -> R,
+) -> (R, WorkReport) {
+    record_inner(Some(rigid_work::capture_colliders(colliders)), run)
+}
+
+fn record_inner<R>(
+    colliders: Option<
+        std::collections::HashMap<crate::geometry::ColliderHandle, rigid_work::ColliderSnapshot>,
+    >,
+    run: impl FnOnce() -> R,
+) -> (R, WorkReport) {
     const {
         assert!(
             !cfg!(feature = "parallel"),
             "work audit requires single-threaded Rapier"
         );
     }
+    let rigid_scope = if colliders.is_some() {
+        "rigid_coulomb warmstart/projection/solve only; twist/restitution blocks unobserved"
+    } else {
+        "generic contacts and phases only; rigid collection disabled"
+    };
     RECORDING.with(|r| {
         let mut r = r.borrow_mut();
         assert!(r.is_none(), "nested work recording");
-        *r = Some(WorkReport::default());
+        *r = Some(WorkReport {
+            rigid_scope,
+            ..WorkReport::default()
+        });
     });
+    COLLIDERS.with(|c| *c.borrow_mut() = colliders);
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
             RECORDING.with(|r| {
                 r.borrow_mut().take();
+            });
+            COLLIDERS.with(|c| {
+                c.borrow_mut().take();
             });
         }
     }
@@ -108,6 +177,17 @@ pub fn record<R>(run: impl FnOnce() -> R) -> (R, WorkReport) {
     let rows = RECORDING.with(|r| r.borrow_mut().take().unwrap());
     drop(reset);
     (result, rows)
+}
+
+pub(crate) fn note_rigid_policy(twist: bool) {
+    if !rigid_enabled() {
+        return;
+    }
+    RECORDING.with(|r| {
+        if let Some(report) = r.borrow_mut().as_mut() {
+            report.twist_selected_unobserved |= twist;
+        }
+    });
 }
 
 struct Side {

@@ -155,7 +155,24 @@ pub(super) unsafe fn solve_pass(
                 let builder = unsafe { &*ctx.coulomb_builders.add(chunk_id) };
                 builder.update_rhs_wo_bias(params, solved_dt, solver_bodies, c);
             }
+            #[cfg(feature = "contact-work-audit")]
+            let observation = unsafe {
+                super::audit_rigid_before(
+                    ctx,
+                    c,
+                    ctx.coulomb_builders.add(chunk_id),
+                    solver_bodies,
+                    params,
+                    "solve",
+                    wo_bias,
+                    solved_dt,
+                    chunk_id,
+                    solve_friction,
+                )
+            };
             c.solve(solver_bodies, true, solve_friction);
+            #[cfg(feature = "contact-work-audit")]
+            crate::contact_work_audit::rigid_work::after(observation, c, solver_bodies);
         }
     };
 
@@ -359,17 +376,22 @@ pub(super) unsafe fn solve_pass(
                     c.remove_cfm_and_bias_from_rhs();
                 }
                 #[cfg(feature = "contact-work-audit")]
-                let observation = crate::contact_work_audit::before(
-                    c,
-                    contacts.generic_velocity_constraints_builder[index].audit_handles(),
-                    &vs.solver_bodies,
-                    &vs.generic_solver_vels,
-                    unsafe { &*ctx.bodies },
-                    unsafe { &*ctx.multibodies },
-                    wo_bias,
-                    solved_dt,
-                    "solve",
-                );
+                let observation = if crate::contact_work_audit::enabled() {
+                    assert_eq!(sync.num_workers, 1);
+                    crate::contact_work_audit::before(
+                        c,
+                        contacts.generic_velocity_constraints_builder[index].audit_handles(),
+                        &vs.solver_bodies,
+                        &vs.generic_solver_vels,
+                        unsafe { &*ctx.bodies },
+                        unsafe { &*ctx.multibodies },
+                        wo_bias,
+                        solved_dt,
+                        "solve",
+                    )
+                } else {
+                    None
+                };
                 #[cfg(not(feature = "contact-work-audit"))]
                 let _ = index;
                 c.solve(

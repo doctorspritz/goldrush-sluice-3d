@@ -951,3 +951,12 @@ mod contact_geometry;
 
 #[cfg(feature = "contact-work-audit")]
 mod contact_work;
+
+#[cfg(feature = "contact-work-audit")]
+mod rigid_geometry;
+
+#[cfg(feature = "contact-work-audit")]
+mod rigid_work;
+
+#[cfg(feature = "contact-work-audit")]
+mod rigid_pair_query;

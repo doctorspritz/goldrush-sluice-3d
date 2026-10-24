@@ -128,6 +128,22 @@ impl<'a> ManifoldStore<'a> {
         unsafe { &*self.manifold_ptr(r) }
     }
 
+    /// Read-only diagnostic identity; cluster subshape ids do not establish
+    /// ownership of individual points merged from several child manifolds.
+    #[cfg(feature = "contact-work-audit")]
+    pub(crate) fn audit_pair_metadata(
+        &self,
+        r: ContactRef,
+    ) -> ([crate::geometry::ColliderHandle; 2], bool) {
+        assert!(!r.is_padding());
+        let pair = self.pair_ptr(r.edge);
+        unsafe {
+            let colliders = [(*pair).collider1, (*pair).collider2];
+            let rigid = rigid_contacts_ptr(pair);
+            (colliders, !(*rigid).solver_clusters.is_empty())
+        }
+    }
+
     /// Prefetches the pair header of `r` (the first hop of [`Self::get`]'s
     /// dependent pointer chain). No-op on padding/out-of-range refs.
     #[inline]

@@ -366,3 +366,40 @@ unsafe fn audit_phase(ctx: &SharedCtx<'_>, label: &'static str, unbiased: bool, 
         unsafe { &*ctx.multibodies },
     );
 }
+
+#[cfg(feature = "contact-work-audit")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn audit_rigid_before(
+    ctx: &SharedCtx<'_>,
+    c: &ContactWithCoulombFriction<crate::math::SimdReal>,
+    builder: *const ContactWithCoulombFrictionBuilder,
+    solver: &crate::dynamics::solver::solver_body::SolverBodies,
+    params: &IntegrationParameters,
+    stage: &'static str,
+    unbiased: bool,
+    time: Real,
+    chunk: usize,
+    solve_friction: bool,
+) -> Option<crate::contact_work_audit::rigid_work::Snapshot> {
+    // Do not form ANY extra references from shared worker pointers unless
+    // rigid recording is selected. The recorder refuses parallel builds.
+    if !crate::contact_work_audit::rigid_enabled() {
+        return None;
+    }
+    assert_eq!(ctx.sync.num_workers, 1);
+    crate::contact_work_audit::rigid_work::before(
+        c,
+        unsafe { &*builder },
+        solver,
+        ctx.island_bodies,
+        unsafe { &*ctx.bodies },
+        unsafe { &*ctx.multibodies },
+        ctx.store,
+        params,
+        stage,
+        unbiased,
+        time,
+        chunk,
+        solve_friction,
+    )
+}

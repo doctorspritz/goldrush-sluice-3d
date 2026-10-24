@@ -1,4 +1,7 @@
 #[cfg(all(test, feature = "dim3", feature = "f32"))]
+#[path = "rigid_anchor_objectivity.rs"]
+mod rigid_anchor_objectivity;
+#[cfg(all(test, feature = "dim3", feature = "f32"))]
 #[path = "rigid_warmstart_admissibility.rs"]
 mod rigid_warmstart_admissibility;
 
@@ -10,7 +13,7 @@ use crate::dynamics::solver::solver_body::SolverBodies;
 use crate::dynamics::solver::solver_contact_graph::ContactRef;
 use crate::dynamics::{IntegrationParameters, MultibodyJointSet, RigidBodySet};
 use crate::geometry::{ContactManifold, SimdSolverContact};
-use crate::math::{Real, SimdReal, TangentImpulse, DIM, MAX_MANIFOLD_POINTS, SIMD_WIDTH};
+use crate::math::{DIM, MAX_MANIFOLD_POINTS, Real, SIMD_WIDTH, SimdReal, TangentImpulse};
 #[cfg(feature = "dim2")]
 use crate::utils::OrthonormalBasis;
 use crate::utils::{self, AngularInertiaOps, CrossProduct, DotProduct, ScalarType};
@@ -53,6 +56,11 @@ pub(crate) struct ContactWithCoulombFrictionBuilder {
 }
 
 impl ContactWithCoulombFrictionBuilder {
+    #[cfg(feature = "contact-work-audit")]
+    pub(crate) fn audit_infos(&self) -> &[CoulombContactPointInfos<SimdReal>; MAX_MANIFOLD_POINTS] {
+        &self.infos
+    }
+
     pub fn generate(
         manifold_id: [ContactRef; SIMD_WIDTH],
         manifolds: [&ContactManifold; SIMD_WIDTH],

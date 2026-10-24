@@ -88,6 +88,8 @@ fn midpoint_rotation(
 /// The stage machine executed by every worker. See [`SharedCtx`] for the safety contract.
 pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
     let sync = ctx.sync;
+    #[cfg(feature = "contact-work-audit")]
+    crate::contact_work_audit::note_rigid_policy(ctx.use_twist);
     let num_chunks = ctx.num_chunks;
     let all_chunks = 0..num_chunks;
     let all_island_bodies = 0..ctx.island_bodies.len();
@@ -628,11 +630,53 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                                     multibodies,
                                     constraint,
                                 );
+                                #[cfg(feature = "contact-work-audit")]
+                                let observation = unsafe {
+                                    super::audit_rigid_before(
+                                        ctx,
+                                        constraint,
+                                        builder,
+                                        solver_bodies,
+                                        params,
+                                        "warmstart",
+                                        false,
+                                        solved_dt,
+                                        chunk_id,
+                                        true,
+                                    )
+                                };
                                 constraint.warmstart(solver_bodies);
+                                #[cfg(feature = "contact-work-audit")]
+                                crate::contact_work_audit::rigid_work::after(
+                                    observation,
+                                    constraint,
+                                    solver_bodies,
+                                );
                                 if params.maximum_dissipation_friction
                                     && params.friction_in_bias_pass
                                 {
+                                    #[cfg(feature = "contact-work-audit")]
+                                    let observation = unsafe {
+                                        super::audit_rigid_before(
+                                            ctx,
+                                            constraint,
+                                            builder,
+                                            solver_bodies,
+                                            params,
+                                            "projection",
+                                            true,
+                                            solved_dt,
+                                            chunk_id,
+                                            true,
+                                        )
+                                    };
                                     constraint.project_warmstart(solver_bodies);
+                                    #[cfg(feature = "contact-work-audit")]
+                                    crate::contact_work_audit::rigid_work::after(
+                                        observation,
+                                        constraint,
+                                        solver_bodies,
+                                    );
                                 }
                             }
                         }
@@ -675,9 +719,51 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                                 multibodies,
                                 constraint,
                             );
+                            #[cfg(feature = "contact-work-audit")]
+                            let observation = unsafe {
+                                super::audit_rigid_before(
+                                    ctx,
+                                    constraint,
+                                    builder,
+                                    solver_bodies,
+                                    params,
+                                    "warmstart",
+                                    false,
+                                    solved_dt,
+                                    chunk_id,
+                                    true,
+                                )
+                            };
                             constraint.warmstart(solver_bodies);
+                            #[cfg(feature = "contact-work-audit")]
+                            crate::contact_work_audit::rigid_work::after(
+                                observation,
+                                constraint,
+                                solver_bodies,
+                            );
                             if params.maximum_dissipation_friction && params.friction_in_bias_pass {
+                                #[cfg(feature = "contact-work-audit")]
+                                let observation = unsafe {
+                                    super::audit_rigid_before(
+                                        ctx,
+                                        constraint,
+                                        builder,
+                                        solver_bodies,
+                                        params,
+                                        "projection",
+                                        true,
+                                        solved_dt,
+                                        chunk_id,
+                                        true,
+                                    )
+                                };
                                 constraint.project_warmstart(solver_bodies);
+                                #[cfg(feature = "contact-work-audit")]
+                                crate::contact_work_audit::rigid_work::after(
+                                    observation,
+                                    constraint,
+                                    solver_bodies,
+                                );
                             }
                         }
                     }
@@ -691,17 +777,22 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                     {
                         builder.update(params, solved_dt, &vs.solver_bodies, multibodies, c);
                         #[cfg(feature = "contact-work-audit")]
-                        let observation = crate::contact_work_audit::before(
-                            c,
-                            builder.audit_handles(),
-                            &vs.solver_bodies,
-                            &vs.generic_solver_vels,
-                            unsafe { &*ctx.bodies },
-                            multibodies,
-                            false,
-                            solved_dt,
-                            "warmstart",
-                        );
+                        let observation = if crate::contact_work_audit::enabled() {
+                            assert_eq!(sync.num_workers, 1);
+                            crate::contact_work_audit::before(
+                                c,
+                                builder.audit_handles(),
+                                &vs.solver_bodies,
+                                &vs.generic_solver_vels,
+                                unsafe { &*ctx.bodies },
+                                multibodies,
+                                false,
+                                solved_dt,
+                                "warmstart",
+                            )
+                        } else {
+                            None
+                        };
                         c.warmstart(
                             &contacts.generic_jacobians,
                             &mut vs.solver_bodies,
@@ -717,17 +808,22 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                         );
                         if params.maximum_dissipation_friction && params.friction_in_bias_pass {
                             #[cfg(feature = "contact-work-audit")]
-                            let observation = crate::contact_work_audit::before(
-                                c,
-                                builder.audit_handles(),
-                                &vs.solver_bodies,
-                                &vs.generic_solver_vels,
-                                unsafe { &*ctx.bodies },
-                                multibodies,
-                                true,
-                                solved_dt,
-                                "projection",
-                            );
+                            let observation = if crate::contact_work_audit::enabled() {
+                                assert_eq!(sync.num_workers, 1);
+                                crate::contact_work_audit::before(
+                                    c,
+                                    builder.audit_handles(),
+                                    &vs.solver_bodies,
+                                    &vs.generic_solver_vels,
+                                    unsafe { &*ctx.bodies },
+                                    multibodies,
+                                    true,
+                                    solved_dt,
+                                    "projection",
+                                )
+                            } else {
+                                None
+                            };
                             c.project_warmstart(
                                 &contacts.generic_jacobians,
                                 &mut vs.solver_bodies,

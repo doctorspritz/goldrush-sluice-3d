@@ -17,13 +17,26 @@ type Manifold = q::ContactManifold<ContactManifoldData, ContactData>;
 const TOUCH_EPS: f32 = 1e-5;
 struct StablePolyContacts {
     verify_separation: bool,
+    // Diagnostic-only: rebuild cached features while retaining physical points,
+    // coefficients, existing touch repair and the verified separation policy.
+    #[cfg(test)]
+    force_fresh: bool,
 }
 const TOUCH_ONLY: StablePolyContacts = StablePolyContacts {
     verify_separation: false,
+    #[cfg(test)]
+    force_fresh: false,
 };
 #[cfg(any(test, feature = "contact-history"))]
 const VERIFIED: StablePolyContacts = StablePolyContacts {
     verify_separation: true,
+    #[cfg(test)]
+    force_fresh: false,
+};
+#[cfg(all(test, feature = "contact-work-audit"))]
+const FRESH_FOR_TEST: StablePolyContacts = StablePolyContacts {
+    verify_separation: true,
+    force_fresh: true,
 };
 impl StablePolyContacts {
     // Cached feature contacts can keep a negative gap while an independent
@@ -53,6 +66,13 @@ pub(crate) fn restore_dispatcher(world: &mut r::PhysicsWorld) {
 #[cfg(feature = "contact-history")]
 pub(crate) fn restore_verified_dispatcher(world: &mut r::PhysicsWorld) {
     world.narrow_phase.set_query_dispatcher(VERIFIED);
+}
+/// Unqualified diagnostic trial, never a persisted or Session contact policy.
+/// The caller must also disable outer pair recycling; otherwise the narrow
+/// phase can return before either persistent-dispatcher entrypoint runs.
+#[cfg(all(test, feature = "contact-work-audit"))]
+pub(crate) fn restore_fresh_dispatcher_for_test(world: &mut r::PhysicsWorld) {
+    world.narrow_phase.set_query_dispatcher(FRESH_FOR_TEST);
 }
 pub(crate) fn configure(world: &mut r::PhysicsWorld) {
     restore_dispatcher(world);
@@ -213,6 +233,12 @@ impl PersistentQueryDispatcher<ContactManifoldData, ContactData> for StablePolyC
         ms: &mut Vec<Manifold>,
         w: &mut Option<q::ContactManifoldsWorkspace>,
     ) -> Result<(), q::Unsupported> {
+        #[cfg(test)]
+        if self.force_fresh {
+            for manifold in ms.iter_mut() {
+                manifold.mark_shapes_deformed();
+            }
+        }
         DefaultQueryDispatcher.contact_manifolds(p, a, b, d, ms, w)?;
         for m in ms {
             if let (Some((pa, ha)), Some((pb, hb))) = (child(a, m.subshape1), child(b, m.subshape2))
@@ -237,6 +263,10 @@ impl PersistentQueryDispatcher<ContactManifoldData, ContactData> for StablePolyC
         d: f32,
         m: &mut Manifold,
     ) -> Result<(), q::Unsupported> {
+        #[cfg(test)]
+        if self.force_fresh {
+            m.mark_shapes_deformed();
+        }
         DefaultQueryDispatcher.contact_manifold_convex_convex(p, a, b, n1, n2, d, m)?;
         if n1.is_none() && n2.is_none() {
             if let (Some(ha), Some(hb)) = (a.as_convex_polyhedron(), b.as_convex_polyhedron()) {
@@ -477,5 +507,144 @@ mod tests {
                 .map(|p| p.dist)
                 .fold(f32::INFINITY, f32::min)
         );
+    }
+
+    #[test]
+    #[cfg(feature = "contact-work-audit")]
+    fn cached_oblique_clod_manifold_requires_geometric_refresh() {
+        #[derive(serde::Deserialize)]
+        struct CapturedPose {
+            translation: [f32; 3],
+            rotation_xyzw: [f32; 4],
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            registered_local_vertices: [Vec<[f32; 3]>; 2],
+            registered_shared_shapes: [r::SharedShape; 2],
+            entry_captured_poses: [CapturedPose; 2],
+            saved_original_manifold: Manifold,
+            prediction_m: f32,
+            observed_cached_min_gap_m: f32,
+            observed_fresh_min_gap_m: f32,
+            observed_fresh_max_gap_m: f32,
+            observed_fresh_point_count: usize,
+        }
+        let case: Case =
+            serde_json::from_str(include_str!("soil_contacts_pair2242_fixture.json")).unwrap();
+        let poses = case.entry_captured_poses.map(|pose| {
+            // Captured engine coefficients, with no quaternion normalization.
+            r::Pose::from_parts(
+                r::Vector::from_array(pose.translation),
+                r::Rotation::from_array(pose.rotation_xyzw),
+            )
+        });
+        let relative = poses[0].inverse() * poses[1];
+        let [a, b] = &case.registered_shared_shapes;
+        let ha = a.as_convex_polyhedron().unwrap();
+        let hb = b.as_convex_polyhedron().unwrap();
+        // Deserialize the actual registered topology; rebuilding a convex hull
+        // can renumber features and invalidate this cached-manifold regression.
+        for (hull, expected) in [ha, hb].into_iter().zip(&case.registered_local_vertices) {
+            assert_eq!(
+                hull.points()
+                    .iter()
+                    .map(|p| p.to_array())
+                    .collect::<Vec<_>>(),
+                *expected
+            );
+        }
+        // This is the policy's own SAT calculation, not the independent f64
+        // registered-geometry oracle used in the source observation.
+        let (_, overlap) = touch_axis(ha, hb, &relative);
+        assert!(
+            (-0.00115..-0.00112).contains(&overlap),
+            "actual registered pair should overlap by about 1.137 mm: {overlap}"
+        );
+        let minimum = |m: &Manifold| {
+            m.points
+                .iter()
+                .map(|p| p.dist)
+                .fold(f32::INFINITY, f32::min)
+        };
+        let maximum = |m: &Manifold| {
+            m.points
+                .iter()
+                .map(|p| p.dist)
+                .fold(f32::NEG_INFINITY, f32::max)
+        };
+        let default = DefaultQueryDispatcher;
+        let legacy: [(
+            &str,
+            &dyn PersistentQueryDispatcher<ContactManifoldData, ContactData>,
+        ); 3] = [
+            ("Default", &default),
+            ("TOUCH_ONLY", &TOUCH_ONLY),
+            ("VERIFIED", &VERIFIED),
+        ];
+        for (name, dispatcher) in legacy {
+            let mut cached = case.saved_original_manifold.clone();
+            dispatcher
+                .contact_manifold_convex_convex(
+                    &relative,
+                    &**a,
+                    &**b,
+                    None,
+                    None,
+                    case.prediction_m,
+                    &mut cached,
+                )
+                .unwrap();
+            assert!(
+                minimum(&cached) < -0.09,
+                "{name} negative control disappeared"
+            );
+            assert!(
+                (minimum(&cached) - case.observed_cached_min_gap_m).abs() <= TOUCH_EPS,
+                "{name} no longer reproduces the captured cached patch"
+            );
+        }
+        let mut refreshed = case.saved_original_manifold.clone();
+        FRESH_FOR_TEST
+            .contact_manifold_convex_convex(
+                &relative,
+                &**a,
+                &**b,
+                None,
+                None,
+                case.prediction_m,
+                &mut refreshed,
+            )
+            .unwrap();
+        assert_eq!(refreshed.points.len(), case.observed_fresh_point_count);
+        assert_eq!(
+            refreshed.points.len(),
+            5,
+            "the physical contact patch must remain"
+        );
+        assert!(refreshed.points.iter().all(|p| p.dist.abs() < 0.002));
+        assert!((minimum(&refreshed) - case.observed_fresh_min_gap_m).abs() <= TOUCH_EPS);
+        assert!((maximum(&refreshed) - case.observed_fresh_max_gap_m).abs() <= TOUCH_EPS);
+        assert!(
+            refreshed
+                .local_n1
+                .dot(case.saved_original_manifold.local_n1)
+                < 0.
+        );
+        let mut cold = Manifold::new();
+        VERIFIED
+            .contact_manifold_convex_convex(
+                &relative,
+                &**a,
+                &**b,
+                None,
+                None,
+                case.prediction_m,
+                &mut cold,
+            )
+            .unwrap();
+        assert_eq!(cold.points.len(), refreshed.points.len());
+        assert!((minimum(&cold) - minimum(&refreshed)).abs() <= TOUCH_EPS);
+        assert!((maximum(&cold) - maximum(&refreshed)).abs() <= TOUCH_EPS);
+        assert!(cold.local_n1.dot(refreshed.local_n1) > 0.9999);
     }
 }
