@@ -28,16 +28,24 @@ Retained impulses strongly amplify this failure at the current solve convergence
 
 Two backed-up engine prototypes were measured on the same boundary. Refreshing articulated contact gaps after integration gives +3,582.61 J; refreshing current contact Jacobians/inverse masses gives +3,588.48 J. Neither removes the failure. Both are rejected and every vendor source is restored exactly. An unwired prototype attempt is labelled as an unchanged-solver control and excluded from candidate evidence. No runtime force law, history policy, iteration count, physical cadence, particle population or acceptance limit is changed.
 
-Final validation passes the explicitly executed saved-boundary diagnostic, **23 default library checks and 31 featured library checks**, strict featured all-target Clippy and formatting. Three opt-in diagnostics remain ignored in the default featured suite; this turn explicitly executes only the new saved-boundary diagnostic. Full soil/gameplay suites and native rendering are not rerun for this test-only change. All production simulation and rendering sources match the baseline. Scoped cleanup leaves zero test/browser processes; 14 shared Playwright MCP and 56 Node processes remain untouched.
+Final validation passes the explicitly executed saved-boundary diagnostic and fixture generator, **23 default library checks and 31 featured library checks**, strict featured all-target Clippy and formatting. Three opt-in diagnostics remain ignored in the default featured suite; this turn explicitly executes the saved-boundary diagnostic and fixture generator. Full soil/gameplay suites and native rendering are not rerun for this test-only change. All production simulation and rendering sources match the baseline. Scoped cleanup leaves zero test/browser processes; 14 shared Playwright MCP and 56 Node processes remain untouched.
 
 The [receipt](2026-10-24-contact-energy-source.json) records inputs, source hashes, all controls and rejected candidates. Complete body rows and prototype patches remain in `/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bank-energy-source-20261024`. The next accuracy work is a converged coupled normal/friction/limit solve across actual machine-to-clod mass ratios, with consistent-history refinement and penetration checks. `sluice-retained-coupling-20261024` and joint-limit work stay open; the retained owner remains experimental and outside Session. Pads, wet/cohesive mud, shaker decks, buildup, settling circuits, real-time performance and the full operation remain required.
 
-Run the diagnostic serially with the two preserved boundary paths and a fresh output file:
+Regenerating the fixture from this committed checkout reproduced both complete owner binaries byte-for-byte on this Mac. That establishes local regeneration, not cross-platform determinism. Original inputs remain intact; the duplicate generated copies are compressed with verified round trips.
+
+The generator below pays for the warm-up once. Subsequent solver trials reuse its saved boundaries. Run these serially from the repository root; when using a worktree, set `CARGO_TARGET_DIR` to the shared target first:
 
 ```bash
-SLUICE_ENERGY_BOUNDARY=/path/to/before.bin \
-SLUICE_ENERGY_REFERENCE=/path/to/after.bin \
-SLUICE_ENERGY_BREAKDOWN=/tmp/fresh-energy-report.json \
+task_energy_dir="$(mktemp -d /tmp/sluice-energy.XXXXXX)"
+SLUICE_ENERGY_WITNESS="$task_energy_dir/witness" \
+cargo +nightly test -p mining-sim --features contact-history --lib \
+  zero_actuator_bank_energy_witness --profile playable --locked --jobs 1 \
+  -- --ignored --test-threads=1 --nocapture
+
+SLUICE_ENERGY_BOUNDARY="$task_energy_dir/witness/before.bin" \
+SLUICE_ENERGY_REFERENCE="$task_energy_dir/witness/after.bin" \
+SLUICE_ENERGY_BREAKDOWN="$task_energy_dir/breakdown.json" \
 cargo +nightly test -p mining-sim --features contact-history --lib \
   saved_bank_energy_source_breakdown --profile playable --locked --jobs 1 \
   -- --ignored --test-threads=1 --nocapture

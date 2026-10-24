@@ -22,6 +22,10 @@
     {
       "name": "final-format",
       "exit": 0
+    },
+    {
+      "name": "regenerate-witness",
+      "exit": 0
     }
   ],
   "counts": {
@@ -49,7 +53,6 @@
     "all_body_poses",
     "all_body_linear_and_angular_velocities"
   ],
-  "binary_numerical_world_equality_claimed": false,
   "phase_reproduction_body_state_exact": true,
   "variants": [
     {
@@ -289,5 +292,36 @@
   "whole_bank_timestep_convergence_verified": false,
   "retained_session_adoption_allowed": false,
   "new_native_render_or_throughput_test_performed": false,
-  "full_realistic_operation_goal_complete": false
+  "full_realistic_operation_goal_complete": false,
+  "fixture_regeneration": {
+    "both_owner_binaries_identical": true,
+    "sha256": {
+      "before.bin": {
+        "original": "f800b6d49b9301e2af61cd0148d79ea32074b90a783cf159d0e8d5cfb4772e8e",
+        "regenerated": "f800b6d49b9301e2af61cd0148d79ea32074b90a783cf159d0e8d5cfb4772e8e"
+      },
+      "after.bin": {
+        "original": "cc246e6cb66e689cbad6021e7d9de7caef55e2344c2a8cee05733b1993a65ec7",
+        "regenerated": "cc246e6cb66e689cbad6021e7d9de7caef55e2344c2a8cee05733b1993a65ec7"
+      }
+    },
+    "same_host_toolchain_verification": true,
+    "cross_platform_determinism_verified": false,
+    "original_uncompressed_inputs_preserved": true,
+    "generated_copy_archives": [
+      {
+        "file": "before.bin",
+        "raw_sha256": "f800b6d49b9301e2af61cd0148d79ea32074b90a783cf159d0e8d5cfb4772e8e",
+        "archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bank-energy-source-20261024/regenerated-witness/before.bin.gz",
+        "archive_sha256": "5d391d70fcf94fbb1be4ba66547929ac25f56618fefdbf3631ac6897bb8fbb95"
+      },
+      {
+        "file": "after.bin",
+        "raw_sha256": "cc246e6cb66e689cbad6021e7d9de7caef55e2344c2a8cee05733b1993a65ec7",
+        "archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bank-energy-source-20261024/regenerated-witness/after.bin.gz",
+        "archive_sha256": "8c82f7bc12b111c74cfbcc91afdf2019bf033c7e662d63253616e1a65db8be32"
+      }
+    ]
+  },
+  "binary_equality_in_reference_step_comparison_claimed": false
 }
