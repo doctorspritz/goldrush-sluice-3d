@@ -1155,3 +1155,6 @@ mod friction_batch_tests {
         }
     }
 }
+#[cfg(all(test, feature = "dim3", feature = "f32", feature = "std"))]
+#[path = "friction_sign_tests.rs"]
+mod friction_sign_tests;
