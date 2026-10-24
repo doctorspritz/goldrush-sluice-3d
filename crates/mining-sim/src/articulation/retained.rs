@@ -88,6 +88,7 @@ pub struct RetainedSoil {
     machine: Excavator,
     soil: crate::soil::ActiveSoil,
     geometry: Geometry,
+    dispatcher: Dispatcher,
 }
 impl Clone for RetainedSoil {
     fn clone(&self) -> Self {
@@ -102,15 +103,32 @@ impl Clone for RetainedSoil {
             machine: self.machine.clone(),
             soil: self.soil.clone(),
             geometry: self.geometry.clone(),
+            dispatcher: self.dispatcher,
         }
     }
 }
 impl RetainedSoil {
     pub fn new(
+        machine: Excavator,
+        soil: crate::soil::ActiveSoil,
+        env: &Environment<'_>,
+    ) -> Result<Self, String> {
+        Self::with_contact_dispatcher(machine, soil, env, Dispatcher::RigidSoilVerified)
+    }
+    /// Explicit numerical policy for same-model contact comparisons. Both
+    /// supported rigid-soil policies are stored and restored without upgrade.
+    pub fn with_contact_dispatcher(
         mut machine: Excavator,
         mut soil: crate::soil::ActiveSoil,
         env: &Environment<'_>,
+        dispatcher: Dispatcher,
     ) -> Result<Self, String> {
+        if !matches!(
+            dispatcher,
+            Dispatcher::RigidSoil | Dispatcher::RigidSoilVerified
+        ) {
+            return Err("Retained soil requires a rigid-soil contact dispatcher".into());
+        }
         let geometry = Geometry::capture(env)?;
         if machine.bucket_model() != crate::bucket::Model::MountedShellV2
             || !machine.valid()
@@ -130,11 +148,19 @@ impl RetainedSoil {
         // the step. Cached guesses receive a local unbiased projection first.
         // Existing saved worlds keep their explicitly stored numerical policy.
         model.world.integration_parameters.friction_in_bias_pass = true;
+        match dispatcher {
+            Dispatcher::RigidSoil => crate::soil_contacts::restore_dispatcher(&mut model.world),
+            Dispatcher::RigidSoilVerified => {
+                crate::soil_contacts::restore_verified_dispatcher(&mut model.world)
+            }
+            Dispatcher::Default => unreachable!("policy checked above"),
+        }
         Ok(Self {
             model: Some(model),
             machine,
             soil,
             geometry,
+            dispatcher,
         })
     }
     pub fn machine(&self) -> &Excavator {
@@ -200,7 +226,7 @@ impl RetainedSoil {
             .model
             .as_ref()
             .ok_or("Cannot save a poisoned retained world")?;
-        let boundary = ContactHistory::from_world(clone_world(&m.world), Dispatcher::RigidSoil);
+        let boundary = ContactHistory::from_world(clone_world(&m.world), self.dispatcher);
         let saved = Saved {
             machine_json: serde_json::to_string(&self.machine).map_err(|e| e.to_string())?,
             soil_json: serde_json::to_string(&self.soil).map_err(|e| e.to_string())?,
@@ -237,9 +263,13 @@ impl RetainedSoil {
         let soil = serde_json::from_str(&saved.soil_json).map_err(|e| e.to_string())?;
         let mut result = Self::new(machine, soil, env)?;
         let boundary = ContactHistory::decode(&saved.numerical_world)?;
-        if boundary.dispatcher() != Dispatcher::RigidSoil {
+        if !matches!(
+            boundary.dispatcher(),
+            Dispatcher::RigidSoil | Dispatcher::RigidSoilVerified
+        ) {
             return Err("Wrong retained contact policy".into());
         }
+        result.dispatcher = boundary.dispatcher();
         let world = boundary.into_world();
         let expected = result.model.as_ref().unwrap();
         if saved.bodies != expected.bodies

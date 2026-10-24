@@ -1,8 +1,8 @@
-//! Repair the pinned polygon-manifold degeneracy at touching convex edges.
-//! GJK can report coincident witnesses while feature clipping fabricates a
-//! deep penetration with an ambiguous normal. Only independently verified
-//! near-touch cases are repaired; real penetrations and separated contacts
-//! retain the pinned dispatcher. Enabled only for the new rigid-soil model.
+//! Rigid-soil convex contact policies. The original policy repairs coincident
+//! clipping degeneracy at touching edges. The verified retained-world policy
+//! also invalidates a negative cached manifold when a hull axis certifies
+//! separation, then regenerates ordinary positive/speculative contacts.
+//! Genuine penetrations keep the pinned manifold and physical coefficients.
 use q::details::NormalConstraints;
 use q::{DefaultQueryDispatcher, PersistentQueryDispatcher, QueryDispatcher};
 use rapier3d::parry::{
@@ -15,9 +15,44 @@ use rapier3d::{
 };
 type Manifold = q::ContactManifold<ContactManifoldData, ContactData>;
 const TOUCH_EPS: f32 = 1e-5;
-struct StablePolyContacts;
+struct StablePolyContacts {
+    verify_separation: bool,
+}
+const TOUCH_ONLY: StablePolyContacts = StablePolyContacts {
+    verify_separation: false,
+};
+#[cfg(any(test, feature = "contact-history"))]
+const VERIFIED: StablePolyContacts = StablePolyContacts {
+    verify_separation: true,
+};
+impl StablePolyContacts {
+    // Cached feature contacts can keep a negative gap while an independent
+    // hull axis already separates the solids. Force feature regeneration;
+    // do not remove speculative contact or alter actual penetration depths.
+    fn invalidate_separated(
+        &self,
+        pos: &r::Pose,
+        a: &ConvexPolyhedron,
+        b: &ConvexPolyhedron,
+        m: &mut Manifold,
+    ) -> bool {
+        if self.verify_separation
+            && m.points.iter().any(|p| p.dist < -TOUCH_EPS)
+            && touch_axis(a, b, pos).1 > TOUCH_EPS
+        {
+            m.mark_shapes_deformed();
+            true
+        } else {
+            false
+        }
+    }
+}
 pub(crate) fn restore_dispatcher(world: &mut r::PhysicsWorld) {
-    world.narrow_phase.set_query_dispatcher(StablePolyContacts);
+    world.narrow_phase.set_query_dispatcher(TOUCH_ONLY);
+}
+#[cfg(feature = "contact-history")]
+pub(crate) fn restore_verified_dispatcher(world: &mut r::PhysicsWorld) {
+    world.narrow_phase.set_query_dispatcher(VERIFIED);
 }
 pub(crate) fn configure(world: &mut r::PhysicsWorld) {
     restore_dispatcher(world);
@@ -182,7 +217,12 @@ impl PersistentQueryDispatcher<ContactManifoldData, ContactData> for StablePolyC
         for m in ms {
             if let (Some((pa, ha)), Some((pb, hb))) = (child(a, m.subshape1), child(b, m.subshape2))
             {
-                repair(&(pa.inverse() * *p * pb), ha, hb, m);
+                let relative = pa.inverse() * *p * pb;
+                if self.invalidate_separated(&relative, ha, hb, m) {
+                    DefaultQueryDispatcher
+                        .contact_manifold_convex_convex(&relative, ha, hb, None, None, d, m)?;
+                }
+                repair(&relative, ha, hb, m);
             }
         }
         Ok(())
@@ -200,6 +240,10 @@ impl PersistentQueryDispatcher<ContactManifoldData, ContactData> for StablePolyC
         DefaultQueryDispatcher.contact_manifold_convex_convex(p, a, b, n1, n2, d, m)?;
         if n1.is_none() && n2.is_none() {
             if let (Some(ha), Some(hb)) = (a.as_convex_polyhedron(), b.as_convex_polyhedron()) {
+                if self.invalidate_separated(p, ha, hb, m) {
+                    DefaultQueryDispatcher
+                        .contact_manifold_convex_convex(p, ha, hb, None, None, d, m)?;
+                }
                 repair(p, ha, hb, m);
             }
         }
@@ -272,7 +316,7 @@ mod tests {
         let lower_bound = min_b - max_a;
         assert!(lower_bound > 0.013);
         let old = manifold(&DefaultQueryDispatcher, &p, &*a, &*b);
-        let new = manifold(&StablePolyContacts, &p, &*a, &*b);
+        let new = manifold(&TOUCH_ONLY, &p, &*a, &*b);
         let old_min = old
             .points
             .iter()
@@ -297,7 +341,7 @@ mod tests {
         let compound = r::SharedShape::compound(vec![(child_pose, a.clone())]);
         let mut ms = Vec::new();
         let mut workspace = None;
-        StablePolyContacts
+        TOUCH_ONLY
             .contact_manifolds(
                 &(child_pose * p),
                 &*compound,
@@ -324,20 +368,114 @@ mod tests {
             })
             .collect();
         let h = hull(&points);
-        for x in [0.04, 0.09, 0.105] {
+        for x in [0.04, 0.09, 0.0999, 0.09998, 0.10002, 0.1001, 0.105] {
             let p = r::Pose::translation(x, 0., 0.);
             let old = manifold(&DefaultQueryDispatcher, &p, &*h, &*h);
-            let new = manifold(&StablePolyContacts, &p, &*h, &*h);
-            assert!(!new.points.is_empty());
-            assert_eq!(old.local_n1, new.local_n1);
-            assert_eq!(old.local_n2, new.local_n2);
-            assert_eq!(old.points.len(), new.points.len());
-            for (a, b) in old.points.iter().zip(&new.points) {
-                assert_eq!(
-                    (a.local_p1, a.local_p2, a.dist, a.fid1, a.fid2),
-                    (b.local_p1, b.local_p2, b.dist, b.fid1, b.fid2)
-                );
+            for dispatcher in [&TOUCH_ONLY, &VERIFIED] {
+                let new = manifold(dispatcher, &p, &*h, &*h);
+                assert!(!new.points.is_empty());
+                assert_eq!(old.local_n1, new.local_n1);
+                assert_eq!(old.local_n2, new.local_n2);
+                assert_eq!(old.points.len(), new.points.len());
+                for (a, b) in old.points.iter().zip(&new.points) {
+                    assert_eq!(
+                        (a.local_p1, a.local_p2, a.dist, a.fid1, a.fid2),
+                        (b.local_p1, b.local_p2, b.dist, b.fid1, b.fid2)
+                    );
+                }
             }
         }
+    }
+
+    #[test]
+    #[cfg(feature = "contact-history")]
+    fn cached_negative_contacts_between_separated_hulls_are_regenerated_not_discarded() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            a: Vec<[f32; 3]>,
+            b: Vec<[f32; 3]>,
+            translation: [f32; 3],
+            rotation: [f32; 4],
+            cached_manifold: Manifold,
+        }
+        let case: Case = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/playtests/fixtures/2026-10-24-separated-clods.json"
+        )))
+        .unwrap();
+        let a = hull(&case.a);
+        let b = hull(&case.b);
+        let pos = r::Pose::from_parts(
+            r::Vector::from_array(case.translation),
+            r::Rotation::from_array(case.rotation),
+        );
+        let mut old = case.cached_manifold.clone();
+        DefaultQueryDispatcher
+            .contact_manifold_convex_convex(&pos, &*a, &*b, None, None, 0.02, &mut old)
+            .unwrap();
+        assert!(
+            old.points.iter().any(|p| p.dist < -0.001),
+            "old cached failure was not reproduced"
+        );
+        let mut corrected = case.cached_manifold.clone();
+        VERIFIED
+            .contact_manifold_convex_convex(&pos, &*a, &*b, None, None, 0.02, &mut corrected)
+            .unwrap();
+        assert!(
+            !corrected.points.is_empty(),
+            "positive speculative contact must remain"
+        );
+        assert!(
+            corrected.points.iter().all(|p| p.dist > 0.0007),
+            "separated solids retained fictitious penetration"
+        );
+        // The public manifold dispatcher must also preserve compound-child
+        // coordinates when invalidating a cached feature manifold.
+        let child_pose = r::Pose::translation(0.3, 0.5, 0.7);
+        let compound = r::SharedShape::compound(vec![(child_pose, a.clone())]);
+        let parent_relative = child_pose * pos;
+        let mut manifolds = Vec::new();
+        let mut workspace = None;
+        DefaultQueryDispatcher
+            .contact_manifolds(
+                &parent_relative,
+                &*compound,
+                &*b,
+                0.02,
+                &mut manifolds,
+                &mut workspace,
+            )
+            .unwrap();
+        assert_eq!(manifolds.len(), 1);
+        let mut cached = case.cached_manifold;
+        cached.set_subshape_pos1(Some(child_pose));
+        manifolds[0] = cached;
+        VERIFIED
+            .contact_manifolds(
+                &parent_relative,
+                &*compound,
+                &*b,
+                0.02,
+                &mut manifolds,
+                &mut workspace,
+            )
+            .unwrap();
+        assert!(manifolds.iter().any(|m| !m.points.is_empty()));
+        assert!(manifolds
+            .iter()
+            .flat_map(|m| &m.points)
+            .all(|p| p.dist > 0.0007));
+        println!(
+            "cached min={} corrected min={}",
+            old.points
+                .iter()
+                .map(|p| p.dist)
+                .fold(f32::INFINITY, f32::min),
+            corrected
+                .points
+                .iter()
+                .map(|p| p.dist)
+                .fold(f32::INFINITY, f32::min)
+        );
     }
 }

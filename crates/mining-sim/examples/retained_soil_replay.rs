@@ -2,6 +2,7 @@
 use mining_sim::{
     articulation::{self, retained::RetainedSoil, Environment},
     bucket,
+    contact_history::Dispatcher,
     soil::ActiveSoil,
     Excavator, MachineInput, Session, Vec3,
 };
@@ -68,13 +69,24 @@ impl State {
 }
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().collect();
-    let usage="retained_soil_replay cold|retained|restore OUTPUT_DIR TICKS HZ < commands.json\nMechanical comparison only; fresh directories,1..3600 command ticks,240/480/960Hz.";
+    let usage="retained_soil_replay cold|retained|restore OUTPUT_DIR TICKS HZ [legacy|verified] < commands.json\nMechanical comparison only; fresh directories,1..3600 command ticks,240/480/960Hz.";
     if args.len() == 2 && args[1] == "--help" {
         println!("{usage}");
         return Ok(());
     }
-    if args.len() != 5 || !matches!(args[1].as_str(), "cold" | "retained" | "restore") {
+    if !(5..=6).contains(&args.len())
+        || !matches!(args[1].as_str(), "cold" | "retained" | "restore")
+    {
         return Err(usage.into());
+    }
+    let dispatcher = match args.get(5).map(String::as_str) {
+        None if args[1] == "cold" => Dispatcher::RigidSoil,
+        None | Some("verified") => Dispatcher::RigidSoilVerified,
+        Some("legacy") => Dispatcher::RigidSoil,
+        _ => return Err(usage.into()),
+    };
+    if args[1] == "cold" && dispatcher != Dispatcher::RigidSoil {
+        return Err("cold Session uses the legacy geometric dispatcher".into());
     }
     let ticks: usize = args[3].parse()?;
     let hz: u32 = args[4].parse()?;
@@ -119,7 +131,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut state = if args[1] == "cold" {
         State::Cold(Box::new((machine, soil)))
     } else {
-        State::Retained(Box::new(RetainedSoil::new(machine, soil, &env)?))
+        State::Retained(Box::new(RetainedSoil::with_contact_dispatcher(
+            machine, soil, &env, dispatcher,
+        )?))
     };
     let startup = started.elapsed().as_secs_f64();
     state.snapshot(out, 0)?;
@@ -131,8 +145,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut restores = 0;
     for (tick, input) in tape.commands.iter().take(ticks).enumerate() {
         let timer = Instant::now();
-        for _ in 0..hz / 60 {
-            state.step((*input).into(), 1. / hz as f32, &env)?;
+        for substep in 0..hz / 60 {
+            if let Err(error) = state.step((*input).into(), 1. / hz as f32, &env) {
+                fs::write(
+                    out.join("metrics.json"),
+                    serde_json::to_vec_pretty(&serde_json::json!({
+                        "completed":false,"failure":error,"failed_command_tick":tick+1,"failed_substep":substep,
+                        "accepted_mechanical_steps":tick*(hz as usize/60)+substep as usize,
+                        "requested_command_ticks":ticks,"mechanical_hz":hz,"contact_dispatcher":format!("{dispatcher:?}"),
+                        "clods":clods,"step_wall_seconds":step_wall+timer.elapsed().as_secs_f64(),
+                        "last_complete_snapshot_tick":tick/60*60,"scope":"Refused mechanical replay; not a completed stroke or accuracy pass"
+                    }))?,
+                )?;
+                return Err(error.into());
+            }
             let (_, soil) = state.views();
             maximum_residual = maximum_residual.max(soil.feedback.coupled_passivity_residual_j);
             contact_steps += usize::from(soil.feedback.bucket_contacts > 0);
@@ -165,7 +191,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("mechanical replay changed finite material or became invalid".into());
     }
     let metrics = serde_json::json!({"completed":true,"scope":"Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
- "mode":args[1],"ticks":ticks,"mechanical_hz":hz,"mechanical_steps":ticks*(hz as usize/60),"simulated_seconds":ticks as f64/60.,"startup_seconds":startup,"step_wall_seconds":step_wall,"restore_wall_seconds":restore_wall,"total_wall_seconds":started.elapsed().as_secs_f64(),
+ "mode":args[1],"contact_dispatcher":format!("{dispatcher:?}"),"friction_in_bias_pass":args[1]!="cold","ticks":ticks,"mechanical_hz":hz,"mechanical_steps":ticks*(hz as usize/60),"simulated_seconds":ticks as f64/60.,"startup_seconds":startup,"step_wall_seconds":step_wall,"restore_wall_seconds":restore_wall,"total_wall_seconds":started.elapsed().as_secs_f64(),
  "clods":clods,"initial_material":initial_material,"final_material":final_material,"max_held_estimate_m3":max_held,"final_held_estimate_m3":bucket::estimated_soil_contents(machine,soil).volume(),"contact_steps":contact_steps,"maximum_coupled_passivity_residual_j":maximum_residual,"restores":restores});
     fs::write(
         out.join("metrics.json"),

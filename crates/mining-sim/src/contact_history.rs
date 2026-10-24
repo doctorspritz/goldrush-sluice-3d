@@ -16,6 +16,7 @@ pub const MAX_WORLD_BYTES: usize = 64 * 1024 * 1024;
 pub enum Dispatcher {
     Default,
     RigidSoil,
+    RigidSoilVerified,
 }
 impl Dispatcher {
     fn install(self, world: &mut r::PhysicsWorld) {
@@ -24,12 +25,14 @@ impl Dispatcher {
                 .narrow_phase
                 .set_query_dispatcher(DefaultQueryDispatcher),
             Self::RigidSoil => crate::soil_contacts::restore_dispatcher(world),
+            Self::RigidSoilVerified => crate::soil_contacts::restore_verified_dispatcher(world),
         }
     }
     fn code(self) -> u8 {
         match self {
             Self::Default => 0,
             Self::RigidSoil => 1,
+            Self::RigidSoilVerified => 2,
         }
     }
 }
@@ -86,6 +89,7 @@ impl ContactHistory {
         let dispatcher = match bytes[10] {
             0 => Dispatcher::Default,
             1 => Dispatcher::RigidSoil,
+            2 => Dispatcher::RigidSoilVerified,
             _ => return Err("Unsupported contact dispatcher".into()),
         };
         let world = codec()

@@ -101,9 +101,25 @@ fn saved_friction_policies_continue_exactly_and_other_parameter_edits_are_refuse
         obstacles: &obstacles,
         loads: &[],
     };
-    for full_friction in [false, true] {
-        let mut owner =
-            RetainedSoil::new(s.machine.clone(), s.active_soil.clone().unwrap(), &env).unwrap();
+    assert!(RetainedSoil::with_contact_dispatcher(
+        s.machine.clone(),
+        s.active_soil.clone().unwrap(),
+        &env,
+        Dispatcher::Default
+    )
+    .is_err());
+    for (full_friction, dispatcher) in [false, true].into_iter().flat_map(|full| {
+        [Dispatcher::RigidSoil, Dispatcher::RigidSoilVerified]
+            .map(move |dispatcher| (full, dispatcher))
+    }) {
+        let mut owner = RetainedSoil::with_contact_dispatcher(
+            s.machine.clone(),
+            s.active_soil.clone().unwrap(),
+            &env,
+            dispatcher,
+        )
+        .unwrap();
+        assert_eq!(owner.dispatcher, dispatcher);
         owner
             .model
             .as_mut()
@@ -115,6 +131,7 @@ fn saved_friction_policies_continue_exactly_and_other_parameter_edits_are_refuse
             .step(MachineInput::default(), 1. / 240., &env)
             .unwrap();
         let mut restored = RetainedSoil::decode(&owner.encode().unwrap(), &env).unwrap();
+        assert_eq!(restored.dispatcher, dispatcher);
         assert_eq!(
             restored
                 .model
@@ -548,6 +565,10 @@ fn zero_actuator_bank_energy_witness() {
     )
     .unwrap();
     let current_policy = std::env::var_os("SLUICE_ENERGY_CURRENT_POLICY").is_some();
+    if !current_policy || std::env::var_os("SLUICE_ENERGY_LEGACY_GEOMETRY").is_some() {
+        owner.dispatcher = Dispatcher::RigidSoil;
+        crate::soil_contacts::restore_dispatcher(&mut owner.model.as_mut().unwrap().world);
+    }
     if !current_policy {
         // Preserve the original portable failure witness independently of
         // the numerical policy selected for newly created experiments.
@@ -620,9 +641,16 @@ fn zero_actuator_bank_energy_witness() {
             let initial = energy(&owner);
             std::fs::write(output.join("before.bin"), &before).unwrap();
             let mut restored = RetainedSoil::decode(&before, &env).unwrap();
-            owner
-                .step(MachineInput::default(), 1. / 480., &env)
-                .unwrap();
+            if let Err(error) = owner.step(MachineInput::default(), 1. / 480., &env) {
+                if let Some(bytes) = before_step.as_ref() {
+                    std::fs::write(output.join("refused-before.bin"), bytes).unwrap();
+                }
+                std::fs::write(output.join("refusal.json"),serde_json::to_vec_pretty(&serde_json::json!({"requested_steps":300,"accepted_steps":trajectory.len(),"trajectory_completed":false,"failure":error,"trajectory":trajectory,"accuracy_gate_passed":false})).unwrap()).unwrap();
+                panic!(
+                    "Full trajectory refused after {} accepted steps: {error}",
+                    trajectory.len()
+                );
+            }
             restored
                 .step(MachineInput::default(), 1. / 480., &env)
                 .unwrap();
@@ -659,7 +687,7 @@ fn zero_actuator_bank_energy_witness() {
                 "restored_step_exact":true,"passivity_gate_j":0.01,
                 "passivity_gate_passed":trajectory.iter().all(|v|v["delta_energy_j"].as_f64().unwrap()<=0.01),
                 "last_step_passivity_gate_passed":delta<=0.01,
-                "current_policy":current_policy,"friction_in_bias_pass":model.world.integration_parameters.friction_in_bias_pass,
+                "current_policy":current_policy,"contact_dispatcher":format!("{:?}",owner.dispatcher),"completed_steps":trajectory.len(),"requested_steps":300,"trajectory_completed":true,"friction_in_bias_pass":model.world.integration_parameters.friction_in_bias_pass,
                 "maximum_step_energy_gain_j":trajectory.iter().map(|v|v["delta_energy_j"].as_f64().unwrap()).fold(f64::NEG_INFINITY,f64::max),
                 "all_steps_passivity_gate_passed":trajectory.iter().all(|v|v["delta_energy_j"].as_f64().unwrap()<=0.01),"trajectory":trajectory});
             let mut summary = report.clone();
@@ -671,9 +699,16 @@ fn zero_actuator_bank_energy_witness() {
             )
             .unwrap();
         } else {
-            owner
-                .step(MachineInput::default(), 1. / 480., &env)
-                .unwrap();
+            if let Err(error) = owner.step(MachineInput::default(), 1. / 480., &env) {
+                if let Some(bytes) = before_step.as_ref() {
+                    std::fs::write(output.join("refused-before.bin"), bytes).unwrap();
+                }
+                std::fs::write(output.join("refusal.json"),serde_json::to_vec_pretty(&serde_json::json!({"requested_steps":300,"accepted_steps":trajectory.len(),"trajectory_completed":false,"failure":error,"trajectory":trajectory,"accuracy_gate_passed":false})).unwrap()).unwrap();
+                panic!(
+                    "Full trajectory refused after {} accepted steps: {error}",
+                    trajectory.len()
+                );
+            }
             let row = observe(&owner, step, initial_step_energy);
             retain_worst(&owner, step, &row, before_step, &mut worst_boundary);
             trajectory.push(row);
@@ -911,3 +946,5 @@ fn saved_bank_energy_source_breakdown() {
         report["attribution_variants"]
     );
 }
+
+mod contact_geometry;

@@ -1,14 +1,16 @@
 The contact-history boundary preserves a complete rigid world's numerical state before persistent machine/soil integration is admitted into Session. The explicit `contact-history` Cargo feature exposes `mining_sim::contact_history::ContactHistory`, which owns the world, clones its numerical sets, and supports a bounded binary encoding. The actual machine plus 1,040-clod bank, its raw and solver manifolds, cached impulses and repeated restoration are checked in `articulation/history_tests.rs`.
 
-The world carries bodies, colliders, both joint sets, soft-body state, integration parameters, islands, broad-phase pairs and the narrow-phase contact graph. The derived physics/collision pipelines and CCD lookup workspace are rebuilt. The query dispatcher is stateless code selected explicitly as `Default` or `RigidSoil`; it is reinstalled after decode. Reinstalling it preserves the saved contact-softness and other physical parameters. `world_mut()` supports ordinary body/joint updates; owners must keep the declared dispatcher policy consistent.
+The world carries bodies, colliders, both joint sets, soft-body state, integration parameters, islands, broad-phase pairs and the narrow-phase contact graph. The derived physics/collision pipelines and CCD lookup workspace are rebuilt. The query dispatcher is stateless code selected explicitly as `Default`, `RigidSoil` (the original touch repair), or `RigidSoilVerified` (also checks separated cached convex contacts); it is reinstalled after decode. Reinstalling it preserves the saved contact-softness and other physical parameters. `world_mut()` supports ordinary body/joint updates; owners must keep the declared dispatcher policy consistent.
 
 | Version 1 field | Encoding |
 |---|---|
 | Magic | Eight bytes: `SLUICEWH` |
 | Schema | Little-endian u16, currently 1 |
-| Dispatcher | One byte: 0 default, 1 rigid-soil convex repair |
+| Dispatcher | One byte: 0 default, 1 original rigid-soil touch repair, 2 verified cached-convex separation |
 | World | Bincode 1.3.3, fixed integers and little-endian scalars |
 | Payload limit | 64 MiB; oversized payloads are refused |
+
+Policy 2 invalidates a negative cached manifold only when a separating hull axis exceeds the existing 10 micrometre geometry tolerance, then asks the pinned dispatcher to regenerate the ordinary manifold. Positive speculative contacts and genuine penetrations remain governed by the existing solver. The policy name describes this geometric check, not physical passivity or loaded accuracy. Original policy-1 boundaries retain policy 1 on restore; older binaries reject the new policy code instead of silently substituting another solver.
 
 The schema is tied to the pinned Rapier 0.36.1 state layout and local patches. Cross-version migration requires an explicit schema decision. Unsupported magic/version/policy, truncated data, trailing data and oversized input are rejected. This is an engine-produced numerical boundary; application-level scene, custody and handle-map validation remains necessary before admitting it into Session saves.
 
