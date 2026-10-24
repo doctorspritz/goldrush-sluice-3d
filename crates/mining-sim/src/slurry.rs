@@ -79,13 +79,18 @@ impl SlurryField {
     /// material ledger. Keep the established outlet sample before applying it.
     pub fn reconstruct_channel(&mut self) {
         // Including the two projection passes, this gives an approximately
-        // 12 cm streamwise standard deviation, versus 3 cm across the channel.
+        // 12 cm streamwise standard deviation. A 6 cm cross-channel footprint
+        // joins undersampled fine parcels into suspension instead of separate
+        // round brown islands. Both remain smaller than the channel width.
         // The weighted fine parcels undersample a continuous suspension: their
         // optical footprint should form a streak, not a round dirt clod. All
         // three additive moments use the same positive conservative stencil.
         // Vertical stratification and the separately sampled outlet stay intact.
         for _ in 0..30 {
             self.filter_axis(0);
+        }
+        for _ in 0..6 {
+            self.filter_axis(2);
         }
     }
     fn filter_axis(&mut self, axis: usize) {
@@ -269,6 +274,7 @@ mod reconstruction_tests {
             for axis in [0, 1, 2, 0, 2]
                 .into_iter()
                 .chain(std::iter::repeat_n(0, 30))
+                .chain(std::iter::repeat_n(2, 6))
             {
                 let mut next = vec![Cell::default(); reference.len()];
                 for z in 0..dims[2] {
@@ -367,11 +373,7 @@ mod reconstruction_tests {
                         assert!(cell.water >= 0. && cell.fines >= 0. && cell.area >= 0.);
                         if cell.water > 0. {
                             nonzero += 1;
-                            assert_eq!(
-                                (y, z),
-                                (2, 4),
-                                "cross-stream/bed stratification was changed"
-                            );
+                            assert_eq!(y, 2, "bed/bulk stratification was changed");
                             assert!((cell.fines / cell.water - 0.02).abs() < 1e-14);
                             assert!((cell.area / cell.water - 300.).abs() < 1e-10);
                         }
@@ -383,6 +385,42 @@ mod reconstruction_tests {
             assert!((total.water - 0.001).abs() < 1e-17);
             assert!((total.fines - 0.00002).abs() < 1e-18);
             assert!((total.area - 0.3).abs() < 1e-14);
+        }
+    }
+
+    #[test]
+    fn cross_channel_fine_footprint_keeps_a_real_concentration_gradient() {
+        let mut field = SlurryField {
+            dims: [1, 1, 101],
+            cells: vec![Cell::default(); 101],
+        };
+        field.cells[50] = Cell {
+            water: 1.,
+            fines: 0.02,
+            area: 300.,
+        };
+        field.reconstruct_channel();
+        let total: f64 = field.cells.iter().map(|c| c.water).sum();
+        let variance: f64 = field
+            .cells
+            .iter()
+            .enumerate()
+            .map(|(z, c)| c.water * ((z as f64 - 50.) * CELL_M as f64).powi(2))
+            .sum::<f64>()
+            / total;
+        assert!((total - 1.).abs() < 1e-13);
+        assert!((variance - 6. * (CELL_M as f64).powi(2) / 2.).abs() < 1e-12);
+        for (z, cell) in field.cells.iter_mut().enumerate() {
+            *cell = Cell {
+                water: 1.,
+                fines: z as f64 * 0.001,
+                area: z as f64,
+            };
+        }
+        field.reconstruct_channel();
+        for z in 12..89 {
+            assert!((field.cells[z].fines / field.cells[z].water - z as f64 * 0.001).abs() < 1e-12);
+            assert!((field.cells[z].area / field.cells[z].water - z as f64).abs() < 1e-12);
         }
     }
 }

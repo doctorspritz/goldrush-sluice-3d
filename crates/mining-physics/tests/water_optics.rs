@@ -2004,6 +2004,61 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
     }
     println!("inclined-sheet maximum analytic normal error: {max_error}");
 
+    // A front-kernel switch on a continuous sheet must not switch its whole
+    // transported ripple phase. The old nearest-envelope velocity jumps 0.8
+    // m/s at this boundary; the joined column must vary continuously instead.
+    queue.write_texture(
+        raw.as_image_copy(),
+        bytemuck::cast_slice(&field(&|x, y| {
+            [depth(x, y), -1., if x < 16. { 0.2 } else { 1. }, 0.12]
+        })),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(32 * 16),
+            rows_per_image: None,
+        },
+        raw.size(),
+    );
+    let flow_source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let i=p.y*8u+p.x;
+ let pixel=vec2(31.94+f32(i)*0.002,32.);
+ let joined=channel_surface(pixel,sample_depth(pixel).x);
+ let nearest=textureLoad(raw_depths,vec2<i32>(round(pixel*0.5-0.5)),0).ba;
+ result[i]=vec4(joined.flow,nearest);
+}"#
+    );
+    let flows = execute(
+        &device,
+        &queue,
+        flow_source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [1, 1],
+    );
+    let mut joined_jump = 0f32;
+    let mut nearest_jump = 0f32;
+    for (i, value) in flows[..64 * 4].chunks_exact(4).enumerate() {
+        assert!(value.iter().all(|v| v.is_finite()));
+        assert!((0.2..=1.).contains(&value[0]));
+        assert!((value[1] - 0.12).abs() < 0.000001);
+        if i > 0 {
+            joined_jump = joined_jump.max((value[0] - flows[(i - 1) * 4]).abs());
+            nearest_jump = nearest_jump.max((value[2] - flows[(i - 1) * 4 + 2]).abs());
+        }
+    }
+    assert!(nearest_jump > 0.79, "front-kernel control did not switch");
+    assert!(
+        joined_jump < 0.001,
+        "transported detail switched: {joined_jump}"
+    );
+    println!("flow boundary: nearest jump {nearest_jump}, joined {joined_jump} m/s");
+
     // A resolved curved sheet is not a particle bump. Match its local
     // analytic tangent and a smoothly varying optical path, through subpixel
     // phases, rather than borrowing a plane fitted beyond the crest.
@@ -2666,4 +2721,70 @@ fn grazing_profile_reaches_connected_water_without_moving_spray_or_empty_pixels(
         );
         assert!(value[0] >= 1. && value[0] <= 0.8 / 0.15 + 1e-6);
     }
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn travelling_channel_detail_is_bounded_filtered_and_continuous_at_phase_resets() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 64);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let i=p.y*8u+p.x;let mode=i%8u;
+ let normal=normalize(vec3(0.2,0.95,0.16));
+ let world=vec3(34.+f32(i/8u)*0.013,2.,28.);
+ var flow=vec2(0.7,0.12);var confidence=1.;var footprint=0.0001;
+ if mode==0u {flow=vec2(0.);}
+ if mode==1u {confidence=0.;}
+ if mode==2u {footprint=1.;}
+ let before=channel_ripple_normal(normal,world,flow,2.-0.000001,footprint,confidence);
+ let after=channel_ripple_normal(normal,world,flow,2.+0.000001,footprint,confidence);
+ result[i]=vec4(after,length(before-after));
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    let length = (0.2f64.powi(2) + 0.95f64.powi(2) + 0.16f64.powi(2)).sqrt();
+    let expected = [0.2 / length, 0.95 / length, 0.16 / length];
+    let mut moving_max = 0f64;
+    for (i, value) in values.chunks_exact(4).enumerate() {
+        assert!(value.iter().all(|v| v.is_finite()));
+        let norm = value[..3].iter().map(|v| (*v as f64).powi(2)).sum::<f64>();
+        assert!((norm - 1.).abs() < 0.000001);
+        let difference = (0..3)
+            .map(|a| (value[a] as f64 - expected[a]).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(
+            difference < 0.25,
+            "unbounded capillary normal: {difference}"
+        );
+        assert!(value[3] < 0.0001, "phase reset popped: {value:?}");
+        if i % 8 <= 2 {
+            assert!(difference < 0.000001, "inactive detail changed sheet");
+        } else {
+            moving_max = moving_max.max(difference);
+        }
+    }
+    assert!(moving_max > 0.02, "moving fine detail was not exercised");
 }

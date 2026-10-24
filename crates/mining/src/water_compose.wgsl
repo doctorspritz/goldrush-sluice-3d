@@ -180,7 +180,7 @@ fn channel_cross(pixel:vec2<i32>,size:vec2<i32>,origin:f32,slope:vec2<f32>,curva
     let tolerance=max(max(abs(slope.x),abs(slope.y))*1.5,0.00001);
     return mixed*(1.-smoothstep(tolerance,tolerance*2.,error));
 }
-struct ChannelSurface {normal:vec4<f32>,column:vec2<f32>};
+struct ChannelSurface {normal:vec4<f32>,column:vec2<f32>,flow:vec2<f32>};
 // Gather every texel in the footprint. Striding over alternating texels makes
 // the surface and its turbidity change when the half-size pixel phase changes.
 // Share visibility tests between the two additive fields, before normalizing.
@@ -188,6 +188,7 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
     var sum=vec3(0.);var weight=0.;
     var position_sum=vec3(0.);var second=vec3(0.);var cross_depth=vec2(0.);var plane_weight=0.;
     var column=vec2(0.);var column_weight=0.;
+    var flow_sum=vec2(0.);var flow_weight=0.;
     let size=vec2<i32>(textureDimensions(surface_normals));
     let p=pixel*vec2<f32>(size)/u.viewport.xy-0.5;
     let center=vec2<i32>(round(p));
@@ -291,6 +292,11 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         // The same four passes already reconstructed these additive moments
         // with the interface. Keep the ratio until after the final gather.
         column+=filtered.gb*cw;column_weight+=cw;
+        // The nearest kernel is an envelope, not a velocity field. Transport
+        // surface detail with the joined water column, so switching the front
+        // particle cannot switch the direction/phase of an entire muddy patch.
+        let fw=cw*max(filtered.g,0.);
+        flow_sum+=raw.ba*fw;flow_weight+=fw;
     }}
     var out:ChannelSurface;
     out.normal=vec4(0.);
@@ -346,6 +352,7 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         out.normal=vec4(world_n,select(sheet.confidence,out.normal.w,out.normal.w>0.));
     }
     out.column=column/max(column_weight,0.000001);
+    out.flow=flow_sum/max(flow_weight,0.000001);
     return out;
 }
 fn reconstructed_normal(pixel:vec2<f32>,depth:f32)->vec4<f32> {
@@ -382,6 +389,33 @@ fn ripple_gradient(q:vec2<f32>,footprint:f32)->vec2<f32> {
     return vec2(0.8,0.6)*cos(dot(q,vec2(27.,20.)))*exp(-0.5*1130.*footprint*footprint)
         +vec2(-0.4,0.9)*cos(dot(q,vec2(-63.,142.)))*0.36*exp(-0.5*24133.*footprint*footprint)
         +vec2(0.9,-0.3)*cos(dot(q,vec2(194.,-65.)))*0.12*exp(-0.5*41861.*footprint*footprint);
+}
+// Millimetre-scale travelling surface detail, projected onto the actual sheet.
+// This changes reflection/refraction only, never depth, volume,
+// concentration or particle motion. Band filtering removes unresolved glints.
+fn channel_ripple_gradient(q:vec2<f32>,footprint:f32)->vec2<f32> {
+    return vec2(1.,0.22)*cos(dot(q,vec2(150.,33.)))*exp(-0.5*23589.*footprint*footprint)
+        +vec2(0.55,-0.8)*cos(dot(q,vec2(77.,-112.)))*0.45*exp(-0.5*18473.*footprint*footprint)
+        +vec2(0.97,0.24)*cos(dot(q,vec2(291.,72.)))*0.2*exp(-0.5*89865.*footprint*footprint);
+}
+fn channel_ripple_normal(normal:vec3<f32>,world:vec3<f32>,flow:vec2<f32>,time:f32,footprint:f32,confidence:f32)->vec3<f32> {
+    let velocity=vec3(flow.x,0.,flow.y);
+    let projected=velocity-normal*dot(normal,velocity);
+    let speed=length(projected);
+    // A stationary sheet has no invented boiling animation. The bounded
+    // fallback keeps zero-speed and near-vertical sheets finite.
+    if speed<0.0001 {return normal;}
+    // World-anchored phases do not rotate about the world origin when a crest
+    // changes slope. Only the small gradient is projected onto its tangent.
+    let uv=world.xz;
+    let phase0=fract(time*0.5);let phase1=fract(time*0.5+0.5);
+    let weight0=1.-abs(phase0*2.-1.);
+    let gradient=mix(channel_ripple_gradient(uv-flow*(phase1*2.),footprint),
+                     channel_ripple_gradient(uv-flow*(phase0*2.),footprint),weight0);
+    let slope=vec3(gradient.x,0.,gradient.y);
+    let tangent=slope-normal*dot(slope,normal);
+    let amplitude=0.14*smoothstep(0.02,0.45,speed)*clamp(confidence,0.,1.);
+    return normalize(normal-tangent*amplitude);
 }
 fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,original:vec3<f32>)->vec3<f32> {
     let position=view_point(pixel,depth);
@@ -475,10 +509,12 @@ fn channel_sun(normal:vec3<f32>,eye:vec3<f32>,light:vec3<f32>,variance:f32)->f32
     var normal=normalize(select(textureLoad(surface_normals,raw_pixel,0).xyz,river_surface.xyz,river));
     var surface_confidence=0.;
     var channel_column=vec2(0.);
+    var flow=optical_sample.ba;
     if in_channel {
         let joined=channel_surface(q,depth);
         let surface=joined.normal;
         channel_column=joined.column;
+        flow=joined.flow;
         surface_confidence=surface.w;
         if surface.w>0. {
             var surface_normal=surface.xyz;if dot(surface_normal,u.world_from_view[3].xyz-world.xyz)<0. {surface_normal = -surface_normal;}
@@ -497,13 +533,14 @@ fn channel_sun(normal:vec3<f32>,eye:vec3<f32>,light:vec3<f32>,variance:f32)->f32
     var n = normalize(cross(dy,dx)); if n.z < 0. { n = -n; }
     normal = normalize((u.world_from_view * vec4(n,0.)).xyz);
     }
-    let flow=optical_sample.ba;
     // Dual-phase advection blends at resets, so a varying flow field cannot
     // stretch the normal detail indefinitely. Simulation time also freezes it.
     let eye_world=normalize(u.world_from_view[3].xyz-world.xyz);
     let pixel_size=depth*2.*abs(u.view_from_clip[1].y)/u.viewport.y;
     let footprint=pixel_size/max(abs(dot(normal,eye_world)),0.12);
-    if river || in_channel {
+    if in_channel {
+        normal=channel_ripple_normal(normal,world.xyz,flow,u.sediment.z,footprint,surface_confidence);
+    } else if river {
         let phase0=fract(u.sediment.z*0.5);let phase1=fract(u.sediment.z*0.5+0.5);
         let weight0=1.-abs(phase0*2.-1.);
         let q0=world.xz-flow*(phase0*2.);let q1=world.xz-flow*(phase1*2.);
