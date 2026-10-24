@@ -1,0 +1,26 @@
+   Compiling rapier3d v0.36.1 (/Users/simonheikkila/.codex/worktrees/direct-mining/the-sluice-moose/vendor/rapier3d)
+    Finished `playable` profile [optimized] target(s) in 30.67s
+     Running unittests src/lib.rs (/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/playable/deps/rapier3d-1262a4da00b64789)
+
+running 4 tests
+test dynamics::solver::contact_constraint::contact_with_coulomb_friction::rigid_anchor_objectivity::actual_persistent_tangential_slip_is_preserved ... ok
+test dynamics::solver::contact_constraint::contact_with_coulomb_friction::rigid_anchor_objectivity::common_rigid_rotation_does_not_invent_tangential_anchor_velocity ...
+thread 'dynamics::solver::contact_constraint::contact_with_coulomb_friction::rigid_anchor_objectivity::common_rigid_rotation_does_not_invent_tangential_anchor_velocity' (37718384) panicked at src/dynamics/solver/contact_constraint/rigid_anchor_objectivity.rs:164:13:
+common rigid angle=0.025, translation=Vec3(0.0, 0.0, 0.0) invented contact velocity: actual=Vec3(-2.3997502, 0.0, 0.0), material-witness target=Vec3(0.0, 0.0, 0.0), discrepancy=2.3997502 m/s
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test dynamics::solver::contact_constraint::contact_with_coulomb_friction::rigid_anchor_objectivity::common_rotation_preserves_real_tangential_slip_without_adding_false_slip ...
+thread 'dynamics::solver::contact_constraint::contact_with_coulomb_friction::rigid_anchor_objectivity::common_rotation_preserves_real_tangential_slip_without_adding_false_slip' (37718385) panicked at src/dynamics/solver/contact_constraint/rigid_anchor_objectivity.rs:197:9:
+angle=0.025: true persistent slip target=Vec3(1.92, 0.0, -1.3439999), builder target=Vec3(-0.47975016, 0.0, -1.3439999)
+FAILED
+test dynamics::solver::contact_constraint::contact_with_coulomb_friction::rigid_anchor_objectivity::unbiased_update_removes_position_target_and_preserves_source_impulses ... ok
+
+failures:
+
+failures:
+    dynamics::solver::contact_constraint::contact_with_coulomb_friction::rigid_anchor_objectivity::common_rigid_rotation_does_not_invent_tangential_anchor_velocity
+    dynamics::solver::contact_constraint::contact_with_coulomb_friction::rigid_anchor_objectivity::common_rotation_preserves_real_tangential_slip_without_adding_false_slip
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 99 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

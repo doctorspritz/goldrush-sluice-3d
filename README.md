@@ -10,7 +10,7 @@ The [environment-detail report](docs/playtests/2026-10-21-environment-detail.md)
 
 The [shoreline report](docs/playtests/2026-10-21-shoreline.md) records full-resolution river/terrain contact, pixel-sized edge blending, native comparisons and its added GPU memory cost. The physical solvers and accepted particle/outlet optics remain unchanged; larger bank contours still need refinement.
 
-The [crest and muddy-patch correction](docs/playtests/2026-10-23-crest-patches.md) filters the visible interface and sediment optical columns together, reducing rounded crest highlights and isolated muddy islands. Matched native captures and motion record the improvement and remaining broad waves/grain speckling. The water, riffle and sediment solvers remain unchanged.
+The [current crest and muddy-shore build](docs/playtests/2026-10-24-visual-delivery.md) retains directional crest shapes, reconstructs visible water and sediment together, and keeps shoreline turbidity continuous. Its corrected support calculation is also cheaper. Native comparisons and fresh default-demo motion are recorded; broad physical waves and grain speckling still need work. The water, riffle and sediment solvers remain unchanged.
 
 The [spatial payload model](docs/physics/payload-exchange.md) and [checkpoint](docs/playtests/2026-10-23-payload-exchange.md) add momentum-aware finite load transactions to the optional articulated mechanism. Soil contact, retention and normal articulated digging remain under development.
 
