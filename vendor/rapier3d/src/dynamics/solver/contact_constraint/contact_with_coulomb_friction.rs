@@ -391,7 +391,9 @@ impl ContactWithCoulombFrictionBuilder {
         let all_infos = &self.infos[..constraint.num_contacts as usize];
         let normal_parts = &mut constraint.normal_part[..constraint.num_contacts as usize];
         let tangent_parts = &mut constraint.tangent_part[..constraint.num_contacts as usize];
-        for part in tangent_parts.iter_mut() {part.maximum_dissipation=params.maximum_dissipation_friction;}
+        for part in tangent_parts.iter_mut() {
+            part.maximum_dissipation = params.maximum_dissipation_friction;
+        }
 
         #[cfg(feature = "dim2")]
         let tangents1 = constraint.dir1.orthonormal_basis();
@@ -555,6 +557,31 @@ pub(crate) struct ContactWithCoulombFriction<N: ScalarType> {
 }
 
 impl ContactWithCoulombFriction<SimdReal> {
+    /// Improve the cached initial guess with one local unbiased contact solve.
+    /// Restore the physical biased rows; retain the newly projected impulses.
+    pub fn project_warmstart(&mut self, bodies: &mut SolverBodies) {
+        let rhs = self.normal_part.map(|p| (p.rhs, p.cfm_factor));
+        let tangent_rhs = self.tangent_part.map(|p| p.rhs);
+        let cfm = self.cfm_factor;
+        for p in &mut self.normal_part {
+            p.rhs = p.rhs_wo_bias;
+            p.cfm_factor = SimdReal::splat(1.0);
+        }
+        for p in &mut self.tangent_part {
+            p.rhs = p.rhs_wo_bias;
+        }
+        self.cfm_factor = SimdReal::splat(1.0);
+        self.solve(bodies, true, true);
+        for (p, (rhs, cfm)) in self.normal_part.iter_mut().zip(rhs) {
+            p.rhs = rhs;
+            p.cfm_factor = cfm;
+        }
+        for (p, rhs) in self.tangent_part.iter_mut().zip(tangent_rhs) {
+            p.rhs = rhs;
+        }
+        self.cfm_factor = cfm;
+    }
+
     pub fn warmstart(&mut self, bodies: &mut SolverBodies) {
         let mut solver_vel1 = bodies.gather_vels(self.solver_vel1);
         let mut solver_vel2 = bodies.gather_vels(self.solver_vel2);

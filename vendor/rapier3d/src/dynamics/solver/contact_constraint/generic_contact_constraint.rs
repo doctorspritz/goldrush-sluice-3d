@@ -444,7 +444,9 @@ impl GenericContactConstraintBuilder {
         let all_infos = &self.infos[..constraint.num_contacts as usize];
         let normal_parts = &mut constraint.normal_part[..constraint.num_contacts as usize];
         let tangent_parts = &mut constraint.tangent_part[..constraint.num_contacts as usize];
-        for part in tangent_parts.iter_mut() {part.maximum_dissipation=params.maximum_dissipation_friction;}
+        for part in tangent_parts.iter_mut() {
+            part.maximum_dissipation = params.maximum_dissipation_friction;
+        }
 
         #[cfg(feature = "dim2")]
         let tangents1 = constraint.dir1.orthonormal_basis();
@@ -596,6 +598,36 @@ impl GenericContactConstraint {
         }
     }
 
+    /// Improve the cached initial guess with one local unbiased contact solve.
+    /// Restore the physical biased rows; retain the newly projected impulses.
+    pub fn project_warmstart(
+        &mut self,
+        jacobians: &DVector,
+        bodies: &mut SolverBodies,
+        generic_solver_vels: &mut DVector,
+    ) {
+        let rhs = self.normal_part.map(|p| (p.rhs, p.cfm_factor));
+        let tangent_rhs = self.tangent_part.map(|p| p.rhs);
+        let cfm = self.cfm_factor;
+        for p in &mut self.normal_part {
+            p.rhs = p.rhs_wo_bias;
+            p.cfm_factor = 1.0;
+        }
+        for p in &mut self.tangent_part {
+            p.rhs = p.rhs_wo_bias;
+        }
+        self.cfm_factor = 1.0;
+        self.solve(jacobians, bodies, generic_solver_vels, true, true);
+        for (p, (rhs, cfm)) in self.normal_part.iter_mut().zip(rhs) {
+            p.rhs = rhs;
+            p.cfm_factor = cfm;
+        }
+        for (p, rhs) in self.tangent_part.iter_mut().zip(tangent_rhs) {
+            p.rhs = rhs;
+        }
+        self.cfm_factor = cfm;
+    }
+
     pub fn warmstart(
         &mut self,
         jacobians: &DVector,
@@ -738,6 +770,109 @@ impl GenericContactConstraint {
         }
         for tangent_part in &mut self.tangent_part {
             tangent_part.rhs = tangent_part.rhs_wo_bias;
+        }
+    }
+}
+
+#[cfg(all(test, feature = "dim3"))]
+mod warmstart_projection_tests {
+    use super::*;
+    use crate::alloc_prelude::vec;
+    fn contact(m1: Real, m2: Real) -> GenericContactConstraint {
+        let mut c = GenericContactConstraint::invalid();
+        c.j_id = 0;
+        c.ndofs1 = 0;
+        c.ndofs2 = 0;
+        c.generic_constraint_mask = 0;
+        c.solver_vel1 = 0;
+        c.solver_vel2 = 1;
+        c.num_contacts = 1;
+        c.dir1 = Vector::Y;
+        c.tangent1 = Vector::X;
+        c.im1 = Vector::splat(1. / m1);
+        c.im2 = Vector::splat(1. / m2);
+        c.cfm_factor = 0.31;
+        c.limit = 1.;
+        let r = 1. / (1. / m1 + 1. / m2);
+        c.normal_part[0].r = r;
+        c.normal_part[0].rhs = -8.;
+        c.normal_part[0].rhs_wo_bias = 0.;
+        c.normal_part[0].cfm_factor = 0.4;
+        c.normal_part[0].impulse_accumulator = 0.37;
+        c.tangent_part[0].r = [r, r, 0.];
+        c.tangent_part[0].maximum_dissipation = true;
+        c.tangent_part[0].rhs = [3., -7.];
+        c
+    }
+    #[test]
+    fn warmstart_projection_matches_inelastic_momentum_and_restores_biased_rows() {
+        for m1 in [1., 1000., 1_000_000.] {
+            let m2 = 1.;
+            for seed in [0., 7., 123.] {
+                let mut c = contact(m1, m2);
+                let r = c.normal_part[0].r;
+                c.normal_part[0].impulse = seed * r;
+                c.tangent_part[0].impulse = na::vector![seed * r * 0.2, -seed * r * 0.1];
+                let saved = c;
+                let mut bodies = SolverBodies::default();
+                bodies.resize(2);
+                let v = Vector::new(0.3, -0.8, 0.2);
+                bodies.vels[0].linear = v;
+                let expected = v * (m1 / (m1 + m2));
+                let jac = DVector::zeros(0);
+                let mut generic = DVector::zeros(0);
+                c.warmstart(&jac, &mut bodies, &mut generic);
+                c.project_warmstart(&jac, &mut bodies, &mut generic);
+                for body in &bodies.vels {
+                    assert!(
+                        (body.linear - expected).length() < 0.00003,
+                        "m={m1},seed={seed},v={:?},expected={expected:?}",
+                        body.linear
+                    );
+                }
+                assert_eq!(c.cfm_factor, saved.cfm_factor);
+                assert_eq!(c.normal_part[0].rhs, saved.normal_part[0].rhs);
+                assert_eq!(c.normal_part[0].cfm_factor, saved.normal_part[0].cfm_factor);
+                assert_eq!(
+                    c.normal_part[0].impulse_accumulator,
+                    saved.normal_part[0].impulse_accumulator
+                );
+                assert_eq!(c.tangent_part[0].rhs, saved.tangent_part[0].rhs);
+                assert!(
+                    c.tangent_part[0].impulse.norm() <= c.limit * c.normal_part[0].impulse + 1e-5
+                );
+                let kinetic = 0.5 * m1 as f64 * bodies.vels[0].linear.as_dvec3().length_squared()
+                    + 0.5 * m2 as f64 * bodies.vels[1].linear.as_dvec3().length_squared();
+                let reference = 0.5 * (m1 + m2) as f64 * expected.as_dvec3().length_squared();
+                assert!((kinetic - reference).abs() < 0.00005 * (reference + 1.));
+            }
+        }
+    }
+    #[test]
+    fn warmstart_projection_uses_generalized_inverse_mass_at_the_real_ratio() {
+        for m1 in [1., 1000., 1_000_000.] {
+            let m2 = 1.;
+            let mut c = contact(m1, m2);
+            c.ndofs1 = 1;
+            c.generic_constraint_mask = 1;
+            c.im1 = Vector::ZERO;
+            c.limit = 0.;
+            c.normal_part[0].impulse = 123. * c.normal_part[0].r;
+            c.tangent_part[0].r = [m2, m2, 0.];
+            let jac = DVector::from_vec(vec![1., 1. / m1, 0., 0., 0., 0.]);
+            let mut generic = DVector::from_vec(vec![-0.8]);
+            let mut bodies = SolverBodies::default();
+            bodies.resize(2);
+            bodies.vels[1].linear.y = 0.2;
+            let expected = (-0.8 * m1 + 0.2 * m2) / (m1 + m2);
+            c.warmstart(&jac, &mut bodies, &mut generic);
+            c.project_warmstart(&jac, &mut bodies, &mut generic);
+            assert!(
+                (generic[0] - expected).abs() < 0.00003,
+                "generalized mass {m1}: {} vs {expected}",
+                generic[0]
+            );
+            assert!((bodies.vels[1].linear.y - expected).abs() < 0.00003);
         }
     }
 }

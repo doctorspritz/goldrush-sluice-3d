@@ -92,6 +92,64 @@ fn complete_retained_bank_owner_clones_and_restores_through_real_contact() {
     println!("real retained normal/friction histories={impulses}");
 }
 #[test]
+fn saved_friction_policies_continue_exactly_and_other_parameter_edits_are_refused() {
+    let s = bank();
+    let obstacles = s.mechanical_obstacles();
+    let env = Environment {
+        gravity: -Vec3::Y * 9.81,
+        site: Some(&s.site),
+        obstacles: &obstacles,
+        loads: &[],
+    };
+    for full_friction in [false, true] {
+        let mut owner =
+            RetainedSoil::new(s.machine.clone(), s.active_soil.clone().unwrap(), &env).unwrap();
+        owner
+            .model
+            .as_mut()
+            .unwrap()
+            .world
+            .integration_parameters
+            .friction_in_bias_pass = full_friction;
+        owner
+            .step(MachineInput::default(), 1. / 240., &env)
+            .unwrap();
+        let mut restored = RetainedSoil::decode(&owner.encode().unwrap(), &env).unwrap();
+        assert_eq!(
+            restored
+                .model
+                .as_ref()
+                .unwrap()
+                .world
+                .integration_parameters
+                .friction_in_bias_pass,
+            full_friction
+        );
+        for _ in 0..4 {
+            owner
+                .step(MachineInput::default(), 1. / 240., &env)
+                .unwrap();
+            restored
+                .step(MachineInput::default(), 1. / 240., &env)
+                .unwrap();
+            same(&owner, &restored, "stored friction policy");
+        }
+        let mut invalid = owner.clone();
+        invalid
+            .model
+            .as_mut()
+            .unwrap()
+            .world
+            .integration_parameters
+            .num_solver_iterations += 1;
+        let error = match RetainedSoil::decode(&invalid.encode().unwrap(), &env) {
+            Ok(_) => panic!("unrecognized numerical edits must remain refused"),
+            Err(error) => error,
+        };
+        assert!(error.contains("parameters do not match"), "{error}");
+    }
+}
+#[test]
 fn refused_inputs_geometry_and_corrupt_owners_cannot_reset_contact_history() {
     let mut s = bank();
     let obstacles = s.mechanical_obstacles();
@@ -489,6 +547,18 @@ fn zero_actuator_bank_energy_witness() {
         &env,
     )
     .unwrap();
+    let current_policy = std::env::var_os("SLUICE_ENERGY_CURRENT_POLICY").is_some();
+    if !current_policy {
+        // Preserve the original portable failure witness independently of
+        // the numerical policy selected for newly created experiments.
+        owner
+            .model
+            .as_mut()
+            .unwrap()
+            .world
+            .integration_parameters
+            .friction_in_bias_pass = false;
+    }
     let output = std::path::PathBuf::from(
         std::env::var_os("SLUICE_ENERGY_WITNESS").expect("fresh witness directory"),
     );
@@ -518,7 +588,33 @@ fn zero_actuator_bank_energy_witness() {
             })
             .sum::<f64>()
     };
+    let mut trajectory = Vec::new();
+    let mut worst_boundary: Option<(usize, f64, Vec<u8>, Vec<u8>)> = None;
+    let observe = |owner: &RetainedSoil, step: usize, initial: f64| {
+        let total = energy(owner);
+        let delta = total - initial;
+        let reported = owner.soil().feedback.coupled_passivity_residual_j;
+        assert!(
+            (delta - reported).abs() < 0.05,
+            "independent full-bank energy disagrees at {step}: {delta} vs {reported}"
+        );
+        serde_json::json!({"step":step+1,"total_energy_j":total,"delta_energy_j":delta,"reported_residual_j":reported})
+    };
+    let retain_worst = |owner: &RetainedSoil,
+                        step: usize,
+                        row: &serde_json::Value,
+                        before: Option<Vec<u8>>,
+                        worst: &mut Option<(usize, f64, Vec<u8>, Vec<u8>)>| {
+        if let Some(before) = before {
+            let delta = row["delta_energy_j"].as_f64().unwrap();
+            if worst.as_ref().is_none_or(|v| delta > v.1) {
+                *worst = Some((step + 1, delta, before, owner.encode().unwrap()));
+            }
+        }
+    };
     for step in 0..300 {
+        let before_step = current_policy.then(|| owner.encode().unwrap());
+        let initial_step_energy = energy(&owner);
         if step == 299 {
             let before = owner.encode().unwrap();
             let initial = energy(&owner);
@@ -532,6 +628,14 @@ fn zero_actuator_bank_energy_witness() {
                 .unwrap();
             same(&owner, &restored, "zero actuator energy witness");
             let delta = energy(&owner) - initial;
+            let row = observe(&owner, step, initial_step_energy);
+            retain_worst(&owner, step, &row, before_step, &mut worst_boundary);
+            trajectory.push(row);
+            if let Some((step, delta, before, after)) = &worst_boundary {
+                std::fs::write(output.join("worst-before.bin"), before).unwrap();
+                std::fs::write(output.join("worst-after.bin"), after).unwrap();
+                std::fs::write(output.join("worst.json"),serde_json::to_vec_pretty(&serde_json::json!({"step":step,"delta_energy_j":delta,"mechanical_hz":480,"complete_owner_boundaries":true})).unwrap()).unwrap();
+            }
             let reported = owner.soil().feedback.coupled_passivity_residual_j;
             let model = owner.model.as_ref().unwrap();
             let (mb, _) = model.world.multibody_joints.get(model.joints[0]).unwrap();
@@ -552,8 +656,15 @@ fn zero_actuator_bank_energy_witness() {
                 "dynamic_bodies":model.world.bodies.iter().filter(|(_,b)|b.is_dynamic()).count(),
                 "independent_energy_delta_j":delta,"reported_residual_j":reported,
                 "actuator_motor_rows":0,"pump_work_j":actuator.pump_energy_j,"elastic_energy_j":actuator.feedback.elastic_j,
-                "restored_step_exact":true,"passivity_gate_j":0.01,"passivity_gate_passed":delta<=0.01});
-            println!("ENERGY WITNESS {report}");
+                "restored_step_exact":true,"passivity_gate_j":0.01,
+                "passivity_gate_passed":trajectory.iter().all(|v|v["delta_energy_j"].as_f64().unwrap()<=0.01),
+                "last_step_passivity_gate_passed":delta<=0.01,
+                "current_policy":current_policy,"friction_in_bias_pass":model.world.integration_parameters.friction_in_bias_pass,
+                "maximum_step_energy_gain_j":trajectory.iter().map(|v|v["delta_energy_j"].as_f64().unwrap()).fold(f64::NEG_INFINITY,f64::max),
+                "all_steps_passivity_gate_passed":trajectory.iter().all(|v|v["delta_energy_j"].as_f64().unwrap()<=0.01),"trajectory":trajectory});
+            let mut summary = report.clone();
+            summary.as_object_mut().unwrap().remove("trajectory");
+            println!("ENERGY WITNESS {summary}");
             std::fs::write(
                 output.join("report.json"),
                 serde_json::to_vec_pretty(&report).unwrap(),
@@ -563,6 +674,9 @@ fn zero_actuator_bank_energy_witness() {
             owner
                 .step(MachineInput::default(), 1. / 480., &env)
                 .unwrap();
+            let row = observe(&owner, step, initial_step_energy);
+            retain_worst(&owner, step, &row, before_step, &mut worst_boundary);
+            trajectory.push(row);
         }
     }
 }

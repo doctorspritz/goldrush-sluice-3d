@@ -1,0 +1,22 @@
+The experimental retained-soil owner now preconditions cached contact impulses with one local unbiased normal/friction solve before the ordinary biased solve. New owners also run friction in the biased pass. Both choices are stored numerical policy; they add solver work without changing masses, geometry, actuator forces, physical cadence or admission limits. Ordinary Session continues using its existing rebuilt-world path and relaxation-only friction policy.
+
+Original false-policy snapshots and new true-policy snapshots both restore and continue exactly. Other integration-parameter tampering remains refused. The original saved bank before/after binaries regenerate byte-for-byte. Two private analytic tests independently check inelastic velocity, momentum, energy and the friction cone for rigid and generalized degrees of freedom, including mass ratios up to one million. Only those two vendor tests were run; 87 others were filtered out.
+
+On the same preserved old bank step, the old policy gains **3,584.104 J**. Full biased-pass friction without the new projection gains **2,784.45 J**; adding the unbiased projection changes that same control to **−19.699 J**. The original false policy still reproduces its original failure exactly. This isolated negative step is not whole-trajectory passivity.
+
+| Fresh 300-step, 480 Hz full bank | Original policy | New experimental policy |
+|---|---:|---:|
+| Maximum step energy gain | 3,584.104 J | 79.206 J |
+| Steps above the unchanged 0.01 J bound | 21 | 57 |
+| Net energy change | +655.875 J | −227.473 J |
+| Whole-window passivity | Fail | Fail |
+
+All 1,040 clods and 1,045 dynamic bodies are observed independently, with zero actuator motor rows and no pump/elastic work. The final step loses 0.262 J, but the actual worst boundary is step 28. The observer now reports the entire-window gate, separately from the last-step gate, and saves the complete worst before/after owner. A final rerun matches all four final/worst owner binaries exactly. Observer execution succeeds while physical accuracy fails.
+
+At the worst boundary, the engine contributes approximately 67.20 J and final synchronization 12.00 J. Machines gain 38.65 J and clods 40.55 J. Disabling penetration-velocity bias makes that step dissipate 1.92 J; 64 relaxation passes still gain 19.99 J. Neither bias nor contact history is disabled in production. Warmed-boundary TGS changes are attribution controls, not timestep convergence. The next investigation must audit actual geometric witnesses and converge coupled penetration/joint stabilization without widening limits.
+
+Validation completes **32 featured library checks, 23 default library checks, 147 integration checks and the two analytic projection checks**, plus the explicitly executed stored-policy and bank-observer diagnostics. Three optional featured diagnostics remain ignored in its ordinary suite. Two combined invocations timed out; they are not successful full-suite runs. Coverage is the union of completed target summaries, the delayed-input case completed in the interrupted run, and dedicated long prepared-bank and 1,080-tick scoop/hold/spill runs. The latter retains at least 4.219 L airborne and empties, under ordinary cold Session; it does not prove retained-bank convergence. Strict featured all-target Clippy, maintained formatting, vendor-file formatting and zero available doctests complete successfully.
+
+The local [receipt](2026-10-24-contact-warm-projection.json) records source/log hashes and exact owner proofs. Reproduce the current full trace with `SLUICE_ENERGY_CURRENT_POLICY=1 SLUICE_ENERGY_WITNESS=/tmp/new-owner-witness cargo +nightly test -p mining-sim --features contact-history --lib zero_actuator_bank_energy_witness --profile playable --locked --jobs 1 -- --ignored --test-threads=1 --nocapture`; choose a fresh output directory. Omit the current-policy variable for the original portable witness. Use the documented shared Cargo target from a worktree.
+
+The remaining 79 J error, loaded refinement, changing geometry, continuous soil activation, wet/cohesive material and native throughput remain open. Existing cold/retained timings now compare different numerical policies and cannot isolate a retention-only speedup. No new native app or real-time measurement is claimed by this physics checkpoint. Pads, shaker decks, sluice buildup, settling circuits and the full operation remain unfinished.

@@ -6,20 +6,20 @@ use core::sync::atomic::Ordering;
 
 #[cfg(feature = "dim3")]
 use crate::dynamics::rigid_body::gyroscopic_corrected_angvel;
+use crate::dynamics::solver::JointConstraintsSet;
 use crate::dynamics::solver::contact_constraint::ContactWithCoulombFrictionBuilder;
 #[cfg(feature = "dim3")]
 use crate::dynamics::solver::contact_constraint::ContactWithTwistFrictionBuilder;
 use crate::dynamics::solver::joint_constraint::GenericJointConstraintBuilder;
 use crate::dynamics::solver::solver_body::SOLVER_BODY_ALLOW_FAST_ROTATION;
 use crate::dynamics::solver::solver_contact_graph::ContactRef;
-use crate::dynamics::solver::JointConstraintsSet;
 use crate::dynamics::{JointGraphEdge, RigidBodyType, RigidBodyVelocity};
 use crate::geometry::ContactManifold;
 use crate::math::Real;
 use parry::math::SIMD_WIDTH;
 
 use super::solve::solve_pass;
-use super::{chunk_at, stage_batch, SharedCtx, BODY_BATCH};
+use super::{BODY_BATCH, SharedCtx, chunk_at, stage_batch};
 
 /// Per-full-step angular rotation cap (0.25π ≈ 45°): bodies without
 /// `allow_fast_rotation` get their angular velocity clamped each substep so the full-step
@@ -597,6 +597,11 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                                     constraint,
                                 );
                                 constraint.warmstart(solver_bodies);
+                                if params.maximum_dissipation_friction
+                                    && params.friction_in_bias_pass
+                                {
+                                    constraint.project_warmstart(solver_bodies);
+                                }
                             }
                             if !ctx.use_twist {
                                 let builder = unsafe { &*ctx.coulomb_builders.add(chunk_id) };
@@ -610,6 +615,11 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                                     constraint,
                                 );
                                 constraint.warmstart(solver_bodies);
+                                if params.maximum_dissipation_friction
+                                    && params.friction_in_bias_pass
+                                {
+                                    constraint.project_warmstart(solver_bodies);
+                                }
                             }
                         }
                         done += claimed_len;
@@ -637,6 +647,9 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                                 constraint,
                             );
                             constraint.warmstart(solver_bodies);
+                            if params.maximum_dissipation_friction && params.friction_in_bias_pass {
+                                constraint.project_warmstart(solver_bodies);
+                            }
                         }
                         if !ctx.use_twist {
                             let builder = unsafe { &*ctx.coulomb_builders.add(chunk_id) };
@@ -649,6 +662,9 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                                 constraint,
                             );
                             constraint.warmstart(solver_bodies);
+                            if params.maximum_dissipation_friction && params.friction_in_bias_pass {
+                                constraint.project_warmstart(solver_bodies);
+                            }
                         }
                     }
 
@@ -665,6 +681,13 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                             &mut vs.solver_bodies,
                             &mut vs.generic_solver_vels,
                         );
+                        if params.maximum_dissipation_friction && params.friction_in_bias_pass {
+                            c.project_warmstart(
+                                &contacts.generic_jacobians,
+                                &mut vs.solver_bodies,
+                                &mut vs.generic_solver_vels,
+                            );
+                        }
                     }
                     sync.complete(stage, 1, 1);
                 }

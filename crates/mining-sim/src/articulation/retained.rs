@@ -125,7 +125,11 @@ impl RetainedSoil {
             1. / machine.tracks.mechanical_hz as f32,
             env,
         )?;
-        let model = build_model(&mut machine, env, &state, Some(&mut soil))?;
+        let mut model = build_model(&mut machine, env, &state, Some(&mut soil))?;
+        // The retained experiment solves friction with normal contact throughout
+        // the step. Cached guesses receive a local unbiased projection first.
+        // Existing saved worlds keep their explicitly stored numerical policy.
+        model.world.integration_parameters.friction_in_bias_pass = true;
         Ok(Self {
             model: Some(model),
             machine,
@@ -251,6 +255,10 @@ impl RetainedSoil {
         }
         let mut parameters = expected.world.integration_parameters;
         parameters.dt = world.integration_parameters.dt;
+        // Both stored policies are supported: original relax-only friction,
+        // and the new full-friction projected warm start. All other model
+        // parameters must still match exactly; decoding never upgrades a save.
+        parameters.friction_in_bias_pass = world.integration_parameters.friction_in_bias_pass;
         if !parameters.dt.is_finite()
             || parameters.dt <= 0.
             || parameters.dt > 0.05

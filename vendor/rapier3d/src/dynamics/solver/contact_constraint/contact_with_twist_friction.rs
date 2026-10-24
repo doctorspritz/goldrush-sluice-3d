@@ -630,6 +630,25 @@ pub(crate) struct ContactWithTwistFriction<N: ScalarType> {
 }
 
 impl ContactWithTwistFriction<SimdReal> {
+    pub fn project_warmstart(&mut self, bodies: &mut SolverBodies) {
+        let rhs = self.normal_part.map(|p| (p.rhs, p.cfm_factor));
+        let tangent_rhs = self.tangent_part.rhs;
+        let cfm = self.cfm_factor;
+        for p in &mut self.normal_part {
+            p.rhs = p.rhs_wo_bias;
+            p.cfm_factor = SimdReal::splat(1.0);
+        }
+        self.tangent_part.rhs = self.tangent_part.rhs_wo_bias;
+        self.cfm_factor = SimdReal::splat(1.0);
+        self.solve(bodies, true, true);
+        for (p, (rhs, cfm)) in self.normal_part.iter_mut().zip(rhs) {
+            p.rhs = rhs;
+            p.cfm_factor = cfm;
+        }
+        self.tangent_part.rhs = tangent_rhs;
+        self.cfm_factor = cfm;
+    }
+
     pub fn warmstart(&mut self, bodies: &mut SolverBodies) {
         let mut solver_vel1 = bodies.gather_vels(self.solver_vel1);
         let mut solver_vel2 = bodies.gather_vels(self.solver_vel2);
