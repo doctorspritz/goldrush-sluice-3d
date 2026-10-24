@@ -1,3 +1,7 @@
+#[cfg(all(test, feature = "dim3", feature = "f32"))]
+#[path = "rigid_warmstart_admissibility.rs"]
+mod rigid_warmstart_admissibility;
+
 use super::{ContactConstraintNormalPart, ContactConstraintTangentPart};
 #[cfg(feature = "block-solver")]
 use crate::dynamics::solver::contact_constraint::BLOCK_SOLVER_MIN_CONDITION;
@@ -6,7 +10,7 @@ use crate::dynamics::solver::solver_body::SolverBodies;
 use crate::dynamics::solver::solver_contact_graph::ContactRef;
 use crate::dynamics::{IntegrationParameters, MultibodyJointSet, RigidBodySet};
 use crate::geometry::{ContactManifold, SimdSolverContact};
-use crate::math::{DIM, MAX_MANIFOLD_POINTS, Real, SIMD_WIDTH, SimdReal, TangentImpulse};
+use crate::math::{Real, SimdReal, TangentImpulse, DIM, MAX_MANIFOLD_POINTS, SIMD_WIDTH};
 #[cfg(feature = "dim2")]
 use crate::utils::OrthonormalBasis;
 use crate::utils::{self, AngularInertiaOps, CrossProduct, DotProduct, ScalarType};
