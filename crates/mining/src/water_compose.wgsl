@@ -483,6 +483,23 @@ fn channel_sun(normal:vec3<f32>,eye:vec3<f32>,light:vec3<f32>,variance:f32)->f32
     let fresnel=0.02037+0.97963*pow(1.-vh,5.);
     return distribution*masking*fresnel/(4.*nv)*0.6;
 }
+// River finite-volume classes and channel fine parcels both carry Q_ext=2
+// geometric extinction. The same reduced-scattering approximation is used for
+// unresolved forward light; these albedo/g/source colours are not soil calibration.
+fn suspended_extinction(beta:f32)->vec3<f32> {
+    let transport=(1.-0.95)+0.95*(1.-0.85);
+    return vec3(0.8,0.24,0.12)+vec3(0.5625,1.,1.5)*beta*transport;
+}
+fn suspended_source(beta:f32)->vec3<f32> {
+    let water=vec3(0.8,0.24,0.12);
+    let transport=(1.-0.95)+0.95*(1.-0.85);
+    let mineral=vec3(0.5625,1.,1.5)*beta*transport;
+    return (water*vec3(0.035,0.18,0.18)+mineral*vec3(0.22,0.16,0.095))/(water+mineral)*0.8;
+}
+fn river_extinction(marker:f32)->f32 {return max(marker-1.,0.);}
+fn eye_ray_path(view_gap:f32,ray_cosine:f32)->f32 {
+    return clamp(view_gap/max(ray_cosine,0.0001),0.,0.5);
+}
 @fragment fn compose(s: Screen) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(s.position.xy); let original = textureLoad(scene,pixel,0);
     // Uniform capture-only selection; ordinary gameplay always uses mode zero.
@@ -596,9 +613,9 @@ fn channel_sun(normal:vec3<f32>,eye:vec3<f32>,light:vec3<f32>,variance:f32)->f32
     // Optical columns are integrated in world metres along the eye ray, not
     // camera-Z metres. Mixing those units made oblique crests alternate
     // between background and muddy scattering as the floor clip took over.
-    let ray_cosine=select(1.,max(-normalize(position).z,0.0001),in_channel);
+    let ray_cosine=select(1.,max(-normalize(position).z,0.0001),in_channel || river);
     var thickness = 0.04;
-    if opaque>0. && abs(opaque_view.w)>0.00001 { thickness=clamp((-opaque_view.z/opaque_view.w-depth)/ray_cosine,0.,0.5); }
+    if opaque>0. && abs(opaque_view.w)>0.00001 { thickness=eye_ray_path(-opaque_view.z/opaque_view.w-depth,ray_cosine); }
     var column=vec2(0.);
     if !river {
         if in_channel {column=channel_column;} else {column=optical_column(q,raw_depth,false);}
@@ -610,32 +627,17 @@ fn channel_sun(normal:vec3<f32>,eye:vec3<f32>,light:vec3<f32>,variance:f32)->f32
         thickness=visible;
     }
     let optical=optical_sample.g;
-    // River keeps its existing concentration convention. Channel extinction
-    // comes from local represented fine-grain cross section per water volume.
-    let beta=select(column.y/max(column.x,0.000001),max(optical-1.,0.)*2400.,river);
-    // Particle water uses reduced scattering for unresolved forward-scattered
-    // light, rather than treating every grain cross section as absorption.
-    // g=.85 and albedo=.95 are presentation approximations, not measured soil
-    // coefficients; concentration and represented sediment remain unchanged.
-    let transport=select((1.-0.95)+0.95*(1.-0.85),1.,river);
-    let extinction=vec3(0.8,0.24,0.12)+vec3(0.5625,1.,1.5)*beta*transport;
+    // The terrain marker already carries class-aware extinction per metre;
+    // channel columns carry the same cross section normalized by visible water.
+    let beta=select(column.y/max(column.x,0.000001),river_extinction(optical),river);
+    let extinction=suspended_extinction(beta);
     let transmission=exp(-extinction*thickness);
+    // Keep the accepted detached outlet's source and surface-lighting path.
     var scattering=mix(vec3(0.035,0.18,0.18),vec3(0.22,0.13,0.055),clamp(beta/120.,0.,1.));
-    if in_channel {
-        // Mix water and mineral source terms by their extinction, rather than
-        // applying a second arbitrary concentration-to-colour threshold. The
-        // Beer-Lambert column already controls how much suspended dirt is seen.
-        let water_extinction=vec3(0.8,0.24,0.12);
-        let mineral_extinction=vec3(0.5625,1.,1.5)*beta*transport;
-        scattering=(water_extinction*vec3(0.035,0.18,0.18)
-            +mineral_extinction*vec3(0.22,0.16,0.095))/extinction;
-    }
-    if in_channel {
-        // Suspended particles scatter light throughout the water column. A
-        // Lambert term from each reconstructed surface bump paints false mud
-        // patches onto that volume. Use the diffuse environment irradiance;
-        // reflection, refraction and the sun still follow the actual surface.
-        scattering*=0.8;
+    if in_channel || river {
+        // Volume irradiance must not inherit a Lambert patch from every surface
+        // bump. Extinction weights water/mineral source terms continuously.
+        scattering=suspended_source(beta);
     } else if !river {
         scattering*=0.35+0.65*max(dot(normal,light),0.);
     }

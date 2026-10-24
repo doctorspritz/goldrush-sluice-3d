@@ -79,6 +79,7 @@ struct Depth {@location(0) linear:vec4<f32>,@location(1) normal:vec4<f32>,@built
  var world=v.world;var optical=select(1.+v.shape.y,-1.-v.shape.y,v.shape.z==0.);
  if v.shape.z==1. {
   if v.terrain.x<=MIN_FILM_DEPTH {discard;}
+  // Positive marker plus class-aware extinction in inverse metres; clear=1.
   optical=1.+v.terrain.y;
  } else {
   // Ray/ellipsoid intersection reconstructs a surface from neighbourhood

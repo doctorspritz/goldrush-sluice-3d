@@ -8,31 +8,45 @@ use mining_sim::{
 pub(crate) const MAX_SPLATS: usize = (WIDTH - 1) * (WIDTH - 1);
 // Presentation only; keep in step with MIN_FILM_DEPTH in water_depth.wgsl.
 const MIN_VISIBLE_DEPTH_M: f32 = 0.0001;
+// Existing terrain settling/erosion D50s, also used when intake emits grains.
+// This optical approximation matches SlurryField: Q_ext=2 and area/V=1.5/d.
+const DIAMETERS_M: [f64; 4] = [0.0001, 0.001, 0.01, 0.002];
+fn extinction_per_m(concentrations: [f32; 4]) -> f32 {
+    let beta = concentrations
+        .into_iter()
+        .zip(mining_sim::material::REFERENCE_DRY_DENSITIES_KG_M3)
+        .zip(DIAMETERS_M)
+        .filter(|((concentration, _), _)| concentration.is_finite())
+        .map(|((concentration, density), diameter)| {
+            3. * f64::from(concentration.max(0.)) * density
+                / (mining_sim::material::MINERAL_DENSITY_KG_M3 * diameter)
+        })
+        .sum::<f64>();
+    // Keep malformed/extreme presentation inputs finite without capping any
+    // physical concentration or changing the authoritative transported moments.
+    beta.min(f64::from(f32::MAX) / 8.) as f32
+}
 pub(crate) fn instances(site: &Site, detail: &crate::environment::Detail) -> Vec<InstanceData> {
     let surface = &site.world.water_surface;
     let mut height = surface.clone();
     let mut supported = vec![false; WIDTH * WIDTH];
-    let mut concentration = vec![0.; WIDTH * WIDTH];
+    let mut extinction = vec![0.; WIDTH * WIDTH];
     for z in 0..WIDTH {
         for x in 0..WIDTH {
             let i = z * WIDTH + x;
             supported[i] = site.world.water_depth(x, z) > MIN_VISIBLE_DEPTH_M;
-            // Terrain transport stores reference bulk/water concentration.
-            // Only actual mineral solids contribute to optical extinction.
-            concentration[i] = [
-                &site.hydraulic.suspended_sediment,
-                &site.hydraulic.suspended_overburden,
-                &site.hydraulic.suspended_gravel,
-                &site.hydraulic.suspended_paydirt,
-            ]
-            .iter()
-            .zip(mining_sim::material::REFERENCE_DRY_DENSITIES_KG_M3)
-            .map(|(a, rho)| {
-                (a.get(i).copied().unwrap_or(0.) as f64 * rho
-                    / mining_sim::material::MINERAL_DENSITY_KG_M3) as f32
-            })
-            .sum::<f32>()
-            .clamp(0., 1.);
+            // Reconstruct represented grain cross section per water volume.
+            // Equal mineral volume in 10 mm gravel must not cloud the river as
+            // much as 0.1 mm fines. Storage remains reference bulk/water ratio.
+            extinction[i] = extinction_per_m(
+                [
+                    &site.hydraulic.suspended_sediment,
+                    &site.hydraulic.suspended_overburden,
+                    &site.hydraulic.suspended_gravel,
+                    &site.hydraulic.suspended_paydirt,
+                ]
+                .map(|a| a.get(i).copied().unwrap_or(0.)),
+            );
             // Extend wet levels across the dry shore for reconstruction. The final
             // surface is clipped against actual ground, never draped up dry banks.
             if !supported[i] {
@@ -125,7 +139,7 @@ pub(crate) fn instances(site: &Site, detail: &crate::environment::Detail) -> Vec
                 shape: [0., 0., 1., subdivisions as f32],
                 axis_x: h,
                 axis_y: depth,
-                axis_z: ids.map(|i| concentration[i]),
+                axis_z: ids.map(|i| extinction[i]),
                 slope_x: ids.map(|i| slopes_x[i]),
                 slope_z: ids.map(|i| slopes_z[i]),
                 flow_z: vz,
@@ -246,11 +260,39 @@ mod tests {
             .all(|(a, b)| a.center_radius == b.center_radius && a.axis_x == b.axis_x));
     }
     #[test]
-    fn concentration_is_independent_of_water_depth_and_dry_cells_are_absent() {
+    fn class_extinction_matches_represented_sphere_cross_sections() {
+        let water_m3 = 0.4;
+        let mineral_m3 = 0.000_004;
+        let mut mixed = [0.; 4];
+        let mut expected_sum = 0.;
+        for (class, &diameter) in DIAMETERS_M.iter().enumerate() {
+            let grain_volume = std::f64::consts::PI * diameter.powi(3) / 6.;
+            let represented_grains = mineral_m3 / grain_volume;
+            let area = represented_grains * std::f64::consts::PI * (diameter * 0.5).powi(2);
+            let expected = 2. * area / water_m3;
+            let mut concentrations = [0.; 4];
+            concentrations[class] = (mineral_m3 / water_m3
+                * mining_sim::material::MINERAL_DENSITY_KG_M3
+                / mining_sim::material::REFERENCE_DRY_DENSITIES_KG_M3[class])
+                as f32;
+            let beta = extinction_per_m(concentrations);
+            assert!((f64::from(beta) - expected).abs() <= expected * 2e-7);
+            mixed[class] = concentrations[class];
+            expected_sum += expected;
+        }
+        assert!((f64::from(extinction_per_m(mixed)) - expected_sum).abs() < expected_sum * 2e-7);
+        let twice = mixed.map(|value| value * 2.);
+        assert_eq!(extinction_per_m(twice), extinction_per_m(mixed) * 2.);
+        assert_eq!(extinction_per_m([0.; 4]), 0.);
+        assert_eq!(extinction_per_m([f32::NAN, f32::INFINITY, -1., 0.]), 0.);
+        assert!(extinction_per_m([f32::MAX; 4]).is_finite());
+    }
+    #[test]
+    fn extinction_is_independent_of_water_depth_and_dry_cells_are_absent() {
         let mut site = Site::new();
         site.hydraulic.suspended_sediment = vec![0.02; WIDTH * WIDTH];
         let a = instances(&site, &crate::environment::Detail::default());
-        let expected = (0.02_f32 as f64 * 1600. / 2650.) as f32;
+        let expected = (0.02_f32 as f64 * 1600. / 2650. * 3. / 0.0001) as f32;
         assert!(a.iter().all(|p| p.axis_z == [expected; 4]));
         for z in 0..WIDTH {
             for x in 0..WIDTH {

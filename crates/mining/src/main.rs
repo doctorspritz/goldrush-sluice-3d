@@ -15,6 +15,7 @@ mod sediment;
 mod terrain_water;
 mod validation;
 mod water;
+mod water_passes;
 mod water_presentation;
 mod water_surface_worker;
 

@@ -1,0 +1,640 @@
+{
+  "base_commit": "cb3bf6910f1732dddf211712d8261db4e8896ec8",
+  "verified_at_utc": "2026-10-24T05:28:32.484160+00:00",
+  "source_sha256": {
+    "crates/mining/src/main.rs": "c9684bfb9cca65a36fa712a34dc6a95aa6fedd5a549f922e5fbbe21fe505cbc9",
+    "crates/mining/src/water.rs": "f45f100155a940685527f4181e32f5feacbe12e74b530f147eb0cc0ef268b313",
+    "crates/mining/src/water_passes.rs": "3aea9ee310a48c843142d8d7d0d31a16a232ac75ab7a7ef4e1bb3f2d0af22e0c",
+    "crates/mining/src/terrain_water.rs": "852f2581a3a98ed14b2fdd4befbcf53dd77888583534ebb00824c5e071af51d1",
+    "crates/mining/src/water_compose.wgsl": "292119dde2bc06da1c9cc8de97849e2d26b0e05ac8dc8d8ae2964e3099329b1b",
+    "crates/mining/src/water_depth.wgsl": "a529229c8e2d592ee00671b2abe3da251faa49f55a5c851c2529d5290da20db1",
+    "crates/mining-physics/tests/crest_chain.rs": "c92243df1e63d724827d106f9c85ebd46e5ec2dcbdd02b44a47381512e0c2fad",
+    "crates/mining-physics/tests/river_optics.rs": "e9f495a91d4c2ef5b3ff854a6cc56fe7b63128fdf79d1b5f23fa7cb887419b5d"
+  },
+  "protected_simulation_vendor_sources_unchanged": 644,
+  "app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-chain-20261024/app/First Bend.app/Contents",
+  "app_binary_sha256": "2b675eb661608ecf32bdc0b7e33beecf4f3d60759a4d17def774ac7647c77a58",
+  "baseline_input": {
+    "baseline_binary": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/visible-crest-optics-20261024/final/final-app/First Bend.app/Contents/MacOS/mining",
+    "baseline_sha256": "7b4f162abf3642fd216e87413bea5b5536b2bd96e8dce5bd8d17530424b78e3a",
+    "fixture": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/storage-final-2026-10-23/grown.json.save.json",
+    "fixture_sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42"
+  },
+  "checks": [
+    {
+      "name": "format",
+      "exit": 0
+    },
+    {
+      "name": "river_optics",
+      "exit": 0
+    },
+    {
+      "name": "water_optics",
+      "exit": 0
+    },
+    {
+      "name": "visible_water_column",
+      "exit": 0
+    },
+    {
+      "name": "app-tests",
+      "exit": 0
+    },
+    {
+      "name": "clippy",
+      "exit": 0
+    },
+    {
+      "name": "format-check",
+      "exit": 0
+    },
+    {
+      "name": "package",
+      "exit": 0
+    }
+  ],
+  "gpu_checks_explicitly_passed": 20,
+  "application_tests_passed": 55,
+  "application_profiling_test_ignored": 1,
+  "native_checks": [
+    {
+      "name": "after-sluice-final",
+      "exit": 0
+    },
+    {
+      "name": "after-sluice-normal",
+      "exit": 0
+    },
+    {
+      "name": "after-sluice-sediment",
+      "exit": 0
+    },
+    {
+      "name": "after-sluice-column",
+      "exit": 0
+    },
+    {
+      "name": "after-outlet-final",
+      "exit": 0
+    },
+    {
+      "name": "after-river-final",
+      "exit": 0
+    },
+    {
+      "name": "motion",
+      "exit": 0
+    },
+    {
+      "name": "after-benchmark",
+      "exit": 1
+    }
+  ],
+  "frozen_physics": [
+    {
+      "view": "sluice",
+      "layer": "final",
+      "identical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "rigid_falling",
+        "excavated_m3",
+        "delivered_m3",
+        "surface"
+      ],
+      "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/visible-crest-optics-20261024/final/after-sluice-final/frames.json",
+      "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-chain-20261024/after-sluice-final/frames.json"
+    },
+    {
+      "view": "sluice",
+      "layer": "normal",
+      "identical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "rigid_falling",
+        "excavated_m3",
+        "delivered_m3",
+        "surface"
+      ],
+      "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/visible-crest-optics-20261024/final/after-sluice-normal/frames.json",
+      "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-chain-20261024/after-sluice-normal/frames.json"
+    },
+    {
+      "view": "sluice",
+      "layer": "sediment",
+      "identical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "rigid_falling",
+        "excavated_m3",
+        "delivered_m3",
+        "surface"
+      ],
+      "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/visible-crest-optics-20261024/final/after-sluice-sediment/frames.json",
+      "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-chain-20261024/after-sluice-sediment/frames.json"
+    },
+    {
+      "view": "sluice",
+      "layer": "column",
+      "identical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "rigid_falling",
+        "excavated_m3",
+        "delivered_m3",
+        "surface"
+      ],
+      "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/visible-crest-optics-20261024/final/after-sluice-column/frames.json",
+      "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-chain-20261024/after-sluice-column/frames.json"
+    },
+    {
+      "view": "outlet",
+      "layer": "final",
+      "identical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "rigid_falling",
+        "excavated_m3",
+        "delivered_m3",
+        "surface"
+      ],
+      "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/visible-crest-optics-20261024/final/after-outlet-final/frames.json",
+      "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-chain-20261024/after-outlet-final/frames.json"
+    },
+    {
+      "view": "river",
+      "layer": "final",
+      "identical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "rigid_falling",
+        "excavated_m3",
+        "delivered_m3",
+        "surface"
+      ],
+      "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/visible-crest-optics-20261024/final/after-river-final/frames.json",
+      "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-chain-20261024/after-river-final/frames.json"
+    }
+  ],
+  "image_comparison": {
+    "after-sluice-final": {
+      "changed_rgb_pixels": 347876,
+      "max_difference": 168
+    },
+    "after-sluice-normal": {
+      "changed_rgb_pixels": 164451,
+      "max_difference": 206
+    },
+    "after-sluice-sediment": {
+      "changed_rgb_pixels": 209303,
+      "max_difference": 99
+    },
+    "after-sluice-column": {
+      "changed_rgb_pixels": 320588,
+      "max_difference": 200
+    },
+    "after-outlet-final": {
+      "changed_rgb_pixels": 391908,
+      "max_difference": 165
+    },
+    "after-river-final": {
+      "changed_rgb_pixels": 928647,
+      "max_difference": 48
+    },
+    "accepted_outlet_crop_exact": false
+  },
+  "motion": {
+    "source_frames": 34,
+    "presentation_advances": 33,
+    "worker_advances": 33,
+    "recording_underruns": 0,
+    "wall_seconds": 2.979910625,
+    "sim_seconds": 1.1666667275130749,
+    "six_review_indices": [
+      0,
+      7,
+      13,
+      20,
+      26,
+      33
+    ],
+    "video_frames": 185,
+    "all_source_frames_used": true,
+    "display_holds_are_not_simulation_steps": true
+  },
+  "benchmark_before": {
+    "bulk_budget_passed": true,
+    "bulk_material_error_m3": 4.1089060687227175e-07,
+    "bulk_tolerance_m3": 0.0004124674631923488,
+    "detail_revision": 4,
+    "displayed_grains": 18652,
+    "dry_mass_budget_passed": true,
+    "dry_mass_error_kg": 0.0007394951535388827,
+    "dry_mass_tolerance_kg": 0.8074216222582683,
+    "exported_gold_g": 4.868751354999187,
+    "exported_material_m3": [
+      0.0,
+      0.948356464693382,
+      0.0,
+      0.5343278979949027
+    ],
+    "failure": null,
+    "fluid_surface_ready": true,
+    "gold_balance_error_g": 2.7284841053187847e-12,
+    "grains": 4817,
+    "initial_bulk_material_m3": 412.4674631923488,
+    "initial_dry_mass_kg": 807421.6222582683,
+    "inlet": {
+      "emission_clock": 0.0,
+      "emitted": {
+        "gold_g": 0.023340996267940072,
+        "solid_m3": [
+          0.0,
+          0.007694396451324978,
+          0.0,
+          0.002532282133084601
+        ]
+      },
+      "last_water_m3": 6.249640136957169e-05,
+      "pending": {
+        "gold_g": 0.0,
+        "solid_m3": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "ready": {
+        "gold_g": 8.784836430929146e-09,
+        "solid_m3": [
+          0.0,
+          3.853117082985885e-10,
+          0.0,
+          9.603703069332895e-10
+        ]
+      },
+      "sequence": 8417,
+      "withdrawn": {
+        "gold_g": 0.023341005052776597,
+        "solid_m3": [
+          0.0,
+          0.007694396836636437,
+          0.0,
+          0.002532283093454914
+        ]
+      }
+    },
+    "last_worker_tick_ms": 87.746959,
+    "max_water_speed_mps": 1.0800001621246338,
+    "mean_fps": 55.626560259940895,
+    "one_second_ratios": [
+      0.3950903156873644,
+      0.4242625172490146,
+      0.3655595430188481,
+      0.39572195313643393,
+      0.3607735696669132,
+      0.39617671744987565,
+      0.36337064154304693,
+      0.3639547981721464,
+      0.3630457879946127,
+      0.39472733561055307,
+      0.32865433996177806,
+      0.3662920909560418,
+      0.39377685337644974,
+      0.3978129447446557,
+      0.4324695162384612,
+      0.39534021141613873,
+      0.4248009110346143,
+      0.36600618188384143,
+      0.3942848777246863
+    ],
+    "outflow_particles": 10592,
+    "p95_frame_ms": 27.191582999999998,
+    "passed": false,
+    "paused": false,
+    "phase_model": "legacy",
+    "simulation_seconds": 7.700000401586294,
+    "simulation_wall_ratio": 0.3846515402083187,
+    "sluice_water_balance_error_m3": 0.0,
+    "slurry": {
+      "feed_grading": "Alluvial",
+      "fine_parcels_below_200um": 116,
+      "independently_resolved_grain_collisions": false,
+      "optical_grid_m": 0.029999999329447746,
+      "optics_calibrated": false,
+      "outlet_extinction_m1": 115.9107894897461,
+      "projected_suspended_fines_m3": 0.0001350799407011986,
+      "projected_water_m3": 0.014487374963422927,
+      "projection_fines_error_m3": 7.047314121155779e-19,
+      "projection_water_error_m3": 3.2959746043559335e-17,
+      "represented_grains": 1520309069.2828548,
+      "solver_parcels": 4817
+    },
+    "stored_water_m3": 12.748771690249134,
+    "terrain_fine_cells": 355,
+    "terrain_water_splats": 2730,
+    "wall_seconds": 20.01811925,
+    "warmup_seconds": 5,
+    "water_balance": {
+      "baseline_sim_time": 0.0,
+      "boundary_outflow_m3": 13.334333330113713,
+      "external_inflow_m3": 11.969988376833498,
+      "initial_stored_m3": 14.113124481402338,
+      "legacy_baseline": false
+    },
+    "water_balance_error_m3": -7.837872988858408e-06,
+    "water_cfl_speed_mps": 1.0799999237060547,
+    "water_mean_downstream_ms": 0.39049413800239563,
+    "water_near_cfl_limit": 288,
+    "water_particles": 115899,
+    "water_presentation": {
+      "buffer_underrun_frames": 0,
+      "interpolation_alpha": 0.8334991931915283,
+      "max_capture_ms": 1.513417,
+      "max_surface_build_ms": 173.741208,
+      "mean_capture_ms": 0.38786184042553207,
+      "mean_surface_build_ms": 82.33624896085406,
+      "paired_render_particles": 66073,
+      "presented_sim_time": 99.69445517271882,
+      "surface_builds": 281
+    },
+    "worker_busy_fraction": 0.9992045251204104,
+    "worker_mean_ms": 86.58959021212121,
+    "worker_packets": 231,
+    "worker_phases_mean_ms": [
+      3.129021259740259,
+      39.562944125541115,
+      34.16627982683982,
+      2.6358771774891796,
+      3.610291471861472
+    ]
+  },
+  "benchmark_after": {
+    "bulk_budget_passed": true,
+    "bulk_material_error_m3": 4.09580422910949e-07,
+    "bulk_tolerance_m3": 0.0004124674631967811,
+    "detail_revision": 4,
+    "displayed_grains": 18341,
+    "dry_mass_budget_passed": true,
+    "dry_mass_error_kg": 0.0007372467080131173,
+    "dry_mass_tolerance_kg": 0.8074216222661602,
+    "exported_gold_g": 4.869144836844834,
+    "exported_material_m3": [
+      0.0,
+      0.9487539017544924,
+      0.0,
+      0.5343701341128586
+    ],
+    "failure": null,
+    "fluid_surface_ready": true,
+    "gold_balance_error_g": 1.8189894035458565e-12,
+    "grains": 4816,
+    "initial_bulk_material_m3": 412.4674631967811,
+    "initial_dry_mass_kg": 807421.6222661602,
+    "inlet": {
+      "emission_clock": 0.03333333507180214,
+      "emitted": {
+        "gold_g": 0.023340996267940072,
+        "solid_m3": [
+          0.0,
+          0.007694396451324978,
+          0.0,
+          0.002532282133084601
+        ]
+      },
+      "last_water_m3": 6.249640136957169e-05,
+      "pending": {
+        "gold_g": 1.2036363931453732e-05,
+        "solid_m3": [
+          0.0,
+          5.279719075633806e-07,
+          0.0,
+          1.3157258028254145e-06
+        ]
+      },
+      "ready": {
+        "gold_g": 8.076618586735134e-09,
+        "solid_m3": [
+          0.0,
+          3.542787295386583e-10,
+          0.0,
+          8.828758863277505e-10
+        ]
+      },
+      "sequence": 8417,
+      "withdrawn": {
+        "gold_g": 0.023353040708490206,
+        "solid_m3": [
+          0.0,
+          0.007694924777511022,
+          0.0,
+          0.0025335987417633194
+        ]
+      }
+    },
+    "last_worker_tick_ms": 94.893292,
+    "max_water_speed_mps": 1.0800000429153442,
+    "mean_fps": 55.75966098525479,
+    "one_second_ratios": [
+      0.3987425034385914,
+      0.3647761876005602,
+      0.39647623916696945,
+      0.36095884359603936,
+      0.3938032479425501,
+      0.3967033824305437,
+      0.3631570154611211,
+      0.36357089488981437,
+      0.3645865974792807,
+      0.366062728046388,
+      0.33156566342337973,
+      0.36115915921516173,
+      0.39838420758156406,
+      0.3978201486486591,
+      0.3981630625251318,
+      0.39998802122098903,
+      0.42849278011961156,
+      0.3984293791792625,
+      0.39966638296212637
+    ],
+    "outflow_particles": 10450,
+    "p95_frame_ms": 27.135125,
+    "passed": false,
+    "paused": false,
+    "phase_model": "legacy",
+    "simulation_seconds": 7.63333373144269,
+    "simulation_wall_ratio": 0.38156040849113126,
+    "sluice_water_balance_error_m3": 0.0,
+    "slurry": {
+      "feed_grading": "Alluvial",
+      "fine_parcels_below_200um": 117,
+      "independently_resolved_grain_collisions": false,
+      "optical_grid_m": 0.029999999329447746,
+      "optics_calibrated": false,
+      "outlet_extinction_m1": 160.26515197753906,
+      "projected_suspended_fines_m3": 0.0001376554199039856,
+      "projected_water_m3": 0.014495499963402358,
+      "projection_fines_error_m3": 4.336808689942018e-19,
+      "projection_water_error_m3": -2.2551405187698492e-17,
+      "represented_grains": 1565463544.6075523,
+      "solver_parcels": 4816
+    },
+    "stored_water_m3": 12.74919637490953,
+    "terrain_fine_cells": 355,
+    "terrain_water_splats": 2730,
+    "wall_seconds": 20.005570708,
+    "warmup_seconds": 5,
+    "water_balance": {
+      "baseline_sim_time": 0.0,
+      "boundary_outflow_m3": 13.33990862319218,
+      "external_inflow_m3": 11.975988366641104,
+      "initial_stored_m3": 14.113124481402338,
+      "legacy_baseline": false
+    },
+    "water_balance_error_m3": -7.849941731308263e-06,
+    "water_cfl_speed_mps": 1.0799999237060547,
+    "water_mean_downstream_ms": 0.39144399762153625,
+    "water_near_cfl_limit": 324,
+    "water_particles": 115964,
+    "water_presentation": {
+      "buffer_underrun_frames": 0,
+      "interpolation_alpha": 0.0410204753279686,
+      "max_capture_ms": 1.173,
+      "max_surface_build_ms": 87.98375,
+      "mean_capture_ms": 0.39443922614840976,
+      "mean_surface_build_ms": 80.0299465496454,
+      "paired_render_particles": 66083,
+      "presented_sim_time": 99.73470588409724,
+      "surface_builds": 282
+    },
+    "worker_busy_fraction": 0.9995096658254251,
+    "worker_mean_ms": 87.3177349039301,
+    "worker_packets": 229,
+    "worker_phases_mean_ms": [
+      3.141997122270739,
+      40.0306068515284,
+      34.33221639301311,
+      2.6632448864628815,
+      3.5981733755458523
+    ]
+  },
+  "physical_realtime_gate_passed": false,
+  "full_game_complete": false,
+  "cleanup_summary": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=14 rss_mib=275.3\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=56 rss_mib=1109.0\n",
+  "owned_game_build_encoder_processes": 0,
+  "crashes_unchanged": true,
+  "original_dirty_paths_preserved": 9,
+  "stash_preserved": true,
+  "lossless_compression": [
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/rake-stroke-states.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/rake-stroke-states.json.gz",
+      "sha256": "438680f6fda4720add1e06f3e4b63c36a4e30595e249b2cc77bca42291f15a94",
+      "bytes": 43251596,
+      "gzip_bytes": 7717044,
+      "restore": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/rake-stroke-states.json.gz"
+    },
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/hard-geometry-rake-1.1.states.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/hard-geometry-rake-1.1.states.json.gz",
+      "sha256": "ef891f349fec2a046e7cb7407386e920d339a61827f83f0a9d8c945ad0585bdb",
+      "bytes": 43246417,
+      "gzip_bytes": 7761222,
+      "restore": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/hard-geometry-rake-1.1.states.json.gz"
+    },
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/hard-geometry-rake-0.9.states.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/hard-geometry-rake-0.9.states.json.gz",
+      "sha256": "9cb1fc84151d560c27ed67029307d120d7f752dc5b60b88f105d7e3665d87cb9",
+      "bytes": 43242504,
+      "gzip_bytes": 7762754,
+      "restore": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/hard-geometry-rake-0.9.states.json.gz"
+    },
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/first-stroke-states.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/first-stroke-states.json.gz",
+      "sha256": "1bfc709f19a0d431d52a4b66ade2a4af7d41554c88534215128e46a3bc62d853",
+      "bytes": 42692142,
+      "gzip_bytes": 7371137,
+      "restore": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/first-stroke-states.json.gz"
+    },
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/open-stroke-states.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/open-stroke-states.json.gz",
+      "sha256": "bd1f812cec2373343ba37da9c34f3cd04acbbb558438a720727403151e40f478",
+      "bytes": 42690796,
+      "gzip_bytes": 7377862,
+      "restore": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/open-stroke-states.json.gz"
+    },
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/level-stroke-states.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/level-stroke-states.json.gz",
+      "sha256": "0fd1097054d8bfdc1933a1bb6a81262786560b033d8c184626d49d9dd363d687",
+      "bytes": 42687195,
+      "gzip_bytes": 7342638,
+      "restore": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bucket-mount-20261023/level-stroke-states.json.gz"
+    }
+  ],
+  "reviewed_views": [
+    "full sluice",
+    "full river",
+    "full outlet",
+    "matched final/normal/extinction/column",
+    "six temporal full samples",
+    "all34 temporal crops"
+  ],
+  "whole_video_playback_claimed": false,
+  "media_sha256": {
+    "docs/playtests/2026-10-24-crest-chain.jpg": "e660e5dff69ea7f38e6bbb8e7d0a849d1e268d108b4e7a7a8c190a7041add924",
+    "docs/playtests/2026-10-24-crest-chain-river.jpg": "1a658240e3c5bb730456691ec7ea6f6d3b6afe0f1dc51f6aead7cb8f4c7e7204",
+    "docs/playtests/2026-10-24-crest-chain.temporal.jpg": "ac793fa15f343044d2ca5b7ea58a568e11b217d1406168c8d2b2691dbcb6780e",
+    "docs/playtests/2026-10-24-crest-chain.mp4": "b9fa148f6c6305a68166f7479e26bc5d438c4d41fa1ca6bc0fe8e7d32ef70d41"
+  },
+  "logs_sha256": {
+    "crest-chain.log": "1756e186683a36d97fb0a38670fd6fb7976f74856e9ef43c94160161e9005cef",
+    "river_optics.log": "d9103b55b24d5f310f4cc2effbd57cc2d94402fcb7452329a18c458d45d82286",
+    "water_optics.log": "2988501db4008a988d33ff2455d6082d8f684a270d310ec15e87fe97a3100123",
+    "visible_water_column.log": "6460b750aba683b4b4eedd6636da07bb17ccef4b1ae9be086aa8c133e0e6254d",
+    "app-tests.log": "0595e1dd1cf5474634344b04c5657aff6d52189e14dcb5c847790685ace184aa",
+    "clippy.log": "02a0304c5780b4d8fc7f142fb4ef7f61ec15b7c8065a917da46b3ae6a18601cf",
+    "package.log": "5a97e234657104b77f1a58de9dbc0c11f8035d7271cd21dc8233bd7250907409"
+  },
+  "river_optics_are_presentation_approximations": true
+}

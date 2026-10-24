@@ -232,8 +232,6 @@ struct FluidPipelines {
     geometry_y: CachedRenderPipelineId,
     optical_x: CachedRenderPipelineId,
     optical_y: CachedRenderPipelineId,
-    blur_x: CachedRenderPipelineId,
-    blur_y: CachedRenderPipelineId,
     compose_id: CachedRenderPipelineId,
 }
 fn init_pipelines(
@@ -466,22 +464,6 @@ fn init_pipelines(
         TextureFormat::Rgba32Float,
         None,
     );
-    let blur_x = make(
-        blur_shader.clone(),
-        &blur,
-        "fullscreen",
-        "blur_x",
-        TextureFormat::Rgba32Float,
-        None,
-    );
-    let blur_y = make(
-        blur_shader,
-        &blur,
-        "fullscreen",
-        "blur_y",
-        TextureFormat::Rgba32Float,
-        None,
-    );
     let compose_id = make(
         compose_shader,
         &compose,
@@ -505,8 +487,6 @@ fn init_pipelines(
         geometry_y,
         optical_x,
         optical_y,
-        blur_x,
-        blur_y,
         compose_id,
     });
 }
@@ -694,8 +674,6 @@ impl ViewNode for FluidNode {
             settings.geometry_y,
             settings.optical_x,
             settings.optical_y,
-            settings.blur_x,
-            settings.blur_y,
             settings.compose_id,
         ] {
             if let CachedPipelineState::Err(error) = cache.get_render_pipeline_state(id) {
@@ -719,8 +697,6 @@ impl ViewNode for FluidNode {
             Some(geometry_y),
             Some(optical_x),
             Some(optical_y),
-            Some(blur_x),
-            Some(blur_y),
             Some(compose),
         ) = (
             cache.get_render_pipeline(settings.depth_id),
@@ -733,8 +709,6 @@ impl ViewNode for FluidNode {
             cache.get_render_pipeline(settings.geometry_y),
             cache.get_render_pipeline(settings.optical_x),
             cache.get_render_pipeline(settings.optical_y),
-            cache.get_render_pipeline(settings.blur_x),
-            cache.get_render_pipeline(settings.blur_y),
             cache.get_render_pipeline(settings.compose_id),
         )
         else {
@@ -901,17 +875,19 @@ impl ViewNode for FluidNode {
             pass.draw(0..3, 0..1);
         }
         // Establish geometry, then exchange optical moments over that surface.
-        // Four original shape filters and four conservative optical exchanges
+        // Four crest-preserving shape filters and two optical exchanges
         // share six draws and the existing targets. The outlet keeps exactly
         // its original four filters; the optical-only draws copy it unchanged.
-        for (pipeline, group, output) in [
-            (geometry_x, &pong_group, &target.ping),
-            (geometry_y, &ping_group, &target.pong),
-            (blur_x, &pong_group, &target.ping),
-            (blur_y, &ping_group, &target.pong),
-            (optical_x, &pong_group, &target.ping),
-            (optical_y, &ping_group, &target.pong),
-        ] {
+        for (index, pipeline) in
+            crate::water_passes::surface_passes(geometry_x, geometry_y, optical_x, optical_y)
+                .into_iter()
+                .enumerate()
+        {
+            let (group, output) = if index % 2 == 0 {
+                (&pong_group, &target.ping)
+            } else {
+                (&ping_group, &target.pong)
+            };
             let mut pass = context
                 .command_encoder()
                 .begin_render_pass(&RenderPassDescriptor {
