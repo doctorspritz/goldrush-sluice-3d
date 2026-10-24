@@ -105,6 +105,71 @@ impl Kernel {
         // Choosing the shortest axis then depends on an arbitrary eigenbasis.
         // Compress the measured NORMAL in the support tensor instead. Every
         // tangent t retains t^T C t, including through eigenvalue degeneracy.
+        // Let A contain the original support columns and B = S A. Instead of
+        // building and diagonalizing the rotated world tensor B B^T, solve its
+        // right Gram matrix G = B^T B. If V diagonalizes G, B V has orthogonal
+        // columns and exactly the same support tensor: B V V^T B^T = S C S.
+        // This also preserves the actual rounded input axes; it does not assume
+        // their Gram matrix is exactly diagonal. Near a measured principal
+        // normal G is nearly diagonal regardless of the world's orientation.
+        let compressed = Mat3::from_cols(
+            self.axes[0] - normal * ((1. - thickness) * normal.dot(self.axes[0])),
+            self.axes[1] - normal * ((1. - thickness) * normal.dot(self.axes[1])),
+            self.axes[2] - normal * ((1. - thickness) * normal.dot(self.axes[2])),
+        );
+        let x = compressed.x_axis;
+        let y = compressed.y_axis;
+        let z = compressed.z_axis;
+        let xy = x.dot(y);
+        let xz = x.dot(z);
+        let yz = y.dot(z);
+        let gram = Mat3::from_cols(
+            Vec3::new(x.dot(x), xy, xz),
+            Vec3::new(xy, y.dot(y), yz),
+            Vec3::new(xz, yz, z.dot(z)),
+        );
+        let (right, _) = eigen(gram);
+        [
+            compressed * right.x_axis,
+            compressed * right.y_axis,
+            compressed * right.z_axis,
+        ]
+    }
+    #[cfg(test)]
+    fn channel_axes_world_reference(self) -> [Vec3; 3] {
+        let thickness = 1. - 0.5 * self.planarity * self.bulk;
+        if self.bulk == 0. || thickness == 1. {
+            return self.axes;
+        }
+        let normal = self.normal.normalize_or_zero();
+        if normal == Vec3::ZERO {
+            return self.axes;
+        }
+        // Exact coordinate-aligned sheets need no eigensolve: S acts on one
+        // axis only and every other support axis has zero normal component.
+        for coordinate in 0..3 {
+            if normal[coordinate].abs() != 1.
+                || normal[(coordinate + 1) % 3] != 0.
+                || normal[(coordinate + 2) % 3] != 0.
+            {
+                continue;
+            }
+            for index in 0..3 {
+                if self.axes[index][coordinate] != 0.
+                    && self.axes[index][(coordinate + 1) % 3] == 0.
+                    && self.axes[index][(coordinate + 2) % 3] == 0.
+                    && (0..3).all(|other| other == index || self.axes[other][coordinate] == 0.)
+                {
+                    let mut axes = self.axes;
+                    axes[index] *= thickness;
+                    return axes;
+                }
+            }
+        }
+        // A normal and a short tangent can share an eigenvalue after flooring.
+        // Choosing the shortest axis then depends on an arbitrary eigenbasis.
+        // Compress the measured NORMAL in the support tensor instead. Every
+        // tangent t retains t^T C t, including through eigenvalue degeneracy.
         let covariance = self
             .axes
             .into_iter()
@@ -922,3 +987,7 @@ mod tests {
         assert!(worst < 0.001, "reconstruction-cell shape jump {worst}");
     }
 }
+
+#[cfg(test)]
+#[path = "fluid_surface_profile.rs"]
+pub(super) mod profile;

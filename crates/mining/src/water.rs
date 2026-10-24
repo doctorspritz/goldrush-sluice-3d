@@ -1182,6 +1182,8 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
                 kernel.center
             };
             let axes = if kind == 0. {
+                #[cfg(test)]
+                crate::fluid_surface::profile::record_kernel(kernel);
                 kernel.channel_axes()
             } else {
                 kernel.axes
