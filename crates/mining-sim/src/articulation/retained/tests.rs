@@ -306,3 +306,263 @@ fn retained_swing_chart_crosses_pi_without_losing_saved_contact_state_or_momentu
     assert!((after.0 - before.0).length() < 1.);
     assert!(intrinsic.length() < 5.);
 }
+
+// A bounded diagnostic, deliberately separate from physics acceptance tests.
+// Probe every passive source before attributing the full bank's residual.
+#[test]
+#[ignore = "explicit passive actuator diagnosis; no accuracy pass is implied"]
+fn passive_actuator_source_probe() {
+    let session = bank();
+    let obstacles = session.mechanical_obstacles();
+    let mut rows = Vec::new();
+    let output = std::env::var_os("SLUICE_PASSIVITY_PROBE").expect("diagnostic output path");
+    let cases = if std::env::var_os("SLUICE_PASSIVITY_BANK_ONLY").is_some() {
+        vec!["bank"]
+    } else {
+        vec!["free", "fall", "ground"]
+    };
+    for case in cases {
+        for retained in [false, true] {
+            for elastic in [false, true] {
+                for hz in [240, 480] {
+                    let mut machine = session.machine.clone();
+                    machine.engine_on = false;
+                    machine.tracks.mechanical_hz = hz;
+                    if !elastic {
+                        let a = machine.articulation.as_mut().unwrap();
+                        a.stiffness_nm_rad.fill(0.);
+                        a.damping_nms_rad.fill(0.);
+                    }
+                    let env = Environment {
+                        gravity: if case == "free" {
+                            Vec3::ZERO
+                        } else {
+                            -Vec3::Y * 9.81
+                        },
+                        site: if matches!(case, "ground" | "bank") {
+                            Some(&session.site)
+                        } else {
+                            None
+                        },
+                        obstacles: if matches!(case, "ground" | "bank") {
+                            &obstacles
+                        } else {
+                            &[]
+                        },
+                        loads: &[],
+                    };
+                    let mut soil = if case == "bank" {
+                        session.active_soil.clone().unwrap()
+                    } else {
+                        // The owner requires finite nonempty soil. This clod
+                        // remains far above and away from the machine/terrain.
+                        let mut distant = clod();
+                        distant.center = Vec3::new(2., 40., 2.);
+                        ActiveSoil::from_clods(vec![distant]).unwrap()
+                    };
+                    let mut owner = retained
+                        .then(|| RetainedSoil::new(machine.clone(), soil.clone(), &env).unwrap());
+                    let mut maximum = f64::NEG_INFINITY;
+                    let mut sum = 0.;
+                    let mut worst = serde_json::Value::Null;
+                    let mut failure = None;
+                    let mut completed_steps = 0;
+                    for step in 0..2 * hz {
+                        let result = if let Some(o) = &mut owner {
+                            o.step(MachineInput::default(), 1. / hz as f32, &env)
+                        } else {
+                            step_soil(
+                                &mut machine,
+                                MachineInput::default(),
+                                1. / hz as f32,
+                                &env,
+                                &mut soil,
+                            )
+                        };
+                        if let Err(error) = result {
+                            failure = Some(error);
+                            break;
+                        }
+                        completed_steps = step + 1;
+                        let (m, s) = owner
+                            .as_ref()
+                            .map(|o| (o.machine(), o.soil()))
+                            .unwrap_or((&machine, &soil));
+                        if case != "bank" {
+                            assert_eq!(
+                                s.feedback.bucket_contacts, 0,
+                                "distant control touched tool"
+                            );
+                        }
+                        let residual = s.feedback.coupled_passivity_residual_j;
+                        assert!(residual.is_finite());
+                        sum += residual;
+                        if residual > maximum {
+                            maximum = residual;
+                            worst = serde_json::json!({"step":step,"position":m.position,"articulation":m.articulation,"soil_feedback":s.feedback});
+                        }
+                    }
+                    let row = serde_json::json!({"case":case,"retained":retained,"elastic":elastic,"hz":hz,"completed":failure.is_none(),"completed_steps":completed_steps,"failure":failure,"maximum_positive_residual_j":maximum.max(0.),"sum_residual_j":sum,"worst":worst});
+                    println!("PASSIVE PROBE case={case} retained={retained} elastic={elastic} hz={hz} steps={completed_steps}/{} failure={failure:?} max={maximum} sum={sum}",2*hz);
+                    rows.push(row);
+                    std::fs::write(&output, serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn zero_force_retained_hinges_keep_free_motion_and_saved_continuation() {
+    let mut m = free_machine(0.);
+    m.tracks.mechanical_hz = 960;
+    let a = m.articulation.as_mut().unwrap();
+    a.stiffness_nm_rad.fill(0.);
+    a.damping_nms_rad.fill(0.);
+    a.velocity[9] = 0.3;
+    let mut distant = clod();
+    distant.center = Vec3::new(2., 40., 2.);
+    let soil = ActiveSoil::from_clods(vec![distant]).unwrap();
+    let env = Environment::free(Vec3::ZERO);
+    let mut owner = RetainedSoil::new(m.clone(), soil.clone(), &env).unwrap();
+    let mut restored = RetainedSoil::decode(&owner.encode().unwrap(), &env).unwrap();
+    let mut cold_machine = m;
+    let mut cold_soil = soil;
+    for _ in 0..8 {
+        owner
+            .step(MachineInput::default(), 1. / 960., &env)
+            .unwrap();
+        restored
+            .step(MachineInput::default(), 1. / 960., &env)
+            .unwrap();
+        step_soil(
+            &mut cold_machine,
+            MachineInput::default(),
+            1. / 960.,
+            &env,
+            &mut cold_soil,
+        )
+        .unwrap();
+        same(&owner, &restored, "free actuator restore");
+        for machine in [owner.machine(), &cold_machine] {
+            let a = machine.articulation.as_ref().unwrap();
+            assert!(
+                a.velocity[9] > 0.29,
+                "zero-force hinge was braked: {}",
+                a.velocity[9]
+            );
+            assert_eq!(a.pump_energy_j, 0.);
+            assert_eq!(a.feedback.elastic_j, 0.);
+        }
+        let model = owner.model.as_ref().unwrap();
+        let (mb, _) = model.world.multibody_joints.get(model.joints[0]).unwrap();
+        assert!(mb.links().skip(1).all(|link| !link
+            .joint
+            .data
+            .motor_axes
+            .contains(r::JointAxesMask::ANG_X)));
+    }
+}
+
+// A portable diagnostic witness for the remaining contact/dynamics failure.
+// A successful test means restore/replay and energy observation agree. It is
+// explicitly not a passivity acceptance gate; the JSON records that gate.
+#[test]
+#[ignore = "explicit full-bank energy witness; known passivity failure"]
+fn zero_actuator_bank_energy_witness() {
+    let mut session = bank();
+    session.machine.engine_on = false;
+    session.machine.tracks.mechanical_hz = 480;
+    let a = session.machine.articulation.as_mut().unwrap();
+    a.stiffness_nm_rad.fill(0.);
+    a.damping_nms_rad.fill(0.);
+    let obstacles = session.mechanical_obstacles();
+    let env = Environment {
+        gravity: -Vec3::Y * 9.81,
+        site: Some(&session.site),
+        obstacles: &obstacles,
+        loads: &[],
+    };
+    let mut owner = RetainedSoil::new(
+        session.machine.clone(),
+        session.active_soil.take().unwrap(),
+        &env,
+    )
+    .unwrap();
+    let output = std::path::PathBuf::from(
+        std::env::var_os("SLUICE_ENERGY_WITNESS").expect("fresh witness directory"),
+    );
+    std::fs::create_dir(&output).unwrap();
+    let energy = |owner: &RetainedSoil| {
+        owner
+            .model
+            .as_ref()
+            .unwrap()
+            .world
+            .bodies
+            .iter()
+            .filter(|(_, b)| b.is_dynamic())
+            .map(|(_, b)| {
+                let m = b.mass() as f64;
+                let v = sv(b.linvel()).as_dvec3();
+                let omega = sv(b.angvel()).as_dvec3();
+                let inertia = b.mass_properties().effective_angular_inertia();
+                let columns = [r::Vector::X, r::Vector::Y, r::Vector::Z]
+                    .map(|axis| sv(inertia * axis).as_dvec3());
+                let tensor = DMat3::from_cols(columns[0], columns[1], columns[2]);
+                0.5 * m * v.length_squared() + 0.5 * omega.dot(tensor * omega)
+                    - m * env
+                        .gravity
+                        .as_dvec3()
+                        .dot(sv(b.center_of_mass()).as_dvec3())
+            })
+            .sum::<f64>()
+    };
+    for step in 0..300 {
+        if step == 299 {
+            let before = owner.encode().unwrap();
+            let initial = energy(&owner);
+            std::fs::write(output.join("before.bin"), &before).unwrap();
+            let mut restored = RetainedSoil::decode(&before, &env).unwrap();
+            owner
+                .step(MachineInput::default(), 1. / 480., &env)
+                .unwrap();
+            restored
+                .step(MachineInput::default(), 1. / 480., &env)
+                .unwrap();
+            same(&owner, &restored, "zero actuator energy witness");
+            let delta = energy(&owner) - initial;
+            let reported = owner.soil().feedback.coupled_passivity_residual_j;
+            let model = owner.model.as_ref().unwrap();
+            let (mb, _) = model.world.multibody_joints.get(model.joints[0]).unwrap();
+            assert!(mb.links().skip(1).all(|link| !link
+                .joint
+                .data
+                .motor_axes
+                .contains(r::JointAxesMask::ANG_X)));
+            let actuator = owner.machine().articulation.as_ref().unwrap();
+            assert_eq!(actuator.pump_energy_j, 0.);
+            assert_eq!(actuator.feedback.elastic_j, 0.);
+            assert!(
+                (delta - reported).abs() < 0.05,
+                "feedback disagrees with independent body energy: {delta} versus {reported}"
+            );
+            std::fs::write(output.join("after.bin"), owner.encode().unwrap()).unwrap();
+            let report = serde_json::json!({"hz":480,"steps_before":299,"clods":owner.soil().clods.len(),
+                "dynamic_bodies":model.world.bodies.iter().filter(|(_,b)|b.is_dynamic()).count(),
+                "independent_energy_delta_j":delta,"reported_residual_j":reported,
+                "actuator_motor_rows":0,"pump_work_j":actuator.pump_energy_j,"elastic_energy_j":actuator.feedback.elastic_j,
+                "restored_step_exact":true,"passivity_gate_j":0.01,"passivity_gate_passed":delta<=0.01});
+            println!("ENERGY WITNESS {report}");
+            std::fs::write(
+                output.join("report.json"),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        } else {
+            owner
+                .step(MachineInput::default(), 1. / 480., &env)
+                .unwrap();
+        }
+    }
+}

@@ -183,7 +183,8 @@ impl RetainedSoil {
             &mut model,
         )?;
         if !machine.valid() || !soil.valid() {
-            return Err("Retained contact integration became invalid; world poisoned".into());
+            return Err(format!("Retained contact integration became invalid; world poisoned: machine={} articulation={} soil={} angles={:?}",
+                machine.valid(), machine.articulation.as_ref().is_some_and(|a| a.valid_for(&machine)), soil.valid(), [machine.boom, machine.stick, machine.curl]));
         }
         self.machine = machine;
         self.soil = soil;

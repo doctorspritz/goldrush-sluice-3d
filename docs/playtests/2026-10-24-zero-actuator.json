@@ -1,0 +1,602 @@
+{
+  "base_commit": "3d8c5894c73c2ff9f66064482dd8eb4e728981a5",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/passive-actuator-20261024",
+  "scope": "Disable zero-force articulated actuator motor rows and correct invalid free-hinge diagnostics; retained contact accuracy remains unresolved.",
+  "quality": [
+    {
+      "name": "final-energy-witness",
+      "exit": 0
+    },
+    {
+      "name": "final-default-lib",
+      "exit": 0
+    },
+    {
+      "name": "final-featured-lib",
+      "exit": 0
+    },
+    {
+      "name": "final-articulation",
+      "exit": 0
+    },
+    {
+      "name": "final-gpu-pipeline",
+      "exit": 0
+    },
+    {
+      "name": "final-app-tests",
+      "exit": 0
+    },
+    {
+      "name": "final-strict-clippy",
+      "exit": 0
+    },
+    {
+      "name": "final-featured-clippy",
+      "exit": 0
+    },
+    {
+      "name": "final-format",
+      "exit": 0
+    },
+    {
+      "name": "final-replay-build",
+      "exit": 0
+    },
+    {
+      "name": "final-nonzero-default-cold-replay",
+      "exit": 0
+    },
+    {
+      "name": "final-legacy-library",
+      "exit": 0
+    },
+    {
+      "name": "final-legacy-probe-build",
+      "exit": 0
+    },
+    {
+      "name": "final-legacy-v7",
+      "exit": 0
+    },
+    {
+      "name": "final-legacy-v8",
+      "exit": 0
+    },
+    {
+      "name": "final-legacy-v9",
+      "exit": 0
+    },
+    {
+      "name": "final-legacy-v10",
+      "exit": 0
+    },
+    {
+      "name": "final-package",
+      "exit": 0
+    }
+  ],
+  "default_lib_passed": 22,
+  "featured_lib_passed": 30,
+  "featured_diagnostics_ignored_in_default_suite": 2,
+  "diagnostics_executed_separately": true,
+  "articulation_integration_passed": 20,
+  "original_gpu_pipeline_passed": 5,
+  "app_passed": 52,
+  "app_profiling_ignored": 1,
+  "ordinary_nonzero_checkpoints": [
+    {
+      "file": "tick-0000.json",
+      "sha256": "5d1b8087f687fd17724c9472bbbd057fbe959f5a01147b90e74432e6e8465bd0"
+    },
+    {
+      "file": "tick-0060.json",
+      "sha256": "ae4ef0d0108f1bdc2e377d68dceadc7aa05e332d66f79f9d3d9a63a8f764b07f"
+    },
+    {
+      "file": "tick-0120.json",
+      "sha256": "5b47a0a8e767c0b96528ed91862bedf6ec091abdc31d57124adb0005581ae3c2"
+    },
+    {
+      "file": "tick-0180.json",
+      "sha256": "86277435d0a5edfe36fea48873eadbf265798945967d11e5c1fdd413b3ce219c"
+    },
+    {
+      "file": "tick-0240.json",
+      "sha256": "7d9a95ff243293a10f3d6a4a9ad8de2938684cb9aa2e126e15e2317cc33e0512"
+    },
+    {
+      "file": "tick-0300.json",
+      "sha256": "436db948333027d0a0afe80d35abe445685d13a8bfe4f28e48e2e94f2a87dfa3"
+    },
+    {
+      "file": "tick-0360.json",
+      "sha256": "f2e29c5a4a9014451c67051307905612058a35c77ff7ee7a08d02b99ed90896e"
+    },
+    {
+      "file": "tick-0420.json",
+      "sha256": "f862d923fa30698a301e649ba2ae4e2c9042f834c3c927a48b0f09570bab6309"
+    },
+    {
+      "file": "tick-0480.json",
+      "sha256": "1aa73fda00b18718508c44ec81a7d6480e420a0a4399d38e26aeaea603ad4fa7"
+    },
+    {
+      "file": "tick-0540.json",
+      "sha256": "e9ad1d37e12364365fae6758023af8f4f714d4c79f122ad665344b2775543236"
+    },
+    {
+      "file": "tick-0600.json",
+      "sha256": "c695edf006cb22f071d73aa646091182baf6d7404c3cc96b709409233efb254c"
+    },
+    {
+      "file": "tick-0660.json",
+      "sha256": "506b5038ad9adf259433ea98be8aef6fe2e72d752b3611127e3ff7af794f1fbd"
+    },
+    {
+      "file": "tick-0720.json",
+      "sha256": "164be5222dc80c3c5fae7c11793a92746eee64e784aee2798e068fc289e91702"
+    },
+    {
+      "file": "tick-0780.json",
+      "sha256": "3b442dcae7643675f7380f4a804db9a91a4e07ced7dcacd37a15bccb65c4a0d7"
+    },
+    {
+      "file": "tick-0840.json",
+      "sha256": "516245fcf1cafdb42451c101b876bc131d8cfdff9e64f462aec3b71c96d420f4"
+    },
+    {
+      "file": "tick-0900.json",
+      "sha256": "bc4043eae07162018c3309a4885ed4db6b57d605bf3741f1ae7fbd7f79238a50"
+    },
+    {
+      "file": "tick-0960.json",
+      "sha256": "2e71530bb87acfd99cf6a52992f5bdb3d2809555108ec107d9f127b61def5e62"
+    },
+    {
+      "file": "tick-1020.json",
+      "sha256": "63e32faa85774b15fa789d919b9a2680ed81daccc487b0aa0e0a4b67ef5f941d"
+    },
+    {
+      "file": "tick-1080.json",
+      "sha256": "42de6b45866549166d0a3ca8ff9a686ecb5024d4ec703409e81a4471f237b005"
+    }
+  ],
+  "genuine_legacy_continuations": [
+    {
+      "version": 7,
+      "snapshots": 6,
+      "sha256": "75877591056ff687e29adee0dccdfc927a44266ac10d0f842e7af23a74a2b04e"
+    },
+    {
+      "version": 8,
+      "snapshots": 6,
+      "sha256": "7a491052096b2982433503092b01272ce1bfa4a4e05c99f26a9b6fe72cb37207"
+    },
+    {
+      "version": 9,
+      "snapshots": 6,
+      "sha256": "ab82bb33ff05105ee3f498f7450245ca71a29167d1663bf497510992261bacb5"
+    },
+    {
+      "version": 10,
+      "snapshots": 6,
+      "sha256": "692e5ef18caa7fa29a4084ebdbb289af4feb07c7c580b8e6a3549690a619b97f"
+    }
+  ],
+  "diagnostics": {
+    "passive-fixed-complete.json": {
+      "attempted": 24,
+      "completed": 21,
+      "refused": 3,
+      "outcomes": [
+        {
+          "case": "free",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": false,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 0.0,
+          "retained": false,
+          "sum_residual_j": 0.0
+        },
+        {
+          "case": "free",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": false,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 0.0,
+          "retained": false,
+          "sum_residual_j": 0.0
+        },
+        {
+          "case": "free",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": true,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 0.0,
+          "retained": false,
+          "sum_residual_j": 0.0
+        },
+        {
+          "case": "free",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": true,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 0.0,
+          "retained": false,
+          "sum_residual_j": 0.0
+        },
+        {
+          "case": "free",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": false,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 0.0,
+          "retained": true,
+          "sum_residual_j": 0.0
+        },
+        {
+          "case": "free",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": false,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 0.0,
+          "retained": true,
+          "sum_residual_j": 0.0
+        },
+        {
+          "case": "free",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": true,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 0.0,
+          "retained": true,
+          "sum_residual_j": 0.0
+        },
+        {
+          "case": "free",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": true,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 0.0,
+          "retained": true,
+          "sum_residual_j": 0.0
+        },
+        {
+          "case": "fall",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": false,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 0.0,
+          "retained": false,
+          "sum_residual_j": -839.5266286005206
+        },
+        {
+          "case": "fall",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": false,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 0.0,
+          "retained": false,
+          "sum_residual_j": -326.61348422380024
+        },
+        {
+          "case": "fall",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": true,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 0.0,
+          "retained": false,
+          "sum_residual_j": -839.4878723252039
+        },
+        {
+          "case": "fall",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": true,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 0.0,
+          "retained": false,
+          "sum_residual_j": -326.52766955670586
+        },
+        {
+          "case": "fall",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": false,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 0.0,
+          "retained": true,
+          "sum_residual_j": -839.3380472101851
+        },
+        {
+          "case": "fall",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": false,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 0.0,
+          "retained": true,
+          "sum_residual_j": -326.76615836576593
+        },
+        {
+          "case": "fall",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": true,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 0.0,
+          "retained": true,
+          "sum_residual_j": -839.3263284601851
+        },
+        {
+          "case": "fall",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": true,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 0.0,
+          "retained": true,
+          "sum_residual_j": -326.75443961576593
+        },
+        {
+          "case": "ground",
+          "completed": false,
+          "completed_steps": 175,
+          "elastic": false,
+          "failure": "Moving-soil contact integration became invalid: machine=false articulation=true tracks=true angles=[0.062344503, -0.21110232, 1.4542621] invalid_clod=None",
+          "hz": 240,
+          "maximum_positive_residual_j": 0.0,
+          "retained": false,
+          "sum_residual_j": -2598.342653755925
+        },
+        {
+          "case": "ground",
+          "completed": false,
+          "completed_steps": 359,
+          "elastic": false,
+          "failure": "Moving-soil contact integration became invalid: machine=false articulation=true tracks=true angles=[0.037842687, -0.14821692, 1.448545] invalid_clod=None",
+          "hz": 480,
+          "maximum_positive_residual_j": 0.007526348787450843,
+          "retained": false,
+          "sum_residual_j": -7750.230807530952
+        },
+        {
+          "case": "ground",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": true,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 0.009330948608067047,
+          "retained": false,
+          "sum_residual_j": -82.08148068845867
+        },
+        {
+          "case": "ground",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": true,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 0.014520546817038849,
+          "retained": false,
+          "sum_residual_j": -81.7014455141375
+        },
+        {
+          "case": "ground",
+          "completed": false,
+          "completed_steps": 175,
+          "elastic": false,
+          "failure": "Retained contact integration became invalid; world poisoned: machine=false articulation=true soil=true angles=[0.06145487, -0.20884225, 1.4534019]",
+          "hz": 240,
+          "maximum_positive_residual_j": 5.213718959587368,
+          "retained": true,
+          "sum_residual_j": -2598.2334025625864
+        },
+        {
+          "case": "ground",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": false,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 1.238384165001662,
+          "retained": true,
+          "sum_residual_j": -14943.09191096314
+        },
+        {
+          "case": "ground",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": true,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 0.009882548640462119,
+          "retained": true,
+          "sum_residual_j": -82.07761406899908
+        },
+        {
+          "case": "ground",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": true,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 0.012873506609821561,
+          "retained": true,
+          "sum_residual_j": -81.69545234415773
+        }
+      ]
+    },
+    "bank-fixed-complete.json": {
+      "attempted": 8,
+      "completed": 6,
+      "refused": 2,
+      "outcomes": [
+        {
+          "case": "bank",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": false,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 83.3037044027651,
+          "retained": false,
+          "sum_residual_j": -12922.26857958056
+        },
+        {
+          "case": "bank",
+          "completed": false,
+          "completed_steps": 302,
+          "elastic": false,
+          "failure": "Moving-soil contact integration became invalid: machine=false articulation=true tracks=true angles=[0.1868183, -0.44448185, 1.4514028] invalid_clod=None",
+          "hz": 480,
+          "maximum_positive_residual_j": 60.359874260859215,
+          "retained": false,
+          "sum_residual_j": -379.92659649465077
+        },
+        {
+          "case": "bank",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": true,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 65.03359077191544,
+          "retained": false,
+          "sum_residual_j": -80.82560592993741
+        },
+        {
+          "case": "bank",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": true,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 63.96730979196582,
+          "retained": false,
+          "sum_residual_j": -72.43011707094956
+        },
+        {
+          "case": "bank",
+          "completed": false,
+          "completed_steps": 160,
+          "elastic": false,
+          "failure": "Retained contact integration became invalid; world poisoned: machine=false articulation=true soil=true angles=[0.16566004, -0.39101663, 1.4524375]",
+          "hz": 240,
+          "maximum_positive_residual_j": 1172.2822243965584,
+          "retained": true,
+          "sum_residual_j": 313.3549572837619
+        },
+        {
+          "case": "bank",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": false,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 3584.103969278656,
+          "retained": true,
+          "sum_residual_j": -20270.66027707507
+        },
+        {
+          "case": "bank",
+          "completed": true,
+          "completed_steps": 480,
+          "elastic": true,
+          "failure": null,
+          "hz": 240,
+          "maximum_positive_residual_j": 838.4653265299821,
+          "retained": true,
+          "sum_residual_j": 692.2534168722232
+        },
+        {
+          "case": "bank",
+          "completed": true,
+          "completed_steps": 960,
+          "elastic": true,
+          "failure": null,
+          "hz": 480,
+          "maximum_positive_residual_j": 50.79738217095837,
+          "retained": true,
+          "sum_residual_j": -64.30440429921782
+        }
+      ]
+    },
+    "witness": {
+      "actuator_motor_rows": 0,
+      "clods": 1040,
+      "dynamic_bodies": 1045,
+      "elastic_energy_j": 0.0,
+      "hz": 480,
+      "independent_energy_delta_j": 3584.1036867035727,
+      "passivity_gate_j": 0.01,
+      "passivity_gate_passed": false,
+      "pump_work_j": 0.0,
+      "reported_residual_j": 3584.103969278656,
+      "restored_step_exact": true,
+      "steps_before": 299
+    },
+    "witness_files": {
+      "before.bin": {
+        "bytes": 16192347,
+        "sha256": "f800b6d49b9301e2af61cd0148d79ea32074b90a783cf159d0e8d5cfb4772e8e"
+      },
+      "after.bin": {
+        "bytes": 16171015,
+        "sha256": "cc246e6cb66e689cbad6021e7d9de7caef55e2344c2a8cee05733b1993a65ec7"
+      }
+    }
+  },
+  "attempted_physical_cases": 32,
+  "completed_physical_cases": 27,
+  "refused_joint_limit_cases": 5,
+  "independent_energy_witness": {
+    "actuator_motor_rows": 0,
+    "clods": 1040,
+    "dynamic_bodies": 1045,
+    "elastic_energy_j": 0.0,
+    "hz": 480,
+    "independent_energy_delta_j": 3584.1036867035727,
+    "passivity_gate_j": 0.01,
+    "passivity_gate_passed": false,
+    "pump_work_j": 0.0,
+    "reported_residual_j": 3584.103969278656,
+    "restored_step_exact": true,
+    "steps_before": 299
+  },
+  "retained_session_adoption_allowed": false,
+  "full_digging_accuracy_complete": false,
+  "manual_native_controls_rerun_for_this_physics_change": false,
+  "tested_sources_manifest_sha256": "41789e7b8c9c488fe553bb06bdbc562c2aa2b8d35ec8d8eb632c9bd095428ee2",
+  "preexisting_game_warning": "Unused GridCellSizeScalarParams3D::new constructor",
+  "water_rendering_changes_in_subsequent_separate_commit": true
+}

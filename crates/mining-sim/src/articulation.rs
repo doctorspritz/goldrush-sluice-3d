@@ -261,6 +261,24 @@ fn torque_limits(m: &Excavator) -> [f32; 4] {
         m.hydraulics.bucket_force_n * 1.065,
     ]
 }
+fn configure_actuator(
+    joint: &mut r::GenericJoint,
+    reference: f32,
+    stiffness: f32,
+    damping: f32,
+    limit: f32,
+) {
+    joint.set_motor_model(r::JointAxis::AngX, r::MotorModel::ForceBased);
+    joint.set_motor_position(r::JointAxis::AngX, reference, stiffness, damping);
+    joint.set_motor_max_force(r::JointAxis::AngX, limit);
+    // Rapier interprets an enabled zero-coefficient motor as a rigid velocity
+    // servo. Our declared spring/damper law supplies no actuator force when
+    // both coefficients (or the torque envelope) vanish. Keep the hinge and
+    // its limits, but remove that motor row in setup and every live update.
+    if limit == 0. || (stiffness == 0. && damping == 0.) {
+        joint.motor_axes.remove(r::JointAxesMask::ANG_X);
+    }
+}
 fn potential(error: f32, stiffness: f32, limit: f32) -> f64 {
     if stiffness == 0. || limit == 0. {
         return 0.;
@@ -639,10 +657,14 @@ impl Model {
                 r::RevoluteJointBuilder::new(if i == 0 { r::Vector::Y } else { r::Vector::X })
                     .local_anchor1(rv(anchors[i].0))
                     .local_anchor2(rv(anchors[i].1))
-                    .contacts_enabled(false)
-                    .motor_model(r::MotorModel::ForceBased)
-                    .motor_position(s.reference[i], s.stiffness_nm_rad[i], s.damping_nms_rad[i])
-                    .motor_max_force(limits[i]);
+                    .contacts_enabled(false);
+            configure_actuator(
+                &mut j.0.data,
+                s.reference[i],
+                s.stiffness_nm_rad[i],
+                s.damping_nms_rad[i],
+                limits[i],
+            );
             if shell && i == 3 {
                 let mount = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
                     * Quat::from_rotation_y(std::f32::consts::PI);
@@ -903,12 +925,14 @@ fn advance_model(
         .multibody_joints
         .get_mut(model.joints[0])
         .unwrap();
-    for i in 0..4 {
-        mb.link_mut(i + 1).unwrap().joint.data.set_motor_position(
-            r::JointAxis::AngX,
+    let limits = torque_limits(m);
+    for (i, &limit) in limits.iter().enumerate() {
+        configure_actuator(
+            &mut mb.link_mut(i + 1).unwrap().joint.data,
             s.reference[i],
             s.stiffness_nm_rad[i],
             s.damping_nms_rad[i],
+            limit,
         );
     }
     model.world.integration_parameters.dt = dt;
@@ -1152,6 +1176,102 @@ fn carried_moments(m: &Excavator) -> crate::payload::MassMoments {
 #[cfg(test)]
 mod shell_tests {
     use super::*;
+    #[test]
+    fn zero_coefficient_actuator_is_free_and_nonzero_terms_match_cube_dynamics() {
+        let dt = 1. / 240.;
+        for axis in [r::Vector::X, r::Vector::Y, r::Vector::Z] {
+            for (stiffness, damping, limit) in [
+                (0., 0., 30.),
+                (0., 100., 30.),
+                (1000., 0., 1000.),
+                (1000., 100., 0.),
+            ] {
+                let mut world = r::PhysicsWorld::new();
+                world.gravity = r::Vector::ZERO;
+                world.integration_parameters.dt = dt;
+                world.integration_parameters.num_solver_iterations = 4;
+                world.integration_parameters.num_internal_pgs_iterations = 16;
+                let base = world.insert_body(r::RigidBodyBuilder::fixed());
+                let (body, _) = world.insert(
+                    r::RigidBodyBuilder::dynamic().can_sleep(false),
+                    r::ColliderBuilder::cuboid(0.5, 0.5, 0.5).mass(2.),
+                );
+                world.bodies[body].recompute_mass_properties_from_colliders(&world.colliders);
+                let handle = world
+                    .insert_multibody_joint(base, body, r::RevoluteJointBuilder::new(axis))
+                    .unwrap();
+                {
+                    let (mb, id) = world.multibody_joints.get_mut(handle).unwrap();
+                    configure_actuator(
+                        &mut mb.link_mut(id).unwrap().joint.data,
+                        0.,
+                        1000.,
+                        100.,
+                        1000.,
+                    );
+                }
+                world.step(); // Warm an enabled actuator, then exercise disabling it.
+                let (mb, id) = world.multibody_joints.get_mut(handle).unwrap();
+                mb.damping_mut().fill(0.);
+                configure_actuator(
+                    &mut mb.link_mut(id).unwrap().joint.data,
+                    0.,
+                    stiffness,
+                    damping,
+                    limit,
+                );
+                world.bodies[body].add_torque(axis * 0.5, false);
+                world.step();
+                let (mb, id) = world.multibody_joints.get(handle).unwrap();
+                let actual_v = mb.generalized_velocity()[0] as f64;
+                let actual_q = mb.link(id).unwrap().joint.coords()[AXIS] as f64;
+                // Independent inertia of a 2 kg, 1 metre cube: I=1/3 kg m².
+                // Apply backward Euler to each declared TGS substep, not the
+                // production motor coefficients or an empirical response.
+                let h = dt as f64 / 4.;
+                let inertia = 1. / 3.;
+                let (k, d) = if limit == 0. {
+                    (0., 0.)
+                } else {
+                    (stiffness as f64, damping as f64)
+                };
+                let (mut q, mut v) = (0., 0.);
+                for _ in 0..4 {
+                    v = (inertia * v + h * 0.5 - h * k * q) / (inertia + h * d + h * h * k);
+                    q += h * v;
+                }
+                println!("CUBE k={stiffness} d={damping} cap={limit}: rate={actual_v} expected={v}, angle={actual_q} expected={q}");
+                assert!(
+                    (actual_v - v).abs() < v.abs() * 0.0001 + 1e-9,
+                    "zero-force actuator locked or response incorrect"
+                );
+                assert!(
+                    (actual_q - q).abs() < q.abs() * 0.0002 + 1e-10,
+                    "actuator displacement differs from independent inertia"
+                );
+                if stiffness == 0. && damping == 0. && limit > 0. {
+                    let (mb, id) = world.multibody_joints.get_mut(handle).unwrap();
+                    configure_actuator(
+                        &mut mb.link_mut(id).unwrap().joint.data,
+                        0.,
+                        0.,
+                        100.,
+                        limit,
+                    );
+                    world.bodies[body].reset_torques(false);
+                    world.step();
+                    let expected = v / (1. + h * 100. / inertia).powi(4);
+                    let (mb, _) = world.multibody_joints.get(handle).unwrap();
+                    assert!(
+                        (mb.generalized_velocity()[0] as f64 - expected).abs()
+                            < expected.abs() * 0.0001 + 1e-9,
+                        "disabled actuator failed to re-enable its physical damping"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn commanded_strain_reaches_the_links_before_a_relief_return_map() {
         let mut m = Excavator::new(&Site::new());

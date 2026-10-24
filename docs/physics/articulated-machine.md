@@ -12,7 +12,7 @@ Joint limits act dynamically. Validation admits at most 1 mrad of limit error, w
 
 ## Actuator approximation and ledger
 
-Each joint uses a force-based implicit spring/damper, with assumed stiffness 20 MN m/rad and damping 100 kN m s/rad. Torque caps use the existing force limits times declared lever arms, not actual cylinder geometry or measured hydraulic curves. Control input moves the elastic reference at the existing joystick rates; it does not prescribe body rotation.
+Each joint uses a force-based implicit spring/damper, with assumed stiffness 20 MN m/rad and damping 100 kN m s/rad. Torque caps use the existing force limits times declared lever arms, not actual cylinder geometry or measured hydraulic curves. Control input moves the elastic reference at the existing joystick rates; it does not prescribe body rotation. Zero stiffness and damping, or a zero torque envelope, disable that actuator's motor row while preserving the hinge and its limits. An enabled zero-coefficient Rapier motor instead acts as a rigid velocity servo, so leaving it enabled would contradict this declared zero-force law. Setup and every live update apply the same rule, and nonzero damping can be re-enabled after release. The [independent cube controls](../playtests/2026-10-24-zero-actuator.md) verify this branch and ordinary spring/damper response; they do not prove the full bank's energy closure.
 
 For strain magnitude x, stiffness K and torque cap T, the stored potential is:
 
