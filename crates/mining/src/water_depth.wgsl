@@ -4,6 +4,7 @@ struct Particle {center_radius:vec4<f32>,velocity:vec4<f32>,shape:vec4<f32>,axis
 @group(0) @binding(1) var<uniform> u:Uniforms;
 @group(0) @binding(2) var front_depth:texture_2d<f32>;
 @group(0) @binding(3) var opaque_depth:texture_depth_2d;
+@group(0) @binding(4) var joined_depth:texture_2d<f32>;
 // Presentation only, matching terrain_water::MIN_VISIBLE_DEPTH_M.
 const MIN_FILM_DEPTH:f32=0.0001;
 struct Varying {
@@ -206,4 +207,49 @@ struct Column {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>,@loc
  var out:Column;out.optical=vec4(path,path*v.shape.y,surface);out.normal=normal;
  out.near=vec4(profile[0],profile[1],profile[2],profile[3]);
  out.far=vec4(profile[4],profile[5],profile[6],profile[7]);return out;
+}
+
+// Integrate each represented kernel over the visible eye-ray interval. Clipping
+// a sum by its mean concentration retains sediment from hidden front layers.
+fn visible_kernel_column(s:f32,a:f32,closest:f32,front:f32,back:f32,scale:f32)->f32 {
+ let half=sqrt(max(s,0.)/a);
+ let lo=max(closest-half,front);let hi=min(closest+half,back);
+ if hi<=lo {return 0.;}
+ return column_integral(s,a,(lo-closest)*sqrt(a),(hi-closest)*sqrt(a))*scale;
+}
+struct VisibleColumn {@location(0) optical:vec4<f32>,@location(1) normal:vec4<f32>};
+@fragment fn particle_visible_thickness(v:Varying)->VisibleColumn {
+ let eye=u.world_from_view[3].xyz;let ray=normalize(v.world-eye);let origin=eye-v.center_radius.xyz;
+ let o=vec3(dot(origin,v.axis_x)/dot(v.axis_x,v.axis_x),dot(origin,v.axis_y)/dot(v.axis_y,v.axis_y),dot(origin,v.axis_z)/dot(v.axis_z,v.axis_z));
+ let d=vec3(dot(ray,v.axis_x)/dot(v.axis_x,v.axis_x),dot(ray,v.axis_y)/dot(v.axis_y,v.axis_y),dot(ray,v.axis_z)/dot(v.axis_z,v.axis_z));
+ let a=dot(d,d);let closest=-dot(o,d)/a;let q=o+d*closest;let squared=1.-dot(q,q);
+ if squared<0. {discard;}
+ let pixel=vec2<i32>(v.clip.xy);let raw=textureLoad(front_depth,pixel,0);
+ let channel=v.shape.z==0.;
+ if raw.r<=0. || (raw.g< -0.5)!=channel {discard;}
+ // Reproduce the accepted detached/outlet chord exactly, in the same order.
+ var path=2.*sqrt(squared/a)*v.shape.x;var normal=vec4(0.);
+ if channel {
+  let joined=textureLoad(joined_depth,pixel,0);
+  if joined.r<=0. || joined.a<=0.5 {discard;}
+  let full=vec2<i32>(textureDimensions(opaque_depth));
+  let q=clamp(vec2<i32>(v.clip.xy*vec2<f32>(full)/vec2<f32>(textureDimensions(front_depth))),vec2(0),full-vec2(1));
+  let z=textureLoad(opaque_depth,q,0);let xy=(vec2<f32>(q)+0.5)/vec2<f32>(full);
+  let opaque=u.view_from_clip*vec4(xy.x*2.-1.,1.-xy.y*2.,z,1.);
+  let ray_scale=max(-(u.view_from_world*vec4(ray,0.)).z,0.000001);
+  let interval=channel_interval(eye,ray,v.lateral);
+  let front=max(max(joined.r/ray_scale,0.),interval.x);
+  var back=interval.y;
+  if z>0. {back=min(back,(-opaque.z/max(opaque.w,0.000001))/ray_scale);}
+  path=visible_kernel_column(squared,a,closest,front,back,v.shape.x);
+  if back>front {
+   // Every overlapping kernel differentiates the same joined point. The old
+   // front-envelope inset gave a resolved crest the normal of foreground
+   // spray. Match the bulk-weighted scalar field that selected the interface;
+   // a vanishing gradient stays untrusted and retains the existing fallback.
+   let gradient=density_gradient(eye+ray*front,v.center_radius.xyz,v.axis_x,v.axis_y,v.axis_z,v.shape.x)*clamp(v.surface.w,0.,1.);
+   normal=vec4(gradient,length(gradient));
+  }
+ }
+ var out:VisibleColumn;out.optical=vec4(path,path*v.shape.y,0.,0.);out.normal=normal;return out;
 }

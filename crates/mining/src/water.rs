@@ -224,6 +224,9 @@ struct FluidPipelines {
     compose: BindGroupLayout,
     depth_id: CachedRenderPipelineId,
     thickness_id: CachedRenderPipelineId,
+    visible_id: CachedRenderPipelineId,
+    visible_optical_x: CachedRenderPipelineId,
+    visible_optical_y: CachedRenderPipelineId,
     reconstruct_id: CachedRenderPipelineId,
     geometry_x: CachedRenderPipelineId,
     geometry_y: CachedRenderPipelineId,
@@ -268,6 +271,10 @@ fn init_pipelines(
                     texture_2d(TextureSampleType::Float { filterable: false }),
                 ),
                 (3, texture_depth_2d()),
+                (
+                    4,
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                ),
             ),
         ),
     );
@@ -322,7 +329,9 @@ fn init_pipelines(
                 targets: {
                     let mut targets = vec![Some(ColorTargetState {
                         format,
-                        blend: if fragment == "particle_thickness" {
+                        blend: if fragment == "particle_thickness"
+                            || fragment == "particle_visible_thickness"
+                        {
                             Some(BlendState {
                                 color: BlendComponent {
                                     src_factor: BlendFactor::One,
@@ -340,10 +349,15 @@ fn init_pipelines(
                         },
                         write_mask: ColorWrites::ALL,
                     })];
-                    if fragment == "particle_depth" || fragment == "particle_thickness" {
+                    if fragment == "particle_depth"
+                        || fragment == "particle_thickness"
+                        || fragment == "particle_visible_thickness"
+                    {
                         targets.push(Some(ColorTargetState {
                             format: TextureFormat::Rgba16Float,
-                            blend: if fragment == "particle_thickness" {
+                            blend: if fragment == "particle_thickness"
+                                || fragment == "particle_visible_thickness"
+                            {
                                 targets[0].as_ref().unwrap().blend
                             } else {
                                 None
@@ -379,6 +393,14 @@ fn init_pipelines(
             stencil: default(),
             bias: default(),
         }),
+    );
+    let visible_id = make(
+        depth_shader.clone(),
+        &thickness_particles,
+        "particle_vertex",
+        "particle_visible_thickness",
+        TextureFormat::Rgba16Float,
+        None,
     );
     let thickness_id = make(
         depth_shader,
@@ -428,6 +450,22 @@ fn init_pipelines(
         TextureFormat::Rgba32Float,
         None,
     );
+    let visible_optical_x = make(
+        blur_shader.clone(),
+        &blur,
+        "fullscreen",
+        "visible_optical_x",
+        TextureFormat::Rgba32Float,
+        None,
+    );
+    let visible_optical_y = make(
+        blur_shader.clone(),
+        &blur,
+        "fullscreen",
+        "visible_optical_y",
+        TextureFormat::Rgba32Float,
+        None,
+    );
     let blur_x = make(
         blur_shader.clone(),
         &blur,
@@ -459,6 +497,9 @@ fn init_pipelines(
         compose,
         depth_id,
         thickness_id,
+        visible_id,
+        visible_optical_x,
+        visible_optical_y,
         reconstruct_id,
         geometry_x,
         geometry_y,
@@ -645,6 +686,9 @@ impl ViewNode for FluidNode {
         for id in [
             settings.depth_id,
             settings.thickness_id,
+            settings.visible_id,
+            settings.visible_optical_x,
+            settings.visible_optical_y,
             settings.reconstruct_id,
             settings.geometry_x,
             settings.geometry_y,
@@ -667,6 +711,9 @@ impl ViewNode for FluidNode {
         let (
             Some(depth),
             Some(thickness),
+            Some(visible),
+            Some(visible_optical_x),
+            Some(visible_optical_y),
             Some(reconstruct),
             Some(geometry_x),
             Some(geometry_y),
@@ -678,6 +725,9 @@ impl ViewNode for FluidNode {
         ) = (
             cache.get_render_pipeline(settings.depth_id),
             cache.get_render_pipeline(settings.thickness_id),
+            cache.get_render_pipeline(settings.visible_id),
+            cache.get_render_pipeline(settings.visible_optical_x),
+            cache.get_render_pipeline(settings.visible_optical_y),
             cache.get_render_pipeline(settings.reconstruct_id),
             cache.get_render_pipeline(settings.geometry_x),
             cache.get_render_pipeline(settings.geometry_y),
@@ -707,6 +757,18 @@ impl ViewNode for FluidNode {
                 uniform.clone(),
                 &target.raw,
                 scene_depth.view(),
+                &target.raw,
+            )),
+        );
+        let visible_group = device.create_bind_group(
+            "fluid visible column inputs",
+            &settings.thickness_particles,
+            &BindGroupEntries::sequential((
+                particles.buffer.as_entire_binding(),
+                uniform.clone(),
+                &target.raw,
+                scene_depth.view(),
+                &target.pong,
             )),
         );
         let blur_group = |texture: &TextureView| {
@@ -854,6 +916,41 @@ impl ViewNode for FluidNode {
                 .command_encoder()
                 .begin_render_pass(&RenderPassDescriptor {
                     label: Some("fluid bilateral smoothing"),
+                    color_attachments: &[color(output)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        // The raw column belongs to the particle envelope. Once the joined
+        // surface is fixed, reintegrate each kernel from that visible surface,
+        // rather than retaining the average colour of hidden front water.
+        // Reuse the thickness/ping/pong targets; no allocation grows.
+        {
+            let mut pass = context
+                .command_encoder()
+                .begin_render_pass(&RenderPassDescriptor {
+                    label: Some("fluid visible optical interval"),
+                    color_attachments: &[color(&target.thickness), color(&target.normal_sums)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            pass.set_pipeline(visible);
+            pass.set_bind_group(0, &visible_group, &[]);
+            pass.draw(0..6, 0..particles.count);
+        }
+        for (pipeline, group, output) in [
+            (visible_optical_x, &pong_group, &target.ping),
+            (visible_optical_y, &ping_group, &target.pong),
+        ] {
+            let mut pass = context
+                .command_encoder()
+                .begin_render_pass(&RenderPassDescriptor {
+                    label: Some("fluid visible optical exchange"),
                     color_attachments: &[color(output)],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,

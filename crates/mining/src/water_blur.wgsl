@@ -79,7 +79,7 @@ fn optical_point(pixel:vec2<i32>,size:vec2<i32>,depth:f32)->vec3<f32> {
     let ray=u.view_from_clip*vec4(uv.x*2.-1.,1.-uv.y*2.,1.,1.);
     return ray.xyz*(depth/max(-ray.z,0.000001));
 }
-fn optical_exchange(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->vec2<f32> {
+fn optical_exchange_inner(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>,visible:bool)->vec2<f32> {
     let size=vec2<i32>(textureDimensions(depths));
     let origin=optical_point(pixel,size,center.r);
     var result=center.gb;
@@ -89,8 +89,9 @@ fn optical_exchange(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->vec2<
         for(var distance=1;distance<=4;distance++) {
             let q=pixel+direction*(sign*distance);
             if any(q<vec2(0)) || any(q>=size) {break;}
-            let sample=textureLoad(depths,q,0);
+            var sample=textureLoad(depths,q,0);
             if sample.r<=0. || sample.a<=0.5 {break;}
+            if visible {sample.g=textureLoad(columns,q,0).r;sample.b=textureLoad(columns,q,0).g;}
             connection=min(connection,optical_support(previous.g,sample.g));
             let delta=optical_point(q,size,sample.r)-origin;
             // Eight neighbours, each at most 1/8: the update is positive.
@@ -102,6 +103,23 @@ fn optical_exchange(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->vec2<
         }
     }
     return result;
+}
+fn optical_exchange(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->vec2<f32> {
+    return optical_exchange_inner(pixel,direction,center,false);
+}
+// Seed from the newly integrated visible moments, then perform the same
+// positive symmetric exchange. Geometry is frozen before integration: neither
+// exchange may move the interface and expose a different set of ray intervals.
+@fragment fn visible_optical_x(s:Screen)->@location(0) vec4<f32> {
+    let pixel=vec2<i32>(s.position.xy);var center=textureLoad(depths,pixel,0);
+    if center.r<=0. || center.a<=0.5 {return center;}
+    center.g=textureLoad(columns,pixel,0).r;center.b=textureLoad(columns,pixel,0).g;
+    return vec4(center.r,optical_exchange_inner(pixel,vec2(1,0),center,true),center.a);
+}
+@fragment fn visible_optical_y(s:Screen)->@location(0) vec4<f32> {
+    let pixel=vec2<i32>(s.position.xy);let center=textureLoad(depths,pixel,0);
+    if center.r<=0. || center.a<=0.5 {return center;}
+    return vec4(center.r,optical_exchange(pixel,vec2(0,1),center),center.a);
 }
 fn smooth_surface_inner(pixel: vec2<i32>, direction: vec2<i32>,exchange:bool) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(depths)); let center = textureLoad(depths,pixel,0);
