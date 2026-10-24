@@ -948,3 +948,6 @@ fn saved_bank_energy_source_breakdown() {
 }
 
 mod contact_geometry;
+
+#[cfg(feature = "contact-work-audit")]
+mod contact_work;

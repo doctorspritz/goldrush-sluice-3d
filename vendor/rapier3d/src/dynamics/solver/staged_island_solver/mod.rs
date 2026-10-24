@@ -346,3 +346,23 @@ impl StagedIslandSolver {
         }
     }
 }
+
+#[cfg(feature = "contact-work-audit")]
+unsafe fn audit_phase(ctx: &SharedCtx<'_>, label: &'static str, unbiased: bool, time: Real) {
+    // Return BEFORE creating references to worker-owned mutable buffers.
+    // Recording refuses parallel builds; no new barriers or mutations.
+    if !crate::contact_work_audit::enabled() {
+        return;
+    }
+    assert_eq!(ctx.sync.num_workers, 1);
+    crate::contact_work_audit::phase(
+        label,
+        unbiased,
+        time,
+        ctx.island_bodies,
+        unsafe { &(*ctx.velocity_solver).solver_bodies },
+        unsafe { &(*ctx.velocity_solver).generic_solver_vels },
+        unsafe { &*ctx.bodies },
+        unsafe { &*ctx.multibodies },
+    );
+}

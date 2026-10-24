@@ -172,6 +172,13 @@ pub(super) unsafe fn solve_pass(
             .generic_velocity_constraints
             .is_empty();
 
+    #[cfg(feature = "contact-work-audit")]
+    if worker_id == 0 {
+        unsafe {
+            super::audit_phase(ctx, "before_pass", wo_bias, solved_dt);
+        }
+    }
+
     // Joint color stages (ascending color id; parallel within a color:
     // constraints of a color touch pairwise-disjoint bodies). Only this group's
     // slices of the layout tables participate.
@@ -260,6 +267,13 @@ pub(super) unsafe fn solve_pass(
         };
     }
 
+    #[cfg(feature = "contact-work-audit")]
+    if worker_id == 0 {
+        unsafe {
+            super::audit_phase(ctx, "after_joints", wo_bias, solved_dt);
+        }
+    }
+
     // Contact color stages (ascending color id).
     for (_, chunk_range) in &ctx.color_ranges[group.colors.clone()] {
         let virt = 0..chunk_range.end - chunk_range.start;
@@ -340,10 +354,24 @@ pub(super) unsafe fn solve_pass(
             let contacts = unsafe { &mut *ctx.contact_constraints };
             let vs = unsafe { &mut *ctx.velocity_solver };
             let jac = &contacts.generic_jacobians;
-            for c in contacts.generic_velocity_constraints.iter_mut() {
+            for (index, c) in contacts.generic_velocity_constraints.iter_mut().enumerate() {
                 if wo_bias {
                     c.remove_cfm_and_bias_from_rhs();
                 }
+                #[cfg(feature = "contact-work-audit")]
+                let observation = crate::contact_work_audit::before(
+                    c,
+                    contacts.generic_velocity_constraints_builder[index].audit_handles(),
+                    &vs.solver_bodies,
+                    &vs.generic_solver_vels,
+                    unsafe { &*ctx.bodies },
+                    unsafe { &*ctx.multibodies },
+                    wo_bias,
+                    solved_dt,
+                    "solve",
+                );
+                #[cfg(not(feature = "contact-work-audit"))]
+                let _ = index;
                 c.solve(
                     jac,
                     &mut vs.solver_bodies,
@@ -351,11 +379,26 @@ pub(super) unsafe fn solve_pass(
                     true,
                     solve_friction,
                 );
+                #[cfg(feature = "contact-work-audit")]
+                crate::contact_work_audit::after(
+                    observation,
+                    c,
+                    jac,
+                    &vs.solver_bodies,
+                    &vs.generic_solver_vels,
+                );
             }
         }
         sync.complete(stage, 1, 1);
     }
     stage = sync.sync(stage, 1);
+
+    #[cfg(feature = "contact-work-audit")]
+    if worker_id == 0 {
+        unsafe {
+            super::audit_phase(ctx, "after_contacts", wo_bias, solved_dt);
+        }
+    }
 
     if has_soft && ctx.base_params.soft_bodies.resweep_strain < Real::MAX {
         // Second sweep of the strained soft constraints after the contacts (already updated and

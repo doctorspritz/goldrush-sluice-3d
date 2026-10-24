@@ -36,6 +36,10 @@ pub extern crate parry3d as parry;
 #[cfg(all(feature = "dim3", feature = "f64"))]
 pub extern crate parry3d_f64 as parry;
 
+/// Read-only diagnostic observation of articulated contact work.
+#[cfg(all(feature = "contact-work-audit", feature = "dim3", feature = "f32"))]
+pub use dynamics::solver::contact_work_audit;
+
 /// Internal prelude re-exporting alloc types for no_std compatibility.
 #[cfg(feature = "alloc")]
 #[doc(hidden)]

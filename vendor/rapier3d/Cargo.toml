@@ -54,6 +54,8 @@ features = [
 status = "actively-developed"
 
 [features]
+# Read-only, explicitly enabled single-threaded contact work observation.
+contact-work-audit = ["std", "serde-serialize"]
 alloc = [
     "nalgebra/alloc",
     "parry3d/alloc",

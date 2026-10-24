@@ -327,6 +327,13 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
             let is_last_substep = substep_id == num_substeps - 1;
             let solved_dt = substep_id as Real * params.dt;
 
+            #[cfg(feature = "contact-work-audit")]
+            if worker_id == 0 {
+                unsafe {
+                    super::audit_phase(ctx, "before_forces", false, solved_dt);
+                }
+            }
+
             /*
              * Stage: apply velocity increments (parallel over claimed body slots).
              * Worker 0 also applies the generic (multibody) increments.
@@ -387,6 +394,13 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                     sync.complete(stage, 1, stage_work);
                 }
                 stage = sync.sync(stage, stage_work);
+            }
+
+            #[cfg(feature = "contact-work-audit")]
+            if worker_id == 0 {
+                unsafe {
+                    super::audit_phase(ctx, "after_forces", false, solved_dt);
+                }
             }
 
             /*
@@ -676,22 +690,69 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                         .zip(contacts.generic_velocity_constraints.iter_mut())
                     {
                         builder.update(params, solved_dt, &vs.solver_bodies, multibodies, c);
+                        #[cfg(feature = "contact-work-audit")]
+                        let observation = crate::contact_work_audit::before(
+                            c,
+                            builder.audit_handles(),
+                            &vs.solver_bodies,
+                            &vs.generic_solver_vels,
+                            unsafe { &*ctx.bodies },
+                            multibodies,
+                            false,
+                            solved_dt,
+                            "warmstart",
+                        );
                         c.warmstart(
                             &contacts.generic_jacobians,
                             &mut vs.solver_bodies,
                             &mut vs.generic_solver_vels,
                         );
+                        #[cfg(feature = "contact-work-audit")]
+                        crate::contact_work_audit::after(
+                            observation,
+                            c,
+                            &contacts.generic_jacobians,
+                            &vs.solver_bodies,
+                            &vs.generic_solver_vels,
+                        );
                         if params.maximum_dissipation_friction && params.friction_in_bias_pass {
+                            #[cfg(feature = "contact-work-audit")]
+                            let observation = crate::contact_work_audit::before(
+                                c,
+                                builder.audit_handles(),
+                                &vs.solver_bodies,
+                                &vs.generic_solver_vels,
+                                unsafe { &*ctx.bodies },
+                                multibodies,
+                                true,
+                                solved_dt,
+                                "projection",
+                            );
                             c.project_warmstart(
                                 &contacts.generic_jacobians,
                                 &mut vs.solver_bodies,
                                 &mut vs.generic_solver_vels,
+                            );
+                            #[cfg(feature = "contact-work-audit")]
+                            crate::contact_work_audit::after(
+                                observation,
+                                c,
+                                &contacts.generic_jacobians,
+                                &vs.solver_bodies,
+                                &vs.generic_solver_vels,
                             );
                         }
                     }
                     sync.complete(stage, 1, 1);
                 }
                 stage = sync.sync(stage, 1);
+            }
+
+            #[cfg(feature = "contact-work-audit")]
+            if worker_id == 0 {
+                unsafe {
+                    super::audit_phase(ctx, "after_warm", false, solved_dt);
+                }
             }
 
             /*
@@ -828,6 +889,13 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                     sync.complete(stage, 1, num_group_bodies + 1);
                 }
                 stage = sync.sync(stage, num_group_bodies + 1);
+            }
+
+            #[cfg(feature = "contact-work-audit")]
+            if worker_id == 0 {
+                unsafe {
+                    super::audit_phase(ctx, "after_integrate", false, solved_dt + params.dt);
+                }
             }
 
             /*

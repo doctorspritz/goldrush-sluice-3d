@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+contact-work-audit = ["contact-history", "rapier3d/contact-work-audit"]
 contact-history = ["rapier3d/serde-serialize", "dep:bincode"]
 
 [dependencies]

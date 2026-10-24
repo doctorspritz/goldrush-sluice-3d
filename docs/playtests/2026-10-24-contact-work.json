@@ -1,0 +1,482 @@
+{
+  "phase_samples": 220,
+  "contact_blocks": 5244,
+  "islands": 1,
+  "dynamic_bodies_each_sample": 1045,
+  "physical_clods": 1040,
+  "gravity_m_s2": [
+    0.0,
+    -9.8100004196167,
+    0.0
+  ],
+  "phase_delta_j": 57.216926458553644,
+  "independent_body_delta_j": 57.216923396044876,
+  "phase_minus_body_delta_j": 3.0625087674707174e-06,
+  "initial_phase_minus_body_energy_j": -6.9508678279817104e-06,
+  "final_phase_minus_body_energy_j": -3.888359060510993e-06,
+  "phases": [
+    {
+      "label": "after_forces",
+      "unbiased": false,
+      "kinetic_change_j": -5.998846249981355,
+      "potential_change_j": 0.0,
+      "generalized_kinetic_change_j": -5.067783512193984,
+      "events": 4
+    },
+    {
+      "label": "after_warm",
+      "unbiased": false,
+      "kinetic_change_j": 169.20464375166753,
+      "potential_change_j": 0.0,
+      "generalized_kinetic_change_j": 11.113613055694799,
+      "events": 4
+    },
+    {
+      "label": "before_pass",
+      "unbiased": false,
+      "kinetic_change_j": 0.0,
+      "potential_change_j": 0.0,
+      "generalized_kinetic_change_j": 0.0,
+      "events": 64
+    },
+    {
+      "label": "after_joints",
+      "unbiased": false,
+      "kinetic_change_j": 0.0,
+      "potential_change_j": 0.0,
+      "generalized_kinetic_change_j": 0.0,
+      "events": 64
+    },
+    {
+      "label": "after_contacts",
+      "unbiased": false,
+      "kinetic_change_j": -110.53816429482815,
+      "potential_change_j": 0.0,
+      "generalized_kinetic_change_j": 33.66113693548455,
+      "events": 64
+    },
+    {
+      "label": "after_integrate",
+      "unbiased": false,
+      "kinetic_change_j": 0.026548377471684148,
+      "potential_change_j": 7.300499366153282,
+      "generalized_kinetic_change_j": 0.026548392351770644,
+      "events": 4
+    },
+    {
+      "label": "before_pass",
+      "unbiased": true,
+      "kinetic_change_j": 0.0,
+      "potential_change_j": 0.0,
+      "generalized_kinetic_change_j": 0.0,
+      "events": 4
+    },
+    {
+      "label": "after_joints",
+      "unbiased": true,
+      "kinetic_change_j": 0.0,
+      "potential_change_j": 0.0,
+      "generalized_kinetic_change_j": 0.0,
+      "events": 4
+    },
+    {
+      "label": "after_contacts",
+      "unbiased": true,
+      "kinetic_change_j": -2.777754491910514,
+      "potential_change_j": 0.0,
+      "generalized_kinetic_change_j": -0.38325994591211554,
+      "events": 4
+    },
+    {
+      "label": "before_forces",
+      "unbiased": false,
+      "kinetic_change_j": 0.0,
+      "potential_change_j": 0.0,
+      "generalized_kinetic_change_j": 0.0,
+      "events": 3
+    }
+  ],
+  "generic_contact_blocks": [
+    {
+      "stage": "warmstart",
+      "unbiased": false,
+      "blocks": 276,
+      "physical_kinetic_change_j": 1113.9351289205026,
+      "normal_midpoint_work_j": 1145.0847371401821,
+      "tangent_midpoint_work_j": -31.160601644809763,
+      "physical_minus_impulse_work_j": 0.010993425130440389,
+      "maximum_work_residual_j": 0.00799026350233678,
+      "maximum_velocity_response_residual": 1.5334783483922365e-05
+    },
+    {
+      "stage": "projection",
+      "unbiased": true,
+      "blocks": 276,
+      "physical_kinetic_change_j": -1180.744935411058,
+      "normal_midpoint_work_j": -1188.1277250853034,
+      "tangent_midpoint_work_j": 7.3893831680694655,
+      "physical_minus_impulse_work_j": -0.006593493823949829,
+      "maximum_work_residual_j": 0.007859890120048396,
+      "maximum_velocity_response_residual": 1.174758403976739e-05
+    },
+    {
+      "stage": "solve",
+      "unbiased": false,
+      "blocks": 4416,
+      "physical_kinetic_change_j": -49.21854467446004,
+      "normal_midpoint_work_j": -46.93950413528211,
+      "tangent_midpoint_work_j": -2.285698890325065,
+      "physical_minus_impulse_work_j": 0.006658351147125815,
+      "maximum_work_residual_j": 0.0002678806455812116,
+      "maximum_velocity_response_residual": 1.5400823372146988e-06
+    },
+    {
+      "stage": "solve",
+      "unbiased": true,
+      "blocks": 276,
+      "physical_kinetic_change_j": -0.2632790828887548,
+      "normal_midpoint_work_j": -0.21316670255959064,
+      "tangent_midpoint_work_j": -0.049966183922826715,
+      "physical_minus_impulse_work_j": -0.00014619640633742757,
+      "maximum_work_residual_j": 8.594053482488193e-05,
+      "maximum_velocity_response_residual": 3.8056180073908763e-07
+    }
+  ],
+  "generic_contact_net_kinetic_change_j": -116.29163024790407,
+  "rigid_contact_warmstart_and_projection_kinetic_change_j": 236.0144502422228,
+  "complete_numerical_boundary_exact": true,
+  "passivity_gate_j": 0.01,
+  "passivity_gate_passed": false,
+  "whole_world_impulse_work_closed": false,
+  "not_a_complete_causal_attribution": true,
+  "attribution_controls": [
+    {
+      "accepted": true,
+      "delta_energy_j": 57.216923396190396,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "baseline",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 1,
+      "stabilization": 1,
+      "step_wall_ms": 186.798834,
+      "tgs": 4,
+      "warmstart_coefficient": 1.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 55.80824003063026,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "relax-2",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 1,
+      "stabilization": 2,
+      "step_wall_ms": 197.03454200000002,
+      "tgs": 4,
+      "warmstart_coefficient": 1.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 53.17860537741217,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "relax-4",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 1,
+      "stabilization": 4,
+      "step_wall_ms": 217.757584,
+      "tgs": 4,
+      "warmstart_coefficient": 1.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 48.60880119164358,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "relax-8",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 1,
+      "stabilization": 8,
+      "step_wall_ms": 250.01495899999998,
+      "tgs": 4,
+      "warmstart_coefficient": 1.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 41.47757101964089,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "relax-16",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 1,
+      "stabilization": 16,
+      "step_wall_ms": 320.362792,
+      "tgs": 4,
+      "warmstart_coefficient": 1.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 17.298497287003556,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "relax-64",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 1,
+      "stabilization": 64,
+      "step_wall_ms": 713.584125,
+      "tgs": 4,
+      "warmstart_coefficient": 1.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 57.21692339555011,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "friction-bias",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 1,
+      "stabilization": 1,
+      "step_wall_ms": 188.398334,
+      "tgs": 4,
+      "warmstart_coefficient": 1.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 46.61941701348405,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "warmstart-half",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 1,
+      "stabilization": 1,
+      "step_wall_ms": 186.008333,
+      "tgs": 4,
+      "warmstart_coefficient": 0.5
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 1.999000900046667,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "no-bias",
+      "no_bias": true,
+      "no_history": false,
+      "outer_steps": 1,
+      "stabilization": 1,
+      "step_wall_ms": 171.911666,
+      "tgs": 4,
+      "warmstart_coefficient": 1.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 39.381774542998755,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "no-history",
+      "no_bias": false,
+      "no_history": true,
+      "outer_steps": 1,
+      "stabilization": 1,
+      "step_wall_ms": 172.766667,
+      "tgs": 4,
+      "warmstart_coefficient": 0.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 60.5514328389545,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "contact-refresh-4",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 4,
+      "stabilization": 1,
+      "step_wall_ms": 231.206958,
+      "tgs": 1,
+      "warmstart_coefficient": 1.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 49.386139372276375,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "contact-refresh-4-relax-4",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 4,
+      "stabilization": 4,
+      "step_wall_ms": 260.693291,
+      "tgs": 1,
+      "warmstart_coefficient": 1.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 180.07361949357437,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "tgs-8",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 1,
+      "stabilization": 1,
+      "step_wall_ms": 326.245208,
+      "tgs": 8,
+      "warmstart_coefficient": 1.0
+    },
+    {
+      "accepted": true,
+      "delta_energy_j": 459.2189182371367,
+      "failure": null,
+      "friction_in_bias_pass": true,
+      "name": "tgs-16",
+      "no_bias": false,
+      "no_history": false,
+      "outer_steps": 1,
+      "stabilization": 1,
+      "step_wall_ms": 532.424209,
+      "tgs": 16,
+      "warmstart_coefficient": 1.0
+    }
+  ],
+  "saved_input_sha256": "7147a81a9830b2d27fcfca6feef4ef419ef8a09fede2899a7ab6e02af7c8db0b",
+  "saved_reference_sha256": "6f54234a1ed418414b2fd4abb10e8c1614411668c0e8275f21532fe29c4d7dc9",
+  "raw_ledger_sha256": "ec74ac49ebdc889b43f919ab767f6cc435cb7b0fff5ffda471e79c98edddfad4",
+  "base_commit": "decead4cf02d0d80e8f6b6cbaabefbf39e325387",
+  "verified_at_utc": "2026-10-24T05:14:26.812789+00:00",
+  "source_sha256": {
+    "crates/mining-sim/Cargo.toml": "cb8274df64c5b74a8ae5e618bea72ef16a8590b1f94a2650ac62ff863fe246a7",
+    "crates/mining-sim/src/articulation/retained/tests.rs": "084f10d3dd21ea3392c8db48ae1a148e1e69305fac4fe45bd87a1c883900364f",
+    "crates/mining-sim/src/articulation/retained/tests/contact_geometry.rs": "83c5d0616bd303cf7c075a1915feeb4ebb164825719ed095dba4609fe2f6e31d",
+    "vendor/rapier3d/Cargo.toml": "b842042b897feb854f7234468b3d7eb8d194c52705c797f90476836e6e0e94a3",
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/generic_contact_constraint.rs": "dac1144335e02c1aa9ea39737d594f4b8165d1f0ccf1bdd5b795446d5682142a",
+    "vendor/rapier3d/src/dynamics/solver/mod.rs": "18dfc56add127cca1c8cacf1ff547f13ecc80ec83979f0d05a76b1f9edd748a9",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/mod.rs": "31fac63b30dd44b96928b2b2752df806d15b2639f6ab5a60d275eaf2449326de",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/solve.rs": "f12592ec3438b042064feea15d1c2d1e1ca87f241d669b0b3c02aa901e6ff0cc",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs": "48787a76e77c44e554a2a40a0fdb8c7fd946042385ea79bc5852a51285898c00",
+    "vendor/rapier3d/src/lib.rs": "2ac21e4275f5cd40b4b9e9bd3257bdaae6c05dad58b7d4aeb22b850d3adf1d83",
+    "crates/mining-sim/src/articulation/retained/tests/contact_work.rs": "3244143326117f8615c125848d128d8d79dad4af621041bd25e090d57dc0d85d",
+    "vendor/rapier3d/src/dynamics/solver/contact_work_audit.rs": "a688e2ce54021e1f3cbff63544fb0b4eb6a369958f0885005b150859c36c76c8"
+  },
+  "doc_sha256": "5a0cc9444b0a0dc4b45916d14fe133eebeca76fc9359f5be6d88acff6e1a10ab",
+  "plan_sha256": "78fb9cc1f4fe8586e18a72767eed88cbdd9a748e4388d2f576665ba72c13f95a",
+  "final_raw_ledger_sha256": "ec74ac49ebdc889b43f919ab767f6cc435cb7b0fff5ffda471e79c98edddfad4",
+  "final_local_raw_ledger": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work-verified.json",
+  "root_lock_sha256": "2b2d55c0b24d670216ed3ad3cab97e7f7b6ac3bdc5ddbf1eebd8b3e4d4f87034",
+  "application_wide": "1.7.1",
+  "vendor_lock_sha256": "73773551273e5df29c23bc5f4b73a914374c1477ebab6ae1e1dd017524736ce9",
+  "vendor_unit_wide": "1.6.1",
+  "verification": {
+    "explicit_saved_observer_passed": true,
+    "standalone_unit_controls_passed": 2,
+    "default_library_passed": 23,
+    "default_run_precedes_formatting_and_audit_const_guard_only": true,
+    "strict_scoped_application_all_targets_clippy": true,
+    "vendor_lint_allowance": [
+      "clippy::let_and_return (unchanged runtime)"
+    ],
+    "changed_rust_files_formatted": 10,
+    "full_workspace_lint_clean": false,
+    "unchanged_sim3d_initial_lint_findings": 10,
+    "full_integrations_rerun": false,
+    "native_app_run": false,
+    "new_visual_or_speed_claim": false
+  },
+  "final_logs_sha256": {
+    "contact-work-verified.log": "f4a46856d8e556bdcb6df122025e770afc41ecd189747c8fe7aa55a0cafe6b5d",
+    "observer-unit-final.log": "cc43c06a2e3c49959681d2a2c733e72c6b2aa77d8009cc8276e968d49296830a",
+    "default-library.log": "0da7853b9fd832a29f5b6aa0e74f27a70c21a2c12e7708d7273fe75a5d39fcfb",
+    "vendor-clippy-final.log": "41e0af1db82af00f3a7a22912645da8abd1880e8ea6f1ccff2e034ac414cf874",
+    "application-clippy-scoped.log": "718fe6267fce464664ee6b73a12ccbd2a7af38b395dcd8372ec550fbde218195"
+  },
+  "development_failures_preserved": [
+    "contact-work.log",
+    "contact-work-full.log",
+    "contact-work-phases.log",
+    "observer-unit-controls.log",
+    "vendor-clippy.log",
+    "application-clippy.log",
+    "beads-rigid-work.log"
+  ],
+  "partial_or_stale_observations_superseded": [
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work.json.gz",
+      "original_sha256": "199b2f6087a7ebb22aca68fb4e4d3682c7d4cce5dc439654845c91cbf45b56d6",
+      "original_bytes": 5509692,
+      "gzip_bytes": 365918,
+      "restore": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work.json.gz"
+    },
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work-full.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work-full.json.gz",
+      "original_sha256": "d2c6f3ffd04b3ac42b47ccbdda7895230f691d9d0d7b8f40e1afed18b1c6f3c1",
+      "original_bytes": 6241599,
+      "gzip_bytes": 397707,
+      "restore": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work-full.json.gz"
+    },
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work-phases.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work-phases.json.gz",
+      "original_sha256": "26a2311bfd1b6f7b7e79fb018380006a46bb315e42d3913e8f5db05373341e4e",
+      "original_bytes": 6283102,
+      "gzip_bytes": 401647,
+      "restore": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work-phases.json.gz"
+    },
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work-final.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work-final.json.gz",
+      "original_sha256": "ec74ac49ebdc889b43f919ab767f6cc435cb7b0fff5ffda471e79c98edddfad4",
+      "original_bytes": 6294169,
+      "gzip_bytes": 404758,
+      "restore": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/penetration-energy-20261024/contact-work-final.json.gz"
+    }
+  ],
+  "initial_geometry_diagnostic_lossless_recovery": [
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/old-worst-compact.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/old-worst-compact.json.gz",
+      "original_bytes": 26153710,
+      "gzip_bytes": 2849092,
+      "original_sha256": "34c1e692bda8d8ac4dcbb32d84073a6e6ecf02364c00e3bdebb9894acc75792c",
+      "gzip_sha256": "b8637de2d1d0ae3df74a0856c4e8aff4ef9690bb65bc2a633006376bd5e1d284",
+      "restoration_command": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/old-worst-compact.json.gz"
+    },
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/controlled-corrected-compact.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/controlled-corrected-compact.json.gz",
+      "original_bytes": 26045471,
+      "gzip_bytes": 2835551,
+      "original_sha256": "7c0567ddfbede0d5d520a33b193bae14151192272db219e47da8adf15e012893",
+      "gzip_sha256": "4ea0547d4e27c62cced7ad1606b531bd82c729050e0af412a7b2d831b36e25ad",
+      "restoration_command": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/controlled-corrected-compact.json.gz"
+    },
+    {
+      "original": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/new-worst-compact.json",
+      "gzip": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/new-worst-compact.json.gz",
+      "original_bytes": 22690659,
+      "gzip_bytes": 2504630,
+      "original_sha256": "63c1993f69a03e5a8f970f34d7f0ea095dfa6864506fe707cc5e5f228c74657f",
+      "gzip_sha256": "3ac177e767025b84b382ca2def91be7f306a331c1403fa62f6435b3a1d231f3f",
+      "restoration_command": "gzip -dk /Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/new-worst-compact.json.gz"
+    }
+  ],
+  "cleanup_summary": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=14 rss_mib=272.8\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=56 rss_mib=1100.5\n",
+  "heavy_jobs_serial": true,
+  "crashes_unchanged": true,
+  "render_app_preserved_sha256": "7b4f162abf3642fd216e87413bea5b5536b2bd96e8dce5bd8d17530424b78e3a",
+  "original_dirty_paths_preserved": 9,
+  "free_disk_bytes_at_receipt": 231550976,
+  "ordinary_gameplay_physics_changed": false,
+  "save_policy_changed": false,
+  "remaining_issue": "sluice-rigid-warm-work-20261024",
+  "full_goal_complete": false
+}

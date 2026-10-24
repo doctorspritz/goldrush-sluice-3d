@@ -366,7 +366,7 @@ fn saved_bank_registered_geometry_audit() {
     );
 }
 
-fn independent_energy(owner: &RetainedSoil, gravity: Vec3) -> f64 {
+pub(super) fn independent_energy(owner: &RetainedSoil, gravity: Vec3) -> f64 {
     owner
         .model
         .as_ref()

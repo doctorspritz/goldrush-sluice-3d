@@ -58,3 +58,7 @@ pub unsafe fn reset_buffer<T>(buffer: &mut Vec<T>, len: usize) {
         buffer.set_len(len);
     }
 }
+
+/// Optional read-only generic-contact work observation.
+#[cfg(all(feature = "contact-work-audit", feature = "dim3", feature = "f32"))]
+pub mod contact_work_audit;

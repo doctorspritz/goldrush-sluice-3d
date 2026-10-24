@@ -24,6 +24,11 @@ pub(crate) struct GenericContactConstraintBuilder {
 }
 
 impl GenericContactConstraintBuilder {
+    #[cfg(feature = "contact-work-audit")]
+    pub(crate) fn audit_handles(&self) -> [RigidBodyHandle; 2] {
+        [self.handle1, self.handle2]
+    }
+
     pub fn invalid() -> Self {
         Self {
             infos: [CoulombContactPointInfos::default(); MAX_MANIFOLD_POINTS],
