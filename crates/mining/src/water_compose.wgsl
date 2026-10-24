@@ -393,12 +393,23 @@ fn ripple_gradient(q:vec2<f32>,footprint:f32)->vec2<f32> {
 // Millimetre-scale travelling surface detail, projected onto the actual sheet.
 // This changes reflection/refraction only, never depth, volume,
 // concentration or particle motion. Band filtering removes unresolved glints.
-fn channel_ripple_gradient(q:vec2<f32>,footprint:f32)->vec2<f32> {
-    return vec2(1.,0.22)*cos(dot(q,vec2(150.,33.)))*exp(-0.5*23589.*footprint*footprint)
-        +vec2(0.55,-0.8)*cos(dot(q,vec2(77.,-112.)))*0.45*exp(-0.5*18473.*footprint*footprint)
-        +vec2(0.97,0.24)*cos(dot(q,vec2(291.,72.)))*0.2*exp(-0.5*89865.*footprint*footprint);
+fn channel_wave(q:vec2<f32>,k:vec2<f32>,dx:vec2<f32>,dy:vec2<f32>)->vec2<f32> {
+    // Integrate each wave over its actual pixel ellipse. Using the largest
+    // grazing footprint for every direction erased even resolved cross-flow
+    // detail, leaving smooth inflated-looking shoulders on the riffle waves.
+    let phase=vec2(dot(k,dx),dot(k,dy));
+    return normalize(k)*cos(dot(q,k))*exp(-0.5*dot(phase,phase));
 }
-fn channel_ripple_normal(normal:vec3<f32>,world:vec3<f32>,flow:vec2<f32>,time:f32,footprint:f32,confidence:f32)->vec3<f32> {
+fn channel_ripple_gradient(q:vec2<f32>,dx:vec2<f32>,dy:vec2<f32>)->vec2<f32> {
+    // Incommensurate bands avoid repeating parallel stripes on every crest.
+    // Coarser resolved detail survives while subpixel capillary glints vanish.
+    return channel_wave(q,vec2(51.,19.),dx,dy)*0.55
+        +channel_wave(q,vec2(-34.,67.),dx,dy)*0.40
+        +channel_wave(q,vec2(150.,33.),dx,dy)*0.65
+        +channel_wave(q,vec2(77.,-112.),dx,dy)*0.35
+        +channel_wave(q,vec2(291.,72.),dx,dy)*0.15;
+}
+fn channel_ripple_normal_footprint(normal:vec3<f32>,world:vec3<f32>,flow:vec2<f32>,time:f32,dx:vec2<f32>,dy:vec2<f32>,confidence:f32)->vec3<f32> {
     let velocity=vec3(flow.x,0.,flow.y);
     let projected=velocity-normal*dot(normal,velocity);
     let speed=length(projected);
@@ -410,12 +421,15 @@ fn channel_ripple_normal(normal:vec3<f32>,world:vec3<f32>,flow:vec2<f32>,time:f3
     let uv=world.xz;
     let phase0=fract(time*0.5);let phase1=fract(time*0.5+0.5);
     let weight0=1.-abs(phase0*2.-1.);
-    let gradient=mix(channel_ripple_gradient(uv-flow*(phase1*2.),footprint),
-                     channel_ripple_gradient(uv-flow*(phase0*2.),footprint),weight0);
+    let gradient=mix(channel_ripple_gradient(uv-flow*(phase1*2.),dx,dy),
+                     channel_ripple_gradient(uv-flow*(phase0*2.),dx,dy),weight0);
     let slope=vec3(gradient.x,0.,gradient.y);
     let tangent=slope-normal*dot(slope,normal);
     let amplitude=0.14*smoothstep(0.02,0.45,speed)*clamp(confidence,0.,1.);
     return normalize(normal-tangent*amplitude);
+}
+fn channel_ripple_normal(normal:vec3<f32>,world:vec3<f32>,flow:vec2<f32>,time:f32,footprint:f32,confidence:f32)->vec3<f32> {
+    return channel_ripple_normal_footprint(normal,world,flow,time,vec2(footprint,0.),vec2(0.,footprint),confidence);
 }
 fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,original:vec3<f32>)->vec3<f32> {
     let position=view_point(pixel,depth);
@@ -538,8 +552,19 @@ fn channel_sun(normal:vec3<f32>,eye:vec3<f32>,light:vec3<f32>,variance:f32)->f32
     let eye_world=normalize(u.world_from_view[3].xyz-world.xyz);
     let pixel_size=depth*2.*abs(u.view_from_clip[1].y)/u.viewport.y;
     let footprint=pixel_size/max(abs(dot(normal,eye_world)),0.12);
+    // Differentiate the continuous tangent plane, not the noisy raw envelope.
+    // Each direction retains its own projected footprint at a grazing crest.
+    let tangent_origin=view_point(q,depth);
+    let world_dx=(u.world_from_view*vec4(view_point(q+vec2(1.,0.),depth)-tangent_origin,0.)).xyz;
+    let world_dy=(u.world_from_view*vec4(view_point(q+vec2(0.,1.),depth)-tangent_origin,0.)).xyz;
+    let view_ray=world.xyz-u.world_from_view[3].xyz;
+    let tangent_denom=dot(normal,view_ray);
+    let tangent_safe=abs(tangent_denom)>0.0001;
+    let dx=world_dx-view_ray*(dot(normal,world_dx)/select(1.,tangent_denom,tangent_safe));
+    let dy=world_dy-view_ray*(dot(normal,world_dy)/select(1.,tangent_denom,tangent_safe));
     if in_channel {
-        normal=channel_ripple_normal(normal,world.xyz,flow,u.sediment.z,footprint,surface_confidence);
+        normal=channel_ripple_normal_footprint(normal,world.xyz,flow,u.sediment.z,
+            dx.xz,dy.xz,surface_confidence*select(0.,1.,tangent_safe));
     } else if river {
         let phase0=fract(u.sediment.z*0.5);let phase1=fract(u.sediment.z*0.5+0.5);
         let weight0=1.-abs(phase0*2.-1.);

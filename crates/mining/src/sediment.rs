@@ -30,10 +30,11 @@ fn sample_counts(s: &Sluice) -> Vec<usize> {
         .into_iter()
         .zip(&s.grains)
         .map(|(n, g)| {
-            // Fine suspended sand already contributes to the conservative
-            // optical field. Opaque proxies also write scene depth, punching
-            // brown islands through water. Keep deposited sand and all gold.
-            if g.kind == GrainKind::Sand && !g.resting && g.diameter_m < 0.0015 {
+            // All suspended sand already contributes to the conservative
+            // optical field, including coarse sand above 1.5 mm. Drawing it
+            // again as opaque geometry doubles its appearance and writes
+            // brown islands into scene depth. Keep deposited sand and gold.
+            if g.kind == GrainKind::Sand && !g.resting {
                 0
             } else {
                 1 + (n - 1) * free / extra.max(free).max(1)
@@ -214,6 +215,27 @@ mod tests {
         assert!((projected.1 - s.grains[0].solid_volume()).abs() < 1e-15);
         assert_eq!(geometry(&s)[2].positions.len(), 6);
         assert_eq!(before, serde_json::to_string(&s).unwrap());
+    }
+    #[test]
+    fn coarse_suspended_sand_has_one_optical_representation() {
+        let mut s = crate::demo::session().unwrap().sluice;
+        let mut sand = s
+            .grains
+            .iter()
+            .find(|g| g.kind == GrainKind::Sand)
+            .unwrap()
+            .clone();
+        sand.resting = false;
+        sand.diameter_m = 0.002;
+        s.grains = vec![sand];
+        let before = serde_json::to_string(&s).unwrap();
+        let field = mining_sim::slurry::SlurryField::new(&s);
+        assert!((field.projected_volumes().1 - s.grains[0].solid_volume()).abs() < 1e-15);
+        assert_eq!(sample_counts(&s), vec![0]);
+        assert!(geometry(&s)[0].positions.is_empty());
+        assert_eq!(before, serde_json::to_string(&s).unwrap());
+        s.grains[0].resting = true;
+        assert!(sample_counts(&s)[0] > 0);
     }
     #[test]
     fn removing_a_parcel_does_not_reseed_surviving_proxy_clouds() {

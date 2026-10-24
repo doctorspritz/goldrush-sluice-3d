@@ -355,7 +355,8 @@ impl ChannelField {
         let local = local.translated(origin - p);
         let total = total.translated(origin - p);
         let mean = total.sum / total.count.max(1e-8);
-        let (basis, variance) = eigen(total.square / total.count.max(1e-8) - outer(mean));
+        let covariance = total.square / total.count.max(1e-8) - outer(mean);
+        let (basis, variance) = eigen(covariance);
         let spread = variance.max(Vec3::splat(cell * cell * 0.25));
         let footprint = std::f64::consts::TAU.powf(1.5)
             * ((spread.x as f64) * spread.y as f64 * spread.z as f64).sqrt();
@@ -398,18 +399,51 @@ impl ChannelField {
         // neighbours so crossing that former hard threshold cannot pop a drop.
         let anisotropy = smooth((total.count - 4.) / 8.);
         let ratio = Vec3::ONE.lerp(ratio, anisotropy);
+        let mut axes = [
+            basis.x_axis * ratio.x,
+            basis.y_axis * ratio.y,
+            basis.z_axis * ratio.z,
+        ];
+        let mut surface_planarity = planarity * anisotropy;
+        // A thick crest has three resolved dimensions, so PCA alone calls it
+        // isotropic and draws rounded support right at its free boundary.
+        // The continuous moment deficit points out of the liquid there. Use
+        // that measured boundary normal to flatten connected crest support;
+        // an interior volume, side wall or detached drop supplies no such cue.
+        let deficit = -mean;
+        let boundary_normal = deficit.normalize_or_zero();
+        let boundary = smooth((deficit.length() / cell - 0.2) / 0.65)
+            * smooth((boundary_normal.y - 0.25) / 0.5)
+            * (1. - surface_planarity)
+            * bulk;
+        if boundary > 0. {
+            let n = normal.lerp(boundary_normal, boundary).normalize_or_zero();
+            let tx = (Vec3::X - n * n.x).normalize_or_zero();
+            let tz = n.cross(tx);
+            let tangent_x = tx.dot(covariance * tx).max(cell * cell * 0.25);
+            let tangent_z = tz.dot(covariance * tz).max(cell * cell * 0.25);
+            let minor = n
+                .dot(covariance * n)
+                .max(1e-10)
+                .min(tangent_x.max(tangent_z) * 0.16);
+            let target = outer(tx) * tangent_x + outer(tz) * tangent_z + outer(n) * minor;
+            let (v, d) = eigen(covariance * (1. - boundary) + target * boundary);
+            let positive = d.max(Vec3::splat(d.max_element().max(1e-10) * 0.16));
+            let s = Vec3::new(positive.x.sqrt(), positive.y.sqrt(), positive.z.sqrt());
+            let r = (s / s.element_product().cbrt().max(1e-10))
+                .clamp(Vec3::splat(0.45), Vec3::splat(1.8));
+            axes = [v.x_axis * r.x, v.y_axis * r.y, v.z_axis * r.z];
+            normal = n;
+            surface_planarity += (1. - surface_planarity) * boundary;
+        }
         Kernel {
-            axes: [
-                basis.x_axis * ratio.x,
-                basis.y_axis * ratio.y,
-                basis.z_axis * ratio.z,
-            ],
+            axes,
             center: p,
             channel_center: p
                 + (local.sum / local.count.max(1e-8)).clamp_length_max(cell * 0.75)
                     * (0.8 * smooth((local_density - 0.05) / 0.45)),
             normal,
-            planarity: planarity * anisotropy,
+            planarity: surface_planarity,
             bulk,
         }
     }
@@ -464,6 +498,42 @@ fn eigen(m: Mat3) -> (Mat3, Vec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn thick_water_boundary_has_thin_support_without_flattening_its_interior() {
+        let points: Vec<_> = (-10..=10)
+            .flat_map(|x| {
+                (-24..=0).flat_map(move |y| {
+                    (-10..=10).map(move |z| Vec3::new(x as f32, y as f32, z as f32) * 0.005)
+                })
+            })
+            .collect();
+        let before = points.clone();
+        let k = kernels(&points, 0.01, 1.25e-7);
+        let top = points.iter().position(|p| *p == Vec3::ZERO).unwrap();
+        let middle = points
+            .iter()
+            .position(|p| (*p - Vec3::new(0., -0.06, 0.)).length() < 1e-6)
+            .unwrap();
+        let support = |k: Kernel| {
+            let a = k.channel_axes();
+            (
+                a.iter().map(|p| p.y * p.y).sum::<f32>().sqrt(),
+                a.iter().map(|p| p.x * p.x).sum::<f32>().sqrt(),
+            )
+        };
+        let (vertical, horizontal) = support(k[top]);
+        assert!(k[top].normal.dot(Vec3::Y) > 0.99);
+        assert!(
+            vertical / horizontal < 0.34,
+            "free boundary support: {vertical}/{horizontal}"
+        );
+        let (vertical, horizontal) = support(k[middle]);
+        assert!(
+            (vertical / horizontal - 1.).abs() < 0.02,
+            "interior acquired a false surface: {vertical}/{horizontal}"
+        );
+        assert_eq!(points, before);
+    }
     fn kernels(points: &[Vec3], cell: f32, volume: f64) -> Vec<Kernel> {
         super::kernels(points, cell, volume, &vec![true; points.len()])
     }

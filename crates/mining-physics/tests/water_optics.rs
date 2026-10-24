@@ -2788,3 +2788,54 @@ fn travelling_channel_detail_is_bounded_filtered_and_continuous_at_phase_resets(
     }
     assert!(moving_max > 0.02, "moving fine detail was not exercised");
 }
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn grazing_pixel_filters_only_unresolved_wave_directions() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 8);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(1) fn probe() {
+ let q=vec2(0.);let dx=vec2(0.1,0.);let dy=vec2(0.,0.001);
+ result[0]=vec4(channel_wave(q,vec2(0.,140.),dx,dy),channel_wave(q,vec2(140.,0.),dx,dy));
+ result[1]=vec4(channel_wave(q,vec2(0.,140.),dy,dx),channel_wave(q,vec2(84.,112.),vec2(0.001,0.),vec2(0.,0.001)));
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    let expected = (-0.5f64 * 0.14f64.powi(2)).exp();
+    assert!(
+        (values[1] as f64 - expected).abs() < 1e-6,
+        "resolved transverse detail was erased: {values:?}"
+    );
+    assert!(
+        values[2].abs() < 1e-6 && values[3].abs() < 1e-6,
+        "unresolved direction aliased: {values:?}"
+    );
+    assert!(
+        (values[5] - values[1]).abs() < 1e-6,
+        "pixel basis changed filtering"
+    );
+    assert!((values[6] as f64 - 0.6 * expected).abs() < 1e-6);
+    assert!((values[7] as f64 - 0.8 * expected).abs() < 1e-6);
+}
