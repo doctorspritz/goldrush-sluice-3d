@@ -30,15 +30,12 @@ pub(crate) fn instances(site: &Site, detail: &crate::environment::Detail) -> Vec
     let surface = &site.world.water_surface;
     let mut height = surface.clone();
     let mut supported = vec![false; WIDTH * WIDTH];
-    let mut extinction = vec![0.; WIDTH * WIDTH];
-    for z in 0..WIDTH {
-        for x in 0..WIDTH {
-            let i = z * WIDTH + x;
-            supported[i] = site.world.water_depth(x, z) > MIN_VISIBLE_DEPTH_M;
-            // Reconstruct represented grain cross section per water volume.
-            // Equal mineral volume in 10 mm gravel must not cloud the river as
-            // much as 0.1 mm fines. Storage remains reference bulk/water ratio.
-            extinction[i] = extinction_per_m(
+    // Reconstruct physical wet samples before extending optical support. The
+    // subsequent shore pass reads only actual wet neighbours, never its own
+    // extrapolated dry values, so ordering cannot diffuse a sediment plume.
+    let mut extinction: Vec<_> = (0..WIDTH * WIDTH)
+        .map(|i| {
+            extinction_per_m(
                 [
                     &site.hydraulic.suspended_sediment,
                     &site.hydraulic.suspended_overburden,
@@ -46,12 +43,20 @@ pub(crate) fn instances(site: &Site, detail: &crate::environment::Detail) -> Vec
                     &site.hydraulic.suspended_paydirt,
                 ]
                 .map(|a| a.get(i).copied().unwrap_or(0.)),
-            );
+            )
+        })
+        .collect();
+    for z in 0..WIDTH {
+        for x in 0..WIDTH {
+            let i = z * WIDTH + x;
+            supported[i] = site.world.water_depth(x, z) > MIN_VISIBLE_DEPTH_M;
             // Extend wet levels across the dry shore for reconstruction. The final
             // surface is clipped against actual ground, never draped up dry banks.
             if !supported[i] {
                 let mut sum = 0.;
                 let mut weight = 0.;
+                let mut optical_moment = 0_f64;
+                let mut water_support = 0_f64;
                 for dz in -1..=1 {
                     for dx in -1..=1 {
                         let nx = x as i32 + dx;
@@ -59,16 +64,27 @@ pub(crate) fn instances(site: &Site, detail: &crate::environment::Detail) -> Vec
                         if nx < 0 || nz < 0 || nx >= WIDTH as i32 || nz >= WIDTH as i32 {
                             continue;
                         }
-                        if site.world.water_depth(nx as usize, nz as usize) > MIN_VISIBLE_DEPTH_M {
+                        let depth = site.world.water_depth(nx as usize, nz as usize);
+                        if depth > MIN_VISIBLE_DEPTH_M {
+                            let neighbour = nz as usize * WIDTH + nx as usize;
                             let w = 1. / (dx * dx + dz * dz).max(1) as f32;
-                            sum += surface[nz as usize * WIDTH + nx as usize] * w;
+                            sum += surface[neighbour] * w;
                             weight += w;
+                            let volume_weight = f64::from(w) * f64::from(depth);
+                            water_support += volume_weight;
+                            optical_moment += f64::from(extinction[neighbour]) * volume_weight;
                         }
                     }
                 }
                 if weight > 0. {
                     height[i] = sum / weight;
                     supported[i] = true;
+                    // Dry corners carry no transported water or sediment, but
+                    // the shore-clipped visual plane interpolates through them.
+                    // A zero beta there spuriously clears a uniformly turbid
+                    // film. Extend positive optical/water moments together;
+                    // the unchanged signed depth still excludes dry coverage.
+                    extinction[i] = (optical_moment / water_support) as f32;
                 }
             }
         }
@@ -258,6 +274,87 @@ mod tests {
             .iter()
             .zip(b)
             .all(|(a, b)| a.center_radius == b.center_radius && a.axis_x == b.axis_x));
+    }
+    fn dry_site() -> Site {
+        let mut site = Site::new();
+        site.world.bedrock_elevation.fill(0.);
+        site.world.paydirt_thickness.fill(0.);
+        site.world.gravel_thickness.fill(0.);
+        site.world.overburden_thickness.fill(0.);
+        site.world.terrain_sediment.fill(0.);
+        site.world.water_surface.fill(0.);
+        site.hydraulic.suspended_sediment = vec![0.; WIDTH * WIDTH];
+        site.hydraulic.suspended_overburden = vec![0.; WIDTH * WIDTH];
+        site.hydraulic.suspended_gravel = vec![0.; WIDTH * WIDTH];
+        site.hydraulic.suspended_paydirt = vec![0.; WIDTH * WIDTH];
+        site
+    }
+    #[test]
+    fn uniform_turbid_shore_retains_extinction_until_signed_depth_clips_water() {
+        let mut site = dry_site();
+        let index = 60 * WIDTH + 80;
+        site.world.water_surface[index] += 0.003;
+        site.hydraulic.suspended_sediment[index] = 0.002;
+        let expected = extinction_per_m([0.002, 0., 0., 0.]);
+        let before_surface = site.world.water_surface.clone();
+        let before_sediment = site.hydraulic.suspended_sediment.clone();
+        let water = instances(&site, &crate::environment::Detail::default());
+        assert_eq!(water.len(), 4);
+        for cell in &water {
+            for beta in cell.axis_z {
+                assert!((beta - expected).abs() < expected * 1e-6);
+            }
+            // A quarter of the physical depth remains visible at cell centre.
+            // Interpolating raw dry zeros previously reduced beta fourfold here.
+            let depth = crate::environment::interpolate(cell.axis_y, 0.5, 0.5);
+            assert!(depth > MIN_VISIBLE_DEPTH_M);
+            let beta = crate::environment::interpolate(cell.axis_z, 0.5, 0.5);
+            assert!((beta - expected).abs() < expected * 1e-6);
+            assert_eq!(cell.axis_y.iter().filter(|&&depth| depth > 0.).count(), 1);
+        }
+        assert_eq!(site.world.water_surface, before_surface);
+        assert_eq!(site.hydraulic.suspended_sediment, before_sediment);
+    }
+    #[test]
+    fn shore_mixtures_are_depth_weighted_bounded_and_leave_wet_samples_unchanged() {
+        let mut site = dry_site();
+        let left = 60 * WIDTH + 79;
+        let right = 60 * WIDTH + 81;
+        site.world.water_surface[left] += 0.004;
+        site.world.water_surface[right] += 0.012;
+        site.hydraulic.suspended_sediment[left] = 0.001;
+        // Right is actual clear water, so it must dilute the extrapolation.
+        let beta = extinction_per_m([0.001, 0., 0., 0.]);
+        let expected = f64::from(beta) * f64::from(site.world.water_depth(79, 60))
+            / f64::from(site.world.water_depth(79, 60) + site.world.water_depth(81, 60));
+        let water = instances(&site, &crate::environment::Detail::default());
+        let mut sampled = false;
+        for cell in &water {
+            let x = (cell.center_radius[0] / CELL - 0.5).round() as usize;
+            let z = (cell.center_radius[2] / CELL - 0.5).round() as usize;
+            for (corner, (dx, dz)) in [(0, 0), (1, 0), (0, 1), (1, 1)].into_iter().enumerate() {
+                let position = (x + dx, z + dz);
+                let value = cell.axis_z[corner];
+                assert!(value.is_finite() && (0. ..=beta).contains(&value));
+                match position {
+                    (79, 60) => assert_eq!(value, beta),
+                    (81, 60) => assert_eq!(value, 0.),
+                    (80, 60) => {
+                        assert!((f64::from(value) - expected).abs() < f64::from(beta) * 1e-6);
+                        sampled = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(sampled);
+        site.hydraulic.suspended_sediment[left] = 0.;
+        assert!(
+            instances(&site, &crate::environment::Detail::default())
+                .iter()
+                .all(|cell| cell.axis_z == [0.; 4]),
+            "clear wet/dry water must stay exactly clear"
+        );
     }
     #[test]
     fn class_extinction_matches_represented_sphere_cross_sections() {

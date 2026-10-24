@@ -21,6 +21,40 @@ impl Default for Moments {
 fn outer(p: Vec3) -> Mat3 {
     Mat3::from_cols(p * p.x, p * p.y, p * p.z)
 }
+// Retain the complete measured tangent ellipse at a free boundary. Keeping
+// only two tangent diagonal entries erases their covariance and turns a crest
+// rotated away from those arbitrary axes into round support.
+fn boundary_covariance(covariance: Mat3, normal: Vec3, tangent_floor: f32) -> Mat3 {
+    let projection = Mat3::IDENTITY - outer(normal);
+    let tangent = projection * covariance * projection;
+    // The two nonzero eigenvalues of P C P give a basis-independent floor.
+    // Lift only an unresolved minor tangent: the resolved major footprint must
+    // not widen to compensate for missing variance in another direction.
+    let trace = tangent.x_axis.x + tangent.y_axis.y + tangent.z_axis.z;
+    let square = tangent
+        .to_cols_array()
+        .into_iter()
+        .map(|v| v * v)
+        .sum::<f32>();
+    let spread = (2. * square - trace * trace).max(0.).sqrt();
+    let minimum = 0.5 * (trace - spread);
+    let maximum = 0.5 * (trace + spread);
+    let tangent = if maximum <= tangent_floor {
+        projection * tangent_floor
+    } else if minimum < tangent_floor {
+        // Here maximum > floor > minimum, so spread is positive and this
+        // weight is bounded. Both tangent eigenvectors remain unchanged.
+        let weight = ((tangent_floor - minimum) / spread).clamp(0., 1.);
+        tangent * (1. - weight) + projection * (maximum * weight)
+    } else {
+        tangent
+    };
+    let minor = normal
+        .dot(covariance * normal)
+        .max(1e-10)
+        .min(maximum.max(tangent_floor) * 0.16);
+    tangent + outer(normal) * minor
+}
 #[derive(Clone, Copy)]
 pub(crate) struct Kernel {
     pub axes: [Vec3; 3],
@@ -32,23 +66,59 @@ pub(crate) struct Kernel {
     pub bulk: f32,
 }
 impl Kernel {
-    /// Channel sheets use thinner support along their measured minor axis.
+    /// Channel sheets use thinner support along their measured surface normal.
     /// Keep the measured tangential footprint: redistributing normal support
     /// into its tangents inflates crest shoulders and muddy optical patches.
     /// The caller normalizes by the actual determinant, retaining represented
     /// water volume. Spray and the outlet retain their original support.
     pub(crate) fn channel_axes(self) -> [Vec3; 3] {
-        let mut axes = self.axes;
-        let minor = (0..3)
-            .min_by(|&a, &b| {
-                axes[a]
-                    .length_squared()
-                    .total_cmp(&axes[b].length_squared())
-            })
-            .unwrap();
         let thickness = 1. - 0.5 * self.planarity * self.bulk;
-        axes[minor] *= thickness;
-        axes
+        if self.bulk == 0. || thickness == 1. {
+            return self.axes;
+        }
+        let normal = self.normal.normalize_or_zero();
+        if normal == Vec3::ZERO {
+            return self.axes;
+        }
+        // Exact coordinate-aligned sheets need no eigensolve: S acts on one
+        // axis only and every other support axis has zero normal component.
+        for coordinate in 0..3 {
+            if normal[coordinate].abs() != 1.
+                || normal[(coordinate + 1) % 3] != 0.
+                || normal[(coordinate + 2) % 3] != 0.
+            {
+                continue;
+            }
+            for index in 0..3 {
+                if self.axes[index][coordinate] != 0.
+                    && self.axes[index][(coordinate + 1) % 3] == 0.
+                    && self.axes[index][(coordinate + 2) % 3] == 0.
+                    && (0..3).all(|other| other == index || self.axes[other][coordinate] == 0.)
+                {
+                    let mut axes = self.axes;
+                    axes[index] *= thickness;
+                    return axes;
+                }
+            }
+        }
+        // A normal and a short tangent can share an eigenvalue after flooring.
+        // Choosing the shortest axis then depends on an arbitrary eigenbasis.
+        // Compress the measured NORMAL in the support tensor instead. Every
+        // tangent t retains t^T C t, including through eigenvalue degeneracy.
+        let covariance = self
+            .axes
+            .into_iter()
+            .map(outer)
+            .fold(Mat3::ZERO, |a, b| a + b);
+        let compression = Mat3::IDENTITY - outer(normal) * (1. - thickness);
+        let (basis, variance) = eigen(compression * covariance * compression);
+        let positive = variance.max(Vec3::ZERO);
+        let lengths = Vec3::new(positive.x.sqrt(), positive.y.sqrt(), positive.z.sqrt());
+        [
+            basis.x_axis * lengths.x,
+            basis.y_axis * lengths.y,
+            basis.z_axis * lengths.z,
+        ]
     }
 }
 pub(crate) fn kernels(
@@ -414,15 +484,7 @@ impl ChannelField {
             * bulk;
         if boundary > 0. {
             let n = normal.lerp(boundary_normal, boundary).normalize_or_zero();
-            let tx = (Vec3::X - n * n.x).normalize_or_zero();
-            let tz = n.cross(tx);
-            let tangent_x = tx.dot(covariance * tx).max(cell * cell * 0.25);
-            let tangent_z = tz.dot(covariance * tz).max(cell * cell * 0.25);
-            let minor = n
-                .dot(covariance * n)
-                .max(1e-10)
-                .min(tangent_x.max(tangent_z) * 0.16);
-            let target = outer(tx) * tangent_x + outer(tz) * tangent_z + outer(n) * minor;
+            let target = boundary_covariance(covariance, n, cell * cell * 0.25);
             let (v, d) = eigen(covariance * (1. - boundary) + target * boundary);
             let positive = d.max(Vec3::splat(d.max_element().max(1e-10) * 0.16));
             let s = Vec3::new(positive.x.sqrt(), positive.y.sqrt(), positive.z.sqrt());
@@ -494,6 +556,142 @@ fn eigen(m: Mat3) -> (Mat3, Vec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn boundary_covariance_retains_oblique_crest_cross_terms_under_rotation() {
+        let measured = Mat3::from_diagonal(Vec3::new(0.0009, 0.0004, 0.0001));
+        // Independent expected tangent variances, with only the normal support
+        // bounded to 16 percent of the longest measured tangent variance.
+        let expected = Mat3::from_diagonal(Vec3::new(0.0009, 0.000144, 0.0001));
+        for angle in [0., 0.23, std::f32::consts::FRAC_PI_4, 1.1] {
+            for tilt in [0., 0.6, std::f32::consts::FRAC_PI_2] {
+                let rotation = Mat3::from_rotation_z(tilt) * Mat3::from_rotation_y(angle);
+                let covariance = rotation * measured * rotation.transpose();
+                let target = boundary_covariance(covariance, rotation * Vec3::Y, 0.000025);
+                let reference = rotation * expected * rotation.transpose();
+                let error = (target - reference)
+                    .to_cols_array()
+                    .into_iter()
+                    .map(f32::abs)
+                    .fold(0_f32, f32::max);
+                assert!(
+                    error < 1e-8,
+                    "boundary ellipse depends on orientation: {angle}, {tilt}, {error}"
+                );
+            }
+        }
+        let rotation = Mat3::from_rotation_y(std::f32::consts::FRAC_PI_4);
+        let covariance = rotation * measured * rotation.transpose();
+        // Actual former diagonal-only construction: at 45 degrees it loses a
+        // 0.0004 m² tangent covariance and gives this 3:1 ridge a round ellipse.
+        let old = outer(Vec3::X) * covariance.x_axis.x
+            + outer(Vec3::Z) * covariance.z_axis.z
+            + outer(Vec3::Y) * (covariance.x_axis.x.max(covariance.z_axis.z) * 0.16);
+        let actual = boundary_covariance(covariance, Vec3::Y, 0.000025);
+        assert!((actual.x_axis.z - covariance.x_axis.z).abs() < 1e-8);
+        assert!((old.x_axis.z - covariance.x_axis.z).abs() > 0.00039);
+        assert!((covariance.x_axis.x - covariance.z_axis.z).abs() < 1e-8);
+        assert!(actual.determinant() > 0. && actual.is_finite());
+    }
+    #[test]
+    fn final_channel_support_thins_normal_through_degenerate_eigenframes() {
+        let support = |axes: [Vec3; 3]| axes.into_iter().map(outer).fold(Mat3::ZERO, |a, b| a + b);
+        let expected = Mat3::from_diagonal(Vec3::new(3.24, 0.1296, 0.5184));
+        let volume = 1.8 * 0.72 * 0.72;
+        for angle in [0., 0.23, std::f32::consts::FRAC_PI_4, 1.1] {
+            for tilt in [0., 0.6, std::f32::consts::FRAC_PI_2] {
+                let rotation = Mat3::from_rotation_z(tilt) * Mat3::from_rotation_y(angle);
+                for frame_angle in [0., 0.2, std::f32::consts::FRAC_PI_4, 0.9] {
+                    // These are different eigenframes of exactly the same
+                    // support: normal Y and tangent Z share a floored length.
+                    let (sin, cos) = frame_angle.sin_cos();
+                    let axes = [
+                        rotation * Vec3::X * 1.8,
+                        rotation * (Vec3::Y * cos + Vec3::Z * sin) * 0.72,
+                        rotation * (-Vec3::Y * sin + Vec3::Z * cos) * 0.72,
+                    ];
+                    let normal = rotation * Vec3::Y;
+                    let kernel = Kernel {
+                        axes,
+                        center: Vec3::ZERO,
+                        channel_center: Vec3::ZERO,
+                        normal,
+                        planarity: 1.,
+                        bulk: 1.,
+                    };
+                    let final_axes = kernel.channel_axes();
+                    let actual = support(final_axes);
+                    let reference = rotation * expected * rotation.transpose();
+                    let error = (actual - reference)
+                        .to_cols_array()
+                        .into_iter()
+                        .map(f32::abs)
+                        .fold(0_f32, f32::max);
+                    assert!(
+                        error < 2e-5,
+                        "final support depends on eigenframe: angle={angle}, tilt={tilt}, frame={frame_angle}, error={error}"
+                    );
+                    assert!((normal.dot(actual * normal) - 0.1296).abs() < 2e-5);
+                    let represented = final_axes.iter().map(|a| a.length()).product::<f32>();
+                    assert!((represented - volume * 0.5).abs() < 2e-5);
+                    assert!(final_axes
+                        .iter()
+                        .all(|a| a.is_finite() && a.length() <= 1.80001));
+                    assert_eq!(Kernel { bulk: 0., ..kernel }.channel_axes(), axes);
+                    assert_eq!(
+                        Kernel {
+                            planarity: 0.,
+                            ..kernel
+                        }
+                        .channel_axes(),
+                        axes
+                    );
+                }
+            }
+        }
+        // Actual previous shortest-axis rule on a 45-degree degenerate basis
+        // compresses an arbitrary Y/Z mixture rather than the measured Y.
+        let (sin, cos) = std::f32::consts::FRAC_PI_4.sin_cos();
+        let mut old = [
+            Vec3::X * 1.8,
+            (Vec3::Y * cos + Vec3::Z * sin) * 0.72,
+            (-Vec3::Y * sin + Vec3::Z * cos) * 0.72,
+        ];
+        let shortest = (0..3)
+            .min_by(|&a, &b| old[a].length_squared().total_cmp(&old[b].length_squared()))
+            .unwrap();
+        old[shortest] *= 0.5;
+        assert!(
+            (Vec3::Y.dot(support(old) * Vec3::Y) - 0.1296).abs() > 0.19,
+            "old rule did not reproduce wrong-direction crest thinning"
+        );
+    }
+    #[test]
+    fn boundary_tangent_floor_stays_positive_and_continuous() {
+        let floor = 0.000025;
+        let at = |variance| {
+            boundary_covariance(
+                Mat3::from_diagonal(Vec3::new(0.0005, 0.0001, variance)),
+                Vec3::Y,
+                floor,
+            )
+        };
+        for variance in [0., floor * 0.5, floor * 0.99999, floor * 1.00001] {
+            let target = at(variance);
+            assert!(target.is_finite() && target.determinant() > 0.);
+            assert!((target.x_axis.x - 0.0005).abs() < 1e-9);
+            assert!(target.z_axis.z >= floor - 1e-9);
+            assert!(target.y_axis.y > 0. && target.y_axis.y <= target.x_axis.x * 0.16 + 1e-9);
+        }
+        let jump = (at(floor + 1e-9) - at(floor - 1e-9))
+            .to_cols_array()
+            .into_iter()
+            .map(f32::abs)
+            .fold(0_f32, f32::max);
+        assert!(
+            jump < 3e-9,
+            "tangent support jumps at its variance floor: {jump}"
+        );
+    }
     #[test]
     fn thick_water_boundary_has_thin_support_without_flattening_its_interior() {
         let points: Vec<_> = (-10..=10)
