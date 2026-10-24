@@ -1,0 +1,878 @@
+{
+  "base": "5648c2ceaa91ef1d4d14751f0ae8eab53c3130b2",
+  "source_sha256": {
+    "crates/game/src/gpu/flip_3d.rs": "90a24efdcb4652462b9d631c9043cced75f2b9af9d1bd2197cb84d3c66cacc1f",
+    "crates/game/src/gpu/phase_transfer_3d.rs": "c597b6e4f034e8d135c22585069c7f2bd2c9b30a69690ce2a0a4bad5e0acc99e",
+    "crates/game/src/gpu/pressure_3d.rs": "dc365175e0b84b0f1f3e963b9f979c1c861f3ee8cf4c8f3a2398f983315f2a8d",
+    "crates/game/src/gpu/shaders/density_error_3d.wgsl": "d5a17b2e991d97a96f8f3b5d31dba8d04671c8d40f44a40b349540e3e3b7f05c",
+    "crates/game/src/gpu/shaders/g2p_3d.wgsl": "ad09cfe03565d1cb9e3c09c5857a25bed6e93a4213eba604dcd1a1453a0a0dcb",
+    "crates/game/src/gpu/shaders/phase_transfer_3d.wgsl": "e8881cbb21da8aa836ca4a0b5e767dc9e45a02b97ab990ed9aa2e9f4fbdc83fb",
+    "crates/game/src/gpu/shaders/sample_sdf_3d.wgsl": "b8b1db246ca75538913ff19d22d445295302b917a242edc690617b9ceeeced05",
+    "crates/game/src/gpu/shaders/sdf_collision_3d.wgsl": "5b485a62bb967d181e551709cdcb08af5300677764d62a01ada11687ae34648d",
+    "crates/mining-physics/examples/volume_hydrostatic.rs": "772cc2ca454a6bda7885b9dd025e0a1a4a1975468515251ee7189f27e847517c",
+    "crates/mining-physics/src/lib.rs": "1c6a65d5e05b244f637563e9188ad2dee00d13c50a61a03c410db005e0a7bc0a",
+    "crates/mining-physics/tests/conservative_runtime.rs": "23a55986a6b59995cfb74e5911c9df8a611ac0e716f36dd5a702c15b9089f9ae",
+    "crates/mining-physics/tests/original_pipeline.rs": "d95cf8247e00593221466b0501cef40b4be1c20812dc4ce90b51adf138ab0a40",
+    "crates/mining-physics/tests/storage_growth.rs": "8c92dc6b4307d70613354cb3d69ad664eab37a49c01b81459094644ebbbbadcf",
+    "crates/mining-physics/tests/volume_pressure.rs": "58cf07f26c77fe5af4cb5c8c169b06e08ddec4fbff6c86172210aec9526d45af",
+    "crates/mining-physics/tests/water_projection.rs": "5ca26a3e697cf3787b0b0351558759a53657ac4ba87a169d5de87843b0015886",
+    "crates/sim3d/src/clump.rs": "867ac6eac0243925f86fb96b9fa3f452972856e1d6a677b65ee3647a18cf8de0"
+  },
+  "binary_sha256": "4dee1be37e384da6836a0428f1cfba688b7d17ff56195dd81982c83e4552eac2",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/volume-constraint-20261023",
+  "checks": {
+    "cpu-final": {
+      "passed": 141,
+      "failed": 0,
+      "ignored": 81,
+      "log_sha256": "b386ef493cb7e923891055ee88b26b71ffde90c1332f29ddd2a0c9b4b685b994"
+    },
+    "sim3d-cpu-final": {
+      "passed": 124,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "a6283a53a9b10fc32362a6a9f00a0bdc12cc5ccce7797f4c6915b440ca5c5d70"
+    },
+    "gpu-final": {
+      "passed": 15,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "d0f7130e5416bd21cea1c33f054d59b7bc1d85b1fcfff94df0ed45e525a1622b"
+    },
+    "storage-final": {
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "82327abe7af79a47ac942a90bacf50054cd1ca81d395ef8b60f89acd7a17d294"
+    },
+    "phase-oracle": {
+      "passed": 1,
+      "log": "storage-pipeline-final.log",
+      "note": "Standalone phase oracle unchanged by later scratch-pressure initialization; eleven internal controls including refusal."
+    },
+    "legacy-lint": {
+      "diagnostics": 108,
+      "changed_primary": []
+    }
+  },
+  "rest_matrix": [
+    {
+      "dt": 0.008333333767950535,
+      "energy_j": 6.663260013514308e-14,
+      "geometry": 0,
+      "grid": 12,
+      "max_drift_m": 3.725290298461914e-09,
+      "max_speed_mps": 5.352656557988666e-07,
+      "particles": 13824,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 4
+    },
+    {
+      "dt": 0.004166666883975267,
+      "energy_j": 2.632484883529673e-13,
+      "geometry": 0,
+      "grid": 12,
+      "max_drift_m": 3.73255915064874e-09,
+      "max_speed_mps": 1.0733075441748952e-06,
+      "particles": 13824,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 8
+    },
+    {
+      "dt": 0.008333333767950535,
+      "energy_j": 5.579176452714642e-14,
+      "geometry": 0,
+      "grid": 12,
+      "max_drift_m": 7.450580596923828e-09,
+      "max_speed_mps": 5.049416813562857e-07,
+      "particles": 110592,
+      "passed": true,
+      "per_axis": 4,
+      "steps": 4
+    },
+    {
+      "dt": 0.004166666883975267,
+      "energy_j": 2.2158518651405391e-13,
+      "geometry": 0,
+      "grid": 12,
+      "max_drift_m": 1.1175870895385742e-08,
+      "max_speed_mps": 1.0054025096906116e-06,
+      "particles": 110592,
+      "passed": true,
+      "per_axis": 4,
+      "steps": 8
+    },
+    {
+      "dt": 0.008333333767950535,
+      "energy_j": 6.474472930906119e-14,
+      "geometry": 0,
+      "grid": 24,
+      "max_drift_m": 1.490207068854943e-08,
+      "max_speed_mps": 7.299332196453179e-07,
+      "particles": 110592,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 4
+    },
+    {
+      "dt": 0.004166666883975267,
+      "energy_j": 2.599379550409323e-13,
+      "geometry": 0,
+      "grid": 24,
+      "max_drift_m": 2.235234752845372e-08,
+      "max_speed_mps": 1.4577208276023157e-06,
+      "particles": 110592,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 8
+    },
+    {
+      "dt": 0.008333333767950535,
+      "energy_j": 2.0112554734185136e-14,
+      "geometry": 1,
+      "grid": 12,
+      "max_drift_m": 0.0,
+      "max_speed_mps": 4.5148266281103133e-07,
+      "particles": 8000,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 4
+    },
+    {
+      "dt": 0.004166666883975267,
+      "energy_j": 8.181182873768608e-14,
+      "geometry": 1,
+      "grid": 12,
+      "max_drift_m": 0.0,
+      "max_speed_mps": 9.07508024283743e-07,
+      "particles": 8000,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 8
+    },
+    {
+      "dt": 0.008333333767950535,
+      "energy_j": 3.717236829785321e-14,
+      "geometry": 1,
+      "grid": 12,
+      "max_drift_m": 3.725290298461914e-09,
+      "max_speed_mps": 5.184964493309963e-07,
+      "particles": 64000,
+      "passed": true,
+      "per_axis": 4,
+      "steps": 4
+    },
+    {
+      "dt": 0.004166666883975267,
+      "energy_j": 1.4831799885111767e-13,
+      "geometry": 1,
+      "grid": 12,
+      "max_drift_m": 3.725290298461914e-09,
+      "max_speed_mps": 1.0456737982167397e-06,
+      "particles": 64000,
+      "passed": true,
+      "per_axis": 4,
+      "steps": 8
+    },
+    {
+      "dt": 0.008333333767950535,
+      "energy_j": 4.385816045172023e-14,
+      "geometry": 1,
+      "grid": 24,
+      "max_drift_m": 1.053671194739536e-08,
+      "max_speed_mps": 7.338355771935312e-07,
+      "particles": 64000,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 4
+    },
+    {
+      "dt": 0.004166666883975267,
+      "energy_j": 1.7656893673109002e-13,
+      "geometry": 1,
+      "grid": 24,
+      "max_drift_m": 1.053671194739536e-08,
+      "max_speed_mps": 1.4698464383400278e-06,
+      "particles": 64000,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 8
+    },
+    {
+      "dt": 0.008333333767950535,
+      "energy_j": 6.28533657451821e-14,
+      "geometry": 2,
+      "grid": 12,
+      "max_drift_m": 3.725290298461914e-09,
+      "max_speed_mps": 5.341757400856295e-07,
+      "particles": 13312,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 4
+    },
+    {
+      "dt": 0.004166666883975267,
+      "energy_j": 2.4892181704833944e-13,
+      "geometry": 2,
+      "grid": 12,
+      "max_drift_m": 3.73255915064874e-09,
+      "max_speed_mps": 1.0730890380727942e-06,
+      "particles": 13312,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 8
+    },
+    {
+      "dt": 0.008333333767950535,
+      "energy_j": 5.012894015284588e-14,
+      "geometry": 2,
+      "grid": 12,
+      "max_drift_m": 3.725290298461914e-09,
+      "max_speed_mps": 5.198084522817226e-07,
+      "particles": 106496,
+      "passed": true,
+      "per_axis": 4,
+      "steps": 4
+    },
+    {
+      "dt": 0.004166666883975267,
+      "energy_j": 2.0053635328464567e-13,
+      "geometry": 2,
+      "grid": 12,
+      "max_drift_m": 3.725290298461914e-09,
+      "max_speed_mps": 1.033685634865833e-06,
+      "particles": 106496,
+      "passed": true,
+      "per_axis": 4,
+      "steps": 8
+    },
+    {
+      "dt": 0.008333333767950535,
+      "energy_j": 6.251833960813366e-14,
+      "geometry": 2,
+      "grid": 24,
+      "max_drift_m": 1.490207068854943e-08,
+      "max_speed_mps": 7.109424018381105e-07,
+      "particles": 106496,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 4
+    },
+    {
+      "dt": 0.004166666883975267,
+      "energy_j": 2.498445266839987e-13,
+      "geometry": 2,
+      "grid": 24,
+      "max_drift_m": 2.235234752845372e-08,
+      "max_speed_mps": 1.419466002516856e-06,
+      "particles": 106496,
+      "passed": true,
+      "per_axis": 2,
+      "steps": 8
+    }
+  ],
+  "blend_matrix": [
+    {
+      "angular_error": 1.571439773393955e-07,
+      "blend": 0.0,
+      "energy_ratio": 0.9780364332683961,
+      "passed": true
+    },
+    {
+      "angular_error": 1.2737315231685957e-07,
+      "blend": 0.5,
+      "energy_ratio": 0.9838976381937801,
+      "passed": true
+    },
+    {
+      "angular_error": 9.567206298566517e-08,
+      "blend": 0.9700000286102295,
+      "energy_ratio": 0.9987451085427468,
+      "passed": true
+    },
+    {
+      "angular_error": 9.783967069611738e-08,
+      "blend": 1.0,
+      "energy_ratio": 1.0000000425051796,
+      "passed": true
+    }
+  ],
+  "hydrostatic": {
+    "cases": [
+      {
+        "alpha": 0.0,
+        "duration_s": 0.1,
+        "grid": 12,
+        "hz": 120,
+        "kinetic_energy_j": 0.003324159162934636,
+        "max_drift_m": 0.014491128735244274,
+        "max_speed_mps": 0.26068228483200073,
+        "particles": 9216,
+        "passed": false,
+        "per_axis": 2,
+        "pressure_sweeps": 120,
+        "refusal": null
+      },
+      {
+        "alpha": 0.0,
+        "duration_s": 0.1,
+        "grid": 12,
+        "hz": 120,
+        "kinetic_energy_j": 0.003827409977233123,
+        "max_drift_m": 0.016018593683838844,
+        "max_speed_mps": 0.28814420104026794,
+        "particles": 73728,
+        "passed": false,
+        "per_axis": 4,
+        "pressure_sweeps": 120,
+        "refusal": null
+      },
+      {
+        "alpha": 0.0,
+        "duration_s": 0.1,
+        "grid": 24,
+        "hz": 240,
+        "kinetic_energy_j": 0.002134930711486647,
+        "max_drift_m": 0.016599059104919434,
+        "max_speed_mps": 0.31784287095069885,
+        "particles": 73728,
+        "passed": false,
+        "per_axis": 2,
+        "pressure_sweeps": 120,
+        "refusal": null
+      },
+      {
+        "alpha": 0.0,
+        "duration_s": 0.1,
+        "grid": 12,
+        "hz": 240,
+        "kinetic_energy_j": 0.003248607773801268,
+        "max_drift_m": 0.013976525515317917,
+        "max_speed_mps": 0.2613470256328583,
+        "particles": 9216,
+        "passed": false,
+        "per_axis": 2,
+        "pressure_sweeps": 120,
+        "refusal": null
+      },
+      {
+        "alpha": 0.0,
+        "duration_s": 0.1,
+        "grid": 12,
+        "hz": 120,
+        "kinetic_energy_j": 0.003325077036342757,
+        "max_drift_m": 0.014500416815280914,
+        "max_speed_mps": 0.26075807213783264,
+        "particles": 9216,
+        "passed": false,
+        "per_axis": 2,
+        "pressure_sweeps": 480,
+        "refusal": null
+      },
+      {
+        "alpha": 1.0,
+        "duration_s": 0.1,
+        "grid": 12,
+        "hz": 120,
+        "kinetic_energy_j": 0.0034291652565379737,
+        "max_drift_m": 0.014723514206707478,
+        "max_speed_mps": 0.2765371799468994,
+        "particles": 9216,
+        "passed": false,
+        "per_axis": 2,
+        "pressure_sweeps": 120,
+        "refusal": null
+      },
+      {
+        "alpha": 1.0,
+        "duration_s": 0.1,
+        "grid": 12,
+        "hz": 120,
+        "kinetic_energy_j": 0.0038774899341424036,
+        "max_drift_m": 0.01617082767188549,
+        "max_speed_mps": 0.29769715666770935,
+        "particles": 73728,
+        "passed": false,
+        "per_axis": 4,
+        "pressure_sweeps": 120,
+        "refusal": null
+      },
+      {
+        "alpha": 1.0,
+        "duration_s": 0.1,
+        "grid": 24,
+        "hz": 240,
+        "kinetic_energy_j": 0.002200986833708158,
+        "max_drift_m": 0.016983674839138985,
+        "max_speed_mps": 0.3226670026779175,
+        "particles": 73728,
+        "passed": false,
+        "per_axis": 2,
+        "pressure_sweeps": 120,
+        "refusal": null
+      },
+      {
+        "alpha": 1.0,
+        "duration_s": 0.1,
+        "grid": 12,
+        "hz": 240,
+        "kinetic_energy_j": 0.0036410756320816953,
+        "max_drift_m": 0.014159226790070534,
+        "max_speed_mps": 0.2984955310821533,
+        "particles": 9216,
+        "passed": false,
+        "per_axis": 2,
+        "pressure_sweeps": 120,
+        "refusal": null
+      },
+      {
+        "alpha": 1.0,
+        "duration_s": 0.1,
+        "grid": 12,
+        "hz": 120,
+        "kinetic_energy_j": 0.0034246164519834586,
+        "max_drift_m": 0.014584613963961601,
+        "max_speed_mps": 0.28094932436943054,
+        "particles": 9216,
+        "passed": false,
+        "per_axis": 2,
+        "pressure_sweeps": 480,
+        "refusal": null
+      }
+    ],
+    "gate": "max speed < 1mm/s and max drift < 0.02 cell over 0.1 physical seconds",
+    "passed": false,
+    "protocol": "initially stationary 0.12m square column, 0.08m water, gravity -9.81, open top, closed other faces; no SDF, flow, or vorticity force"
+  },
+  "native": {
+    "legacy": {
+      "bulk_budget_passed": true,
+      "bulk_material_error_m3": 3.2904603131100885e-07,
+      "bulk_tolerance_m3": 0.0004124674631850535,
+      "detail_revision": 4,
+      "displayed_grains": 18471,
+      "dry_mass_budget_passed": true,
+      "dry_mass_error_kg": 0.0005922854179516435,
+      "dry_mass_tolerance_kg": 0.8074216222450263,
+      "exported_gold_g": 4.855690923599597,
+      "exported_material_m3": [
+        0.0,
+        0.9358917584358215,
+        0.0,
+        0.5329262494467102
+      ],
+      "failure": null,
+      "fluid_surface_ready": true,
+      "gold_balance_error_g": 9.094947017729282e-13,
+      "grains": 4651,
+      "initial_bulk_material_m3": 412.4674631850535,
+      "initial_dry_mass_kg": 807421.6222450264,
+      "inlet": {
+        "emission_clock": 0.0,
+        "emitted": {
+          "gold_g": 0.022781922741773323,
+          "solid_m3": [
+            0.0,
+            0.007668658504997855,
+            0.0,
+            0.002471148412399837
+          ]
+        },
+        "last_water_m3": 6.249453872442245e-05,
+        "pending": {
+          "gold_g": 0.0,
+          "solid_m3": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "ready": {
+          "gold_g": 7.978348161512651e-09,
+          "solid_m3": [
+            0.0,
+            3.943763614630095e-10,
+            0.0,
+            8.724445079134125e-10
+          ]
+        },
+        "sequence": 8325,
+        "withdrawn": {
+          "gold_g": 0.02278193072012156,
+          "solid_m3": [
+            0.0,
+            0.007668658899373976,
+            0.0,
+            0.0024711492848443466
+          ]
+        }
+      },
+      "last_worker_tick_ms": 121.3455,
+      "max_water_speed_mps": 1.0800000429153442,
+      "mean_fps": 55.26978608056666,
+      "one_second_ratios": [
+        0.3300950496214645,
+        0.3298945030371187,
+        0.3326752774348456,
+        0.33299878417556994,
+        0.3300771671901724,
+        0.3304868126097162,
+        0.3300436953023919,
+        0.3277571501490484,
+        0.29908276618766744,
+        0.333074107815389,
+        0.29765705752895166,
+        0.33220054685325184,
+        0.2962165404155988,
+        0.3295248670668957,
+        0.33309083261224975,
+        0.29845554550517317,
+        0.29814219206795173,
+        0.2959355503840638,
+        0.2989205263408089
+      ],
+      "outflow_particles": 11051,
+      "p95_frame_ms": 26.770708,
+      "passed": false,
+      "paused": false,
+      "phase_model": "legacy",
+      "simulation_seconds": 6.3333336636424065,
+      "simulation_wall_ratio": 0.3166630072629331,
+      "sluice_water_balance_error_m3": 0.0,
+      "slurry": {
+        "feed_grading": "Alluvial",
+        "fine_parcels_below_200um": 125,
+        "independently_resolved_grain_collisions": false,
+        "optical_grid_m": 0.029999999329447746,
+        "optics_calibrated": false,
+        "outlet_extinction_m1": 209.04412841796875,
+        "projected_suspended_fines_m3": 0.00012486922857806335,
+        "projected_water_m3": 0.014615374963099736,
+        "projection_fines_error_m3": 8.131516293641283e-20,
+        "projection_water_error_m3": 1.0408340855860843e-17,
+        "represented_grains": 1649802862.911394,
+        "solver_parcels": 4651
+      },
+      "stored_water_m3": 12.737365804000351,
+      "terrain_fine_cells": 358,
+      "terrain_water_splats": 2733,
+      "wall_seconds": 20.000232166,
+      "warmup_seconds": 5,
+      "water_balance": {
+        "baseline_sim_time": 0.0,
+        "boundary_outflow_m3": 13.159739576751628,
+        "external_inflow_m3": 11.78398869279772,
+        "initial_stored_m3": 14.113124481402338,
+        "legacy_baseline": false
+      },
+      "water_balance_error_m3": -7.793448077109133e-06,
+      "water_cfl_speed_mps": 1.0799999237060547,
+      "water_mean_downstream_ms": 0.3860519826412201,
+      "water_near_cfl_limit": 158,
+      "water_particles": 116923,
+      "water_presentation": {
+        "buffer_underrun_frames": 0,
+        "interpolation_alpha": 0.9290281534194946,
+        "max_capture_ms": 1.516917,
+        "max_surface_build_ms": 38.316791,
+        "mean_capture_ms": 0.37186724999999987,
+        "mean_surface_build_ms": 30.312696846808517,
+        "paired_render_particles": 66081,
+        "presented_sim_time": 98.16430605805216,
+        "surface_builds": 235
+      },
+      "worker_busy_fraction": 1.0004473575069397,
+      "worker_mean_ms": 105.31147063157896,
+      "worker_packets": 190,
+      "worker_phases_mean_ms": [
+        3.207900936842105,
+        35.39669746842105,
+        58.19358506315793,
+        2.8170243736842093,
+        3.740097805263159
+      ]
+    },
+    "conservative": {
+      "bulk_budget_passed": true,
+      "bulk_material_error_m3": 2.761327664302371e-07,
+      "bulk_tolerance_m3": 0.0004124674631721521,
+      "detail_revision": 4,
+      "displayed_grains": 20738,
+      "dry_mass_budget_passed": true,
+      "dry_mass_error_kg": 0.0004972015740349889,
+      "dry_mass_tolerance_kg": 0.8074216222217634,
+      "exported_gold_g": 4.845036529478275,
+      "exported_material_m3": [
+        0.0,
+        0.9262785762693175,
+        0.0,
+        0.5317823797515189
+      ],
+      "failure": null,
+      "fluid_surface_ready": true,
+      "gold_balance_error_g": 9.094947017729282e-13,
+      "grains": 5433,
+      "initial_bulk_material_m3": 412.46746317215207,
+      "initial_dry_mass_kg": 807421.6222217635,
+      "inlet": {
+        "emission_clock": 0.03333333507180214,
+        "emitted": {
+          "gold_g": 0.02232118422743944,
+          "solid_m3": [
+            0.0,
+            0.007644437710680545,
+            0.0,
+            0.002420751942407854
+          ]
+        },
+        "last_water_m3": 6.249547004699707e-05,
+        "pending": {
+          "gold_g": 1.2077293152893792e-05,
+          "solid_m3": [
+            0.0,
+            6.775938897860735e-07,
+            0.0,
+            1.3211088983167923e-06
+          ]
+        },
+        "ready": {
+          "gold_g": 2.418711886131115e-09,
+          "solid_m3": [
+            0.0,
+            1.3570130114818734e-10,
+            0.0,
+            2.6457764623082705e-10
+          ]
+        },
+        "sequence": 8249,
+        "withdrawn": {
+          "gold_g": 0.02233326393930428,
+          "solid_m3": [
+            0.0,
+            0.0076451154402713915,
+            0.0,
+            0.0024220733158838133
+          ]
+        }
+      },
+      "last_worker_tick_ms": 154.094542,
+      "max_water_speed_mps": 1.0800000429153442,
+      "mean_fps": 55.24128024538909,
+      "one_second_ratios": [
+        0.26336887429383754,
+        0.29604955495698626,
+        0.2639970434719376,
+        0.2662937806057401,
+        0.2661296198241679,
+        0.26490179461951535,
+        0.29460404790479505,
+        0.2628289616757055,
+        0.26533456837389596,
+        0.26596014627551007,
+        0.2935503714129924,
+        0.26639661008867865,
+        0.2609454729983481,
+        0.2655794646410428,
+        0.26391953109067395,
+        0.26574773606451096,
+        0.2664307005051034,
+        0.2658920705000329,
+        0.22983897893316743
+      ],
+      "outflow_particles": 10821,
+      "p95_frame_ms": 27.653125,
+      "passed": false,
+      "paused": false,
+      "phase_model": "conservative-validation",
+      "simulation_seconds": 5.333333611488342,
+      "simulation_wall_ratio": 0.2664999848339035,
+      "sluice_water_balance_error_m3": 0.0,
+      "slurry": {
+        "feed_grading": "Alluvial",
+        "fine_parcels_below_200um": 283,
+        "independently_resolved_grain_collisions": false,
+        "optical_grid_m": 0.029999999329447746,
+        "optics_calibrated": false,
+        "outlet_extinction_m1": 1053.32861328125,
+        "projected_suspended_fines_m3": 0.0002794760898308104,
+        "projected_water_m3": 0.015922624959799302,
+        "projection_fines_error_m3": -2.710505431213761e-19,
+        "projection_water_error_m3": 6.591949208711867e-17,
+        "represented_grains": 3571389319.8459787,
+        "solver_parcels": 5433
+      },
+      "stored_water_m3": 12.728848277048883,
+      "terrain_fine_cells": 358,
+      "terrain_water_splats": 2733,
+      "wall_seconds": 20.01251,
+      "warmup_seconds": 5,
+      "water_balance": {
+        "baseline_sim_time": 0.0,
+        "boundary_outflow_m3": 13.024257352623028,
+        "external_inflow_m3": 11.639988937415183,
+        "initial_stored_m3": 14.113124481402338,
+        "legacy_baseline": false
+      },
+      "water_balance_error_m3": -7.7891456093937e-06,
+      "water_cfl_speed_mps": 1.0799999237060547,
+      "water_mean_downstream_ms": 0.3328388035297394,
+      "water_near_cfl_limit": 257,
+      "water_particles": 127381,
+      "water_presentation": {
+        "buffer_underrun_frames": 0,
+        "interpolation_alpha": 0.7589594721794128,
+        "max_capture_ms": 1.03825,
+        "max_surface_build_ms": 61.134292,
+        "mean_capture_ms": 0.4053844371859298,
+        "mean_surface_build_ms": 33.60516938190954,
+        "paired_render_particles": 66043,
+        "presented_sim_time": 96.9586370384939,
+        "surface_builds": 199
+      },
+      "worker_busy_fraction": 0.9975620418927961,
+      "worker_mean_ms": 124.77325211875,
+      "worker_packets": 160,
+      "worker_phases_mean_ms": [
+        3.5866549437499984,
+        54.989518718750006,
+        58.83969424375,
+        1.7466677000000004,
+        3.7155171937499984
+      ]
+    }
+  },
+  "motion": {
+    "fps": 60,
+    "encoded_frames": 972,
+    "views": [
+      {
+        "view": "legacy-sluice",
+        "source_frames": 45,
+        "encoded_frames": 245,
+        "selected_review_frames": [
+          0,
+          9,
+          18,
+          26,
+          35,
+          44
+        ],
+        "advancing_frames": 44,
+        "recording_underruns": 0,
+        "max_first_display_delay_ms": 16.593625000000056
+      },
+      {
+        "view": "conservative-sluice",
+        "source_frames": 45,
+        "encoded_frames": 242,
+        "selected_review_frames": [
+          0,
+          9,
+          18,
+          26,
+          35,
+          44
+        ],
+        "advancing_frames": 44,
+        "recording_underruns": 0,
+        "max_first_display_delay_ms": 16.486124999999685
+      },
+      {
+        "view": "conservative-outlet",
+        "source_frames": 45,
+        "encoded_frames": 243,
+        "selected_review_frames": [
+          0,
+          9,
+          18,
+          26,
+          35,
+          44
+        ],
+        "advancing_frames": 44,
+        "recording_underruns": 0,
+        "max_first_display_delay_ms": 16.66341633333346
+      },
+      {
+        "view": "conservative-river",
+        "source_frames": 44,
+        "encoded_frames": 242,
+        "selected_review_frames": [
+          0,
+          9,
+          17,
+          26,
+          34,
+          43
+        ],
+        "advancing_frames": 43,
+        "recording_underruns": 0,
+        "max_first_display_delay_ms": 16.125875000000068
+      }
+    ],
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "r_frame_rate": "60/1",
+          "duration": "16.200000",
+          "nb_frames": "972"
+        }
+      ]
+    }
+  },
+  "review": {
+    "temporal_samples_per_view": 6,
+    "views": [
+      "legacy-sluice",
+      "conservative-sluice",
+      "conservative-outlet",
+      "conservative-river"
+    ],
+    "full_resolution_samples": [
+      "conservative-sluice frame 26",
+      "conservative-outlet frame 26"
+    ],
+    "entire_video_watched": false,
+    "manual_operator_replay": false,
+    "observations": "Advancing connected flow; broad riffle humps and some raised curls, rounded coarse outlet globules, granular highlights, coarse shoreline/placeholder environment remain. Native rendering is not physical calibration."
+  },
+  "failed_candidate_receipts": [
+    "lake-before.json",
+    "lake-corners-before.json",
+    "blend-before.json",
+    "boundary-mass.log",
+    "pipeline-refusal-detail.log",
+    "pipeline-sdf-cutcell.log",
+    "storage-pipeline-final.log",
+    "restore-before.log",
+    "hydrostatic-first.json",
+    "hydrostatic-final.json"
+  ],
+  "status": "partial-validation; hydrostatic and real-time gates failed",
+  "conservative_default": false,
+  "source_note": "Physical checks precede removal of one EOF blank line in shared SDF WGSL. Final native package, benchmarks and all motion were rebuilt/rerun from exactly the source fingerprints here. Earlier native receipts retained under pre-whitespace/.",
+  "cleanup": {
+    "owned_heavy_processes": 0,
+    "shared_playwright_mcp": 14,
+    "shared_node": 56,
+    "new_crash_reports": 0
+  },
+  "media_sha256": {
+    "2026-10-23-volume-constraint.mp4": "30f05eca5a2f4cac6b8b790a201d62520b58fbe110ef63958713ec31e95698e1",
+    "2026-10-23-volume-constraint.views.png": "f2782fd5ca3d581389c791096dc8925ddebfe7257eec976d5d8020462a9256a9",
+    "2026-10-23-volume-constraint.sluice.png": "7d994b86e754b014085aa6cfb02f0d0ccf316e6e776a1efb13c2778a403345fd"
+  },
+  "native_checkpoint": "4f3e7ce0cf454e2db0d9e6ef3b81fee7ab2fdd12",
+  "ci_followup": {
+    "test_only_file": "crates/mining/src/foliage.rs",
+    "change": "fixed-array iteration for newer chunks_exact_to_as_chunks Clippy rule",
+    "existing_foliage_checks_passed": 2,
+    "strict_maintained_clippy_passed": true,
+    "production_code_changed": false
+  }
+}

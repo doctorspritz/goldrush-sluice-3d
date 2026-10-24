@@ -1,0 +1,41 @@
+{
+  "base_commit": "f037e633abe313963c7765cabefa1ff9be771b0b",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/terrain-throughput-2026-10-22-1027",
+  "terrain_rows": 256,
+  "last_100_means_ms": {
+    "total_ms": 5.53647083,
+    "upload_ms": 0.55157707,
+    "encode_ms": 0.50760458,
+    "submit_wait_ms": 1.93462666,
+    "decode_ms": 0.8150600100000001,
+    "gold_ms": 0.5182866599999999,
+    "project_reconcile_ms": 1.20931585
+  },
+  "native": {
+    "mean_fps": 56.294403880349535,
+    "simulation_wall_ratio": 0.6124844429290744,
+    "worker_mean_ms": 51.3420886588542,
+    "worker_phases_mean_ms": [
+      1.9426970677083346,
+      31.538523658854135,
+      10.665502781249995,
+      1.8112113697916667,
+      3.5711177317708334
+    ],
+    "bulk_budget_passed": true,
+    "dry_mass_budget_passed": true,
+    "passed": false
+  },
+  "phase_order": [
+    "prepare",
+    "fluid",
+    "dem",
+    "finish",
+    "terrain"
+  ],
+  "source_sha256": {
+    "crates/mining-physics/src/terrain.rs": "19925ac938e867facfd55fea755e7c45dfbb056d311fe07fc97740c039ddd222",
+    "crates/mining-physics/src/worker.rs": "5cb6a6ceae0b4d6d69d7c719fcd5b92eb8048b73cecdc38c1a71c5fbf6dbd197"
+  },
+  "binary_sha256": "f4c999cd9beb8f47c2a0e91f4625396fccf9a60ae2d9ca3aa220e28fa732139a"
+}

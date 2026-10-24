@@ -6,13 +6,16 @@ use super::buffers::{GeologyBuffers, WaterBuffers};
 pub struct SimulationPipelines {
     pub surface: wgpu::ComputePipeline,
     pub flux: wgpu::ComputePipeline,
+    pub donor_budget: wgpu::ComputePipeline,
+    pub limit_flux: wgpu::ComputePipeline,
     pub depth: wgpu::ComputePipeline,
+    pub bed_snapshot: wgpu::ComputePipeline,
+    pub erosion_reconcile: wgpu::ComputePipeline,
     pub settling: wgpu::ComputePipeline,
     pub erosion: wgpu::ComputePipeline,
     pub sediment_transport: wgpu::ComputePipeline,
-    pub collapse: wgpu::ComputePipeline,
-    pub collapse_red: wgpu::ComputePipeline,
-    pub collapse_black: wgpu::ComputePipeline,
+    pub collapse_flux: wgpu::ComputePipeline,
+    pub collapse_apply: wgpu::ComputePipeline,
 }
 
 /// Emitter pipeline and resources.
@@ -43,6 +46,7 @@ pub struct CoreBindGroups {
     pub params: wgpu::BindGroup,
     pub water: wgpu::BindGroup,
     pub terrain: wgpu::BindGroup,
+    pub collapse: wgpu::BindGroup,
 }
 
 /// Create the params bind group layout.
@@ -112,6 +116,8 @@ pub fn create_terrain_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             storage_entry(5, false), // surface_material
             storage_entry(6, false), // settling_time
             storage_entry(7, false), // debug_stats
+            storage_entry(8, false), // bed exchange roundoff feedback
+            storage_entry(9, false), // counted subgrid bed inventory
         ],
     })
 }
@@ -142,20 +148,62 @@ pub fn create_water_bind_group(
         label: Some("Water Bind Group"),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: water.depth.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: water.velocity_x.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: water.velocity_z.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: water.surface.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: water.flux_x.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: water.flux_z.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: water.suspended_sediment.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 7, resource: water.suspended_sediment_next.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 8, resource: water.suspended_overburden.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 9, resource: water.suspended_overburden_next.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 10, resource: water.suspended_gravel.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 11, resource: water.suspended_gravel_next.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 12, resource: water.suspended_paydirt.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 13, resource: water.suspended_paydirt_next.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: water.depth.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: water.velocity_x.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: water.velocity_z.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: water.surface.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: water.flux_x.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: water.flux_z.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: water.suspended_sediment.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: water.suspended_sediment_next.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: water.suspended_overburden.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 9,
+                resource: water.suspended_overburden_next.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 10,
+                resource: water.suspended_gravel.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 11,
+                resource: water.suspended_gravel_next.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 12,
+                resource: water.suspended_paydirt.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 13,
+                resource: water.suspended_paydirt_next.as_entire_binding(),
+            },
         ],
     })
 }
@@ -170,16 +218,83 @@ pub fn create_terrain_bind_group(
         label: Some("Terrain Bind Group"),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: geology.bedrock.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: geology.paydirt.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: geology.gravel.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: geology.overburden.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: geology.sediment.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: geology.surface_material.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: geology.settling_time.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 7, resource: geology.debug_stats.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: geology.bedrock.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: geology.paydirt.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: geology.gravel.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: geology.overburden.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: geology.sediment.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: geology.surface_material.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: geology.settling_time.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: geology.debug_stats.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: geology.bed_exchange_error.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 9,
+                resource: geology.bed_remainder.as_entire_binding(),
+            },
         ],
     })
+}
+
+/// Collapse needs only geology and its own scratch, without binding all water
+/// buffers or increasing the existing water pipeline's storage-binding limit.
+pub fn create_collapse_bindings(
+    device: &wgpu::Device,
+    geology: &GeologyBuffers,
+) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Collapse Geology Layout"),
+        entries: &(0..7).map(|i| storage_entry(i, false)).collect::<Vec<_>>(),
+    });
+    let buffers = [
+        &geology.bedrock,
+        &geology.paydirt,
+        &geology.gravel,
+        &geology.overburden,
+        &geology.sediment,
+        &geology.surface_material,
+        &geology.collapse_flux,
+    ];
+    let entries: Vec<_> = buffers
+        .iter()
+        .enumerate()
+        .map(|(i, buffer)| wgpu::BindGroupEntry {
+            binding: i as u32,
+            resource: buffer.as_entire_binding(),
+        })
+        .collect();
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Collapse Geology"),
+        layout: &layout,
+        entries: &entries,
+    });
+    (layout, group)
 }
 
 /// Create all simulation pipelines.
@@ -188,6 +303,7 @@ pub fn create_simulation_pipelines(
     params_layout: &wgpu::BindGroupLayout,
     water_layout: &wgpu::BindGroupLayout,
     terrain_layout: &wgpu::BindGroupLayout,
+    collapse_layout: &wgpu::BindGroupLayout,
 ) -> SimulationPipelines {
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Heightfield Pipeline Layout"),
@@ -204,13 +320,17 @@ pub fn create_simulation_pipelines(
     // Erosion shader
     let erosion_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Heightfield Erosion Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/heightfield_erosion.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(
+            include_str!("../shaders/heightfield_erosion.wgsl").into(),
+        ),
     });
 
     // Collapse shader
     let collapse_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Heightfield Collapse Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/heightfield_collapse.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(
+            include_str!("../shaders/heightfield_collapse.wgsl").into(),
+        ),
     });
 
     let create_compute = |label: &str, module: &wgpu::ShaderModule, entry: &str| {
@@ -224,24 +344,56 @@ pub fn create_simulation_pipelines(
         })
     };
 
+    let collapse_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Collapse Pipeline Layout"),
+        bind_group_layouts: &[params_layout, collapse_layout],
+        push_constant_ranges: &[],
+    });
+    let create_collapse = |label: &str, entry: &str| {
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&collapse_pipeline_layout),
+            module: &collapse_shader,
+            entry_point: Some(entry),
+            compilation_options: Default::default(),
+            cache: None,
+        })
+    };
+
     SimulationPipelines {
         surface: create_compute("Update Surface Pipeline", &water_shader, "update_surface"),
         flux: create_compute("Update Flux Pipeline", &water_shader, "update_flux"),
+        donor_budget: create_compute("Water Donor Budget", &water_shader, "donor_budget"),
+        limit_flux: create_compute("Limit Shared Water Flux", &water_shader, "limit_flux"),
         depth: create_compute("Update Depth Pipeline", &water_shader, "update_depth"),
-        settling: create_compute("Update Settling Pipeline", &erosion_shader, "update_settling"),
+        bed_snapshot: create_compute(
+            "Snapshot Bed Exchange",
+            &erosion_shader,
+            "snapshot_bed_exchange",
+        ),
+        erosion_reconcile: create_compute(
+            "Reconcile Stored Erosion and Bed Age",
+            &erosion_shader,
+            "reconcile_erosion",
+        ),
+        settling: create_compute(
+            "Update Settling Pipeline",
+            &erosion_shader,
+            "update_settling",
+        ),
         erosion: create_compute("Update Erosion Pipeline", &erosion_shader, "update_erosion"),
-        sediment_transport: create_compute("Sediment Transport Pipeline", &erosion_shader, "update_sediment_transport"),
-        collapse: create_compute("Collapse Pipeline", &collapse_shader, "update_collapse"),
-        collapse_red: create_compute("Collapse Red Pipeline", &collapse_shader, "update_collapse_red"),
-        collapse_black: create_compute("Collapse Black Pipeline", &collapse_shader, "update_collapse_black"),
+        sediment_transport: create_compute(
+            "Sediment Transport Pipeline",
+            &erosion_shader,
+            "update_sediment_transport",
+        ),
+        collapse_flux: create_collapse("Collapse Donor Transfers", "update_collapse_flux"),
+        collapse_apply: create_collapse("Gather Collapse Transfers", "apply_collapse_flux"),
     }
 }
 
 /// Create emitter resources.
-pub fn create_emitter_resources(
-    device: &wgpu::Device,
-    water: &WaterBuffers,
-) -> EmitterResources {
+pub fn create_emitter_resources(device: &wgpu::Device, water: &WaterBuffers) -> EmitterResources {
     let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Emitter Params Buffer"),
         size: 80,
@@ -276,14 +428,38 @@ pub fn create_emitter_resources(
         label: Some("Emitter Bind Group"),
         layout: &layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: water.depth.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: water.suspended_sediment.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: water.suspended_overburden.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: water.suspended_gravel.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: water.suspended_paydirt.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: water.velocity_x.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 7, resource: water.velocity_z.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: params_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: water.depth.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: water.suspended_sediment.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: water.suspended_overburden.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: water.suspended_gravel.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: water.suspended_paydirt.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: water.velocity_x.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: water.velocity_z.as_entire_binding(),
+            },
         ],
     });
 
@@ -295,7 +471,9 @@ pub fn create_emitter_resources(
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Heightfield Emitter Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/heightfield_emitter.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(
+            include_str!("../shaders/heightfield_emitter.wgsl").into(),
+        ),
     });
 
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -365,12 +543,30 @@ pub fn create_material_tool_resources(
         label: Some("Material Tool Terrain Bind Group"),
         layout: &terrain_layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: geology.bedrock.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: geology.paydirt.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: geology.gravel.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: geology.overburden.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: geology.sediment.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: geology.surface_material.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: geology.bedrock.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: geology.paydirt.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: geology.gravel.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: geology.overburden.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: geology.sediment.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: geology.surface_material.as_entire_binding(),
+            },
         ],
     });
 
@@ -382,7 +578,9 @@ pub fn create_material_tool_resources(
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Heightfield Material Tool Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/heightfield_material_tool.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(
+            include_str!("../shaders/heightfield_material_tool.wgsl").into(),
+        ),
     });
 
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -452,7 +650,9 @@ pub fn create_bridge_merge_resources(
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Bridge Merge Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/heightfield_bridge_merge.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(
+            include_str!("../shaders/heightfield_bridge_merge.wgsl").into(),
+        ),
     });
 
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

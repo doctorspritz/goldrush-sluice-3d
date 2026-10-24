@@ -1,0 +1,389 @@
+{
+  "base_head": "dc225bb9a0b1e5a4cc6cc02b4af6d4853bef6620",
+  "artifact_root": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/soil-contact-cost-20261024",
+  "existing_build_sources_identical": 740,
+  "physics_or_build_optimization_retained": false,
+  "added_example_sha256": "fdca3cfb73c227b1608a293ca3599022455bffce5499a4d9367e4e8d05863ddd",
+  "fixture_sha256": "b6d31d66f43216bef5a74b5fb8cbb99851d27fb3d0b85b249b5c1e28b411d924",
+  "fixture_bytes": 334248,
+  "replay": {
+    "full_stroke_snapshots": [
+      {
+        "file": "tick-0000.json",
+        "sha256": "30bc0c9377c7a5c323c43f4743fb2ec008014ffe4a563fa8dafbae4eb3312631"
+      },
+      {
+        "file": "tick-0060.json",
+        "sha256": "320b7269b3ac16dec93455983ec1e1b1c3efe051e29c13c74221ee45d71cae39"
+      },
+      {
+        "file": "tick-0120.json",
+        "sha256": "7117044a75d363efeafc18ffb7c6ce8bfe4116670d9e1f1b604acf9b126cc311"
+      },
+      {
+        "file": "tick-0180.json",
+        "sha256": "9cdbf3dcc14a0b077b040e78d9c6e0bae53e6d6cc592971ebe2f4327370b2a3b"
+      },
+      {
+        "file": "tick-0240.json",
+        "sha256": "fd88c2f1185f9908cb5c8e5231ed0e1672f38edc0e56573702c8b9a91d59aed0"
+      },
+      {
+        "file": "tick-0300.json",
+        "sha256": "72850698fcd1f2f5dbecee302fd2474aa5b164a08010c9601e82befaf21b6477"
+      },
+      {
+        "file": "tick-0360.json",
+        "sha256": "cb8e7dfdef9fee7368d16df87d016839451e65855e06b5194296159a9dc2e4ee"
+      },
+      {
+        "file": "tick-0420.json",
+        "sha256": "55e42e1fc0b18b1eae4f7b8fc7973f7cf08c7b9d648389257f2a56033ed30eff"
+      },
+      {
+        "file": "tick-0480.json",
+        "sha256": "28be5bf39c28089c1fdb1ecb77a69fe4f8af4649953eedbb263ab3d881d84cf1"
+      },
+      {
+        "file": "tick-0540.json",
+        "sha256": "c137c466df4eb072e9d1126d73058ad8148f428dd1f2d6a675a074fdb9520e54"
+      },
+      {
+        "file": "tick-0600.json",
+        "sha256": "c8812a46bee9233167d7bdb1b29f46483620945e211f4b83344a7a0f6b9a5557"
+      },
+      {
+        "file": "tick-0660.json",
+        "sha256": "0ae14d5660b400d61057d14d7a6e2a641e5e8b8f095dfcc871d5a74695bf884a"
+      },
+      {
+        "file": "tick-0720.json",
+        "sha256": "0ea62ea7253f56b1e10305a846d273f90cff2b8cf62e2665aa1145cd404d2038"
+      },
+      {
+        "file": "tick-0780.json",
+        "sha256": "7a504011b697a01043d5029cf1a3f9bba979177307ef5f5fc6001ac8ec0aa84f"
+      },
+      {
+        "file": "tick-0840.json",
+        "sha256": "4f0392e1103718a2d16510c4f4fcd7e542c1070700b6688bb89b53b52091013c"
+      },
+      {
+        "file": "tick-0900.json",
+        "sha256": "c000c42829066c9b319c191569a917e59a740276d16fe85578779f35925146ff"
+      },
+      {
+        "file": "tick-0960.json",
+        "sha256": "aec01495e8ac01a46c90b9d35e1d3006b6de78d24bc8a015ae58d60befec5c17"
+      },
+      {
+        "file": "tick-1020.json",
+        "sha256": "de4f716cb87bccdd016bb94cf473626e8e18920ebbcb8adfb5524759c42dd444"
+      },
+      {
+        "file": "tick-1080.json",
+        "sha256": "52f2e6f1f77d783a24b419531dc48800a62e95b9bac8db84a2d9adeeac5d142e"
+      }
+    ],
+    "full_stroke_metrics": {
+      "clods": 1040,
+      "completed": true,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.004218750167638063,
+      "mechanical_hz": 240,
+      "scope": "CPU mechanics; no GPU terrain/water updates",
+      "sim_time": 18.000000938773155,
+      "simulated_seconds": 18.000000938773155,
+      "start_sim_time": 0.0,
+      "step_wall_seconds": 168.8459502159999,
+      "ticks": 1080,
+      "total_wall_seconds": 169.10376475
+    },
+    "identical_idle_roundtrip": true,
+    "existing_output_preserved": true,
+    "unbounded_run_rejected_before_output": true,
+    "fixture_sha256": "b6d31d66f43216bef5a74b5fb8cbb99851d27fb3d0b85b249b5c1e28b411d924",
+    "fixture_bytes": 334248,
+    "harness_source_sha256": "fdca3cfb73c227b1608a293ca3599022455bffce5499a4d9367e4e8d05863ddd",
+    "harness_binary_sha256": "a0e2901600dbba7c133804948f9a41a3c080b2594d00b20329dbdec4c202183d",
+    "reference_binary_sha256": "7236812205e74e3babf6f3f706a68ba78de60688ba36d381f42b197881e71360"
+  },
+  "paired_trials": {
+    "runs": [
+      {
+        "label": "timing-0-old",
+        "variant": "old",
+        "step_wall": 12.283633333,
+        "raw_result": "RESULT ticks=60 clods=1040 wall=12.357063208 serialization=0.07342987499999999 sim=1.0000000521540642",
+        "identical": [
+          "tick-0045.json",
+          "tick-0015.json",
+          "tick-0060.json",
+          "tick-0030.json"
+        ],
+        "different": [],
+        "exe_sha256": "03bc5c9e18a49c332e8ec306a6cbf534eade69db24ea975ebccec81355f0ca33"
+      },
+      {
+        "label": "timing-0-zero",
+        "variant": "zero",
+        "step_wall": 12.329317124,
+        "raw_result": "RESULT ticks=60 clods=1040 wall=12.3820865 serialization=0.052769376 sim=1.0000000521540642",
+        "identical": [
+          "tick-0045.json",
+          "tick-0015.json",
+          "tick-0060.json",
+          "tick-0030.json"
+        ],
+        "different": [],
+        "exe_sha256": "9814cd287bd8f3ccb626d58caf2e41151f11fced67562778d7a723068da6fd3a"
+      },
+      {
+        "label": "timing-0-opt3",
+        "variant": "opt3",
+        "step_wall": 12.351109541,
+        "raw_result": "RESULT ticks=60 clods=1040 wall=12.410724375 serialization=0.059614834 sim=1.0000000521540642",
+        "identical": [
+          "tick-0045.json",
+          "tick-0015.json",
+          "tick-0060.json",
+          "tick-0030.json"
+        ],
+        "different": [],
+        "exe_sha256": "4e0bba72d078b357037da917b8b0ef382e360d573a5f863d28c50d256e477bbf"
+      },
+      {
+        "label": "timing-1-old",
+        "variant": "old",
+        "step_wall": 12.417292958,
+        "raw_result": "RESULT ticks=60 clods=1040 wall=12.546975583 serialization=0.129682625 sim=1.0000000521540642",
+        "identical": [
+          "tick-0045.json",
+          "tick-0015.json",
+          "tick-0060.json",
+          "tick-0030.json"
+        ],
+        "different": [],
+        "exe_sha256": "03bc5c9e18a49c332e8ec306a6cbf534eade69db24ea975ebccec81355f0ca33"
+      },
+      {
+        "label": "timing-1-zero",
+        "variant": "zero",
+        "step_wall": 12.305328958999999,
+        "raw_result": "RESULT ticks=60 clods=1040 wall=12.485705625 serialization=0.180376666 sim=1.0000000521540642",
+        "identical": [
+          "tick-0045.json",
+          "tick-0015.json",
+          "tick-0060.json",
+          "tick-0030.json"
+        ],
+        "different": [],
+        "exe_sha256": "9814cd287bd8f3ccb626d58caf2e41151f11fced67562778d7a723068da6fd3a"
+      },
+      {
+        "label": "timing-1-opt3",
+        "variant": "opt3",
+        "step_wall": 12.391636042,
+        "raw_result": "RESULT ticks=60 clods=1040 wall=12.45711825 serialization=0.065482208 sim=1.0000000521540642",
+        "identical": [
+          "tick-0045.json",
+          "tick-0015.json",
+          "tick-0060.json",
+          "tick-0030.json"
+        ],
+        "different": [],
+        "exe_sha256": "4e0bba72d078b357037da917b8b0ef382e360d573a5f863d28c50d256e477bbf"
+      }
+    ],
+    "median_step_wall": {
+      "old": 12.350463145500001,
+      "zero": 12.3173230415,
+      "opt3": 12.3713727915
+    },
+    "zero_wall_reduction": 0.00268330860224264,
+    "opt3_wall_reduction": -0.001693025253681979
+  },
+  "rejected_face_trial": {
+    "old": {
+      "result": "RESULT ticks=60 clods=1040 wall=12.4807395 serialization=0.062483832999999996 sim=1.0000000521540642",
+      "sha256": "03bc5c9e18a49c332e8ec306a6cbf534eade69db24ea975ebccec81355f0ca33"
+    },
+    "candidate": {
+      "result": "RESULT ticks=60 clods=1040 wall=12.666039 serialization=0.049692958 sim=1.0000000521540642",
+      "sha256": "a8c5c047a87b2a6e7ea5a9e197c233bf78efca5bce286514601302a6e48190f0"
+    },
+    "same": [
+      "tick-0045.json",
+      "tick-0015.json",
+      "tick-0030.json"
+    ],
+    "different": [
+      "tick-0060.json"
+    ]
+  },
+  "rejected_face_state_differences": {
+    "different_leaves": 13385,
+    "first_leaves": [
+      [
+        ".machine.tracks.feedback.contacts",
+        6544,
+        6609
+      ],
+      [
+        ".machine.tracks.feedback.normal_force_n",
+        112441.47,
+        112294.26
+      ],
+      [
+        ".machine.articulation.feedback.ground_normal_n",
+        112437.67,
+        111585.84
+      ],
+      [
+        ".active_soil.clods[0].center[0]",
+        18.340904,
+        18.341082
+      ],
+      [
+        ".active_soil.clods[0].center[1]",
+        0.5002008,
+        0.49995703
+      ],
+      [
+        ".active_soil.clods[0].center[2]",
+        20.464808,
+        20.465054
+      ],
+      [
+        ".active_soil.clods[0].rotation[0]",
+        -0.010695522,
+        -0.009346208
+      ],
+      [
+        ".active_soil.clods[0].rotation[1]",
+        -0.01481155,
+        -0.012941871
+      ],
+      [
+        ".active_soil.clods[0].rotation[2]",
+        -0.0068747206,
+        -0.0060101445
+      ],
+      [
+        ".active_soil.clods[0].rotation[3]",
+        0.99980944,
+        0.9998545
+      ],
+      [
+        ".active_soil.clods[0].velocity[0]",
+        0.006296009,
+        0.0021229554
+      ],
+      [
+        ".active_soil.clods[0].velocity[1]",
+        -0.005392722,
+        -0.0014782012
+      ],
+      [
+        ".active_soil.clods[0].velocity[2]",
+        0.002621287,
+        0.00085630035
+      ],
+      [
+        ".active_soil.clods[0].angular_velocity[0]",
+        -0.008453345,
+        0.03854246
+      ],
+      [
+        ".active_soil.clods[0].angular_velocity[1]",
+        0.0006579496,
+        0.014517594
+      ]
+    ]
+  },
+  "observational_contact_counts_last_printed": {
+    "calls": 4128768,
+    "six_vertex_hull_pairs": 2890027,
+    "empty_hull_manifolds": 830548,
+    "face_distance_rejections": 817425
+  },
+  "observational_friction_counts_last_printed": {
+    "calls": 11534336,
+    "zero_radius_and_old_impulse": 7674268
+  },
+  "sampling": {
+    "source": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/soil-cost-20261024/sample.txt",
+    "sha256": "04c8d415bd28895cde74d64f2c58f08d4255168afee5f427edc25f05c986734b",
+    "main_thread_samples": 3739,
+    "inside_world_step_samples": 3529,
+    "convex_contact_solve_self_samples": 834
+  },
+  "quality": [
+    {
+      "name": "harness-final-build",
+      "exit": 0
+    },
+    {
+      "name": "harness-clippy",
+      "exit": 0
+    },
+    {
+      "name": "harness-format",
+      "exit": 0
+    },
+    {
+      "name": "harness-full-stroke",
+      "exit": 0
+    },
+    {
+      "name": "harness-record-idle",
+      "exit": 0
+    },
+    {
+      "name": "harness-replay-idle",
+      "exit": 0
+    },
+    {
+      "name": "harness-preserve-existing",
+      "exit": 1
+    },
+    {
+      "name": "harness-reject-unbounded",
+      "exit": 1
+    }
+  ],
+  "quality_scope": "New CPU command harness and complete saved-state comparisons. No new native render/performance or full-workspace pass is claimed. The discarded shortcut passed86 vendored unit tests but was not retained.",
+  "cleanup": {
+    "log_sha256": "c2f9a2c4a488171ae4bf2b4356fe4a40b1a999fc70f01c37e3bfa55d3fedf4f1",
+    "agent_browser": 0,
+    "playwright_tests": 0,
+    "chrome_for_testing": 0,
+    "shared_playwright_mcp_untouched": 14,
+    "node_ecosystem_untouched": 56,
+    "new_crash_reports": [],
+    "crash_reports": [
+      ".WindowServer-2026-09-24-144010.ips",
+      ".WindowServer-2026-09-27-124241.ips",
+      ".WindowServer-2026-09-27-141659.ips",
+      ".WindowServer-2026-09-29-195851.ips",
+      ".WindowServer-2026-10-08-155410.ips",
+      ".WindowServer-2026-10-19-135417.ips"
+    ]
+  },
+  "full_game_goal_complete": false,
+  "next_issue": "sluice-contact-history-20261024"
+}

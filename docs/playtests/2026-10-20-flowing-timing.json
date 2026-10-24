@@ -1,0 +1,13 @@
+{
+  "fluid_surface_ready": true,
+  "frames": 811,
+  "input_check_passed": null,
+  "ledger_error_g": 4.547473508864641e-12,
+  "mean_fps": 57.431401800548414,
+  "particles_below_floor": 1,
+  "sampled_splats": 62084,
+  "save_restored": false,
+  "scenario": "flowing demo",
+  "water_particles": 124168,
+  "water_rendering": "particle depth + bilateral surface"
+}

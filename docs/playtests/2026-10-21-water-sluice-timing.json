@@ -1,0 +1,19 @@
+{
+  "airborne_water_particles": 10544,
+  "fluid_surface_ready": true,
+  "frames": 211,
+  "hydraulic_profile": "OriginalDemo",
+  "input_check_passed": true,
+  "ledger_error_g": 3.637978807091713e-12,
+  "mean_fps": 56.48963186124297,
+  "particles_below_floor": 0,
+  "sampled_splats": 60165,
+  "save_restored": true,
+  "scenario": "flowing demo",
+  "simulation_time": 18.283334286883473,
+  "wall_seconds": 20.20509175,
+  "water_balance_error_m3": 0.0,
+  "water_mean_downstream_ms": 0.38027551770210266,
+  "water_particles": 109785,
+  "water_rendering": "anisotropic particle surface + optical thickness + connected terrain water"
+}

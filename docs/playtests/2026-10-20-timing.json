@@ -1,0 +1,19 @@
+{
+  "benchmark_seconds": 20.0,
+  "flip_substeps_per_tick": 2,
+  "frame_count": 1149,
+  "ledger_error_g": 4.547473508864641e-12,
+  "mean_fps": 57.418009794127926,
+  "mean_ms": 17.41613830896432,
+  "p50_ms": 17.297875,
+  "p95_ms": 21.858459,
+  "p99_ms": 22.762917,
+  "resolution": "1440x900",
+  "save_restored_during_processing": true,
+  "solver": "original FLIP/APIC + CPU DEM + GPU heightfield",
+  "wash_frames": 13915,
+  "wash_mean_fps": 57.47154859516275,
+  "wash_simulated_seconds": 93.33333820104599,
+  "wash_simulation_speed": 0.38547762446592215,
+  "wash_wall_seconds": 242.123880291
+}

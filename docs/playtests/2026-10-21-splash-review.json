@@ -1,0 +1,390 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-21",
+  "base_commit": "293b100a9f154abd774c88a84a6b5a8d174433b9",
+  "classification": "confirmed visual defect; solver-stage root cause not yet isolated",
+  "source_sha256": {
+    "crates/mining/src/main.rs": "43ecb4c0eef7d573d208fe1c7ba75871234429f91a0327810d88a4c39e44c74c",
+    "crates/mining/src/water.rs": "8f7a328992667c87af99901d1304ab84d8ec019e16826a15af9735ed489fb1c2",
+    "crates/mining/src/motion_capture.rs": "3597300654b27bdb7725e1263efb4b52a53b514ed1cc9f278736e0a6e33dbaca"
+  },
+  "capture_app_binary_sha256": "7fe8ddd9d65c39d0a2de307c6c988f1d30ddc60df3842ba7c80d2c07ba1c5d8d",
+  "physics_source_changed": false,
+  "capture_method": "native GPU screenshots requested with particle/presentation metadata; OS window lookup returned no matching task window, so no OS video was obtained",
+  "selection": "128 highest initial water particles with downstream x 0.3..1.35 m and grid cross-channel z 0.07..0.33 m. Stats use unique position/velocity states above a 0.05 m mathematical-floor-reference threshold; selection is deliberately biased toward raised water, not a population estimate. Fixed demo yaw is zero, so world-Z velocity is downstream.",
+  "clips": {
+    "a": {
+      "frames": 95,
+      "first_wall": 0.0,
+      "last_wall": 5.964679,
+      "sim_seconds": 3.9666668735444546,
+      "observed_capture_fps": 15.759439862564271,
+      "unique_source_states": 95,
+      "tracked_ids": 128,
+      "tracked_elevated_samples": 208,
+      "elevated_threshold_above_floor_reference_m": 0.05,
+      "elevated_vertical_dominance": 0.8173076923076923,
+      "elevated_mean_abs_downstream_mps": 0.06941184439329635,
+      "elevated_mean_abs_vertical_mps": 0.2999888728308998,
+      "render_high_kernel_radius_median_m": 0.010307159274816513,
+      "render_high_kernel_low_planarity_fraction": 0.47960526315789476,
+      "example_tracks": [
+        {
+          "id": 49913,
+          "sim_seconds": 3.083333494141698,
+          "samples": 73,
+          "downstream_range_m": 0.6646587252616882,
+          "net_downstream_m": 0.6646587252616882,
+          "world_vertical_range_m": 0.19698119163513184,
+          "height_above_plane_range_m": 0.08915725350379944,
+          "vertical_velocity_sign_changes": 12,
+          "mean_abs_vx": 0.24222683766298633,
+          "mean_abs_vy": 0.10886237081395436
+        },
+        {
+          "id": 100377,
+          "sim_seconds": 2.4833334628492594,
+          "samples": 58,
+          "downstream_range_m": 1.1732686161994934,
+          "net_downstream_m": 1.1638893783092499,
+          "world_vertical_range_m": 0.25481969118118286,
+          "height_above_plane_range_m": 0.07108389213681221,
+          "vertical_velocity_sign_changes": 12,
+          "mean_abs_vx": 0.47861074980605267,
+          "mean_abs_vy": 0.18011672142491644
+        },
+        {
+          "id": 89541,
+          "sim_seconds": 2.433333460241556,
+          "samples": 57,
+          "downstream_range_m": 0.9147618412971497,
+          "net_downstream_m": 0.9082188606262207,
+          "world_vertical_range_m": 0.21612191200256348,
+          "height_above_plane_range_m": 0.06785216182470322,
+          "vertical_velocity_sign_changes": 12,
+          "mean_abs_vx": 0.3758198129045859,
+          "mean_abs_vy": 0.15312850456929913
+        },
+        {
+          "id": 118762,
+          "sim_seconds": 2.433333460241556,
+          "samples": 57,
+          "downstream_range_m": 1.1057535409927368,
+          "net_downstream_m": 1.0985205471515656,
+          "world_vertical_range_m": 0.2404392957687378,
+          "height_above_plane_range_m": 0.09186343848705292,
+          "vertical_velocity_sign_changes": 12,
+          "mean_abs_vx": 0.4420833435285379,
+          "mean_abs_vy": 0.16174366323097625
+        },
+        {
+          "id": 105195,
+          "sim_seconds": 3.133333496749401,
+          "samples": 74,
+          "downstream_range_m": 1.1526279747486115,
+          "net_downstream_m": 1.1435410678386688,
+          "world_vertical_range_m": 0.27386677265167236,
+          "height_above_plane_range_m": 0.08872756361961365,
+          "vertical_velocity_sign_changes": 11,
+          "mean_abs_vx": 0.37388670563420934,
+          "mean_abs_vy": 0.12908388009747943
+        },
+        {
+          "id": 54381,
+          "sim_seconds": 3.9666668735444546,
+          "samples": 94,
+          "downstream_range_m": 0.6817226409912109,
+          "net_downstream_m": 0.6077904105186462,
+          "world_vertical_range_m": 0.19038784503936768,
+          "height_above_plane_range_m": 0.08153748512268066,
+          "vertical_velocity_sign_changes": 10,
+          "mean_abs_vx": 0.19719804318837053,
+          "mean_abs_vy": 0.11002247353230524
+        },
+        {
+          "id": 103024,
+          "sim_seconds": 3.9666668735444546,
+          "samples": 94,
+          "downstream_range_m": 1.067237913608551,
+          "net_downstream_m": 1.053931474685669,
+          "world_vertical_range_m": 0.2596192955970764,
+          "height_above_plane_range_m": 0.08039380609989166,
+          "vertical_velocity_sign_changes": 10,
+          "mean_abs_vx": 0.2938046572713536,
+          "mean_abs_vy": 0.11315637323578097
+        },
+        {
+          "id": 102684,
+          "sim_seconds": 3.133333496749401,
+          "samples": 74,
+          "downstream_range_m": 1.1135563850402832,
+          "net_downstream_m": 1.1086855232715607,
+          "world_vertical_range_m": 0.2558305263519287,
+          "height_above_plane_range_m": 0.07469359785318375,
+          "vertical_velocity_sign_changes": 10,
+          "mean_abs_vx": 0.30549656395551456,
+          "mean_abs_vy": 0.13144529228845164
+        },
+        {
+          "id": 80802,
+          "sim_seconds": 3.0500001590698957,
+          "samples": 72,
+          "downstream_range_m": 0.9890975654125214,
+          "net_downstream_m": 0.9890975654125214,
+          "world_vertical_range_m": 0.2615011930465698,
+          "height_above_plane_range_m": 0.09552021324634552,
+          "vertical_velocity_sign_changes": 10,
+          "mean_abs_vx": 0.3257440714366769,
+          "mean_abs_vy": 0.13218223181320354
+        },
+        {
+          "id": 77665,
+          "sim_seconds": 2.833333481103182,
+          "samples": 67,
+          "downstream_range_m": 1.0336242318153381,
+          "net_downstream_m": 1.0336242318153381,
+          "world_vertical_range_m": 0.23333203792572021,
+          "height_above_plane_range_m": 0.06749411672353745,
+          "vertical_velocity_sign_changes": 10,
+          "mean_abs_vx": 0.322690091436423,
+          "mean_abs_vy": 0.13260735903884832
+        },
+        {
+          "id": 62779,
+          "sim_seconds": 2.583333468064666,
+          "samples": 61,
+          "downstream_range_m": 0.6633579730987549,
+          "net_downstream_m": 0.6633579730987549,
+          "world_vertical_range_m": 0.18872541189193726,
+          "height_above_plane_range_m": 0.09172545373439789,
+          "vertical_velocity_sign_changes": 10,
+          "mean_abs_vx": 0.23014939244389038,
+          "mean_abs_vy": 0.12821239958829522
+        },
+        {
+          "id": 89577,
+          "sim_seconds": 2.583333468064666,
+          "samples": 61,
+          "downstream_range_m": 1.1491663455963135,
+          "net_downstream_m": 1.145949274301529,
+          "world_vertical_range_m": 0.25961047410964966,
+          "height_above_plane_range_m": 0.08070021867752075,
+          "vertical_velocity_sign_changes": 10,
+          "mean_abs_vx": 0.4350664136839695,
+          "mean_abs_vy": 0.15784292970784009
+        }
+      ],
+      "capture_water_residual_m3": -8.367361644445737e-06,
+      "capture_gold_residual_g": 4.092726157978177e-12
+    },
+    "b": {
+      "frames": 93,
+      "first_wall": 4.2e-08,
+      "last_wall": 5.973852875,
+      "sim_seconds": 3.833333533257246,
+      "observed_capture_fps": 15.400446340389449,
+      "unique_source_states": 92,
+      "tracked_ids": 128,
+      "tracked_elevated_samples": 253,
+      "elevated_threshold_above_floor_reference_m": 0.05,
+      "elevated_vertical_dominance": 0.9169960474308301,
+      "elevated_mean_abs_downstream_mps": 0.059227466031803386,
+      "elevated_mean_abs_vertical_mps": 0.3424085387264115,
+      "render_high_kernel_radius_median_m": 0.010304992087185383,
+      "render_high_kernel_low_planarity_fraction": 0.46480174731182794,
+      "example_tracks": [
+        {
+          "id": 206441,
+          "sim_seconds": 2.7666668109595776,
+          "samples": 66,
+          "downstream_range_m": 0.9516546130180359,
+          "net_downstream_m": 0.9464743137359619,
+          "world_vertical_range_m": 0.2358870506286621,
+          "height_above_plane_range_m": 0.08415857702493668,
+          "vertical_velocity_sign_changes": 15,
+          "mean_abs_vx": 0.33501363855391514,
+          "mean_abs_vy": 0.1376761700186321
+        },
+        {
+          "id": 198516,
+          "sim_seconds": 2.8000001460313797,
+          "samples": 67,
+          "downstream_range_m": 1.0074485838413239,
+          "net_downstream_m": 1.0043923258781433,
+          "world_vertical_range_m": 0.25167906284332275,
+          "height_above_plane_range_m": 0.092011459171772,
+          "vertical_velocity_sign_changes": 14,
+          "mean_abs_vx": 0.37217492749914527,
+          "mean_abs_vy": 0.13441651815669298
+        },
+        {
+          "id": 189977,
+          "sim_seconds": 3.2500001695007086,
+          "samples": 78,
+          "downstream_range_m": 0.9573004245758057,
+          "net_downstream_m": 0.9437283277511597,
+          "world_vertical_range_m": 0.24799805879592896,
+          "height_above_plane_range_m": 0.09779778122901917,
+          "vertical_velocity_sign_changes": 12,
+          "mean_abs_vx": 0.27087258614856413,
+          "mean_abs_vy": 0.16019448271216766
+        },
+        {
+          "id": 208028,
+          "sim_seconds": 3.833333533257246,
+          "samples": 92,
+          "downstream_range_m": 1.022269368171692,
+          "net_downstream_m": 1.0040748417377472,
+          "world_vertical_range_m": 0.2421492338180542,
+          "height_above_plane_range_m": 0.06903741508722305,
+          "vertical_velocity_sign_changes": 10,
+          "mean_abs_vx": 0.28553003724158293,
+          "mean_abs_vy": 0.11359861318068516
+        },
+        {
+          "id": 189436,
+          "sim_seconds": 3.2500001695007086,
+          "samples": 78,
+          "downstream_range_m": 1.048513948917389,
+          "net_downstream_m": 1.0377330780029297,
+          "world_vertical_range_m": 0.25912177562713623,
+          "height_above_plane_range_m": 0.08742035180330276,
+          "vertical_velocity_sign_changes": 10,
+          "mean_abs_vx": 0.3123813799827006,
+          "mean_abs_vy": 0.1345165895625728
+        },
+        {
+          "id": 168947,
+          "sim_seconds": 2.9666668213903904,
+          "samples": 71,
+          "downstream_range_m": 0.7487331628799438,
+          "net_downstream_m": 0.7336782217025757,
+          "world_vertical_range_m": 0.20957255363464355,
+          "height_above_plane_range_m": 0.09233960509300232,
+          "vertical_velocity_sign_changes": 10,
+          "mean_abs_vx": 0.286463773891356,
+          "mean_abs_vy": 0.17482440384813178
+        },
+        {
+          "id": 157901,
+          "sim_seconds": 1.6333334185183048,
+          "samples": 40,
+          "downstream_range_m": 0.6972519755363464,
+          "net_downstream_m": 0.6972519755363464,
+          "world_vertical_range_m": 0.22083157300949097,
+          "height_above_plane_range_m": 0.10423381626605988,
+          "vertical_velocity_sign_changes": 10,
+          "mean_abs_vx": 0.40459040191490203,
+          "mean_abs_vy": 0.1964528143289499
+        },
+        {
+          "id": 138231,
+          "sim_seconds": 2.7166668083518744,
+          "samples": 65,
+          "downstream_range_m": 0.9964105188846588,
+          "net_downstream_m": 0.9964105188846588,
+          "world_vertical_range_m": 0.2399139404296875,
+          "height_above_plane_range_m": 0.07768143713474274,
+          "vertical_velocity_sign_changes": 9,
+          "mean_abs_vx": 0.3529934745425215,
+          "mean_abs_vy": 0.14036578559853996
+        },
+        {
+          "id": 167145,
+          "sim_seconds": 2.583333468064666,
+          "samples": 62,
+          "downstream_range_m": 0.7429417967796326,
+          "net_downstream_m": 0.7180893421173096,
+          "world_vertical_range_m": 0.21242886781692505,
+          "height_above_plane_range_m": 0.09830234944820404,
+          "vertical_velocity_sign_changes": 9,
+          "mean_abs_vx": 0.31293704159343766,
+          "mean_abs_vy": 0.1429065189647278
+        },
+        {
+          "id": 144901,
+          "sim_seconds": 2.383333457633853,
+          "samples": 57,
+          "downstream_range_m": 0.44293415546417236,
+          "net_downstream_m": 0.4407644271850586,
+          "world_vertical_range_m": 0.14705955982208252,
+          "height_above_plane_range_m": 0.0959932804107666,
+          "vertical_velocity_sign_changes": 9,
+          "mean_abs_vx": 0.15063890730635376,
+          "mean_abs_vy": 0.15493985021148865
+        },
+        {
+          "id": 200486,
+          "sim_seconds": 2.2500001173466444,
+          "samples": 54,
+          "downstream_range_m": 0.9828992187976837,
+          "net_downstream_m": 0.9818246364593506,
+          "world_vertical_range_m": 0.24684005975723267,
+          "height_above_plane_range_m": 0.07866046577692032,
+          "vertical_velocity_sign_changes": 9,
+          "mean_abs_vx": 0.37971448301579114,
+          "mean_abs_vy": 0.15380078158476088
+        },
+        {
+          "id": 126749,
+          "sim_seconds": 2.0500001069158316,
+          "samples": 49,
+          "downstream_range_m": 0.9436838626861572,
+          "net_downstream_m": 0.9432673454284668,
+          "world_vertical_range_m": 0.22622984647750854,
+          "height_above_plane_range_m": 0.0736360028386116,
+          "vertical_velocity_sign_changes": 9,
+          "mean_abs_vx": 0.43920865789892116,
+          "mean_abs_vy": 0.17527907462885642
+        }
+      ],
+      "capture_water_residual_m3": -8.765411429578762e-06,
+      "capture_gold_residual_g": 5.002220859751105e-12
+    }
+  },
+  "media": {
+    "motion-a.mp4": {
+      "sha256": "815bd4d8736ef34485029801ea2f7354199da64751a21de9618b694acfea2bed",
+      "bytes": 1735852
+    },
+    "motion-b.mp4": {
+      "sha256": "ae10c21155446e403a6dc6ffd4ba3e240c9bb922e26d4f79355d4c4ec3ec3faa",
+      "bytes": 949055
+    },
+    "motion-b-sim-time.mp4": {
+      "sha256": "cc0c36210bd51d62cde2c5aa94592e2b66f321e18b9370a75d961f2a36c1dd0a",
+      "bytes": 827460
+    },
+    "contact-a.png": {
+      "sha256": "4b54737671eb503b0860af6b11403d5dd0962f6fd990e992683db3317293b64a",
+      "bytes": 1377085
+    },
+    "contact-b.png": {
+      "sha256": "ce18c3d247943f42940c3c729895436ea0d4f2828377b48164fe6dd139731079",
+      "bytes": 1387967
+    },
+    "splash-detail-strip.png": {
+      "sha256": "1e1d3a5de2b7531f5376bb18f0dc9a4238fac1dd158c3cede20b7db9772999b1",
+      "bytes": 251501
+    }
+  },
+  "frames_receipts_sha256": {
+    "a": "2b6eb9c8f50170ed4742c1aabce0604398a6cab567802eceda15af2dc3733d5d",
+    "b": "6971739108405cc571f9c2520d2f8fa250d9e2ba86e400ffbccd456f3185380e"
+  },
+  "tests": {
+    "passed": 29,
+    "log_sha256": "23aaa840f5eced03bd70715deb1cd4a58ff03ec5df8ddf52fe30acc72ffbe8be",
+    "strict_clippy": "passed; pre-existing game dependency unused-constructor warning"
+  },
+  "artifact_root": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/splash-review-2026-10-21",
+  "follow_up_issue": "sluice-splash-motion",
+  "limits": [
+    "Screenshot sampling averaged about 15-16 FPS and affects cadence; retain actual wall-clock frame durations.",
+    "The optional simulation-time replay is explicitly retimed diagnostic footage, not a real-time performance claim.",
+    "Some brown flecks are grain proxies; the kinematic measurements refer specifically to water particles.",
+    "Surface metadata is logged when the screenshot is requested; it is not a per-GPU-stage impulse trace.",
+    "Vertical dominance alone does not establish that a hydraulic jump is physically incorrect. No calibrated laboratory reference was fitted.",
+    "Candidate collision/density mechanisms require controlled stage-resolved tests before claiming a cause."
+  ]
+}

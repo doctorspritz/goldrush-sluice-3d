@@ -1,0 +1,934 @@
+{
+  "base_commit": "660f228bee81bf8ce21b7fe6f870c9451f913195",
+  "original_experimental_comparison_base": "8c7560eb3fd41966d40c04b376636f1a2d7cc678",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024",
+  "tested_sources_sha256": {
+    "crates/mining-sim/src/sluice.rs": "d180e660b8730a90dc75e23c1a43da03cc7884a48c3c03f87b920c49df3b65f9",
+    "crates/mining-sim/tests/slurry.rs": "b0cd8345700980dffaf079300f7c3d2c985241d28805d4c64cf86848f67b4261",
+    "crates/mining-sim/src/machine.rs": "bc892381e2a59f9eaf1c5b0880647914c6638fc59ad202ea95b7949cc348fb0e",
+    "crates/mining-sim/examples/soil_contact_replay.rs": "fdca3cfb73c227b1608a293ca3599022455bffce5499a4d9367e4e8d05863ddd",
+    "crates/mining-sim/src/articulation/retained/tests.rs": "45a978e9279eee7a2a86d2b82896ade6e869e7cc6280dc3021a4839d192ac585",
+    "crates/mining-sim/tests/bed_age.rs": "ff2b1c42c377508468259ae873719cf7155f9d2722f071333cb69a1301c61857",
+    "crates/mining-sim/src/soil.rs": "bb615f8166406eca5ce2bf0a80def372393ef5e4ff949b5e5129c6bf1fcf5b7f",
+    "crates/mining-sim/src/soil_water.rs": "bd0881fb1bfa1f7757ca705b4d3fddb5f275841339043f56e15dce7ca34bdd60",
+    "crates/mining-sim/src/surface_bed.rs": "cbc6b5ed6970ff0313c719bb93d9d573a12ef777b5c5cda1e18b70357a653fef",
+    "crates/mining-sim/tests/granular.rs": "bcbd18de13a2c2925753ff5b9610b148b402728a4b9da592b756ce46d92c62dd",
+    "crates/mining-sim/tests/operation.rs": "c8286d6591241462e61b70376a4e5859834b85cc24f9669ed0055c2f29858d98",
+    "crates/mining-sim/examples/retained_soil_replay.rs": "9257475eac80129e2f7288c16aba75f301d0f10ebbe86ee447d8b1b6659a20cf",
+    "crates/mining-sim/tests/payload.rs": "af7c6f7a70e55d7b0c27fb4e0dabd1d535741f98b393d0dc12a4a7333cf918d0",
+    "crates/mining-sim/tests/soil.rs": "10038a1c9ef5834bc01cb77c64cf6f9713193780fe653c1a3f7da0cacd9e904d",
+    "crates/mining-sim/examples/machine_contact_probe.rs": "0b90692d8e88eae04c88f0f80d14d90c40ec05de45984b589b3d9034894e7f1d",
+    "crates/mining-sim/src/site.rs": "21fc0717712736a41c6f88ddaa1bdb0908e9923ca3ff2e1748171c425d03db08",
+    "crates/mining-sim/tests/water_projection.rs": "d7c0d49581bea08965981f664f7a816d228b5666aadb4a7c8cb3766d46967153",
+    "crates/mining-sim/tests/water_balance.rs": "b2e27a36cce590037144a4471a16c6ed61b50f8c3cfcf798234b822d52a6778e",
+    "crates/mining-sim/src/payload.rs": "ee289c185a49df55604006b19eebdcb5c058a539d46549bbc5fe5acaa95ed909",
+    "crates/mining-sim/tests/material_mass.rs": "a51f55a690e34a9e9e40583011e2781c2a5a6060e0d3f0cbfd1a175752bd485b",
+    "crates/mining-sim/src/water_balance.rs": "6b07027fdb4dc932f4a3c79a8b4695202f9fdabd018d784eb3099ab92e2f8a5a",
+    "crates/mining-sim/src/articulation/retained.rs": "12a0335fe6d2f220718a6044f81eeaf71bb929ea5cbead07cc79252fef4dad72",
+    "crates/mining-sim/tests/earthworks.rs": "cc4cdaceabfaed2b6ae5cc596aaf34c110d6dbe32603a922abbb2914a33aa877",
+    "crates/mining-sim/src/lib.rs": "396dffbd3429c64139590eff7d9c36ac529b39887dd54d5ecf8ba00a9bfabd23",
+    "crates/mining-sim/tests/intake.rs": "8ee11e8867dce4e96dd4a42defe74a13f43d5f83c290e7c94c1ae42bfcfb2fa5",
+    "crates/mining-sim/src/intake.rs": "4b41558ac4ce58e364edfbb72479e6b34381d9bff0a757fdeb1adfdbbe9a77fc",
+    "crates/mining-sim/tests/tracks.rs": "0fe97ce5ff97e08b75ef04cd31c2dd4b1528c6451ac12c5bae89bc3b9c130087",
+    "crates/mining-sim/src/articulation/retained/tests/contact_geometry.rs": "1707fe53112448b74f2c01fece6f5187779bfbeb543ba9ab3898073b494785b6",
+    "crates/mining-sim/src/earthworks.rs": "f32014f3871cbe81b01fa387a1414954086d7d43faf168f7796b5265c64eb060",
+    "crates/mining-sim/examples/track_stroke_probe.rs": "85b1dc5694302503561c00445143a4b6f0269d3e94a518f40730fd9b66e4857e",
+    "crates/mining-sim/src/articulation/history_tests.rs": "fafa8f01463785db36bc5d3edf0889e87abfc9e65576f5409fe3549d33059cff",
+    "crates/mining-sim/src/bucket.rs": "10a5b07283b522d811b56fc4bccb98ea9468def37ffe77e59604139f48a5ce4e",
+    "crates/mining-sim/tests/soil_water.rs": "ef1a9fd529e7cc7702deca2fa202dfc1ec8ed1d94bd9ae40e98676b2a0e94214",
+    "crates/mining-sim/src/slurry.rs": "27c183bfc60f40fcd310a4cb9b2f58cac720a9e566ea58b36e04c645994e62ea",
+    "crates/mining-sim/src/tracks.rs": "0501057d247e00414c683d6871af969d7b996df8f503ff117223feb5f2457ab1",
+    "crates/mining-sim/src/outflow.rs": "641455d6163f6856c3913a358ea9b1f0fd473803929f7c7ccb161991d6fa0d1a",
+    "crates/mining-sim/src/replay.rs": "373fabbe1bf682be1273f563ea48ae86c7527f4d4436a6a835d013048d5c8cdd",
+    "crates/mining-sim/src/storage.rs": "50027895203dfc5e41361326430cf998923c869d6f826a7518e70ac3b6374e90",
+    "crates/mining-sim/tests/articulation.rs": "ee286139db2f2f17bbe8984e16ee91689cacffd08db5f2a5b95c7284523e6a45",
+    "crates/mining-sim/examples/slurry_probe.rs": "6fecd6d64cf0e598e57b380f90ddb340bc87abf647f502876a4aaae087146bab",
+    "crates/mining-sim/src/session.rs": "de695e76635545ef0aeb45a211f170b29bf4af89daac3a3b56436d9d86e45c90",
+    "crates/mining-sim/tests/accuracy.rs": "e473202919325a16b58f4b11e6973d2a234f0619b7e5cf96eb82ffa6ceae9779",
+    "crates/mining-sim/src/material.rs": "b2d36d8d183f6b0244b0ac67fd6e24d816cf5a724dd61fe58c4ceef179d05061",
+    "crates/mining-sim/src/articulation.rs": "8f72f51458155291e2f2e6993e237b62fcf0d887d047d0452046b737d86f2252",
+    "crates/mining-sim/src/articulation/exchange.rs": "7085b1b10e0d756829f01f57e94373134a5106766d7abb52fa5fdd9c4c3d43ff",
+    "crates/mining-sim/tests/subgrid_bed.rs": "9c9ac9145b703e49646f6a62a50ea4f40f82d26f78f7be369ad2b2fe28f8496d",
+    "crates/mining-sim/src/contact_history.rs": "7f90e8fc45a7b78877aabd6442e4bc39f3ae73e3fc8f2c5a25bdbbc4b3605032",
+    "crates/mining-sim/src/soil_contacts.rs": "026b5b07d712ad0d9df2135bf9cf2771dd0d48f9a620636c30275644d37ba2f9",
+    "crates/mining-sim/tests/outflow.rs": "4436a550331258c9f9eecf07034c1939c3c2a8d02eaaf796e8b5b806b5eba2de"
+  },
+  "source_scope": "Experimental retained soil dispatcher/owner, its replay tool and diagnostics. Rendering, water, terrain and all vendor sources unchanged.",
+  "controlled_boundary_seed": {
+    "before_legacy_sha256": "847db647faa3e9b093aaf2fbae9e5dcb8f1cc38f182e79b580905d11b8647877",
+    "before_checked_sha256": "543f2b94355f0468b2cb6f08b75a90b3f7ef0167f79ae94edee1ea1d93367adc",
+    "same_length": true,
+    "different_bytes": [
+      [
+        977437,
+        1,
+        2
+      ]
+    ],
+    "total_different_bytes": 1
+  },
+  "controlled_step": {
+    "diagnostic_policy_upgrade_is_explicit": true,
+    "legacy_reference_state_exact": true,
+    "same_input_boundary": true,
+    "timestep_convergence_test": false,
+    "variants": [
+      {
+        "accepted": true,
+        "clods": 1040,
+        "delta_energy_j": 79.20565488058492,
+        "name": "legacy",
+        "step_ms": 202.60375
+      },
+      {
+        "accepted": true,
+        "clods": 1040,
+        "delta_energy_j": 81.31327518835315,
+        "name": "verified",
+        "step_ms": 205.267
+      }
+    ],
+    "whole_trajectory_acceptance": false
+  },
+  "geometry_audits": {
+    "old-worst-compact": {
+      "total_active_manifolds": 7182,
+      "certified_primitive_manifolds": 6724,
+      "merged_clusters_not_certified": 458,
+      "separated_with_negative_active_cached_gap": 38,
+      "minimum_before_sat_gap_m": -0.0030720078657973104,
+      "minimum_pair": [
+        "clod-540",
+        "clod-541"
+      ],
+      "bad_pairs": [
+        {
+          "a": "clod-932",
+          "b": "clod-938",
+          "sat_gap": 1.1350331906356814e-05,
+          "cached_min": -1.3180371752241626e-05
+        },
+        {
+          "a": "clod-930",
+          "b": "clod-935",
+          "sat_gap": 1.0771765145634049e-05,
+          "cached_min": -2.4455834136460908e-05
+        },
+        {
+          "a": "clod-934",
+          "b": "clod-1016",
+          "sat_gap": 3.3241208896583885e-05,
+          "cached_min": -2.327820402570069e-05
+        },
+        {
+          "a": "clod-928",
+          "b": "clod-1004",
+          "sat_gap": 1.1211630585705734e-05,
+          "cached_min": -1.376636191707803e-05
+        },
+        {
+          "a": "clod-876",
+          "b": "clod-880",
+          "sat_gap": 1.8046485088518693e-05,
+          "cached_min": -3.48127941833809e-05
+        },
+        {
+          "a": "clod-755",
+          "b": "clod-758",
+          "sat_gap": 2.3348430545411247e-05,
+          "cached_min": -1.1149715646752156e-05
+        },
+        {
+          "a": "clod-729",
+          "b": "clod-735",
+          "sat_gap": 5.07490156564927e-05,
+          "cached_min": -5.010400855098851e-05
+        },
+        {
+          "a": "clod-836",
+          "b": "clod-843",
+          "sat_gap": 2.6171564002197556e-05,
+          "cached_min": -2.0491737814154476e-05
+        },
+        {
+          "a": "clod-828",
+          "b": "clod-833",
+          "sat_gap": 3.985370654291387e-05,
+          "cached_min": -2.4236775061581284e-05
+        },
+        {
+          "a": "clod-839",
+          "b": "clod-840",
+          "sat_gap": 2.1367067056132782e-05,
+          "cached_min": -4.109583460376598e-05
+        },
+        {
+          "a": "clod-545",
+          "b": "clod-551",
+          "sat_gap": 0.0004966864693720652,
+          "cached_min": -2.8595473850145936e-05
+        },
+        {
+          "a": "clod-490",
+          "b": "clod-499",
+          "sat_gap": 2.8498340018501267e-05,
+          "cached_min": -3.872231172863394e-05
+        },
+        {
+          "a": "clod-647",
+          "b": "clod-654",
+          "sat_gap": 3.535430571943721e-05,
+          "cached_min": -3.0372886612894945e-05
+        },
+        {
+          "a": "clod-636",
+          "b": "clod-645",
+          "sat_gap": 0.00014442543215409387,
+          "cached_min": -0.0010858132736757398
+        },
+        {
+          "a": "clod-632",
+          "b": "clod-635",
+          "sat_gap": 3.7855609170023286e-05,
+          "cached_min": -0.00017856316117104143
+        },
+        {
+          "a": "clod-636",
+          "b": "clod-639",
+          "sat_gap": 0.0007492162898863342,
+          "cached_min": -0.0014098401879891753
+        },
+        {
+          "a": "clod-620",
+          "b": "clod-625",
+          "sat_gap": 9.711741581241995e-05,
+          "cached_min": -5.8670309954322875e-05
+        },
+        {
+          "a": "clod-625",
+          "b": "clod-628",
+          "sat_gap": 4.721410878438803e-05,
+          "cached_min": -1.1781086868722923e-05
+        },
+        {
+          "a": "clod-528",
+          "b": "clod-604",
+          "sat_gap": 1.2393306459301812e-05,
+          "cached_min": -2.2351117877406068e-05
+        },
+        {
+          "a": "clod-558",
+          "b": "clod-645",
+          "sat_gap": 0.0001620125486248014,
+          "cached_min": -0.0002018544328166172
+        },
+        {
+          "a": "clod-544",
+          "b": "clod-633",
+          "sat_gap": 3.858494474595631e-05,
+          "cached_min": -4.4412739953259006e-05
+        },
+        {
+          "a": "clod-641",
+          "b": "clod-716",
+          "sat_gap": 0.00018937301057064815,
+          "cached_min": -7.073166489135474e-05
+        },
+        {
+          "a": "clod-231",
+          "b": "clod-232",
+          "sat_gap": 1.2838427487338322e-05,
+          "cached_min": -1.9247931049903855e-05
+        },
+        {
+          "a": "clod-172",
+          "b": "clod-175",
+          "sat_gap": 1.8906719828848395e-05,
+          "cached_min": -1.0198742529610172e-05
+        },
+        {
+          "a": "clod-352",
+          "b": "clod-355",
+          "sat_gap": 1.9391518549127795e-05,
+          "cached_min": -3.4584358218126e-05
+        },
+        {
+          "a": "clod-336",
+          "b": "clod-339",
+          "sat_gap": 1.2057972778478643e-05,
+          "cached_min": -1.7605925677344203e-05
+        },
+        {
+          "a": "clod-318",
+          "b": "clod-325",
+          "sat_gap": 1.3557654192197788e-05,
+          "cached_min": -1.196142147819046e-05
+        },
+        {
+          "a": "clod-356",
+          "b": "clod-359",
+          "sat_gap": 4.205640976806535e-05,
+          "cached_min": -2.186094206990674e-05
+        },
+        {
+          "a": "clod-343",
+          "b": "clod-344",
+          "sat_gap": 2.3476031646652018e-05,
+          "cached_min": -1.8950613593915477e-05
+        },
+        {
+          "a": "clod-300",
+          "b": "clod-304",
+          "sat_gap": 1.4140995677536239e-05,
+          "cached_min": -1.0213831046712585e-05
+        },
+        {
+          "a": "clod-412",
+          "b": "clod-417",
+          "sat_gap": 4.4961608104188144e-05,
+          "cached_min": -2.3970929760253057e-05
+        },
+        {
+          "a": "clod-435",
+          "b": "clod-443",
+          "sat_gap": 1.0297373663092912e-05,
+          "cached_min": -3.9462887798435986e-05
+        },
+        {
+          "a": "clod-396",
+          "b": "clod-400",
+          "sat_gap": 1.7007441103444876e-05,
+          "cached_min": -1.7512007616460323e-05
+        },
+        {
+          "a": "clod-370",
+          "b": "clod-459",
+          "sat_gap": 2.85248382709824e-05,
+          "cached_min": -2.6027712010545656e-05
+        },
+        {
+          "a": "clod-224",
+          "b": "clod-300",
+          "sat_gap": 1.2139023738200194e-05,
+          "cached_min": -1.2180438716313802e-05
+        },
+        {
+          "a": "clod-279",
+          "b": "clod-364",
+          "sat_gap": 1.2154493663985022e-05,
+          "cached_min": -2.689432403712999e-05
+        },
+        {
+          "a": "clod-422",
+          "b": "clod-509",
+          "sat_gap": 1.5565104600767654e-05,
+          "cached_min": -1.1046548024751246e-05
+        },
+        {
+          "a": "clod-55",
+          "b": "clod-138",
+          "sat_gap": 1.1085392817022921e-05,
+          "cached_min": -1.0915118764387444e-05
+        }
+      ]
+    },
+    "controlled-corrected-compact": {
+      "total_active_manifolds": 7155,
+      "certified_primitive_manifolds": 6692,
+      "merged_clusters_not_certified": 463,
+      "separated_with_negative_active_cached_gap": 0,
+      "minimum_before_sat_gap_m": -0.0030720078657973104,
+      "minimum_pair": [
+        "clod-540",
+        "clod-541"
+      ],
+      "bad_pairs": []
+    },
+    "new-worst-compact": {
+      "total_active_manifolds": 6167,
+      "certified_primitive_manifolds": 5793,
+      "merged_clusters_not_certified": 374,
+      "separated_with_negative_active_cached_gap": 0,
+      "minimum_before_sat_gap_m": -0.002070938775890596,
+      "minimum_pair": [
+        "clod-642",
+        "clod-643"
+      ],
+      "bad_pairs": []
+    }
+  },
+  "passive_full300_comparison": {
+    "legacy_geometry_full_friction": {
+      "steps": 300,
+      "peak_j": 79.20565488058492,
+      "worst_step": 28,
+      "violations": 57,
+      "net_j": -227.47287707577925,
+      "passivity_passed": false
+    },
+    "checked_geometry_full_friction": {
+      "steps": 300,
+      "peak_j": 57.216923396044876,
+      "worst_step": 29,
+      "violations": 56,
+      "net_j": -231.61865873381612,
+      "passivity_passed": false
+    }
+  },
+  "passivity_gate_j": 0.01,
+  "passivity_gate_passed": false,
+  "loaded_replays": {
+    "loaded-legacy-240": {
+      "clods": 1040,
+      "completed": true,
+      "contact_dispatcher": "RigidSoil",
+      "contact_steps": 1254,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "friction_in_bias_pass": true,
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.0,
+      "maximum_coupled_passivity_residual_j": 128.68985562873695,
+      "mechanical_hz": 240,
+      "mechanical_steps": 4320,
+      "mode": "retained",
+      "restore_wall_seconds": 0.0,
+      "restores": 0,
+      "scope": "Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
+      "simulated_seconds": 18.0,
+      "startup_seconds": 0.005324917,
+      "step_wall_seconds": 396.6319608720007,
+      "ticks": 1080,
+      "total_wall_seconds": 396.776157333
+    },
+    "loaded-verified-240": {
+      "clods": 1040,
+      "completed": true,
+      "contact_dispatcher": "RigidSoilVerified",
+      "contact_steps": 1321,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "friction_in_bias_pass": true,
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.0,
+      "maximum_coupled_passivity_residual_j": 143.80403085337912,
+      "mechanical_hz": 240,
+      "mechanical_steps": 4320,
+      "mode": "retained",
+      "restore_wall_seconds": 0.0,
+      "restores": 0,
+      "scope": "Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
+      "simulated_seconds": 18.0,
+      "startup_seconds": 0.004700459,
+      "step_wall_seconds": 400.1826259829999,
+      "ticks": 1080,
+      "total_wall_seconds": 400.359716084
+    },
+    "loaded-verified-480": {
+      "clods": 1040,
+      "completed": true,
+      "contact_dispatcher": "RigidSoilVerified",
+      "contact_steps": 2594,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "friction_in_bias_pass": true,
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.0,
+      "maximum_coupled_passivity_residual_j": 115.32322659111651,
+      "mechanical_hz": 480,
+      "mechanical_steps": 8640,
+      "mode": "retained",
+      "restore_wall_seconds": 0.0,
+      "restores": 0,
+      "scope": "Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
+      "simulated_seconds": 18.0,
+      "startup_seconds": 0.004702375,
+      "step_wall_seconds": 733.5097198919992,
+      "ticks": 1080,
+      "total_wall_seconds": 733.626849542
+    }
+  },
+  "loaded_comparisons": {
+    "geometry_only_240": {
+      "both_complete": true,
+      "same_initial_physical_canonical_state": true,
+      "refinement": false,
+      "sampled_every_command_ticks": 60,
+      "snapshots": [
+        {
+          "tick": 0,
+          "root_difference_m": 0.0,
+          "maximum_clod_center_difference_m": 0.0,
+          "maximum_joint_difference_rad": 0.0
+        },
+        {
+          "tick": 60,
+          "root_difference_m": 4.382692687651328e-05,
+          "maximum_clod_center_difference_m": 0.4294805533479517,
+          "maximum_joint_difference_rad": 0.0001690387725830078
+        },
+        {
+          "tick": 120,
+          "root_difference_m": 0.0007506236294580737,
+          "maximum_clod_center_difference_m": 0.9728824681091232,
+          "maximum_joint_difference_rad": 0.00575101375579834
+        },
+        {
+          "tick": 180,
+          "root_difference_m": 0.0021225862366692147,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.0041315555572509766
+        },
+        {
+          "tick": 240,
+          "root_difference_m": 0.008804258330140088,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.0063250064849853516
+        },
+        {
+          "tick": 300,
+          "root_difference_m": 0.009161158201875397,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.012061059474945068
+        },
+        {
+          "tick": 360,
+          "root_difference_m": 0.011768187974101618,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.02141740918159485
+        },
+        {
+          "tick": 420,
+          "root_difference_m": 0.012098741062975853,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.01984792947769165
+        },
+        {
+          "tick": 480,
+          "root_difference_m": 0.01223678891095668,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.0198667049407959
+        },
+        {
+          "tick": 540,
+          "root_difference_m": 0.011777511487338454,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.021733880043029785
+        },
+        {
+          "tick": 600,
+          "root_difference_m": 0.012248120746356854,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.02173912525177002
+        },
+        {
+          "tick": 660,
+          "root_difference_m": 0.012629988078930284,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.021619677543640137
+        },
+        {
+          "tick": 720,
+          "root_difference_m": 0.01245058483019547,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.02148778736591339
+        },
+        {
+          "tick": 780,
+          "root_difference_m": 0.012510258347246868,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.02138647437095642
+        },
+        {
+          "tick": 840,
+          "root_difference_m": 0.01201269089790565,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.021350324153900146
+        },
+        {
+          "tick": 900,
+          "root_difference_m": 0.011006103955440388,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.02138352394104004
+        },
+        {
+          "tick": 960,
+          "root_difference_m": 0.010751384651519298,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.0022603273391723633
+        },
+        {
+          "tick": 1020,
+          "root_difference_m": 0.010544330827096984,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.00223541259765625
+        },
+        {
+          "tick": 1080,
+          "root_difference_m": 0.009867107266583805,
+          "maximum_clod_center_difference_m": 1.5578429474917577,
+          "maximum_joint_difference_rad": 0.002233147621154785
+        }
+      ],
+      "maximum_sampled_root_difference_m": 0.012629988078930284,
+      "maximum_sampled_clod_difference_m": 1.5578429474917577,
+      "empty_strokes_do_not_establish_convergence": true,
+      "convergence_proven": false
+    },
+    "checked_240_480": {
+      "both_complete": true,
+      "same_initial_physical_canonical_state": true,
+      "refinement": true,
+      "sampled_every_command_ticks": 60,
+      "snapshots": [
+        {
+          "tick": 0,
+          "root_difference_m": 0.0,
+          "maximum_clod_center_difference_m": 0.0,
+          "maximum_joint_difference_rad": 0.0
+        },
+        {
+          "tick": 60,
+          "root_difference_m": 0.0001683363728275767,
+          "maximum_clod_center_difference_m": 0.9482381662609657,
+          "maximum_joint_difference_rad": 0.000576019287109375
+        },
+        {
+          "tick": 120,
+          "root_difference_m": 0.0015685481412241404,
+          "maximum_clod_center_difference_m": 0.8148811918935559,
+          "maximum_joint_difference_rad": 0.0033675432205200195
+        },
+        {
+          "tick": 180,
+          "root_difference_m": 0.002246735336148975,
+          "maximum_clod_center_difference_m": 1.0441431630220188,
+          "maximum_joint_difference_rad": 0.00854647159576416
+        },
+        {
+          "tick": 240,
+          "root_difference_m": 0.007686173891247439,
+          "maximum_clod_center_difference_m": 1.0427731871242143,
+          "maximum_joint_difference_rad": 0.011283397674560547
+        },
+        {
+          "tick": 300,
+          "root_difference_m": 0.022800538661771,
+          "maximum_clod_center_difference_m": 1.0421993889768706,
+          "maximum_joint_difference_rad": 0.02114860713481903
+        },
+        {
+          "tick": 360,
+          "root_difference_m": 0.02401860693326959,
+          "maximum_clod_center_difference_m": 1.1954368656643113,
+          "maximum_joint_difference_rad": 0.03204485774040222
+        },
+        {
+          "tick": 420,
+          "root_difference_m": 0.02175071631147623,
+          "maximum_clod_center_difference_m": 1.712268609782634,
+          "maximum_joint_difference_rad": 0.029048919677734375
+        },
+        {
+          "tick": 480,
+          "root_difference_m": 0.01985036872201412,
+          "maximum_clod_center_difference_m": 1.8873032933263858,
+          "maximum_joint_difference_rad": 0.022169888019561768
+        },
+        {
+          "tick": 540,
+          "root_difference_m": 0.018082506080022355,
+          "maximum_clod_center_difference_m": 1.88767239609282,
+          "maximum_joint_difference_rad": 0.015886425971984863
+        },
+        {
+          "tick": 600,
+          "root_difference_m": 0.01681960548773045,
+          "maximum_clod_center_difference_m": 1.8879474457866467,
+          "maximum_joint_difference_rad": 0.016011595726013184
+        },
+        {
+          "tick": 660,
+          "root_difference_m": 0.016041465035439247,
+          "maximum_clod_center_difference_m": 1.8880671663614563,
+          "maximum_joint_difference_rad": 0.016021728515625
+        },
+        {
+          "tick": 720,
+          "root_difference_m": 0.015096973270502833,
+          "maximum_clod_center_difference_m": 1.8881112755803475,
+          "maximum_joint_difference_rad": 0.016016125679016113
+        },
+        {
+          "tick": 780,
+          "root_difference_m": 0.014165356059458633,
+          "maximum_clod_center_difference_m": 1.8847942282661605,
+          "maximum_joint_difference_rad": 0.016016602516174316
+        },
+        {
+          "tick": 840,
+          "root_difference_m": 0.013099579773259878,
+          "maximum_clod_center_difference_m": 1.8865837763092075,
+          "maximum_joint_difference_rad": 0.016022443771362305
+        },
+        {
+          "tick": 900,
+          "root_difference_m": 0.012521183075631425,
+          "maximum_clod_center_difference_m": 1.8864565729487974,
+          "maximum_joint_difference_rad": 0.016023993492126465
+        },
+        {
+          "tick": 960,
+          "root_difference_m": 0.012035501479313615,
+          "maximum_clod_center_difference_m": 1.8867234861617455,
+          "maximum_joint_difference_rad": 0.01602327823638916
+        },
+        {
+          "tick": 1020,
+          "root_difference_m": 0.011896882529976449,
+          "maximum_clod_center_difference_m": 1.8871836388068952,
+          "maximum_joint_difference_rad": 0.016025185585021973
+        },
+        {
+          "tick": 1080,
+          "root_difference_m": 0.011810540777695227,
+          "maximum_clod_center_difference_m": 1.8874377111144647,
+          "maximum_joint_difference_rad": 0.01602637767791748
+        }
+      ],
+      "maximum_sampled_root_difference_m": 0.02401860693326959,
+      "maximum_sampled_clod_difference_m": 1.8881112755803475,
+      "empty_strokes_do_not_establish_convergence": true,
+      "convergence_proven": false
+    }
+  },
+  "loaded_replay_is_successful_digging": false,
+  "profile": {
+    "seconds": 3,
+    "interval_ms": 10,
+    "main_thread_samples": 270,
+    "friction_disk_leaf_samples": 146,
+    "friction_disk_leaf_fraction": 0.5407407407407407,
+    "enclosing_coulomb_solve_leaf_samples": 72,
+    "scope": "One window in the loaded checked-geometry replay; not whole-run timing attribution. This run includes sampling overhead.",
+    "sampler_process_exit": 0
+  },
+  "checks": [
+    {
+      "name": "featured-library-final",
+      "exit": 0
+    },
+    {
+      "name": "legacy-generator-final",
+      "exit": 0
+    },
+    {
+      "name": "verified-generator-final",
+      "exit": 0
+    },
+    {
+      "name": "old-worst-compact",
+      "exit": 0
+    },
+    {
+      "name": "controlled-corrected-compact",
+      "exit": 0
+    },
+    {
+      "name": "new-worst-compact",
+      "exit": 0
+    },
+    {
+      "name": "build-loaded-replay",
+      "exit": 0
+    },
+    {
+      "name": "loaded-legacy-240",
+      "exit": 0
+    },
+    {
+      "name": "loaded-verified-240",
+      "exit": 0
+    },
+    {
+      "name": "loaded-verified-480",
+      "exit": 0
+    },
+    {
+      "name": "fast-integrations-final",
+      "exit": 0
+    },
+    {
+      "name": "default-library-final",
+      "exit": 0
+    },
+    {
+      "name": "oracle-regression-final",
+      "exit": 0
+    },
+    {
+      "name": "compound-regression-final",
+      "exit": 0
+    },
+    {
+      "name": "portable-old-current-final",
+      "exit": 0
+    },
+    {
+      "name": "clippy-featured-final",
+      "exit": 0
+    },
+    {
+      "name": "clippy-default-final",
+      "exit": 0
+    },
+    {
+      "name": "format-final",
+      "exit": 0
+    },
+    {
+      "name": "doc-final",
+      "exit": 0
+    }
+  ],
+  "check_logs": {
+    "featured-library-final": {
+      "sha256": "ba0982c4262ad05ec5061d95a0814f3cab7ac2964ca38e9c27e30acca354d6bb",
+      "test_results": [
+        "test result: ok. 34 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 41.99s"
+      ]
+    },
+    "default-library-final": {
+      "sha256": "85b8f8c0728a44eec0930b4cb43766cce23d070678e0185e93d43a745515e379",
+      "test_results": [
+        "test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s"
+      ]
+    },
+    "fast-integrations-final": {
+      "sha256": "2f88839578ff231bd59cf7bfe8527ee0fc20b3a685e99ff19814b852509fa044",
+      "test_results": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s",
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.07s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.39s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s",
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.56s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.38s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s"
+      ]
+    },
+    "compound-regression-final": {
+      "sha256": "15e42ca26b7e938606d39d0ded43fb64a50ddfb71b2427202ab2072d108c268d",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.00s"
+      ]
+    },
+    "oracle-regression-final": {
+      "sha256": "330a691dc9e3f7d1174d279eda5591ba1596b8996c897bd6e60c67c430f2c64a",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.00s"
+      ]
+    },
+    "portable-old-current-final": {
+      "sha256": "15f184fa2fbbf27c15e51842f71fa8d6ccfd5a5dff98f235ec80042041f3a125",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 44.01s"
+      ]
+    },
+    "clippy-featured-final": {
+      "sha256": "bba7155bc661ce4845f9d2c602ac6ffde98978319e3eb707921f2c59e84f4ab7",
+      "test_results": []
+    },
+    "clippy-default-final": {
+      "sha256": "2dddda985105456ef99312e75171a75d6224bcdc11a372914f730573e222be0b",
+      "test_results": []
+    },
+    "format-final": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test_results": []
+    },
+    "doc-final": {
+      "sha256": "c48e8a1c5abd37745936ad2374b06f548d0fed99393413b0be929797eb22b899",
+      "test_results": [
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    }
+  },
+  "legacy_original_binary_proof": {
+    "before.bin": true,
+    "after.bin": true
+  },
+  "final_checked_four_binary_proof": {
+    "before.bin": true,
+    "after.bin": true,
+    "worst-before.bin": true,
+    "worst-after.bin": true
+  },
+  "portable_old_current_four_binary_proof": {
+    "before.bin": true,
+    "after.bin": true,
+    "worst-before.bin": true,
+    "worst-after.bin": true
+  },
+  "fixture_sha256": "df53ce1596d3c62d3f1359643623790b1e149af1175eb944509a9d02209ee448",
+  "input_command_tape_gzip_sha256": "b6d31d66f43216bef5a74b5fb8cbb99851d27fb3d0b85b249b5c1e28b411d924",
+  "cleanup_sha256": "ffbd79ad4d1971b3a7cfc3dceef7653c741b5d87118974752d1a36ce3daf916b",
+  "apfs_clone_manifest_sha256": "a501bfa97ee9a684962df272b0caa196f28429ae14ec8ed64f1dc84852fb59fe",
+  "raw_audit_compression_manifests": [
+    "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/first-audit-compression.json",
+    "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/v2-audit-compression.json"
+  ],
+  "ordinary_session_adopts_new_dispatcher": false,
+  "native_build_or_fps_check": false,
+  "full_goal_complete": false,
+  "additional_generated_duplicate_clone_manifest_sha256": "22c90a3a2e1acab2d177871cd6641c5becaa614dbbb87920a7bad782e661b54c",
+  "remaining_shared_playwright_mcp_processes": 14,
+  "remaining_shared_node_processes": 56,
+  "prior_featured_clippy_test_lint_failure_corrected_log": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/clippy-featured-final.previous-failed.log",
+  "classification": "progress"
+}

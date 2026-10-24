@@ -1,0 +1,27 @@
+{
+  "source_save": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/environment-2026-10-21/land-bank-fixture.save.json",
+  "sha256": "46b0f978da410d81390da4d9e3efc5333143d833340ea5f356b25b551ddfe290",
+  "camera": {
+    "position": [
+      12.5,
+      0.35000000000000003,
+      17.0
+    ],
+    "yaw": -1.25,
+    "pitch": -0.55,
+    "mode": "OnFoot",
+    "third_person": false,
+    "hand": {
+      "soil_m3": 0.0,
+      "sand_m3": 0.0,
+      "gravel_m3": 0.0,
+      "gold_g": 0.0
+    },
+    "tool_swing": 0.0
+  },
+  "simulation_time": 54.000002816319466,
+  "freeze": true,
+  "physics_changed": false,
+  "baseline": "a94ac6f6daafe6fa9c5b0737eb41abd42b9e8776",
+  "shallow_fixture": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/shallow-2026-10-21/shallow-fixture.save.json"
+}

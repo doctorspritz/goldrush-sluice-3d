@@ -1,0 +1,68 @@
+{
+  "verified_at_utc": "2026-10-24T06:35:57.519942+00:00",
+  "render_commit": "2e1b29dcf0626ee905a28a0af5ab3dd45a33ad39",
+  "source_app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/support-gram-20261024/app/First Bend.app",
+  "app": "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app",
+  "binary_sha256": "812a61d64b17f2c4e8c6bfa3d565a2e70e15834e800ec561d57f7bafa1326dcd",
+  "copied_without_rebuild": true,
+  "source_hashes_match": true,
+  "source_receipt": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/support-gram-20261024/receipt.json",
+  "jobs": [
+    {
+      "name": "default-demo-sluice",
+      "exit": 0,
+      "frames": 45,
+      "physical_seconds": 2.2166667822748423,
+      "presentation_advances": 44,
+      "recording_underruns": 0
+    },
+    {
+      "name": "default-demo-river",
+      "exit": 0,
+      "frames": 2,
+      "physical_seconds": 0.3166666831821203,
+      "presentation_advances": 1,
+      "recording_underruns": 0
+    }
+  ],
+  "default_demo_motion": {
+    "frames": 45,
+    "presentation_advances": 44,
+    "worker_advances": 44,
+    "wall_seconds": 3.988943,
+    "physical_seconds": 2.2166667822748423,
+    "recording_underruns": 0
+  },
+  "no_runtime_source_edits_since_render_commit": true,
+  "retained_validation": {
+    "source_receipt": "docs/playtests/2026-10-24-support-gram.json",
+    "ordinary_app_tests": 62,
+    "explicit_cpu_profiles": 2,
+    "explicit_gpu_regression": 1,
+    "tests_rerun_this_delivery_check": false,
+    "source_and_binary_identity_reverified": true,
+    "mean_fps": 55.68495291324973,
+    "simulation_wall_ratio": 0.3879866567995007,
+    "benchmark_rerun_this_delivery_check": false,
+    "physical_realtime_gate_passed": false
+  },
+  "media_sha256": {
+    "docs/playtests/2026-10-24-visual-delivery.png": "d8fbfc02fd5d2c574baeffdade275497be868daa92bc40e4b0e3f5f90779595e"
+  },
+  "reviewed_all_default_demo_temporal_crops": 45,
+  "whole_video_playback_claimed": false,
+  "original_files_and_stash_preserved": true,
+  "protected_sources_unchanged": 688,
+  "no_new_crash_reports": true,
+  "owned_game_build_encoder_processes_remaining": 0,
+  "cleanup": {
+    "agent_browser": 0,
+    "playwright_tests": 0,
+    "playwright_mcp": 18,
+    "chrome_for_testing": 0,
+    "node_ecosystem": 72,
+    "shared_processes_left_untouched": true
+  },
+  "unapplied_physics_checkpoint": "docs/physics/rigid-work-observer-checkpoint.md",
+  "bd_sync_exit": 1
+}

@@ -39,6 +39,8 @@ pub fn create_storage_buffer_u32(
 }
 
 const DEBUG_STATS_COUNT: u32 = 16;
+/// Interleaved water scratch/diagnostics after the N sediment-next floats.
+pub const WATER_AUX_FLOATS: u32 = 12;
 
 /// Holds all geology-related buffers.
 pub struct GeologyBuffers {
@@ -49,15 +51,35 @@ pub struct GeologyBuffers {
     pub sediment: wgpu::Buffer,
     pub surface_material: wgpu::Buffer,
     pub settling_time: wgpu::Buffer,
+    /// Persistent per-class roundoff feedback for bed/suspension exchange.
+    pub bed_exchange_error: wgpu::Buffer,
+    /// Counted positive bed thickness below a geometric layer ULP, per class.
+    pub bed_remainder: wgpu::Buffer,
     pub debug_stats: wgpu::Buffer,
+    /// Derived scratch: 8 source-owned vec4 transfers per cell, not save state.
+    pub collapse_flux: wgpu::Buffer,
 }
 
 impl GeologyBuffers {
     pub fn new(device: &wgpu::Device, width: u32, depth: u32, initial_height: f32) -> Self {
-        let bedrock = create_storage_buffer(device, "Bedrock Buffer", width, depth, initial_height * 0.5);
-        let paydirt = create_storage_buffer(device, "Paydirt Buffer", width, depth, initial_height * 0.25);
-        let gravel = create_storage_buffer(device, "Gravel Buffer", width, depth, initial_height * 0.05);
-        let overburden = create_storage_buffer(device, "Overburden Buffer", width, depth, initial_height * 0.2);
+        let bedrock =
+            create_storage_buffer(device, "Bedrock Buffer", width, depth, initial_height * 0.5);
+        let paydirt = create_storage_buffer(
+            device,
+            "Paydirt Buffer",
+            width,
+            depth,
+            initial_height * 0.25,
+        );
+        let gravel =
+            create_storage_buffer(device, "Gravel Buffer", width, depth, initial_height * 0.05);
+        let overburden = create_storage_buffer(
+            device,
+            "Overburden Buffer",
+            width,
+            depth,
+            initial_height * 0.2,
+        );
         let sediment = create_storage_buffer(device, "Sediment Buffer", width, depth, 0.0);
         let surface_material =
             create_storage_buffer_u32(device, "Surface Material Buffer", width, depth, 4);
@@ -74,7 +96,28 @@ impl GeologyBuffers {
             sediment,
             surface_material,
             settling_time,
+            bed_exchange_error: create_storage_buffer(
+                device,
+                "Bed Exchange Roundoff",
+                width * 4,
+                depth,
+                0.,
+            ),
+            bed_remainder: create_storage_buffer(
+                device,
+                "Subgrid Bed Inventory",
+                width * 4,
+                depth,
+                0.,
+            ),
             debug_stats,
+            collapse_flux: create_storage_buffer(
+                device,
+                "Collapse Outgoing Transfers",
+                width * 32,
+                depth,
+                0.,
+            ),
         }
     }
 }
@@ -88,6 +131,10 @@ pub struct WaterBuffers {
     pub flux_x: wgpu::Buffer,
     pub flux_z: wgpu::Buffer,
     pub suspended_sediment: wgpu::Buffer,
+    /// Concentration transport target. During a bed stage the four `_next`
+    /// prefixes temporarily hold immutable old layer thicknesses; the stage
+    /// restores current concentrations before returning. Aux slot 7 holds the
+    /// stage's immutable slope; water/export slots are unaffected.
     pub suspended_sediment_next: wgpu::Buffer,
     pub suspended_overburden: wgpu::Buffer,
     pub suspended_overburden_next: wgpu::Buffer,
@@ -106,14 +153,62 @@ impl WaterBuffers {
             surface: create_storage_buffer(device, "Water Surface Buffer", width, depth, 0.0),
             flux_x: create_storage_buffer(device, "Flux X Buffer", width, depth, 0.0),
             flux_z: create_storage_buffer(device, "Flux Z Buffer", width, depth, 0.0),
-            suspended_sediment: create_storage_buffer(device, "Suspended Sediment Buffer", width, depth, 0.0),
-            suspended_sediment_next: create_storage_buffer(device, "Suspended Sediment Next Buffer", width, depth, 0.0),
-            suspended_overburden: create_storage_buffer(device, "Suspended Overburden Buffer", width, depth, 0.0),
-            suspended_overburden_next: create_storage_buffer(device, "Suspended Overburden Next Buffer", width, depth, 0.0),
-            suspended_gravel: create_storage_buffer(device, "Suspended Gravel Buffer", width, depth, 0.0),
-            suspended_gravel_next: create_storage_buffer(device, "Suspended Gravel Next Buffer", width, depth, 0.0),
-            suspended_paydirt: create_storage_buffer(device, "Suspended Paydirt Buffer", width, depth, 0.0),
-            suspended_paydirt_next: create_storage_buffer(device, "Suspended Paydirt Next Buffer", width, depth, 0.0),
+            suspended_sediment: create_storage_buffer(
+                device,
+                "Suspended Sediment Buffer",
+                width,
+                depth,
+                0.0,
+            ),
+            suspended_sediment_next: create_storage_buffer(
+                device,
+                "Sediment Next and Water Scratch",
+                width * (1 + WATER_AUX_FLOATS),
+                depth,
+                0.0,
+            ),
+            suspended_overburden: create_storage_buffer(
+                device,
+                "Suspended Overburden Buffer",
+                width,
+                depth,
+                0.0,
+            ),
+            suspended_overburden_next: create_storage_buffer(
+                device,
+                "Suspended Overburden Next Buffer",
+                width,
+                depth,
+                0.0,
+            ),
+            suspended_gravel: create_storage_buffer(
+                device,
+                "Suspended Gravel Buffer",
+                width,
+                depth,
+                0.0,
+            ),
+            suspended_gravel_next: create_storage_buffer(
+                device,
+                "Suspended Gravel Next Buffer",
+                width,
+                depth,
+                0.0,
+            ),
+            suspended_paydirt: create_storage_buffer(
+                device,
+                "Suspended Paydirt Buffer",
+                width,
+                depth,
+                0.0,
+            ),
+            suspended_paydirt_next: create_storage_buffer(
+                device,
+                "Suspended Paydirt Next Buffer",
+                width,
+                depth,
+                0.0,
+            ),
         }
     }
 }

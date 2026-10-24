@@ -37,6 +37,10 @@ struct Params {
 @group(0) @binding(4) var<storage, read_write> grid_v: array<f32>;
 @group(0) @binding(5) var<storage, read_write> grid_w: array<f32>;
 
+@group(0) @binding(6) var<storage,read> mobility_u:array<f32>;
+@group(0) @binding(7) var<storage,read> mobility_v:array<f32>;
+@group(0) @binding(8) var<storage,read> mobility_w:array<f32>;
+
 // Cell type constants (matching sluice_3d_visual convention)
 const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
@@ -158,7 +162,7 @@ fn apply_gradient_u(@builtin(global_invocation_id) id: vec3<u32>) {
     let p_right = get_pressure(i32(i), i32(j), i32(k));
     let p_left = get_pressure(i32(i) - 1, i32(j), i32(k));
 
-    grid_u[idx] = grid_u[idx] - (p_right - p_left) * params.inv_cell_size;
+    grid_u[idx] = grid_u[idx] - face_mobility(0u,idx) * (p_right - p_left) * params.inv_cell_size;
 }
 
 // Apply pressure gradient to V velocity component
@@ -208,7 +212,7 @@ fn apply_gradient_v(@builtin(global_invocation_id) id: vec3<u32>) {
     let p_top = get_pressure(i32(i), i32(j), i32(k));
     let p_bottom = get_pressure(i32(i), i32(j) - 1, i32(k));
 
-    grid_v[idx] = grid_v[idx] - (p_top - p_bottom) * params.inv_cell_size;
+    grid_v[idx] = grid_v[idx] - face_mobility(1u,idx) * (p_top - p_bottom) * params.inv_cell_size;
 }
 
 // Apply pressure gradient to W velocity component
@@ -258,5 +262,5 @@ fn apply_gradient_w(@builtin(global_invocation_id) id: vec3<u32>) {
     let p_front = get_pressure(i32(i), i32(j), i32(k));
     let p_back = get_pressure(i32(i), i32(j), i32(k) - 1);
 
-    grid_w[idx] = grid_w[idx] - (p_front - p_back) * params.inv_cell_size;
+    grid_w[idx] = grid_w[idx] - face_mobility(2u,idx) * (p_front - p_back) * params.inv_cell_size;
 }

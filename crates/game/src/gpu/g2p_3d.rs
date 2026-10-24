@@ -23,11 +23,12 @@ struct G2pParams3D {
     height: u32,
     depth: u32,
     particle_count: u32,
-    d_inv: f32,         // APIC D inverse = 4/dx^2
-    flip_ratio: f32,    // FLIP blend ratio (0.97 for water)
-    dt: f32,            // Time step for velocity clamping
-    max_velocity: f32,  // Safety clamp (2000.0)
-    _padding: [f32; 3], // Align to 48 bytes
+    d_inv: f32,        // APIC D inverse = 4/dx^2
+    flip_ratio: f32,   // FLIP blend ratio (0.97 for water)
+    dt: f32,           // Time step for velocity clamping
+    max_velocity: f32, // Safety clamp (2000.0)
+    diameter_offset: u32,
+    _padding: [u32; 2], // Align to 48 bytes
 }
 
 /// Sediment parameters for G2P - drag-based entrainment model.
@@ -38,21 +39,20 @@ pub struct SedimentParams3D {
     pub settling_velocity: f32,
     /// Speed below which friction kicks in (m/s). Typical: 0.1
     pub friction_threshold: f32,
-    /// How much to damp when slow (0-1 per frame). Typical: 0.3-0.5
+    /// Damping fraction at 60 Hz; integrated with exponential decay.
     pub friction_strength: f32,
     /// How much vorticity suspends sediment. Typical: 1.0-2.0
     pub vorticity_lift: f32,
     /// Minimum vorticity to lift. Typical: 1.0-5.0
     pub vorticity_threshold: f32,
-    /// Rate at which particle velocity approaches water velocity (1/s).
-    /// Higher = more entrainment. Typical: 5.0-20.0
-    /// Scaled by 1/density so heavier particles entrain less.
+    /// Fallback relaxation rate (1/s) when no terminal settling speed is set.
+    /// With a terminal speed, the shader derives the rate from submerged gravity.
     pub drag_coefficient: f32,
     /// Density threshold for gold particles.
     pub gold_density_threshold: f32,
     /// Drag multiplier applied to gold (fine gold entrains more).
     pub gold_drag_multiplier: f32,
-    /// Settling velocity used for gold-specific lift (m/s).
+    /// Gold terminal settling speed in still water (m/s).
     pub gold_settling_velocity: f32,
     /// Upward bias for flaky gold near the surface (m/s^2).
     pub gold_flake_lift: f32,
@@ -66,9 +66,9 @@ pub struct SedimentParams3D {
 impl Default for SedimentParams3D {
     fn default() -> Self {
         Self {
-            settling_velocity: 0.0,     // No settling - pure fluid
+            settling_velocity: 0.0,     // No prescribed terminal speed; use fallback drag
             friction_threshold: 0.0,    // No friction threshold
-            friction_strength: 0.0,     // No friction - sediment = colored water
+            friction_strength: 0.0,     // No heuristic low-speed damping
             vorticity_lift: 0.0,        // Not needed with no settling
             vorticity_threshold: 999.0, // Never triggers
             drag_coefficient: 10.0,     // Moderate drag - particles entrain in flow
@@ -84,6 +84,8 @@ impl Default for SedimentParams3D {
 
 /// GPU-based Grid-to-Particle transfer for 3D simulation
 pub struct GpuG2p3D {
+    particle_metadata_buffer: Arc<wgpu::Buffer>,
+    conservative_phase_exchange: bool,
     width: u32,
     height: u32,
     depth: u32,
@@ -145,11 +147,122 @@ impl GpuG2p3D {
         water_grid_u_buffer: &wgpu::Buffer,
         water_grid_v_buffer: &wgpu::Buffer,
         water_grid_w_buffer: &wgpu::Buffer,
+        water_offsets: [u64; 3],
     ) -> Self {
+        Self::new_with_metadata(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            positions_buffer,
+            velocities_buffer,
+            c_col0_buffer,
+            c_col1_buffer,
+            c_col2_buffer,
+            densities_buffer,
+            grid_u_buffer,
+            grid_v_buffer,
+            grid_w_buffer,
+            grid_u_old_buffer,
+            grid_v_old_buffer,
+            grid_w_old_buffer,
+            vorticity_mag_buffer,
+            water_grid_u_buffer,
+            water_grid_v_buffer,
+            water_grid_w_buffer,
+            water_offsets,
+            None,
+        )
+    }
+
+    /// Shared phase metadata must contain four capacity planes (rho,d,b,c).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_metadata(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        max_particles: usize,
+        positions_buffer: Arc<wgpu::Buffer>,
+        velocities_buffer: Arc<wgpu::Buffer>,
+        c_col0_buffer: Arc<wgpu::Buffer>,
+        c_col1_buffer: Arc<wgpu::Buffer>,
+        c_col2_buffer: Arc<wgpu::Buffer>,
+        densities_buffer: Arc<wgpu::Buffer>,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        grid_u_old_buffer: &wgpu::Buffer,
+        grid_v_old_buffer: &wgpu::Buffer,
+        grid_w_old_buffer: &wgpu::Buffer,
+        vorticity_mag_buffer: &wgpu::Buffer,
+        water_grid_u_buffer: &wgpu::Buffer,
+        water_grid_v_buffer: &wgpu::Buffer,
+        water_grid_w_buffer: &wgpu::Buffer,
+        water_offsets: [u64; 3],
+        metadata: Option<Arc<wgpu::Buffer>>,
+    ) -> Self {
+        let phase_buffers = metadata.is_some();
+        let mut water_sizes = [
+            ((width + 1) * height * depth) as u64,
+            (width * (height + 1) * depth) as u64,
+            (width * height * (depth + 1)) as u64,
+        ]
+        .map(|n| {
+            if phase_buffers {
+                ((n + 4).div_ceil(64) * 64 + 4 * n) * 4
+            } else {
+                n * 4
+            }
+        });
+        if phase_buffers {
+            // Paired voxel reflection reads immutable solid flags after the
+            // response plane. Binding only that earlier prefix silently made
+            // every geometry query out of bounds in the gather shader.
+            let cells = u64::from(width) * u64::from(height) * u64::from(depth);
+            water_sizes[0] = (super::phase_transfer_3d::PhaseTransfer3D::cell_count_offset([
+                width, height, depth,
+            ]) + cells)
+                * 4;
+            assert!(metadata.as_ref().unwrap().size() >= (max_particles as u64) * 16);
+            for (axis, buffer) in [
+                water_grid_u_buffer,
+                water_grid_v_buffer,
+                water_grid_w_buffer,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                assert!(
+                    buffer.size() >= water_offsets[axis] + water_sizes[axis],
+                    "phase gather response or solid-marker plane is truncated"
+                );
+            }
+        }
+        let particle_metadata_buffer = metadata.unwrap_or_else(|| {
+            Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Grain density and diameter metadata"),
+                size: (max_particles * 8) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }))
+        });
+        let phase_constants = std::collections::HashMap::from([(
+            "PHASE_EXCHANGE_ALLOWED".to_string(),
+            f64::from(u32::from(phase_buffers)),
+        )]);
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("G2P 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/g2p_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("shaders/mac_wall_3d.wgsl"),
+                    include_str!("shaders/g2p_3d.wgsl")
+                )
+                .into(),
+            ),
         });
 
         // Staging buffers for readback
@@ -448,7 +561,7 @@ impl GpuG2p3D {
                 },
                 wgpu::BindGroupEntry {
                     binding: 12,
-                    resource: densities_buffer.as_ref().as_entire_binding(),
+                    resource: particle_metadata_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 13,
@@ -460,15 +573,27 @@ impl GpuG2p3D {
                 },
                 wgpu::BindGroupEntry {
                     binding: 15,
-                    resource: water_grid_u_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: water_grid_u_buffer,
+                        offset: water_offsets[0],
+                        size: std::num::NonZeroU64::new(water_sizes[0]),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 16,
-                    resource: water_grid_v_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: water_grid_v_buffer,
+                        offset: water_offsets[1],
+                        size: std::num::NonZeroU64::new(water_sizes[1]),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 17,
-                    resource: water_grid_w_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: water_grid_w_buffer,
+                        offset: water_offsets[2],
+                        size: std::num::NonZeroU64::new(water_sizes[2]),
+                    }),
                 },
             ],
         });
@@ -485,11 +610,16 @@ impl GpuG2p3D {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("g2p"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &phase_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
         Self {
+            particle_metadata_buffer,
+            conservative_phase_exchange: false,
             width,
             height,
             depth,
@@ -508,8 +638,38 @@ impl GpuG2p3D {
             g2p_pipeline,
             bind_group,
             max_particles,
-            workgroup_size: 256,
+            workgroup_size: 128,
         }
+    }
+
+    /// Metadata shares the original density binding: keep the storage-buffer
+    /// requirement at 16 rather than excluding adapters with that limit.
+    pub fn set_conservative_phase_exchange(&mut self, enabled: bool) {
+        assert!(
+            !enabled || self.particle_metadata_buffer.size() >= (self.max_particles as u64) * 16,
+            "phase gather requires shared four-plane metadata"
+        );
+        self.conservative_phase_exchange = enabled;
+    }
+
+    pub fn upload_grain_diameters(&self, queue: &wgpu::Queue, first: usize, values: &[f32]) {
+        if !values.is_empty() {
+            queue.write_buffer(
+                &self.particle_metadata_buffer,
+                ((self.max_particles + first) * 4) as u64,
+                bytemuck::cast_slice(values),
+            );
+        }
+    }
+
+    /// Set the boundary mask after uploading this step's shared parameters.
+    pub fn set_open_boundaries(&self, queue: &wgpu::Queue, open: u32) {
+        assert!(open <= 63);
+        queue.write_buffer(
+            &self.params_buffer,
+            (std::mem::size_of::<G2pParams3D>() - 4) as u64,
+            bytemuck::bytes_of(&open),
+        );
     }
 
     /// Upload G2P params to GPU (particle data is shared with P2G).
@@ -535,8 +695,16 @@ impl GpuG2p3D {
             d_inv,
             flip_ratio,
             dt,
-            max_velocity: 1.0, // CFL-safe: max_vel < dx/dt = 0.01/0.0083 ≈ 1.2 m/s
-            _padding: [0.0; 3],
+            max_velocity: 0.9 * cell_size / dt.max(1e-6), // Safety follows CFL, not an arbitrary 1 m/s sluice limit
+            diameter_offset: self.max_particles as u32,
+            _padding: [
+                u32::from(self.conservative_phase_exchange),
+                if self.conservative_phase_exchange {
+                    63
+                } else {
+                    0
+                },
+            ],
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
         queue.write_buffer(
@@ -550,15 +718,32 @@ impl GpuG2p3D {
 
     /// Encode G2P compute pass into command encoder
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, particle_count: u32) {
+        self.encode_profiled(encoder, particle_count, None);
+    }
+
+    pub fn encode_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        particle_count: u32,
+        timer: Option<&mut super::timing::GpuStageTimer>,
+    ) {
+        encoder.copy_buffer_to_buffer(
+            &self.densities_buffer,
+            0,
+            &self.particle_metadata_buffer,
+            0,
+            (particle_count as u64) * 4,
+        );
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("G2P 3D Pass"),
-            timestamp_writes: None,
+            timestamp_writes: timer.map(|timer| timer.pass("G2P 3D Pass")),
         });
         pass.set_pipeline(&self.g2p_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         let workgroups = particle_count.div_ceil(self.workgroup_size);
         pass.dispatch_workgroups(workgroups, 1, 1);
     }
+
 
     /// Download particle data from GPU
     pub fn download(

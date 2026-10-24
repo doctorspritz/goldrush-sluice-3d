@@ -1,0 +1,198 @@
+{
+  "artifact_root": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bed-exchange-2026-10-22",
+  "source": {
+    "base": "4323fc91ecdf017ec6cc0aa7ad2de8ffbb2c1b16",
+    "files": {
+      "crates/game/src/gpu/heightfield/buffers.rs": "c940164171880e069fd80a8396c4d636efca3529250860567acb55519d3e5f48",
+      "crates/game/src/gpu/heightfield/mod.rs": "f19305776a7f05ae4a2b1000666ea4db936808965dd647cb21f18e4913026ad6",
+      "crates/game/src/gpu/heightfield/pipelines.rs": "b280dd8e1fe08702999ffbdd392372a9a28401932dfebc72f847363f376c8fc5",
+      "crates/game/src/gpu/heightfield/simulation.rs": "9c7d4438ca1295987449b2b912e2b9bfa14d1d2a372d89fc9afe814afc34d897",
+      "crates/game/src/gpu/shaders/heightfield_erosion.wgsl": "0d878baec432a379f452dadc370e99d253811d1ce257b016d348b853a1653f54",
+      "crates/mining-physics/tests/terrain_exchange.rs": "860e3ba18084bef5aded0ba69633e315c596b7b907b7d1645ba5bc1adb3b11d6"
+    },
+    "scope": "Immutable terrain bed-stage snapshots and represented-transfer reconciliation. One final transport-target restore after both stages; no new storage or physical law changes.",
+    "binary_sha256": "3236fa8e5bec598b59e722f95502fdea88b6fead30a61ea1918e57e5bceeb822",
+    "app_path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bed-exchange-2026-10-22/app/First Bend.app"
+  },
+  "checks": {
+    "cpu": {
+      "passed": 96,
+      "ignored_in_this_invocation": 31
+    },
+    "gpu": {
+      "passed": 30,
+      "ignored_in_this_invocation": 0
+    },
+    "strict_focused_all_target_clippy": true,
+    "scoped_stable_and_nightly_formatting": true,
+    "signed_packaging": true
+  },
+  "controlled_exchange": {
+    "stages_per_material": 20000,
+    "prescribed_time_seconds": 1000,
+    "cells": 1024,
+    "water_depth_m": 0.3,
+    "initial_mobile_m3": 1.920000104904176,
+    "relative_tolerance": 1e-06,
+    "residuals": [
+      {
+        "material": 0,
+        "error_m3": 1.084009186414e-06,
+        "fraction_of_initial_mobile": 5.645881e-07
+      },
+      {
+        "material": 1,
+        "error_m3": 2.892806723054e-07,
+        "fraction_of_initial_mobile": 1.50667e-07
+      },
+      {
+        "material": 2,
+        "error_m3": -4.986632013981e-07,
+        "fraction_of_initial_mobile": -2.597204e-07
+      },
+      {
+        "material": 3,
+        "error_m3": 8.561225559589e-07,
+        "fraction_of_initial_mobile": 4.458971e-07
+      }
+    ],
+    "sloped_reference_maximum_error_m": 4.141711668071e-09,
+    "erosion_timestep_control_error_m": 2.82167547383e-07,
+    "old_1024m_layer_maximum_residual_m3": 0.0037500858306884766,
+    "new_1024m_layer_measured_residual_m3": 0.0,
+    "actual_water_depth_f32_m": 0.30000001192092896
+  },
+  "timings": {
+    "before": {
+      "bulk_budget_passed": true,
+      "bulk_material_error_m3": 2.625018856861061e-05,
+      "bulk_tolerance_m3": 0.00041246746237733273,
+      "gold_balance_error_g": 6.821210263296962e-12,
+      "mean_fps": 57.6781842900035,
+      "p95_frame_ms": 30.059292000000003,
+      "passed": false,
+      "simulation_wall_ratio": 0.654818874426684,
+      "sluice_water_balance_error_m3": 0.0,
+      "water_balance_error_m3": -6.873669832430096e-06,
+      "water_presentation": {
+        "buffer_underrun_frames": 0,
+        "interpolation_alpha": 0.9467261433601379,
+        "max_capture_ms": 1.158292,
+        "max_surface_build_ms": 43.900166999999996,
+        "mean_capture_ms": 0.3710526955445545,
+        "mean_surface_build_ms": 21.483277362282873,
+        "paired_render_particles": 66075,
+        "presented_sim_time": 53.3648936552304,
+        "surface_builds": 403
+      }
+    },
+    "after-initial": {
+      "bulk_budget_passed": true,
+      "bulk_material_error_m3": 2.4471490405630902e-05,
+      "bulk_tolerance_m3": 0.000412467467247226,
+      "gold_balance_error_g": 6.366462912410498e-12,
+      "mean_fps": 56.78578296941125,
+      "p95_frame_ms": 30.242042,
+      "passed": false,
+      "simulation_wall_ratio": 0.6165191503826742,
+      "sluice_water_balance_error_m3": 0.0,
+      "water_balance_error_m3": -6.670462653346476e-06,
+      "water_presentation": {
+        "buffer_underrun_frames": 2,
+        "interpolation_alpha": 0.21053993701934814,
+        "max_capture_ms": 1.329875,
+        "max_surface_build_ms": 125.735292,
+        "mean_capture_ms": 0.3748228362068964,
+        "mean_surface_build_ms": 22.163347447084252,
+        "paired_render_particles": 66045,
+        "presented_sim_time": 55.40702088754929,
+        "surface_builds": 463
+      }
+    },
+    "after": {
+      "bulk_budget_passed": true,
+      "bulk_material_error_m3": 2.427864114906697e-05,
+      "bulk_tolerance_m3": 0.0004124674676001316,
+      "gold_balance_error_g": 7.73070496506989e-12,
+      "mean_fps": 57.30853045341734,
+      "p95_frame_ms": 30.257040999999997,
+      "passed": false,
+      "simulation_wall_ratio": 0.6124677829738495,
+      "sluice_water_balance_error_m3": 0.0,
+      "water_balance_error_m3": -6.677737509619419e-06,
+      "water_presentation": {
+        "buffer_underrun_frames": 0,
+        "interpolation_alpha": 0.7124028205871582,
+        "max_capture_ms": 1.303625,
+        "max_surface_build_ms": 65.75629199999999,
+        "mean_capture_ms": 0.38025159829059846,
+        "mean_surface_build_ms": 21.598362079059832,
+        "paired_render_particles": 66040,
+        "presented_sim_time": 55.52374965560542,
+        "surface_builds": 468
+      }
+    }
+  },
+  "motion": {
+    "sluice": {
+      "frames": 43,
+      "seconds": 3.978841125,
+      "simulation_wall_ratio": 0.6785895832460446,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 0,
+      "underruns_during_recording": 2,
+      "water_balance_error_m3": -7.257184751807699e-06,
+      "gold_balance_error_g": 5.4569682106375694e-12
+    },
+    "outlet": {
+      "frames": 28,
+      "seconds": 2.905646542,
+      "simulation_wall_ratio": 0.5563879596551436,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 0,
+      "underruns_during_recording": 6,
+      "water_balance_error_m3": -7.142174244023636e-06,
+      "gold_balance_error_g": 9.549694368615746e-12
+    },
+    "river": {
+      "frames": 32,
+      "seconds": 2.9836720420000002,
+      "simulation_wall_ratio": 0.6591430765688443,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 0,
+      "underruns_during_recording": 0,
+      "water_balance_error_m3": -7.052124388451375e-06,
+      "gold_balance_error_g": 3.637978807091713e-12
+    }
+  },
+  "native_views_inspected": [
+    "sluice",
+    "outlet",
+    "river"
+  ],
+  "new_storage_buffers": 0,
+  "additional_bed_compute_passes_per_terrain_step": 4,
+  "new_crash_reports": [],
+  "known_incomplete": [
+    "General terrain settling timestep convergence: 1mm and per-step heuristics remain, tracked in sluice-terrain-settling.",
+    "Full soil/mass/porosity/contact, constructed pads/pools, shaker decks, dense-phase calibration and high quality environment remain in the active full plan.",
+    "Real-time physical throughput still fails; final native benchmark is slower than this turn baseline.",
+    "Presentation underruns under capture remain; screenshots and shared workstation load affect cadence.",
+    "Short global bulk budgets do not establish long-duration pond retention or calibrated recovery."
+  ],
+  "prior_cloud_ci": {
+    "head": "4323fc91ecdf017ec6cc0aa7ad2de8ffbb2c1b16",
+    "url": "https://github.com/doctorspritz/goldrush-sluice-3d/actions/runs/39721751980",
+    "mining": "success",
+    "legacy_failures": [
+      "Format",
+      "Test game"
+    ]
+  },
+  "full_objective_complete": false,
+  "media_sha256": {
+    "png": "f56f0f2ca399f4d311b620bca3498d57fd9b023298d3fc9d5c2fae04def1429f",
+    "mp4": "9b4d4e3f087531d3344d134b1f3a0abff87eb599cee1852682deffcbd4182884"
+  },
+  "physical_parameters_changed": false
+}

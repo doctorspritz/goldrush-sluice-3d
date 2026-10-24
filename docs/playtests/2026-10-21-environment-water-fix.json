@@ -1,0 +1,111 @@
+{
+  "demo": {
+    "sim_seconds": 40.01666875369847,
+    "ledger": {
+      "initial_stored_m3": 14.113124481402338,
+      "external_inflow_m3": 4.800000414252281,
+      "boundary_outflow_m3": 5.5600084961161516,
+      "baseline_sim_time": 0.0,
+      "legacy_baseline": false
+    },
+    "stored_m3": 13.353109118870904,
+    "error_m3": -7.280667563946963e-06,
+    "error_ml": -7.280667563946963,
+    "impact_depth_m": 0.10823733359575272,
+    "outlet_connected_to_river": true,
+    "wet_component_cells": 2601,
+    "water_particles": 110881,
+    "grains": 1599,
+    "processed_m3": 0.003999999999999882,
+    "hopper_m3": 0.8051900781728167,
+    "returned_m3": 0.13478212465970785,
+    "compressed_bytes": 9384194,
+    "sha256": "153d24b16319539cd38db9c342653ae455fc7be0a41633bfb3c163e9d5a8377f"
+  },
+  "gpu_tests": {
+    "closed_domain_tolerance_m3": 1e-07,
+    "open_boundary_tolerance_m3": 2e-07,
+    "thin_film_tolerance_m3": 1e-08,
+    "material_export_tolerance_m3": 1e-08,
+    "cases": [
+      "aggregate outgoing donor budget",
+      "closed domain",
+      "-X",
+      "+X",
+      "-Z",
+      "+Z",
+      "all open corners",
+      "four suspended channels including exports",
+      "0.5mm downhill runoff",
+      "lake at rest wet/dry boundary"
+    ]
+  },
+  "sluice_solver": "unchanged original FLIP/APIC pressure, CPU DEM and riffle geometry",
+  "live_20_seconds": {
+    "detail_revision": 3,
+    "exported_gold_g": 5.7445961128108145,
+    "exported_material_m3": [
+      0.0,
+      0.5567478838337486,
+      0.0,
+      0.6287050022066907
+    ],
+    "fluid_surface_ready": true,
+    "gold_balance_error_g": 5.9117155615240335e-12,
+    "grains": 1955,
+    "last_worker_tick_ms": 48.067458,
+    "mean_fps": 52.29231269912469,
+    "one_second_ratios": [
+      0.7955744722646012,
+      0.7873732006864911,
+      0.7999382800885223,
+      0.8441461585753043,
+      0.8418936412454534,
+      0.8660352275580827,
+      0.6626580068243733,
+      0.7635285721517057,
+      0.7990066766724784,
+      0.8119358634587271,
+      0.7958139275633422,
+      0.7974718606258362,
+      0.7815845459392602,
+      0.8175064855696966,
+      0.7602987296043071,
+      0.777603505556221,
+      0.7119636204554504,
+      0.8333298351432542,
+      0.8071545614477935
+    ],
+    "outflow_particles": 10782,
+    "p95_frame_ms": 48.229,
+    "passed": false,
+    "simulation_seconds": 15.816667491570115,
+    "simulation_wall_ratio": 0.7900126419789384,
+    "sluice_water_balance_error_m3": 0.0,
+    "stored_water_m3": 13.093326766902663,
+    "terrain_fine_cells": 357,
+    "terrain_water_splats": 2777,
+    "wall_seconds": 20.020777708,
+    "warmup_seconds": 5,
+    "water_balance": {
+      "baseline_sim_time": 0.0,
+      "boundary_outflow_m3": 8.03978848450301,
+      "external_inflow_m3": 7.020000605843961,
+      "initial_stored_m3": 14.113124481402338,
+      "legacy_baseline": false
+    },
+    "water_balance_error_m3": -9.835840625527226e-06,
+    "water_mean_downstream_ms": 0.37773939967155457,
+    "water_particles": 110440,
+    "worker_busy_fraction": 0.9229487930239799,
+    "worker_mean_ms": 34.66820379174485,
+    "worker_packets": 533,
+    "worker_phases_mean_ms": [
+      1.5958032270168856,
+      22.375985028142594,
+      5.932234348968107,
+      1.149784559099437,
+      1.9362994127579725
+    ]
+  }
+}

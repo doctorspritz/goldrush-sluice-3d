@@ -1,0 +1,81 @@
+{
+  "artifact_root": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-followup-2026-10-22",
+  "source": {
+    "base": "fcc33f29922e5b4a623d658e4467d3695a7a1a99",
+    "files": {
+      "crates/mining/src/water_compose.wgsl": "a200584d8e44c842d90b95514c42a849f9b30499b981f49b452a71382a077622",
+      "crates/mining-physics/tests/water_optics.rs": "619b7a7e65218fa5906e78d705720d79f00cc6a8ab863e3f3f037ff22aaed52e"
+    },
+    "binary_sha256": "f83da3c2f4bf81dee4aff1904c5831cba737e9da3b447f57bb434ad400d971bc",
+    "scope": "Channel volume-gradient and optical-column spatial filtering only. Rejected depth-plane trials retained separately.",
+    "preserved_unrelated_work": {
+      "crates/mining-physics/tests/terrain_exchange.rs": "4cf749b31c74f386ebb0598402a3c0f858e9e3602ab4292767fc87967721ac46"
+    },
+    "app_path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-followup-2026-10-22/release/First Bend.app"
+  },
+  "before": {
+    "mean_fps": 57.13251317292731,
+    "p95_frame_ms": 30.774708,
+    "simulation_wall_ratio": 0.6197110920388567,
+    "water_balance_error_m3": -6.63211695695054e-06,
+    "sluice_water_balance_error_m3": 0.0,
+    "gold_balance_error_g": 4.092726157978177e-12,
+    "bulk_material_error_m3": 2.5397880222044478e-05,
+    "passed": false
+  },
+  "after": {
+    "mean_fps": 57.53802058317885,
+    "p95_frame_ms": 30.053583,
+    "simulation_wall_ratio": 0.6179636765369874,
+    "water_balance_error_m3": -7.1544644981713645e-06,
+    "sluice_water_balance_error_m3": 0.0,
+    "gold_balance_error_g": 0.0,
+    "bulk_material_error_m3": 2.541402852784813e-05,
+    "passed": false
+  },
+  "motion": {
+    "wide-live": {
+      "frames": 83,
+      "wall_seconds": 5.973054583,
+      "simulation_wall_ratio": 0.6724644518709161,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 0,
+      "underruns_during_recording": 0
+    },
+    "wide-outlet": {
+      "frames": 33,
+      "wall_seconds": 2.9534784160000003,
+      "simulation_wall_ratio": 0.7053829920345805,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 0,
+      "underruns_during_recording": 1
+    }
+  },
+  "frozen_comparison": {
+    "sim_time": 40.01666875369847,
+    "solver_steps": 4800,
+    "selected_physical_tracks_equal": true,
+    "flow_fields_equal": true
+  },
+  "checks": {
+    "application_passed": 33,
+    "profiling_microbenchmark_ignored": 1,
+    "gpu_optics_explicit_passed": 4,
+    "strict_scoped_clippy": true,
+    "stable_test_formatting": true,
+    "signed_bundle": true
+  },
+  "limits": [
+    "Shader filtering is a presentation approximation, not an exact volume-preserving isosurface.",
+    "Isolated water kernels, grain stippling and coarse environment remain.",
+    "Both loaded benchmarks correctly fail the combined real-time gate.",
+    "One presentation underrun occurs in the outlet recording.",
+    "Unscoped strict Clippy encounters 10 unchanged sim3d lints; required no-deps focused Clippy passes.",
+    "Legacy full-workspace Format/Test game failures are outside this slice."
+  ],
+  "new_crash_reports": [],
+  "media_sha256": {
+    "png": "b3fdc4fbb07235cd145a0433ec48f937e693928754fbdab9904c0f126598069d",
+    "mp4": "83487c8f7d2f7aa4481c61dd6d7d09b3116eb6f54866e7e66e54d7911840d9ce"
+  }
+}

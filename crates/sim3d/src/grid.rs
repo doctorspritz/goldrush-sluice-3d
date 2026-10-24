@@ -574,57 +574,28 @@ impl Grid3D {
                     let idx = self.cell_index(i as usize, j as usize, k as usize);
                     let val = self.sdf[idx];
 
-                    // Get minimum neighbor distance for each axis (using both directions)
-                    // This implements proper upwind scheme for Eikonal solver
-                    let phi_x_minus = if i > 0 {
-                        self.sdf[self.cell_index((i - 1) as usize, j as usize, k as usize)]
-                    } else {
-                        f32::INFINITY
-                    };
-                    let phi_x_plus = if i < w - 1 {
-                        self.sdf[self.cell_index((i + 1) as usize, j as usize, k as usize)]
-                    } else {
-                        f32::INFINITY
-                    };
-                    let phi_x = phi_x_minus.min(phi_x_plus);
-
-                    let phi_y_minus = if j > 0 {
-                        self.sdf[self.cell_index(i as usize, (j - 1) as usize, k as usize)]
-                    } else {
-                        f32::INFINITY
-                    };
-                    let phi_y_plus = if j < h - 1 {
-                        self.sdf[self.cell_index(i as usize, (j + 1) as usize, k as usize)]
-                    } else {
-                        f32::INFINITY
-                    };
-                    let phi_y = phi_y_minus.min(phi_y_plus);
-
-                    let phi_z_minus = if k > 0 {
-                        self.sdf[self.cell_index(i as usize, j as usize, (k - 1) as usize)]
-                    } else {
-                        f32::INFINITY
-                    };
-                    let phi_z_plus = if k < d - 1 {
-                        self.sdf[self.cell_index(i as usize, j as usize, (k + 1) as usize)]
-                    } else {
-                        f32::INFINITY
-                    };
-                    let phi_z = phi_z_minus.min(phi_z_plus);
-
-                    if val >= 0.0 {
-                        // Outside: use Eikonal solver for positive distances
-                        if phi_x < f32::INFINITY || phi_y < f32::INFINITY || phi_z < f32::INFINITY {
-                            let new_val = self.solve_eikonal(phi_x, phi_y, phi_z, dx);
-                            self.sdf[idx] = self.sdf[idx].min(new_val);
+                    // Solve unsigned distance independently on each side of
+                    // the interface. Taking min of signed negative neighbours
+                    // selected the deepest sentinel and prevented inward sweep;
+                    // mixing opposite signs also shrank the half-cell seeds.
+                    let solid = self.solid[idx];
+                    let phase_distance = |ii: i32, jj: i32, kk: i32| {
+                        if ii < 0 || ii >= w || jj < 0 || jj >= h || kk < 0 || kk >= d {
+                            return f32::INFINITY;
                         }
-                    } else if val < 0.0 {
-                        // Inside: propagate negative distances
-                        if phi_x > -f32::INFINITY || phi_y > -f32::INFINITY || phi_z > -f32::INFINITY
-                        {
-                            let new_val = -self.solve_eikonal(-phi_x, -phi_y, -phi_z, dx);
-                            self.sdf[idx] = self.sdf[idx].max(new_val);
+                        let neighbour = self.cell_index(ii as usize, jj as usize, kk as usize);
+                        if self.solid[neighbour] == solid {
+                            self.sdf[neighbour].abs()
+                        } else {
+                            f32::INFINITY
                         }
+                    };
+                    let phi_x = phase_distance(i - 1, j, k).min(phase_distance(i + 1, j, k));
+                    let phi_y = phase_distance(i, j - 1, k).min(phase_distance(i, j + 1, k));
+                    let phi_z = phase_distance(i, j, k - 1).min(phase_distance(i, j, k + 1));
+                    if phi_x.is_finite() || phi_y.is_finite() || phi_z.is_finite() {
+                        let distance = val.abs().min(self.solve_eikonal(phi_x, phi_y, phi_z, dx));
+                        self.sdf[idx] = if solid { -distance } else { distance };
                     }
                 }
             }
@@ -981,5 +952,133 @@ mod tests {
             expected,
             result
         );
+    }
+
+    #[test]
+    fn eikonal_signed_planes_preserve_physical_distance_in_both_phases() {
+        for h in [0.01f32, 0.125] {
+            for axis in 0..3 {
+                for inverted in [false, true] {
+                    let shape = [13usize, 19, 11];
+                    let cut = shape[axis] / 2;
+                    let mut grid = Grid3D::new(shape[0], shape[1], shape[2], h);
+                    for z in 0..shape[2] {
+                        for y in 0..shape[1] {
+                            for x in 0..shape[0] {
+                                if ([x, y, z][axis] < cut) ^ inverted {
+                                    grid.set_solid(x, y, z);
+                                }
+                            }
+                        }
+                    }
+                    grid.compute_sdf();
+                    for z in 0..shape[2] {
+                        for y in 0..shape[1] {
+                            for x in 0..shape[0] {
+                                let expected = ([x, y, z][axis] as f32 + 0.5 - cut as f32)
+                                    * h
+                                    * if inverted { -1. } else { 1. };
+                                let value = grid.sdf[grid.cell_index(x, y, z)];
+                                let tolerance = 32. * f32::EPSILON * expected.abs().max(h);
+                                assert!((value-expected).abs()<=tolerance,"axis={axis},inverted={inverted},h={h},cell={x},{y},{z}: {value} vs {expected}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn eikonal_complement_has_opposite_distance_without_sentinels_or_steep_edges() {
+        let (nx, ny, nz, h) = (17, 13, 11, 0.01);
+        let mut a = Grid3D::new(nx, ny, nz, h);
+        let mut b = Grid3D::new(nx, ny, nz, h);
+        for z in 0..nz {
+            for y in 0..ny {
+                for x in 0..nx {
+                    let solid = y < 3
+                        || z < 2
+                        || ((4..10).contains(&x) && (3..8).contains(&y) && (2..8).contains(&z));
+                    if solid {
+                        a.set_solid(x, y, z);
+                    } else {
+                        b.set_solid(x, y, z);
+                    }
+                }
+            }
+        }
+        a.compute_sdf();
+        b.compute_sdf();
+        let sentinel = (nx + ny + nz) as f32 * h;
+        for z in 0..nz {
+            for y in 0..ny {
+                for x in 0..nx {
+                    let i = a.cell_index(x, y, z);
+                    let value = a.sdf[i];
+                    assert!(
+                        value.is_finite() && value.abs() < sentinel,
+                        "unpropagated sentinel at{x},{y},{z}: {value}"
+                    );
+                    assert_eq!(
+                        value, -b.sdf[i],
+                        "solid/air complement changed the distance magnitude"
+                    );
+                    assert_eq!(value < 0., a.solid[i], "distance changed geometric sign");
+                    for (xx, yy, zz) in [(x + 1, y, z), (x, y + 1, z), (x, y, z + 1)] {
+                        if xx < nx && yy < ny && zz < nz {
+                            let difference = (value - a.sdf[a.cell_index(xx, yy, zz)]).abs();
+                            assert!(
+                                difference <= h * (1. + 64. * f32::EPSILON * nx as f32),
+                                "nonphysical distance slope {difference} / {h}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn eikonal_riffle_knots_have_bounded_interpolated_contact_gradients() {
+        let (n, h) = (16usize, 0.01);
+        let mut grid = Grid3D::new(n, n, n, h);
+        for z in 0..n {
+            for y in 0..n {
+                for x in 0..n {
+                    if y < 3
+                        || z == 0
+                        || z == n - 1
+                        || (((3..6).contains(&x) || (9..12).contains(&x)) && y < 5)
+                    {
+                        grid.set_solid(x, y, z);
+                    }
+                }
+            }
+        }
+        grid.compute_sdf();
+        for z in 1..n - 1 {
+            for y in 1..n - 1 {
+                for x in 1..n - 1 {
+                    for offset in [Vec3::splat(0.5), Vec3::new(0.99, 0.37, 0.51)] {
+                        let point = (Vec3::new(x as f32, y as f32, z as f32) + offset) * h;
+                        let (distance, gradient) = crate::clump::sample_sdf_with_gradient(
+                            &grid.sdf,
+                            point,
+                            Vec3::ZERO,
+                            n,
+                            n,
+                            n,
+                            h,
+                        );
+                        assert!(distance.is_finite() && gradient.is_finite());
+                        assert!(
+                            gradient.length() <= 3f32.sqrt() * (1. + 128. * f32::EPSILON),
+                            "unbounded contact gradient at{point:?}: {gradient:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

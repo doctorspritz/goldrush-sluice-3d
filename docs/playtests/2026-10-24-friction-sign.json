@@ -1,0 +1,344 @@
+{
+  "base_commit": "67c4df9ba2e3fc30236a7eada6b0724e63a1d863",
+  "candidates_adopted": false,
+  "production_kernel_unchanged": true,
+  "runtime_contact_prefix_byte_identical": true,
+  "runtime_source_changes": [],
+  "test_only_attachment": "vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_constraint_element.rs",
+  "test_sources_sha256": {
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_constraint_element.rs": "c3946c3ff68d2b30e56385e4eb4180eb1291bb33f32bc4089293c9f42d149bf5",
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/friction_sign_tests.rs": "e78343fe267d2a0763cf8cb653e3b43b9967b280659048480bf2424161a62ec5"
+  },
+  "docs_sha256": {
+    "docs/physics/friction-sign-experiment.md": "e6235b59107c50d1cec0a7a5f4e91a649eace631b02f795152c17d0052718557",
+    "plans/2026-10-22-realistic-operation.md": "570585e70753c49801bd079f3fe50d5d31d28bc9be4a60d6a7e63ae888c84d9b"
+  },
+  "lockfile_scope": {
+    "vendor_sha256": "73773551273e5df29c23bc5f4b73a914374c1477ebab6ae1e1dd017524736ce9",
+    "vendor_wide": "1.6.1",
+    "application_sha256": "2b2d55c0b24d670216ed3ad3cab97e7f7b6ac3bdc5ddbf1eebd8b3e4d4f87034",
+    "application_wide": "1.7.1",
+    "application_dependency_graph_benchmarked": false
+  },
+  "features": [
+    "enhanced-determinism",
+    "serde-serialize"
+  ],
+  "profile": "playable",
+  "architecture": "arm64",
+  "rustc": "rustc 1.95.0-nightly (39052daf9 2026-01-22)\nbinary: rustc\ncommit-hash: 39052daf937d46373ac29778e1b8853c52c0cc25\ncommit-date: 2026-01-22\nhost: aarch64-apple-darwin\nrelease: 1.95.0-nightly\nLLVM version: 21.1.8\n",
+  "timing_rows": [
+    {
+      "dataset": "broad-stress",
+      "repeat": 0,
+      "mode": 0,
+      "simd_calls": 1049088,
+      "seconds": 0.283882292,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 0,
+      "mode": 1,
+      "simd_calls": 1049088,
+      "seconds": 0.39870725,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 0,
+      "mode": 2,
+      "simd_calls": 1049088,
+      "seconds": 0.297077,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 1,
+      "mode": 2,
+      "simd_calls": 1049088,
+      "seconds": 0.292506709,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 1,
+      "mode": 1,
+      "simd_calls": 1049088,
+      "seconds": 0.400307666,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 1,
+      "mode": 0,
+      "simd_calls": 1049088,
+      "seconds": 0.283374625,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 2,
+      "mode": 0,
+      "simd_calls": 1049088,
+      "seconds": 0.283899584,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 2,
+      "mode": 1,
+      "simd_calls": 1049088,
+      "seconds": 0.399485583,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 2,
+      "mode": 2,
+      "simd_calls": 1049088,
+      "seconds": 0.29891275,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 3,
+      "mode": 2,
+      "simd_calls": 1049088,
+      "seconds": 0.297631583,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 3,
+      "mode": 1,
+      "simd_calls": 1049088,
+      "seconds": 0.402798458,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 3,
+      "mode": 0,
+      "simd_calls": 1049088,
+      "seconds": 0.282738709,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 4,
+      "mode": 0,
+      "simd_calls": 1049088,
+      "seconds": 0.28536525,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 4,
+      "mode": 1,
+      "simd_calls": 1049088,
+      "seconds": 0.402469375,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "broad-stress",
+      "repeat": 4,
+      "mode": 2,
+      "simd_calls": 1049088,
+      "seconds": 0.2916455,
+      "checksum": "8.406005486174279e7"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 0,
+      "mode": 0,
+      "simd_calls": 1048640,
+      "seconds": 0.27966325,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 0,
+      "mode": 1,
+      "simd_calls": 1048640,
+      "seconds": 0.349023125,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 0,
+      "mode": 2,
+      "simd_calls": 1048640,
+      "seconds": 0.329545083,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 1,
+      "mode": 2,
+      "simd_calls": 1048640,
+      "seconds": 0.328662584,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 1,
+      "mode": 1,
+      "simd_calls": 1048640,
+      "seconds": 0.349706459,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 1,
+      "mode": 0,
+      "simd_calls": 1048640,
+      "seconds": 0.28448625,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 2,
+      "mode": 0,
+      "simd_calls": 1048640,
+      "seconds": 0.2896865,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 2,
+      "mode": 1,
+      "simd_calls": 1048640,
+      "seconds": 0.349028083,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 2,
+      "mode": 2,
+      "simd_calls": 1048640,
+      "seconds": 0.331079917,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 3,
+      "mode": 2,
+      "simd_calls": 1048640,
+      "seconds": 0.329607875,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 3,
+      "mode": 1,
+      "simd_calls": 1048640,
+      "seconds": 0.351513208,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 3,
+      "mode": 0,
+      "simd_calls": 1048640,
+      "seconds": 0.286057084,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 4,
+      "mode": 0,
+      "simd_calls": 1048640,
+      "seconds": 0.283669375,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 4,
+      "mode": 1,
+      "simd_calls": 1048640,
+      "seconds": 0.347698167,
+      "checksum": "9.386738749979064e4"
+    },
+    {
+      "dataset": "bounded-synthetic",
+      "repeat": 4,
+      "mode": 2,
+      "simd_calls": 1048640,
+      "seconds": 0.334014375,
+      "checksum": "9.386738749979064e4"
+    }
+  ],
+  "timing_summary": {
+    "broad-stress": {
+      "median_seconds": {
+        "0": 0.283882292,
+        "1": 0.400307666,
+        "2": 0.297077
+      },
+      "candidate1_time_increase_pct": 41.01184796690313,
+      "candidate2_time_increase_pct": 4.647950355424069
+    },
+    "bounded-synthetic": {
+      "median_seconds": {
+        "0": 0.28448625,
+        "1": 0.349028083,
+        "2": 0.329607875
+      },
+      "candidate1_time_increase_pct": 22.687153772809765,
+      "candidate2_time_increase_pct": 15.8607401939461
+    }
+  },
+  "scalar_cases_per_candidate": 32781,
+  "simd_components_per_candidate": 262248,
+  "simd_width": 4,
+  "sliding_overlapping_batches": 32762,
+  "qualified_batches": 2602,
+  "certified_steps": 38382,
+  "ambiguous_steps": 24066,
+  "kernel_tests_passed": 8,
+  "timing_executed_separately": true,
+  "clippy": {
+    "exit_code": 0,
+    "new_module_clippy_all_denied": true,
+    "unchanged_runtime_warnings": 2,
+    "strict_whole_vendor_pass_claimed": false
+  },
+  "format_check_exit": 0,
+  "ftz_counterexample": "explicit emulation; hardware FP mode not changed",
+  "negative_timing_evidence_is_synthetic": true,
+  "complete_bank_replay_executed": false,
+  "native_app_run_this_stage": false,
+  "real_time_improvement_claimed": false,
+  "physical_accuracy_gate_closed": false,
+  "render_app_preserved_sha256": "7b4f162abf3642fd216e87413bea5b5536b2bd96e8dce5bd8d17530424b78e3a",
+  "cleanup_summary": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=14 rss_mib=272.8\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=56 rss_mib=1100.5\n",
+  "heavy_jobs_run_serially": true,
+  "crash_reports_unchanged": true,
+  "original_dirty_paths_preserved": 9,
+  "local_artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/friction-sign-20261024",
+  "final_logs_sha256": {
+    "final-kernel-controls.log": "0f5c7274593e16dad549cbd572239c8fa178680565c20d4c574aabb98606d39f",
+    "final-timing.log": "7396a5f0ff36991b91fa45293c3f2f811d3a913f3973ba85e31f91c81e0e8660",
+    "clippy.log": "e01d9e8cb7539cfe6c2d7be83ed7d58b4a9a4fc0b61781c2822ae4f4a43b72a5",
+    "cleanup.log": "ffbd79ad4d1971b3a7cfc3dceef7653c741b5d87118974752d1a36ce3daf916b",
+    "fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "retained_development_failures": [
+    "differential.log",
+    "initial-compile-failure.log",
+    "final-controls.log"
+  ],
+  "earlier_short_or_partial_result_timings_superseded": [
+    "timing-initial.log",
+    "timing-hoisted.log"
+  ],
+  "remaining": [
+    "actual loaded SIMD distribution",
+    "accurate faster solver",
+    "retained-soil energy closure",
+    "loaded digging and refinement",
+    "all unfinished operation stages"
+  ],
+  "full_goal_complete": false
+}

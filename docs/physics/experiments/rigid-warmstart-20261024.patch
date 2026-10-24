@@ -1,0 +1,523 @@
+diff --git a/crates/mining-sim/src/contact_history.rs b/crates/mining-sim/src/contact_history.rs
+--- a/crates/mining-sim/src/contact_history.rs
++++ b/crates/mining-sim/src/contact_history.rs
+@@ -69,6 +69,16 @@
+         self.dispatcher
+     }
+     pub fn encode(&self) -> Result<Vec<u8>, String> {
++        // This experimental initializer has no admitted/versioned save policy.
++        // Never silently serialize it as a legacy numerical world: its Rapier
++        // parameter is skipped solely to keep existing schema1 bytes intact.
++        if self
++            .world
++            .integration_parameters
++            .energy_admissible_rigid_warmstart
++        {
++            return Err("Experimental warm-start policy has no versioned persistence".into());
++        }
+         let payload = codec().serialize(&self.world).map_err(|e| e.to_string())?;
+         let mut bytes = Vec::with_capacity(HEADER + payload.len());
+         bytes.extend_from_slice(MAGIC);
+@@ -124,3 +134,44 @@
+         ..Default::default()
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn experimental_warm_start_cannot_silently_lose_its_policy_on_save() {
++        let mut history =
++            ContactHistory::from_world(r::PhysicsWorld::default(), Dispatcher::Default);
++        let legacy = history.encode().unwrap();
++        let restored = ContactHistory::decode(&legacy).unwrap();
++        assert!(
++            !restored
++                .world()
++                .integration_parameters
++                .energy_admissible_rigid_warmstart
++        );
++        assert_eq!(restored.encode().unwrap(), legacy);
++        history
++            .world_mut()
++            .integration_parameters
++            .energy_admissible_rigid_warmstart = true;
++        assert!(history
++            .encode()
++            .unwrap_err()
++            .contains("versioned persistence"));
++        assert!(
++            history
++                .clone()
++                .world()
++                .integration_parameters
++                .energy_admissible_rigid_warmstart
++        );
++        assert!(history.clone().encode().is_err());
++        history
++            .world_mut()
++            .integration_parameters
++            .energy_admissible_rigid_warmstart = false;
++        assert_eq!(history.encode().unwrap(), legacy);
++    }
++}
+diff --git a/crates/mining-sim/src/articulation/retained/tests.rs b/crates/mining-sim/src/articulation/retained/tests.rs
+--- a/crates/mining-sim/src/articulation/retained/tests.rs
++++ b/crates/mining-sim/src/articulation/retained/tests.rs
+@@ -951,3 +951,6 @@
+
+ #[cfg(feature = "contact-work-audit")]
+ mod contact_work;
++
++#[cfg(feature = "contact-work-audit")]
++mod warmstart_trial;
+diff --git a/crates/mining-sim/src/articulation/retained/tests/warmstart_trial.rs b/crates/mining-sim/src/articulation/retained/tests/warmstart_trial.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/mining-sim/src/articulation/retained/tests/warmstart_trial.rs
+@@ -0,0 +1,326 @@
++//! Opt-in numerical diagnostics, never Session admission or saved continuation.
++use super::*;
++use serde_json::{json, Value};
++
++const PASSIVITY_J: f64 = 0.01;
++const STEPS: usize = 300;
++const HZ: u16 = 480;
++
++fn output(variable: &str) -> std::path::PathBuf {
++    let path =
++        std::path::PathBuf::from(std::env::var_os(variable).expect("fresh diagnostic JSON path"));
++    assert!(!path.exists(), "refuse to overwrite {}", path.display());
++    path
++}
++fn energy(owner: &RetainedSoil, env: &Environment<'_>) -> f64 {
++    super::contact_geometry::independent_energy(owner, env.gravity)
++}
++fn inventory(owner: &RetainedSoil) -> Value {
++    let model = owner.model.as_ref().unwrap();
++    let dynamic: Vec<_> = model
++        .world
++        .bodies
++        .iter()
++        .filter(|(_, body)| body.is_dynamic())
++        .collect();
++    let (machine, _) = model.world.multibody_joints.get(model.joints[0]).unwrap();
++    let motor_rows: u32 = machine
++        .links()
++        .skip(1)
++        .map(|link| link.joint.data.motor_axes.bits().count_ones())
++        .sum();
++    let actuator = owner.machine().articulation.as_ref().unwrap();
++    json!({"clods":owner.soil().clods.len(),"dynamic_bodies":dynamic.len(),
++        "dynamic_mass_kg":dynamic.iter().map(|(_,body)|f64::from(body.mass())).sum::<f64>(),
++        "material":owner.soil().material(),"motor_rows":motor_rows,
++        "pump_work_j":actuator.pump_energy_j,"elastic_energy_j":actuator.feedback.elastic_j,
++        "engine_on":owner.machine().engine_on,"mechanical_hz":owner.machine().tracks.mechanical_hz,
++        "zero_stiffness_and_damping":actuator.stiffness_nm_rad.iter().chain(&actuator.damping_nms_rad).all(|value|*value==0.)})
++}
++fn full_passive_bank(value: &Value) -> bool {
++    value["clods"] == 1040
++        && value["dynamic_bodies"] == 1045
++        && value["motor_rows"] == 0
++        && value["pump_work_j"] == 0.
++        && value["elastic_energy_j"] == 0.
++        && value["engine_on"] == false
++        && value["mechanical_hz"] == HZ
++        && value["zero_stiffness_and_damping"] == true
++}
++fn same_inventory(a: &Value, b: &Value) -> bool {
++    ["clods", "dynamic_bodies", "dynamic_mass_kg", "material"]
++        .into_iter()
++        .all(|key| a[key] == b[key])
++}
++// The experimental flag is deliberately absent from serde. Comparing all
++// serialized parameters never changes the candidate world's flag or state.
++fn physical_parameters(owner: &RetainedSoil) -> Vec<u8> {
++    bincode::serialize(&owner.model.as_ref().unwrap().world.integration_parameters).unwrap()
++}
++fn compact_phases(rows: &rapier3d::contact_work_audit::WorkReport, gravity: Vec3) -> Value {
++    let mut value = serde_json::to_value(rows).unwrap();
++    let contact_blocks = value
++        .as_object_mut()
++        .unwrap()
++        .remove("contacts")
++        .unwrap()
++        .as_array()
++        .unwrap()
++        .len();
++    let phases = value["phases"].as_array().unwrap();
++    let total = |phase: &Value| {
++        phase["kinetic_j"].as_f64().unwrap()
++            - (0..3)
++                .map(|i| f64::from(gravity[i]) * phase["mass_position_kg_m"][i].as_f64().unwrap())
++                .sum::<f64>()
++    };
++    let delta = phases
++        .first()
++        .zip(phases.last())
++        .map(|(first, last)| total(last) - total(first));
++    let island_body_counts: Vec<_> = value["islands"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .map(|island| island.as_array().unwrap().len())
++        .collect();
++    json!({"generic_contact_blocks":contact_blocks,"island_body_counts":island_body_counts,
++        "phase_energy_delta_j":delta,"all_phase_dynamic_bodies_1045":!phases.is_empty() && phases.iter().all(|phase|phase["dynamic_bodies"]==1045),"phases":phases})
++}
++fn observed_step(owner: &mut RetainedSoil, env: &Environment<'_>) -> Value {
++    let initial_energy = energy(owner, env);
++    let before = inventory(owner);
++    let started = std::time::Instant::now();
++    let (result, rows) = rapier3d::contact_work_audit::record(|| {
++        owner.step(MachineInput::default(), 1. / f32::from(HZ), env)
++    });
++    let completed = result.is_ok();
++    let final_energy = completed.then(|| energy(owner, env));
++    let after = completed.then(|| inventory(owner));
++    let phases = compact_phases(&rows, env.gravity);
++    let delta = final_energy.map(|last| last - initial_energy);
++    let agreement = delta
++        .zip(phases["phase_energy_delta_j"].as_f64())
++        .map(|(body, phase)| (body - phase).abs());
++    json!({"completed":completed,"refusal":result.err(),"before":before,"after":after,
++        "initial_body_energy_j":initial_energy,"final_body_energy_j":final_energy,
++        "independent_energy_delta_j":delta,"phase_body_difference_j":agreement,
++        "phase_observer_agrees":agreement.is_some_and(|difference|difference<0.0001),
++        "work_observer":phases,"observer_wall_ms":started.elapsed().as_secs_f64()*1000.,
++        "observer_timing_is_not_a_runtime_benchmark":true,
++        "passivity_gate_j":PASSIVITY_J,"passivity_gate_passed":delta.is_some_and(|gain|gain<=PASSIVITY_J)})
++}
++
++#[test]
++#[ignore = "explicit saved full-bank warm-guess comparison; physical gate is reported separately"]
++fn saved_bank_energy_admissible_warmstart_trial() {
++    let path = output("SLUICE_WARMSTART_TRIAL");
++    let session = bank();
++    let obstacles = session.mechanical_obstacles();
++    let env = Environment {
++        gravity: -Vec3::Y * 9.81,
++        site: Some(&session.site),
++        obstacles: &obstacles,
++        loads: &[],
++    };
++    let bytes = std::fs::read(std::env::var_os("SLUICE_ENERGY_BOUNDARY").unwrap()).unwrap();
++    let reference_bytes =
++        std::fs::read(std::env::var_os("SLUICE_ENERGY_REFERENCE").unwrap()).unwrap();
++    let reference = RetainedSoil::decode(&reference_bytes, &env).unwrap();
++    let mut baseline = RetainedSoil::decode(&bytes, &env).unwrap();
++    let mut candidate = RetainedSoil::decode(&bytes, &env).unwrap();
++    same(
++        &baseline,
++        &candidate,
++        "identical independently decoded starting boundary",
++    );
++    assert_eq!(
++        baseline.encode().unwrap(),
++        bytes,
++        "legacy before boundary changed"
++    );
++    assert_eq!(
++        reference.encode().unwrap(),
++        reference_bytes,
++        "legacy reference encoding changed"
++    );
++    let parameters = physical_parameters(&baseline);
++    assert!(
++        !baseline
++            .model
++            .as_ref()
++            .unwrap()
++            .world
++            .integration_parameters
++            .energy_admissible_rigid_warmstart
++    );
++    candidate
++        .model
++        .as_mut()
++        .unwrap()
++        .world
++        .integration_parameters
++        .energy_admissible_rigid_warmstart = true;
++    assert_eq!(parameters, physical_parameters(&candidate));
++    let persistence_refusal = candidate
++        .encode()
++        .expect_err("candidate must not persist unversioned policy");
++    let initial = inventory(&candidate);
++    assert!(full_passive_bank(&initial));
++    let baseline_report = observed_step(&mut baseline, &env);
++    same(
++        &baseline,
++        &reference,
++        "default policy reference continuation",
++    );
++    assert_eq!(
++        baseline.encode().unwrap(),
++        reference_bytes,
++        "default complete after-state changed"
++    );
++    let candidate_report = observed_step(&mut candidate, &env);
++    let completed = candidate_report["completed"] == true;
++    let candidate_parameters_unchanged = completed && parameters == physical_parameters(&candidate);
++    let candidate_inventory_preserved = completed
++        && same_inventory(&initial, &candidate_report["after"])
++        && full_passive_bank(&candidate_report["after"]);
++    let report = json!({"requested_steps":1,"hz":HZ,"initial":initial,
++        "baseline_before_roundtrip_exact":true,"baseline_after_reference_exact":true,
++        "all_physical_parameters_except_experimental_flag_unchanged":candidate_parameters_unchanged,
++        "candidate_persistence_refused":true,"persistence_refusal":persistence_refusal,
++        "candidate_saved_continuation_claimed":false,"candidate_inventory_preserved":candidate_inventory_preserved,
++        "baseline":baseline_report,"candidate":candidate_report,
++        "passivity_gate_j":PASSIVITY_J,
++        "candidate_passivity_gate_passed":candidate_report["passivity_gate_passed"],
++        "diagnostic_success_is_not_physical_acceptance":true,"full_game_admission":false});
++    std::fs::write(&path, serde_json::to_vec(&report).unwrap()).unwrap();
++    assert!(report["baseline"]["phase_observer_agrees"] == true);
++    assert!(report["baseline"]["work_observer"]["all_phase_dynamic_bodies_1045"] == true);
++    if completed {
++        assert!(candidate_parameters_unchanged && candidate_inventory_preserved);
++        assert!(report["candidate"]["phase_observer_agrees"] == true);
++        assert!(report["candidate"]["work_observer"]["all_phase_dynamic_bodies_1045"] == true);
++    }
++    println!(
++        "WARM GUESS saved trial completed={completed} physical_gate={} path={}",
++        report["candidate_passivity_gate_passed"],
++        path.display()
++    );
++}
++
++#[test]
++#[ignore = "explicit complete 300-step full-bank passive numerical experiment"]
++fn complete_bank_energy_admissible_warmstart_trajectory() {
++    let path = output("SLUICE_WARMSTART_TRAJECTORY");
++    let mut session = bank();
++    session.machine.engine_on = false;
++    session.machine.tracks.mechanical_hz = HZ;
++    let actuator = session.machine.articulation.as_mut().unwrap();
++    actuator.stiffness_nm_rad.fill(0.);
++    actuator.damping_nms_rad.fill(0.);
++    let obstacles = session.mechanical_obstacles();
++    let env = Environment {
++        gravity: -Vec3::Y * 9.81,
++        site: Some(&session.site),
++        obstacles: &obstacles,
++        loads: &[],
++    };
++    let mut owner = RetainedSoil::new(
++        session.machine.clone(),
++        session.active_soil.take().unwrap(),
++        &env,
++    )
++    .unwrap();
++    assert_eq!(owner.dispatcher, Dispatcher::RigidSoilVerified);
++    let parameters = physical_parameters(&owner);
++    assert!(
++        owner
++            .model
++            .as_ref()
++            .unwrap()
++            .world
++            .integration_parameters
++            .friction_in_bias_pass
++    );
++    owner
++        .model
++        .as_mut()
++        .unwrap()
++        .world
++        .integration_parameters
++        .energy_admissible_rigid_warmstart = true;
++    let persistence_refusal = owner
++        .encode()
++        .expect_err("candidate policy must refuse persistence");
++    let initial = inventory(&owner);
++    assert!(full_passive_bank(&initial));
++    let initial_energy = energy(&owner, &env);
++    let mut last_energy = initial_energy;
++    let mut trajectory = Vec::new();
++    let mut refusal = None;
++    let mut observations_valid = true;
++    let started = std::time::Instant::now();
++    for step in 0..STEPS {
++        if let Err(error) = owner.step(MachineInput::default(), 1. / f32::from(HZ), &env) {
++            refusal = Some(
++                json!({"attempted_step":step+1,"error":error,"owner_poisoned":owner.failed()}),
++            );
++            break;
++        }
++        let current = energy(&owner, &env);
++        let delta = current - last_energy;
++        let inventory = inventory(&owner);
++        let preserved = same_inventory(&initial, &inventory) && full_passive_bank(&inventory);
++        let parameter_match = parameters == physical_parameters(&owner)
++            && owner
++                .model
++                .as_ref()
++                .unwrap()
++                .world
++                .integration_parameters
++                .energy_admissible_rigid_warmstart;
++        let feedback = owner.soil().feedback.coupled_passivity_residual_j;
++        let observer_match = (delta - feedback).abs() < 0.05;
++        observations_valid &= current.is_finite() && preserved && parameter_match && observer_match;
++        trajectory.push(json!({"step":step+1,"total_energy_j":current,"delta_energy_j":delta,
++            "reported_residual_j":feedback,"independent_feedback_agrees":observer_match,
++            "inventory":inventory,"inventory_preserved":preserved,"physical_parameters_unchanged":parameter_match,
++            "passivity_gate_passed":delta<=PASSIVITY_J}));
++        last_energy = current;
++    }
++    let completed = trajectory.len() == STEPS && refusal.is_none();
++    let violations = trajectory
++        .iter()
++        .filter(|row| row["passivity_gate_passed"] != true)
++        .count();
++    let maximum = trajectory
++        .iter()
++        .filter_map(|row| row["delta_energy_j"].as_f64())
++        .reduce(f64::max);
++    let report = json!({"requested_steps":STEPS,"completed_steps":trajectory.len(),"hz":HZ,
++        "trajectory_completed":completed,"refusal":refusal,"initial":initial,
++        "initial_energy_j":initial_energy,"last_accepted_energy_j":last_energy,
++        "net_energy_change_accepted_j":last_energy-initial_energy,"maximum_step_energy_gain_j":maximum,
++        "passivity_gate_j":PASSIVITY_J,"violations":violations,
++        "all_steps_passivity_gate_passed":completed && violations==0,
++        "observations_valid":observations_valid,"candidate_persistence_refused":true,
++        "persistence_refusal":persistence_refusal,"candidate_saved_continuation_claimed":false,
++        "physical_contact_count_or_cadence_reduction":false,"diagnostic_success_is_not_physical_acceptance":true,
++        "wall_seconds":started.elapsed().as_secs_f64(),"trajectory":trajectory,"full_game_admission":false});
++    std::fs::write(&path, serde_json::to_vec(&report).unwrap()).unwrap();
++    assert!(
++        observations_valid,
++        "independent energy/custody/parameter observations invalid; inspect report"
++    );
++    assert!(
++        completed || report["refusal"].is_object(),
++        "incomplete trajectory needs actual refusal"
++    );
++    println!(
++        "WARM GUESS trajectory accepted={}/{} violations={violations} physical_gate={} path={}",
++        report["completed_steps"],
++        STEPS,
++        report["all_steps_passivity_gate_passed"],
++        path.display()
++    );
++}
+diff --git a/vendor/rapier3d/src/dynamics/integration_parameters.rs b/vendor/rapier3d/src/dynamics/integration_parameters.rs
+--- a/vendor/rapier3d/src/dynamics/integration_parameters.rs
++++ b/vendor/rapier3d/src/dynamics/integration_parameters.rs
+@@ -291,6 +291,11 @@
+     /// Defaults false to preserve existing worlds' numerical behavior.
+     #[cfg_attr(feature="serde-serialize",serde(default))]
+     pub maximum_dissipation_friction: bool,
++    /// Experimental passive rigid Coulomb warm-start initializer. Never serialized;
++    /// callers must refuse saving until this numerical policy has a version.
++    /// Requires 3D f32, Coulomb, maximum dissipation and friction in the bias pass.
++    #[cfg_attr(feature = "serde-serialize", serde(skip))]
++    pub energy_admissible_rigid_warmstart: bool,
+     /// Number of internal Project Gauss Seidel (PGS) iterations run at each solver iteration (default: `1`).
+     pub num_internal_pgs_iterations: usize,
+     /// The number of stabilization iterations run at each solver iterations (default: `1`).
+@@ -419,6 +424,7 @@
+             num_internal_stabilization_iterations: 1,
+             num_solver_iterations: 4,
+             maximum_dissipation_friction: false,
++            energy_admissible_rigid_warmstart: false,
+             normalized_allowed_linear_error: 0.005,
+             normalized_max_corrective_velocity: 3.0,
+             // Four times the linear slop. A larger speculative
+diff --git a/vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs b/vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs
+--- a/vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs
++++ b/vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs
+@@ -1,4 +1,4 @@
+-#[cfg(all(test, feature = "dim3", feature = "f32"))]
++#[cfg(all(feature = "dim3", feature = "f32"))]
+ #[path = "rigid_warmstart_admissibility.rs"]
+ mod rigid_warmstart_admissibility;
+
+@@ -10,7 +10,7 @@
+ use crate::dynamics::solver::solver_contact_graph::ContactRef;
+ use crate::dynamics::{IntegrationParameters, MultibodyJointSet, RigidBodySet};
+ use crate::geometry::{ContactManifold, SimdSolverContact};
+-use crate::math::{Real, SimdReal, TangentImpulse, DIM, MAX_MANIFOLD_POINTS, SIMD_WIDTH};
++use crate::math::{DIM, MAX_MANIFOLD_POINTS, Real, SIMD_WIDTH, SimdReal, TangentImpulse};
+ #[cfg(feature = "dim2")]
+ use crate::utils::OrthonormalBasis;
+ use crate::utils::{self, AngularInertiaOps, CrossProduct, DotProduct, ScalarType};
+diff --git a/vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs b/vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs
+--- a/vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs
++++ b/vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs
+@@ -87,6 +87,20 @@
+
+ /// The stage machine executed by every worker. See [`SharedCtx`] for the safety contract.
+ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
++    if ctx.base_params.energy_admissible_rigid_warmstart {
++        assert!(
++            cfg!(all(feature = "dim3", feature = "f32")),
++            "admissible rigid warmstart requires 3D f32"
++        );
++        assert!(
++            !ctx.use_twist,
++            "admissible rigid warmstart does not support twist friction"
++        );
++        assert!(
++            ctx.base_params.maximum_dissipation_friction && ctx.base_params.friction_in_bias_pass,
++            "admissible rigid warmstart requires maximum-dissipation friction in both passes"
++        );
++    }
+     let sync = ctx.sync;
+     let num_chunks = ctx.num_chunks;
+     let all_chunks = 0..num_chunks;
+@@ -628,11 +642,21 @@
+                                     multibodies,
+                                     constraint,
+                                 );
+-                                constraint.warmstart(solver_bodies);
+-                                if params.maximum_dissipation_friction
+-                                    && params.friction_in_bias_pass
+-                                {
+-                                    constraint.project_warmstart(solver_bodies);
++                                if params.energy_admissible_rigid_warmstart {
++                                    #[cfg(all(feature = "dim3", feature = "f32"))]
++                                    constraint.warmstart_project_admissible(
++                                        solver_bodies,
++                                        unsafe { &*ctx.bodies },
++                                        ctx.island_bodies,
++                                        multibodies,
++                                    );
++                                } else {
++                                    constraint.warmstart(solver_bodies);
++                                    if params.maximum_dissipation_friction
++                                        && params.friction_in_bias_pass
++                                    {
++                                        constraint.project_warmstart(solver_bodies);
++                                    }
+                                 }
+                             }
+                         }
+@@ -675,9 +699,21 @@
+                                 multibodies,
+                                 constraint,
+                             );
+-                            constraint.warmstart(solver_bodies);
+-                            if params.maximum_dissipation_friction && params.friction_in_bias_pass {
+-                                constraint.project_warmstart(solver_bodies);
++                            if params.energy_admissible_rigid_warmstart {
++                                #[cfg(all(feature = "dim3", feature = "f32"))]
++                                constraint.warmstart_project_admissible(
++                                    solver_bodies,
++                                    unsafe { &*ctx.bodies },
++                                    ctx.island_bodies,
++                                    multibodies,
++                                );
++                            } else {
++                                constraint.warmstart(solver_bodies);
++                                if params.maximum_dissipation_friction
++                                    && params.friction_in_bias_pass
++                                {
++                                    constraint.project_warmstart(solver_bodies);
++                                }
+                             }
+                         }
+                     }

@@ -1,0 +1,142 @@
+{
+  "artifact_root": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-polish-2026-10-22",
+  "source": {
+    "base": "1ad9a8e9fbbf76881f4f63846d1581e2d01d4efb",
+    "overlay": {
+      "crates/mining/src/water_compose.wgsl": "a30394869cef98d16bf1ef9b66bd21b6d2e556d2c16e3791633754db1d7f2942",
+      "crates/mining-physics/tests/water_optics.rs": "2c14549e26eca46c8cd0d36f928f771a73ceae131032b9a50a45a1407be1a315"
+    },
+    "preserved_work": {
+      "crates/game/src/gpu/heightfield/pipelines.rs": "b10c6f839228dee0d17ae8441fd69a0339acbe5deb17baaddb212568a49267bf",
+      "crates/game/src/gpu/heightfield/simulation.rs": "18e364b7b96f7984bb6e70e27368c82d4115b2230f1dc9f8b7d23341c449da06",
+      "crates/game/src/gpu/shaders/heightfield_erosion.wgsl": "942b4fb5e4da83744267a0764e56ccf98512f95890a5c27b4e242ff392c3a880",
+      "crates/mining-physics/src/lib.rs": "52015ab8c8c39ae9cd505d8e59d6f6e871dec6726ad46f2f7d28c84deb63e3a7",
+      "crates/mining-physics/tests/terrain_exchange.rs": "67bdad9f874025a0b353a23d8d25544ce6c552d00e7d7035dfd619ab1ecaa839",
+      "crates/mining-sim/src/session.rs": "8b7eb93933a66eb2e092f61a5165cf5f1a712e41a9c83825cb52980ffff05762",
+      "crates/mining-sim/src/site.rs": "a92504719714c82fd22a4ae388f3db0a3feb6505e0a319ac86d87c9da97ff5c1",
+      "crates/mining-sim/tests/bed_age.rs": "59e96b40dd68ffe011cd86b65effab9dce2c7c510a76b08925a72d0c6e62c28e"
+    },
+    "source": "/private/tmp/sluice-crest-polish-source-20261022",
+    "binary_sha256": "630ed8093db0dadf8c65ffe406bc3d767922ae71c1bc49261255d93eb6144d0b",
+    "scope": "Channel normal and optical filtering, scattering lighting, and real-GPU aliasing control. Physics excluded and preserved."
+  },
+  "benchmark_run_order": [
+    "baseline_first",
+    "fixed",
+    "baseline_repeat"
+  ],
+  "benchmarks": {
+    "baseline_first": {
+      "mean_fps": 50.21763938177375,
+      "p95_frame_ms": 40.407167,
+      "simulation_wall_ratio": 0.5828286923917954,
+      "water_balance_error_m3": -6.713484832943095e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 1.1823431123048067e-11,
+      "bulk_material_error_m3": 2.3147003901158314e-05,
+      "passed": false
+    },
+    "fixed": {
+      "mean_fps": 57.8484912232723,
+      "p95_frame_ms": 29.933375,
+      "simulation_wall_ratio": 0.6249389396279483,
+      "water_balance_error_m3": -6.62950637675408e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 4.547473508864641e-12,
+      "bulk_material_error_m3": 2.470644130880828e-05,
+      "passed": false
+    },
+    "baseline_repeat": {
+      "mean_fps": 57.45688166872602,
+      "p95_frame_ms": 30.541167,
+      "simulation_wall_ratio": 0.6278004446064269,
+      "water_balance_error_m3": -6.665394842286787e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 4.547473508864641e-12,
+      "bulk_material_error_m3": 2.4791032330995222e-05,
+      "passed": false
+    }
+  },
+  "motion": {
+    "sluice": {
+      "frames": 44,
+      "wall_seconds": 3.937139833,
+      "simulation_wall_ratio": 0.6180459834944237,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 0,
+      "underruns_during_recording": 0,
+      "water_balance_error_m3": -7.169190844535933e-06,
+      "gold_balance_error_g": 5.002220859751105e-12
+    },
+    "outlet": {
+      "frames": 33,
+      "wall_seconds": 2.9146470000000004,
+      "simulation_wall_ratio": 0.7033442152397293,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 0,
+      "underruns_during_recording": 0,
+      "water_balance_error_m3": -7.199476755204159e-06,
+      "gold_balance_error_g": 6.821210263296962e-12
+    },
+    "river": {
+      "frames": 32,
+      "wall_seconds": 2.9651617079999997,
+      "simulation_wall_ratio": 0.6632578465890288,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 0,
+      "underruns_during_recording": 0,
+      "water_balance_error_m3": -7.197573495432152e-06,
+      "gold_balance_error_g": 6.366462912410498e-12
+    }
+  },
+  "checks": {
+    "application_passed": 33,
+    "profiling_microbenchmark_ignored": 1,
+    "real_gpu_optics_explicit_passed": 4,
+    "strict_scoped_clippy": true,
+    "focused_formatting": true,
+    "signed_bundle": true
+  },
+  "frozen_comparison": {
+    "simulation_time": 40.01666875369847,
+    "solver_steps": 4800,
+    "selected_physical_tracks_equal": true,
+    "flow_fields_equal": true
+  },
+  "aliasing_control": {
+    "old_uniform_mean_extinction_m1": 50,
+    "old_observed_extinction_m1": 89.99999,
+    "fixed_extinction_error_bound_m1": 1.5,
+    "normal_direction_y_lower_bound": 0.995,
+    "subpixel_cases": 16
+  },
+  "video": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "width": 1440,
+        "height": 900,
+        "nb_frames": "110"
+      }
+    ],
+    "format": {
+      "duration": "10.081000"
+    }
+  },
+  "limitations": [
+    "Detached water kernels, grain stippling, opaque environmental water and coarse art remain.",
+    "The fixed 0.8 diffuse irradiance is an art approximation, not measured sediment optics.",
+    "Filtering changes presentation; it is not an exact volume-preserving isosurface.",
+    "All three loaded benchmarks correctly fail the combined real-time gate.",
+    "Baseline first run had 18 presentation underruns and a 299 ms surface build; repeated baseline and fixed benchmark have zero underruns.",
+    "The first post-restore GPU invocation reused the cached old embedded shader; the final invocation explicitly rebuilt source and passes.",
+    "No full-workspace CI or operator replay pass claimed.",
+    "Eight unfinished terrain physics files remain unmodified and are excluded from this build."
+  ],
+  "new_crash_reports": [],
+  "media_sha256": {
+    "png": "8c3b49dd620e0bc868ab4bb4e62f5bb982664270491a10d313cc4a3f66d671b2",
+    "mp4": "f66bfb66dbc96f6e1996b3c4584b22470a92d23b584b578a23203f23e498dcd2"
+  }
+}

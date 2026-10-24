@@ -1,0 +1,420 @@
+{
+  "scope": "Reduce artificial crest rounding and coarse parcel mud patches; broader water art remains in progress.",
+  "baseline_head": "a16b73293523c1b9405b45a92345862d2ee64cac",
+  "old_resolved_crest_depth_error_m": 0.0106624365,
+  "corrected_resolved_crest_depth_error_m": 1.1920929e-07,
+  "old_scaled_profile_depth_error_m": 0.05,
+  "corrected_scaled_profile_error_bound_m": 2e-06,
+  "normal_probe_band_m": 0.051,
+  "angle_scale_cap": 6.666666666666667,
+  "new_fullscreen_passes_or_targets": 0,
+  "fine_streamwise_reconstruction_sigma_m": 0.12,
+  "fine_crossstream_reconstruction_sigma_m": 0.03,
+  "physical_material_and_solver_changes": false,
+  "source_proof": {
+    "audited_solver_sources": 164,
+    "changes_to_simulation_stepping": false,
+    "optical_only_exception": "crates/mining-sim/src/slurry.rs (read-only field reconstruction)",
+    "preserved_preexisting_exception": "crates/sim3d/src/clump.rs (unchanged pre-existing test-only diff)",
+    "tested_sources_sha256": "d5bfcc434ef1605c876244c19cfeeab392df6dbc040667830507818bbd485bee",
+    "changed_build_sources": [
+      ".beads/issues.jsonl",
+      "crates/mining-physics/tests/water_optics.rs",
+      "crates/mining-sim/src/slurry.rs",
+      "crates/mining/src/water_blur.wgsl",
+      "crates/mining/src/water_compose.wgsl",
+      "crates/mining/src/water_depth.wgsl",
+      "crates/sim3d/src/clump.rs",
+      "scripts/package-mining-macos.sh"
+    ]
+  },
+  "quality": [
+    {
+      "name": "format",
+      "exit": 0,
+      "expected_exit": 0
+    },
+    {
+      "name": "old-crest",
+      "exit": 101,
+      "expected_exit": 101
+    },
+    {
+      "name": "old-angle",
+      "exit": 101,
+      "expected_exit": 101
+    },
+    {
+      "name": "final-gpu",
+      "exit": 0,
+      "expected_exit": 0
+    },
+    {
+      "name": "final-app-sim",
+      "exit": 124,
+      "expected_exit": 0
+    },
+    {
+      "name": "final-clippy",
+      "exit": 0,
+      "expected_exit": 0
+    },
+    {
+      "name": "final-format-check",
+      "exit": 0,
+      "expected_exit": 0
+    },
+    {
+      "name": "final-package",
+      "exit": 0,
+      "expected_exit": 0
+    }
+  ],
+  "test_summary": {
+    "completed_groups": [
+      {
+        "passed": 51,
+        "failed": 0,
+        "ignored": 1
+      },
+      {
+        "passed": 20,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 20,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 10,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 4,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 14,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 19,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 5,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "completed_group_checks_passed": 173,
+    "ignored": 1,
+    "broad_command_exit": 124,
+    "broad_command_passed": false,
+    "timeout_scenario": "actual_bank_clods_are_scooped_held_airborne_and_emptied_by_the_open_shell",
+    "real_gpu_optics_passed": 11
+  },
+  "frozen_physics": [
+    {
+      "view": "sluice",
+      "layer": "final",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "17581f23a2ec8198529c0875feeac338ff6776d22a290d248ea4e8c39b14514f",
+      "after_manifest_sha256": "4c3993a004574ad49bf47524908d6f6d684ce947f3d1b24135aff977490b4933"
+    },
+    {
+      "view": "sluice",
+      "layer": "normal",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "87336d9b4da710683033df055be288b0ed3518a5dc6e2e0b5a5be698b6477153",
+      "after_manifest_sha256": "8204383e6ee37ae136841df368c1385caeda8fe8559a8e770db3c26f5fb21d0f"
+    },
+    {
+      "view": "sluice",
+      "layer": "sediment",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "1df6aca8c056c943b799b6f57bd68acf2f550289f58275bc1409705d3532d49a",
+      "after_manifest_sha256": "1e2107f021f054c718117c3105a70ba976b94bcb292ec366a3407f7ae8cf8816"
+    },
+    {
+      "view": "sluice",
+      "layer": "column",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "92bd872f82a7c9abcfbe4462f60fd126125863593a81471e688ba096eff266f8",
+      "after_manifest_sha256": "b4cc3e9688d0533e3711392c53e81589541bd369be3d32aa97e81f3d51a0aef9"
+    },
+    {
+      "view": "outlet",
+      "layer": "final",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "77f8f01e21f9fec63eae561208dfad1500f7e9093ebe79a3ffede726e7382992",
+      "after_manifest_sha256": "4cd70f70d777dd7b2c9fa67e37f23df42083ccea3e742239157cf005f94bd013"
+    },
+    {
+      "view": "river",
+      "layer": "final",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest_sha256": "79ccfd56e24899e333216abe2c2095368dbfedc32b9b1c29579dcc59a2380475",
+      "after_manifest_sha256": "3fab27a7694e6015da08d5a4d9fe2e93f64785e737e90d9de9b449de57b48371"
+    }
+  ],
+  "native_images": {
+    "sluice-final": {
+      "changed_rgb_pixels": 156156,
+      "max_channel_difference": 172
+    },
+    "sluice-normal": {
+      "changed_rgb_pixels": 165267,
+      "max_channel_difference": 204
+    },
+    "sluice-sediment": {
+      "changed_rgb_pixels": 157530,
+      "max_channel_difference": 128
+    },
+    "sluice-column": {
+      "changed_rgb_pixels": 117832,
+      "max_channel_difference": 198
+    },
+    "outlet-final": {
+      "changed_rgb_pixels": 27472,
+      "max_channel_difference": 159
+    },
+    "river-final": {
+      "changed_rgb_pixels": 22,
+      "max_channel_difference": 1
+    },
+    "outlet_crop_identical": false,
+    "outlet_crop_max_channel_difference": 1,
+    "preservation_tolerance_8bit_levels": 1
+  },
+  "motion": {
+    "source_frames": 33,
+    "presentation_advances": 32,
+    "worker_advances": 27,
+    "presentation_buffer_underruns": 0,
+    "wall_seconds": 2.9286441659999998,
+    "sim_seconds": 0.9000000469386578,
+    "max_surface_build_ms": 81.974875,
+    "review_indices": [
+      0,
+      6,
+      13,
+      19,
+      26,
+      32
+    ],
+    "video_display_frames": 182,
+    "whole_video_playback_reviewed": false
+  },
+  "all_33_temporal_crops_and_six_full_time_samples_reviewed": true,
+  "whole_video_playback_reviewed": false,
+  "manual_controls_verified": false,
+  "benchmark": {
+    "before": {
+      "mean_fps": 55.75535829844108,
+      "p95_frame_ms": 25.870125,
+      "simulation_wall_ratio": 0.3197292958995381,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.818506411183535e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "bulk_material_error_m3": 3.345547838762286e-07,
+      "dry_mass_error_kg": 0.0006022177403792739,
+      "gold_balance_error_g": 1.3642420526593924e-12,
+      "water_presentation": {
+        "buffer_underrun_frames": 0,
+        "interpolation_alpha": 0.8613367080688477,
+        "max_capture_ms": 0.956708,
+        "max_surface_build_ms": 120.610667,
+        "mean_capture_ms": 0.3695355840336133,
+        "mean_surface_build_ms": 73.38626163291144,
+        "paired_render_particles": 66090,
+        "presented_sim_time": 98.2287163470573,
+        "surface_builds": 237
+      }
+    },
+    "after": {
+      "mean_fps": 55.78255424244495,
+      "p95_frame_ms": 25.6825,
+      "simulation_wall_ratio": 0.31986862932235155,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.819346564019725e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "bulk_material_error_m3": 3.34066612595052e-07,
+      "dry_mass_error_kg": 0.0006012992234900594,
+      "gold_balance_error_g": 3.637978807091713e-12,
+      "water_presentation": {
+        "buffer_underrun_frames": 0,
+        "interpolation_alpha": 0.38652878999710083,
+        "max_capture_ms": 1.04825,
+        "max_surface_build_ms": 82.88012499999999,
+        "mean_capture_ms": 0.36951936286919823,
+        "mean_surface_build_ms": 77.82877984388179,
+        "paired_render_particles": 66090,
+        "presented_sim_time": 98.21288941490576,
+        "surface_builds": 237
+      }
+    }
+  },
+  "binaries": {
+    "before": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/optical-flux-20261024/final/final-app/First Bend.app/Contents/MacOS/mining",
+      "sha256": "334c98a25dc07b942948667604527468e465aba88f9c6983e5f1d7238ece5b46"
+    },
+    "after": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-mud-fix-20261024/final-app/First Bend.app/Contents/MacOS/mining",
+      "sha256": "67d531e283d0a51c5ee1b6e154d3ad82cd47bd62907dfd1ef7591e9c072aa2f3"
+    },
+    "load": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/storage-final-2026-10-23/grown.json.save.json",
+      "sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42"
+    }
+  },
+  "full_water_art_complete": false,
+  "full_game_goal_complete": false,
+  "issues_left_open": [
+    "sluice-oblique-crest-20261024",
+    "sluice-water-surface-art",
+    "sluice-soil-replay-runtime-20261024",
+    "sluice-realtime",
+    "sluice-optical-projection-20261024"
+  ],
+  "cleanup": {
+    "owned_game_compiler_encoder_processes": 0,
+    "agent_browser": 0,
+    "playwright_tests": 0,
+    "chrome_for_testing": 0,
+    "shared_playwright_mcp_left_untouched": 14,
+    "shared_node_left_untouched": 56,
+    "status_log_sha256": "5cbc2965b1f3f37975320f1d9d414f2c74b7b0a6cbf801bea5dbe415d018f4fb"
+  },
+  "no_new_panic_full_or_WindowServer_report": true,
+  "all_heavy_jobs_sequential": true,
+  "disk_free_bytes_at_report": 213164032,
+  "low_disk_failures_recorded": [
+    "package-reflection.log",
+    "package-reflection-retry.log",
+    "reflection-final.log",
+    "before-benchmark.log"
+  ],
+  "limitations": [
+    "Surface reconstruction improves, but broader wave shape, grain stippling and calibrated phase lighting remain unfinished.",
+    "The broader test command timed out at240s in the unchanged full-bank soil scenario; remaining tests were not run or passed.",
+    "River and accepted outlet crop have a measured maximum 1/255 RGB drift; exact image identity failed and is not claimed.",
+    "Existing conservation checks concern additive ray-column moments, not calibrated perspective-weighted optical volume."
+  ],
+  "evidence_hashes": {
+    "comparison.jpg": "4f75ff85b2adbc347afbbcce4cdd0b61932839e192a7a4ff6806b6385e8aedf9",
+    "all-temporal.jpg": "b5a1b4ee7558afe42bd2e56568ede9ea1048d88d6cd1bfd060c37466b8d3a045",
+    "motion-review.jpg": "aadeea63944a84ef541aa48cfebb08c5041de5eecee0d488bb7f3320e92c361d",
+    "motion.mp4": "d21b904225b2d21e7c33af7c3dbaaaccda2bd33b23830d5b1cbc3d3286dadd85",
+    "final-gpu.log": "8c28f67b04e0ff263683dda47b07d6202ddd98d925cbe60bc696518dd94453be",
+    "old-crest.log": "7205f5d8db8eae1cbeba1e69d217efb4624370d7942c3007de0dea9bfed51901",
+    "old-angle.log": "53dc593beaa39f47589acfa1bff04873afc839dae4f17d4588818ec92df2f123",
+    "final-app-sim.log": "15b1ad8213937b7e4724ea90aead6780d6425404f3216bdc805d096e07f1394d",
+    "final-clippy.log": "dc9d1414c063d1030b253b81c732186b1fcfe853a08847ec8337db9fdd139611",
+    "final-format-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "final-package.log": "902c068766917a621634ea16a27c3c5884f4b2694dcae1aa4f8b42d884937784",
+    "verified-motion/frames.json": "56bdcf97a2950b3222181000a380af763d8170441ef4c838087b7a3ac2d716c0"
+  }
+}

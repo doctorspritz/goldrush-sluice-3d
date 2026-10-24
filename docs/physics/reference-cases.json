@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "references": [
+    {
+      "id": "apic-transfer",
+      "source": "https://doi.org/10.1145/2766996",
+      "authors": ["C. Jiang", "C. Schroeder", "A. Selle", "J. Teran", "A. Stomakhin"],
+      "kind": "primary particle-grid transfer method",
+      "used_for": "complete quadratic support and constant-field affine reproduction",
+      "comparison_status": "actual GPU manufactured constant-field check passes; closed global momentum budget remains unresolved"
+    },
+    {
+      "id": "ubc-pilot-sluice",
+      "source": "https://ygsftp.gov.yk.ca/ygsftp/publications/tech/fine_gold_recovery_sluiceboxes.pdf",
+      "authors": ["G. W. Poling", "J. F. Hamilton"],
+      "kind": "primary pilot-scale experiments",
+      "apparatus": {"width_in": 12, "length_ft": 8},
+      "original_units": {"water": "US gallons/minute", "slope": "inches/foot", "feed": "pounds/minute", "gold_size": "original sieve fractions"},
+      "variables": ["riffle type", "matting", "water flow", "solid feed", "slope", "feed upper size", "gold sieve fraction"],
+      "comparison_status": "blocked: exact geometry, feed, mat and procedure not reproduced",
+      "table_transcription_status": "pending original-image verification; no invented recovery targets",
+      "caution": "Some metric quantities are normalised by channel width; never infer SI discharge from OCR alone."
+    },
+    {
+      "id": "sph-dem-validation",
+      "source": "https://arxiv.org/html/1301.0752v2",
+      "authors": ["M. Robinson", "S. Luding", "M. Ramaioli"],
+      "kind": "primary numerical validation",
+      "cases": ["single particle sedimentation", "constant porosity block", "multi-particle instability"],
+      "comparison_status": "pending matched equations, parameters and quantitative diagnostics"
+    },
+    {
+      "id": "rigid-contact",
+      "source": "https://www.cs.ubc.ca/~rbridson/docs/rigid_bodies.pdf",
+      "authors": ["E. Guendelman", "R. Bridson", "R. Fedkiw"],
+      "kind": "primary contact method",
+      "used_for": "contact-point velocity, effective mass and Coulomb friction",
+      "comparison_status": "analytical primitive tests; full paper algorithm not implemented"
+    }
+  ],
+  "equipment": [
+    {"component": "sluice", "physical_model": "FLIP/APIC with unresolved weighted grains and rigid contacts", "externally_validated_recovery": false},
+    {"component": "shaker_deck", "physical_model": "archived prototype only", "externally_validated_separation": false}
+  ]
+}

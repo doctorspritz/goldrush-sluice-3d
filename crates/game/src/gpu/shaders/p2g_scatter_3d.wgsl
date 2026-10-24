@@ -12,6 +12,9 @@
 // Fixed-point scale: 10^5 gives ±21,474 range with 5 decimal digits precision
 // Reduced from 10^6 to prevent overflow with high particle concentrations (100k+)
 const SCALE: f32 = 100000.0;
+// Adding a quantised integer zero cannot alter an accumulator. The reference
+// specialization retains those writes for exact GPU and whole-step controls.
+override ELIDE_ZERO_ATOMICS: bool = true;
 
 // Kernel constants
 const BSPLINE_SUPPORT_RADIUS: f32 = 1.5;  // Support range [-1.5, 1.5] for quadratic B-spline
@@ -28,7 +31,7 @@ struct Params {
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> positions: array<vec3<f32>>;
+@group(0) @binding(1) var<storage, read> positions: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> velocities: array<vec3<f32>>;
 // C matrix stored as 3 ROWS (c_col0 = row 0, etc.)
 // This naming is historical; they're actually rows from the staggered APIC reconstruction
@@ -80,6 +83,7 @@ fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
 }
 
+fn water_offset(n:u32)->u32 {return ((n+63u)/64u)*64u;}
 // Multiply C matrix by offset vector
 // C is stored as 3 ROWS (not columns!): c_col0 = row 0, etc.
 // So C * offset = [dot(row0, offset), dot(row1, offset), dot(row2, offset)]
@@ -91,15 +95,16 @@ fn c_mat_mul(idx: u32, offset: vec3<f32>) -> vec3<f32> {
     );
 }
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(128)
 fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= params.particle_count) {
         return;
     }
 
-    let pos = positions[id.x];
+    let pos = positions[id.x].xyz;
     let vel = velocities[id.x];
     let density = densities[id.x];
+    let mass_weight = density * select(positions[id.x].w, 1.0, positions[id.x].w <= 0.0);
     if (density > 1.0 && params.include_sediment == 0u) {
         return;
     }
@@ -123,7 +128,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     // ========== U component (staggered on left YZ faces) ==========
     // U sample point is at (i, j+0.5, k+0.5) in cell coordinates
     let u_pos = pos / cell_size - vec3<f32>(0.0, 0.5, 0.5);
-    let base_u = vec3<i32>(floor(u_pos));
+    let base_u = vec3<i32>(floor(u_pos + vec3<f32>(0.5)));
     let frac_u = u_pos - vec3<f32>(base_u);
 
     // Precompute 1D weights for -1, 0, +1 offsets
@@ -170,11 +175,22 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
                 // Mass-weighted momentum: m * (v + C*offset) * w
-                let momentum_x = density * (vel.x + affine_vel.x) * w;
+                let momentum_x = mass_weight * (vel.x + affine_vel.x) * w;
 
                 let idx = u_index(u32(ni), u32(nj), u32(nk));
-                atomicAdd(&u_sum[idx], i32(momentum_x * SCALE));
-                atomicAdd(&u_weight[idx], i32(density * w * SCALE));
+                // Water and solids accumulate once in disjoint integer ranges.
+                // Divide combines their integer sums before conversion, preserving
+                // the original mixture transfer and a separate water-only field.
+                var accum_idx=idx;
+                if params._pad0!=0u && density<=1.0 {accum_idx+=water_offset((params.width+1u)*params.height*params.depth);}
+                let quantized_momentum = i32(momentum_x*SCALE);
+                let quantized_weight = i32(mass_weight*w*SCALE);
+                if !ELIDE_ZERO_ATOMICS || quantized_momentum != 0 {
+                    atomicAdd(&u_sum[accum_idx],quantized_momentum);
+                }
+                if !ELIDE_ZERO_ATOMICS || quantized_weight != 0 {
+                    atomicAdd(&u_weight[accum_idx],quantized_weight);
+                }
             }
         }
     }
@@ -182,7 +198,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     // ========== V component (staggered on bottom XZ faces) ==========
     // V sample point is at (i+0.5, j, k+0.5) in cell coordinates
     let v_pos = pos / cell_size - vec3<f32>(0.5, 0.0, 0.5);
-    let base_v = vec3<i32>(floor(v_pos));
+    let base_v = vec3<i32>(floor(v_pos + vec3<f32>(0.5)));
     let frac_v = v_pos - vec3<f32>(base_v);
 
     let v_wx = array<f32, 3>(
@@ -227,11 +243,22 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
                 // Mass-weighted momentum: m * (v + C*offset) * w
-                let momentum_y = density * (vel.y + affine_vel.y) * w;
+                let momentum_y = mass_weight * (vel.y + affine_vel.y) * w;
 
                 let idx = v_index(u32(ni), u32(nj), u32(nk));
-                atomicAdd(&v_sum[idx], i32(momentum_y * SCALE));
-                atomicAdd(&v_weight[idx], i32(density * w * SCALE));
+                // Water and solids accumulate once in disjoint integer ranges.
+                // Divide combines their integer sums before conversion, preserving
+                // the original mixture transfer and a separate water-only field.
+                var accum_idx=idx;
+                if params._pad0!=0u && density<=1.0 {accum_idx+=water_offset(params.width*(params.height+1u)*params.depth);}
+                let quantized_momentum = i32(momentum_y*SCALE);
+                let quantized_weight = i32(mass_weight*w*SCALE);
+                if !ELIDE_ZERO_ATOMICS || quantized_momentum != 0 {
+                    atomicAdd(&v_sum[accum_idx],quantized_momentum);
+                }
+                if !ELIDE_ZERO_ATOMICS || quantized_weight != 0 {
+                    atomicAdd(&v_weight[accum_idx],quantized_weight);
+                }
             }
         }
     }
@@ -239,7 +266,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     // ========== W component (staggered on back XY faces) ==========
     // W sample point is at (i+0.5, j+0.5, k) in cell coordinates
     let w_pos = pos / cell_size - vec3<f32>(0.5, 0.5, 0.0);
-    let base_w = vec3<i32>(floor(w_pos));
+    let base_w = vec3<i32>(floor(w_pos + vec3<f32>(0.5)));
     let frac_w = w_pos - vec3<f32>(base_w);
 
     let w_wx = array<f32, 3>(
@@ -284,11 +311,22 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 let offset = node_pos - pos;
                 let affine_vel = c_mat_mul(id.x, offset);
                 // Mass-weighted momentum: m * (v + C*offset) * w
-                let momentum_z = density * (vel.z + affine_vel.z) * w;
+                let momentum_z = mass_weight * (vel.z + affine_vel.z) * w;
 
                 let idx = w_index(u32(ni), u32(nj), u32(nk));
-                atomicAdd(&w_sum[idx], i32(momentum_z * SCALE));
-                atomicAdd(&w_weight[idx], i32(density * w * SCALE));
+                // Water and solids accumulate once in disjoint integer ranges.
+                // Divide combines their integer sums before conversion, preserving
+                // the original mixture transfer and a separate water-only field.
+                var accum_idx=idx;
+                if params._pad0!=0u && density<=1.0 {accum_idx+=water_offset(params.width*params.height*(params.depth+1u));}
+                let quantized_momentum = i32(momentum_z*SCALE);
+                let quantized_weight = i32(mass_weight*w*SCALE);
+                if !ELIDE_ZERO_ATOMICS || quantized_momentum != 0 {
+                    atomicAdd(&w_sum[accum_idx],quantized_momentum);
+                }
+                if !ELIDE_ZERO_ATOMICS || quantized_weight != 0 {
+                    atomicAdd(&w_weight[accum_idx],quantized_weight);
+                }
             }
         }
     }

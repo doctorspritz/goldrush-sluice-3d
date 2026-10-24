@@ -6,6 +6,7 @@
 //! - Multi-layer Geology (Bedrock, Paydirt, Overburden)
 
 mod buffers;
+mod events;
 mod mesh;
 mod pipelines;
 mod rendering;
@@ -13,13 +14,15 @@ mod simulation;
 mod sync;
 mod tools;
 
-pub use buffers::{GeologyBuffers, WaterBuffers};
+pub use buffers::{GeologyBuffers, WaterBuffers, WATER_AUX_FLOATS};
+pub use events::{TerrainEventCapture, TerrainEventRecorder};
 pub use mesh::{GridMesh, GridVertex};
 pub use pipelines::{
     BridgeMergeResources, CoreBindGroups, EmitterResources, MaterialToolResources,
     SimulationPipelines,
 };
 pub use rendering::{RenderResources, RenderUniforms};
+pub use simulation::BedExchangeStage;
 
 /// GPU-accelerated Heightfield Simulation.
 ///
@@ -101,12 +104,15 @@ impl GpuHeightfield {
         let params_layout = pipelines::create_params_layout(device);
         let water_layout = pipelines::create_water_layout(device);
         let terrain_layout = pipelines::create_terrain_layout(device);
+        let (collapse_layout, collapse_group) =
+            pipelines::create_collapse_bindings(device, &geology);
 
         // Create bind groups
         let bind_groups = CoreBindGroups {
             params: pipelines::create_params_bind_group(device, &params_layout, &params_buffer),
             water: pipelines::create_water_bind_group(device, &water_layout, &water),
             terrain: pipelines::create_terrain_bind_group(device, &terrain_layout, &geology),
+            collapse: collapse_group,
         };
 
         // Create pipelines
@@ -115,10 +121,12 @@ impl GpuHeightfield {
             &params_layout,
             &water_layout,
             &terrain_layout,
+            &collapse_layout,
         );
         let emitter = pipelines::create_emitter_resources(device, &water);
         let material_tool = pipelines::create_material_tool_resources(device, &geology);
-        let bridge = pipelines::create_bridge_merge_resources(device, &params_layout, &water_layout);
+        let bridge =
+            pipelines::create_bridge_merge_resources(device, &params_layout, &water_layout);
 
         // Create rendering resources
         let render = rendering::create_render_resources(device, format, &geology, &water);
@@ -126,26 +134,76 @@ impl GpuHeightfield {
 
         // Create dummy buffers for legacy field compatibility
         // These point to the same underlying buffers
-        let bedrock_buffer = buffers::create_storage_buffer(device, "Bedrock Compat", width, depth, initial_height * 0.5);
-        let paydirt_buffer = buffers::create_storage_buffer(device, "Paydirt Compat", width, depth, initial_height * 0.25);
-        let gravel_buffer = buffers::create_storage_buffer(device, "Gravel Compat", width, depth, initial_height * 0.05);
-        let overburden_buffer = buffers::create_storage_buffer(device, "Overburden Compat", width, depth, initial_height * 0.2);
-        let sediment_buffer = buffers::create_storage_buffer(device, "Sediment Compat", width, depth, 0.0);
-        let surface_material_buffer = buffers::create_storage_buffer_u32(device, "Surface Material Compat", width, depth, 4);
-        let water_depth_buffer = buffers::create_storage_buffer(device, "Water Depth Compat", width, depth, 0.0);
-        let water_velocity_x_buffer = buffers::create_storage_buffer(device, "Water Vel X Compat", width, depth, 0.0);
-        let water_velocity_z_buffer = buffers::create_storage_buffer(device, "Water Vel Z Compat", width, depth, 0.0);
-        let water_surface_buffer = buffers::create_storage_buffer(device, "Water Surface Compat", width, depth, 0.0);
-        let flux_x_buffer = buffers::create_storage_buffer(device, "Flux X Compat", width, depth, 0.0);
-        let flux_z_buffer = buffers::create_storage_buffer(device, "Flux Z Compat", width, depth, 0.0);
-        let suspended_sediment_buffer = buffers::create_storage_buffer(device, "Suspended Compat", width, depth, 0.0);
-        let suspended_sediment_next_buffer = buffers::create_storage_buffer(device, "Suspended Next Compat", width, depth, 0.0);
-        let suspended_overburden_buffer = buffers::create_storage_buffer(device, "Suspended OB Compat", width, depth, 0.0);
-        let suspended_overburden_next_buffer = buffers::create_storage_buffer(device, "Suspended OB Next Compat", width, depth, 0.0);
-        let suspended_gravel_buffer = buffers::create_storage_buffer(device, "Suspended Gravel Compat", width, depth, 0.0);
-        let suspended_gravel_next_buffer = buffers::create_storage_buffer(device, "Suspended Gravel Next Compat", width, depth, 0.0);
-        let suspended_paydirt_buffer = buffers::create_storage_buffer(device, "Suspended Paydirt Compat", width, depth, 0.0);
-        let suspended_paydirt_next_buffer = buffers::create_storage_buffer(device, "Suspended Paydirt Next Compat", width, depth, 0.0);
+        let bedrock_buffer = buffers::create_storage_buffer(
+            device,
+            "Bedrock Compat",
+            width,
+            depth,
+            initial_height * 0.5,
+        );
+        let paydirt_buffer = buffers::create_storage_buffer(
+            device,
+            "Paydirt Compat",
+            width,
+            depth,
+            initial_height * 0.25,
+        );
+        let gravel_buffer = buffers::create_storage_buffer(
+            device,
+            "Gravel Compat",
+            width,
+            depth,
+            initial_height * 0.05,
+        );
+        let overburden_buffer = buffers::create_storage_buffer(
+            device,
+            "Overburden Compat",
+            width,
+            depth,
+            initial_height * 0.2,
+        );
+        let sediment_buffer =
+            buffers::create_storage_buffer(device, "Sediment Compat", width, depth, 0.0);
+        let surface_material_buffer =
+            buffers::create_storage_buffer_u32(device, "Surface Material Compat", width, depth, 4);
+        let water_depth_buffer =
+            buffers::create_storage_buffer(device, "Water Depth Compat", width, depth, 0.0);
+        let water_velocity_x_buffer =
+            buffers::create_storage_buffer(device, "Water Vel X Compat", width, depth, 0.0);
+        let water_velocity_z_buffer =
+            buffers::create_storage_buffer(device, "Water Vel Z Compat", width, depth, 0.0);
+        let water_surface_buffer =
+            buffers::create_storage_buffer(device, "Water Surface Compat", width, depth, 0.0);
+        let flux_x_buffer =
+            buffers::create_storage_buffer(device, "Flux X Compat", width, depth, 0.0);
+        let flux_z_buffer =
+            buffers::create_storage_buffer(device, "Flux Z Compat", width, depth, 0.0);
+        let suspended_sediment_buffer =
+            buffers::create_storage_buffer(device, "Suspended Compat", width, depth, 0.0);
+        let suspended_sediment_next_buffer =
+            buffers::create_storage_buffer(device, "Suspended Next Compat", width, depth, 0.0);
+        let suspended_overburden_buffer =
+            buffers::create_storage_buffer(device, "Suspended OB Compat", width, depth, 0.0);
+        let suspended_overburden_next_buffer =
+            buffers::create_storage_buffer(device, "Suspended OB Next Compat", width, depth, 0.0);
+        let suspended_gravel_buffer =
+            buffers::create_storage_buffer(device, "Suspended Gravel Compat", width, depth, 0.0);
+        let suspended_gravel_next_buffer = buffers::create_storage_buffer(
+            device,
+            "Suspended Gravel Next Compat",
+            width,
+            depth,
+            0.0,
+        );
+        let suspended_paydirt_buffer =
+            buffers::create_storage_buffer(device, "Suspended Paydirt Compat", width, depth, 0.0);
+        let suspended_paydirt_next_buffer = buffers::create_storage_buffer(
+            device,
+            "Suspended Paydirt Next Compat",
+            width,
+            depth,
+            0.0,
+        );
 
         Self {
             width,
@@ -190,7 +248,43 @@ impl GpuHeightfield {
         self.dispatch_tile(encoder, self.width, self.depth);
     }
 
-    pub fn dispatch_tile(&self, encoder: &mut wgpu::CommandEncoder, tile_width: u32, tile_depth: u32) {
+    pub fn dispatch_tile(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+    ) {
+        self.dispatch_tile_substeps(encoder, tile_width, tile_depth, 2);
+    }
+
+    pub fn dispatch_water_substeps(&self, encoder: &mut wgpu::CommandEncoder, substeps: u32) {
+        self.dispatch_tile_substeps(encoder, self.width, self.depth, substeps);
+    }
+
+    /// Slope-only dispatch for controlled soil cases. Configure the matching
+    /// tile with update_params_tile; a one-cell receiver halo is included.
+    pub fn dispatch_collapse_tile(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+    ) {
+        simulation::dispatch_collapse_tile(
+            encoder,
+            &self.simulation,
+            &self.bind_groups,
+            tile_width,
+            tile_depth,
+        );
+    }
+
+    fn dispatch_tile_substeps(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+        substeps: u32,
+    ) {
         simulation::dispatch_simulation_tile(
             encoder,
             &self.simulation,
@@ -199,19 +293,83 @@ impl GpuHeightfield {
             self.depth,
             tile_width,
             tile_depth,
-            &self.water.suspended_sediment,
-            &self.water.suspended_sediment_next,
-            &self.water.suspended_overburden,
-            &self.water.suspended_overburden_next,
-            &self.water.suspended_gravel,
-            &self.water.suspended_gravel_next,
-            &self.water.suspended_paydirt,
-            &self.water.suspended_paydirt_next,
+            substeps,
+            &self.water,
+            None,
+        );
+    }
+
+    /// Same physical dispatch, with read-only records for local f64 tracers.
+    pub fn dispatch_water_substeps_traced(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        substeps: u32,
+        recorder: &TerrainEventRecorder,
+        capture: &TerrainEventCapture,
+    ) {
+        simulation::dispatch_simulation_tile(
+            encoder,
+            &self.simulation,
+            &self.bind_groups,
+            self.width,
+            self.depth,
+            self.width,
+            self.depth,
+            substeps,
+            &self.water,
+            Some((recorder, capture)),
+        );
+    }
+
+    /// Run one complete bed stage without water transport or terrain collapse.
+    /// Parameters (including tile origin) must be uploaded before dispatch.
+    pub fn dispatch_bed_exchange_tile(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+        stage: BedExchangeStage,
+    ) {
+        simulation::dispatch_bed_exchange_tile(
+            encoder,
+            &self.simulation,
+            &self.bind_groups,
+            &self.water,
+            self.width * self.depth,
+            tile_width,
+            tile_depth,
+            stage,
         );
     }
 
     pub fn update_params(&self, queue: &wgpu::Queue, dt: f32) {
-        simulation::update_params(queue, &self.params_buffer, self.width, self.depth, self.cell_size, dt);
+        simulation::update_params(
+            queue,
+            &self.params_buffer,
+            self.width,
+            self.depth,
+            self.cell_size,
+            dt,
+        );
+    }
+
+    /// Boundary mask: -X=1, +X=2, -Z=4, +Z=8. Outflow only.
+    /// The same substep count must be passed to dispatch_water_substeps.
+    pub fn update_water_params(
+        &self,
+        queue: &wgpu::Queue,
+        dt: f32,
+        boundaries: u32,
+        manning_n: f32,
+        substeps: u32,
+    ) {
+        self.update_params(queue, dt);
+        queue.write_buffer(
+            &self.params_buffer,
+            24,
+            bytemuck::cast_slice(&[boundaries, substeps.max(1)]),
+        );
+        queue.write_buffer(&self.params_buffer, 44, bytemuck::bytes_of(&manning_n));
     }
 
     pub fn update_params_tile(
@@ -315,7 +473,12 @@ impl GpuHeightfield {
         tools::dispatch_emitter(encoder, &self.emitter, self.width, self.depth);
     }
 
-    pub fn dispatch_emitter_tile(&self, encoder: &mut wgpu::CommandEncoder, tile_width: u32, tile_depth: u32) {
+    pub fn dispatch_emitter_tile(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+    ) {
         tools::dispatch_emitter_tile(encoder, &self.emitter, tile_width, tile_depth);
     }
 
@@ -385,7 +548,12 @@ impl GpuHeightfield {
         tools::dispatch_material_tool(encoder, &self.material_tool, self.width, self.depth);
     }
 
-    pub fn dispatch_material_tool_tile(&self, encoder: &mut wgpu::CommandEncoder, tile_width: u32, tile_depth: u32) {
+    pub fn dispatch_material_tool_tile(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+    ) {
         tools::dispatch_material_tool_tile(encoder, &self.material_tool, tile_width, tile_depth);
     }
 
@@ -393,12 +561,24 @@ impl GpuHeightfield {
         tools::dispatch_excavate(encoder, &self.material_tool, self.width, self.depth);
     }
 
-    pub fn dispatch_excavate_tile(&self, encoder: &mut wgpu::CommandEncoder, tile_width: u32, tile_depth: u32) {
+    pub fn dispatch_excavate_tile(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        tile_width: u32,
+        tile_depth: u32,
+    ) {
         tools::dispatch_excavate_tile(encoder, &self.material_tool, tile_width, tile_depth);
     }
 
     pub fn upload_from_world(&self, queue: &wgpu::Queue, world: &sim3d::World) {
-        sync::upload_from_world(queue, &self.geology, &self.water, self.width, self.depth, world);
+        sync::upload_from_world(
+            queue,
+            &self.geology,
+            &self.water,
+            self.width,
+            self.depth,
+            world,
+        );
     }
 
     pub fn upload_terrain_only(&self, queue: &wgpu::Queue, world: &sim3d::World) {
@@ -411,7 +591,16 @@ impl GpuHeightfield {
         queue: &wgpu::Queue,
         world: &mut sim3d::World,
     ) {
-        sync::download_to_world(device, queue, &self.geology, &self.water, self.width, self.depth, world).await;
+        sync::download_to_world(
+            device,
+            queue,
+            &self.geology,
+            &self.water,
+            self.width,
+            self.depth,
+            world,
+        )
+        .await;
     }
 
     pub fn render(
@@ -454,6 +643,12 @@ impl GpuHeightfield {
     }
 
     pub fn dispatch_bridge_merge(&self, encoder: &mut wgpu::CommandEncoder) {
-        sync::dispatch_bridge_merge(encoder, &self.bridge, &self.bind_groups, self.width, self.depth);
+        sync::dispatch_bridge_merge(
+            encoder,
+            &self.bridge,
+            &self.bind_groups,
+            self.width,
+            self.depth,
+        );
     }
 }

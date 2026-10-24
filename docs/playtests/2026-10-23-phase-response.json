@@ -1,0 +1,1013 @@
+{
+  "base_head": "e6f6e2699630cc6ac25120c4208963116362b638",
+  "artifact_root": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/phase-attribution-20261023",
+  "runtime_phase_exchange_active": false,
+  "ordinary_budget_13_cases_exact_equal": true,
+  "baseline_cases": [
+    {
+      "case": "water_transfer_flip",
+      "coincident": false,
+      "combined_phase_imbalance_fraction": null,
+      "diameter": 0.0,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 1.0,
+      "fluid_momentum_change": [
+        -7.152557373046875e-07,
+        0.0,
+        0.0
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        99.20000076293945,
+        0.0,
+        0.0
+      ],
+      "momentum_before_relative_mass_mps": [
+        99.20000147819519,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        -7.152557373046875e-07,
+        0.0,
+        0.0
+      ],
+      "pressure_sweeps": 0,
+      "relative_to_initial_momentum": 7.210239179904704e-09,
+      "solid_final_velocity": [
+        -0.20000000298023224,
+        0.0,
+        0.0
+      ],
+      "solid_momentum_change": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "water_transfer_pic",
+      "coincident": false,
+      "combined_phase_imbalance_fraction": null,
+      "diameter": 0.0,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 0.0,
+      "fluid_momentum_change": [
+        -0.07509280741214752,
+        0.0,
+        0.0
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        99.12490867078304,
+        0.0,
+        0.0
+      ],
+      "momentum_before_relative_mass_mps": [
+        99.20000147819519,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        -0.07509280741214752,
+        0.0,
+        0.0
+      ],
+      "pressure_sweeps": 0,
+      "relative_to_initial_momentum": 0.0007569839344070314,
+      "solid_final_velocity": [
+        0.11209815740585327,
+        0.0,
+        0.0
+      ],
+      "solid_momentum_change": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "water_transfer_blend",
+      "coincident": false,
+      "combined_phase_imbalance_fraction": null,
+      "diameter": 0.0,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 0.9700000286102295,
+      "fluid_momentum_change": [
+        -0.0022550970315933228,
+        0.0,
+        0.0
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        99.1977463811636,
+        0.0,
+        0.0
+      ],
+      "momentum_before_relative_mass_mps": [
+        99.20000147819519,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        -0.0022550970315933228,
+        0.0,
+        0.0
+      ],
+      "pressure_sweeps": 0,
+      "relative_to_initial_momentum": 2.2732832641025794e-05,
+      "solid_final_velocity": [
+        -0.19063706696033478,
+        0.0,
+        0.0
+      ],
+      "solid_momentum_change": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "water_pressure_flip",
+      "coincident": false,
+      "combined_phase_imbalance_fraction": null,
+      "diameter": 0.0,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 1.0,
+      "fluid_momentum_change": [
+        1.6083439886569977,
+        1.3649696484208107e-08,
+        3.2887328416109085e-09
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        100.80834546685219,
+        1.3649696484208107e-08,
+        3.2887328416109085e-09
+      ],
+      "momentum_before_relative_mass_mps": [
+        99.20000147819519,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        1.6083439886569977,
+        1.3649696484208107e-08,
+        3.2887328416109085e-09
+      ],
+      "pressure_sweeps": 80,
+      "relative_to_initial_momentum": 0.016213144805350858,
+      "solid_final_velocity": [
+        -0.16856110095977783,
+        5.820766091346741e-11,
+        4.0745362639427185e-10
+      ],
+      "solid_momentum_change": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "water_pressure_blend",
+      "coincident": false,
+      "combined_phase_imbalance_fraction": null,
+      "diameter": 0.0,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 0.9700000286102295,
+      "fluid_momentum_change": [
+        1.6060912907123566,
+        1.3649696484208107e-08,
+        3.2887328416109085e-09
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        100.80609276890755,
+        1.3649696484208107e-08,
+        3.2887328416109085e-09
+      ],
+      "momentum_before_relative_mass_mps": [
+        99.20000147819519,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        1.6060912907123566,
+        1.3649696484208107e-08,
+        3.2887328416109085e-09
+      ],
+      "pressure_sweeps": 80,
+      "relative_to_initial_momentum": 0.016190436157053748,
+      "solid_final_velocity": [
+        -0.15919816493988037,
+        5.820766091346741e-11,
+        4.0745362639427185e-10
+      ],
+      "solid_momentum_change": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "mixed_dry_transfer_flip",
+      "coincident": false,
+      "combined_phase_imbalance_fraction": 1.0,
+      "diameter": -0.0003000000142492354,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 1.0,
+      "fluid_momentum_change": [
+        -5.066394805908203e-07,
+        0.0,
+        0.0
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        93.9200005877018,
+        0.0,
+        0.0
+      ],
+      "momentum_before_relative_mass_mps": [
+        93.92000109434127,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        -5.066394805908203e-07,
+        0.0,
+        0.0
+      ],
+      "pressure_sweeps": 0,
+      "relative_to_initial_momentum": 5.394372601017203e-09,
+      "solid_final_velocity": [
+        -0.20000000298023224,
+        -0.0,
+        -0.0
+      ],
+      "solid_momentum_change": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "mixed_dry_transfer_blend",
+      "coincident": false,
+      "combined_phase_imbalance_fraction": 1.0,
+      "diameter": -0.0003000000142492354,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 0.9700000286102295,
+      "fluid_momentum_change": [
+        -0.3024316877126694,
+        0.0,
+        0.0
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        93.6175694066286,
+        0.0,
+        0.0
+      ],
+      "momentum_before_relative_mass_mps": [
+        93.92000109434127,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        -0.3024316877126694,
+        0.0,
+        0.0
+      ],
+      "pressure_sweeps": 0,
+      "relative_to_initial_momentum": 0.003220098852095212,
+      "solid_final_velocity": [
+        -0.20000000298023224,
+        -0.0,
+        -0.0
+      ],
+      "solid_momentum_change": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "mixed_drag_flip",
+      "coincident": false,
+      "combined_phase_imbalance_fraction": 0.9999998719765929,
+      "diameter": 0.0003000000142492354,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 1.0,
+      "fluid_momentum_change": [
+        -5.066394805908203e-07,
+        0.0,
+        0.0
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        101.83479460604448,
+        0.0,
+        0.0
+      ],
+      "momentum_before_relative_mass_mps": [
+        93.92000109434127,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        7.914793511703209,
+        0.0,
+        0.0
+      ],
+      "pressure_sweeps": 0,
+      "relative_to_initial_momentum": 0.08427165054813952,
+      "solid_final_velocity": [
+        -0.013330339454114437,
+        0.0,
+        0.0
+      ],
+      "solid_momentum_change": [
+        7.914794018342697,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "mixed_drag_blend",
+      "coincident": false,
+      "combined_phase_imbalance_fraction": 0.9263908042613934,
+      "diameter": 0.0003000000142492354,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 0.9700000286102295,
+      "fluid_momentum_change": [
+        -0.3024316877126694,
+        0.0,
+        0.0
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        101.5323634249713,
+        0.0,
+        0.0
+      ],
+      "momentum_before_relative_mass_mps": [
+        93.92000109434127,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        7.61236233063002,
+        0.0,
+        0.0
+      ],
+      "pressure_sweeps": 0,
+      "relative_to_initial_momentum": 0.0810515570904169,
+      "solid_final_velocity": [
+        -0.013330339454114437,
+        0.0,
+        0.0
+      ],
+      "solid_momentum_change": [
+        7.914794018342697,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "mixed_full_120hz",
+      "coincident": false,
+      "combined_phase_imbalance_fraction": 0.9999999999999998,
+      "diameter": 0.0003000000142492354,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 0.9700000286102295,
+      "fluid_momentum_change": [
+        2.0110023617744446,
+        -7.409835234284401e-08,
+        -1.2863893061876297e-08
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        103.84579747445841,
+        -7.409835234284401e-08,
+        -1.2863893061876297e-08
+      ],
+      "momentum_before_relative_mass_mps": [
+        93.92000109434127,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        9.925796380117134,
+        -7.409835234284401e-08,
+        -1.2863893061876297e-08
+      ],
+      "pressure_sweeps": 80,
+      "relative_to_initial_momentum": 0.10568352070339966,
+      "solid_final_velocity": [
+        -0.013330339454114437,
+        0.0,
+        0.0
+      ],
+      "solid_momentum_change": [
+        7.914794018342697,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "mixed_full_240hz",
+      "coincident": false,
+      "combined_phase_imbalance_fraction": 0.9999999999999999,
+      "diameter": 0.0003000000142492354,
+      "dt": 0.004166666883975267,
+      "flip_ratio": 0.9700000286102295,
+      "fluid_momentum_change": [
+        2.0110023617744446,
+        -7.409835234284401e-08,
+        -1.2863893061876297e-08
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        100.50555488717515,
+        -7.409835234284401e-08,
+        -1.2863893061876297e-08
+      ],
+      "momentum_before_relative_mass_mps": [
+        93.92000109434127,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        6.585553792833878,
+        -7.409835234284401e-08,
+        -1.2863893061876297e-08
+      ],
+      "pressure_sweeps": 80,
+      "relative_to_initial_momentum": 0.07011875762457441,
+      "solid_final_velocity": [
+        -0.09210964292287827,
+        0.0,
+        0.0
+      ],
+      "solid_momentum_change": [
+        4.574551431059433,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "coincident_drag_flip",
+      "coincident": true,
+      "combined_phase_imbalance_fraction": 1.0,
+      "diameter": 0.0003000000142492354,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 1.0,
+      "fluid_momentum_change": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        101.83758064123542,
+        0.0,
+        0.0
+      ],
+      "momentum_before_relative_mass_mps": [
+        93.92000109434127,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        7.917579546894146,
+        0.0,
+        0.0
+      ],
+      "pressure_sweeps": 0,
+      "relative_to_initial_momentum": 0.08430131446592566,
+      "solid_final_velocity": [
+        -0.013264643028378487,
+        0.0,
+        0.0
+      ],
+      "solid_momentum_change": [
+        7.917579546894146,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "coincident_drag_blend",
+      "coincident": true,
+      "combined_phase_imbalance_fraction": 0.8879550125189737,
+      "diameter": 0.0003000000142492354,
+      "dt": 0.008333333767950535,
+      "flip_ratio": 0.9700000286102295,
+      "fluid_momentum_change": [
+        -0.46988677978515625,
+        0.0,
+        0.0
+      ],
+      "gravity": 0,
+      "momentum_after_relative_mass_mps": [
+        101.36769386145026,
+        0.0,
+        0.0
+      ],
+      "momentum_before_relative_mass_mps": [
+        93.92000109434127,
+        0.0,
+        0.0
+      ],
+      "momentum_residual": [
+        7.44769276710899,
+        0.0,
+        0.0
+      ],
+      "pressure_sweeps": 0,
+      "relative_to_initial_momentum": 0.07929826107676352,
+      "solid_final_velocity": [
+        -0.013264643028378487,
+        0.0,
+        0.0
+      ],
+      "solid_momentum_change": [
+        7.917579546894146,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "cpu_checks": 63,
+  "gpu_checks_explicitly_executed": 7,
+  "gpu_harness": {
+    "valid_cases": [
+      "drag",
+      "exact-capacity",
+      "reserved",
+      "reversed",
+      "stiff",
+      "pressure",
+      "freefall",
+      "rotation"
+    ],
+    "invalid_cases": [
+      "overflow",
+      "nonfinite",
+      "bad-rate"
+    ],
+    "relative_mass": 115.79999732971191,
+    "max_linear_momentum_residual": 5.13e-07,
+    "max_angular_momentum_residual": 3.2e-07,
+    "allocation_and_order_exact_equal": true
+  },
+  "pressure_controls": {
+    "dispatches": [
+      "reference",
+      "packed",
+      "cached"
+    ],
+    "boundaries": [
+      "open",
+      "closed"
+    ],
+    "sweeps": 800,
+    "separate_pass_submission_batch_sweeps": 80,
+    "pressure_max_error_threshold": 1e-07,
+    "divergence_max_threshold": 0.0002,
+    "velocity_max_threshold": 2e-05,
+    "gpu_header_transition_verified": true
+  },
+  "new_response_fixed_point": {
+    "scale": 68719476736,
+    "per_input_absolute_limit": "2^26 / actual_particle_count",
+    "signed_sum_margin": 2
+  },
+  "timing_discarded": "native-before.json overlapped packaging; isolated measurements replace it",
+  "incomplete": [
+    "actual GpuFlip3D/worker integration",
+    "represented-volume position repair and matching masks",
+    "joined failure readback and guarded advection",
+    "storage growth/restore for phase allocations",
+    "porosity-dependent closure and packing convergence",
+    "independent recovery calibration",
+    "real-time simulation",
+    "full operation stages 2-6"
+  ],
+  "new_crash_reports": [],
+  "native_before": {
+    "bulk_budget_passed": true,
+    "bulk_material_error_m3": 3.096138811997662e-07,
+    "bulk_tolerance_m3": 0.000412467463179788,
+    "detail_revision": 4,
+    "displayed_grains": 18875,
+    "dry_mass_budget_passed": true,
+    "dry_mass_error_kg": 0.0005573120433837175,
+    "dry_mass_tolerance_kg": 0.8074216222356134,
+    "exported_gold_g": 4.851776887790221,
+    "exported_material_m3": [
+      0.0,
+      0.9322827090321999,
+      0.0,
+      0.5325060699624515
+    ],
+    "fluid_surface_ready": true,
+    "gold_balance_error_g": -4.547473508864641e-13,
+    "grains": 4651,
+    "initial_bulk_material_m3": 412.467463179788,
+    "initial_dry_mass_kg": 807421.6222356134,
+    "inlet": {
+      "emission_clock": 0.0,
+      "emitted": {
+        "gold_g": 0.0226113907085036,
+        "solid_m3": [
+          0.0,
+          0.007660112405235154,
+          0.0,
+          0.0024524953184859857
+        ]
+      },
+      "last_water_m3": 6.249453872442245e-05,
+      "pending": {
+        "gold_g": 0.0,
+        "solid_m3": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "ready": {
+        "gold_g": 8.295726801468023e-09,
+        "solid_m3": [
+          0.0,
+          4.269033547627034e-10,
+          0.0,
+          9.07515056814217e-10
+        ]
+      },
+      "sequence": 8297,
+      "withdrawn": {
+        "gold_g": 0.02261139900423046,
+        "solid_m3": [
+          0.0,
+          0.007660112832138269,
+          0.0,
+          0.0024524962260010414
+        ]
+      }
+    },
+    "last_worker_tick_ms": 121.192,
+    "mean_fps": 55.595908308485676,
+    "one_second_ratios": [
+      0.29969120872999333,
+      0.29676877232457244,
+      0.29921711406726226,
+      0.29814017993625436,
+      0.2965927703572515,
+      0.29829140249274083,
+      0.2967374370806693,
+      0.3294340865115491,
+      0.2980928302382538,
+      0.29415825335331247,
+      0.2940975873546075,
+      0.26358358737139304,
+      0.29787837690670127,
+      0.29764530642145587,
+      0.32770468134759845,
+      0.2999346176022627,
+      0.2949355420777877,
+      0.2976018161120312,
+      0.2629912570442369
+    ],
+    "outflow_particles": 10645,
+    "p95_frame_ms": 26.853541,
+    "passed": false,
+    "simulation_seconds": 5.933333642780781,
+    "simulation_wall_ratio": 0.296620476707183,
+    "sluice_water_balance_error_m3": 0.0,
+    "slurry": {
+      "feed_grading": "Alluvial",
+      "fine_parcels_below_200um": 127,
+      "independently_resolved_grain_collisions": false,
+      "optical_grid_m": 0.029999999329447746,
+      "optics_calibrated": false,
+      "outlet_extinction_m1": 217.1724395751953,
+      "projected_suspended_fines_m3": 0.00012414560852366785,
+      "projected_water_m3": 0.014637624963043525,
+      "projection_fines_error_m3": 5.963111948670274e-19,
+      "projection_water_error_m3": -2.42861286636753e-17,
+      "represented_grains": 1813712431.0953426,
+      "solver_parcels": 4651
+    },
+    "stored_water_m3": 12.734051481628708,
+    "terrain_fine_cells": 358,
+    "terrain_water_splats": 2733,
+    "wall_seconds": 20.003115458,
+    "warmup_seconds": 5,
+    "water_balance": {
+      "baseline_sim_time": 0.0,
+      "boundary_outflow_m3": 13.109053992442558,
+      "external_inflow_m3": 11.729988784529269,
+      "initial_stored_m3": 14.113124481402338,
+      "legacy_baseline": false
+    },
+    "water_balance_error_m3": -7.791860340944368e-06,
+    "water_mean_downstream_ms": 0.3807148039340973,
+    "water_particles": 117101,
+    "water_presentation": {
+      "buffer_underrun_frames": 0,
+      "interpolation_alpha": 0.2951887547969818,
+      "max_capture_ms": 1.079209,
+      "max_surface_build_ms": 37.588249999999995,
+      "mean_capture_ms": 0.37786165315315307,
+      "mean_surface_build_ms": 31.511234986486464,
+      "paired_render_particles": 66030,
+      "presented_sim_time": 97.70984472112652,
+      "surface_builds": 222
+    },
+    "worker_busy_fraction": 0.9986177547663485,
+    "worker_mean_ms": 112.22172048876405,
+    "worker_packets": 178,
+    "worker_phases_mean_ms": [
+      3.307187022471911,
+      40.36942782022471,
+      59.7942130617978,
+      2.8118103370786507,
+      4.001987606741573
+    ]
+  },
+  "native_after": {
+    "bulk_budget_passed": true,
+    "bulk_material_error_m3": 3.071268679377681e-07,
+    "bulk_tolerance_m3": 0.000412467463179788,
+    "detail_revision": 4,
+    "displayed_grains": 18511,
+    "dry_mass_budget_passed": true,
+    "dry_mass_error_kg": 0.0005528810434043407,
+    "dry_mass_tolerance_kg": 0.8074216222356134,
+    "exported_gold_g": 4.851343672773974,
+    "exported_material_m3": [
+      0.0,
+      0.9318844025541813,
+      0.0,
+      0.5324595569963755
+    ],
+    "fluid_surface_ready": true,
+    "gold_balance_error_g": 7.275957614183426e-12,
+    "grains": 4646,
+    "initial_bulk_material_m3": 412.467463179788,
+    "initial_dry_mass_kg": 807421.6222356134,
+    "inlet": {
+      "emission_clock": 0.03333333507180214,
+      "emitted": {
+        "gold_g": 0.02258708595828488,
+        "solid_m3": [
+          0.0,
+          0.00765885926825447,
+          0.0,
+          0.002449836545260951
+        ]
+      },
+      "last_water_m3": 6.249547004699707e-05,
+      "pending": {
+        "gold_g": 1.214656743700871e-05,
+        "solid_m3": [
+          0.0,
+          6.274691951416816e-07,
+          0.0,
+          1.328722922998291e-06
+        ]
+      },
+      "ready": {
+        "gold_g": 9.258643851122494e-09,
+        "solid_m3": [
+          0.0,
+          4.782844071376463e-10,
+          0.0,
+          1.0128106055198818e-09
+        ]
+      },
+      "sequence": 8293,
+      "withdrawn": {
+        "gold_g": 0.022599241784365797,
+        "solid_m3": [
+          0.0,
+          0.00765948721573378,
+          0.0,
+          0.0024511662809945534
+        ]
+      }
+    },
+    "last_worker_tick_ms": 118.997542,
+    "mean_fps": 55.66039800817334,
+    "one_second_ratios": [
+      0.2995390002630774,
+      0.29772795418668396,
+      0.2995016449090905,
+      0.2952291494940393,
+      0.2992744248032837,
+      0.3285571292016592,
+      0.29658532968604373,
+      0.2985573120749451,
+      0.29469369959502173,
+      0.29568833768603386,
+      0.299502840930275,
+      0.29639604953230947,
+      0.26438084379893156,
+      0.2988729656925925,
+      0.3274761798797378,
+      0.29671295534862835,
+      0.29829665464556987,
+      0.2965958735816699,
+      0.2967759650210322
+    ],
+    "outflow_particles": 10748,
+    "p95_frame_ms": 26.444417,
+    "passed": false,
+    "simulation_seconds": 5.933333642780781,
+    "simulation_wall_ratio": 0.29650487201775716,
+    "sluice_water_balance_error_m3": 0.0,
+    "slurry": {
+      "feed_grading": "Alluvial",
+      "fine_parcels_below_200um": 126,
+      "independently_resolved_grain_collisions": false,
+      "optical_grid_m": 0.029999999329447746,
+      "optics_calibrated": false,
+      "outlet_extinction_m1": 185.34877014160156,
+      "projected_suspended_fines_m3": 0.00012450383767699435,
+      "projected_water_m3": 0.014643749963028106,
+      "projection_fines_error_m3": 5.421010862427522e-20,
+      "projection_water_error_m3": 2.0816681711721685e-17,
+      "represented_grains": 1797649752.457588,
+      "solver_parcels": 4646
+    },
+    "stored_water_m3": 12.733651773110704,
+    "terrain_fine_cells": 358,
+    "terrain_water_splats": 2733,
+    "wall_seconds": 20.0109145,
+    "warmup_seconds": 5,
+    "water_balance": {
+      "baseline_sim_time": 0.0,
+      "boundary_outflow_m3": 13.103453707471628,
+      "external_inflow_m3": 11.723988794721663,
+      "initial_stored_m3": 14.113124481402338,
+      "legacy_baseline": false
+    },
+    "water_balance_error_m3": -7.795541669963768e-06,
+    "water_mean_downstream_ms": 0.381198912858963,
+    "water_particles": 117150,
+    "water_presentation": {
+      "buffer_underrun_frames": 0,
+      "interpolation_alpha": 0.7004414796829224,
+      "max_capture_ms": 1.4598339999999999,
+      "max_surface_build_ms": 69.86208400000001,
+      "mean_capture_ms": 0.3750748552036198,
+      "mean_surface_build_ms": 30.217136447963817,
+      "paired_render_particles": 66059,
+      "presented_sim_time": 97.69001981060016,
+      "surface_builds": 221
+    },
+    "worker_busy_fraction": 0.9973096972654604,
+    "worker_mean_ms": 112.11842180898883,
+    "worker_packets": 178,
+    "worker_phases_mean_ms": [
+      3.3499035393258434,
+      40.07509175280897,
+      59.81723720224715,
+      2.8329024269662924,
+      4.073940073033707
+    ]
+  },
+  "source_sha256": {
+    "crates/game/src/gpu/g2p_3d.rs": "9448b824c74eabcf1e6fb1397846cf4ad29a705dd3d2693e8ae89beef0fb39de",
+    "crates/game/src/gpu/mod.rs": "0162f50e0d61850424a5056f0f3a395562f432675c8a67d2a88e855efa1f0cd5",
+    "crates/game/src/gpu/pressure_3d.rs": "8567fbeb0bbc2240b26f1dc70657de5cc29297176643b9c812243f01f2261444",
+    "crates/game/src/gpu/shaders/g2p_3d.wgsl": "64a145c4bb68983494fdd168f09f73d3120c9a46cad64cc39e6a0730fab3708c",
+    "crates/game/src/gpu/shaders/pressure_3d.wgsl": "e42b632452102cd19223ca09257d63d674fdda42ce531c6274fd61eb65d6a509",
+    "crates/game/src/gpu/shaders/pressure_gradient_3d.wgsl": "2e6236356ce54dff13ad8c6729cdc0079b774347d9d0d453bee14eccb78a12cb",
+    "crates/mining-physics/examples/coupling_balance.rs": "6de9c7aafe9146d08245170d6ad7b0f7947a27567c590e9a1cd238e4066a4925",
+    "crates/mining-physics/src/lib.rs": "d73300448a06cbcd9afc16fedc1c8f4a39c833f8b622a33ec44f1fa12b435840",
+    "crates/game/src/gpu/phase_transfer_3d.rs": "238fd5ac02dc2d32e7eca246270dc3fd45d7df272efe2c8df3f0c189b3309384",
+    "crates/game/src/gpu/shaders/phase_transfer_3d.wgsl": "77524ca35b9b556aa13807c0d483d1bdcc5e5ac25b6e08f73904ba711ec0fda2",
+    "crates/game/src/gpu/shaders/pressure_mobility.wgsl": "e439675325603a9d1137b825c6b65b19af697618e0021f1904e5319d2afc3598",
+    "crates/game/src/gpu/shaders/wide_sum.wgsl": "ef5203e53767e4081ae7a2c448b46f60409a9bfac10760e47af33cbe012ecc2e",
+    "crates/mining-physics/src/phase_exchange.rs": "9ccaf5e0eb3dde41980e6e93db095d7eab3f30faff86a984af056d6a85db6ae5",
+    "crates/mining-physics/tests/phase_gpu.rs": "7362036a2434ef697075b7fb9c6781a241362656138ce2dbfbe84d6ced7f9e79",
+    "crates/mining-physics/tests/weighted_pressure.rs": "39907032682b2a58c317d5416980be7dc46c74162b64f5f26cf98060f953f407",
+    "crates/mining-physics/tests/wide_momentum.rs": "8b08b58e81ae3c07e03167fdf4c13ca7c78df0eeefac72ebde05ff2b9eb95507"
+  },
+  "binary_sha256": "656eafd1df138c8144315b81cfc5368ad25021ec8b27e2b0142579c9d32aaeb0",
+  "app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/phase-attribution-20261023/app/First Bend.app",
+  "native_motion": {
+    "fps": 60,
+    "encoded_frames": 976,
+    "views": [
+      {
+        "view": "sluice",
+        "source_frames": 45,
+        "encoded_frames": 245,
+        "selected_review_frames": [
+          0,
+          9,
+          18,
+          26,
+          35,
+          44
+        ],
+        "advancing_frames": 44,
+        "recording_underruns": 0,
+        "max_first_display_delay_ms": 16.492458666666653
+      },
+      {
+        "view": "outlet",
+        "source_frames": 44,
+        "encoded_frames": 241,
+        "selected_review_frames": [
+          0,
+          9,
+          17,
+          26,
+          34,
+          43
+        ],
+        "advancing_frames": 43,
+        "recording_underruns": 0,
+        "max_first_display_delay_ms": 16.499542000000034
+      },
+      {
+        "view": "river",
+        "source_frames": 45,
+        "encoded_frames": 245,
+        "selected_review_frames": [
+          0,
+          9,
+          18,
+          26,
+          35,
+          44
+        ],
+        "advancing_frames": 44,
+        "recording_underruns": 0,
+        "max_first_display_delay_ms": 16.500249999999994
+      },
+      {
+        "view": "bank",
+        "source_frames": 45,
+        "encoded_frames": 245,
+        "selected_review_frames": [
+          0,
+          9,
+          18,
+          26,
+          35,
+          44
+        ],
+        "advancing_frames": 44,
+        "recording_underruns": 0,
+        "max_first_display_delay_ms": 16.417166666666816
+      }
+    ],
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "r_frame_rate": "60/1",
+          "duration": "16.266667",
+          "nb_frames": "976"
+        }
+      ]
+    }
+  },
+  "frozen_comparison": {
+    "exact_equal_fields": [
+      "sim_time",
+      "fluid_clock",
+      "solver_steps",
+      "tracks",
+      "surface",
+      "flow",
+      "machine",
+      "excavated_m3",
+      "delivered_m3"
+    ],
+    "tracks": 128,
+    "surface_type": "list",
+    "render_samples": 128
+  },
+  "native_review_coverage": "Six temporal samples per view, full sluice and river frames; not a complete video watch or operator replay",
+  "native_visual_limits": [
+    "some raised/pillowy water remains over riffles",
+    "grain stippling",
+    "coarse shoreline geometry",
+    "placeholder grass rocks backdrop and equipment",
+    "simplified illumination"
+  ],
+  "process_note": "One discarded benchmark overlapped packaging for about 18 seconds. Both exited before a verified owned-only stop could act; no process was killed. All accepted benchmarks/captures and other heavy jobs were serialized.",
+  "cleanup": {
+    "owned_browser_test_or_native_jobs": 0,
+    "shared_playwright_mcp_processes_left_untouched": 18,
+    "shared_node_processes_left_untouched": 72
+  }
+}

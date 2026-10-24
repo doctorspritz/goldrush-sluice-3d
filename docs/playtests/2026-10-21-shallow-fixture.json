@@ -1,0 +1,35 @@
+{
+  "base_save": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-2026-10-21/washing.save.json",
+  "depths_m_left_to_right": [
+    0.00025,
+    0.0005,
+    0.001,
+    0.002,
+    0.005,
+    0.01
+  ],
+  "patch_z_m": [
+    10,
+    24
+  ],
+  "plane_slope": 0.015,
+  "camera": {
+    "position": [
+      7.0,
+      0.4,
+      8.0
+    ],
+    "yaw": 0.0,
+    "pitch": -0.3,
+    "mode": "OnFoot",
+    "third_person": false,
+    "hand": {
+      "soil_m3": 0.0,
+      "sand_m3": 0.0,
+      "gravel_m3": 0.0,
+      "gold_g": 0.0
+    },
+    "tool_swing": 0.0
+  },
+  "capture_freezes_physics": true
+}

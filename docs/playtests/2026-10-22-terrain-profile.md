@@ -1,0 +1,7 @@
+Opt-in terrain wall profiling corrects the bottleneck attribution. The native worker phase array is ordered `prepare, fluid, DEM, finish, terrain`. Its second entry is the sluice fluid step, not terrain.
+
+A serialized 20-second native window with `SLUICE_PROFILE_TERRAIN=1` recorded 256 terrain steps. The last 100 terrain steps average 5.54 ms: upload 0.55 ms, encoding 0.51 ms, submit/map wait 1.94 ms, decode 0.82 ms, local gold replay 0.52 ms, and projection/soil reconciliation 1.21 ms. Each readback transfers 3,342,336 bytes. These are wall spans, including scheduling and shared GPU contention, rather than device timestamp measurements.
+
+Worker packet means are 1.94 ms preparation, 31.54 ms fluid, 10.67 ms DEM, 1.81 ms finish and 3.57 ms terrain. Terrain runs less often than the worker publishes, which explains its smaller packet average. The result does not justify moving the terrain solver to CPU. Profile fluid synchronization/pressure stages and DEM contacts next while preserving their models and resolution.
+
+Native rendering averaged 56.29 FPS and simulation advanced at 0.6125 times wall time. Numerical gates passed; the combined real-time gate failed. The profiler only adds wall-clock observations and an opt-in JSON log. It changes no physical equation, grid, step or particle count. The [receipt](2026-10-22-terrain-profile.json) pins source and binary hashes. Throughput work remains open in `sluice-terrain-throughput` and `sluice-realtime`.

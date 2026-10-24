@@ -1,0 +1,17 @@
+{
+  "fluid_surface_ready": true,
+  "frames": 211,
+  "hydraulic_profile": "OriginalDemo",
+  "input_check_passed": true,
+  "ledger_error_g": 5.002220859751105e-12,
+  "mean_fps": 56.27472271586515,
+  "particles_below_floor": 0,
+  "sampled_splats": 60682,
+  "save_restored": true,
+  "scenario": "flowing demo",
+  "simulation_time": 18.51666763238609,
+  "wall_seconds": 19.766815875,
+  "water_mean_downstream_ms": 0.3834327161312103,
+  "water_particles": 121363,
+  "water_rendering": "particle depth + bilateral surface"
+}
