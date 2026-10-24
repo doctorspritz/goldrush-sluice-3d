@@ -566,3 +566,234 @@ fn zero_actuator_bank_energy_witness() {
         }
     }
 }
+
+// Replay the preserved failing boundary without paying for another warm-up.
+// This observes the error; it must never be reported as a passivity gate.
+#[test]
+#[ignore = "explicit saved-bank energy-source diagnostic"]
+fn saved_bank_energy_source_breakdown() {
+    let session = bank();
+    let obstacles = session.mechanical_obstacles();
+    let env = Environment {
+        gravity: -Vec3::Y * 9.81,
+        site: Some(&session.site),
+        obstacles: &obstacles,
+        loads: &[],
+    };
+    let bytes = std::fs::read(
+        std::env::var_os("SLUICE_ENERGY_BOUNDARY").expect("saved before.bin boundary"),
+    )
+    .unwrap();
+    let output = std::path::PathBuf::from(
+        std::env::var_os("SLUICE_ENERGY_BREAKDOWN").expect("fresh output JSON"),
+    );
+    assert!(!output.exists());
+    let before = RetainedSoil::decode(&bytes, &env).unwrap();
+    let mut after = RetainedSoil::decode(&bytes, &env).unwrap();
+    let mut engine = RetainedSoil::decode(&bytes, &env).unwrap();
+    let reference = RetainedSoil::decode(
+        &std::fs::read(
+            std::env::var_os("SLUICE_ENERGY_REFERENCE").expect("saved after.bin boundary"),
+        )
+        .unwrap(),
+        &env,
+    )
+    .unwrap();
+    let components = |body: &r::RigidBody| {
+        let mass = body.mass() as f64;
+        let velocity = sv(body.linvel()).as_dvec3();
+        let omega = sv(body.angvel()).as_dvec3();
+        let inertia = body.mass_properties().effective_angular_inertia();
+        let columns =
+            [r::Vector::X, r::Vector::Y, r::Vector::Z].map(|axis| sv(inertia * axis).as_dvec3());
+        let tensor = DMat3::from_cols(columns[0], columns[1], columns[2]);
+        [
+            0.5 * mass * velocity.length_squared(),
+            0.5 * omega.dot(tensor * omega),
+            -mass
+                * env
+                    .gravity
+                    .as_dvec3()
+                    .dot(sv(body.center_of_mass()).as_dvec3()),
+        ]
+    };
+    let snapshot = |owner: &RetainedSoil| {
+        owner
+            .model
+            .as_ref()
+            .unwrap()
+            .world
+            .bodies
+            .iter()
+            .filter(|(_, body)| body.is_dynamic())
+            .map(|(handle, body)| (handle, components(body)))
+            .collect::<std::collections::HashMap<_, _>>()
+    };
+    let initial = snapshot(&before);
+    after
+        .step(MachineInput::default(), 1. / 480., &env)
+        .unwrap();
+    same(&after, &reference, "preserved bank energy boundary");
+    let model = engine.model.as_mut().unwrap();
+    let (mb, _) = model.world.multibody_joints.get(model.joints[0]).unwrap();
+    assert!(mb.links().skip(1).all(|link| !link
+        .joint
+        .data
+        .motor_axes
+        .contains(r::JointAxesMask::ANG_X)));
+    model.world.integration_parameters.dt = 1. / 480.;
+    model.world.step_with_events(
+        &Belts {
+            forward: *model.world.bodies[model.bodies[0]].rotation() * r::Vector::Z,
+            speed: [0.; 2],
+        },
+        &(),
+    );
+    let raw = snapshot(&engine);
+    let model = engine.model.as_mut().unwrap();
+    let (mb, _) = model
+        .world
+        .multibody_joints
+        .get_mut(model.joints[0])
+        .unwrap();
+    let velocity: [f32; 10] = mb.generalized_velocity().as_slice().try_into().unwrap();
+    mb.forward_kinematics(&model.world.bodies, false);
+    mb.update_rigid_bodies(&mut model.world.bodies, true);
+    model.set_velocity(&velocity);
+    // The phase-only reproduction must reach the exact authoritative body
+    // state, not a superficially similar alternative force/controller path.
+    let expected = &after.model.as_ref().unwrap().world.bodies;
+    for (handle, body) in model.world.bodies.iter() {
+        let other = &expected[handle];
+        assert_eq!(
+            body.position(),
+            other.position(),
+            "phase replay pose {handle:?}"
+        );
+        assert_eq!(
+            body.linvel(),
+            other.linvel(),
+            "phase replay velocity {handle:?}"
+        );
+        assert_eq!(
+            body.angvel(),
+            other.angvel(),
+            "phase replay spin {handle:?}"
+        );
+    }
+    let final_state = snapshot(&after);
+    let model = after.model.as_ref().unwrap();
+    let label = |handle: Option<r::RigidBodyHandle>| {
+        handle
+            .map(|h| {
+                if let Some(i) = model.bodies.iter().position(|x| *x == h) {
+                    format!("machine-{i}")
+                } else if let Some(i) = model.soil_handles.iter().position(|x| *x == h) {
+                    format!("clod-{i}")
+                } else {
+                    format!("body-{h:?}")
+                }
+            })
+            .unwrap_or("static".into())
+    };
+    let mut rows = Vec::new();
+    let mut totals = [[0f64; 3]; 3];
+    for (handle, value) in &initial {
+        let end = final_state[handle];
+        let mid = raw[handle];
+        for (axis, &component) in value.iter().enumerate() {
+            totals[0][axis] += component;
+            totals[1][axis] += mid[axis];
+            totals[2][axis] += end[axis];
+        }
+        let delta: [f64; 3] = std::array::from_fn(|i| end[i] - value[i]);
+        let body = &model.world.bodies[*handle];
+        rows.push(serde_json::json!({"body":label(Some(*handle)),"mass_kg":body.mass(),"before_j":value,"engine_j":mid,"after_j":end,"delta_j":delta,"delta_total_j":delta.iter().sum::<f64>(),"after_position":body.translation().to_array(),"after_velocity":body.linvel().to_array(),"after_spin":body.angvel().to_array()}));
+    }
+    rows.sort_by(|a, b| {
+        b["delta_total_j"]
+            .as_f64()
+            .unwrap()
+            .abs()
+            .total_cmp(&a["delta_total_j"].as_f64().unwrap().abs())
+    });
+    let mut contacts = Vec::new();
+    for pair in model.world.narrow_phase.contact_pairs() {
+        let a = &model.world.colliders[pair.collider1];
+        let b = &model.world.colliders[pair.collider2];
+        for manifold in pair.solver_manifolds() {
+            for point in &manifold.points {
+                if point.data.impulse > 0. {
+                    contacts.push(serde_json::json!({"a":label(a.parent()),"b":label(b.parent()),"impulse_ns":point.data.impulse,"distance_m":point.dist,"normal":manifold.data.normal.to_array()}));
+                }
+            }
+        }
+    }
+    contacts.sort_by(|a, b| {
+        b["impulse_ns"]
+            .as_f64()
+            .unwrap()
+            .total_cmp(&a["impulse_ns"].as_f64().unwrap())
+    });
+    // These are one-step attribution controls, not production parameter
+    // changes. A refused case remains a refusal; no angle is clamped/admitted.
+    let mut variants = Vec::new();
+    let initial_energy: f64 = initial.values().flatten().sum();
+    for (name, stabilization, tgs, steps, no_bias, no_history) in [
+        ("baseline", 1, 4, 1, false, false),
+        ("relax-2", 2, 4, 1, false, false),
+        ("relax-4", 4, 4, 1, false, false),
+        ("relax-8", 8, 4, 1, false, false),
+        ("relax-16", 16, 4, 1, false, false),
+        ("relax-64", 64, 4, 1, false, false),
+        ("friction-bias", 1, 4, 1, false, false),
+        ("warmstart-half", 1, 4, 1, false, false),
+        ("no-bias", 1, 4, 1, true, false),
+        ("no-history", 1, 4, 1, false, true),
+        ("contact-refresh-4", 1, 1, 4, false, false),
+        ("contact-refresh-4-relax-4", 4, 1, 4, false, false),
+        ("tgs-8", 1, 8, 1, false, false),
+        ("tgs-16", 1, 16, 1, false, false),
+    ] {
+        let mut variant = RetainedSoil::decode(&bytes, &env).unwrap();
+        let parameters = &mut variant.model.as_mut().unwrap().world.integration_parameters;
+        parameters.num_internal_stabilization_iterations = stabilization;
+        parameters.num_solver_iterations = tgs;
+        if no_bias {
+            parameters.normalized_max_corrective_velocity = 0.;
+        }
+        if no_history {
+            parameters.warmstart_coefficient = 0.;
+        }
+        if name == "friction-bias" {
+            parameters.friction_in_bias_pass = true;
+        }
+        if name == "warmstart-half" {
+            parameters.warmstart_coefficient *= 0.5;
+        }
+        let warmstart_coefficient = parameters.warmstart_coefficient;
+        let friction_in_bias_pass = parameters.friction_in_bias_pass;
+        let started = std::time::Instant::now();
+        let mut failure = None;
+        for _ in 0..steps {
+            if let Err(error) =
+                variant.step(MachineInput::default(), 1. / (480 * steps) as f32, &env)
+            {
+                failure = Some(error);
+                break;
+            }
+        }
+        let delta = if failure.is_none() {
+            Some(snapshot(&variant).values().flatten().sum::<f64>() - initial_energy)
+        } else {
+            None
+        };
+        variants.push(serde_json::json!({"name":name,"stabilization":stabilization,"tgs":tgs,"outer_steps":steps,"no_bias":no_bias,"no_history":no_history,"warmstart_coefficient":warmstart_coefficient,"friction_in_bias_pass":friction_in_bias_pass,"accepted":failure.is_none(),"failure":failure,"delta_energy_j":delta,"step_wall_ms":started.elapsed().as_secs_f64()*1000.}));
+    }
+    let report = serde_json::json!({"energy_components":["linear_kinetic","angular_kinetic","gravity"],"phase_totals_j":totals,"reported_residual_j":after.soil().feedback.coupled_passivity_residual_j,"body_rows":rows,"largest_contacts":contacts.iter().take(32).collect::<Vec<_>>(),"contact_points":contacts.len(),"phase_replay_body_state_exact":true,"saved_reference_after_state_exact":true,"attribution_variants":variants,"variants_are_not_timestep_convergence_tests":true,"accuracy_gate_passed":false});
+    std::fs::write(output, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    println!(
+        "ENERGY SOURCE totals={totals:?}, controls={}",
+        report["attribution_variants"]
+    );
+}
