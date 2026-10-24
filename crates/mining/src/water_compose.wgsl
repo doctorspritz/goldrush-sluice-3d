@@ -394,11 +394,17 @@ fn ripple_gradient(q:vec2<f32>,footprint:f32)->vec2<f32> {
 // This changes reflection/refraction only, never depth, volume,
 // concentration or particle motion. Band filtering removes unresolved glints.
 fn channel_wave(q:vec2<f32>,k:vec2<f32>,dx:vec2<f32>,dy:vec2<f32>)->vec2<f32> {
-    // Integrate each wave over its actual pixel ellipse. Using the largest
-    // grazing footprint for every direction erased even resolved cross-flow
-    // detail, leaving smooth inflated-looking shoulders on the riffle waves.
+    // dx/dy span a whole pixel, not one standard deviation. Integrate the
+    // sinusoid over that pixel parallelogram; the old Gaussian used 12 times
+    // its variance and erased resolved ripples into smooth crest shoulders.
     let phase=vec2(dot(k,dx),dot(k,dy));
-    return normalize(k)*cos(dot(q,k))*exp(-0.5*dot(phase,phase));
+    let half_phase=phase*0.5;
+    let safe=max(abs(half_phase),vec2(0.0001));
+    let average=sin(safe)/safe;
+    // Pixel integration alone does not band-limit sampling. Fade out before
+    // Nyquist in either pixel direction, without blurring its resolved axis.
+    let band=1.-smoothstep(2.2,3.14159265,max(abs(phase.x),abs(phase.y)));
+    return normalize(k)*cos(dot(q,k))*average.x*average.y*band;
 }
 fn channel_ripple_gradient(q:vec2<f32>,dx:vec2<f32>,dy:vec2<f32>)->vec2<f32> {
     // Incommensurate bands avoid repeating parallel stripes on every crest.

@@ -33,8 +33,10 @@ pub(crate) struct Kernel {
 }
 impl Kernel {
     /// Channel sheets use thinner support along their measured minor axis.
-    /// Tangent expansion preserves kernel volume; spray and the outlet retain
-    /// the original axes. This changes reconstruction, never particle motion.
+    /// Keep the measured tangential footprint: redistributing normal support
+    /// into its tangents inflates crest shoulders and muddy optical patches.
+    /// The caller normalizes by the actual determinant, retaining represented
+    /// water volume. Spray and the outlet retain their original support.
     pub(crate) fn channel_axes(self) -> [Vec3; 3] {
         let mut axes = self.axes;
         let minor = (0..3)
@@ -45,13 +47,7 @@ impl Kernel {
             })
             .unwrap();
         let thickness = 1. - 0.5 * self.planarity * self.bulk;
-        for (i, axis) in axes.iter_mut().enumerate() {
-            *axis *= if i == minor {
-                thickness
-            } else {
-                thickness.sqrt().recip()
-            };
-        }
+        axes[minor] *= thickness;
         axes
     }
 }
@@ -568,7 +564,12 @@ mod tests {
         assert!(k.normal.dot(Vec3::Y) > 0.99 && k.planarity > 0.99);
         assert!(vertical < horizontal * 0.35, "{vertical} / {horizontal}");
         let volume = |axes: [Vec3; 3]| axes.iter().map(|a| a.length()).product::<f32>();
-        assert!((volume(axes) - volume(k.axes)).abs() < 1e-5);
+        // The volume-normalized poly6, rather than expanded tangents, owns
+        // represented water volume. Thinning cannot broaden the wave shoulder.
+        assert!(volume(axes) < volume(k.axes));
+        for (old, new) in k.axes.iter().zip(axes) {
+            assert!(new.length() <= old.length() + 1e-6);
+        }
         let spray = Kernel { bulk: 0., ..k };
         assert_eq!(spray.channel_axes(), spray.axes);
         assert!(data

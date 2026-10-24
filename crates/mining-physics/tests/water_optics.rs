@@ -2802,16 +2802,22 @@ fn grazing_pixel_filters_only_unresolved_wave_directions() {
         layout: &empty,
         entries: &[],
     });
-    let (buffer, layout, group) = output(&device, 8);
+    let (buffer, layout, group) = output(&device, 16);
     let source = format!(
         "{}\n{}",
         include_str!("../../mining/src/water_compose.wgsl"),
         r#"
 @group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+fn legacy_wave(q:vec2<f32>,k:vec2<f32>,dx:vec2<f32>,dy:vec2<f32>)->vec2<f32> {
+ let phase=vec2(dot(k,dx),dot(k,dy));
+ return normalize(k)*cos(dot(q,k))*exp(-0.5*dot(phase,phase));
+}
 @compute @workgroup_size(1) fn probe() {
  let q=vec2(0.);let dx=vec2(0.1,0.);let dy=vec2(0.,0.001);
  result[0]=vec4(channel_wave(q,vec2(0.,140.),dx,dy),channel_wave(q,vec2(140.,0.),dx,dy));
  result[1]=vec4(channel_wave(q,vec2(0.,140.),dy,dx),channel_wave(q,vec2(84.,112.),vec2(0.001,0.),vec2(0.,0.001)));
+ result[2]=vec4(channel_wave(vec2(0.013,-0.009),vec2(51.,19.),vec2(0.025,0.004),vec2(-0.003,0.005)),0.,0.);
+ result[3]=vec4(legacy_wave(vec2(0.013,-0.009),vec2(51.,19.),vec2(0.025,0.004),vec2(-0.003,0.005)),0.,0.);
 }"#
     );
     let values = execute(
@@ -2823,7 +2829,7 @@ fn grazing_pixel_filters_only_unresolved_wave_directions() {
         &buffer,
         [1, 1],
     );
-    let expected = (-0.5f64 * 0.14f64.powi(2)).exp();
+    let expected = (0.07f64).sin() / 0.07;
     assert!(
         (values[1] as f64 - expected).abs() < 1e-6,
         "resolved transverse detail was erased: {values:?}"
@@ -2836,6 +2842,28 @@ fn grazing_pixel_filters_only_unresolved_wave_directions() {
         (values[5] - values[1]).abs() < 1e-6,
         "pixel basis changed filtering"
     );
-    assert!((values[6] as f64 - 0.6 * expected).abs() < 1e-6);
-    assert!((values[7] as f64 - 0.8 * expected).abs() < 1e-6);
+    let diagonal = (0.042f64.sin() / 0.042) * (0.056f64.sin() / 0.056);
+    assert!((values[6] as f64 - 0.6 * diagonal).abs() < 1e-6);
+    assert!((values[7] as f64 - 0.8 * diagonal).abs() < 1e-6);
+    // Independent midpoint integration over the actual pixel, rather than
+    // reproducing the shader's closed-form filter. This resolved band lost
+    // more than half its contrast under the previous 12x-variance Gaussian.
+    let mut integral = 0.;
+    for y in 0..128 {
+        for x in 0..128 {
+            let u = (x as f64 + 0.5) / 128. - 0.5;
+            let v = (y as f64 + 0.5) / 128. - 0.5;
+            let px = 0.013 + 0.025 * u - 0.003 * v;
+            let py = -0.009 + 0.004 * u + 0.005 * v;
+            integral += (51. * px + 19. * py).cos() / (128. * 128.);
+        }
+    }
+    let length = (51f64.powi(2) + 19f64.powi(2)).sqrt();
+    assert!((values[8] as f64 - integral * 51. / length).abs() < 0.00001);
+    assert!((values[9] as f64 - integral * 19. / length).abs() < 0.00001);
+    let legacy_error = ((values[12] as f64 - integral * 51. / length).powi(2)
+        + (values[13] as f64 - integral * 19. / length).powi(2))
+    .sqrt();
+    assert!(legacy_error > 0.35, "legacy over-filter was not reproduced");
+    eprintln!("Resolved pixel-integrated wave: expected={integral}, legacy_error={legacy_error}");
 }
