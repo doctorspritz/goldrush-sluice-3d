@@ -965,10 +965,77 @@ pub fn sync(
     }
 }
 
+// Immutable for one reconstruction snapshot. Compute the original placement
+// arithmetic and finite stepped wall geometry once, then reuse their values
+// for every render sample. Rebuilding on each call also covers moved/tilted
+// equipment without a persistent cache or invalidation protocol.
+struct SurfaceGeometry {
+    inlet: mining_sim::Vec3,
+    forward: mining_sim::Vec3,
+    right: mining_sim::Vec3,
+    slope: f32,
+    floor_offset: f32,
+    half_width: f32,
+    cell: f32,
+    wall_tops: Vec<f32>,
+    lateral: [f32; 4],
+}
+impl SurfaceGeometry {
+    fn new(sluice: &mining_sim::Sluice, placement: mining_sim::Placement) -> Self {
+        let config = mining_physics::geometry::config(sluice);
+        let half_width = sluice.profile.width() * 0.5;
+        let right = placement.right();
+        let plane = right / half_width;
+        Self {
+            inlet: placement.inlet,
+            forward: placement.forward(),
+            right,
+            slope: placement.slope_deg.to_radians().tan(),
+            floor_offset: (sluice.floor_cells() + 1) as f32 * config.cell_size,
+            half_width,
+            cell: config.cell_size,
+            wall_tops: (0..config.grid_width)
+                .map(|column| {
+                    (config.floor_height_at(column) + config.riffle_height + config.wall_margin + 1)
+                        as f32
+                        * config.cell_size
+                })
+                .collect(),
+            lateral: [plane.x, plane.y, plane.z, -plane.dot(placement.inlet)],
+        }
+    }
+    fn world(&self, position: mining_sim::Vec3) -> mining_sim::Vec3 {
+        // Preserve the order in grid_to_local followed by Placement::to_world.
+        // Algebraically cancelling their slopes would change rounded heights.
+        let local = mining_sim::Vec3::new(
+            position.x,
+            position.y - self.floor_offset + position.x * self.slope,
+            position.z - self.half_width - self.cell,
+        );
+        self.inlet
+            + self.forward * local.x
+            + mining_sim::Vec3::Y * (local.y - local.x * self.slope)
+            + self.right * local.z
+    }
+    fn velocity(&self, velocity: mining_sim::Vec3) -> mining_sim::Vec3 {
+        self.forward * velocity.x + mining_sim::Vec3::Y * velocity.y + self.right * velocity.z
+    }
+    fn below_wall_top(&self, world: Vec3) -> bool {
+        let origin = Vec3::from_array(self.inlet.to_array());
+        let x = (world - origin).dot(Vec3::from_array(self.forward.to_array()));
+        let column = (x / self.cell)
+            .floor()
+            .clamp(0., (self.wall_tops.len() - 1) as f32) as usize;
+        let height = world.y - origin.y + self.floor_offset;
+        height <= self.wall_tops[column]
+    }
+}
+
 pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
     let Some(p) = sluice.placement else {
         return Vec::new();
     };
+    let geometry = SurfaceGeometry::new(sluice, p);
     let count = sluice.water.len() + sluice.outflow.len();
     let weight = count as f32 / count.clamp(1, MAX_SPLATS) as f32;
     let radius = sluice.profile.cell() * 0.85 * weight.cbrt();
@@ -1010,11 +1077,11 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
                 )
             } else {
                 let water = &sluice.water[index];
-                let world = p.to_world(sluice.grid_to_local(water.position));
+                let world = geometry.world(water.position);
                 (
                     id,
                     Vec3::from_array(world.to_array()),
-                    sluice.grid_velocity_to_world(water.velocity),
+                    geometry.velocity(water.velocity),
                     0.,
                     slurry.sample_channel(water.position).1,
                 )
@@ -1089,9 +1156,8 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
                     // The lateral slab clips reconstruction at the physical
                     // inner walls. Reuse unused channel fields/stride; outlet
                     // and terrain attributes keep their existing meanings.
-                    slope_z: if kind == 0. && below_wall_top(sluice, _p) {
-                        let right = p.right() / (sluice.profile.width() * 0.5);
-                        [right.x, right.y, right.z, -right.dot(p.inlet)]
+                    slope_z: if kind == 0. && geometry.below_wall_top(_p) {
+                        geometry.lateral
                     } else {
                         [0.; 4]
                     },
@@ -1105,6 +1171,7 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
 
 // Use the same finite, stepped wall height as collision/mesh geometry. A
 // splash above the wall must remain free to render outside the lateral slab.
+#[cfg(test)]
 fn below_wall_top(sluice: &mining_sim::Sluice, world: Vec3) -> bool {
     let Some(p) = sluice.placement else {
         return false;
@@ -1152,7 +1219,11 @@ mod tests {
     #[test]
     #[ignore = "bounded render profiling; run explicitly with --ignored --nocapture"]
     fn profile_surface_reconstruction_and_correspondence() {
-        let mut session = crate::demo::session().unwrap();
+        let mut session = if let Some(path) = std::env::var_os("SLUICE_SURFACE_LOAD") {
+            mining_sim::Session::load_json(&std::fs::read_to_string(path).unwrap()).unwrap()
+        } else {
+            crate::demo::session().unwrap()
+        };
         session.sluice.ensure_water_ids();
         let previous = samples(&session.sluice);
         for p in &mut session.sluice.water {
@@ -1306,6 +1377,67 @@ mod tests {
         assert!(a.difference(&b).all(|id| *id == removed));
         assert!(b.difference(&a).count() <= 1);
     }
+    #[test]
+    fn snapshot_geometry_retains_original_transforms_and_stepped_walls() {
+        let mut sluice = crate::demo::session().unwrap().sluice;
+        for profile in [
+            mining_sim::sluice::HydraulicProfile::Legacy,
+            mining_sim::sluice::HydraulicProfile::OriginalDemo,
+        ] {
+            sluice.profile = profile;
+            for yaw in [0., 0.37, 1.4, -2.2] {
+                for slope_deg in [3., 9.8, 17.] {
+                    sluice.placement = Some(mining_sim::Placement {
+                        inlet: mining_sim::Vec3::new(14.13, 2.37, -9.21),
+                        yaw,
+                        slope_deg,
+                    });
+                    let placement = sluice.placement.unwrap();
+                    let geometry = SurfaceGeometry::new(&sluice, placement);
+                    let right = placement.right() / (profile.width() * 0.5);
+                    assert_eq!(
+                        geometry.lateral.map(f32::to_bits),
+                        [right.x, right.y, right.z, -right.dot(placement.inlet)].map(f32::to_bits)
+                    );
+                    for column in 0..geometry.wall_tops.len() {
+                        for fraction in [-0.0001, 0.25, 1.0001] {
+                            let position = mining_sim::Vec3::new(
+                                (column as f32 + fraction) * geometry.cell,
+                                geometry.wall_tops[column] + 0.001,
+                                profile.width() * 0.7,
+                            );
+                            assert_eq!(
+                                geometry.world(position).to_array().map(f32::to_bits),
+                                placement
+                                    .to_world(sluice.grid_to_local(position))
+                                    .to_array()
+                                    .map(f32::to_bits)
+                            );
+                            let velocity = position * 0.37 - mining_sim::Vec3::ONE;
+                            assert_eq!(
+                                geometry.velocity(velocity).to_array().map(f32::to_bits),
+                                sluice
+                                    .grid_velocity_to_world(velocity)
+                                    .to_array()
+                                    .map(f32::to_bits)
+                            );
+                            for offset in [-0.0001, 0., 0.0001] {
+                                let world = placement.inlet
+                                    + placement.forward() * position.x
+                                    + mining_sim::Vec3::Y
+                                        * (geometry.wall_tops[column] - geometry.floor_offset
+                                            + offset);
+                                let world = Vec3::from_array(world.to_array());
+                                assert_eq!(geometry.below_wall_top(world), below_wall_top(&sluice, world),
+                                    "profile={profile:?} yaw={yaw} slope={slope_deg} column={column} fraction={fraction} offset={offset}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn reconstruction_clips_below_the_actual_wall_but_retains_above_wall_spray() {
         let mut sluice = crate::demo::session().unwrap().sluice;

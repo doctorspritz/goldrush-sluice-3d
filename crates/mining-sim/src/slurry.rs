@@ -89,19 +89,28 @@ impl SlurryField {
         }
     }
     fn filter_axis(&mut self, axis: usize) {
-        let dims = self.dims;
+        let stride = [1, self.dims[0], self.dims[0] * self.dims[1]][axis];
+        let length = self.dims[axis];
+        let block = stride * length;
         let mut next = vec![Cell::default(); self.cells.len()];
-        for z in 0..dims[2] {
-            for y in 0..dims[1] {
-                for x in 0..dims[0] {
-                    let p = [x, y, z];
-                    let value = self.cells[self.index(p)];
-                    for (offset, weight) in [(-1, 0.25), (0, 0.5), (1, 0.25)] {
-                        let mut q = p;
-                        q[axis] =
-                            (p[axis] as i32 + offset).clamp(0, dims[axis] as i32 - 1) as usize;
-                        next[self.index(q)].add(value, weight);
-                    }
+        // Gather in the original scatter's contribution order: lower cell,
+        // centre, upper cell, including duplicated clamped boundary taps.
+        // Each destination is written once rather than updated three times.
+        // Contiguous blocks also avoid rebuilding XYZ indices for every tap.
+        for (source, target) in self
+            .cells
+            .chunks_exact(block)
+            .zip(next.chunks_exact_mut(block))
+        {
+            for coordinate in 0..length {
+                let lower = coordinate.saturating_sub(1) * stride;
+                let center = coordinate * stride;
+                let upper = (coordinate + 1).min(length - 1) * stride;
+                for lane in 0..stride {
+                    let value = &mut target[center + lane];
+                    value.add(source[lower + lane], 0.25);
+                    value.add(source[center + lane], 0.5);
+                    value.add(source[upper + lane], 0.25);
                 }
             }
         }
@@ -236,6 +245,58 @@ pub fn diagnostics(s: &Sluice) -> serde_json::Value {
 #[cfg(test)]
 mod reconstruction_tests {
     use super::*;
+
+    #[test]
+    fn gathered_filter_matches_ordered_scatter_at_every_axis_and_boundary() {
+        // Keep the original destination scatter as an independent reference.
+        // Singleton axes exercise duplicated boundary taps; the patterned
+        // moments span many magnitudes so a changed addition order is visible.
+        for dims in [[1, 1, 1], [2, 3, 5], [9, 5, 9], [101, 1, 1], [4, 1, 7]] {
+            let mut field = SlurryField {
+                dims,
+                cells: (0..dims.iter().product())
+                    .map(|i| {
+                        let v = ((i * 73 + 17) % 113) as f64 * 10f64.powi(i as i32 % 16 - 12);
+                        Cell {
+                            water: v,
+                            fines: v * 0.0173,
+                            area: v * 372.81,
+                        }
+                    })
+                    .collect(),
+            };
+            let mut reference = field.cells.clone();
+            for axis in [0, 1, 2, 0, 2]
+                .into_iter()
+                .chain(std::iter::repeat_n(0, 30))
+            {
+                let mut next = vec![Cell::default(); reference.len()];
+                for z in 0..dims[2] {
+                    for y in 0..dims[1] {
+                        for x in 0..dims[0] {
+                            let p = [x, y, z];
+                            let value = reference[field.index(p)];
+                            for (offset, weight) in [(-1, 0.25), (0, 0.5), (1, 0.25)] {
+                                let mut q = p;
+                                q[axis] = (p[axis] as i32 + offset).clamp(0, dims[axis] as i32 - 1)
+                                    as usize;
+                                next[field.index(q)].add(value, weight);
+                            }
+                        }
+                    }
+                }
+                reference = next;
+                field.filter_axis(axis);
+                for (index, (a, b)) in field.cells.iter().zip(&reference).enumerate() {
+                    assert_eq!(
+                        [a.water.to_bits(), a.fines.to_bits(), a.area.to_bits()],
+                        [b.water.to_bits(), b.fines.to_bits(), b.area.to_bits()],
+                        "dims={dims:?} axis={axis} cell={index}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn fine_parcel_footprint_is_streamwise_and_keeps_a_broad_plume() {
