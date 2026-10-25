@@ -879,6 +879,13 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
                 };
             }
 
+            #[cfg(feature = "contact-work-audit")]
+            if worker_id == 0 {
+                unsafe {
+                    super::residual::observe(ctx, group_index, params, solved_dt, false);
+                }
+            }
+
             /*
              * Stage: integrate positions (parallel over claimed body slots).
              * Worker 0 also integrates the multibodies (sole accessor of `bodies` and
@@ -991,6 +998,7 @@ pub(super) unsafe fn run_worker(ctx: &SharedCtx, worker_id: usize) {
             if worker_id == 0 {
                 unsafe {
                     super::audit_phase(ctx, "after_integrate", false, solved_dt + params.dt);
+                    super::residual::observe(ctx, group_index, params, solved_dt, true);
                 }
             }
 

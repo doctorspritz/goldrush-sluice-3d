@@ -1,0 +1,3259 @@
+{
+  "scope": "Eight one-outer-step full-bank replays at unchanged 1/480 s outer and 1/1920 s integration cadence. Iteration counts are diagnostic only; no solver policy adopted.",
+  "initial_watched_geometry_and_contact_law_exact_across_iterations": true,
+  "all_observed_after_states_byte_exact_against_unobserved_controls": true,
+  "legacy_16_after_boundary_byte_exact": true,
+  "all_eight_physical_gates_failed": true,
+  "cases": [
+    {
+      "mode": "baseline",
+      "pgs": 16,
+      "physical_energy_gain_j": 57.216923396044876,
+      "physical_gate_j": 0.01,
+      "physical_gate_passed": false,
+      "rigid_points_per_substep": 42052,
+      "generic_contact_points_per_substep": 206,
+      "generic_limit_rows_per_substep": 3,
+      "maximum_rigid_normal_response_m_s": 3.1320129477571546,
+      "first_rigid_normal_response_m_s": 3.1320129477571546,
+      "last_rigid_normal_response_m_s": 2.570360217067307,
+      "maximum_rigid_linear_probe_m_s": 0.7955486178398132,
+      "maximum_generic_contact_normal_response_m_s": 0.08624112730251579,
+      "maximum_generic_joint_impulse_correction": 0.0,
+      "watched_global_velocity_vs_motion_max_error_m_s": 0.001616066456813614,
+      "watched_653_654_first_substep": {
+        "bodies": [
+          [
+            653,
+            0
+          ],
+          [
+            654,
+            0
+          ]
+        ],
+        "contact_id": 1,
+        "frame": 0,
+        "gap_rate_minus_frozen_jacobian_m_s": 0.00023551127041954167,
+        "independent_geometry_after": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.011441031920211807,
+            -0.9646694966432294,
+            0.26321448484971166
+          ],
+          "best_axis_source": "supporting_face",
+          "best_signed_separation_m": -0.0007286952422624893,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "independent_geometry_before": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.009830561244844138,
+            -0.9642631125341184,
+            0.2647640645397805
+          ],
+          "best_axis_source": "edge_cross",
+          "best_signed_separation_m": -0.00024243185641736886,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "pre_integration_normal_velocity_m_s": -0.9341832399368286,
+        "tracking_gap_rate_m_s": -0.9339477286664091
+      },
+      "watched_655_656_657_658_first_substep": [
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0002507189093455542,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.015452492730023642,
+              -0.9635463224546186,
+              0.26709493621671027
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002139062105071865,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": -0.13201914727687836,
+          "tracking_gap_rate_m_s": -0.1317684283675328
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.00022201001270572007,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.015452492730023642,
+              -0.9635463224546186,
+              0.26709493621671027
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002139062105071865,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.6169924736022949,
+          "tracking_gap_rate_m_s": 0.6172144836150006
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.00022201001270572007,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.015452492730023642,
+              -0.9635463224546186,
+              0.26709493621671027
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002139062105071865,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.6169924736022949,
+          "tracking_gap_rate_m_s": 0.6172144836150006
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0006396746192155467,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.015452492730023642,
+              -0.9635463224546186,
+              0.26709493621671027
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002139062105071865,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.3316388428211212,
+          "tracking_gap_rate_m_s": 0.33227851744033676
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0005515897464932196,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.016266972472266657,
+              -0.9634972421359248,
+              0.2672235955207806
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.0014154247449811308,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.12479663640260696,
+          "tracking_gap_rate_m_s": 0.12534822614910018
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -8.389078803752725e-05,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.016266972472266657,
+              -0.9634972421359248,
+              0.2672235955207806
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.0014154247449811308,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.09022253751754761,
+          "tracking_gap_rate_m_s": 0.09013864672951008
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -0.00029696571877535494,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.016266972472266657,
+              -0.9634972421359248,
+              0.2672235955207806
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.0014154247449811308,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.2951638102531433,
+          "tracking_gap_rate_m_s": 0.29486684453436796
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -0.00029696571877535494,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.016266972472266657,
+              -0.9634972421359248,
+              0.2672235955207806
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.0014154247449811308,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.2951638102531433,
+          "tracking_gap_rate_m_s": 0.29486684453436796
+        }
+      ],
+      "observer_after_state_byte_exact": true,
+      "source_summary_bytes": 649422,
+      "source_summary_sha256": "f530b3042163257b961efd8255f6b3d2d5a82f83b11c3a7459ab2d6e317be6f6"
+    },
+    {
+      "mode": "baseline",
+      "pgs": 32,
+      "physical_energy_gain_j": 119.30072663570172,
+      "physical_gate_j": 0.01,
+      "physical_gate_passed": false,
+      "rigid_points_per_substep": 42052,
+      "generic_contact_points_per_substep": 206,
+      "generic_limit_rows_per_substep": 3,
+      "maximum_rigid_normal_response_m_s": 3.037984772764642,
+      "first_rigid_normal_response_m_s": 3.037984772764642,
+      "last_rigid_normal_response_m_s": 2.525545769200859,
+      "maximum_rigid_linear_probe_m_s": 0.7868702411651611,
+      "maximum_generic_contact_normal_response_m_s": 0.0834672392940363,
+      "maximum_generic_joint_impulse_correction": 0.0,
+      "watched_global_velocity_vs_motion_max_error_m_s": 0.001478973183865473,
+      "watched_653_654_first_substep": {
+        "bodies": [
+          [
+            653,
+            0
+          ],
+          [
+            654,
+            0
+          ]
+        ],
+        "contact_id": 1,
+        "frame": 0,
+        "gap_rate_minus_frozen_jacobian_m_s": 0.0007665620171113385,
+        "independent_geometry_after": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.01132686889123372,
+            -0.9646754177989462,
+            0.26319772099231614
+          ],
+          "best_axis_source": "supporting_face",
+          "best_signed_separation_m": -0.0006859894336921357,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "independent_geometry_before": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.009830561244844138,
+            -0.9642631125341184,
+            0.2647640645397805
+          ],
+          "best_axis_source": "edge_cross",
+          "best_signed_separation_m": -0.00024243185641736886,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "pre_integration_normal_velocity_m_s": -0.8525248169898987,
+        "tracking_gap_rate_m_s": -0.8517582549727873
+      },
+      "watched_655_656_657_658_first_substep": [
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -0.000608486904011378,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.01499009290530182,
+              -0.9636999545692054,
+              0.26656649203904415
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.0020903082978334098,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": -0.03799520432949066,
+          "tracking_gap_rate_m_s": -0.03860369123350204
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0004147000068888129,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.01499009290530182,
+              -0.9636999545692054,
+              0.26656649203904415
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.0020903082978334098,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.5577672719955444,
+          "tracking_gap_rate_m_s": 0.5581819720024332
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0004147000068888129,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.01499009290530182,
+              -0.9636999545692054,
+              0.26656649203904415
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.0020903082978334098,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.5577672719955444,
+          "tracking_gap_rate_m_s": 0.5581819720024332
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -0.0005462081305753763,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.01499009290530182,
+              -0.9636999545692054,
+              0.26656649203904415
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.0020903082978334098,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.40258920192718506,
+          "tracking_gap_rate_m_s": 0.4020429937966097
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -5.103636269210288e-05,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.020834592411686694,
+              -0.9622115561618969,
+              0.27150477150050223
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0013646609402062637,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.5692861676216125,
+          "tracking_gap_rate_m_s": 0.5692351312589204
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 7.553483097572089e-05,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.020834592411686694,
+              -0.9622115561618969,
+              0.27150477150050223
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0013646609402062637,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.1265818327665329,
+          "tracking_gap_rate_m_s": 0.12665736759750862
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -0.0003431942317733694,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.020834592411686694,
+              -0.9622115561618969,
+              0.27150477150050223
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0013646609402062637,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.3932076692581177,
+          "tracking_gap_rate_m_s": 0.3928644750263443
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -0.0003431942317733694,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.020834592411686694,
+              -0.9622115561618969,
+              0.27150477150050223
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0013646609402062637,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.3932076692581177,
+          "tracking_gap_rate_m_s": 0.3928644750263443
+        }
+      ],
+      "observer_after_state_byte_exact": true,
+      "source_summary_bytes": 649024,
+      "source_summary_sha256": "5bd45e15b795ff090c91371a77b2507a96c0ab38114f0d89943669a1d0f69344"
+    },
+    {
+      "mode": "baseline",
+      "pgs": 64,
+      "physical_energy_gain_j": 249.98668110353174,
+      "physical_gate_j": 0.01,
+      "physical_gate_passed": false,
+      "rigid_points_per_substep": 42052,
+      "generic_contact_points_per_substep": 206,
+      "generic_limit_rows_per_substep": 3,
+      "maximum_rigid_normal_response_m_s": 2.983618582381205,
+      "first_rigid_normal_response_m_s": 2.983618582381205,
+      "last_rigid_normal_response_m_s": 2.3273727887005284,
+      "maximum_rigid_linear_probe_m_s": 0.7696022391319275,
+      "maximum_generic_contact_normal_response_m_s": 0.07437867855018593,
+      "maximum_generic_joint_impulse_correction": 0.0,
+      "watched_global_velocity_vs_motion_max_error_m_s": 0.001207140826490316,
+      "watched_653_654_first_substep": {
+        "bodies": [
+          [
+            653,
+            0
+          ],
+          [
+            654,
+            0
+          ]
+        ],
+        "contact_id": 1,
+        "frame": 0,
+        "gap_rate_minus_frozen_jacobian_m_s": -0.00027897341496097017,
+        "independent_geometry_after": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.011472299982720856,
+            -0.9646050973693551,
+            0.2634490320008088
+          ],
+          "best_axis_source": "supporting_face",
+          "best_signed_separation_m": -0.0006567650561271066,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "independent_geometry_before": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.009830561244844138,
+            -0.9642631125341184,
+            0.2647640645397805
+          ],
+          "best_axis_source": "edge_cross",
+          "best_signed_separation_m": -0.00024243185641736886,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "pre_integration_normal_velocity_m_s": -0.795731246471405,
+        "tracking_gap_rate_m_s": -0.796010219886366
+      },
+      "watched_655_656_657_658_first_substep": [
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -8.493746685318479e-05,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014799542169545418,
+              -0.9637532474738744,
+              0.26638440557797816
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002062165463676102,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.01634538173675537,
+          "tracking_gap_rate_m_s": 0.016260444269902186
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.000285177219427335,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014799542169545418,
+              -0.9637532474738744,
+              0.26638440557797816
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002062165463676102,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.5942192673683167,
+          "tracking_gap_rate_m_s": 0.594504444587744
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.000285177219427335,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014799542169545418,
+              -0.9637532474738744,
+              0.26638440557797816
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002062165463676102,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.5942192673683167,
+          "tracking_gap_rate_m_s": 0.594504444587744
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -0.0004928432909135916,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014799542169545418,
+              -0.9637532474738744,
+              0.26638440557797816
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002062165463676102,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.4728880524635315,
+          "tracking_gap_rate_m_s": 0.4723952091726179
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0002567472006587135,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.02097431049913695,
+              -0.9622109833425374,
+              0.271496043864497
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.001342767624814556,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.7103228569030762,
+          "tracking_gap_rate_m_s": 0.7105796041037349
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0004207543513818357,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.02097431049913695,
+              -0.9622109833425374,
+              0.271496043864497
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.001342767624814556,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.18628087639808655,
+          "tracking_gap_rate_m_s": 0.18670163074946838
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0002401244106385314,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.02097431049913695,
+              -0.9622109833425374,
+              0.271496043864497
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.001342767624814556,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.43506941199302673,
+          "tracking_gap_rate_m_s": 0.43530953640366526
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0002401244106385314,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.02097431049913695,
+              -0.9622109833425374,
+              0.271496043864497
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.001342767624814556,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.43506941199302673,
+          "tracking_gap_rate_m_s": 0.43530953640366526
+        }
+      ],
+      "observer_after_state_byte_exact": true,
+      "source_summary_bytes": 648961,
+      "source_summary_sha256": "5bd2758640d16257614f0752ef07ea17d5059a0b6e20eb87bd43bc19d6619e2a"
+    },
+    {
+      "mode": "baseline",
+      "pgs": 128,
+      "physical_energy_gain_j": 493.6929792885203,
+      "physical_gate_j": 0.01,
+      "physical_gate_passed": false,
+      "rigid_points_per_substep": 42052,
+      "generic_contact_points_per_substep": 206,
+      "generic_limit_rows_per_substep": 3,
+      "maximum_rigid_normal_response_m_s": 2.89804660954531,
+      "first_rigid_normal_response_m_s": 2.89804660954531,
+      "last_rigid_normal_response_m_s": 1.5486147706576794,
+      "maximum_rigid_linear_probe_m_s": 0.7360268235206604,
+      "maximum_generic_contact_normal_response_m_s": 0.06781660204296559,
+      "maximum_generic_joint_impulse_correction": 0.0,
+      "watched_global_velocity_vs_motion_max_error_m_s": 0.0013858603103872325,
+      "watched_653_654_first_substep": {
+        "bodies": [
+          [
+            653,
+            0
+          ],
+          [
+            654,
+            0
+          ]
+        ],
+        "contact_id": 1,
+        "frame": 0,
+        "gap_rate_minus_frozen_jacobian_m_s": 0.0008287341424275674,
+        "independent_geometry_after": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.011379688206699753,
+            -0.9645964688106031,
+            0.26348463912424464
+          ],
+          "best_axis_source": "supporting_face",
+          "best_signed_separation_m": -0.0005820460943537498,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "independent_geometry_before": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.009830561244844138,
+            -0.9642631125341184,
+            0.2647640645397805
+          ],
+          "best_axis_source": "edge_cross",
+          "best_signed_separation_m": -0.00024243185641736886,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "pre_integration_normal_velocity_m_s": -0.6527876853942871,
+        "tracking_gap_rate_m_s": -0.6519589512518595
+      },
+      "watched_655_656_657_658_first_substep": [
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0010816699197083168,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.01473947259471535,
+              -0.9637647558453006,
+              0.26634609690791017
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002017201366851573,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.10190844535827637,
+          "tracking_gap_rate_m_s": 0.10299011527798468
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0008126137780989362,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.01473947259471535,
+              -0.9637647558453006,
+              0.26634609690791017
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002017201366851573,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.6884676814079285,
+          "tracking_gap_rate_m_s": 0.6892802951860274
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0008126137780989362,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.01473947259471535,
+              -0.9637647558453006,
+              0.26634609690791017
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002017201366851573,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.6884676814079285,
+          "tracking_gap_rate_m_s": 0.6892802951860274
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 5.079768140980878e-05,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.01473947259471535,
+              -0.9637647558453006,
+              0.26634609690791017
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002017201366851573,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.5786082744598389,
+          "tracking_gap_rate_m_s": 0.5786590721412487
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -7.109406684946418e-05,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.020738934534423183,
+              -0.9622629775239776,
+              0.2713297968912844
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0012823312780314566,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.7263749241828918,
+          "tracking_gap_rate_m_s": 0.7263038301160424
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -0.0005094328389896319,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.020738934534423183,
+              -0.9622629775239776,
+              0.2713297968912844
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0012823312780314566,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.2745405435562134,
+          "tracking_gap_rate_m_s": 0.27403111071722375
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0003755400816769505,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.020738934534423183,
+              -0.9622629775239776,
+              0.2713297968912844
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0012823312780314566,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.5515479445457458,
+          "tracking_gap_rate_m_s": 0.5519234846274228
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0003755400816769505,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.020738934534423183,
+              -0.9622629775239776,
+              0.2713297968912844
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0012823312780314566,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.5515479445457458,
+          "tracking_gap_rate_m_s": 0.5519234846274228
+        }
+      ],
+      "observer_after_state_byte_exact": true,
+      "source_summary_bytes": 648965,
+      "source_summary_sha256": "41b55dc204850b588e8eee9a0fae1d8e8cfc86c2ad736f3505501b9c6abce6fa"
+    },
+    {
+      "mode": "registered",
+      "pgs": 16,
+      "physical_energy_gain_j": 42.59900004885276,
+      "physical_gate_j": 0.01,
+      "physical_gate_passed": false,
+      "rigid_points_per_substep": 28835,
+      "generic_contact_points_per_substep": 100,
+      "generic_limit_rows_per_substep": 3,
+      "maximum_rigid_normal_response_m_s": 3.0226514758817253,
+      "first_rigid_normal_response_m_s": 3.0226514758817253,
+      "last_rigid_normal_response_m_s": 2.5459180222333533,
+      "maximum_rigid_linear_probe_m_s": 1.135992169380188,
+      "maximum_generic_contact_normal_response_m_s": 0.10571436629635501,
+      "maximum_generic_joint_impulse_correction": 0.0,
+      "watched_global_velocity_vs_motion_max_error_m_s": 0.001456234985011809,
+      "watched_653_654_first_substep": {
+        "bodies": [
+          [
+            653,
+            0
+          ],
+          [
+            654,
+            0
+          ]
+        ],
+        "contact_id": 0,
+        "frame": 0,
+        "gap_rate_minus_frozen_jacobian_m_s": 0.000733869031199319,
+        "independent_geometry_after": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.011177133549612861,
+            -0.9645874299336274,
+            0.26352639658989285
+          ],
+          "best_axis_source": "supporting_face",
+          "best_signed_separation_m": -0.0006692123120055626,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "independent_geometry_before": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.009830561244844138,
+            -0.9642631125341184,
+            0.2647640645397805
+          ],
+          "best_axis_source": "edge_cross",
+          "best_signed_separation_m": -0.00024243185641736886,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "pre_integration_normal_velocity_m_s": -0.8198791742324829,
+        "tracking_gap_rate_m_s": -0.8191453052012836
+      },
+      "watched_655_656_657_658_first_substep": [
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0005251316976498943,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.013578132043689005,
+              -0.9644436497713798,
+              0.2639395399440264
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0016228263847324342,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.8589949607849121,
+          "tracking_gap_rate_m_s": 0.859520092482562
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0013499463252893418,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.013578132043689005,
+              -0.9644436497713798,
+              0.2639395399440264
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0016228263847324342,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": -0.10545027256011963,
+          "tracking_gap_rate_m_s": -0.10410032623483029
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 4.110374887911217e-05,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.013578132043689005,
+              -0.9644436497713798,
+              0.2639395399440264
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0016228263847324342,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.4497036337852478,
+          "tracking_gap_rate_m_s": 0.4497447375341269
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.00048458854186347877,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.013578132043689005,
+              -0.9644436497713798,
+              0.2639395399440264
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0016228263847324342,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.08907201886177063,
+          "tracking_gap_rate_m_s": 0.08955660740363411
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 5.9415511542870725e-05,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.015911716006244355,
+              -0.9632352305696351,
+              0.26818782202627817
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.001368142822491869,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.4835166931152344,
+          "tracking_gap_rate_m_s": 0.48357610862677725
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 5.9415511542870725e-05,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.015911716006244355,
+              -0.9632352305696351,
+              0.26818782202627817
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.001368142822491869,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.4835166931152344,
+          "tracking_gap_rate_m_s": 0.48357610862677725
+        }
+      ],
+      "observer_after_state_byte_exact": true,
+      "source_summary_bytes": 464487,
+      "source_summary_sha256": "b56d7083dcac9fc0a99bf4c7ede2faacca4df625e9aaacbfae5be9361e75d000"
+    },
+    {
+      "mode": "registered",
+      "pgs": 32,
+      "physical_energy_gain_j": 91.63326233555563,
+      "physical_gate_j": 0.01,
+      "physical_gate_passed": false,
+      "rigid_points_per_substep": 28835,
+      "generic_contact_points_per_substep": 100,
+      "generic_limit_rows_per_substep": 3,
+      "maximum_rigid_normal_response_m_s": 2.9847714881956167,
+      "first_rigid_normal_response_m_s": 2.9847714881956167,
+      "last_rigid_normal_response_m_s": 2.397694070606949,
+      "maximum_rigid_linear_probe_m_s": 1.1193040609359741,
+      "maximum_generic_contact_normal_response_m_s": 0.10275686541863566,
+      "maximum_generic_joint_impulse_correction": 0.0,
+      "watched_global_velocity_vs_motion_max_error_m_s": 0.0015265936814516934,
+      "watched_653_654_first_substep": {
+        "bodies": [
+          [
+            653,
+            0
+          ],
+          [
+            654,
+            0
+          ]
+        ],
+        "contact_id": 0,
+        "frame": 0,
+        "gap_rate_minus_frozen_jacobian_m_s": 0.00041966337001686504,
+        "independent_geometry_after": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.01131209051513094,
+            -0.9645873431979319,
+            0.2635209554296059
+          ],
+          "best_axis_source": "supporting_face",
+          "best_signed_separation_m": -0.0006710539193521825,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "independent_geometry_before": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.009830561244844138,
+            -0.9642631125341184,
+            0.2647640645397805
+          ],
+          "best_axis_source": "edge_cross",
+          "best_signed_separation_m": -0.00024243185641736886,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "pre_integration_normal_velocity_m_s": -0.8238551616668701,
+        "tracking_gap_rate_m_s": -0.8234354982968533
+      },
+      "watched_655_656_657_658_first_substep": [
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.00030301306792779314,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.0136110358105488,
+              -0.9644435581513907,
+              0.26393817996729624
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0016036189760368913,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.8960496187210083,
+          "tracking_gap_rate_m_s": 0.8963526317889361
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.00019395719763240504,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.0136110358105488,
+              -0.9644435581513907,
+              0.26393817996729624
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0016036189760368913,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": -0.07082188129425049,
+          "tracking_gap_rate_m_s": -0.07062792409661808
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -0.00040833190858247104,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.0136110358105488,
+              -0.9644435581513907,
+              0.26393817996729624
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0016036189760368913,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.48341402411460876,
+          "tracking_gap_rate_m_s": 0.4830056922060263
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.00023322671255421312,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.0136110358105488,
+              -0.9644435581513907,
+              0.26393817996729624
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0016036189760368913,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.1198427826166153,
+          "tracking_gap_rate_m_s": 0.12007600932916951
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0015265936814516934,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.016046997236412917,
+              -0.9633705044754656,
+              0.26769341603106617
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0014254367752011277,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.5791157484054565,
+          "tracking_gap_rate_m_s": 0.5806423420869082
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0015265936814516934,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.016046997236412917,
+              -0.9633705044754656,
+              0.26769341603106617
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0014254367752011277,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.5791157484054565,
+          "tracking_gap_rate_m_s": 0.5806423420869082
+        }
+      ],
+      "observer_after_state_byte_exact": true,
+      "source_summary_bytes": 464021,
+      "source_summary_sha256": "3dd7634c55fbf67d68f2f627eb7c8d100e605c1538dce16378c3fe22ac5574f5"
+    },
+    {
+      "mode": "registered",
+      "pgs": 64,
+      "physical_energy_gain_j": 196.278386137099,
+      "physical_gate_j": 0.01,
+      "physical_gate_passed": false,
+      "rigid_points_per_substep": 28835,
+      "generic_contact_points_per_substep": 100,
+      "generic_limit_rows_per_substep": 3,
+      "maximum_rigid_normal_response_m_s": 2.9115971561445075,
+      "first_rigid_normal_response_m_s": 2.9115971561445075,
+      "last_rigid_normal_response_m_s": 2.086773250564567,
+      "maximum_rigid_linear_probe_m_s": 1.0911130905151367,
+      "maximum_generic_contact_normal_response_m_s": 0.10100045417721469,
+      "maximum_generic_joint_impulse_correction": 0.0,
+      "watched_global_velocity_vs_motion_max_error_m_s": 0.0020871281666353103,
+      "watched_653_654_first_substep": {
+        "bodies": [
+          [
+            653,
+            0
+          ],
+          [
+            654,
+            0
+          ]
+        ],
+        "contact_id": 0,
+        "frame": 0,
+        "gap_rate_minus_frozen_jacobian_m_s": 0.00016968640331160856,
+        "independent_geometry_after": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.01137327521605262,
+            -0.9645733998416366,
+            0.2635693550639113
+          ],
+          "best_axis_source": "supporting_face",
+          "best_signed_separation_m": -0.0006457777437987033,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "independent_geometry_before": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.009830561244844138,
+            -0.9642631125341184,
+            0.2647640645397805
+          ],
+          "best_axis_source": "edge_cross",
+          "best_signed_separation_m": -0.00024243185641736886,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "pre_integration_normal_velocity_m_s": -0.7749589681625366,
+        "tracking_gap_rate_m_s": -0.774789281759225
+      },
+      "watched_655_656_657_658_first_substep": [
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0011155425547171305,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.013333693460362494,
+              -0.9644962045810795,
+              0.2637598983306547
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015934149860612479,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.915001392364502,
+          "tracking_gap_rate_m_s": 0.9161169349192191
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.00023192162521246367,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.013333693460362494,
+              -0.9644962045810795,
+              0.2637598983306547
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015934149860612479,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.0006809234619140625,
+          "tracking_gap_rate_m_s": 0.0009128450871265262
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.001049416045067364,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.013333693460362494,
+              -0.9644962045810795,
+              0.2637598983306547
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015934149860612479,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.5364797711372375,
+          "tracking_gap_rate_m_s": 0.5375291871823049
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.000780772969276311,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.013333693460362494,
+              -0.9644962045810795,
+              0.2637598983306547
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015934149860612479,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.20293064415454865,
+          "tracking_gap_rate_m_s": 0.20371141712382496
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.001928426052228871,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.016058215336793396,
+              -0.9635151282454478,
+              0.2671717263528372
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.001485249067040506,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.7175935506820679,
+          "tracking_gap_rate_m_s": 0.7195219767342967
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.001928426052228871,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.016058215336793396,
+              -0.9635151282454478,
+              0.2671717263528372
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.001485249067040506,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.7175935506820679,
+          "tracking_gap_rate_m_s": 0.7195219767342967
+        }
+      ],
+      "observer_after_state_byte_exact": true,
+      "source_summary_bytes": 464412,
+      "source_summary_sha256": "b9c54dcec880bb445ce86cdb8eb77a5f7a46d43eab00c4ec132de7e95ab73210"
+    },
+    {
+      "mode": "registered",
+      "pgs": 128,
+      "physical_energy_gain_j": 399.19537794514326,
+      "physical_gate_j": 0.01,
+      "physical_gate_passed": false,
+      "rigid_points_per_substep": 28835,
+      "generic_contact_points_per_substep": 100,
+      "generic_limit_rows_per_substep": 3,
+      "maximum_rigid_normal_response_m_s": 2.7823024688139544,
+      "first_rigid_normal_response_m_s": 2.7823024688139544,
+      "last_rigid_normal_response_m_s": 1.522210307044659,
+      "maximum_rigid_linear_probe_m_s": 1.0405282974243164,
+      "maximum_generic_contact_normal_response_m_s": 0.10112104941195235,
+      "maximum_generic_joint_impulse_correction": 0.0,
+      "watched_global_velocity_vs_motion_max_error_m_s": 0.001985848103665422,
+      "watched_653_654_first_substep": {
+        "bodies": [
+          [
+            653,
+            0
+          ],
+          [
+            654,
+            0
+          ]
+        ],
+        "contact_id": 0,
+        "frame": 0,
+        "gap_rate_minus_frozen_jacobian_m_s": 0.00018219604186364702,
+        "independent_geometry_after": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.01138706116069346,
+            -0.9645473899049698,
+            0.2636639290188036
+          ],
+          "best_axis_source": "supporting_face",
+          "best_signed_separation_m": -0.0005724328309462123,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "independent_geometry_before": {
+          "applicable": true,
+          "best_axis_force_on_side1": [
+            0.009830561244844138,
+            -0.9642631125341184,
+            0.2647640645397805
+          ],
+          "best_axis_source": "edge_cross",
+          "best_signed_separation_m": -0.00024243185641736886,
+          "cluster_subshape_ids_used_as_ownership": false,
+          "complete_polytope_sat_axes_evaluated": true,
+          "engine_distance_query_used": false,
+          "overlapping_beyond_numeric_tolerance": true,
+          "separated_beyond_numeric_tolerance": false
+        },
+        "pre_integration_normal_velocity_m_s": -0.6342949867248535,
+        "tracking_gap_rate_m_s": -0.6341127906829899
+      },
+      "watched_655_656_657_658_first_substep": [
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 2,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.00012044070194527912,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.012881014766417856,
+              -0.9645917409333672,
+              0.26343282404006396
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698988138419523,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.9602547287940979,
+          "tracking_gap_rate_m_s": 0.9603751694960432
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 3,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0004996591402860462,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.012881014766417856,
+              -0.9645917409333672,
+              0.26343282404006396
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698988138419523,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.12598839402198792,
+          "tracking_gap_rate_m_s": 0.12648805316227396
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 4.893216681778334e-05,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.012881014766417856,
+              -0.9645917409333672,
+              0.26343282404006396
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698988138419523,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.6336287260055542,
+          "tracking_gap_rate_m_s": 0.633677658172372
+        },
+        {
+          "bodies": [
+            [
+              657,
+              0
+            ],
+            [
+              658,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": -0.00043203247508477594,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.012881014766417856,
+              -0.9645917409333672,
+              0.26343282404006396
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698988138419523,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.014297733989464193,
+              -0.9638332399133313,
+              0.266122265962353
+            ],
+            "best_axis_source": "supporting_face",
+            "best_signed_separation_m": -0.002070938775890596,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.3457503318786621,
+          "tracking_gap_rate_m_s": 0.34531829940357733
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 0,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0008213648949999541,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.015966343202674795,
+              -0.9636680094858585,
+              0.26662528645703804
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.001495409176425433,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.8948835134506226,
+          "tracking_gap_rate_m_s": 0.8957048783456225
+        },
+        {
+          "bodies": [
+            [
+              655,
+              0
+            ],
+            [
+              656,
+              0
+            ]
+          ],
+          "contact_id": 1,
+          "frame": 0,
+          "gap_rate_minus_frozen_jacobian_m_s": 0.0008213648949999541,
+          "independent_geometry_after": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.015966343202674795,
+              -0.9636680094858585,
+              0.26662528645703804
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.001495409176425433,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "independent_geometry_before": {
+            "applicable": true,
+            "best_axis_force_on_side1": [
+              0.021145690177894937,
+              -0.9620761135241981,
+              0.2719603124962808
+            ],
+            "best_axis_source": "edge_cross",
+            "best_signed_separation_m": -0.0015698209937911045,
+            "cluster_subshape_ids_used_as_ownership": false,
+            "complete_polytope_sat_axes_evaluated": true,
+            "engine_distance_query_used": false,
+            "overlapping_beyond_numeric_tolerance": true,
+            "separated_beyond_numeric_tolerance": false
+          },
+          "pre_integration_normal_velocity_m_s": 0.8948835134506226,
+          "tracking_gap_rate_m_s": 0.8957048783456225
+        }
+      ],
+      "observer_after_state_byte_exact": true,
+      "source_summary_bytes": 464990,
+      "source_summary_sha256": "266c914be4e10ddd5d66d2218747a0098f95a2ed82bea32eea343f56a1cbbe17"
+    }
+  ],
+  "quality": [
+    {
+      "check": "vendor-tests",
+      "exit": 0,
+      "elapsed": 37.167575792002026
+    },
+    {
+      "check": "audit-tests",
+      "exit": 0,
+      "elapsed": 118.4499585419544
+    },
+    {
+      "check": "default-tests",
+      "exit": 0,
+      "elapsed": 38.71173166699009
+    },
+    {
+      "check": "sim-clippy",
+      "exit": 0,
+      "elapsed": 10.90967725001974
+    },
+    {
+      "check": "vendor-clippy",
+      "exit": 0,
+      "elapsed": 16.47849520901218
+    },
+    {
+      "check": "sim-format",
+      "exit": 0,
+      "elapsed": 0.55993424996268
+    },
+    {
+      "check": "vendor-format",
+      "exit": 0,
+      "elapsed": 0.3016536249779165
+    }
+  ],
+  "changed_sources": [
+    "crates/mining-sim/src/articulation/retained/tests/rigid_work.rs",
+    "vendor/rapier3d/src/dynamics/solver/contact_work_audit.rs",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/mod.rs",
+    "crates/mining-sim/src/articulation/retained/tests/rigid_work/residual.rs",
+    "vendor/rapier3d/src/dynamics/solver/contact_work_audit/residual.rs",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/residual.rs"
+  ],
+  "unchanged_initial_sources": 631,
+  "all_existing_solver_statements_exact_after_removing_observer_hooks": true,
+  "preserved_installed_app_sha256": "13d4e20256f0c8b6c0cd1fa2f9a03e6c57820fcc4b8c5b7fe9396787eca3a892",
+  "preserved_original_dirty_files": 9,
+  "preserved_user_stash": [
+    "a6c6b857da29269271eebb03025767414eabde90"
+  ],
+  "input_boundary_sha256": "7147a81a9830b2d27fcfca6feef4ef419ef8a09fede2899a7ab6e02af7c8db0b",
+  "reference_boundary_sha256": "6f54234a1ed418414b2fd4abb10e8c1614411668c0e8275f21532fe29c4d7dc9",
+  "intermediate_failure": "First harness build failed on a private helper; inline immutable attachment checks fixed it. An unnecessary-unsafe warning was removed before final qualification.",
+  "new_crash_reports": [],
+  "full_goal_complete": false,
+  "gameplay_adopted": false,
+  "beads": {
+    "sync_supported": false,
+    "scoped_export_rows": [
+      "sluice-rigid-bias-work-20261024"
+    ],
+    "exported_lines": 225
+  }
+}

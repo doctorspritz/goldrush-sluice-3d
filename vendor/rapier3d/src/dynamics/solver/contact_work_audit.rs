@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::vec;
 use std::{format, vec::Vec};
 
+pub mod residual;
 pub(crate) mod rigid_work;
 
 std::thread_local! {
@@ -147,6 +148,10 @@ fn record_inner<R>(
             "work audit requires single-threaded Rapier"
         );
     }
+    assert!(
+        !residual::enabled(),
+        "work and residual collectors are mutually exclusive"
+    );
     let rigid_scope = if colliders.is_some() {
         "rigid_coulomb warmstart/projection/solve only; twist/restitution blocks unobserved"
     } else {

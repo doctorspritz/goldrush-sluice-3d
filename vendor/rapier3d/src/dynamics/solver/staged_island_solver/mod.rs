@@ -6,6 +6,8 @@
 mod helpers;
 mod init;
 mod joints;
+#[cfg(feature = "contact-work-audit")]
+mod residual;
 mod solve;
 mod sync;
 mod worker;
