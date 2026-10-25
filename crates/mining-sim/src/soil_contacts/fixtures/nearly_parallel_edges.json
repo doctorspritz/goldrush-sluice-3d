@@ -1,0 +1,773 @@
+{
+  "full_fixture_captured": true,
+  "ordinary_manifold_before_sat": {
+    "data": {
+      "friction": 0.6141353249549866,
+      "graph_pos": 8388610,
+      "normal": [
+        0.7494596838951111,
+        0.658473789691925,
+        0.0687188133597374
+      ],
+      "relative_dominance": 0,
+      "restitution": 0.0,
+      "rigid_body1": {
+        "generation": 0,
+        "index": 16
+      },
+      "rigid_body2": {
+        "generation": 0,
+        "index": 17
+      },
+      "solver_body_ids": [
+        6,
+        7
+      ],
+      "solver_color": 2,
+      "solver_contacts": [
+        {
+          "anchor1": [
+            0.03125028312206268,
+            -0.024875663220882416,
+            0.02206157147884369
+          ],
+          "anchor2": [
+            -0.04687538370490074,
+            0.026669098064303398,
+            0.06891222298145294
+          ],
+          "contact_id": [
+            2147483648
+          ],
+          "dist": 2.2763406377634965e-06,
+          "padding": [
+            0.0
+          ],
+          "tangent_velocity": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      ],
+      "solver_flags": "COMPUTE_RIGID_IMPULSES",
+      "user_data": 0
+    },
+    "local_n1": [
+      0.9999998807907104,
+      -0.00011217269639018923,
+      0.0004051736614201218
+    ],
+    "local_n2": [
+      -0.9999998807907104,
+      6.147667590994388e-05,
+      -0.0004739105934277177
+    ],
+    "points": [
+      {
+        "data": {
+          "impulse": 0.0,
+          "solver_dp1": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "solver_dp2": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "tangent_impulse": [
+            0.0,
+            0.0
+          ],
+          "warmstart_impulse": 0.0,
+          "warmstart_tangent_impulse": [
+            0.0,
+            0.0
+          ],
+          "warmstart_tangent_world": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "warmstart_twist_impulse": 0.0
+        },
+        "dist": -1.4677646049676696e-06,
+        "fid1": 3221225475,
+        "fid2": 1073741826,
+        "local_p1": [
+          0.03125,
+          -0.012790322303771973,
+          -0.09374070167541504
+        ],
+        "local_p2": [
+          -0.046875,
+          0.038751184940338135,
+          -0.0468750037252903
+        ]
+      },
+      {
+        "data": {
+          "impulse": 0.0,
+          "solver_dp1": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "solver_dp2": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "tangent_impulse": [
+            0.0,
+            0.0
+          ],
+          "warmstart_impulse": 0.0,
+          "warmstart_tangent_impulse": [
+            0.0,
+            0.0
+          ],
+          "warmstart_tangent_world": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "warmstart_twist_impulse": 0.0
+        },
+        "dist": -1.4677664239570731e-06,
+        "fid1": 2147483649,
+        "fid2": 2147483650,
+        "local_p1": [
+          0.03125,
+          -0.012792187742888927,
+          -0.0937366634607315
+        ],
+        "local_p2": [
+          -0.0468750037252903,
+          0.03874931111931801,
+          -0.04687097296118736
+        ]
+      },
+      {
+        "data": {
+          "impulse": 0.0,
+          "solver_dp1": [
+            0.03125,
+            -0.024872809648513794,
+            0.022050857543945312
+          ],
+          "solver_dp2": [
+            -0.04687690734863281,
+            0.026668041944503784,
+            0.06892013549804688
+          ],
+          "tangent_impulse": [
+            0.0,
+            0.0
+          ],
+          "warmstart_impulse": 0.0,
+          "warmstart_tangent_impulse": [
+            0.0,
+            0.0
+          ],
+          "warmstart_tangent_world": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "warmstart_twist_impulse": 0.0
+        },
+        "dist": 2.4978075998660643e-06,
+        "fid1": 0,
+        "fid2": 0,
+        "local_p1": [
+          0.03124999813735485,
+          -0.019312936812639236,
+          -0.03124541975557804
+        ],
+        "local_p2": [
+          -0.0468750037252903,
+          0.03222992643713951,
+          0.015620422549545765
+        ]
+      }
+    ],
+    "subshape1": 0,
+    "subshape2": 0,
+    "subshape_poses": null
+  },
+  "reason": "SAT edge direction has no certified exposed segment witnesses",
+  "registered_shared_shapes": [
+    {
+      "ConvexPolyhedron": {
+        "edges": [
+          {
+            "deleted": false,
+            "dir": [
+              0.6956257820129395,
+              -0.17947055399417877,
+              -0.6956257820129395
+            ],
+            "faces": [
+              0,
+              1
+            ],
+            "vertices": [
+              0,
+              2
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              0.0,
+              -0.10378315299749374,
+              0.9945999383926392
+            ],
+            "faces": [
+              0,
+              3
+            ],
+            "vertices": [
+              2,
+              1
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              -0.9401826858520508,
+              0.3406708240509033,
+              0.0
+            ],
+            "faces": [
+              0,
+              2
+            ],
+            "vertices": [
+              1,
+              0
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              0.0,
+              -0.24768725037574768,
+              -0.9688401222229004
+            ],
+            "faces": [
+              1,
+              3
+            ],
+            "vertices": [
+              3,
+              2
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              0.9999972581863403,
+              -0.002345317043364048,
+              0.0
+            ],
+            "faces": [
+              1,
+              2
+            ],
+            "vertices": [
+              0,
+              3
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "faces": [
+              2,
+              3
+            ],
+            "vertices": [
+              1,
+              3
+            ]
+          }
+        ],
+        "edges_adj_to_face": [
+          0,
+          1,
+          2,
+          3,
+          0,
+          4,
+          4,
+          2,
+          5,
+          5,
+          1,
+          3
+        ],
+        "edges_adj_to_vertex": [
+          0,
+          4,
+          2,
+          2,
+          5,
+          1,
+          1,
+          0,
+          3,
+          3,
+          4,
+          5
+        ],
+        "faces": [
+          {
+            "first_vertex_or_edge": 0,
+            "normal": [
+              -0.33904314041137695,
+              -0.9356906414031982,
+              -0.09763617068529129
+            ],
+            "num_vertices_or_edges": 3
+          },
+          {
+            "first_vertex_or_edge": 3,
+            "normal": [
+              0.0022722373250871897,
+              0.9688374996185303,
+              -0.24768657982349396
+            ],
+            "num_vertices_or_edges": 3
+          },
+          {
+            "first_vertex_or_edge": 6,
+            "normal": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "num_vertices_or_edges": 3
+          },
+          {
+            "first_vertex_or_edge": 9,
+            "normal": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "num_vertices_or_edges": 3
+          }
+        ],
+        "faces_adj_to_vertex": [
+          0,
+          1,
+          2,
+          0,
+          2,
+          3,
+          0,
+          1,
+          3,
+          1,
+          2,
+          3
+        ],
+        "points": [
+          [
+            -0.09375,
+            0.019459042698144913,
+            0.03125
+          ],
+          [
+            0.03125,
+            -0.02583412453532219,
+            0.03125
+          ],
+          [
+            0.03125,
+            -0.012790795415639877,
+            -0.09375
+          ],
+          [
+            0.03125,
+            0.019165877252817154,
+            0.03125
+          ]
+        ],
+        "vertices": [
+          {
+            "first_adj_face_or_edge": 0,
+            "num_adj_faces_or_edge": 3
+          },
+          {
+            "first_adj_face_or_edge": 3,
+            "num_adj_faces_or_edge": 3
+          },
+          {
+            "first_adj_face_or_edge": 6,
+            "num_adj_faces_or_edge": 3
+          },
+          {
+            "first_adj_face_or_edge": 9,
+            "num_adj_faces_or_edge": 3
+          }
+        ],
+        "vertices_adj_to_face": [
+          0,
+          2,
+          1,
+          3,
+          2,
+          0,
+          3,
+          0,
+          1,
+          3,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "ConvexPolyhedron": {
+        "edges": [
+          {
+            "deleted": false,
+            "dir": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "faces": [
+              0,
+              2
+            ],
+            "vertices": [
+              0,
+              3
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              0.0,
+              0.10378313809633255,
+              -0.9945999383926392
+            ],
+            "faces": [
+              0,
+              4
+            ],
+            "vertices": [
+              3,
+              2
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              0.0,
+              -0.42115676403045654,
+              0.9069878458976746
+            ],
+            "faces": [
+              0,
+              1
+            ],
+            "vertices": [
+              2,
+              0
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              0.8106318712234497,
+              -0.585556149482727,
+              0.0
+            ],
+            "faces": [
+              1,
+              3
+            ],
+            "vertices": [
+              2,
+              1
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              -0.6956257820129395,
+              0.17947055399417877,
+              0.6956257820129395
+            ],
+            "faces": [
+              1,
+              2
+            ],
+            "vertices": [
+              1,
+              0
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              -0.6956257820129395,
+              0.17947055399417877,
+              0.6956257820129395
+            ],
+            "faces": [
+              2,
+              4
+            ],
+            "vertices": [
+              4,
+              3
+            ]
+          },
+          {
+            "deleted": true,
+            "dir": [
+              0.7052747011184692,
+              0.07193893939256668,
+              -0.7052747011184692
+            ],
+            "faces": [
+              2,
+              2
+            ],
+            "vertices": [
+              0,
+              4
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "faces": [
+              2,
+              3
+            ],
+            "vertices": [
+              1,
+              4
+            ]
+          },
+          {
+            "deleted": false,
+            "dir": [
+              0.9401826858520508,
+              -0.3406708240509033,
+              0.0
+            ],
+            "faces": [
+              3,
+              4
+            ],
+            "vertices": [
+              2,
+              4
+            ]
+          }
+        ],
+        "edges_adj_to_face": [
+          0,
+          1,
+          2,
+          2,
+          3,
+          4,
+          5,
+          0,
+          4,
+          7,
+          7,
+          3,
+          8,
+          8,
+          1,
+          5
+        ],
+        "edges_adj_to_vertex": [
+          0,
+          2,
+          4,
+          4,
+          7,
+          3,
+          2,
+          3,
+          8,
+          1,
+          1,
+          0,
+          5,
+          5,
+          7,
+          8
+        ],
+        "faces": [
+          {
+            "first_vertex_or_edge": 0,
+            "normal": [
+              -1.0,
+              0.0,
+              0.0
+            ],
+            "num_vertices_or_edges": 3
+          },
+          {
+            "first_vertex_or_edge": 3,
+            "normal": [
+              -0.5480180978775024,
+              -0.7586649060249329,
+              -0.3522835075855255
+            ],
+            "num_vertices_or_edges": 3
+          },
+          {
+            "first_vertex_or_edge": 6,
+            "normal": [
+              0.7071068286895752,
+              0.0,
+              0.7071068286895752
+            ],
+            "num_vertices_or_edges": 4
+          },
+          {
+            "first_vertex_or_edge": 10,
+            "normal": [
+              -0.0,
+              -0.0,
+              -1.0
+            ],
+            "num_vertices_or_edges": 3
+          },
+          {
+            "first_vertex_or_edge": 13,
+            "normal": [
+              0.33904314041137695,
+              0.9356906414031982,
+              0.09763617068529129
+            ],
+            "num_vertices_or_edges": 3
+          }
+        ],
+        "faces_adj_to_vertex": [
+          0,
+          1,
+          2,
+          1,
+          2,
+          3,
+          0,
+          1,
+          3,
+          4,
+          0,
+          2,
+          4,
+          2,
+          3,
+          4
+        ],
+        "points": [
+          [
+            -0.046875,
+            -0.01929214410483837,
+            0.078125
+          ],
+          [
+            0.078125,
+            -0.05154198408126831,
+            -0.046875
+          ],
+          [
+            -0.046875,
+            0.038751184940338135,
+            -0.046875
+          ],
+          [
+            -0.046875,
+            0.025707857683300972,
+            0.078125
+          ],
+          [
+            0.078125,
+            -0.006541980430483818,
+            -0.046875
+          ]
+        ],
+        "vertices": [
+          {
+            "first_adj_face_or_edge": 0,
+            "num_adj_faces_or_edge": 3
+          },
+          {
+            "first_adj_face_or_edge": 3,
+            "num_adj_faces_or_edge": 3
+          },
+          {
+            "first_adj_face_or_edge": 6,
+            "num_adj_faces_or_edge": 4
+          },
+          {
+            "first_adj_face_or_edge": 10,
+            "num_adj_faces_or_edge": 3
+          },
+          {
+            "first_adj_face_or_edge": 13,
+            "num_adj_faces_or_edge": 3
+          }
+        ],
+        "vertices_adj_to_face": [
+          0,
+          3,
+          2,
+          0,
+          2,
+          1,
+          4,
+          3,
+          0,
+          1,
+          4,
+          1,
+          2,
+          4,
+          2,
+          3
+        ]
+      }
+    }
+  ],
+  "relative_rotation_xyzw": [
+    1.0857195775315631e-05,
+    3.4367520129308105e-05,
+    -2.5343244487885386e-05,
+    1.0
+  ],
+  "relative_translation": [
+    0.07812479138374329,
+    -0.051544900983572006,
+    -0.04686976224184036
+  ],
+  "vertices": [
+    4,
+    5
+  ]
+}

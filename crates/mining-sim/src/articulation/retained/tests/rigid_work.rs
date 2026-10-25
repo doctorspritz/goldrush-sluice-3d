@@ -269,12 +269,14 @@ enum WorkTrial {
     FreshManifolds,
     MaterialTangents,
     FreshMaterialTangents,
+    SatFeatures,
 }
 impl WorkTrial {
     fn label(self) -> &'static str {
         match self {
             Self::SavedBaseline => "saved_policy_baseline",
             Self::FreshManifolds => "test_only_full_feature_refresh",
+            Self::SatFeatures => "test_only_certified_convex_sat_features",
             Self::MaterialTangents => "test_only_material_tangent_anchors",
             Self::FreshMaterialTangents => "test_only_fresh_features_and_material_tangent_anchors",
         }
@@ -305,7 +307,7 @@ fn install_fresh_manifolds(owner: &mut RetainedSoil) -> Value {
 fn install_trial(owner: &mut RetainedSoil, trial: WorkTrial) -> Value {
     let fresh = matches!(
         trial,
-        WorkTrial::FreshManifolds | WorkTrial::FreshMaterialTangents
+        WorkTrial::FreshManifolds | WorkTrial::FreshMaterialTangents | WorkTrial::SatFeatures
     );
     let material = matches!(
         trial,
@@ -316,6 +318,16 @@ fn install_trial(owner: &mut RetainedSoil, trial: WorkTrial) -> Value {
     } else {
         json!({"dispatcher_changed":false,"integration_parameters_changed":false})
     };
+    if trial == WorkTrial::SatFeatures {
+        crate::soil_contacts::restore_sat_dispatcher_for_test(
+            &mut owner.model.as_mut().unwrap().world,
+        );
+        changes["test_only_dispatcher"]=json!("full fresh fallback plus checked registered convex overlap and Euclidean closest-feature geometry");
+        changes["normal_frame_prerequisite_only"] = json!(true);
+        changes["history_transfer"]=json!("one-to-one feature and body-local position matching from original pre-query plain-manifold records; no impulse amplitude clamp");
+        changes["unqualified_cases_keep_ordinary_fresh_contacts"] = json!(true);
+        changes["no_new_save_policy_or_session_selection"] = json!(true);
+    }
     if material {
         let world = &mut owner.model.as_mut().unwrap().world;
         let before = world.integration_parameters;
@@ -408,6 +420,11 @@ fn saved_bank_material_tangent_work() {
 #[ignore = "audit-only material anchors plus full feature regeneration on the exact saved bank"]
 fn saved_bank_fresh_material_tangent_work() {
     saved_bank_work_trial(WorkTrial::FreshMaterialTangents);
+}
+#[test]
+#[ignore = "explicit certified convex SAT geometry on the complete saved bank; no Session/save adoption"]
+fn saved_bank_sat_feature_work() {
+    saved_bank_work_trial(WorkTrial::SatFeatures);
 }
 fn saved_bank_work_trial(trial: WorkTrial) {
     let session = bank();
@@ -643,6 +660,12 @@ fn saved_bank_work_trial(trial: WorkTrial) {
         "phases":phases});
     let evidence = summary.as_object_mut().unwrap();
     evidence.insert("trial".into(), json!(trial.label()));
+    if trial == WorkTrial::SatFeatures {
+        evidence.insert(
+            "sat_diagnostics".into(),
+            crate::soil_contacts::sat_diagnostics_for_test(),
+        );
+    }
     evidence.insert("saved_failure_history_imported".into(), json!(true));
     evidence.insert("initial_warmstart_history_preserved".into(), json!(true));
     evidence.insert(
@@ -821,6 +844,11 @@ fn complete_bank_material_tangent_trajectory() {
 fn complete_bank_fresh_material_tangent_trajectory() {
     complete_bank_trajectory_trial(WorkTrial::FreshMaterialTangents);
 }
+#[test]
+#[ignore = "explicit full 300-step convex SAT bank; no work recorder, save policy or Session adoption"]
+fn complete_bank_sat_feature_trajectory() {
+    complete_bank_trajectory_trial(WorkTrial::SatFeatures);
+}
 fn complete_bank_trajectory_trial(trial: WorkTrial) {
     let mut session = bank();
     session.machine.engine_on = false;
@@ -913,7 +941,7 @@ fn complete_bank_trajectory_trial(trial: WorkTrial) {
     let final_persistence_refusal =
         (!owner.failed()).then(|| candidate_persistence_refusal(&owner, &env));
     let final_inventory = (!owner.failed()).then(|| passive_inventory(&owner));
-    let summary = json!({"trial":format!("{}_fresh_300_step_bank",trial.label()),
+    let mut summary = json!({"trial":format!("{}_fresh_300_step_bank",trial.label()),
         "fresh_start":true,"saved_failure_history_imported":false,"physical_replay_performed":true,
         "work_observer_enabled":false,"requested_steps":300,"accepted_steps":trajectory.len(),
         "trajectory_completed":completed,"actual_refusal":refusal,"initial_inventory":initial_inventory,"final_inventory":final_inventory,
@@ -926,6 +954,9 @@ fn complete_bank_trajectory_trial(trial: WorkTrial) {
         "observer_diagnostic_success":completed && maximum_feedback_error<0.05,
         "candidate_boundary_files_written":false,"saved_candidate_continuation_claimed":false,
         "elapsed_wall_s":started.elapsed().as_secs_f64(),"trajectory":trajectory});
+    if trial == WorkTrial::SatFeatures {
+        summary["sat_diagnostics"] = crate::soil_contacts::sat_diagnostics_for_test();
+    }
     write_json(&output.join("trajectory-summary.json"), &summary);
     println!("FRESH TRAJECTORY accepted={} completed={completed} net_gain_j={:.9} max_gain_j={maximum_gain:.9} violations={energy_violations} feedback_error_j={maximum_feedback_error:.9}",summary["accepted_steps"],previous_energy-initial_energy);
     assert!(

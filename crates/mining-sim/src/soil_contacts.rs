@@ -3,6 +3,9 @@
 //! also invalidates a negative cached manifold when a hull axis certifies
 //! separation, then regenerates ordinary positive/speculative contacts.
 //! Genuine penetrations keep the pinned manifold and physical coefficients.
+#[cfg(all(test, feature = "contact-work-audit"))]
+#[path = "soil_contacts/convex_sat.rs"]
+mod convex_sat;
 use q::details::NormalConstraints;
 use q::{DefaultQueryDispatcher, PersistentQueryDispatcher, QueryDispatcher};
 use rapier3d::parry::{
@@ -21,22 +24,35 @@ struct StablePolyContacts {
     // coefficients, existing touch repair and the verified separation policy.
     #[cfg(test)]
     force_fresh: bool,
+    #[cfg(all(test, feature = "contact-work-audit"))]
+    sat_features: bool,
 }
 const TOUCH_ONLY: StablePolyContacts = StablePolyContacts {
     verify_separation: false,
     #[cfg(test)]
     force_fresh: false,
+    #[cfg(all(test, feature = "contact-work-audit"))]
+    sat_features: false,
 };
 #[cfg(any(test, feature = "contact-history"))]
 const VERIFIED: StablePolyContacts = StablePolyContacts {
     verify_separation: true,
     #[cfg(test)]
     force_fresh: false,
+    #[cfg(all(test, feature = "contact-work-audit"))]
+    sat_features: false,
 };
 #[cfg(all(test, feature = "contact-work-audit"))]
 const FRESH_FOR_TEST: StablePolyContacts = StablePolyContacts {
     verify_separation: true,
     force_fresh: true,
+    sat_features: false,
+};
+#[cfg(all(test, feature = "contact-work-audit"))]
+const SAT_FOR_TEST: StablePolyContacts = StablePolyContacts {
+    verify_separation: true,
+    force_fresh: true,
+    sat_features: true,
 };
 impl StablePolyContacts {
     // Cached feature contacts can keep a negative gap while an independent
@@ -73,6 +89,15 @@ pub(crate) fn restore_verified_dispatcher(world: &mut r::PhysicsWorld) {
 #[cfg(all(test, feature = "contact-work-audit"))]
 pub(crate) fn restore_fresh_dispatcher_for_test(world: &mut r::PhysicsWorld) {
     world.narrow_phase.set_query_dispatcher(FRESH_FOR_TEST);
+}
+#[cfg(all(test, feature = "contact-work-audit"))]
+pub(crate) fn restore_sat_dispatcher_for_test(world: &mut r::PhysicsWorld) {
+    convex_sat::reset_stats();
+    world.narrow_phase.set_query_dispatcher(SAT_FOR_TEST);
+}
+#[cfg(all(test, feature = "contact-work-audit"))]
+pub(crate) fn sat_diagnostics_for_test() -> serde_json::Value {
+    convex_sat::stats()
 }
 pub(crate) fn configure(world: &mut r::PhysicsWorld) {
     restore_dispatcher(world);
@@ -233,6 +258,15 @@ impl PersistentQueryDispatcher<ContactManifoldData, ContactData> for StablePolyC
         ms: &mut Vec<Manifold>,
         w: &mut Option<q::ContactManifoldsWorkspace>,
     ) -> Result<(), q::Unsupported> {
+        #[cfg(all(test, feature = "contact-work-audit"))]
+        let original_histories: Vec<_> = if self.sat_features {
+            ms.iter()
+                .filter(|m| child(a, m.subshape1).is_some() && child(b, m.subshape2).is_some())
+                .map(|m| (m.subshape1, m.subshape2, m.points.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         #[cfg(test)]
         if self.force_fresh {
             for manifold in ms.iter_mut() {
@@ -248,7 +282,27 @@ impl PersistentQueryDispatcher<ContactManifoldData, ContactData> for StablePolyC
                     DefaultQueryDispatcher
                         .contact_manifold_convex_convex(&relative, ha, hb, None, None, d, m)?;
                 }
+                #[cfg(all(test, feature = "contact-work-audit"))]
+                let separated = if self.sat_features {
+                    let old = original_histories
+                        .iter()
+                        .find(|h| h.0 == m.subshape1 && h.1 == m.subshape2)
+                        .map(|h| h.2.as_slice())
+                        .unwrap_or(&[]);
+                    convex_sat::rebuild_traced(&relative, ha, hb, m, old, Some(d))
+                } else {
+                    None
+                };
                 repair(&relative, ha, hb, m);
+                #[cfg(all(test, feature = "contact-work-audit"))]
+                if let Some(pre_negative) = separated {
+                    convex_sat::observe_final_separated(&relative, ha, hb, m, d, pre_negative);
+                }
+            } else {
+                #[cfg(all(test, feature = "contact-work-audit"))]
+                if self.sat_features {
+                    convex_sat::unsupported();
+                }
             }
         }
         Ok(())
@@ -263,6 +317,12 @@ impl PersistentQueryDispatcher<ContactManifoldData, ContactData> for StablePolyC
         d: f32,
         m: &mut Manifold,
     ) -> Result<(), q::Unsupported> {
+        #[cfg(all(test, feature = "contact-work-audit"))]
+        let original_history = if self.sat_features {
+            m.points.clone()
+        } else {
+            Vec::new()
+        };
         #[cfg(test)]
         if self.force_fresh {
             m.mark_shapes_deformed();
@@ -274,8 +334,27 @@ impl PersistentQueryDispatcher<ContactManifoldData, ContactData> for StablePolyC
                     DefaultQueryDispatcher
                         .contact_manifold_convex_convex(p, ha, hb, None, None, d, m)?;
                 }
+                #[cfg(all(test, feature = "contact-work-audit"))]
+                let separated = if self.sat_features {
+                    convex_sat::rebuild_traced(p, ha, hb, m, &original_history, Some(d))
+                } else {
+                    None
+                };
                 repair(p, ha, hb, m);
+                #[cfg(all(test, feature = "contact-work-audit"))]
+                if let Some(pre_negative) = separated {
+                    convex_sat::observe_final_separated(p, ha, hb, m, d, pre_negative);
+                }
+            } else {
+                #[cfg(all(test, feature = "contact-work-audit"))]
+                if self.sat_features {
+                    convex_sat::unsupported();
+                }
             }
+        }
+        #[cfg(all(test, feature = "contact-work-audit"))]
+        if self.sat_features && (n1.is_some() || n2.is_some()) {
+            convex_sat::unsupported();
         }
         Ok(())
     }

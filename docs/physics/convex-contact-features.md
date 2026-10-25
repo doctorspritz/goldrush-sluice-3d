@@ -1,0 +1,55 @@
+# Registered convex features before coherent contact frames
+
+The test-only retained-soil query now independently rebuilds complete registered `ConvexPolyhedron` geometry after the ordinary fresh query. It handles both penetration and separated/speculative contacts. All 5,058,837 admitted pair queries in the final 300-step bank complete without geometric failure. This is a query-geometry prerequisite: the same run still fails physical passivity, and 2,024,909 other shape or normal-constraint manifolds remain outside this experiment. There is no gameplay selection or new saved numerical policy.
+
+The initial overlapping-feature work preserved all registered vertices, faces and edges, rather than Parry's four-vertex support-face truncation. Complete polygon clipping handles ordinary faces, vertices, skew edges, collinear overlaps and exact touches. It repairs the captured pair 2242 from approximately 92.065 mm cached penetration to 1.135770 mm in its captured relative query coordinates. The known world-space composition difference is about 1.5 micrometres; this does not claim those two coordinate evaluations are identical. Both positive and negative hexagonal-face controls retain all six raw corners and their area before Rapier's existing solver-point reduction.
+
+An ordinary separated query was an additional source of bad geometry. The original count of 2,193 negative queries was taken **before** the existing touch repair. Read-only observation after that repair finds 2,012 corrected queries and 181 still retaining a negative point despite registered hull separation. It also finds 475,303 separated outputs whose witness, normal or prediction-exit checks are unproved. These are final dispatcher manifold records, before the engine's solver reduction and activation filtering; they are not a count of active force rows or a causal energy attribution. All 300 selected energy/inventory records match the previous overlap-only trial bit for bit. Full numerical-state trajectory hashes were not measured for that comparison.
+
+Separated distance now enumerates vertex/face projections and every registered edge pair, including endpoint, parallel and interior-line cases. A separating plane beyond the caller's prediction distance proves that no contact is required. Otherwise the complete closest support-feature intersection supplies the patch. SAT separation is a lower bound on disjoint Euclidean distance, so an independent diagonal-box case requires the closest calculation to establish prediction exit. No real penetrating patch, stock, body or material is removed to improve an energy result.
+
+The first implementation exposed three captured edge cases. Inward-facing face projections could win the distance search. Normalizing tiny differences between projected positions could destabilize an otherwise well-defined face normal. Per-edge half-plane slack around a thin projected polygon could admit a point far outside its ends. The corrected construction uses outward feature normals and stable edge perpendiculars, checks convex optimality before selecting a distance candidate, and uses actual Euclidean distance to polygon edges for boundary tolerance. A separate sliver control demonstrates the old rule accepting a point 1.5 metres beyond a one-metre feature despite its nominal one-nanometre tolerance. The corrected rule rejects it without widening either tolerance.
+
+Construction uses the existing 1 nm numerical tolerance. After rounding witnesses and the solver normal to f32, both registered surfaces, normal agreement, point-depth consistency and the closest witness's combined support/tangent/depth residual face the unchanged 10 micrometre bound. The final full-bank maximum combined residual is 0.161003 micrometres; separated closest outputs reach at most 0.093608 micrometres. These are promoted-coordinate numerical residual checks, not formal interval certificates, a proof of every world-space contact equation, or empirical soil calibration. Captured quaternion coefficients are retained rather than normalized; local witnesses use the inverse of that captured affine map.
+
+Cached contact data is matched once per old record, using feature IDs and sorted distances between body-local witnesses captured **before** the ordinary dispatcher. Parry's ordinary feature-ID loop can copy the same old record into several new points sharing an ID. The experiment transfers 6,279,605 records with zero repeated old slots within each manifold transfer. It retains duplicate physical points and never clamps impulse amplitudes. This does not qualify material friction history: the largest combined body-local reassociation distance is still 0.343232 m, and the existing frozen-frame normal-gap counterexample remains unresolved.
+
+| Fresh complete bank, 300 steps | Geometry qualification result | Maximum step gain J | Steps above 0.01 J |
+|---|---:|---:|---:|
+| Overlap rebuild, ordinary separated queries, observed after repair | 475,303 unproved separated outputs | 27.888699 | 77 |
+| First full distance rebuild | 1,390 construction failures | 19.312272 | 78 |
+| Final registered features | 0 | 31.731024 | 56 |
+
+Each row is a fresh trajectory whose contacts change with its motion; these are not error rates over a shared sample. The intermediate lower energy peak is not selected as a solution: its query construction still fails. The final trajectory preserves all 1,040 clods, 1,045 dynamic bodies and 9,752.505223 kg at every accepted step, with no refusal and no engine, motor, pump or actuator elastic work. It runs at 480 Hz with four temporal substeps and unchanged biased friction. Its net energy change is -306.829449 J; net loss does not excuse individual positive steps. Maximum feedback/independent discrepancy is 0.000757 J, within the existing separate 0.05 J agreement check. The full trajectory runs without the row collector and is not a performance benchmark.
+
+Of the final admitted queries, 427,739 are overlapping patches, 3,178,194 are positive closest patches, and 1,452,904 prove exit beyond prediction. Every separated final output passes its checks, including zero remaining negative queries and zero unproved outputs. Failed construction would retain ordinary geometry and remain counted; the final run has none. The unsupported shape/normal-constraint population is reported separately. Terrain/compound ownership, current solver normals and Jacobians, and physically meaningful persistent friction displacement remain required.
+
+| Matched saved boundary | Existing policy | Registered-feature trial |
+|---|---:|---:|
+| Complete legacy after-state exact | Yes | Different method; equality not claimed |
+| Independent step gain J | 57.216923 | 42.599000 |
+| Rigid / generic blocks folded | 1,010,800 / 5,244 | 987,012 / 5,244 |
+| Phase/body discrepancy J | 0.000003063 | 0.000001841 |
+| Physical 0.01 J gate | Fail | Fail |
+
+Both saved-step observers close their measured contact-stage and phase/body budgets at the unchanged 0.0001 J observer limit. Their normal/tangent quantities are fixed-block midpoint partitions, not sequential row work or a closed causal bias budget. Summary writes retain the 16 MiB hard cap; raw reports are omitted. The explicit one-step collector still holds rows in memory and is not admitted for unbounded trajectories.
+
+The experiment is compiled only by `cfg(all(test, feature = "contact-work-audit"))`. It disables outer pair recycling and regenerates inner features; the only ordinary integration parameter change is `normalized_contact_recycle_distance` from 0.05 to 0. All other parameters, registered shapes, attachments, mass and physical coefficients are preserved. There is no new Session/runtime dispatcher enum. Diagnostic RAM encoding is attempted, but decoding refuses the changed parameters. No candidate boundary file or saved candidate continuation is produced; this is not a general candidate-encode guard or clone-continuity proof.
+
+Sixty audit-enabled library tests and 23 default library tests pass. Seventeen explicit diagnostics are ignored in the ordinary audit suite; the selected saved-step and complete-bank cases above are run separately. Strict scoped all-target Clippy, explicit formatting of all three Rust files, package formatting and whitespace pass. The first helper compile error and incorrect new-test assumption about diagonal SAT axes are retained with their corrected passes. Standalone vendor, full integration, native and GPU suites are not rerun for this test-only stage. The two original known anchor failures remain failures from the preceding stage and are not counted as new passes.
+
+Run the portable controls from the active checkout, using the shared target directory and one worker:
+
+```bash
+CARGO_TARGET_DIR=/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target \
+  cargo +nightly test -p mining-sim --features contact-work-audit --lib \
+  --profile playable --locked --jobs 1 convex_sat -- --test-threads=1
+```
+
+The saved-boundary procedure and environment variables are in [the rigid work guide](rigid-contact-attribution.md). Select `saved_bank_sat_feature_work` for the bounded one-step trial or `complete_bank_sat_feature_trajectory` for a new 300-step bank, using a fresh `SLUICE_RIGID_WORK` output directory and `--ignored`. Inspect physical-gate fields: successful measurement assertions can record failed physics.
+
+The next bounded task, `sluice-contact-frame-cadence-20261025`, compares full world/contact refresh at the same physical integration cadence before attributing the remaining error to frozen frames. Loaded retention, timestep refinement, terrain/union ownership and persistence remain adoption gates. Wet/cohesive soil, continuous activation, pads, shaker decks, sluice buildup, constructed settling/recirculation, complete graphics/gameplay and native real-time operation remain open in Stages 2–6.
+
+All 712 other protected Rust/WGSL sources, saved inputs, the original nine dirty files and user stash remain unchanged. The installed rendering app and its retained copy still have binary SHA-256 `13f4960de14978156db129a38959b91df124b157804cb9cdbc3a5b777d25a263` and pass strict signing verification. No new app, visual capture, FPS result or crash report is produced in this stage. Heavy checks run serially with one compiler/test worker; supervised logs are capped and none is truncated. The [receipt](../playtests/2026-10-25-convex-contact-features.json) records sources, inputs, failures, completed measurements and limits.
+
+Installed Beads rejects `bd sync`; its failure is retained, and only the three touched physics issues plus the new contact-frame task are exported. The installed pre-commit shim delegates solely to Beads. The reviewed tree uses that scoped export and the completed gates above, preserving unrelated shared-database rows; no safety-hook configuration is changed.
