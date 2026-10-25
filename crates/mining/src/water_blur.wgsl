@@ -276,23 +276,56 @@ fn geometry_surface(pixel:vec2<i32>,direction:vec2<i32>)->vec4<f32> {
     }
     return smooth_surface_inner(pixel,direction,false);
 }
-// Reject unresolved alternating texels without broadening a resolved crest.
-// This compact sixth-difference filter exactly retains degree-five inverse
-// depth profiles. Its response is 1-sin(frequency/2)^6: a pixel-scale ripple
-// vanishes while a ten-texel wave retains over 99.9% of its amplitude.
-fn resolved_depth(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->f32 {
+// Sample reciprocal depth continuously. Integer screen offsets leave the
+// denoising radius dependent on camera distance and retain multi-pixel kernel
+// domes in close views. Interpolation never supplies missing water coverage.
+fn sheet_inverse(pixel:vec2<f32>,direction:vec2<i32>)->vec3<f32> {
     let size=vec2<i32>(textureDimensions(depths));
+    let a=vec2<i32>(floor(pixel));
+    let fraction=dot(fract(pixel),vec2<f32>(direction));
+    let b=a+direction;
+    if any(a<vec2(0)) || any(a>=size) {return vec3(0.);}
+    let av=textureLoad(depths,a,0);
+    if av.r<=0. || av.a<=0.5 {return vec3(0.);}
+    let support=smoothstep(0.1,0.7,av.a-1.);
+    if fraction<0.000001 {return vec3(1./av.r,support,1.);}
+    if any(b<vec2(0)) || any(b>=size) {return vec3(0.);}
+    let bv=textureLoad(depths,b,0);
+    if bv.r<=0. || bv.a<=0.5 {return vec3(0.);}
+    return vec3(mix(1./av.r,1./bv.r,fraction),
+                min(support,smoothstep(0.1,0.7,bv.a-1.)),1.);
+}
+fn sheet_filter_step(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->f32 {
+    let size=vec2<i32>(textureDimensions(depths));
+    let a=sheet_inverse(vec2<f32>(pixel-direction),direction);
+    let b=sheet_inverse(vec2<f32>(pixel+direction),direction);
+    if a.z==0. || b.z==0. {return 1.;}
+    let inverse=1./center.r;
+    let dl=inverse-a.x;let dr=b.x-inverse;
+    let slope=select(0.,sign(dl)*min(abs(dl),abs(dr)),dl*dr>0.);
+    let origin=optical_point(pixel,size,center.r);
+    let next=optical_point(pixel+direction,size,1./max(inverse+slope,0.000001));
+    let spacing=length(next-origin);
+    // A 6 mm tangent step rejects the visible 12 mm sampling domes, while
+    // retaining riffle-scale waves. At distance the original texel filter
+    // remains the antialiasing minimum. The cap bounds reads to a local sheet.
+    if spacing<=0.000001 {return 1.;}
+    return clamp(0.006/spacing,1.,4.);
+}
+// High-order fairing rejects short-wave residuals without the broadening of
+// a box blur. Fractional reciprocal-depth samples retain inclined planes.
+// Use world tangent distance: a close-up kernel dome spans several pixels.
+fn resolved_depth(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->f32 {
+    let step=sheet_filter_step(pixel,direction,center);
     var values:array<f32,7>;var support=1.;var variation=0.;var jump=0.;
     for(var i=0;i<7;i++) {
-        let q=pixel+direction*(i-3);
-        if any(q<vec2(0)) || any(q>=size) {return center.r;}
-        let tap=textureLoad(depths,q,0);
-        if tap.r<=0. || tap.a<=0.5 {return center.r;}
-        values[i]=1./tap.r;support=min(support,smoothstep(0.1,0.7,tap.a-1.));
+        let sample=sheet_inverse(vec2<f32>(pixel)+vec2<f32>(direction)*(f32(i-3)*step),direction);
+        if sample.z==0. {return center.r;}
+        values[i]=sample.x;support=min(support,sample.y);
         if i>0 {let change=abs(values[i]-values[i-1]);variation+=change;jump=max(jump,change);}
     }
-    // An isolated jump between layers owns most of the local variation.
-    // Alternating sampling noise does not. Do not smooth across that jump.
+    // Independent layers retain their own interface; no extrapolated stencil
+    // may smooth a step into a crest or expose another layer's muddy column.
     let continuous=1.-smoothstep(0.5,0.8,jump/max(variation,0.000001));
     let sixth=(-values[0]+6.*values[1]-15.*values[2]+20.*values[3]
                -15.*values[4]+6.*values[5]-values[6])/64.;

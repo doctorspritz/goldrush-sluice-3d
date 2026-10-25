@@ -290,6 +290,14 @@ fn ground_wet_tone(code: u32) -> f32 {
     1. - 0.33 * code as f32 / 63.
 }
 
+// Deposited fines cover the original ground continuously. A binary material
+// switch at 15 mm painted cell-sized mud patches and made deposition pop.
+// Quantize only the visual coverage, with the same code in the mesh cache key.
+fn ground_sediment_code(thickness: f32) -> u32 {
+    let t = (thickness / 0.015).clamp(0., 1.);
+    (t * t * (3. - 2. * t) * 63.).round() as u32
+}
+
 pub fn terrain_mesh(site: &Site, x0: usize, z0: usize, subdivisions: usize) -> Mesh {
     let nx = 16.min(WIDTH - 1 - x0);
     let nz = 16.min(WIDTH - 1 - z0);
@@ -313,9 +321,7 @@ pub fn terrain_mesh(site: &Site, x0: usize, z0: usize, subdivisions: usize) -> M
             source_normal.push(normal.to_array());
             let i = site.world.idx(ix, iz);
             let wet = ground_wet_tone(ground_wetness_code(site.world.water_depth(ix, iz)));
-            let mut c = if site.world.terrain_sediment[i] > 0.015 {
-                [0.43, 0.34, 0.22, 1.0]
-            } else if site.world.overburden_thickness[i] > 0.025 {
+            let mut c = if site.world.overburden_thickness[i] > 0.025 {
                 [0.34, 0.29, 0.18, 1.0]
             } else if site.world.paydirt_thickness[i] > 0.01 {
                 [0.58, 0.43, 0.24, 1.0]
@@ -334,7 +340,16 @@ pub fn terrain_mesh(site: &Site, x0: usize, z0: usize, subdivisions: usize) -> M
             for value in &mut c[..3] {
                 *value *= wet;
             }
-            source_color.push(Color::srgb(c[0], c[1], c[2]).to_linear().to_f32_array());
+            let base = Color::srgb(c[0], c[1], c[2]).to_linear().to_f32_array();
+            let sediment = Color::srgb(0.43 * noise * wet, 0.34 * noise * wet, 0.22 * noise * wet)
+                .to_linear()
+                .to_f32_array();
+            let coverage = ground_sediment_code(site.world.terrain_sediment[i]) as f32 / 63.;
+            source_color.push(
+                Vec4::from_array(base)
+                    .lerp(Vec4::from_array(sediment), coverage)
+                    .to_array(),
+            );
         }
     }
     let mut positions = Vec::new();
@@ -1028,9 +1043,9 @@ fn terrain_source(site: &Site, x0: usize, z0: usize) -> Vec<[u32; 2]> {
         for x in x0.saturating_sub(1)..=(x0 + 17).min(WIDTH - 1) {
             let i = site.world.idx(x, z);
             let flags = ground_wetness_code(site.world.water_depth(x, z))
-                | (u32::from(site.world.terrain_sediment[i] > 0.015) << 6)
-                | (u32::from(site.world.overburden_thickness[i] > 0.025) << 7)
-                | (u32::from(site.world.paydirt_thickness[i] > 0.01) << 8);
+                | (ground_sediment_code(site.world.terrain_sediment[i]) << 6)
+                | (u32::from(site.world.overburden_thickness[i] > 0.025) << 12)
+                | (u32::from(site.world.paydirt_thickness[i] > 0.01) << 13);
             key.push([site.world.ground_height(x, z).to_bits(), flags]);
         }
     }
@@ -1432,6 +1447,62 @@ mod terrain_detail_tests {
         let before = serde_json::to_string(&site.snapshot()).unwrap();
         let _ = terrain_mesh(&site, 64, 64, 4);
         assert_eq!(before, serde_json::to_string(&site.snapshot()).unwrap());
+    }
+
+    #[test]
+    fn deposited_fines_colour_is_continuous_and_invalidates_cached_ground() {
+        let mut site = Site::new();
+        let i = site.world.idx(64, 64);
+        let colour = |site: &Site| {
+            let mesh = terrain_mesh(site, 64, 64, 1);
+            let Some(VertexAttributeValues::Float32x4(values)) =
+                mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+            else {
+                panic!("terrain colours")
+            };
+            Vec4::from_array(values[0])
+        };
+        site.world.terrain_sediment[i] = 0.;
+        let dry = colour(&site);
+        let key = terrain_source(&site, 64, 64);
+        site.world.terrain_sediment[i] = 0.0075;
+        assert_ne!(
+            key,
+            terrain_source(&site, 64, 64),
+            "partial deposit left stale colour"
+        );
+        let half = colour(&site);
+        site.world.terrain_sediment[i] = 0.02;
+        let full = colour(&site);
+        assert!(
+            (dry - full).length() > 0.02,
+            "negative control needs distinct soil/mud endpoints"
+        );
+        assert!(
+            (half - (dry + full) * 0.5).length() < 0.002,
+            "partial cover must blend in linear light"
+        );
+        site.world.terrain_sediment[i] = 0.014999;
+        let before_threshold = colour(&site);
+        site.world.terrain_sediment[i] = 0.015001;
+        assert_eq!(
+            before_threshold,
+            colour(&site),
+            "old 15 mm material switch remains"
+        );
+        let mut previous = dry;
+        for n in 1..=64 {
+            site.world.terrain_sediment[i] = n as f32 * 0.015 / 64.;
+            let current = colour(&site);
+            assert!(
+                (current - previous).length() < 0.006,
+                "deposition colour popped at sample {n}"
+            );
+            previous = current;
+        }
+        let state = serde_json::to_string(&site.snapshot()).unwrap();
+        let _ = terrain_mesh(&site, 64, 64, 4);
+        assert_eq!(state, serde_json::to_string(&site.snapshot()).unwrap());
     }
 
     #[test]

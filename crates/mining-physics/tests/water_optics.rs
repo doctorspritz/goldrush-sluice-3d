@@ -2999,3 +2999,148 @@ fn legacy_profile(d:array<f32,8>)->f32 {
         "dilute interface jumped={motion_jump}"
     );
 }
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn close_view_denoises_particle_domes_without_flattening_riffle_waves() {
+    let (device, queue) = device();
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("metre-scaled crest with particle sampling ripple"),
+        size: wgpu::Extent3d {
+            width: 256,
+            height: 8,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    // At z=1 each texel spans 2 mm in world space. A 120 mm hydraulic wave
+    // must survive while a 12 mm sampling ripple is rejected. Vary its phase
+    // in every row; the expected smooth profile is independent of the filter.
+    let field: Vec<f32> = (0..8)
+        .flat_map(|y| {
+            (0..256).flat_map(move |x| {
+                let wave = 0.002 * (std::f32::consts::TAU * (x as f32 - 128.) / 60.).cos();
+                let noise = 0.001 * (std::f32::consts::TAU * x as f32 / 6. + y as f32 * 0.37).cos();
+                [1. / (1. + wave + noise), 0.025, 1.25, 2.]
+            })
+        })
+        .collect();
+    queue.write_texture(
+        texture.as_image_copy(),
+        bytemuck::cast_slice(&field),
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(256 * 16),
+            rows_per_image: None,
+        },
+        texture.size(),
+    );
+    let view = texture.create_view(&Default::default());
+    let mut uniforms = [0f32; 72];
+    uniforms[32] = 0.256;
+    uniforms[37] = 0.008;
+    uniforms[42] = -1.;
+    uniforms[47] = 1.;
+    uniforms[64] = 512.;
+    uniforms[65] = 16.;
+    uniforms[66] = 0.045;
+    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&uniforms),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[0, 1, 2, 3, 4].map(|binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            count: None,
+            ty: if binding == 1 {
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                }
+            } else {
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                }
+            },
+        }),
+    });
+    let entries: Vec<_> = (0..5)
+        .map(|binding| wgpu::BindGroupEntry {
+            binding,
+            resource: if binding == 1 {
+                uniform.as_entire_binding()
+            } else {
+                wgpu::BindingResource::TextureView(&view)
+            },
+        })
+        .collect();
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &layout,
+        entries: &entries,
+    });
+    let (buffer, out_layout, out_group) = output(&device, 1024);
+    let shader = std::env::var_os("SLUICE_CREST_SHADER")
+        .map(|p| std::fs::read_to_string(p).unwrap())
+        .unwrap_or_else(|| include_str!("../../mining/src/water_blur.wgsl").to_owned());
+    let source = format!(
+        "{shader}\n{}",
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let pixel=vec2(i32(p.x)+64,i32(p.y));
+ let filtered=geometry_surface(pixel,vec2(1,0));
+ result[p.y*128u+p.x]=vec4(1./filtered.r,filtered.gba);
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [16, 1],
+    );
+    let mut original = 0f64;
+    let mut corrected = 0f64;
+    let mut mean = 0f64;
+    for i in 0..1024 {
+        let x = i % 128 + 64;
+        let expected = 1. + 0.002 * (std::f64::consts::TAU * (x as f64 - 128.) / 60.).cos();
+        original += (field[((i / 128) * 256 + x) * 4].recip() as f64 - expected).powi(2);
+        corrected += (values[i * 4] as f64 - expected).powi(2);
+        mean += values[i * 4] as f64 - expected;
+        assert_eq!(values[i * 4 + 1], 0.025, "fairing changed the water moment");
+        assert_eq!(
+            values[i * 4 + 2],
+            1.25,
+            "fairing changed suspended sediment"
+        );
+        assert_eq!(values[i * 4 + 3], 2., "fairing changed coverage");
+    }
+    let reduction = (corrected / original).sqrt();
+    println!(
+        "metre-scaled crest: ripple RMS ratio={reduction}, mean inverse-depth error={}",
+        mean / 1024.
+    );
+    assert!(
+        reduction < 0.30,
+        "close-view kernel domes survive: {reduction}"
+    );
+    assert!(
+        (mean / 1024.).abs() < 0.00002,
+        "fairing shifted the bulk sheet"
+    );
+}
