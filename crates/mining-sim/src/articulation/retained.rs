@@ -233,6 +233,13 @@ impl RetainedSoil {
         {
             return Err("Unqualified diagnostic material tangent anchors cannot be saved".into());
         }
+        #[cfg(feature = "contact-work-audit")]
+        if m.world
+            .integration_parameters
+            .diagnostic_preserve_normal_compliance
+        {
+            return Err("Unqualified diagnostic normal compliance cannot be saved".into());
+        }
         let boundary = ContactHistory::from_world(clone_world(&m.world), self.dispatcher);
         let saved = Saved {
             machine_json: serde_json::to_string(&self.machine).map_err(|e| e.to_string())?,

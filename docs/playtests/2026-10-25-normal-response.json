@@ -1,0 +1,1002 @@
+{
+  "manufactured_pipeline_cases": 16,
+  "maximum_discrete_position_error_m": 4.9752085166110405e-06,
+  "maximum_discrete_velocity_error_m_s": 1.5016272488008871e-06,
+  "negative_control_old_velocity_error_m_s": 0.6549198394366751,
+  "normal_trial_velocity_error_m_s": 7.385662545988936e-07,
+  "continuous_refinement": [
+    {
+      "mass_kg": 1.0,
+      "stiffness_n_m": 100000.0,
+      "coarse_position_error_m": 7.966663808236905e-06,
+      "fine_position_error_m": 2.337750167260953e-06,
+      "coarse_velocity_error_m_s": 0.003148364474481715,
+      "fine_velocity_error_m_s": 0.0010401481887761486
+    },
+    {
+      "mass_kg": 1.0,
+      "stiffness_n_m": 1000000.0,
+      "coarse_position_error_m": 1.6416771283648026e-06,
+      "fine_position_error_m": 5.794278291340387e-07,
+      "coarse_velocity_error_m_s": 0.0007610878709698822,
+      "fine_velocity_error_m_s": 0.00030448928363572614
+    },
+    {
+      "mass_kg": 50.0,
+      "stiffness_n_m": 100000.0,
+      "coarse_position_error_m": 6.802610650986918e-05,
+      "fine_position_error_m": 1.75037194821287e-05,
+      "coarse_velocity_error_m_s": 0.004382977290148624,
+      "fine_velocity_error_m_s": 0.0011552293133686858
+    },
+    {
+      "mass_kg": 50.0,
+      "stiffness_n_m": 1000000.0,
+      "coarse_position_error_m": 2.0008854174785443e-05,
+      "fine_position_error_m": 5.413166785411664e-06,
+      "coarse_velocity_error_m_s": 0.003837489700186273,
+      "fine_velocity_error_m_s": 0.001114110639560243
+    }
+  ],
+  "continuous_comparison_clock_hz": 480,
+  "bank_cases": [
+    {
+      "baseline_reference_byte_exact": true,
+      "calibrated_soil": false,
+      "frequency_hz": 1000000.0,
+      "gameplay_adopted": false,
+      "geometry_changes": {
+        "dispatcher_changed": false,
+        "integration_parameters_changed": false
+      },
+      "integration_parameters": {
+        "contact_clustering": true,
+        "contact_recycling": false,
+        "contact_softness": {
+          "damping_ratio": 1.0,
+          "natural_frequency": 1000000.0
+        },
+        "dt": 0.0020833334419876337,
+        "friction_in_bias_pass": true,
+        "friction_model": "Coulomb",
+        "length_unit": 1.0,
+        "max_ccd_substeps": 1,
+        "maximum_dissipation_friction": true,
+        "min_ccd_dt": 0.00016666667943354696,
+        "normalized_allowed_linear_error": 9.999999747378752e-05,
+        "normalized_contact_recycle_distance": 0.05000000074505806,
+        "normalized_max_corrective_velocity": 3.0,
+        "normalized_max_linear_velocity": 400.0,
+        "normalized_prediction_distance": 0.019999999552965164,
+        "num_internal_pgs_iterations": 16,
+        "num_internal_stabilization_iterations": 1,
+        "num_solver_iterations": 4,
+        "soft_bodies": {
+          "contact_stiffening": 4.0,
+          "max_extra_substeps": 4,
+          "recovery": {
+            "authored_velocity_margin": true,
+            "cross_body_detection": true,
+            "cross_body_expel_gate": true,
+            "crossing_repulsion": false,
+            "crossing_repulsion_guide": false,
+            "crossing_repulsion_self_guide": false,
+            "detection_motion_gating": true,
+            "edge_speculation": false,
+            "edge_stand_down": true,
+            "inverted_cell_detection": true,
+            "overlap_constraint_pace": 1.0,
+            "overlap_constraints": true,
+            "overlap_edge_stand_down": true,
+            "overlap_kept_depth": 0.0,
+            "overlap_multi_volume": false,
+            "overlap_normal_push": true,
+            "overlap_patch_constraints": "AlongNormal",
+            "overlap_patience": 240,
+            "overlap_progress_margin": 0.019999999552965164,
+            "overlap_rigid": true,
+            "overlap_self_regions": false,
+            "overlap_skin_volume": false,
+            "overlap_skip_self_tangled": true,
+            "overlap_split": 3,
+            "recovery_pace": 0.5,
+            "self_crossing_detection": true,
+            "self_stand_down": true
+          },
+          "resweep_strain": 0.75
+        },
+        "static_contact_softness": {
+          "damping_ratio": 1.0,
+          "natural_frequency": 1000000.0
+        },
+        "warmstart_coefficient": 1.0,
+        "warmstart_joints": false
+      },
+      "inventory": {
+        "clods": 1040,
+        "dynamic_bodies": 1045,
+        "elastic_energy_j": 0.0,
+        "engine_on": false,
+        "mechanical_hz": 480,
+        "motor_rows": 0,
+        "physical_mass_kg": 9752.505223035812,
+        "pump_energy_j": 0.0,
+        "pump_work_j": 0.0,
+        "stiffness_and_damping_zero": true
+      },
+      "limits": "A numerical per-effective-mass frequency sweep, not a material stiffness or closed global strain ledger. One saved outer step, no fresh/loaded bank, no FPS claim.",
+      "mechanical_gate_passed": false,
+      "mode": "baseline",
+      "normal_spring_energy_credit_j": 0.0,
+      "observer_after_state_byte_exact_in_memory": true,
+      "physical_mechanical_energy_gain_j": 57.216923396044876,
+      "preserve_normal_response": false,
+      "save_refused": false,
+      "unchanged_mechanical_gate_j": 0.01,
+      "source_summary_sha256": "bb6fa92a5c27c6911a2e2c91372b0534e89c02e79ef587aebcea22766ac91823",
+      "source_summary_bytes": 121843,
+      "rigid_normal_response_m_s": [
+        3.1320129477571546,
+        2.7553096830615913,
+        2.602926866061164,
+        2.570360217067307
+      ],
+      "generic_normal_response_m_s": [
+        0.08316626550074648,
+        0.08624112730251579,
+        0.05967128204669988,
+        0.04652543291335934
+      ],
+      "maximum_rigid_linear_probe_m_s": 0.7955486178398132,
+      "watched_tracking_gap_range_m": [
+        -0.0007288625929504633,
+        0.0005859941011294723
+      ],
+      "watched_maximum_tracking_penetration_m": 0.0007288625929504633,
+      "maximum_generic_joint_impulse_correction": 0.0
+    },
+    {
+      "baseline_reference_byte_exact": false,
+      "calibrated_soil": false,
+      "frequency_hz": 1000000.0,
+      "gameplay_adopted": false,
+      "geometry_changes": {
+        "all_other_integration_parameters_exact": true,
+        "full_biased_friction_preserved": true,
+        "history_transfer": "one-to-one feature and body-local position matching from original pre-query plain-manifold records; no impulse amplitude clamp",
+        "no_new_save_policy_or_session_selection": true,
+        "normal_frame_prerequisite_only": true,
+        "only_integration_parameter_change": {
+          "after": 0.0,
+          "before": 0.05000000074505806,
+          "name": "normalized_contact_recycle_distance"
+        },
+        "production_save_policy_added": false,
+        "stored_dispatcher_enum_changed": false,
+        "test_only_dispatcher": "full fresh fallback plus checked registered convex overlap and Euclidean closest-feature geometry",
+        "unqualified_cases_keep_ordinary_fresh_contacts": true
+      },
+      "integration_parameters": {
+        "contact_clustering": true,
+        "contact_recycling": false,
+        "contact_softness": {
+          "damping_ratio": 1.0,
+          "natural_frequency": 1000000.0
+        },
+        "dt": 0.0020833334419876337,
+        "friction_in_bias_pass": true,
+        "friction_model": "Coulomb",
+        "length_unit": 1.0,
+        "max_ccd_substeps": 1,
+        "maximum_dissipation_friction": true,
+        "min_ccd_dt": 0.00016666667943354696,
+        "normalized_allowed_linear_error": 9.999999747378752e-05,
+        "normalized_contact_recycle_distance": 0.0,
+        "normalized_max_corrective_velocity": 3.0,
+        "normalized_max_linear_velocity": 400.0,
+        "normalized_prediction_distance": 0.019999999552965164,
+        "num_internal_pgs_iterations": 16,
+        "num_internal_stabilization_iterations": 1,
+        "num_solver_iterations": 4,
+        "soft_bodies": {
+          "contact_stiffening": 4.0,
+          "max_extra_substeps": 4,
+          "recovery": {
+            "authored_velocity_margin": true,
+            "cross_body_detection": true,
+            "cross_body_expel_gate": true,
+            "crossing_repulsion": false,
+            "crossing_repulsion_guide": false,
+            "crossing_repulsion_self_guide": false,
+            "detection_motion_gating": true,
+            "edge_speculation": false,
+            "edge_stand_down": true,
+            "inverted_cell_detection": true,
+            "overlap_constraint_pace": 1.0,
+            "overlap_constraints": true,
+            "overlap_edge_stand_down": true,
+            "overlap_kept_depth": 0.0,
+            "overlap_multi_volume": false,
+            "overlap_normal_push": true,
+            "overlap_patch_constraints": "AlongNormal",
+            "overlap_patience": 240,
+            "overlap_progress_margin": 0.019999999552965164,
+            "overlap_rigid": true,
+            "overlap_self_regions": false,
+            "overlap_skin_volume": false,
+            "overlap_skip_self_tangled": true,
+            "overlap_split": 3,
+            "recovery_pace": 0.5,
+            "self_crossing_detection": true,
+            "self_stand_down": true
+          },
+          "resweep_strain": 0.75
+        },
+        "static_contact_softness": {
+          "damping_ratio": 1.0,
+          "natural_frequency": 1000000.0
+        },
+        "warmstart_coefficient": 1.0,
+        "warmstart_joints": false
+      },
+      "inventory": {
+        "clods": 1040,
+        "dynamic_bodies": 1045,
+        "elastic_energy_j": 0.0,
+        "engine_on": false,
+        "mechanical_hz": 480,
+        "motor_rows": 0,
+        "physical_mass_kg": 9752.505223035812,
+        "pump_energy_j": 0.0,
+        "pump_work_j": 0.0,
+        "stiffness_and_damping_zero": true
+      },
+      "limits": "A numerical per-effective-mass frequency sweep, not a material stiffness or closed global strain ledger. One saved outer step, no fresh/loaded bank, no FPS claim.",
+      "mechanical_gate_passed": false,
+      "mode": "registered",
+      "normal_spring_energy_credit_j": 0.0,
+      "observer_after_state_byte_exact_in_memory": true,
+      "physical_mechanical_energy_gain_j": 42.59900004885276,
+      "preserve_normal_response": false,
+      "save_refused": false,
+      "unchanged_mechanical_gate_j": 0.01,
+      "source_summary_sha256": "bef6c6cb7e498f14f7388a24437947fe74d800a1b3d056e9db8b52d460c3d964",
+      "source_summary_bytes": 106834,
+      "rigid_normal_response_m_s": [
+        3.0226514758817253,
+        2.814131550277664,
+        2.716766548194048,
+        2.5459180222333533
+      ],
+      "generic_normal_response_m_s": [
+        0.09949390079912102,
+        0.10571436629635501,
+        0.09089817191239728,
+        0.06038368735490886
+      ],
+      "maximum_rigid_linear_probe_m_s": 1.135992169380188,
+      "watched_tracking_gap_range_m": [
+        -0.0006690697045996785,
+        -6.457394920289516e-05
+      ],
+      "watched_maximum_tracking_penetration_m": 0.0006690697045996785,
+      "maximum_generic_joint_impulse_correction": 0.0
+    },
+    {
+      "baseline_reference_byte_exact": false,
+      "calibrated_soil": false,
+      "frequency_hz": 1000000.0,
+      "gameplay_adopted": false,
+      "geometry_changes": {
+        "all_other_integration_parameters_exact": true,
+        "full_biased_friction_preserved": true,
+        "history_transfer": "one-to-one feature and body-local position matching from original pre-query plain-manifold records; no impulse amplitude clamp",
+        "no_new_save_policy_or_session_selection": true,
+        "normal_frame_prerequisite_only": true,
+        "only_integration_parameter_change": {
+          "after": 0.0,
+          "before": 0.05000000074505806,
+          "name": "normalized_contact_recycle_distance"
+        },
+        "production_save_policy_added": false,
+        "stored_dispatcher_enum_changed": false,
+        "test_only_dispatcher": "full fresh fallback plus checked registered convex overlap and Euclidean closest-feature geometry",
+        "unqualified_cases_keep_ordinary_fresh_contacts": true
+      },
+      "integration_parameters": {
+        "contact_clustering": true,
+        "contact_recycling": false,
+        "contact_softness": {
+          "damping_ratio": 1.0,
+          "natural_frequency": 1000000.0
+        },
+        "dt": 0.0020833334419876337,
+        "friction_in_bias_pass": true,
+        "friction_model": "Coulomb",
+        "length_unit": 1.0,
+        "max_ccd_substeps": 1,
+        "maximum_dissipation_friction": true,
+        "min_ccd_dt": 0.00016666667943354696,
+        "normalized_allowed_linear_error": 9.999999747378752e-05,
+        "normalized_contact_recycle_distance": 0.0,
+        "normalized_max_corrective_velocity": 3.0,
+        "normalized_max_linear_velocity": 400.0,
+        "normalized_prediction_distance": 0.019999999552965164,
+        "num_internal_pgs_iterations": 16,
+        "num_internal_stabilization_iterations": 1,
+        "num_solver_iterations": 4,
+        "soft_bodies": {
+          "contact_stiffening": 4.0,
+          "max_extra_substeps": 4,
+          "recovery": {
+            "authored_velocity_margin": true,
+            "cross_body_detection": true,
+            "cross_body_expel_gate": true,
+            "crossing_repulsion": false,
+            "crossing_repulsion_guide": false,
+            "crossing_repulsion_self_guide": false,
+            "detection_motion_gating": true,
+            "edge_speculation": false,
+            "edge_stand_down": true,
+            "inverted_cell_detection": true,
+            "overlap_constraint_pace": 1.0,
+            "overlap_constraints": true,
+            "overlap_edge_stand_down": true,
+            "overlap_kept_depth": 0.0,
+            "overlap_multi_volume": false,
+            "overlap_normal_push": true,
+            "overlap_patch_constraints": "AlongNormal",
+            "overlap_patience": 240,
+            "overlap_progress_margin": 0.019999999552965164,
+            "overlap_rigid": true,
+            "overlap_self_regions": false,
+            "overlap_skin_volume": false,
+            "overlap_skip_self_tangled": true,
+            "overlap_split": 3,
+            "recovery_pace": 0.5,
+            "self_crossing_detection": true,
+            "self_stand_down": true
+          },
+          "resweep_strain": 0.75
+        },
+        "static_contact_softness": {
+          "damping_ratio": 1.0,
+          "natural_frequency": 1000000.0
+        },
+        "warmstart_coefficient": 1.0,
+        "warmstart_joints": false
+      },
+      "inventory": {
+        "clods": 1040,
+        "dynamic_bodies": 1045,
+        "elastic_energy_j": 0.0,
+        "engine_on": false,
+        "mechanical_hz": 480,
+        "motor_rows": 0,
+        "physical_mass_kg": 9752.505223035812,
+        "pump_energy_j": 0.0,
+        "pump_work_j": 0.0,
+        "stiffness_and_damping_zero": true
+      },
+      "limits": "A numerical per-effective-mass frequency sweep, not a material stiffness or closed global strain ledger. One saved outer step, no fresh/loaded bank, no FPS claim.",
+      "mechanical_gate_passed": false,
+      "mode": "preserve",
+      "normal_spring_energy_credit_j": 0.0,
+      "observer_after_state_byte_exact_in_memory": true,
+      "physical_mechanical_energy_gain_j": 43.50830289590522,
+      "preserve_normal_response": true,
+      "save_refused": true,
+      "unchanged_mechanical_gate_j": 0.01,
+      "source_summary_sha256": "73bf600d6fd25f8de94c6d8695c7ad30060b1476e789236fb51982f0a7bac0ad",
+      "source_summary_bytes": 106971,
+      "rigid_normal_response_m_s": [
+        3.0226514758817253,
+        2.803369514275281,
+        2.7147233128825787,
+        2.5473993678341684
+      ],
+      "generic_normal_response_m_s": [
+        0.09949390079912102,
+        0.10696700067008158,
+        0.0911879894926539,
+        0.05823874549834522
+      ],
+      "maximum_rigid_linear_probe_m_s": 1.135992169380188,
+      "watched_tracking_gap_range_m": [
+        -0.0006690697045996785,
+        -5.908604362048209e-05
+      ],
+      "watched_maximum_tracking_penetration_m": 0.0006690697045996785,
+      "maximum_generic_joint_impulse_correction": 0.0
+    },
+    {
+      "baseline_reference_byte_exact": false,
+      "calibrated_soil": false,
+      "frequency_hz": 120.0,
+      "gameplay_adopted": false,
+      "geometry_changes": {
+        "all_other_integration_parameters_exact": true,
+        "full_biased_friction_preserved": true,
+        "history_transfer": "one-to-one feature and body-local position matching from original pre-query plain-manifold records; no impulse amplitude clamp",
+        "no_new_save_policy_or_session_selection": true,
+        "normal_frame_prerequisite_only": true,
+        "only_integration_parameter_change": {
+          "after": 0.0,
+          "before": 0.05000000074505806,
+          "name": "normalized_contact_recycle_distance"
+        },
+        "production_save_policy_added": false,
+        "stored_dispatcher_enum_changed": false,
+        "test_only_dispatcher": "full fresh fallback plus checked registered convex overlap and Euclidean closest-feature geometry",
+        "unqualified_cases_keep_ordinary_fresh_contacts": true
+      },
+      "integration_parameters": {
+        "contact_clustering": true,
+        "contact_recycling": false,
+        "contact_softness": {
+          "damping_ratio": 1.0,
+          "natural_frequency": 120.0
+        },
+        "dt": 0.0020833334419876337,
+        "friction_in_bias_pass": true,
+        "friction_model": "Coulomb",
+        "length_unit": 1.0,
+        "max_ccd_substeps": 1,
+        "maximum_dissipation_friction": true,
+        "min_ccd_dt": 0.00016666667943354696,
+        "normalized_allowed_linear_error": 9.999999747378752e-05,
+        "normalized_contact_recycle_distance": 0.0,
+        "normalized_max_corrective_velocity": 3.0,
+        "normalized_max_linear_velocity": 400.0,
+        "normalized_prediction_distance": 0.019999999552965164,
+        "num_internal_pgs_iterations": 16,
+        "num_internal_stabilization_iterations": 1,
+        "num_solver_iterations": 4,
+        "soft_bodies": {
+          "contact_stiffening": 4.0,
+          "max_extra_substeps": 4,
+          "recovery": {
+            "authored_velocity_margin": true,
+            "cross_body_detection": true,
+            "cross_body_expel_gate": true,
+            "crossing_repulsion": false,
+            "crossing_repulsion_guide": false,
+            "crossing_repulsion_self_guide": false,
+            "detection_motion_gating": true,
+            "edge_speculation": false,
+            "edge_stand_down": true,
+            "inverted_cell_detection": true,
+            "overlap_constraint_pace": 1.0,
+            "overlap_constraints": true,
+            "overlap_edge_stand_down": true,
+            "overlap_kept_depth": 0.0,
+            "overlap_multi_volume": false,
+            "overlap_normal_push": true,
+            "overlap_patch_constraints": "AlongNormal",
+            "overlap_patience": 240,
+            "overlap_progress_margin": 0.019999999552965164,
+            "overlap_rigid": true,
+            "overlap_self_regions": false,
+            "overlap_skin_volume": false,
+            "overlap_skip_self_tangled": true,
+            "overlap_split": 3,
+            "recovery_pace": 0.5,
+            "self_crossing_detection": true,
+            "self_stand_down": true
+          },
+          "resweep_strain": 0.75
+        },
+        "static_contact_softness": {
+          "damping_ratio": 1.0,
+          "natural_frequency": 120.0
+        },
+        "warmstart_coefficient": 1.0,
+        "warmstart_joints": false
+      },
+      "inventory": {
+        "clods": 1040,
+        "dynamic_bodies": 1045,
+        "elastic_energy_j": 0.0,
+        "engine_on": false,
+        "mechanical_hz": 480,
+        "motor_rows": 0,
+        "physical_mass_kg": 9752.505223035812,
+        "pump_energy_j": 0.0,
+        "pump_work_j": 0.0,
+        "stiffness_and_damping_zero": true
+      },
+      "limits": "A numerical per-effective-mass frequency sweep, not a material stiffness or closed global strain ledger. One saved outer step, no fresh/loaded bank, no FPS claim.",
+      "mechanical_gate_passed": true,
+      "mode": "preserve",
+      "normal_spring_energy_credit_j": 0.0,
+      "observer_after_state_byte_exact_in_memory": true,
+      "physical_mechanical_energy_gain_j": -0.8912657683540601,
+      "preserve_normal_response": true,
+      "save_refused": true,
+      "unchanged_mechanical_gate_j": 0.01,
+      "source_summary_sha256": "55f838f48f4fbb9997d522b1c7f0ab2ff9eff701224644eaa5392f7e8f8a1682",
+      "source_summary_bytes": 108109,
+      "rigid_normal_response_m_s": [
+        0.0025251904512724765,
+        0.006518183764664304,
+        0.0018024764024474698,
+        0.0021549568199381573
+      ],
+      "generic_normal_response_m_s": [
+        2.3442781825782368e-06,
+        2.481977872169531e-06,
+        9.561429442456692e-07,
+        2.3357347483240426e-08
+      ],
+      "maximum_rigid_linear_probe_m_s": 0.0007582570542581379,
+      "watched_tracking_gap_range_m": [
+        -0.0002424315025564283,
+        0.00010498552001081407
+      ],
+      "watched_maximum_tracking_penetration_m": 0.0002424315025564283,
+      "maximum_generic_joint_impulse_correction": 0.0
+    },
+    {
+      "baseline_reference_byte_exact": false,
+      "calibrated_soil": false,
+      "frequency_hz": 30.0,
+      "gameplay_adopted": false,
+      "geometry_changes": {
+        "all_other_integration_parameters_exact": true,
+        "full_biased_friction_preserved": true,
+        "history_transfer": "one-to-one feature and body-local position matching from original pre-query plain-manifold records; no impulse amplitude clamp",
+        "no_new_save_policy_or_session_selection": true,
+        "normal_frame_prerequisite_only": true,
+        "only_integration_parameter_change": {
+          "after": 0.0,
+          "before": 0.05000000074505806,
+          "name": "normalized_contact_recycle_distance"
+        },
+        "production_save_policy_added": false,
+        "stored_dispatcher_enum_changed": false,
+        "test_only_dispatcher": "full fresh fallback plus checked registered convex overlap and Euclidean closest-feature geometry",
+        "unqualified_cases_keep_ordinary_fresh_contacts": true
+      },
+      "integration_parameters": {
+        "contact_clustering": true,
+        "contact_recycling": false,
+        "contact_softness": {
+          "damping_ratio": 1.0,
+          "natural_frequency": 30.0
+        },
+        "dt": 0.0020833334419876337,
+        "friction_in_bias_pass": true,
+        "friction_model": "Coulomb",
+        "length_unit": 1.0,
+        "max_ccd_substeps": 1,
+        "maximum_dissipation_friction": true,
+        "min_ccd_dt": 0.00016666667943354696,
+        "normalized_allowed_linear_error": 9.999999747378752e-05,
+        "normalized_contact_recycle_distance": 0.0,
+        "normalized_max_corrective_velocity": 3.0,
+        "normalized_max_linear_velocity": 400.0,
+        "normalized_prediction_distance": 0.019999999552965164,
+        "num_internal_pgs_iterations": 16,
+        "num_internal_stabilization_iterations": 1,
+        "num_solver_iterations": 4,
+        "soft_bodies": {
+          "contact_stiffening": 4.0,
+          "max_extra_substeps": 4,
+          "recovery": {
+            "authored_velocity_margin": true,
+            "cross_body_detection": true,
+            "cross_body_expel_gate": true,
+            "crossing_repulsion": false,
+            "crossing_repulsion_guide": false,
+            "crossing_repulsion_self_guide": false,
+            "detection_motion_gating": true,
+            "edge_speculation": false,
+            "edge_stand_down": true,
+            "inverted_cell_detection": true,
+            "overlap_constraint_pace": 1.0,
+            "overlap_constraints": true,
+            "overlap_edge_stand_down": true,
+            "overlap_kept_depth": 0.0,
+            "overlap_multi_volume": false,
+            "overlap_normal_push": true,
+            "overlap_patch_constraints": "AlongNormal",
+            "overlap_patience": 240,
+            "overlap_progress_margin": 0.019999999552965164,
+            "overlap_rigid": true,
+            "overlap_self_regions": false,
+            "overlap_skin_volume": false,
+            "overlap_skip_self_tangled": true,
+            "overlap_split": 3,
+            "recovery_pace": 0.5,
+            "self_crossing_detection": true,
+            "self_stand_down": true
+          },
+          "resweep_strain": 0.75
+        },
+        "static_contact_softness": {
+          "damping_ratio": 1.0,
+          "natural_frequency": 30.0
+        },
+        "warmstart_coefficient": 1.0,
+        "warmstart_joints": false
+      },
+      "inventory": {
+        "clods": 1040,
+        "dynamic_bodies": 1045,
+        "elastic_energy_j": 0.0,
+        "engine_on": false,
+        "mechanical_hz": 480,
+        "motor_rows": 0,
+        "physical_mass_kg": 9752.505223035812,
+        "pump_energy_j": 0.0,
+        "pump_work_j": 0.0,
+        "stiffness_and_damping_zero": true
+      },
+      "limits": "A numerical per-effective-mass frequency sweep, not a material stiffness or closed global strain ledger. One saved outer step, no fresh/loaded bank, no FPS claim.",
+      "mechanical_gate_passed": true,
+      "mode": "preserve",
+      "normal_spring_energy_credit_j": 0.0,
+      "observer_after_state_byte_exact_in_memory": true,
+      "physical_mechanical_energy_gain_j": -1.1827549682348035,
+      "preserve_normal_response": true,
+      "save_refused": true,
+      "unchanged_mechanical_gate_j": 0.01,
+      "source_summary_sha256": "eed6956be9a4fd67f58a82f42df615c23d975a20d097821b9ef445add4d7f2e9",
+      "source_summary_bytes": 108015,
+      "rigid_normal_response_m_s": [
+        0.0014334516263018054,
+        0.00639474866042664,
+        0.005698319469168787,
+        0.0025877111290870964
+      ],
+      "generic_normal_response_m_s": [
+        6.184330246269595e-09,
+        2.0614434154231983e-09,
+        4.576649521146259e-09,
+        1.1337938784827593e-08
+      ],
+      "maximum_rigid_linear_probe_m_s": 0.0009417862165719271,
+      "watched_tracking_gap_range_m": [
+        -0.0002424315025564283,
+        0.0003310499305371195
+      ],
+      "watched_maximum_tracking_penetration_m": 0.0002424315025564283,
+      "maximum_generic_joint_impulse_correction": 0.0
+    }
+  ],
+  "fresh_300": {
+    "all_mechanical_steps_passed": false,
+    "calibrated_soil": false,
+    "frequency_hz": 120.0,
+    "gameplay_adopted": false,
+    "integration_parameters": {
+      "contact_clustering": true,
+      "contact_recycling": false,
+      "contact_softness": {
+        "damping_ratio": 1.0,
+        "natural_frequency": 120.0
+      },
+      "dt": 0.0020833334419876337,
+      "friction_in_bias_pass": true,
+      "friction_model": "Coulomb",
+      "length_unit": 1.0,
+      "max_ccd_substeps": 1,
+      "maximum_dissipation_friction": true,
+      "min_ccd_dt": 0.00016666667943354696,
+      "normalized_allowed_linear_error": 9.999999747378752e-05,
+      "normalized_contact_recycle_distance": 0.0,
+      "normalized_max_corrective_velocity": 3.0,
+      "normalized_max_linear_velocity": 400.0,
+      "normalized_prediction_distance": 0.019999999552965164,
+      "num_internal_pgs_iterations": 16,
+      "num_internal_stabilization_iterations": 1,
+      "num_solver_iterations": 4,
+      "soft_bodies": {
+        "contact_stiffening": 4.0,
+        "max_extra_substeps": 4,
+        "recovery": {
+          "authored_velocity_margin": true,
+          "cross_body_detection": true,
+          "cross_body_expel_gate": true,
+          "crossing_repulsion": false,
+          "crossing_repulsion_guide": false,
+          "crossing_repulsion_self_guide": false,
+          "detection_motion_gating": true,
+          "edge_speculation": false,
+          "edge_stand_down": true,
+          "inverted_cell_detection": true,
+          "overlap_constraint_pace": 1.0,
+          "overlap_constraints": true,
+          "overlap_edge_stand_down": true,
+          "overlap_kept_depth": 0.0,
+          "overlap_multi_volume": false,
+          "overlap_normal_push": true,
+          "overlap_patch_constraints": "AlongNormal",
+          "overlap_patience": 240,
+          "overlap_progress_margin": 0.019999999552965164,
+          "overlap_rigid": true,
+          "overlap_self_regions": false,
+          "overlap_skin_volume": false,
+          "overlap_skip_self_tangled": true,
+          "overlap_split": 3,
+          "recovery_pace": 0.5,
+          "self_crossing_detection": true,
+          "self_stand_down": true
+        },
+        "resweep_strain": 0.75
+      },
+      "static_contact_softness": {
+        "damping_ratio": 1.0,
+        "natural_frequency": 120.0
+      },
+      "warmstart_coefficient": 1.0,
+      "warmstart_joints": false
+    },
+    "inventory": {
+      "clods": 1040,
+      "dynamic_bodies": 1045,
+      "elastic_energy_j": 0.0,
+      "engine_on": false,
+      "mechanical_hz": 480,
+      "motor_rows": 0,
+      "physical_mass_kg": 9752.505223035812,
+      "pump_energy_j": 0.0,
+      "pump_work_j": 0.0,
+      "stiffness_and_damping_zero": true
+    },
+    "mechanical_gate_j": 0.01,
+    "net_mechanical_energy_change_j": -377.18764101617853,
+    "normal_spring_energy_credit_j": 0.0,
+    "peak_step_mechanical_energy_gain_j": 17.857651453552535,
+    "physical_time_s": 0.625,
+    "save_refused": true,
+    "scope": "Fresh complete passive bank, bounded four-frame observer per step; no raw trace retained. No loaded refinement, material/strain calibration or native performance claim.",
+    "steps": 300,
+    "top": [
+      {
+        "maximum_rigid_normal_response_m_s": 0.042813406827223136,
+        "mechanical_energy_change_j": 17.857651453552535,
+        "step": 50
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.05316822150733634,
+        "mechanical_energy_change_j": 17.27318457813817,
+        "step": 52
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.09778299249931376,
+        "mechanical_energy_change_j": 16.94797116884729,
+        "step": 51
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.05813593556912111,
+        "mechanical_energy_change_j": 15.585863910819171,
+        "step": 49
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.0903006792731097,
+        "mechanical_energy_change_j": 15.172557489742758,
+        "step": 48
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.08029566506804191,
+        "mechanical_energy_change_j": 15.009709800942801,
+        "step": 53
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.04123307915736342,
+        "mechanical_energy_change_j": 14.607458001642954,
+        "step": 54
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.07718081949010101,
+        "mechanical_energy_change_j": 13.245616651460296,
+        "step": 47
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.036239033789748236,
+        "mechanical_energy_change_j": 12.830112189374631,
+        "step": 55
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.057062324503591326,
+        "mechanical_energy_change_j": 11.238143047696212,
+        "step": 57
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.031810690667170176,
+        "mechanical_energy_change_j": 9.694611557031749,
+        "step": 56
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.05574084126578325,
+        "mechanical_energy_change_j": 8.267281163396547,
+        "step": 46
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.040918703604879876,
+        "mechanical_energy_change_j": 8.188309835997643,
+        "step": 58
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.016867745732212464,
+        "mechanical_energy_change_j": 7.67848524346482,
+        "step": 59
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.026118820911801788,
+        "mechanical_energy_change_j": 6.267582471104106,
+        "step": 126
+      },
+      {
+        "maximum_rigid_normal_response_m_s": 0.025576166956861646,
+        "mechanical_energy_change_j": 5.879033033968881,
+        "step": 60
+      }
+    ],
+    "violations": 128
+  },
+  "temporal_substep_cases": [
+    {
+      "mass_kg": 1.0,
+      "loaded": false,
+      "position_error_m": 4.010816750055213e-06,
+      "velocity_error_m_s": 7.385662545988936e-07
+    },
+    {
+      "mass_kg": 1.0,
+      "loaded": true,
+      "position_error_m": 5.931615829453873e-09,
+      "velocity_error_m_s": 1.3122335076299333e-06
+    },
+    {
+      "mass_kg": 50.0,
+      "loaded": false,
+      "position_error_m": 1.6270708650054089e-06,
+      "velocity_error_m_s": 4.888136591330028e-08
+    },
+    {
+      "mass_kg": 50.0,
+      "loaded": true,
+      "position_error_m": 3.5810470523384846e-08,
+      "velocity_error_m_s": 1.5016272488008871e-06
+    }
+  ],
+  "checks": [
+    {
+      "check": "vendor-tests",
+      "exit": 0,
+      "elapsed": 36.426260208012536
+    },
+    {
+      "check": "audit-tests",
+      "exit": 0,
+      "elapsed": 119.93760200001998
+    },
+    {
+      "check": "default-tests",
+      "exit": 0,
+      "elapsed": 37.97188995796023
+    },
+    {
+      "check": "sim-clippy",
+      "exit": 0,
+      "elapsed": 10.661928958958015
+    },
+    {
+      "check": "vendor-clippy",
+      "exit": 0,
+      "elapsed": 16.49013125000056
+    },
+    {
+      "check": "sim-format",
+      "exit": 0,
+      "elapsed": 0.5583131670136936
+    },
+    {
+      "check": "vendor-format",
+      "exit": 0,
+      "elapsed": 0.3117619160329923
+    },
+    {
+      "check": "baseline-1000000",
+      "exit": 0,
+      "elapsed": 0.8036272079916671
+    },
+    {
+      "check": "registered-1000000",
+      "exit": 0,
+      "elapsed": 1.0610322089632973
+    },
+    {
+      "check": "preserve-1000000",
+      "exit": 0,
+      "elapsed": 1.0583819590392523
+    },
+    {
+      "check": "preserve-120",
+      "exit": 0,
+      "elapsed": 1.059771083004307
+    },
+    {
+      "check": "preserve-30",
+      "exit": 0,
+      "elapsed": 1.0522385420044884
+    },
+    {
+      "check": "vendor-qualified",
+      "exit": 0,
+      "elapsed": 36.44682162505342
+    },
+    {
+      "check": "fresh-300",
+      "exit": 0,
+      "elapsed": 176.77078595897183
+    },
+    {
+      "check": "sim-clippy-qualified",
+      "exit": 0,
+      "elapsed": 7.66551741596777
+    },
+    {
+      "check": "vendor-clippy-qualified",
+      "exit": 0,
+      "elapsed": 6.619948083010968
+    },
+    {
+      "check": "format-qualified",
+      "exit": 0,
+      "elapsed": 0.30743454198818654
+    },
+    {
+      "check": "sim-format-qualified",
+      "exit": 0,
+      "elapsed": 0.5628082500188611
+    }
+  ],
+  "qualified_audit_supervisor": {
+    "exit": 0,
+    "stopped_reason": null,
+    "log_bytes": 11438,
+    "discarded_log_bytes": 0
+  },
+  "changed_sources": [
+    "crates/mining-sim/src/contact_history.rs",
+    "crates/mining-sim/src/articulation/retained.rs",
+    "crates/mining-sim/src/articulation/retained/tests/rigid_work.rs",
+    "vendor/rapier3d/src/dynamics/integration_parameters.rs",
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/solve.rs",
+    "crates/mining-sim/src/articulation/retained/tests/rigid_work/compliance.rs",
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/normal_response_bench.rs"
+  ],
+  "unchanged_initial_sources": 632,
+  "preserved_installed_app_sha256": "13d4e20256f0c8b6c0cd1fa2f9a03e6c57820fcc4b8c5b7fe9396787eca3a892",
+  "preserved_original_dirty_files": 9,
+  "preserved_user_stash": [
+    "a6c6b857da29269271eebb03025767414eabde90"
+  ],
+  "new_crash_reports": [],
+  "scope": "Default-off audit normal-response experiment; no calibrated soil stiffness, full strain ledger or Session adoption.",
+  "intermediate_failures": [
+    "Initial bench selected unsupported default twist model; guard correctly refused it.",
+    "Second bench omitted floor collider and failed comparison; fixture corrected.",
+    "Independent sampling grids missed different transient maxima; final refinement compares the same 480 Hz observation times. Original 0.65 convergence bound retained.",
+    "One script edit assertion aborted before source write; exclusive log ownership refused its subsequent launch before any heavy process."
+  ],
+  "gameplay_adopted": false,
+  "full_goal_complete": false,
+  "references": [
+    "https://box2d.org/posts/2024/02/solver2d/",
+    "https://docs.lammps.org/pair_granular.html"
+  ],
+  "worst-before.bin_sha256": "7147a81a9830b2d27fcfca6feef4ef419ef8a09fede2899a7ab6e02af7c8db0b",
+  "worst-after.bin_sha256": "6f54234a1ed418414b2fd4abb10e8c1614411668c0e8275f21532fe29c4d7dc9",
+  "beads": {
+    "sync_supported": false,
+    "scoped_export_rows": [
+      "sluice-rigid-bias-work-20261024"
+    ],
+    "exported_lines": 225
+  }
+}

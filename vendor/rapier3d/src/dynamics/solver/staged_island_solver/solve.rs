@@ -24,6 +24,22 @@ pub(super) unsafe fn solve_pass(
     solved_dt: Real,
 ) -> usize {
     let group = &ctx.groups[group_index];
+    #[cfg(feature = "contact-work-audit")]
+    let solve_normal = {
+        if params.diagnostic_preserve_normal_compliance {
+            assert!(
+                !ctx.use_twist,
+                "normal-compliance trial does not cover twist contacts"
+            );
+            assert!(
+                unsafe { &*ctx.soft_constraints }.is_empty(),
+                "normal-compliance trial does not cover soft bodies"
+            );
+        }
+        !(wo_bias && params.diagnostic_preserve_normal_compliance)
+    };
+    #[cfg(not(feature = "contact-work-audit"))]
+    let solve_normal = true;
     let sync = ctx.sync;
     // Soft-body work of this group: the set is shared and immutable in shape during the solve, so
     // every worker takes the same branches. Soft constraints are springs solved once per substep,
@@ -147,7 +163,7 @@ pub(super) unsafe fn solve_pass(
                 let builder = unsafe { &*ctx.twist_builders.add(chunk_id) };
                 builder.update_rhs_wo_bias(params, solved_dt, solver_bodies, c);
             }
-            c.solve(solver_bodies, true, solve_friction);
+            c.solve(solver_bodies, solve_normal, solve_friction);
         }
         if !ctx.use_twist {
             let c = unsafe { &mut *ctx.coulomb_constraints.add(chunk_id) };
@@ -170,7 +186,7 @@ pub(super) unsafe fn solve_pass(
                     solve_friction,
                 )
             };
-            c.solve(solver_bodies, true, solve_friction);
+            c.solve(solver_bodies, solve_normal, solve_friction);
             #[cfg(feature = "contact-work-audit")]
             crate::contact_work_audit::rigid_work::after(observation, c, solver_bodies);
         }
@@ -398,7 +414,7 @@ pub(super) unsafe fn solve_pass(
                     jac,
                     &mut vs.solver_bodies,
                     &mut vs.generic_solver_vels,
-                    true,
+                    solve_normal,
                     solve_friction,
                 );
                 #[cfg(feature = "contact-work-audit")]

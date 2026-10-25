@@ -77,6 +77,14 @@ impl ContactHistory {
         {
             return Err("Unqualified diagnostic material tangent anchors cannot be saved".into());
         }
+        #[cfg(feature = "contact-work-audit")]
+        if self
+            .world
+            .integration_parameters
+            .diagnostic_preserve_normal_compliance
+        {
+            return Err("Unqualified diagnostic normal compliance cannot be saved".into());
+        }
         let payload = codec().serialize(&self.world).map_err(|e| e.to_string())?;
         let mut bytes = Vec::with_capacity(HEADER + payload.len());
         bytes.extend_from_slice(MAGIC);

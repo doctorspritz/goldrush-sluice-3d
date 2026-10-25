@@ -8,6 +8,9 @@ mod rigid_warmstart_admissibility;
 #[cfg(all(test, feature = "dim3", feature = "f32"))]
 #[path = "normal_compliance_controls.rs"]
 mod normal_compliance_controls;
+#[cfg(all(test, feature = "contact-work-audit"))]
+#[path = "normal_response_bench.rs"]
+mod normal_response_bench;
 
 use super::{ContactConstraintNormalPart, ContactConstraintTangentPart};
 #[cfg(feature = "block-solver")]

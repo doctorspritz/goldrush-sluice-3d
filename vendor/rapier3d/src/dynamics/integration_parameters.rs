@@ -296,6 +296,13 @@ pub struct IntegrationParameters {
     #[cfg(feature = "contact-work-audit")]
     #[cfg_attr(feature = "serde-serialize", serde(skip))]
     pub diagnostic_material_tangent_anchors: bool,
+    /// Audit-only normal-compliance trial: retain the biased normal response
+    /// through relaxation, while joint/friction relaxation remains selected.
+    /// This does not specify a soil stiffness, area law or material calibration.
+    /// Coulomb rigid/generic contacts only; never persisted or enabled by default.
+    #[cfg(feature = "contact-work-audit")]
+    #[cfg_attr(feature = "serde-serialize", serde(skip))]
+    pub diagnostic_preserve_normal_compliance: bool,
     /// Number of internal Project Gauss Seidel (PGS) iterations run at each solver iteration (default: `1`).
     pub num_internal_pgs_iterations: usize,
     /// The number of stabilization iterations run at each solver iterations (default: `1`).
@@ -426,6 +433,8 @@ impl Default for IntegrationParameters {
             maximum_dissipation_friction: false,
             #[cfg(feature = "contact-work-audit")]
             diagnostic_material_tangent_anchors: false,
+            #[cfg(feature = "contact-work-audit")]
+            diagnostic_preserve_normal_compliance: false,
             normalized_allowed_linear_error: 0.005,
             normalized_max_corrective_velocity: 3.0,
             // Four times the linear slop. A larger speculative
