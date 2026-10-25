@@ -1,0 +1,275 @@
+{
+  "base_commit": "fb5dbbbcc535c585b3bf706de595f7b95c7e1e71",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-field-20261025",
+  "changed_sources": {
+    "crates/mining/src/fluid_surface.rs": "0405fdea2000ee55bf687abc88d0c6abafd6a8fa2b37d5444f2516b5c6211256",
+    "crates/mining/src/scene.rs": "eea1670e63cd66110fbcba4cb7532f59cba489594a6115a465abbd8a413e5e29"
+  },
+  "protected_other_sources": 731,
+  "source_manifest": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-field-20261025/source-manifest-final.json",
+  "pending_experiment_files_unchanged": {
+    "Cargo.lock": "8b31afbf692a6b726701279caba810d7cf0805e5b51f74c0627ff1c5ae60c877",
+    "crates/mining-sim/Cargo.toml": "736ff760b4856185a0206b84fbf6737e52e411611b8e2fb0c685f304c4354c48",
+    "crates/mining-sim/src/articulation/retained/tests.rs": "21ffd7dc5c47cc38b5c22c9ca50e50aa5615a3183c4af85595128343fb152c3f",
+    "crates/mining-sim/src/soil_response.rs": "a361cbd95c0575fa4b2f79a84691280cca0d732615eaaeaf81274a8d463083a2",
+    "crates/mining-sim/src/articulation/retained/tests/pressure_geometry.rs": "2fc5b68c8129d116c96600747ab63fb73ac249446216419fcc661b9346aa1f61",
+    "crates/mining-sim/src/soil_response/pressure.rs": "727cfaf723b190e91d16738f07ace42d62a7b43126b4288af4e628e7af4e9ec8",
+    "crates/mining-sim/src/soil_response/pressure/geometry.rs": "edd35e12d4bc58c6efcde3d2eafa33fe44b3ffc900be8e3a737c6922f0d2c9d5",
+    "crates/mining-sim/src/soil_response/pressure/poly.rs": "9f2214f7380be4c8654d408f7eaf4bde8a05b126fbab7e69b1a718c704ced6fc",
+    "crates/mining-sim/src/soil_response/pressure/tests.rs": "f808ed846af4e604f6b814628bec5f9ee45ee14fe67e9f2bf3ed87de954065e1"
+  },
+  "pending_archive": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-field-20261025/pending-physics.tar.gz",
+  "original_dirty_paths_and_stash_preserved": true,
+  "quality": {
+    "ordinary_app_tests": 67,
+    "explicit_saved_support_tests": 1,
+    "saved_kernel_count": 60097,
+    "cache_optimization_fingerprint_identical": "d7af11f5c9fe6c4c",
+    "real_gpu_optics": 16,
+    "real_gpu_chain": 1,
+    "clippy": "pass - mining all targets, no deps, warnings denied",
+    "format": "pass - mining",
+    "one_other_opt_in_profile": "unrun",
+    "signed_native_package": "pass",
+    "intermediate_failures": [
+      "Wider first stencil failed unchanged dense-sheet support; matched footprint passes.",
+      "Cache borrow initially needed explicit dereference; corrected."
+    ],
+    "prior_coupled_physics_tests": "not rerun; no changes to those sources"
+  },
+  "native": {
+    "frozen": {
+      "sluice-final": {
+        "fields_equal": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "flow": true,
+          "material_motion": true,
+          "active_soil": true,
+          "rigid_falling": true,
+          "delivered_m3": true,
+          "excavated_m3": true
+        },
+        "changed_pixels": 127046,
+        "max_channel_delta": 143,
+        "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-interface-20261025/after-frozen-sluice-final",
+        "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-field-20261025/after-sluice-final"
+      },
+      "sluice-normal": {
+        "fields_equal": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "flow": true,
+          "material_motion": true,
+          "active_soil": true,
+          "rigid_falling": true,
+          "delivered_m3": true,
+          "excavated_m3": true
+        },
+        "changed_pixels": 165657,
+        "max_channel_delta": 211,
+        "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-interface-20261025/after-frozen-sluice-normal",
+        "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-field-20261025/after-sluice-normal"
+      },
+      "sluice-sediment": {
+        "fields_equal": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "flow": true,
+          "material_motion": true,
+          "active_soil": true,
+          "rigid_falling": true,
+          "delivered_m3": true,
+          "excavated_m3": true
+        },
+        "changed_pixels": 13726,
+        "max_channel_delta": 100,
+        "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-interface-20261025/after-frozen-sluice-sediment",
+        "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-field-20261025/after-sluice-sediment"
+      },
+      "river-final": {
+        "fields_equal": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "flow": true,
+          "material_motion": true,
+          "active_soil": true,
+          "rigid_falling": true,
+          "delivered_m3": true,
+          "excavated_m3": true
+        },
+        "changed_pixels": 0,
+        "max_channel_delta": 0,
+        "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-interface-20261025/after-frozen-river-final",
+        "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-field-20261025/after-river-final"
+      },
+      "outlet-final": {
+        "fields_equal": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "flow": true,
+          "material_motion": true,
+          "active_soil": true,
+          "rigid_falling": true,
+          "delivered_m3": true,
+          "excavated_m3": true
+        },
+        "changed_pixels": 26154,
+        "max_channel_delta": 149,
+        "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-interface-20261025/after-frozen-outlet-final",
+        "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-field-20261025/after-outlet-final"
+      },
+      "deposit": {
+        "fields_equal": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "flow": true,
+          "material_motion": true,
+          "active_soil": true,
+          "rigid_falling": true,
+          "delivered_m3": true,
+          "excavated_m3": true
+        },
+        "changed_pixels": 46944,
+        "max_channel_delta": 3,
+        "before": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-field-20261025/before-deposit",
+        "after": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-field-20261025/after-deposit"
+      }
+    },
+    "motion": {
+      "before": {
+        "frames": 38,
+        "wall_span": 3.994063875,
+        "simulation_span": 1.5666667483747005,
+        "presented_span": 1.574898838660431,
+        "physical_advances": 37,
+        "presentation_advances": 37,
+        "underruns": 0,
+        "mean_surface_build_ms": 91.48640653398053
+      },
+      "after": {
+        "frames": 37,
+        "wall_span": 3.886973375,
+        "simulation_span": 1.5333334133028984,
+        "presented_span": 1.5434032939342046,
+        "physical_advances": 36,
+        "presentation_advances": 36,
+        "underruns": 0,
+        "mean_surface_build_ms": 111.74565145882353
+      }
+    },
+    "performance": {
+      "before": {
+        "mean_fps": 55.686879153579966,
+        "p95_frame_ms": 26.657459000000003,
+        "simulation_wall_ratio": 0.38644140919036335,
+        "bulk_budget_passed": true,
+        "dry_mass_budget_passed": true,
+        "sluice_water_balance_error_m3": 0.0,
+        "water_balance_error_m3": -7.85580312623324e-06,
+        "gold_balance_error_g": 4.547473508864641e-13,
+        "passed": false,
+        "surface": {
+          "buffer_underrun_frames": 0,
+          "interpolation_alpha": 0.23125213384628296,
+          "max_capture_ms": 1.129875,
+          "max_surface_build_ms": 101.025417,
+          "mean_capture_ms": 0.3816970256410258,
+          "mean_surface_build_ms": 89.95078629044112,
+          "paired_render_particles": 66094,
+          "presented_sim_time": 99.7743802748516,
+          "surface_builds": 272
+        }
+      },
+      "after": {
+        "mean_fps": 55.72103192231741,
+        "p95_frame_ms": 28.514875,
+        "simulation_wall_ratio": 0.38650824342153456,
+        "bulk_budget_passed": true,
+        "dry_mass_budget_passed": true,
+        "sluice_water_balance_error_m3": 0.0,
+        "water_balance_error_m3": -7.85580312623324e-06,
+        "gold_balance_error_g": 4.547473508864641e-13,
+        "passed": false,
+        "surface": {
+          "buffer_underrun_frames": 0,
+          "interpolation_alpha": 0.3062070906162262,
+          "max_capture_ms": 1.451792,
+          "max_surface_build_ms": 124.402709,
+          "mean_capture_ms": 0.3829261964285717,
+          "mean_surface_build_ms": 110.19161577927929,
+          "paired_render_particles": 66596,
+          "presented_sim_time": 99.72041900630768,
+          "surface_builds": 222
+        }
+      }
+    }
+  },
+  "physical_equivalence": {
+    "sim_time": 99.86667187511921,
+    "all_save_values_equal_after_ordering_keyed_contact_entries": true,
+    "byte_identical": false,
+    "difference": "serialized SDF/pair map entry order only",
+    "raw_leaf_differences": 4173
+  },
+  "outlet_crop": {
+    "rectangle": [
+      750,
+      260,
+      1000,
+      750
+    ],
+    "changed_pixels": 0,
+    "maximum_rgb_delta": 0
+  },
+  "performance_limit": "Final surface build mean110.19ms versus89.95ms baseline; p95frame28.51ms versus26.66ms. Draw throughput is similar and physical real time still fails.",
+  "app": {
+    "installed": "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app",
+    "sha256": "72c3ba8e411c4ebc9295ba253269c8d4746fde47ca5353d46884b3640317b5fa",
+    "previous": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-field-20261025/previous-app/First Bend.app",
+    "previous_sha256": "9cb31635c424a15557e4ef9c55c9b728766cbb9bf5fd4cdda07a7602d86dbe6e"
+  },
+  "crashes_unchanged": [
+    ".WindowServer-2026-09-24-144010.ips",
+    ".WindowServer-2026-09-27-124241.ips",
+    ".WindowServer-2026-09-27-141659.ips",
+    ".WindowServer-2026-09-29-195851.ips",
+    ".WindowServer-2026-10-08-155410.ips",
+    ".WindowServer-2026-10-19-135417.ips"
+  ],
+  "beads": {
+    "sync": "installed CLI rejects command",
+    "export_rows": 228,
+    "changed_rows": 1,
+    "issue": "sluice-oblique-crest-20261024",
+    "status": "in_progress",
+    "new_rows": 1,
+    "performance_followup": "menace-xma"
+  },
+  "goal": "broad realistic game, real time and full water art remain active",
+  "media": {
+    "2026-10-25-smooth-crest-field.frames-2.jpg": "07c5d5bb18d5a28e87971a23699f0fff35e45197de05119f0460a2d9219a7546",
+    "2026-10-25-smooth-crest-field.frames-1.jpg": "710fe39f0381d426e79ede8a0473350ee09d528b447fdefc4190d9f57b12ae17",
+    "2026-10-25-smooth-crest-field.jpg": "8a2c643fed8e55a841386e955060fb950992e79163e3478a51ae808bbf782328",
+    "2026-10-25-smooth-mud-field.jpg": "4cfa7c62a35c2da4cb3335d747b221135b50855ace19a17c3939abaccfa994cb",
+    "2026-10-25-smooth-crest-field.mp4": "f1c360b0baf4ece369535ac19ff832b429d87d8e5822ccda215ff22651864b9e"
+  }
+}

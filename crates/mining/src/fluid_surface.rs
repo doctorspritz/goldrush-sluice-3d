@@ -1,7 +1,9 @@
 //! Render-only anisotropic kernels from local particle covariance. Moments are
 //! accumulated in occupied bins, so reconstruction does not scan every pair.
 use bevy::prelude::*;
-use std::collections::HashMap;
+// Integer spatial keys are internal render data. Use the engine cache hasher;
+// all floating-point accumulation remains in explicit particle/stencil order.
+use bevy::platform::collections::HashMap;
 
 #[derive(Clone, Copy)]
 struct Moments {
@@ -365,7 +367,7 @@ pub(crate) fn kernels(
 struct ChannelField {
     nodes: HashMap<[i32; 3], Moments>,
     neighbourhoods: HashMap<[i32; 3], Moments>,
-    stencils: HashMap<[i32; 3], [(Moments, Moments); 8]>,
+    stencils: HashMap<[i32; 3], [(Moments, Moments); 27]>,
     width: f32,
 }
 impl Moments {
@@ -393,21 +395,30 @@ impl Moments {
         self.square += other.square * weight;
     }
 }
-fn stencil(p: Vec3, width: f32) -> [([i32; 3], f32); 8] {
+// Positive quadratic B-splines retain partition of unity and first moments.
+// Their variance is independent of the lattice phase. Tent weights changed
+// from zero to h²/4 as a parcel crossed one cell, so the measured shape and
+// the water/extinction support breathed even on a smooth physical trajectory.
+fn stencil(p: Vec3, width: f32) -> [([i32; 3], f32); 27] {
     let grid = p / width - Vec3::splat(0.5);
-    let base = grid.floor().as_ivec3();
-    let f = grid - base.as_vec3();
+    let base = (grid - Vec3::splat(0.5)).floor().as_ivec3();
+    let t = grid - base.as_vec3() - Vec3::ONE;
+    let weights = t.to_array().map(|t| {
+        [
+            0.5 * (0.5 - t).powi(2),
+            0.75 - t * t,
+            0.5 * (0.5 + t).powi(2),
+        ]
+    });
     std::array::from_fn(|n| {
-        let d = IVec3::new((n & 1) as i32, ((n >> 1) & 1) as i32, ((n >> 2) & 1) as i32);
-        let weight = Vec3::new(
-            if d.x == 0 { 1. - f.x } else { f.x },
-            if d.y == 0 { 1. - f.y } else { f.y },
-            if d.z == 0 { 1. - f.z } else { f.z },
+        let d = IVec3::new((n % 3) as i32, ((n / 3) % 3) as i32, (n / 9) as i32);
+        (
+            (base + d).to_array(),
+            weights[0][d.x as usize] * weights[1][d.y as usize] * weights[2][d.z as usize],
         )
-        .element_product();
-        ((base + d).to_array(), weight)
     })
 }
+
 impl ChannelField {
     fn center(&self, k: [i32; 3]) -> Vec3 {
         (Vec3::from_array(k.map(|i| i as f32)) + Vec3::splat(0.5)) * self.width
@@ -417,7 +428,9 @@ impl ChannelField {
             nodes: HashMap::new(),
             neighbourhoods: HashMap::new(),
             stencils: HashMap::new(),
-            width: cell * 2.,
+            // Match the phase-averaged variance of the former tent stencil:
+            // h_quad²/4 = h_tent²/6. Smoothness must not broaden the water.
+            width: cell * (8_f32 / 3.).sqrt(),
         };
         for &p in points {
             for (k, weight) in stencil(p, out.width) {
@@ -439,16 +452,14 @@ impl ChannelField {
     }
     fn sample(&mut self, p: Vec3, cell: f32, volume: f64) -> Kernel {
         let grid = p / self.width - Vec3::splat(0.5);
-        let base = grid.floor().as_ivec3().to_array();
+        let base = (grid - Vec3::splat(0.5)).floor().as_ivec3().to_array();
         let origin = self.center(base);
-        let corners = if let Some(m) = self.stencils.get(&base) {
-            *m
-        } else {
+        if !self.stencils.contains_key(&base) {
             let corners = std::array::from_fn(|n| {
                 let k = [
-                    base[0] + (n & 1) as i32,
-                    base[1] + ((n >> 1) & 1) as i32,
-                    base[2] + ((n >> 2) & 1) as i32,
+                    base[0] + (n % 3) as i32,
+                    base[1] + ((n / 3) % 3) as i32,
+                    base[2] + (n / 9) as i32,
                 ];
                 let center = self.center(k);
                 let local = self.nodes.get(&k).copied().unwrap_or_default();
@@ -475,13 +486,15 @@ impl ChannelField {
                 )
             });
             self.stencils.insert(base, corners);
-            corners
-        };
+        }
+        // Borrow the cached moment block: copying 27 pairs for every parcel
+        // needlessly moves hundreds of MB per surface snapshot.
+        let corners = &self.stencils[&base];
         let mut local = Moments::default();
         let mut total = Moments::default();
-        for ((_, weight), (a, b)) in stencil(p, self.width).into_iter().zip(corners) {
-            local.accumulate(a, weight);
-            total.accumulate(b, weight);
+        for ((_, weight), (a, b)) in stencil(p, self.width).into_iter().zip(corners.iter()) {
+            local.accumulate(*a, weight);
+            total.accumulate(*b, weight);
         }
         let local = local.translated(origin - p);
         let total = total.translated(origin - p);
@@ -621,6 +634,76 @@ fn eigen(m: Mat3) -> (Mat3, Vec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn channel_stencil_retains_material_moments_with_phase_independent_support() {
+        let width = 0.02;
+        let mut worst = 0_f32;
+        for phase in 0..101 {
+            let p = Vec3::new(-0.031 + phase as f32 * 0.0002, 0.017, -0.023);
+            let mut mass = 0.;
+            let mut center = Vec3::ZERO;
+            let mut covariance = Mat3::ZERO;
+            for (k, w) in stencil(p, width) {
+                assert!(w >= 0. && w.is_finite());
+                let point = (Vec3::from_array(k.map(|v| v as f32)) + Vec3::splat(0.5)) * width;
+                mass += w;
+                center += point * w;
+                covariance += outer(point - p) * w;
+            }
+            assert!((mass - 1.).abs() < 3e-7);
+            assert!((center - p).length() < 1e-8);
+            let error = (covariance - Mat3::IDENTITY * (width * width * 0.25))
+                .to_cols_array()
+                .into_iter()
+                .map(f32::abs)
+                .fold(0_f32, f32::max);
+            worst = worst.max(error);
+            assert!(
+                error < 1e-10,
+                "lattice phase changed the footprint: {error}"
+            );
+        }
+        // Independent former tent variance: a node has no support variance;
+        // a midpoint has h²/4. This phase variation changed parcel shape and
+        // therefore the density/extinction even before the temporal bridge.
+        let old_node_variance = 0.;
+        let old_midpoint_variance = width * width / 4.;
+        assert!(old_midpoint_variance - old_node_variance > 0.00009);
+        println!("channel stencil: old variance swing={old_midpoint_variance}m², final max error={worst}m²");
+    }
+    #[test]
+    fn channel_stencil_has_continuous_slopes_across_all_cell_planes() {
+        // A deliberately non-affine positive nodal field. First-moment checks
+        // alone would miss a slope kink because both schemes reproduce planes.
+        let at = |p: Vec3| -> f64 {
+            stencil(p, 1.)
+                .into_iter()
+                .map(|(k, w)| {
+                    let x = f64::from(k[0]);
+                    let y = f64::from(k[1]);
+                    let z = f64::from(k[2]);
+                    f64::from(w) * (1. + x * x + 2. * y * y + 3. * z * z + x * y)
+                })
+                .sum()
+        };
+        let mut worst = 0_f64;
+        for axis in 0..3 {
+            for plane in [-2., -1., 0., 1., 2.] {
+                let mut p = Vec3::new(0.17, -0.23, 0.31);
+                p[axis] = plane;
+                let step = Vec3::AXES[axis] * 0.001;
+                let left = (at(p) - at(p - step)) / 0.001;
+                let right = (at(p + step) - at(p)) / 0.001;
+                let jump = (right - left).abs();
+                worst = worst.max(jump);
+                assert!(
+                    jump < 0.015,
+                    "channel moment slope kink: axis={axis}, plane={plane}, jump={jump}"
+                );
+            }
+        }
+        println!("channel stencil maximum one-sided slope difference={worst}");
+    }
     #[test]
     fn boundary_covariance_retains_oblique_crest_cross_terms_under_rotation() {
         let measured = Mat3::from_diagonal(Vec3::new(0.0009, 0.0004, 0.0001));
@@ -897,7 +980,12 @@ mod tests {
         let sheet: Vec<_> = (0..25)
             .map(|i| Vec3::new((i % 5) as f32 * 0.003, 0., (i / 5) as f32 * 0.003))
             .collect();
-        assert!(kernels(&sheet, 0.01, 1.25e-7).iter().all(|k| k.bulk == 1.));
+        let data = kernels(&sheet, 0.01, 1.25e-7);
+        assert!(
+            data.iter().all(|k| k.bulk == 1.),
+            "dense sheet minimum support {}",
+            data.iter().map(|k| k.bulk).fold(1_f32, f32::min)
+        );
     }
     #[test]
     fn channel_relaxation_reduces_sampling_noise_without_moving_water_or_spray() {

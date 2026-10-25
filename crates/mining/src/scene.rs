@@ -298,12 +298,48 @@ fn ground_sediment_code(thickness: f32) -> u32 {
     (t * t * (3. - 2. * t) * 63.).round() as u32
 }
 
+// Shape-preserving cubic interpolation retains every measured cell value.
+// Unlike a blur it neither spreads a dry/dry interval nor overshoots the local
+// mud cover. Shared neighbour samples give adjacent chunks the same tangent.
+fn monotone_cover(values: [f32; 4], t: f32) -> f32 {
+    let [a, b, c, d] = values;
+    let tangent = |left: f32, right: f32| {
+        if left * right > 0. {
+            2. * left * right / (left + right)
+        } else {
+            0.
+        }
+    };
+    let m0 = tangent(b - a, c - b);
+    let m1 = tangent(c - b, d - c);
+    let t2 = t * t;
+    let t3 = t2 * t;
+    (2. * t3 - 3. * t2 + 1.) * b
+        + (t3 - 2. * t2 + t) * m0
+        + (-2. * t3 + 3. * t2) * c
+        + (t3 - t2) * m1
+}
+fn deposited_cover(site: &Site, x: f32, z: f32) -> f32 {
+    let ix = x.floor() as i32;
+    let iz = z.floor() as i32;
+    let rows = std::array::from_fn(|dz| {
+        let values = std::array::from_fn(|dx| {
+            let x = (ix + dx as i32 - 1).clamp(0, WIDTH as i32 - 1) as usize;
+            let z = (iz + dz as i32 - 1).clamp(0, WIDTH as i32 - 1) as usize;
+            ground_sediment_code(site.world.terrain_sediment[site.world.idx(x, z)]) as f32 / 63.
+        });
+        monotone_cover(values, x.fract())
+    });
+    monotone_cover(rows, z.fract())
+}
+
 pub fn terrain_mesh(site: &Site, x0: usize, z0: usize, subdivisions: usize) -> Mesh {
     let nx = 16.min(WIDTH - 1 - x0);
     let nz = 16.min(WIDTH - 1 - z0);
     let mut source_height = Vec::new();
     let mut source_normal = Vec::new();
     let mut source_color = Vec::new();
+    let mut source_mud = Vec::new();
     for z in 0..=nz {
         for x in 0..=nx {
             let ix = x0 + x;
@@ -344,12 +380,8 @@ pub fn terrain_mesh(site: &Site, x0: usize, z0: usize, subdivisions: usize) -> M
             let sediment = Color::srgb(0.43 * noise * wet, 0.34 * noise * wet, 0.22 * noise * wet)
                 .to_linear()
                 .to_f32_array();
-            let coverage = ground_sediment_code(site.world.terrain_sediment[i]) as f32 / 63.;
-            source_color.push(
-                Vec4::from_array(base)
-                    .lerp(Vec4::from_array(sediment), coverage)
-                    .to_array(),
-            );
+            source_color.push(base);
+            source_mud.push(sediment);
         }
     }
     let mut positions = Vec::new();
@@ -380,9 +412,16 @@ pub fn terrain_mesh(site: &Site, x0: usize, z0: usize, subdivisions: usize) -> M
             positions.push([px, y, pz]);
             normals.push(n.to_array());
             tangents.push([tangent.x, tangent.y, tangent.z, -1.]);
-            colors.push(std::array::from_fn::<_, 4, _>(|c| {
+            let base = Vec4::from_array(std::array::from_fn(|c| {
                 sample(ids.map(|i| source_color[i][c]))
             }));
+            let mud = Vec4::from_array(std::array::from_fn(|c| {
+                sample(ids.map(|i| source_mud[i][c]))
+            }));
+            colors.push(
+                base.lerp(mud, deposited_cover(site, px / CELL, pz / CELL))
+                    .to_array(),
+            );
             uvs.push([px, pz]);
         }
     }
@@ -1449,6 +1488,60 @@ mod terrain_detail_tests {
         assert_eq!(before, serde_json::to_string(&site.snapshot()).unwrap());
     }
 
+    #[test]
+    fn mud_cover_is_bounded_exact_at_cells_and_smooth_across_chunk_edges() {
+        let mut site = Site::new();
+        site.world.terrain_sediment.fill(0.);
+        for z in 0..WIDTH {
+            let i = site.world.idx(64, z);
+            site.world.terrain_sediment[i] = 0.02;
+        }
+        let before = serde_json::to_string(&site.snapshot()).unwrap();
+        for z in [0., 16.3, 64., 126.8, 127.] {
+            assert_eq!(deposited_cover(&site, 63., z), 0.);
+            assert_eq!(deposited_cover(&site, 64., z), 1.);
+            assert_eq!(deposited_cover(&site, 65., z), 0.);
+            assert_eq!(
+                deposited_cover(&site, 62.5, z),
+                0.,
+                "dry interval acquired mud"
+            );
+            for step in 0..=256 {
+                let value = deposited_cover(&site, 62. + step as f32 / 64., z);
+                assert!(
+                    (0.0..=1.0).contains(&value),
+                    "mud interpolation overshot: {value}"
+                );
+            }
+            let h = 0.001;
+            let left = (1. - deposited_cover(&site, 64. - h, z)) / h;
+            let right = (deposited_cover(&site, 64. + h, z) - 1.) / h;
+            assert!(
+                (right - left).abs() < 0.01,
+                "chunk-edge mud slope kink: {left}/{right}"
+            );
+            // Negative control: interpolate the same nodal peak with the
+            // former linear ramp. Its one-sided slopes disagree by two.
+            let old = |x: f32| if x <= 64. { x - 63. } else { 65. - x };
+            let old_left = (old(64.) - old(64. - h)) / h;
+            let old_right = (old(64. + h) - old(64.)) / h;
+            assert!((old_right - old_left).abs() > 1.99);
+        }
+        let a = terrain_mesh(&site, 48, 64, 4);
+        let b = terrain_mesh(&site, 64, 64, 4);
+        let colour = |mesh: &Mesh| -> Vec<[f32; 4]> {
+            let Some(VertexAttributeValues::Float32x4(v)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+            else {
+                panic!("terrain colour")
+            };
+            v.clone()
+        };
+        let (a, b) = (colour(&a), colour(&b));
+        for z in 0..65 {
+            assert_eq!(a[z * 65 + 64], b[z * 65], "chunk colour seam");
+        }
+        assert_eq!(before, serde_json::to_string(&site.snapshot()).unwrap());
+    }
     #[test]
     fn deposited_fines_colour_is_continuous_and_invalidates_cached_ground() {
         let mut site = Site::new();
