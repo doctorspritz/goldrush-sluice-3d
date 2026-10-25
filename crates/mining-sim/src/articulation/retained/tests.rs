@@ -960,3 +960,6 @@ mod rigid_work;
 
 #[cfg(feature = "contact-work-audit")]
 mod rigid_pair_query;
+
+#[cfg(feature = "contact-work-audit")]
+mod pressure_geometry;

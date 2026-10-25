@@ -11,6 +11,9 @@ use glam::{DQuat, DVec3};
 /// Coupled body/patch calibration dynamics; not a Session or retained-soil policy.
 pub mod dynamics;
 
+/// Finite registered-solid pressure potential and its elastic wrenches.
+pub mod pressure;
+
 const MAX_POLYGON_VERTICES: usize = 256;
 const MAX_TRIANGLES: usize = 65_536;
 

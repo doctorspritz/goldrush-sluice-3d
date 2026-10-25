@@ -3234,7 +3234,10 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "glam 0.27.0",
+ "num-rational",
+ "num-traits",
  "rapier3d",
+ "robust",
  "serde",
  "serde_json",
  "sim3d",
