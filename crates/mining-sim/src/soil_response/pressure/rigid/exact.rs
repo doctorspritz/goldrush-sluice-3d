@@ -341,11 +341,26 @@ impl RawMoments {
 }
 struct Cell {
     planes: [Halfspace; 4],
+    quick_planes: [Affine; 4],
     low: Point,
     high: Point,
 }
+// The floating predicate only selects a face worth checking. Exact rational
+// signs make the rejection decision, including zero-volume boundary contact.
+// This is used only for original tetrahedra: constructed intersection vertices
+// keep the complete exact clipping path and its existing work/precision bounds.
+fn face_separated(poly: &ExactPoly, vertices: &[DVec3; 4], cell: &Cell) -> bool {
+    cell.quick_planes
+        .iter()
+        .zip(&cell.planes)
+        .any(|(quick, exact)| {
+            vertices.iter().all(|p| quick.at(*p) > 0.)
+                && poly.points.iter().all(|p| !exact.at(p).is_negative())
+        })
+}
 struct Rule {
     cells: Vec<Cell>,
+    face_rejection: bool,
     groups: Vec<Vec<usize>>,
     visits: usize,
     tested: usize,
@@ -359,6 +374,7 @@ impl Rule {
         start: usize,
         depth: usize,
         field: &Halfspace,
+        root: Option<&[DVec3; 4]>,
     ) -> Result<RawMoments, String> {
         if depth > MAX_DEPTH {
             return Err("Exact union overlapping-component depth bound exceeded".into());
@@ -380,6 +396,11 @@ impl Rule {
                 if (0..3).any(|i| high[i] <= cell.low[i] || cell.high[i] <= low[i]) {
                     continue;
                 }
+                if self.face_rejection
+                    && root.is_some_and(|vertices| face_separated(poly, vertices, cell))
+                {
+                    continue;
+                }
                 let mut overlap = poly.clone();
                 for plane in &cell.planes {
                     overlap = overlap.clip(plane)?;
@@ -399,7 +420,7 @@ impl Rule {
                 // Only different rigid PARTS need inclusion-exclusion terms.
                 if group + 1 < self.groups.len() {
                     total.add(
-                        self.integrate(&overlap, group + 1, depth + 1, field)?,
+                        self.integrate(&overlap, group + 1, depth + 1, field, None)?,
                         false,
                     );
                 }
@@ -414,6 +435,16 @@ pub(super) fn union(
     am: RigidMotion,
     bm: RigidMotion,
     delta: DVec3,
+) -> Result<Response, String> {
+    union_impl(ac, bc, am, bm, delta, true)
+}
+fn union_impl(
+    ac: &[WorldCell],
+    bc: &[WorldCell],
+    am: RigidMotion,
+    bm: RigidMotion,
+    delta: DVec3,
+    face_rejection: bool,
 ) -> Result<Response, String> {
     let total = bc.len();
     let minimum = ac
@@ -438,6 +469,7 @@ pub(super) fn union(
         .iter()
         .map(|b| Cell {
             planes: geometry::FACES.map(|f| Halfspace::face(f.map(|i| b.tet[i]))),
+            quick_planes: b.planes,
             low: point(b.minimum),
             high: point(b.maximum),
         })
@@ -448,6 +480,7 @@ pub(super) fn union(
     }
     let mut rule = Rule {
         cells,
+        face_rejection,
         groups: group_ids.into_values().collect(),
         visits: 0,
         tested: 0,
@@ -473,8 +506,9 @@ pub(super) fn union(
             let constant = q(p.value) - dot(&normal, &point(p.origin));
             Halfspace { normal, constant }
         };
-        let (moments, energy, volume_error, energy_error) =
-            rule.integrate(&whole, 0, 0, &field)?.converted()?;
+        let (moments, energy, volume_error, energy_error) = rule
+            .integrate(&whole, 0, 0, &field, Some(&a.tet))?
+            .converted()?;
         if moments.volume > 0. {
             result.overlap_volume_m3 += moments.volume;
             result.union_volume_roundoff_estimate_m3 += volume_error;
@@ -488,3 +522,6 @@ pub(super) fn union(
     result.union_maximum_depth = rule.depth;
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests;
