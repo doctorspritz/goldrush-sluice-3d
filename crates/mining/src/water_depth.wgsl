@@ -23,25 +23,60 @@ struct Varying {
 fn quad_value(values:vec4<f32>,uv:vec2<f32>)->f32 {
  return mix(mix(values.x,values.y,uv.x),mix(values.z,values.w,uv.x),uv.y);
 }
-@vertex fn particle_vertex(@builtin(vertex_index) id:u32,@builtin(instance_index) instance:u32)->Varying {
- let corners=array<vec2<f32>,6>(vec2(-1.,-1.),vec2(1.,-1.),vec2(-1.,1.),vec2(-1.,1.),vec2(1.,-1.),vec2(1.,1.));
- var p=particles[instance];var local=corners[id%6u];
+// The common 4*pi/3 factor cancels when normalizing density. Endpoint axes
+// are orthogonal, and presentation re-orthogonalizes their interpolated frame.
+fn kernel_measure(radius:f32,x:vec3<f32>,y:vec3<f32>,z:vec3<f32>)->f32 {
+ return radius*radius*radius*length(x)*length(y)*length(z);
+}
+fn present_particle(particle:Particle,alpha:f32)->Particle {
+ var p=particle;
  if p.shape.z!=1. {
-  p.center_radius=mix(p.previous_center,p.center_radius,u.viewport.w);
-  p.velocity=vec4(mix(p.slope_x.xyz,p.velocity.xyz,u.viewport.w),p.velocity.w);
-  p.axis_x=mix(p.previous_x,p.axis_x,u.viewport.w);
-  p.axis_y=mix(p.previous_y,p.axis_y,u.viewport.w);
-  p.axis_z=mix(p.previous_z,p.axis_z,u.viewport.w);
+  p.center_radius=mix(p.previous_center,p.center_radius,alpha);
+  p.velocity=vec4(mix(p.slope_x.xyz,p.velocity.xyz,alpha),p.velocity.w);
+  p.axis_x=mix(p.previous_x,p.axis_x,alpha);
+  p.axis_y=mix(p.previous_y,p.axis_y,alpha);
+  p.axis_z=mix(p.previous_z,p.axis_z,alpha);
   // Interpolated eigenframes retain orthogonal ellipsoid axes. Equivalent
   // signs/permutations were aligned once when the snapshot pair was built.
   let x=normalize(p.axis_x.xyz);
   let y=normalize(p.axis_y.xyz-x*dot(x,p.axis_y.xyz));
   let z=normalize(cross(x,y))*select(-1.,1.,dot(cross(x,y),p.axis_z.xyz)>=0.);
-  p.axis_x=vec4(x*length(p.axis_x.xyz),p.axis_x.w);
-  p.axis_y=vec4(y*length(p.axis_y.xyz),p.axis_y.w);
-  p.axis_z=vec4(z*length(p.axis_z.xyz),p.axis_z.w);
-  let kind=p.shape.z;p.shape=mix(p.previous_shape,p.shape,u.viewport.w);p.shape.z=kind;
+  let paired_channel=particle.shape.z==0. && particle.previous_shape.z==0. &&
+      particle.previous_center.w>0. && particle.center_radius.w>0.;
+  var lengths=vec3(length(p.axis_x.xyz),length(p.axis_y.xyz),length(p.axis_z.xyz));
+  if paired_channel {
+   // A rotating unit axis gets shorter under vector interpolation. Its
+   // orientation may interpolate, but its principal support length must not
+   // contract merely because the frame turned between solver snapshots.
+   let before=vec3(length(particle.previous_x.xyz),length(particle.previous_y.xyz),length(particle.previous_z.xyz));
+   let after=vec3(length(particle.axis_x.xyz),length(particle.axis_y.xyz),length(particle.axis_z.xyz));
+   lengths=mix(before,after,alpha);
+  }
+  p.axis_x=vec4(x*lengths.x,p.axis_x.w);
+  p.axis_y=vec4(y*lengths.y,p.axis_y.w);
+  p.axis_z=vec4(z*lengths.z,p.axis_z.w);
+  let kind=p.shape.z;p.shape=mix(p.previous_shape,p.shape,alpha);p.shape.z=kind;
+  if paired_channel {
+   // Interpolate represented material, not density. Multiplying an averaged
+   // inverse volume by the interpolated ellipsoid volume pumps water and mud
+   // into a changing kernel, moving the density interface between snapshots.
+   let before=kernel_measure(particle.previous_center.w,
+       particle.previous_x.xyz,particle.previous_y.xyz,particle.previous_z.xyz);
+   let after=kernel_measure(particle.center_radius.w,
+       particle.axis_x.xyz,particle.axis_y.xyz,particle.axis_z.xyz);
+   let water=mix(before*particle.previous_shape.x,after*particle.shape.x,alpha);
+   let mineral=mix(before*particle.previous_shape.x*particle.previous_shape.y,
+                   after*particle.shape.x*particle.shape.y,alpha);
+   let measure=kernel_measure(p.center_radius.w,p.axis_x.xyz,p.axis_y.xyz,p.axis_z.xyz);
+   if measure>0. {p.shape.x=water/measure;}
+   if water>0. {p.shape.y=mineral/water;}
+  }
  }
+ return p;
+}
+@vertex fn particle_vertex(@builtin(vertex_index) id:u32,@builtin(instance_index) instance:u32)->Varying {
+ let corners=array<vec2<f32>,6>(vec2(-1.,-1.),vec2(1.,-1.),vec2(-1.,1.),vec2(-1.,1.),vec2(1.,-1.),vec2(1.,1.));
+ let p=present_particle(particles[instance],u.viewport.w);var local=corners[id%6u];
  let radius=p.center_radius.w;let center=p.center_radius.xyz;
  let ax=p.axis_x.xyz*radius;let ay=p.axis_y.xyz*radius;let az=p.axis_z.xyz*radius;
  let extent=max(length(ax),max(length(ay),length(az)))*1.02;

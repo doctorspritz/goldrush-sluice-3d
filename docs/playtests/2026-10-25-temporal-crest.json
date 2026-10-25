@@ -1,0 +1,209 @@
+{
+  "base_commit": "e69e3918a5422af6cd248777408ede0a2cafe0b3",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-interface-20261025",
+  "changed_sources": {
+    "crates/mining/src/water_depth.wgsl": "920b93e19ea1df322ab7d1eac9d7f1c51ae932c8838ef50c3ea6cbc60a9d822f",
+    "crates/mining-physics/tests/water_optics.rs": "93c8a770a6d485272d09e9bc3ae49e77cfb61ea071a3d2e34a781446c2701093"
+  },
+  "unchanged_other_rust_wgsl_sources": 722,
+  "quality": {
+    "app_tests": 64,
+    "unrun_app_profiles": 2,
+    "gpu_optics": 16,
+    "gpu_chain": 1,
+    "temporal_gpu_combinations": 396,
+    "legacy_volume_relative_error": 4.8624063,
+    "legacy_axis_relative_error": 0.18084776,
+    "corrected_water_relative_error": 2.2737368e-07,
+    "corrected_sediment_extinction_relative_error": 2.2854542e-07,
+    "corrected_axis_relative_error": 2.3841858e-07,
+    "outlet_fade_transfer_relative_error": 2.8445609e-06,
+    "strict_scoped_clippy": "passed",
+    "format": "passed"
+  },
+  "native": {
+    "frozen": {
+      "sluice-final": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_rgb_pixels": 6,
+        "max_channel_delta": 1
+      },
+      "sluice-normal": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_rgb_pixels": 19,
+        "max_channel_delta": 1
+      },
+      "sluice-sediment": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_rgb_pixels": 0,
+        "max_channel_delta": 0
+      },
+      "river-final": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_rgb_pixels": 0,
+        "max_channel_delta": 0
+      },
+      "outlet-final": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_rgb_pixels": 0,
+        "max_channel_delta": 0
+      }
+    },
+    "motion": {
+      "before": {
+        "frames": 28,
+        "wall_seconds": 2.923681208,
+        "physical_seconds": 1.200000062584877,
+        "worker_advances": 27,
+        "presentation_advances": 27,
+        "buffer_underruns": 0
+      },
+      "after": {
+        "frames": 28,
+        "wall_seconds": 2.917103333,
+        "physical_seconds": 1.1666667275130749,
+        "worker_advances": 27,
+        "presentation_advances": 27,
+        "buffer_underruns": 0
+      }
+    },
+    "native_comparison_time_delta_s": 0.00016169692376877265
+  },
+  "benchmarks": {
+    "before": {
+      "mean_fps": 55.8761474482398,
+      "p95_frame_ms": 26.550292,
+      "simulation_wall_ratio": 0.38982216397777014,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.870931899134348e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": -4.547473508864641e-13,
+      "bulk_material_error_m3": 4.187471063232806e-07,
+      "dry_mass_error_kg": 0.0007537226192653179,
+      "passed": false
+    },
+    "after": {
+      "mean_fps": 55.6764751283463,
+      "p95_frame_ms": 26.213875,
+      "simulation_wall_ratio": 0.3863149728173633,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.870738095050456e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 5.002220859751105e-12,
+      "bulk_material_error_m3": 4.143215619478724e-07,
+      "dry_mass_error_kg": 0.0007457156898453832,
+      "passed": false
+    }
+  },
+  "review": "Reviewed all28 final flowing temporal crops, full native midpoint, matched frozen final/normal/sediment views, river/outlet controls and before sequence. Similar native appearance with local temporal correction; whole-video playback and manual control not claimed.",
+  "media": {
+    "docs/playtests/2026-10-25-temporal-crest.jpg": "8aeb10f403897c1351fc0f153f738d988f210fca6669cb82ac578b217a13162a",
+    "docs/playtests/2026-10-25-temporal-crest.frames.jpg": "2424d21ba8dc3f5ab88df3cefff3f35e9060d62efadd716555435658f4e5d069",
+    "docs/playtests/2026-10-25-temporal-crest.mp4": "c6b54ce927c23d0508d994e6fb73fe5c9b04445190e7a5926d8d039817f44f81"
+  },
+  "delivered_app": "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app",
+  "candidate_app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-interface-20261025/app/First Bend.app",
+  "candidate_binary_sha256": "9cb31635c424a15557e4ef9c55c9b728766cbb9bf5fd4cdda07a7602d86dbe6e",
+  "previous_app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-interface-20261025/previous-app/First Bend.app",
+  "previous_binary_sha256": "13d4e20256f0c8b6c0cd1fa2f9a03e6c57820fcc4b8c5b7fe9396787eca3a892",
+  "preserved_original_dirty_files": 9,
+  "preserved_user_stash": [
+    "a6c6b857da29269271eebb03025767414eabde90"
+  ],
+  "preserved_unfinished_experiment": {
+    "manifest": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-interface-20261025/pending-dynamics/manifest.json",
+    "files": 4,
+    "status": "Unvalidated; first compile failed on ambiguous float types; excluded from accepted render build."
+  },
+  "intermediate_failures": [
+    "Initial new GPU test compile: bytemuck does not implement Pod for56-element arrays; input flattened before final checks.",
+    "Initial0.5second frozen capture produced only1frame and failed capture admission; excluded and replaced with1second captures.",
+    "First Pillow image helper used an unavailable/incompatible native package; review helpers ran under existing x86_64 Python/Pillow."
+  ],
+  "scope": "Only channel render interpolation changes: principal support lengths are independent of frame rotation; represented water and sediment extinction moments interpolate before density normalization. Physics, grid, particles, pass count and render targets unchanged. Existing outlet, births/deaths and cross-boundary transfers retain their presentation policy.",
+  "limitations": "Synthetic stress controls are not measured native mass amplification. Snapshot endpoints are retained, so frozen captures change only by rounding. Broad real hydraulic waves, actual sediment plumes and grain stippling remain; physical real-time and full staged game remain open.",
+  "full_goal_complete": false,
+  "beads": {
+    "sync_supported": false,
+    "scoped_export_rows": [
+      "menace-sluice-interface-20261025",
+      "menace-sluice-normal-patch-coupling-20261025"
+    ],
+    "exported_lines": 227
+  },
+  "cleanup": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=16 rss_mib=1.8\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=64 rss_mib=24.4\n",
+  "new_crash_reports": [],
+  "video": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "r_frame_rate": "60/1",
+        "duration": "3.033333",
+        "nb_read_frames": "182"
+      }
+    ]
+  }
+}

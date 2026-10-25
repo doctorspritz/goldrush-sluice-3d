@@ -3144,3 +3144,220 @@ fn close_view_denoises_particle_domes_without_flattening_riffle_waves() {
         "fairing shifted the bulk sheet"
     );
 }
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn changing_channel_kernels_retain_water_and_mineral_between_snapshots() {
+    let (device, queue) = device();
+    let mut particles = Vec::<[f32; 56]>::new();
+    let mut expected = Vec::new();
+    // Radius, principal support lengths and orientation change independently.
+    // These are render snapshots of the same parcel, not changes in its mass.
+    for case in 0..12 {
+        let mut p = [0f32; 56];
+        let mut radii = [0.02f32, 0.02];
+        let mut lengths = [[0.7f32; 3], [1.3; 3]];
+        let mut angles = [0f32, 0.];
+        let mut water = [2e-6f32, 2e-6];
+        let mut beta = [100f32, 100.];
+        let mut kinds = [0f32, 0.];
+        match case {
+            1 => {
+                radii = [0.006, 0.02];
+                lengths = [[1.; 3]; 2];
+                beta = [50., 500.];
+            }
+            2 => {
+                lengths = [[0.5, 1., 1.7]; 2];
+                angles[1] = 70f32.to_radians();
+            }
+            3 => {
+                lengths = [[0.4, 1.1, 1.7], [1.6, 0.5, 1.]];
+            }
+            4 => {
+                water = [1e-6, 4e-6];
+                beta = [100., 800.];
+            }
+            5 => {
+                lengths = [[0.5, 1., 1.7]; 2];
+            }
+            6 => {
+                kinds = [2.; 2];
+            }
+            7 => {
+                radii[0] = 0.;
+            }
+            8 => {
+                radii[1] = 0.;
+            }
+            9 => {
+                kinds[1] = 2.;
+            }
+            10 => {
+                water = [0.; 2];
+            }
+            11 => {
+                kinds[0] = 2.;
+            }
+            _ => {}
+        }
+        let axis = |end: usize, i: usize| {
+            let rotation = glam::Mat3::from_rotation_z(angles[end]);
+            rotation.col(i) * lengths[end][i]
+        };
+        let mut endpoint_density = [0.; 2];
+        for end in 0..2 {
+            // A zero-radius endpoint is the existing birth/death presentation
+            // fade. Its density is retained, rather than normalized to infinity.
+            let r = if radii[end] > 0. { radii[end] } else { 0.02 };
+            endpoint_density[end] = water[end]
+                / (4. / 3.
+                    * std::f32::consts::PI
+                    * r.powi(3)
+                    * lengths[end].iter().product::<f32>());
+            let center = if end == 0 { 36 } else { 0 };
+            p[center..center + 4].copy_from_slice(&[0.1, 0.2, 0.3, radii[end]]);
+            let shape = if end == 0 { 52 } else { 8 };
+            p[shape..shape + 4].copy_from_slice(&[
+                endpoint_density[end],
+                beta[end],
+                kinds[end],
+                1.,
+            ]);
+            for i in 0..3 {
+                let offset = if end == 0 { 40 + i * 4 } else { 12 + i * 4 };
+                p[offset..offset + 3].copy_from_slice(&axis(end, i).to_array());
+            }
+        }
+        particles.push(p);
+        for phase in 0..33 {
+            let t = phase as f32 / 32.;
+            let mix = |a: f32, b: f32| a + (b - a) * t;
+            let radius = mix(radii[0], radii[1]);
+            let product = (0..3)
+                .map(|i| axis(0, i).lerp(axis(1, i), t).length())
+                .product::<f32>();
+            let paired_channel = kinds == [0.; 2] && radii.iter().all(|r| *r > 0.);
+            let volume = if paired_channel {
+                mix(water[0], water[1])
+            } else {
+                4. / 3.
+                    * std::f32::consts::PI
+                    * radius.powi(3)
+                    * product
+                    * mix(endpoint_density[0], endpoint_density[1])
+            };
+            let mineral = if paired_channel {
+                mix(water[0] * beta[0], water[1] * beta[1])
+            } else {
+                volume * mix(beta[0], beta[1])
+            };
+            let support = std::array::from_fn::<_, 3, _>(|i| {
+                if paired_channel {
+                    mix(lengths[0][i], lengths[1][i])
+                } else {
+                    axis(0, i).lerp(axis(1, i), t).length()
+                }
+            });
+            expected.push((case, phase, [volume, mineral, radius, kinds[1]], support));
+        }
+    }
+    let particles: Vec<f32> = particles.into_iter().flatten().collect();
+    let input = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("independent material snapshot pairs"),
+        contents: bytemuck::cast_slice(&particles),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: input.as_entire_binding(),
+        }],
+    });
+    let (buffer, out_layout, out_group) = output(&device, expected.len() as u64 * 2);
+    let shader = std::env::var("SLUICE_TEMPORAL_SHADER")
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .unwrap_or_else(|_| include_str!("../../mining/src/water_depth.wgsl").to_string());
+    let source = format!(
+        "{shader}\n{}",
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(1) fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
+ let p=present_particle(particles[id.x],f32(id.y)/32.);
+ let radius=p.center_radius.w;
+ let measure=radius*radius*radius*length(p.axis_x.xyz)*length(p.axis_y.xyz)*length(p.axis_z.xyz);
+ let water=4./3.*3.14159265359*measure*p.shape.x;
+ let index=(id.x*33u+id.y)*2u;
+ result[index]=vec4(water,water*p.shape.y,radius,p.shape.z);
+ result[index+1u]=vec4(length(p.axis_x.xyz),length(p.axis_y.xyz),length(p.axis_z.xyz),0.);
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&group, &out_group],
+        &[&layout, &out_layout],
+        &buffer,
+        [12, 33],
+    );
+    let mut maximum_water_error = 0f32;
+    let mut maximum_mineral_error = 0f32;
+    let mut maximum_legacy_path_error = 0f32;
+    let mut maximum_support_error = 0f32;
+    for (case, phase, want, support) in expected {
+        let actual = &values[(case * 33 + phase) * 8..(case * 33 + phase + 1) * 8];
+        for i in 0..3 {
+            maximum_support_error =
+                maximum_support_error.max((actual[4 + i] / support[i] - 1.).abs());
+        }
+        assert!(
+            actual.iter().all(|v| v.is_finite()),
+            "case={case} phase={phase}: {actual:?}"
+        );
+        let water_error = (actual[0] - want[0]).abs() / want[0].max(1e-12);
+        let mineral_error = (actual[1] - want[1]).abs() / want[1].max(1e-10);
+        assert!((actual[2] - want[2]).abs() < 1e-7, "support radius changed");
+        assert_eq!(actual[3], want[3], "particle kind changed");
+        if case <= 5 || case == 10 {
+            maximum_water_error = maximum_water_error.max(water_error);
+            maximum_mineral_error = maximum_mineral_error.max(mineral_error);
+        } else {
+            maximum_legacy_path_error = maximum_legacy_path_error
+                .max(water_error)
+                .max(mineral_error);
+        }
+    }
+    println!("TEMPORAL_KERNEL 396 GPU cases: water_relative_error={maximum_water_error} mineral_relative_error={maximum_mineral_error} outlet_fade_transfer_error={maximum_legacy_path_error} principal_support_error={maximum_support_error}");
+    assert!(
+        maximum_legacy_path_error < 0.000005,
+        "accepted outlet/fade/transfer changed"
+    );
+    assert!(
+        maximum_water_error < 0.000005,
+        "interpolation pumped visible water into the crest"
+    );
+    assert!(
+        maximum_mineral_error < 0.000005,
+        "interpolation invented a muddy optical patch"
+    );
+    assert!(
+        maximum_support_error < 0.000005,
+        "rotating principal support contracted between snapshots"
+    );
+}
