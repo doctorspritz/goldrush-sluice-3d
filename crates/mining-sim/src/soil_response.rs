@@ -3,9 +3,13 @@
 //! This is an elastic/viscous interface model for calibration, not a complete
 //! soil constitutive model. Patch area is a material reference area. The plane
 //! is unbounded. Finite opposing footprints, shear, plasticity, cohesion, pore
-//! pressure and dynamic solver coupling are outside this module. Nothing here
+//! pressure and live soil coupling are outside this module. The dynamics child
+//! couples this interface in a two-body calibration solver. Nothing here
 //! selects a Session policy, material default, save format or contact frequency.
 use glam::{DQuat, DVec3};
+
+/// Coupled body/patch calibration dynamics; not a Session or retained-soil policy.
+pub mod dynamics;
 
 const MAX_POLYGON_VERTICES: usize = 256;
 const MAX_TRIANGLES: usize = 65_536;

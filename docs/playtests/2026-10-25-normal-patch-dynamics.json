@@ -1,0 +1,189 @@
+{
+  "base_commit": "bb05585a6c26eac2841febd9a5752fa6c7ba3440",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/patch-coupled-20261025",
+  "changed_sources": {
+    "crates/mining-sim/src/soil_response.rs": "f972c557e8a6bfba7f1a40d2fe1753b1b1fe35cdfade747284388423840ec4a8"
+  },
+  "added_sources": {
+    "crates/mining-sim/src/soil_response/dynamics.rs": "44ecd2309ed9f105337765110a34ebae68be62f1515ab9ac72e447c9b0c0111e",
+    "crates/mining-sim/src/soil_response/dynamics/quadrature.rs": "333825ad59f709bc3bb9a255031181f1ba15afc3b70b4a01762dae06e0a4c9ee",
+    "crates/mining-sim/src/soil_response/dynamics/tests.rs": "858abd11e61bcefe6c77c84f7b2dc75061f9dacd0593b1b02752ab864b3d0bc8"
+  },
+  "unchanged_other_initial_rust_wgsl_sources": 723,
+  "quality": {
+    "checks": [
+      {
+        "check": "final-format-write",
+        "exit": 0,
+        "elapsed": 0.5603050829959102
+      },
+      {
+        "check": "final-patch-qualified",
+        "exit": 0,
+        "elapsed": 10.291495584009681
+      },
+      {
+        "check": "final-default-tests",
+        "exit": 0,
+        "elapsed": 1.3326237910077907
+      },
+      {
+        "check": "final-audit-tests",
+        "exit": 0,
+        "elapsed": 90.80821837502299
+      },
+      {
+        "check": "final-clippy",
+        "exit": 0,
+        "elapsed": 6.977667958999518
+      },
+      {
+        "check": "final-format",
+        "exit": 0,
+        "elapsed": 0.5702914169523865
+      },
+      {
+        "check": "final-saved-default",
+        "exit": 0,
+        "elapsed": 0.8273054170422256
+      }
+    ],
+    "new_dynamics_tests": 14,
+    "material_and_dynamics_tests": 24,
+    "default_tests": 47,
+    "audit_tests": 89,
+    "ignored_in_ordinary_audit_suite": 22,
+    "explicit_ignored_saved_baseline_test": 1,
+    "clippy": "passed",
+    "format": "passed"
+  },
+  "controls": {
+    "specified_stiffness_n_m": 2500000,
+    "material_parameters_are_soil_calibration": false,
+    "loaded_support": [
+      {
+        "mass_kg": 100.0,
+        "gap_m": -0.00039240000003343267,
+        "expected_m": -0.0003924,
+        "dissipation_j": 0.04811804995015871,
+        "max_energy_residual_j": 8.161444610410573e-12
+      },
+      {
+        "mass_kg": 1000.0,
+        "gap_m": -0.003923994486847118,
+        "expected_m": -0.003924,
+        "dissipation_j": 4.811805000125761,
+        "max_energy_residual_j": 5.923267432095258e-11
+      }
+    ],
+    "independent_oscillators": [
+      {
+        "mass_kg": 100.0,
+        "normalized_trajectory_errors": [
+          0.1399171700696737,
+          0.0350697485234609,
+          0.008757339420313112
+        ]
+      },
+      {
+        "mass_kg": 1000.0,
+        "normalized_trajectory_errors": [
+          0.004274345479598569,
+          0.001069454023026666,
+          0.0002674335815723945
+        ]
+      }
+    ],
+    "rotating_timestep_error_metric_m": [
+      2.869408351145193e-05,
+      7.185819507753838e-06,
+      1.7773080855398648e-06
+    ],
+    "rotating_reference_hz": 15360,
+    "rotating_steps_peak_energy_residual_j": 1.0035412431608215e-10,
+    "rational_force_moment_integrals": [
+      {
+        "relative_target": 1e-06,
+        "force_moment_error_n": 0.001986026747545111,
+        "estimated_error_n": 0.029753334286000264,
+        "samples": 4326,
+        "depth": 5
+      },
+      {
+        "relative_target": 1e-08,
+        "force_moment_error_n": 7.15080022928305e-06,
+        "estimated_error_n": 0.00029222124896172716,
+        "samples": 16758,
+        "depth": 6
+      },
+      {
+        "relative_target": 1e-10,
+        "force_moment_error_n": 5.762376531492919e-08,
+        "estimated_error_n": 3.0116242261564297e-06,
+        "samples": 85638,
+        "depth": 8
+      }
+    ],
+    "elastic_release_initial_j": 5,
+    "elastic_release_final_kinetic_j": 5.000000000053452,
+    "default_absolute_numerical_work_gate_j": 1e-08
+  },
+  "saved_baseline": {
+    "baseline_reference_byte_exact": true,
+    "observer_after_state_byte_exact_in_memory": true,
+    "physical_mechanical_energy_gain_j": 57.216923396044876,
+    "mechanical_gate_passed": false,
+    "unchanged_mechanical_gate_j": 0.01,
+    "normal_spring_energy_credit_j": 0.0,
+    "gameplay_adopted": false
+  },
+  "saved_summary_sha256": "bb6fa92a5c27c6911a2e2c91372b0534e89c02e79ef587aebcea22766ac91823",
+  "input_hashes": {
+    "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/fresh-verified-final/worst-before.bin": "7147a81a9830b2d27fcfca6feef4ef419ef8a09fede2899a7ab6e02af7c8db0b",
+    "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/fresh-verified-final/worst-after.bin": "6f54234a1ed418414b2fd4abb10e8c1614411668c0e8275f21532fe29c4d7dc9"
+  },
+  "installed_app_binary": "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app/Contents/MacOS/mining",
+  "installed_app_sha256": "9cb31635c424a15557e4ef9c55c9b728766cbb9bf5fd4cdda07a7602d86dbe6e",
+  "installed_app_unchanged": true,
+  "new_native_or_fps_result": false,
+  "original_dirty_files_preserved": 9,
+  "stash_preserved": [
+    "a6c6b857da29269271eebb03025767414eabde90"
+  ],
+  "beads": {
+    "issue": "menace-sluice-normal-patch-coupling-20261025",
+    "status": "in_progress",
+    "sync_supported": false,
+    "scoped_export_rows": 1,
+    "exported_lines": 227
+  },
+  "cleanup": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=16 rss_mib=1.8\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=64 rss_mib=24.4\n",
+  "new_crash_reports": [],
+  "intermediate_failures": [
+    "Preserved initial experiment did not compile because test float types were ambiguous; explicit f64 fixed.",
+    "Area-proportional local quadrature refused two rotating controls at5.46e-16N contribution; global force/moment error budget fixes it without changing the configured target.",
+    "New rational-control work reference had the release sign reversed; corrected the test reference.",
+    "A zero-gap clip inserted duplicate endpoint vertices; reproduced4slots/3unique points, now deduplicated exactly.",
+    "Lower-order force quadrature exceeded the unchanged300000sample work cap at1e-10relative target; positive degree-five rule completes it at85638samples.",
+    "Initial strictClippy found four needless range loops; equivalent ordered iterators fixed."
+  ],
+  "scope": "Specified dimensional normal material, two fully coupled rigid bodies with anisotropic inertia, gravity/applied loads, matching discrete work, capped viscosity and physical timestep controls. No live Session/retained-world selection or saved numerical policy.",
+  "limits": [
+    "Finite opposing material domains, actual clod/terrain/compound ownership and activation not implemented.",
+    "No friction, joints, yield, plasticity, cohesion, pore pressure or continuous collision detection.",
+    "No whole-world multi-contact solver, loaded soil-particle-resolution qualification, measured real-soil material calibration or native throughput evidence.",
+    "Dense12-unknown calibration solve is not a whole-bank real-time algorithm.",
+    "Legacy saved bank still fails0.01J mechanical gate; no new material potential is credited to its old frequency-scaled rows."
+  ],
+  "full_goal_complete": false,
+  "sources": [
+    {
+      "title": "Dunavant1985 degree-five positive triangle quadrature",
+      "url": "https://doi.org/10.1002/nme.1620210612"
+    },
+    {
+      "title": "Drake primary implementation cross-check of triangle coefficients",
+      "url": "https://github.com/RobotLocomotion/drake/blob/master/multibody/triangle_quadrature/gaussian_triangle_quadrature_rule.h"
+    }
+  ]
+}
