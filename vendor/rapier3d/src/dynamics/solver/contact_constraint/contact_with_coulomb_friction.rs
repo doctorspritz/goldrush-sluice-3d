@@ -5,6 +5,10 @@ mod rigid_anchor_objectivity;
 #[path = "rigid_warmstart_admissibility.rs"]
 mod rigid_warmstart_admissibility;
 
+#[cfg(all(test, feature = "dim3", feature = "f32"))]
+#[path = "normal_compliance_controls.rs"]
+mod normal_compliance_controls;
+
 use super::{ContactConstraintNormalPart, ContactConstraintTangentPart};
 #[cfg(feature = "block-solver")]
 use crate::dynamics::solver::contact_constraint::BLOCK_SOLVER_MIN_CONDITION;

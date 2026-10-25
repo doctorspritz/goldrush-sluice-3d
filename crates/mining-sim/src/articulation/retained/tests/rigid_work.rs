@@ -1059,3 +1059,4 @@ fn material_tangent_trial_refuses_both_save_boundaries_and_keeps_runtime_clone()
 }
 
 mod cadence;
+mod strain;
