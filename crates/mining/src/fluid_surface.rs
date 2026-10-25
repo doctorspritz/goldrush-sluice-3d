@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 // Integer spatial keys are internal render data. Use the engine cache hasher;
 // all floating-point accumulation remains in explicit particle/stencil order.
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy)]
 struct Moments {
@@ -209,6 +209,15 @@ pub(crate) fn kernels(
         m.sum += q;
         m.square += outer(q);
     }
+    // A channel-only bin never consumes the legacy PCA. Identify bins needed
+    // by outlet samples before the particle-order traversal. Shared bins still
+    // warm on their FIRST particle, retaining the sparse outlet representative.
+    let legacy_bins: HashSet<_> = points
+        .iter()
+        .zip(channel)
+        .filter(|(_, in_channel)| !**in_channel)
+        .map(|(&p, _)| key(p))
+        .collect();
     let mut cache = HashMap::<[i32; 3], Kernel>::new();
     let mut centroid_cache = HashMap::<[i32; 3], [(f32, Vec3); 8]>::new();
     points
@@ -216,6 +225,9 @@ pub(crate) fn kernels(
         .enumerate()
         .map(|(index, &p)| {
             let k = key(p);
+            if channel[index] && !legacy_bins.contains(&k) {
+                return field.sample(p, cell, sample_volume_m3);
+            }
             let kernel = *cache.entry(k).or_insert_with(|| {
                 let origin = center(k);
                 let mut total = Moments::default();
@@ -399,7 +411,7 @@ impl Moments {
 // Their variance is independent of the lattice phase. Tent weights changed
 // from zero to h²/4 as a parcel crossed one cell, so the measured shape and
 // the water/extinction support breathed even on a smooth physical trajectory.
-fn stencil(p: Vec3, width: f32) -> [([i32; 3], f32); 27] {
+fn lattice_weights(p: Vec3, width: f32) -> (IVec3, [[f32; 3]; 3]) {
     let grid = p / width - Vec3::splat(0.5);
     let base = (grid - Vec3::splat(0.5)).floor().as_ivec3();
     let t = grid - base.as_vec3() - Vec3::ONE;
@@ -410,6 +422,10 @@ fn stencil(p: Vec3, width: f32) -> [([i32; 3], f32); 27] {
             0.5 * (0.5 + t).powi(2),
         ]
     });
+    (base, weights)
+}
+fn stencil(p: Vec3, width: f32) -> [([i32; 3], f32); 27] {
+    let (base, weights) = lattice_weights(p, width);
     std::array::from_fn(|n| {
         let d = IVec3::new((n % 3) as i32, ((n / 3) % 3) as i32, (n / 9) as i32);
         (
@@ -432,13 +448,31 @@ impl ChannelField {
             // h_quad²/4 = h_tent²/6. Smoothness must not broaden the water.
             width: cell * (8_f32 / 3.).sqrt(),
         };
+        // A lattice cell always addresses the same 27 nodes. Cache their
+        // dense indices/centres once rather than hashing every deposit. Values
+        // still accumulate in the original particle and stencil order, with
+        // identical arithmetic; no coalescing, resampling or worker is added.
+        let mut indices = HashMap::<[i32; 3], usize>::new();
+        let mut values = Vec::<Moments>::new();
+        let mut blocks = HashMap::<[i32; 3], [(usize, Vec3); 27]>::new();
         for &p in points {
-            for (k, weight) in stencil(p, out.width) {
+            let weights = stencil(p, out.width);
+            let entries = blocks.entry(weights[0].0).or_insert_with(|| {
+                weights.map(|(k, _)| {
+                    let index = *indices.entry(k).or_insert_with(|| {
+                        let index = values.len();
+                        values.push(Moments::default());
+                        index
+                    });
+                    (index, out.center(k))
+                })
+            });
+            for ((_, weight), &(index, center)) in weights.into_iter().zip(entries.iter()) {
                 if weight <= 0. {
                     continue;
                 }
-                let q = p - out.center(k);
-                out.nodes.entry(k).or_default().accumulate(
+                let q = p - center;
+                values[index].accumulate(
                     Moments {
                         count: 1.,
                         sum: q,
@@ -448,22 +482,35 @@ impl ChannelField {
                 );
             }
         }
+        // A zero-weight boundary node was absent in the scalar deposition.
+        // Omit unoccupied entries so later neighbourhood sums remain identical,
+        // including their addition order and exact-zero behaviour.
+        out.nodes = indices
+            .into_iter()
+            .filter_map(|(k, index)| (values[index].count > 0.).then_some((k, values[index])))
+            .collect();
         out
     }
     fn sample(&mut self, p: Vec3, cell: f32, volume: f64) -> Kernel {
-        let grid = p / self.width - Vec3::splat(0.5);
-        let base = (grid - Vec3::splat(0.5)).floor().as_ivec3().to_array();
+        let (base, weights) = lattice_weights(p, self.width);
+        let base = base.to_array();
         let origin = self.center(base);
-        if !self.stencils.contains_key(&base) {
-            let corners = std::array::from_fn(|n| {
+        let width = self.width;
+        let center_of =
+            |k: [i32; 3]| (Vec3::from_array(k.map(|i| i as f32)) + Vec3::splat(0.5)) * width;
+        let nodes = &self.nodes;
+        let neighbourhoods = &mut self.neighbourhoods;
+        // The common query path performs one lookup and borrows its block.
+        let corners = self.stencils.entry(base).or_insert_with(|| {
+            std::array::from_fn(|n| {
                 let k = [
                     base[0] + (n % 3) as i32,
                     base[1] + ((n / 3) % 3) as i32,
                     base[2] + (n / 9) as i32,
                 ];
-                let center = self.center(k);
-                let local = self.nodes.get(&k).copied().unwrap_or_default();
-                let total = if let Some(m) = self.neighbourhoods.get(&k) {
+                let center = center_of(k);
+                let local = nodes.get(&k).copied().unwrap_or_default();
+                let total = if let Some(m) = neighbourhoods.get(&k) {
                     *m
                 } else {
                     let mut m = Moments::default();
@@ -471,28 +518,27 @@ impl ChannelField {
                         for y in -1..=1 {
                             for x in -1..=1 {
                                 let key = [k[0] + x, k[1] + y, k[2] + z];
-                                if let Some(n) = self.nodes.get(&key) {
-                                    m.accumulate(n.translated(self.center(key) - center), 1.);
+                                if let Some(n) = nodes.get(&key) {
+                                    m.accumulate(n.translated(center_of(key) - center), 1.);
                                 }
                             }
                         }
                     }
-                    self.neighbourhoods.insert(k, m);
+                    neighbourhoods.insert(k, m);
                     m
                 };
                 (
                     local.translated(center - origin),
                     total.translated(center - origin),
                 )
-            });
-            self.stencils.insert(base, corners);
-        }
-        // Borrow the cached moment block: copying 27 pairs for every parcel
-        // needlessly moves hundreds of MB per surface snapshot.
-        let corners = &self.stencils[&base];
+            })
+        });
         let mut local = Moments::default();
         let mut total = Moments::default();
-        for ((_, weight), (a, b)) in stencil(p, self.width).into_iter().zip(corners.iter()) {
+        // A query needs weights, not another 27-key scatter stencil. Keep
+        // the same x/y/z multiplication and accumulation order as deposition.
+        for (n, (a, b)) in corners.iter().enumerate() {
+            let weight = weights[0][n % 3] * weights[1][(n / 3) % 3] * weights[2][n / 9];
             local.accumulate(*a, weight);
             total.accumulate(*b, weight);
         }
@@ -634,6 +680,89 @@ fn eigen(m: Mat3) -> (Mat3, Vec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cached_deposition_retains_scalar_moments_and_kernel_bytes_at_cell_edges() {
+        let cell = 0.02;
+        let width = cell * (8_f32 / 3.).sqrt();
+        let points: Vec<_> = (-3..=3)
+            .flat_map(|x| {
+                (-2..=2).flat_map(move |z| {
+                    [0., 0.125, 0.5, 0.875, 1.].map(move |phase| {
+                        Vec3::new(
+                            (x as f32 + phase) * width,
+                            (0.1 * (x * z) as f32 + phase) * width,
+                            (z as f32 + phase) * width,
+                        )
+                    })
+                })
+            })
+            .collect();
+        let mut cached = ChannelField::new(&points, cell);
+        let mut scalar = ChannelField {
+            nodes: HashMap::new(),
+            neighbourhoods: HashMap::new(),
+            stencils: HashMap::new(),
+            width,
+        };
+        // Independent original scalar scatter, with no address/block cache.
+        for &p in &points {
+            for (k, weight) in stencil(p, width) {
+                if weight > 0. {
+                    let q = p - scalar.center(k);
+                    scalar.nodes.entry(k).or_default().accumulate(
+                        Moments {
+                            count: 1.,
+                            sum: q,
+                            square: outer(q),
+                        },
+                        weight,
+                    );
+                }
+            }
+        }
+        let bits = |m: Moments| {
+            std::iter::once(m.count)
+                .chain(m.sum.to_array())
+                .chain(m.square.to_cols_array())
+                .map(f32::to_bits)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(cached.nodes.len(), scalar.nodes.len());
+        for (key, &reference) in &scalar.nodes {
+            assert_eq!(bits(cached.nodes[key]), bits(reference));
+        }
+        let kernel_bits = |k: Kernel| {
+            k.axes
+                .into_iter()
+                .flat_map(|v| v.to_array())
+                .chain(k.center.to_array())
+                .chain(k.channel_center.to_array())
+                .chain(k.normal.to_array())
+                .chain([k.planarity, k.bulk])
+                .map(f32::to_bits)
+                .collect::<Vec<_>>()
+        };
+        for &p in &points {
+            assert_eq!(
+                kernel_bits(cached.sample(p, cell, 1e-7)),
+                kernel_bits(scalar.sample(p, cell, 1e-7))
+            );
+        }
+    }
+    #[test]
+    fn shared_outlet_bin_retains_its_first_channel_representative() {
+        let cell = 0.02;
+        let points = [Vec3::splat(0.005), Vec3::splat(0.015)];
+        let output = super::kernels(&points, cell, 1e-8, &[true, false]);
+        // Sparse legacy support is seeded by the first particle in the bin,
+        // even when that particle itself uses the continuous channel field.
+        let expected = points[1] + (points[0] - points[1]).clamp_length_max(cell * 0.2) * 0.35;
+        assert_eq!(
+            output[1].center.to_array().map(f32::to_bits),
+            expected.to_array().map(f32::to_bits)
+        );
+        assert_eq!(output[1].axes, [Vec3::X, Vec3::Y, Vec3::Z]);
+    }
     #[test]
     fn channel_stencil_retains_material_moments_with_phase_independent_support() {
         let width = 0.02;

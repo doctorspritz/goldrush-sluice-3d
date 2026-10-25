@@ -1,0 +1,778 @@
+{
+  "base_commit": "9d1f402460c104694e692bc3e2de538e110ab929",
+  "previous_goal_turn": "progress: rendering fix 584d58e and finite-contact reference 9d1f402 committed and pushed; goal remains active",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025",
+  "changed_source": {
+    "crates/mining/src/fluid_surface.rs": "384d8a5eff69a590dc48cb73021eb2723da24e123db47b2f73c774fe6aa52b7b"
+  },
+  "protected_other_sources": 735,
+  "source_manifest": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/source-manifest-final.json",
+  "inputs_sha256": {
+    "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/storage-final-2026-10-23/grown.json.save.json": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42",
+    "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-bed-20261025/synthetic-deposit.json": "4bf7861c1b58305924d008c12cf09fb6aacbeb1c58bd58f6396cedb20e5fe656"
+  },
+  "ordinary_app_tests_passed": 69,
+  "opt_in_profiles_both_explicitly_ran": true,
+  "full_output_before": {
+    "grains": 4308,
+    "iterations": 16,
+    "output_fnv1a64": "c0e3126d2bcc4681",
+    "pairing_median_ms": 3.0024159999999998,
+    "rebuild_median_ms": 108.70775,
+    "samples": 65536,
+    "water": 117544
+  },
+  "full_output_after": {
+    "grains": 4308,
+    "iterations": 16,
+    "output_fnv1a64": "c0e3126d2bcc4681",
+    "pairing_median_ms": 2.81,
+    "rebuild_median_ms": 91.588166,
+    "samples": 65536,
+    "water": 117544
+  },
+  "saved_support": {
+    "alternating_order": true,
+    "cpu_math_only_no_native_render_speed_claim": true,
+    "current": {
+      "cases": 60097,
+      "maximum_axis_pair_cosine": 1.9921945424502533e-07,
+      "maximum_determinant_relative_error": 7.915887478837647e-07,
+      "maximum_length_product_vs_determinant_relative_error": 2.1094237467877974e-14,
+      "maximum_shader_radial_relative_error": 4.3592005993797756e-07,
+      "maximum_tangent_quadratic_error": 1.12311586386582e-06,
+      "maximum_tensor_absolute_error": 1.1166848321586542e-06,
+      "normalized_shape_acceptance": 2e-05,
+      "unchanged_absolute_tensor_acceptance": 2e-05
+    },
+    "current_median_ms": 10.560832999999999,
+    "current_ms": [
+      10.431417,
+      10.530708,
+      10.46275,
+      10.551458,
+      10.570208,
+      11.672917,
+      11.666083,
+      10.591084
+    ],
+    "dataset_kernels": 60097,
+    "input_kernel_fnv1a64": "d7af11f5c9fe6c4c",
+    "maximum_current_vs_previous_tensor_error": 3.30125276271076e-06,
+    "maximum_input_normalized_axis_dot": 3.2782554626464844e-07,
+    "outlet_instances_not_modified": 5439,
+    "physical_simulation_advanced": false,
+    "previous": {
+      "cases": 60097,
+      "maximum_axis_pair_cosine": 3.2546397957023485e-07,
+      "maximum_determinant_relative_error": 1.802501951475577e-06,
+      "maximum_length_product_vs_determinant_relative_error": 5.3512749786932545e-14,
+      "maximum_shader_radial_relative_error": 1.2326194431810933e-06,
+      "maximum_tangent_quadratic_error": 3.342912129333797e-06,
+      "maximum_tensor_absolute_error": 3.3046838252559496e-06,
+      "normalized_shape_acceptance": 2e-05,
+      "unchanged_absolute_tensor_acceptance": 2e-05
+    },
+    "previous_median_ms": 20.2369375,
+    "previous_ms": [
+      19.246416999999997,
+      19.192542,
+      20.271791,
+      19.915833,
+      20.843207999999997,
+      20.202084,
+      20.380458,
+      20.323
+    ],
+    "reference": "a48a22c corrected world S C S including exact bypasses, same five Jacobi sweeps",
+    "selected_instances": 65536,
+    "timed_methods_have_no_capture_hook": true,
+    "tls_capture_disabled_before_validation_and_timing": true
+  },
+  "quality": [
+    {
+      "name": "app-tests",
+      "exit": 0,
+      "wall_seconds": 18.477156542008743,
+      "args": [
+        "cargo",
+        "+nightly",
+        "test",
+        "-p",
+        "mining",
+        "--profile",
+        "playable",
+        "--locked",
+        "--jobs",
+        "1",
+        "--",
+        "--test-threads=1"
+      ]
+    },
+    {
+      "name": "packed-profile",
+      "exit": 0,
+      "wall_seconds": 2.6290048750233836,
+      "args": [
+        "env",
+        "SLUICE_SURFACE_LOAD=/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/storage-final-2026-10-23/grown.json.save.json",
+        "SLUICE_SURFACE_PROFILE=/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/final-profile.json",
+        "cargo",
+        "+nightly",
+        "test",
+        "-p",
+        "mining",
+        "--profile",
+        "playable",
+        "--locked",
+        "--jobs",
+        "1",
+        "profile_surface_reconstruction_and_correspondence",
+        "--",
+        "--ignored",
+        "--test-threads=1",
+        "--nocapture"
+      ]
+    },
+    {
+      "name": "saved-support",
+      "exit": 0,
+      "wall_seconds": 0.8145704999915324,
+      "args": [
+        "env",
+        "SLUICE_SURFACE_LOAD=/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/storage-final-2026-10-23/grown.json.save.json",
+        "SLUICE_SUPPORT_PROFILE=/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/final-support.json",
+        "cargo",
+        "+nightly",
+        "test",
+        "-p",
+        "mining",
+        "--profile",
+        "playable",
+        "--locked",
+        "--jobs",
+        "1",
+        "profile_saved_native_corrected_support",
+        "--",
+        "--ignored",
+        "--test-threads=1",
+        "--nocapture"
+      ]
+    },
+    {
+      "name": "clippy",
+      "exit": 0,
+      "wall_seconds": 7.212467124976683,
+      "args": [
+        "cargo",
+        "+nightly",
+        "clippy",
+        "-p",
+        "mining",
+        "--all-targets",
+        "--profile",
+        "playable",
+        "--locked",
+        "--jobs",
+        "1",
+        "--no-deps",
+        "--",
+        "-D",
+        "warnings"
+      ]
+    },
+    {
+      "name": "format",
+      "exit": 0,
+      "wall_seconds": 0.30524320900440216,
+      "args": [
+        "cargo",
+        "+nightly",
+        "fmt",
+        "-p",
+        "mining",
+        "--",
+        "--check"
+      ]
+    },
+    {
+      "name": "package",
+      "exit": 0,
+      "wall_seconds": 27.175728958041873,
+      "args": [
+        "bash",
+        "scripts/package-mining-macos.sh",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/final-app"
+      ]
+    }
+  ],
+  "native": {
+    "frozen": {
+      "sluice-final": {
+        "matched_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "flow": true,
+          "material_motion": true,
+          "active_soil": true,
+          "rigid_falling": true,
+          "delivered_m3": true,
+          "excavated_m3": true
+        },
+        "changed_rgb_pixels": 0,
+        "maximum_rgb_delta": 0,
+        "rgb_sha256": [
+          "25a5d2c22dada6007d257b7c61aeddca311f7deaeda6ef55c04d2762bf7adaa7",
+          "25a5d2c22dada6007d257b7c61aeddca311f7deaeda6ef55c04d2762bf7adaa7"
+        ],
+        "dimensions": [
+          1440,
+          900
+        ]
+      },
+      "sluice-normal": {
+        "matched_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "flow": true,
+          "material_motion": true,
+          "active_soil": true,
+          "rigid_falling": true,
+          "delivered_m3": true,
+          "excavated_m3": true
+        },
+        "changed_rgb_pixels": 0,
+        "maximum_rgb_delta": 0,
+        "rgb_sha256": [
+          "4bea201ed98b4ff3f161bb0048b4539a78c617bf93cb5ff47e4cbc2cec5c83ad",
+          "4bea201ed98b4ff3f161bb0048b4539a78c617bf93cb5ff47e4cbc2cec5c83ad"
+        ],
+        "dimensions": [
+          1440,
+          900
+        ]
+      },
+      "river-final": {
+        "matched_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "flow": true,
+          "material_motion": true,
+          "active_soil": true,
+          "rigid_falling": true,
+          "delivered_m3": true,
+          "excavated_m3": true
+        },
+        "changed_rgb_pixels": 0,
+        "maximum_rgb_delta": 0,
+        "rgb_sha256": [
+          "f366b2fe6e48d7c8b6f8ab67a0a12a32cabb497907e5c4ce1cf0ab7f9af95255",
+          "f366b2fe6e48d7c8b6f8ab67a0a12a32cabb497907e5c4ce1cf0ab7f9af95255"
+        ],
+        "dimensions": [
+          1440,
+          900
+        ]
+      },
+      "outlet-final": {
+        "matched_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "flow": true,
+          "material_motion": true,
+          "active_soil": true,
+          "rigid_falling": true,
+          "delivered_m3": true,
+          "excavated_m3": true
+        },
+        "changed_rgb_pixels": 0,
+        "maximum_rgb_delta": 0,
+        "rgb_sha256": [
+          "aabfeecf20e53b4b5f271b65887e269814f6e9591ac225793424385c98783f28",
+          "aabfeecf20e53b4b5f271b65887e269814f6e9591ac225793424385c98783f28"
+        ],
+        "dimensions": [
+          1440,
+          900
+        ]
+      },
+      "deposit": {
+        "matched_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "flow": true,
+          "material_motion": true,
+          "active_soil": true,
+          "rigid_falling": true,
+          "delivered_m3": true,
+          "excavated_m3": true
+        },
+        "changed_rgb_pixels": 0,
+        "maximum_rgb_delta": 0,
+        "rgb_sha256": [
+          "ca8369e6fdfefd922db13175803a98ae1e5378af6ac1cfffb6f66a8bf1d511b7",
+          "ca8369e6fdfefd922db13175803a98ae1e5378af6ac1cfffb6f66a8bf1d511b7"
+        ],
+        "dimensions": [
+          1440,
+          900
+        ]
+      }
+    },
+    "motion": {
+      "before": {
+        "frames": 37,
+        "wall_span_seconds": 3.972931417,
+        "physical_span_seconds": 1.5666667483747005,
+        "presentation_span_seconds": 1.588973802785091,
+        "advancing_physical_intervals": 36,
+        "advancing_presentation_intervals": 36,
+        "buffer_underruns": 0,
+        "mean_surface_build_ms": 109.25148031034489
+      },
+      "after": {
+        "frames": 37,
+        "wall_span_seconds": 3.948790166,
+        "physical_span_seconds": 1.5666667483747005,
+        "presentation_span_seconds": 1.5760528619564838,
+        "advancing_physical_intervals": 36,
+        "advancing_presentation_intervals": 36,
+        "buffer_underruns": 0,
+        "mean_surface_build_ms": 106.77594896629213
+      }
+    },
+    "benchmarks": [
+      {
+        "mode": "before",
+        "window": 1,
+        "mean_fps": 55.71772539334458,
+        "p95_frame_ms": 28.524875,
+        "simulation_wall_ratio": 0.38827335725729917,
+        "passed": false,
+        "bulk_budget_passed": true,
+        "dry_mass_budget_passed": true,
+        "sluice_water_balance_error_m3": 0.0,
+        "water_balance_error_m3": -7.87073807018146e-06,
+        "gold_balance_error_g": 4.547473508864641e-12,
+        "simulation_seconds": 7.7666670717298985,
+        "wall_seconds": 20.003090417,
+        "worker_mean_ms": 85.78192866523605,
+        "surface": {
+          "buffer_underrun_frames": 0,
+          "interpolation_alpha": 0.9990233778953552,
+          "max_capture_ms": 1.0538329999999998,
+          "max_surface_build_ms": 148.27775000000003,
+          "mean_capture_ms": 0.3681747180616742,
+          "mean_surface_build_ms": 108.68385423555554,
+          "paired_render_particles": 66094,
+          "presented_sim_time": 99.7999726518195,
+          "surface_builds": 225
+        }
+      },
+      {
+        "mode": "after",
+        "window": 1,
+        "mean_fps": 55.70062105130919,
+        "p95_frame_ms": 28.582666,
+        "simulation_wall_ratio": 0.3849828714985324,
+        "passed": false,
+        "bulk_budget_passed": true,
+        "dry_mass_budget_passed": true,
+        "sluice_water_balance_error_m3": 0.0,
+        "water_balance_error_m3": -7.849941688675699e-06,
+        "gold_balance_error_g": 1.8189894035458565e-12,
+        "simulation_seconds": 7.700000401586294,
+        "wall_seconds": 20.000890875,
+        "worker_mean_ms": 86.41409416017315,
+        "surface": {
+          "buffer_underrun_frames": 0,
+          "interpolation_alpha": 0.1389055997133255,
+          "max_capture_ms": 0.975334,
+          "max_surface_build_ms": 115.05425,
+          "mean_capture_ms": 0.3715243427419354,
+          "mean_surface_build_ms": 99.75731047560978,
+          "paired_render_particles": 66049,
+          "presented_sim_time": 99.70463538651978,
+          "surface_builds": 246
+        }
+      },
+      {
+        "mode": "after",
+        "window": 2,
+        "mean_fps": 55.849423331426,
+        "p95_frame_ms": 28.629915999999998,
+        "simulation_wall_ratio": 0.38820412610069627,
+        "passed": false,
+        "bulk_budget_passed": true,
+        "dry_mass_budget_passed": true,
+        "sluice_water_balance_error_m3": 0.0,
+        "water_balance_error_m3": -7.870738095050456e-06,
+        "gold_balance_error_g": 5.002220859751105e-12,
+        "simulation_seconds": 7.7666670717298985,
+        "wall_seconds": 20.006657708,
+        "worker_mean_ms": 85.81345777253217,
+        "surface": {
+          "buffer_underrun_frames": 0,
+          "interpolation_alpha": 0.3269686996936798,
+          "max_capture_ms": 1.1147500000000001,
+          "max_surface_build_ms": 112.562166,
+          "mean_capture_ms": 0.36796957551020393,
+          "mean_surface_build_ms": 100.9861371851852,
+          "paired_render_particles": 66094,
+          "presented_sim_time": 99.77757082701115,
+          "surface_builds": 243
+        }
+      },
+      {
+        "mode": "before",
+        "window": 2,
+        "mean_fps": 55.73912045621183,
+        "p95_frame_ms": 28.566958,
+        "simulation_wall_ratio": 0.38829090933246485,
+        "passed": false,
+        "bulk_budget_passed": true,
+        "dry_mass_budget_passed": true,
+        "sluice_water_balance_error_m3": 0.0,
+        "water_balance_error_m3": -7.87073807018146e-06,
+        "gold_balance_error_g": 4.547473508864641e-12,
+        "simulation_seconds": 7.7666670717298985,
+        "wall_seconds": 20.002186209,
+        "worker_mean_ms": 85.76936035622319,
+        "surface": {
+          "buffer_underrun_frames": 0,
+          "interpolation_alpha": 0.09573055803775787,
+          "max_capture_ms": 1.093208,
+          "max_surface_build_ms": 117.80225,
+          "mean_capture_ms": 0.36933953813559317,
+          "mean_surface_build_ms": 104.88971209401704,
+          "paired_render_particles": 66036,
+          "presented_sim_time": 99.8031962236803,
+          "surface_builds": 234
+        }
+      }
+    ],
+    "means": {
+      "before": {
+        "surface_build_ms": 106.7867831647863,
+        "render_fps": 55.7284229247782,
+        "simulation_wall_ratio": 0.38828213329488204,
+        "p95_frame_ms_mean": 28.5459165
+      },
+      "after": {
+        "surface_build_ms": 100.37172383039749,
+        "render_fps": 55.7750221913676,
+        "simulation_wall_ratio": 0.38659349879961435,
+        "p95_frame_ms_mean": 28.606291
+      }
+    },
+    "surface_build_reduction_fraction": 0.06007353292485196
+  },
+  "native_commands": [
+    {
+      "name": "before-sluice-final",
+      "mode": "before",
+      "exit": 0,
+      "wall_seconds": 7.454741417022888,
+      "args": [
+        "--freeze",
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/before-sluice-final",
+        "--capture-view",
+        "sluice",
+        "--capture-water-debug",
+        "final",
+        "--capture-seconds",
+        "1",
+        "--capture-hz",
+        "2"
+      ]
+    },
+    {
+      "name": "before-sluice-normal",
+      "mode": "before",
+      "exit": 0,
+      "wall_seconds": 6.959109583985992,
+      "args": [
+        "--freeze",
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/before-sluice-normal",
+        "--capture-view",
+        "sluice",
+        "--capture-water-debug",
+        "normal",
+        "--capture-seconds",
+        "1",
+        "--capture-hz",
+        "2"
+      ]
+    },
+    {
+      "name": "before-river-final",
+      "mode": "before",
+      "exit": 0,
+      "wall_seconds": 6.72219766699709,
+      "args": [
+        "--freeze",
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/before-river-final",
+        "--capture-view",
+        "river",
+        "--capture-water-debug",
+        "final",
+        "--capture-seconds",
+        "1",
+        "--capture-hz",
+        "2"
+      ]
+    },
+    {
+      "name": "before-outlet-final",
+      "mode": "before",
+      "exit": 0,
+      "wall_seconds": 6.963349499972537,
+      "args": [
+        "--freeze",
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/before-outlet-final",
+        "--capture-view",
+        "outlet",
+        "--capture-water-debug",
+        "final",
+        "--capture-seconds",
+        "1",
+        "--capture-hz",
+        "2"
+      ]
+    },
+    {
+      "name": "before-deposit",
+      "mode": "before",
+      "exit": 0,
+      "wall_seconds": 6.694854292029049,
+      "args": [
+        "--freeze",
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/before-deposit",
+        "--capture-view",
+        "river",
+        "--capture-seconds",
+        "1",
+        "--capture-hz",
+        "2"
+      ]
+    },
+    {
+      "name": "before-motion",
+      "mode": "before",
+      "exit": 0,
+      "wall_seconds": 10.518728542025201,
+      "args": [
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/before-motion",
+        "--capture-view",
+        "sluice",
+        "--capture-seconds",
+        "4",
+        "--capture-hz",
+        "10"
+      ]
+    },
+    {
+      "name": "after-sluice-final",
+      "mode": "after",
+      "exit": 0,
+      "wall_seconds": 8.490532667026855,
+      "args": [
+        "--freeze",
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/after-sluice-final",
+        "--capture-view",
+        "sluice",
+        "--capture-water-debug",
+        "final",
+        "--capture-seconds",
+        "1",
+        "--capture-hz",
+        "2"
+      ]
+    },
+    {
+      "name": "after-sluice-normal",
+      "mode": "after",
+      "exit": 0,
+      "wall_seconds": 6.723964584001806,
+      "args": [
+        "--freeze",
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/after-sluice-normal",
+        "--capture-view",
+        "sluice",
+        "--capture-water-debug",
+        "normal",
+        "--capture-seconds",
+        "1",
+        "--capture-hz",
+        "2"
+      ]
+    },
+    {
+      "name": "after-river-final",
+      "mode": "after",
+      "exit": 0,
+      "wall_seconds": 6.70311570802005,
+      "args": [
+        "--freeze",
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/after-river-final",
+        "--capture-view",
+        "river",
+        "--capture-water-debug",
+        "final",
+        "--capture-seconds",
+        "1",
+        "--capture-hz",
+        "2"
+      ]
+    },
+    {
+      "name": "after-outlet-final",
+      "mode": "after",
+      "exit": 0,
+      "wall_seconds": 6.937279000005219,
+      "args": [
+        "--freeze",
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/after-outlet-final",
+        "--capture-view",
+        "outlet",
+        "--capture-water-debug",
+        "final",
+        "--capture-seconds",
+        "1",
+        "--capture-hz",
+        "2"
+      ]
+    },
+    {
+      "name": "after-deposit",
+      "mode": "after",
+      "exit": 0,
+      "wall_seconds": 6.725301833997946,
+      "args": [
+        "--freeze",
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/after-deposit",
+        "--capture-view",
+        "river",
+        "--capture-seconds",
+        "1",
+        "--capture-hz",
+        "2"
+      ]
+    },
+    {
+      "name": "after-motion",
+      "mode": "after",
+      "exit": 0,
+      "wall_seconds": 10.522372957959305,
+      "args": [
+        "--capture-motion",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/after-motion",
+        "--capture-view",
+        "sluice",
+        "--capture-seconds",
+        "4",
+        "--capture-hz",
+        "10"
+      ]
+    },
+    {
+      "name": "before-benchmark-1",
+      "mode": "before",
+      "exit": 1,
+      "wall_seconds": 25.63209224998718,
+      "args": [
+        "--flow-benchmark",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/before-benchmark-1.json",
+        "--benchmark-seconds",
+        "20"
+      ]
+    },
+    {
+      "name": "after-benchmark-1",
+      "mode": "after",
+      "exit": 1,
+      "wall_seconds": 25.599080749962013,
+      "args": [
+        "--flow-benchmark",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/after-benchmark-1.json",
+        "--benchmark-seconds",
+        "20"
+      ]
+    },
+    {
+      "name": "after-benchmark-2",
+      "mode": "after",
+      "exit": 1,
+      "wall_seconds": 25.38500250002835,
+      "args": [
+        "--flow-benchmark",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/after-benchmark-2.json",
+        "--benchmark-seconds",
+        "20"
+      ]
+    },
+    {
+      "name": "before-benchmark-2",
+      "mode": "before",
+      "exit": 1,
+      "wall_seconds": 25.620537207985763,
+      "args": [
+        "--flow-benchmark",
+        "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/before-benchmark-2.json",
+        "--benchmark-seconds",
+        "20"
+      ]
+    }
+  ],
+  "native_app": {
+    "path": "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app",
+    "sha256": "82f3720c0330cad60ce0770ad003a0a24830dd875b8477e6a4518b51f8e9d15d",
+    "previous_sha256": "72c3ba8e411c4ebc9295ba253269c8d4746fde47ca5353d46884b3640317b5fa",
+    "previous_signed_backup": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/surface-cost-20261025/previous-app/First Bend.app",
+    "signature_verified": true
+  },
+  "original_dirty_checkout_and_user_stash_preserved": true,
+  "crashes_unchanged": [
+    ".WindowServer-2026-09-24-144010.ips",
+    ".WindowServer-2026-09-27-124241.ips",
+    ".WindowServer-2026-09-27-141659.ips",
+    ".WindowServer-2026-09-29-195851.ips",
+    ".WindowServer-2026-10-08-155410.ips",
+    ".WindowServer-2026-10-19-135417.ips"
+  ],
+  "cleanup": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=16 rss_mib=1.8\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=64 rss_mib=23.1\n",
+  "beads": {
+    "id": "menace-xma",
+    "status": "closed",
+    "export_rows": 230,
+    "other_229_literal_rows_preserved": true,
+    "sync": "unsupported; scoped literal export"
+  },
+  "limitations": "A performance change with unchanged accepted visuals, not a new water model or resolved standing waves. Four short native windows are not a long soak or universal benchmark. Real-time physics, broader visual/gameplay/digging goals remain open. GPU unit suites and full soil integration replay were not rerun; WGSL and physical solver sources are unchanged. Manual input and whole-video playback were not rechecked. SIMD candidate was removed after no added timing gain."
+}
