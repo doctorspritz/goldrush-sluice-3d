@@ -270,13 +270,24 @@ enum WorkTrial {
     MaterialTangents,
     FreshMaterialTangents,
     SatFeatures,
+    SatMaterialTangents,
 }
 impl WorkTrial {
+    fn registered(self) -> bool {
+        matches!(self, Self::SatFeatures | Self::SatMaterialTangents)
+    }
+    fn material(self) -> bool {
+        matches!(
+            self,
+            Self::MaterialTangents | Self::FreshMaterialTangents | Self::SatMaterialTangents
+        )
+    }
     fn label(self) -> &'static str {
         match self {
             Self::SavedBaseline => "saved_policy_baseline",
             Self::FreshManifolds => "test_only_full_feature_refresh",
             Self::SatFeatures => "test_only_certified_convex_sat_features",
+            Self::SatMaterialTangents => "test_only_registered_convex_material_tangents",
             Self::MaterialTangents => "test_only_material_tangent_anchors",
             Self::FreshMaterialTangents => "test_only_fresh_features_and_material_tangent_anchors",
         }
@@ -307,18 +318,15 @@ fn install_fresh_manifolds(owner: &mut RetainedSoil) -> Value {
 fn install_trial(owner: &mut RetainedSoil, trial: WorkTrial) -> Value {
     let fresh = matches!(
         trial,
-        WorkTrial::FreshManifolds | WorkTrial::FreshMaterialTangents | WorkTrial::SatFeatures
-    );
-    let material = matches!(
-        trial,
-        WorkTrial::MaterialTangents | WorkTrial::FreshMaterialTangents
-    );
+        WorkTrial::FreshManifolds | WorkTrial::FreshMaterialTangents
+    ) || trial.registered();
+    let material = trial.material();
     let mut changes = if fresh {
         install_fresh_manifolds(owner)
     } else {
         json!({"dispatcher_changed":false,"integration_parameters_changed":false})
     };
-    if trial == WorkTrial::SatFeatures {
+    if trial.registered() {
         crate::soil_contacts::restore_sat_dispatcher_for_test(
             &mut owner.model.as_mut().unwrap().world,
         );
@@ -505,6 +513,62 @@ fn saved_bank_work_trial(trial: WorkTrial) {
         "unobserved twist policy"
     );
 
+    let mut summary = summarize_work_report(&owner, &report, env.gravity, initial_energy);
+    summary["saved_after_state_exact"] = json!(baseline);
+    summary["complete_numerical_boundary_exact"] = json!(baseline);
+    summary["selected_body_machine_soil_exact"] = json!(baseline);
+    summary["solver_parameters_unchanged"] = json!(baseline);
+    summary["initial_inventory"] = initial_inventory;
+    summary["final_inventory"] = final_inventory;
+    let evidence = summary.as_object_mut().unwrap();
+    evidence.insert("trial".into(), json!(trial.label()));
+    if trial.registered() {
+        evidence.insert(
+            "sat_diagnostics".into(),
+            crate::soil_contacts::sat_diagnostics_for_test(),
+        );
+    }
+    evidence.insert("saved_failure_history_imported".into(), json!(true));
+    evidence.insert("initial_warmstart_history_preserved".into(), json!(true));
+    evidence.insert(
+        "saved_reference_equality_required_and_evaluated".into(),
+        json!(baseline),
+    );
+    evidence.insert("declared_changes".into(), declared_changes);
+    evidence.insert("parameters_unchanged_during_step".into(), json!(true));
+    evidence.insert(
+        "candidate_persistence_probe".into(),
+        json!(candidate_persistence),
+    );
+    evidence.insert("candidate_boundary_files_written".into(), json!(false));
+    evidence.insert("saved_candidate_continuation_claimed".into(), json!(false));
+    evidence.insert("raw_report_omitted".into(), json!(true));
+    evidence.insert("raw_report_omission_reason".into(), json!("unbounded trace is not written; all observed rows contribute to exact stage aggregates and closures"));
+    evidence.insert("all_observed_rows_folded".into(), json!(true));
+    evidence.insert(
+        "summary_write_limit_bytes".into(),
+        json!(SUMMARY_LIMIT_BYTES),
+    );
+    write_json(&output.join("summary.json"), &summary);
+    println!("RIGID WORK rigid={} generic={} contact_buckets_closed={} energy_gain_j={} passive_gate_passed={}",
+        report.rigid_len(), report.len(), summary["contact_physical_work_buckets_closed"],
+        summary["independent_energy_delta_j"], summary["physical_passivity_gate_passed"]);
+    assert_work_summary(&summary);
+}
+
+// Fold one outer world step at a time. Solver phase times restart at each
+// call, so separate reports cannot accidentally join different microsteps.
+fn summarize_work_report(
+    owner: &RetainedSoil,
+    report: &rapier3d::contact_work_audit::WorkReport,
+    gravity: Vec3,
+    initial_energy: f64,
+) -> Value {
+    let world = &owner.model.as_ref().unwrap().world;
+    assert_eq!(report.islands().len(), 1);
+    assert_eq!(report.islands()[0].len(), 1045);
+    assert!(report.rigid_len() > 0 && !report.is_empty());
+    assert!(!report.twist_selected_unobserved());
     let phases: Vec<_> = report
         .iter_phases()
         .map(|p| serde_json::to_value(p).unwrap())
@@ -514,7 +578,7 @@ fn saved_bank_work_trial(trial: WorkTrial) {
         .all(|p| p["dynamic_bodies"] == 1045 && p["island"] == 0));
     let potential = |p: &Value| {
         -(0..3)
-            .map(|i| f64::from(env.gravity[i]) * p["mass_position_kg_m"][i].as_f64().unwrap())
+            .map(|i| f64::from(gravity[i]) * p["mass_position_kg_m"][i].as_f64().unwrap())
             .sum::<f64>()
     };
     let energy = |p: &Value| number(p, "kinetic_j") + potential(p);
@@ -621,7 +685,7 @@ fn saved_bank_work_trial(trial: WorkTrial) {
             "closure_error_j":error,"agreement_limit_j":AGREEMENT_J,"closed":b.phase_windows>0 && error.abs()<AGREEMENT_J})
     }).collect();
     let contact_buckets_closed = closures.iter().all(|c| c["closed"] == true);
-    let final_energy = super::contact_geometry::independent_energy(&owner, env.gravity);
+    let final_energy = super::contact_geometry::independent_energy(owner, gravity);
     let body_delta = final_energy - initial_energy;
     let phase_delta = energy(phases.last().unwrap()) - energy(phases.first().unwrap());
     let reported = owner.soil().feedback.coupled_passivity_residual_j;
@@ -639,9 +703,7 @@ fn saved_bank_work_trial(trial: WorkTrial) {
     inspect_blocks(&mut biased, &mut oracle, true);
     inspect_blocks(&mut warm, &mut oracle, false);
     inspect_blocks(&mut tangent_positive, &mut oracle, false);
-    let mut summary = json!({"saved_after_state_exact":baseline,"complete_numerical_boundary_exact":baseline,
-        "selected_body_machine_soil_exact":baseline,"solver_parameters_unchanged":baseline,
-        "registered_shapes_and_collider_attachments_unchanged":true,"initial_inventory":initial_inventory,"final_inventory":final_inventory,
+    json!({"registered_shapes_and_collider_attachments_unchanged":true,
         "rigid_blocks":report.rigid_len(),"generic_blocks":report.len(),"rigid_point_observations":rigid_points,
         "phase_samples":phases.len(),"islands":report.islands(),"twist_selected_unobserved":report.twist_selected_unobserved(),
         "rigid_restitution_seeds_zero":true,"stage_contact_work":totals,"phase_stage_changes_kinetic_and_gravity_j":stages,
@@ -657,52 +719,23 @@ fn saved_bank_work_trial(trial: WorkTrial) {
         "top_geometry_is_subset":true,"all_clustered_contact_geometry_certified":false,
         "individual_impulse_work_identity_required":false,
         "partition_note":"normal/tangent work are fixed-block midpoint partitions, not sequential row work or a closed causal bias budget",
-        "phases":phases});
-    let evidence = summary.as_object_mut().unwrap();
-    evidence.insert("trial".into(), json!(trial.label()));
-    if trial == WorkTrial::SatFeatures {
-        evidence.insert(
-            "sat_diagnostics".into(),
-            crate::soil_contacts::sat_diagnostics_for_test(),
-        );
-    }
-    evidence.insert("saved_failure_history_imported".into(), json!(true));
-    evidence.insert("initial_warmstart_history_preserved".into(), json!(true));
-    evidence.insert(
-        "saved_reference_equality_required_and_evaluated".into(),
-        json!(baseline),
-    );
-    evidence.insert("declared_changes".into(), declared_changes);
-    evidence.insert("parameters_unchanged_during_step".into(), json!(true));
-    evidence.insert(
-        "candidate_persistence_probe".into(),
-        json!(candidate_persistence),
-    );
-    evidence.insert("candidate_boundary_files_written".into(), json!(false));
-    evidence.insert("saved_candidate_continuation_claimed".into(), json!(false));
-    evidence.insert("raw_report_omitted".into(), json!(true));
-    evidence.insert("raw_report_omission_reason".into(), json!("unbounded trace is not written; all observed rows contribute to exact stage aggregates and closures"));
-    evidence.insert("all_observed_rows_folded".into(), json!(true));
-    evidence.insert(
-        "summary_write_limit_bytes".into(),
-        json!(SUMMARY_LIMIT_BYTES),
-    );
-    write_json(&output.join("summary.json"), &summary);
-    println!("RIGID WORK rigid={} generic={} contact_buckets_closed={} energy_gain_j={body_delta:.9} passive_gate_passed={}", report.rigid_len(),report.len(),contact_buckets_closed,body_delta<=PASSIVITY_J);
+        "phases":phases})
+}
+fn assert_work_summary(summary: &Value) {
     assert!(
-        contact_buckets_closed,
-        "rigid+generic contact stage closure failed; see summary.json"
+        summary["contact_physical_work_buckets_closed"] == true,
+        "rigid+generic contact stage closure failed; see bounded summary"
     );
     assert!(
-        phase_body_agree,
+        summary["phase_body_agreement"] == true,
         "independent saved-body and phase energy disagree"
     );
     assert!(
-        feedback_agrees,
+        summary["reported_feedback_agrees_within_existing_0_05_j"] == true,
         "independent energy and existing feedback disagree"
     );
     assert!(
-        no_joint_or_between_work,
+        summary["joint_and_between_snapshot_changes_zero_within_observer_limit"] == true,
         "unaccounted joint/interstage work"
     );
 }
@@ -902,10 +935,7 @@ fn complete_bank_trajectory_trial(trial: WorkTrial) {
                 .world
                 .integration_parameters
                 .diagnostic_material_tangent_anchors,
-            matches!(
-                trial,
-                WorkTrial::MaterialTangents | WorkTrial::FreshMaterialTangents
-            ),
+            trial.material(),
             "material tangent selection changed during trajectory"
         );
         let inventory = passive_inventory(&owner);
@@ -954,7 +984,7 @@ fn complete_bank_trajectory_trial(trial: WorkTrial) {
         "observer_diagnostic_success":completed && maximum_feedback_error<0.05,
         "candidate_boundary_files_written":false,"saved_candidate_continuation_claimed":false,
         "elapsed_wall_s":started.elapsed().as_secs_f64(),"trajectory":trajectory});
-    if trial == WorkTrial::SatFeatures {
+    if trial.registered() {
         summary["sat_diagnostics"] = crate::soil_contacts::sat_diagnostics_for_test();
     }
     write_json(&output.join("trajectory-summary.json"), &summary);
@@ -1027,3 +1057,5 @@ fn material_tangent_trial_refuses_both_save_boundaries_and_keeps_runtime_clone()
         "legacy boundary bytes changed"
     );
 }
+
+mod cadence;

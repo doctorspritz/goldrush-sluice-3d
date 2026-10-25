@@ -1,0 +1,36 @@
+# Full contact refresh at equal physical integration cadence
+
+Full world refresh reduces the saved failure but does not qualify passive digging. Every tested fresh-bank variant still exceeds the unchanged energy limit. The implementation remains audit-only; no Session selection, runtime coefficient, physical stock or saved numerical policy changes.
+
+The control uses one 480 Hz world step with four temporal substeps. The comparison uses four complete 1920 Hz world steps with one temporal substep each. Both integrate four times per macro step, at the same f32 physical dt, with 16 PGS passes per substep. Registered convex geometry, zero outer recycling, full biased friction, relaxation, restitution and softness parameters remain fixed. The second axis selects the existing legacy or diagnostic material-tangent anchor formula.
+
+Full world refresh also changes contact/query/cache, CCD, force, restitution, relaxation and effective mass/Jacobian scheduling. This is not a causal isolation of frozen normals or a native performance comparison.
+
+| Initial condition | Outer world Hz | Tangent anchors | Peak macro gain J | Macro violations | Peak micro gain J | Micro violations | Convex construction failures |
+|---|---:|---|---:|---:|---:|---:|---:|
+| Saved boundary, one macro | 480 | legacy | 42.599000 | 1 | Unobserved | Unobserved | 0 |
+| Saved boundary, one macro | 480 | material | 42.587886 | 1 | Unobserved | Unobserved | 0 |
+| Saved boundary, one macro | 1920 | legacy | 17.834135 | 1 | 12.394636 | 3 | 0 |
+| Saved boundary, one macro | 1920 | material | 17.858071 | 1 | 12.397963 | 3 | 0 |
+| Fresh bank, 300 macros | 480 | legacy | 31.731024 | 56 | Unobserved | Unobserved | 0 |
+| Fresh bank, 300 macros | 480 | material | 43.170141 | 71 | Unobserved | Unobserved | 0 |
+| Fresh bank, 300 macros | 1920 | legacy | 24.521658 | 55 | 7.309088 | 236 | 0 |
+| Fresh bank, 300 macros | 1920 | material | 21.822966 | 63 | 9.123940 | 221 | 1 |
+
+One overlapping query in the refreshed material-anchor trajectory fails construction: `SAT boundary support features have no checked tangent-plane intersection`. That trial retains its ordinary fresh fallback and is not a clean zero-failure geometry result. The [complete captured query](../playtests/2026-10-25-contact-refresh-outlier.json) preserves both registered shapes, relative transform and pre-trial manifold. Zero separated-output failure counters do not qualify this failed overlapping query. Reconstruct and correct it before the next qualified geometry/frame comparison; its causal energy effect is not established. All other saved/trajectory variants have zero registered-convex construction failures.
+
+The 300 macros cover only 0.625 nominal physical seconds: this is a bounded passivity witness, not sustained settling or a loaded digging replay. The macro limit remains 0.01 J. The 1920 Hz variant additionally checks 0.0025 J per microstep, preserving equal allowed power. Internal TGS microstep energies are not independently observed for the 480 Hz control. Net dissipation does not excuse positive individual steps. Diagnostic test success means completion and ledger agreement, not physical acceptance.
+
+Each of the four trajectories completes all 300 macros without refusal and preserves all 1,040 clods, 1,045 dynamic bodies and 9,752.505223 kg at every accepted world step. The engine, motor rows, pump work and actuator elastic work remain zero. The harness checks exact integration parameters and material inventory at every accepted step. Poses remain finite; the additional speed summaries read published rigid-body velocities, not an independent articulated-link velocity oracle. Physical energy instead uses current link Jacobians, generalized velocities, local masses and inertia.
+
+Each saved world step has its own collider-context work report. Solver phase times restart per call, so reports are folded separately rather than joining different calls by their local float time. All rigid and generic blocks contribute to contact-stage closures. Every step closes phase/body work under the existing 0.0001 J bound; summed macro phase work also closes under that bound. Summed feedback and independently calculated macro energy agree within the existing separate 0.05 J bound. Raw reports are dropped before the next microstep and never written. Trajectories do not enable the row collector. The first refreshed trajectory reached 150 logged macros before its 600-second supervisor deadline and has no completed summary. The fresh replacement uses a 2,400-second bound and writes explicitly incomplete progress checkpoints every 50 macros; a checkpoint never claims test or physical acceptance. Each JSON output is capped at 16 MiB; logs are capped at 2 MiB.
+
+The saved legacy-policy after-state remains byte-exact, and its complete observer summary equals the retained reference structurally. The registered-geometry 480 Hz saved energy also matches its earlier reference exactly. All 300 selected energy and inventory records match the earlier registered-geometry trajectory exactly. Full numerical trajectory hashes were not measured.
+
+Geometry counters remain scoped to admitted plain registered convex queries. Other shape/normal-constraint manifolds, clustered solver geometry, current contact-frame transport and persistent friction history are not thereby qualified. Their counts and all per-run residuals are retained in the receipt; the maximum history reassociation remains a diagnostic, not a material-friction certificate.
+
+Candidate encode/admission probes still refuse unsupported numerical policies or the diagnostic material-anchor flag. No candidate boundary file is written, and no saved continuation is claimed. Loaded retention, physical refinement, complete ownership and native throughput remain adoption gates. Wet/cohesive soil, continuous activation, pads, shaker decks, sluice buildup, settling/recirculation and sustained gameplay remain open under Stages 2–6.
+
+Validation: 60 ordinary audit-library tests pass, with 18 explicit diagnostics ignored there; all nine selected saved/trajectory diagnostics execute separately, followed by three replays verifying the corrected micro-limit labels and exact baseline. The original detailed micro reports inherited the helper's macro-limit label; the corrected reports use 0.0025 J and retain identical work/physical evidence. Macro/micro counters in the original cadence summaries were already correct. All 23 default-library tests, scoped strict Clippy, package formatting and whitespace checks pass. The first compile exposed a diagnostic vector-version mismatch, corrected before these checks. A full-workspace formatter check also reported existing unrelated formatting differences; only the changed test files and mining-sim package were formatted/qualified. No GPU, native animation, manual gameplay or real-time benchmark was run in this physics stage.
+
+One heavy job, compiler worker and test worker ran at a time. The signed installed rendering app, original dirty checkout, input boundaries and user stash remain unchanged. The [machine-readable receipt](../playtests/2026-10-25-contact-refresh-cadence.json) records source/output hashes and bounded runner results.
