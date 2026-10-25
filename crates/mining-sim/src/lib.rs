@@ -16,6 +16,7 @@ pub mod sluice;
 pub mod slurry;
 pub mod soil;
 mod soil_contacts;
+pub mod soil_response;
 pub mod soil_water;
 pub mod storage;
 pub mod surface_bed;
