@@ -7,21 +7,85 @@ struct Screen { @builtin(position) position: vec4<f32> };
 @group(0) @binding(3) var density_near:texture_2d<f32>;
 @group(0) @binding(4) var density_far:texture_2d<f32>;
 const PROFILE_DEPTHS:array<f32,8>=array(0.,0.002,0.005,0.009,0.015,0.023,0.035,0.051);
+// Nonuniform C1 profile interpolation keeps a travelling interface and its
+// dilute maximum between probes. Linear crossings round sparse crests; an
+// argmax over the eight sample indices jumps by up to 16 mm between frames.
+fn profile_tangent(d:array<f32,8>,i:u32)->f32 {
+    let k=clamp(i,1u,6u);
+    let left=PROFILE_DEPTHS[k]-PROFILE_DEPTHS[k-1u];
+    let right=PROFILE_DEPTHS[k+1u]-PROFILE_DEPTHS[k];
+    let dl=(d[k]-d[k-1u])/left;let dr=(d[k+1u]-d[k])/right;
+    // Zero samples are compact-support boundaries, not a curved continuation
+    // of a positive ramp. Do not let their clipping bend an affine crossing.
+    if d[i]<=0. {return 0.;}
+    if i>0u && i<7u {
+        if d[k-1u]<=0. && d[k+1u]<=0. {return 0.;}
+        if d[k-1u]<=0. {return dr;}
+        if d[k+1u]<=0. {return dl;}
+    }
+    if i==0u && d[2]<=0. {return dl;}
+    if i==7u && d[5]<=0. {return dr;}
+    if i==0u {return dl-left*(dr-dl)/(left+right);}
+    if i==7u {return dr+right*(dr-dl)/(left+right);}
+    return (right*dl+left*dr)/(left+right);
+}
+fn profile_value(c:vec4<f32>,t:f32)->f32 {return ((c.x*t+c.y)*t+c.z)*t+c.w;}
 fn shared_surface_depth(raw:vec2<f32>,near:vec4<f32>,far:vec4<f32>)->f32 {
     if raw.x<=0. || raw.y>= -0.5 {return raw.x;}
     let density=array(near.x,near.y,near.z,near.w,far.x,far.y,far.z,far.w);
     let iso=0.5;
-    var peak=0.;var peak_depth=0.;
-    for(var i=0u;i<8u;i++) {
-        if density[i]>=iso {
-            if i==0u {return raw.x;}
-            let t=clamp((iso-density[i-1u])/max(density[i]-density[i-1u],0.000001),0.,1.);
-            return raw.x+mix(PROFILE_DEPTHS[i-1u],PROFILE_DEPTHS[i],t)*max(-raw.y,1.);
+    if density[0]>=iso {return raw.x;}
+    var peak=max(density[0],0.);var peak_depth=0.;
+    var m0=profile_tangent(density,0u);
+    for(var i=0u;i<7u;i++) {
+        let h=PROFILE_DEPTHS[i+1u]-PROFILE_DEPTHS[i];
+        let m1=profile_tangent(density,i+1u);
+        let c=vec4(2.*density[i]-2.*density[i+1u]+h*(m0+m1),
+                   -3.*density[i]+3.*density[i+1u]-h*(2.*m0+m1),
+                   h*m0,density[i]);
+        // Include interior maxima: a crest grazing the level set can reach it
+        // between two probes that are both below half density. The first
+        // crossing stays inside the original bounded 51 mm search interval.
+        var maximum=max(density[i+1u],0.);var maximum_t=1.;var refined_peak=false;
+        var roots=vec2(-1.);
+        if abs(c.x)<0.0000001 {
+            if abs(c.y)>0.0000001 {roots.x = -c.z/(2.*c.y);}
+        } else {
+            let discriminant=c.y*c.y-3.*c.x*c.z;
+            if discriminant>=0. {
+                let root=sqrt(discriminant);
+                roots=vec2(-c.y-root,-c.y+root)/(3.*c.x);
+            }
         }
-        if density[i]>peak {peak=density[i];peak_depth=PROFILE_DEPTHS[i];}
+        for(var j=0u;j<2u;j++) {
+            let t=roots[j];
+            if t>0. && t<1. {
+                let value=profile_value(c,t);
+                // Height differences near a smooth maximum can round to zero.
+                // A stationary maximum still owns its sub-probe position.
+                let stationary=6.*c.x*t+2.*c.y<0.;
+                if value>maximum || (stationary && value>=maximum-0.0000001 && m1<=0.) {
+                    maximum=max(value,maximum);maximum_t=t;refined_peak=stationary;
+                }
+            }
+        }
+        if maximum>=iso {
+            var lo=0.;var hi=maximum_t;
+            // Fourteen bisections bound root discretization to 0.5 micrometres in
+            // normal profile coordinates; interpolation error is separate.
+            for(var step=0u;step<14u;step++) {
+                let t=(lo+hi)*0.5;
+                if profile_value(c,t)<iso {lo=t;} else {hi=t;}
+            }
+            return raw.x+(PROFILE_DEPTHS[i]+h*(lo+hi)*0.5)*max(-raw.y,1.);
+        }
+        if maximum>peak || (refined_peak && maximum>=peak-0.0000001) {
+            peak=max(peak,maximum);peak_depth=PROFILE_DEPTHS[i]+h*maximum_t;
+        }
+        m0=m1;
     }
-    // Retain a dilute film continuously as peak density approaches the level
-    // set. Opaque geometry already clips every probe; never sample below it.
+    // The interpolated maximum travels continuously within each profile
+    // interval. Empty columns stay empty; detached outlet tags bypass this.
     return raw.x+peak_depth*max(-raw.y,1.)*smoothstep(0.05,iso,peak);
 }
 // Keep depth and the two additive optical moments in one reconstruction.

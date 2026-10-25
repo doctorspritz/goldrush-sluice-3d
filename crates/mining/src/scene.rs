@@ -280,6 +280,16 @@ pub fn setup(
     commands.insert_resource(p);
 }
 
+// A thin film wets soil before it is 15 mm deep. Quantize only this visual
+// albedo coefficient, so negligible water changes do not upload whole chunks.
+fn ground_wetness_code(depth: f32) -> u32 {
+    let t = (depth / 0.003).clamp(0., 1.);
+    (t * t * (3. - 2. * t) * 63.).round() as u32
+}
+fn ground_wet_tone(code: u32) -> f32 {
+    1. - 0.33 * code as f32 / 63.
+}
+
 pub fn terrain_mesh(site: &Site, x0: usize, z0: usize, subdivisions: usize) -> Mesh {
     let nx = 16.min(WIDTH - 1 - x0);
     let nz = 16.min(WIDTH - 1 - z0);
@@ -302,7 +312,7 @@ pub fn terrain_mesh(site: &Site, x0: usize, z0: usize, subdivisions: usize) -> M
             .normalize();
             source_normal.push(normal.to_array());
             let i = site.world.idx(ix, iz);
-            let wet = site.world.water_depth(ix, iz) > 0.015;
+            let wet = ground_wet_tone(ground_wetness_code(site.world.water_depth(ix, iz)));
             let mut c = if site.world.terrain_sediment[i] > 0.015 {
                 [0.43, 0.34, 0.22, 1.0]
             } else if site.world.overburden_thickness[i] > 0.025 {
@@ -314,12 +324,15 @@ pub fn terrain_mesh(site: &Site, x0: usize, z0: usize, subdivisions: usize) -> M
             };
             let noise = 0.88 + hash(ix as u32, iz as u32) * 0.22;
             for v in &mut c[..3] {
-                *v *= noise * if wet { 0.67 } else { 1.0 };
+                *v *= noise;
             }
             if site.world.overburden_thickness[i] > 0.025
                 && !((11.0..25.0).contains(&px) && (12.0..26.0).contains(&pz))
             {
                 c = [0.20 * noise, 0.29 * noise, 0.15 * noise, 1.0];
+            }
+            for value in &mut c[..3] {
+                *value *= wet;
             }
             source_color.push(Color::srgb(c[0], c[1], c[2]).to_linear().to_f32_array());
         }
@@ -1014,10 +1027,10 @@ fn terrain_source(site: &Site, x0: usize, z0: usize) -> Vec<[u32; 2]> {
     for z in z0.saturating_sub(1)..=(z0 + 17).min(WIDTH - 1) {
         for x in x0.saturating_sub(1)..=(x0 + 17).min(WIDTH - 1) {
             let i = site.world.idx(x, z);
-            let flags = u32::from(site.world.water_depth(x, z) > 0.015)
-                | (u32::from(site.world.terrain_sediment[i] > 0.015) << 1)
-                | (u32::from(site.world.overburden_thickness[i] > 0.025) << 2)
-                | (u32::from(site.world.paydirt_thickness[i] > 0.01) << 3);
+            let flags = ground_wetness_code(site.world.water_depth(x, z))
+                | (u32::from(site.world.terrain_sediment[i] > 0.015) << 6)
+                | (u32::from(site.world.overburden_thickness[i] > 0.025) << 7)
+                | (u32::from(site.world.paydirt_thickness[i] > 0.01) << 8);
             key.push([site.world.ground_height(x, z).to_bits(), flags]);
         }
     }
@@ -1397,6 +1410,30 @@ pub fn guides(game: Res<Game>, mut gizmos: Gizmos) {
 mod terrain_detail_tests {
     use super::*;
     use bevy::mesh::VertexAttributeValues;
+    #[test]
+    fn shallow_wetting_has_no_fifteen_millimetre_colour_jump_and_updates_mesh_key() {
+        assert_eq!(ground_wetness_code(0.), 0);
+        assert_eq!(ground_wetness_code(0.003), 63);
+        assert_eq!(ground_wetness_code(0.014999), ground_wetness_code(0.015001));
+        let mut previous = 1.;
+        for i in 0..=600 {
+            let tone = ground_wet_tone(ground_wetness_code(i as f32 * 0.000005));
+            assert!(tone <= previous && previous - tone < 0.006);
+            previous = tone;
+        }
+        let mut site = Site::new();
+        let i = site.world.idx(64, 64);
+        let ground = site.world.ground_height(64, 64);
+        site.world.water_surface[i] = ground;
+        let dry = terrain_source(&site, 64, 64);
+        site.world.water_surface[i] = ground + 0.0015;
+        assert_ne!(dry, terrain_source(&site, 64, 64));
+        // Display sampling must not alter the physical site.
+        let before = serde_json::to_string(&site.snapshot()).unwrap();
+        let _ = terrain_mesh(&site, 64, 64, 4);
+        assert_eq!(before, serde_json::to_string(&site.snapshot()).unwrap());
+    }
+
     #[test]
     fn fine_chunk_edges_match_coarse_neighbours_without_cracks() {
         let site = Site::new();

@@ -255,16 +255,22 @@ fn shared_density_interface_crossings_are_bounded_without_moving_spray_or_empty_
 @compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
  // An independent linear ramp reaches half density at 19 mm. The old
  // two-probe 12 mm interval cannot bracket this connected interface.
- var near=vec4(0.);
- var far=vec4(0.1,0.9,1.,1.);
+ var profile:array<f32,8>;
+ for(var i=0u;i<8u;i++) {profile[i]=max(0.5+(PROFILE_DEPTHS[i]-0.019)*50.,0.);}
+ var near=vec4(profile[0],profile[1],profile[2],profile[3]);
+ var far=vec4(profile[4],profile[5],profile[6],profile[7]);
  // Independent near/deep ramps, two layers (choose the first), vacuum,
  // an already submerged front, and a crossing at the last interval.
  switch p.x {
-  case 0u: {near=vec4(0.,0.1,0.4,0.8);}
+  case 0u: {
+   for(var i=0u;i<8u;i++) {profile[i]=max(0.5+(PROFILE_DEPTHS[i]-0.006)*80.,0.);}
+   near=vec4(profile[0],profile[1],profile[2],profile[3]);
+   far=vec4(profile[4],profile[5],profile[6],profile[7]);
+  }
   case 2u: {near=vec4(0.,0.1,0.6,0.);}
-  case 3u: {far=vec4(0.);}
+  case 3u: {near=vec4(0.);far=vec4(0.);}
   case 4u: {near=vec4(0.8);}
-  case 5u: {far=vec4(0.,0.,0.,1.);}
+  case 5u: {near=vec4(0.);far=vec4(0.,0.,0.,1.);}
   default: {}
  }
  result[p.y*8u+p.x]=vec4(
@@ -290,7 +296,20 @@ fn shared_density_interface_crossings_are_bounded_without_moving_spray_or_empty_
     let mut previous: Option<f32> = None;
     let expected = [3.006, 3.019, 3.0044, 3., 3., 3.043, 3.019, 3.019];
     for (i, value) in values.as_chunks::<4>().0.iter().enumerate() {
-        assert!((value[0] - expected[i % 8]).abs() < 1e-6, "{value:?}");
+        match i % 8 {
+            2 => assert!(
+                (3.002..=3.005).contains(&value[0]),
+                "first layer: {value:?}"
+            ),
+            5 => assert!(
+                (3.035..=3.051).contains(&value[0]),
+                "last bracket: {value:?}"
+            ),
+            _ => assert!(
+                (value[0] - expected[i % 8]).abs() < 1e-6,
+                "affine crossing: {value:?}"
+            ),
+        }
         assert_eq!(value[1..3], [3., 0.]);
         assert!((3. ..=3.051001).contains(&value[3]));
         if let Some(last) = previous {
@@ -2866,4 +2885,117 @@ fn legacy_wave(q:vec2<f32>,k:vec2<f32>,dx:vec2<f32>,dy:vec2<f32>)->vec2<f32> {
     .sqrt();
     assert!(legacy_error > 0.35, "legacy over-filter was not reproduced");
     eprintln!("Resolved pixel-integrated wave: expected={integral}, legacy_error={legacy_error}");
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn curved_density_profiles_retain_crests_and_dilute_peaks_travel_between_probes() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 256);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_blur.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+// Actual previous linear/argmax policy, retained as a negative control.
+fn legacy_profile(d:array<f32,8>)->f32 {
+ var peak=0.;var depth=0.;
+ for(var i=0u;i<8u;i++) {
+  if d[i]>=0.5 {
+   if i==0u {return 0.;}
+   let t=(0.5-d[i-1u])/max(d[i]-d[i-1u],0.000001);
+   return mix(PROFILE_DEPTHS[i-1u],PROFILE_DEPTHS[i],t);
+  }
+  if d[i]>peak {peak=d[i];depth=PROFILE_DEPTHS[i];}
+ }
+ return depth*smoothstep(0.05,0.5,peak);
+}
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let i=p.y*16u+p.x;
+ let radii=array(0.018,0.024,0.030,0.040,0.050,0.060,0.080);
+ let amplitudes=array(0.55,0.6,0.75,1.,1.5,2.,3.);
+ let radius=radii[min(i/7u,6u)];let amplitude=amplitudes[i%7u];
+ var d:array<f32,8>;
+ for(var k=0u;k<8u;k++) {
+  let q=(PROFILE_DEPTHS[k]-radius)/radius;
+  let support=max(1.-q*q,0.);d[k]=amplitude*support*support*support;
+ }
+ let near=vec4(d[0],d[1],d[2],d[3]);let far=vec4(d[4],d[5],d[6],d[7]);
+ let crossing=shared_surface_depth(vec2(3.,-1.),near,far)-3.;
+ let old=legacy_profile(d);
+ // A translating, positive quadratic density peak has an independent exact
+ // maximum. This exposes a probe-index jump without inventing particle motion.
+ let centre=0.014+f32(i)*0.018/255.;
+ for(var k=0u;k<8u;k++) {d[k]=0.24-50.*pow(PROFILE_DEPTHS[k]-centre,2.);}
+ let moving=shared_surface_depth(vec2(3.,-1.),vec4(d[0],d[1],d[2],d[3]),vec4(d[4],d[5],d[6],d[7]))-3.;
+ result[i]=vec4(crossing,old,moving,legacy_profile(d));
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [2, 2],
+    );
+    let radii = [0.018_f64, 0.024, 0.030, 0.040, 0.050, 0.060, 0.080];
+    let amplitudes = [0.55_f64, 0.6, 0.75, 1., 1.5, 2., 3.];
+    let mut error = 0_f64;
+    let mut legacy_error = 0_f64;
+    let mut motion_jump = 0_f32;
+    let mut legacy_jump = 0_f32;
+    for i in 0..256 {
+        let v = &values[i * 4..i * 4 + 4];
+        if i < 49 {
+            // Exact first half-density crossing of a normalized poly6 ray.
+            let exact = radii[i / 7] * (1. - (1. - (0.5 / amplitudes[i % 7]).cbrt()).sqrt());
+            if exact <= 0.051 {
+                error = error.max((v[0] as f64 - exact).abs());
+                legacy_error = legacy_error.max((v[1] as f64 - exact).abs());
+            } else {
+                // An interface beyond the bounded search is unobserved.
+                // Require a bounded fallback, never claim exact reconstruction.
+                assert!((0. ..=0.051001).contains(&v[0]));
+            }
+        }
+        let centre = 0.014 + i as f64 * 0.018 / 255.;
+        let t = (0.24_f64 - 0.05) / 0.45;
+        let exact = centre * t * t * (3. - 2. * t);
+        assert!(
+            (v[2] as f64 - exact).abs() < 0.000002,
+            "dilute peak at {i}: {v:?}"
+        );
+        if i > 0 {
+            motion_jump = motion_jump.max((v[2] - values[(i - 1) * 4 + 2]).abs());
+            legacy_jump = legacy_jump.max((v[3] - values[(i - 1) * 4 + 3]).abs());
+        }
+    }
+    println!("poly6 profile max error: old={legacy_error}m new={error}m; dilute step: old={legacy_jump}m new={motion_jump}m");
+    assert!(
+        legacy_error > 0.008,
+        "negative control missed rounded crossing"
+    );
+    assert!(
+        error < 0.0015,
+        "curved interface interpolation error={error}"
+    );
+    assert!(
+        legacy_jump > 0.002,
+        "negative control missed probe-index jump"
+    );
+    assert!(
+        motion_jump < 0.00004,
+        "dilute interface jumped={motion_jump}"
+    );
 }
