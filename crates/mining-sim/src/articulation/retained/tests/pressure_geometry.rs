@@ -9,6 +9,7 @@ use glam::{DQuat, DVec3};
 use std::collections::{BTreeMap, HashMap};
 mod qualification;
 mod rigid_shell;
+mod terrain_layer;
 fn vector(v: r::Vector) -> DVec3 {
     DVec3::from_array(v.to_array().map(f64::from))
 }

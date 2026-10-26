@@ -12,14 +12,19 @@ use glam::DVec3;
 mod geometry;
 mod poly;
 mod rigid;
+mod terrain;
 pub use geometry::{PressureBody, RegisteredSolid};
 use poly::{Affine, Moments, Poly, WorldCell};
+pub use terrain::RegisteredTerrainLayer;
 
 /// A compliant or rigid finite opposing solid; never an unbounded face plane.
 pub enum Opposing<'a> {
     Rigid(&'a RegisteredSolid),
     /// Complete closed parts of ONE rigid body. Overlapping steel is integrated once.
     RigidCompound(&'a [RegisteredSolid]),
+    /// Finite erodible support envelope between matching registered surfaces.
+    /// Bedrock beneath this layer is a separate contact domain.
+    TerrainLayer(&'a RegisteredTerrainLayer),
     Compliant(&'a PressureBody),
 }
 #[derive(Default, Debug)]
@@ -118,9 +123,16 @@ pub fn evaluate(
     bm.validate()?;
     let delta = bm.center_of_mass_m - am.center_of_mass_m;
     let ac = cells(a, am, DVec3::ZERO)?;
-    let rigid = matches!(b, Opposing::Rigid(_) | Opposing::RigidCompound(_));
-    let compound = matches!(b, Opposing::RigidCompound(_));
+    let rigid = !matches!(b, Opposing::Compliant(_));
+    let compound = matches!(b, Opposing::RigidCompound(_) | Opposing::TerrainLayer(_));
+    let terrain_total = match &b {
+        Opposing::TerrainLayer(layer) => Some(layer.tetrahedra()),
+        _ => None,
+    };
     let bc = match b {
+        Opposing::TerrainLayer(layer) => {
+            layer.cells(&ac, bm, delta, 1_048_576 / ac.len().max(1))?
+        }
         Opposing::Compliant(b) => cells(b, bm, delta)?,
         Opposing::Rigid(b) => b
             .tets
@@ -157,6 +169,9 @@ pub fn evaluate(
     } else {
         Response::default()
     };
+    if let Some(total) = terrain_total {
+        result.union_input_tetrahedra = total;
+    }
     if !compound {
         for a in &ac {
             for b in &bc {

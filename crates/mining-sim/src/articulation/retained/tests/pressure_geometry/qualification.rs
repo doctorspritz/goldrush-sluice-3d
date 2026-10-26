@@ -96,6 +96,7 @@ fn opponent<'a>(b: &Opposing<'a>) -> Opposing<'a> {
         Opposing::Compliant(b) => Opposing::Compliant(b),
         Opposing::Rigid(b) => Opposing::Rigid(b),
         Opposing::RigidCompound(b) => Opposing::RigidCompound(b),
+        Opposing::TerrainLayer(b) => Opposing::TerrainLayer(b),
     }
 }
 pub(super) type Candidates = BTreeMap<&'static str, Vec<(f64, [r::ColliderHandle; 2])>>;
