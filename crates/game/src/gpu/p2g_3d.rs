@@ -90,6 +90,40 @@ pub struct GpuP2g3D {
     scatter_workgroup_size: u32,
 }
 
+/// Fill wgpu's upload staging directly, without an intermediate padded vector.
+/// The view drops before returning, so the caller's next submit sees the write.
+/// Byte copies avoid assuming an alignment for the staging view.
+pub(super) fn write_particle_plane(
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    first: usize,
+    count: usize,
+    mut value: impl FnMut(usize) -> [f32; 4],
+) {
+    if count == 0 {
+        return;
+    }
+    let offset = u64::try_from(first)
+        .ok()
+        .and_then(|n| n.checked_mul(16))
+        .expect("particle upload offset overflow");
+    let bytes = u64::try_from(count)
+        .ok()
+        .and_then(|n| n.checked_mul(16))
+        .and_then(wgpu::BufferSize::new)
+        .expect("particle upload size overflow");
+    if let Some(mut staging) = queue.write_buffer_with(buffer, offset, bytes) {
+        for (i, slot) in staging.chunks_exact_mut(16).enumerate() {
+            slot.copy_from_slice(bytemuck::bytes_of(&value(i)));
+        }
+    } else {
+        // Retain the existing upload path if direct staging is unavailable.
+        // A failed staging request must never silently skip physical input.
+        let packed: Vec<_> = (0..count).map(value).collect();
+        queue.write_buffer(buffer, offset, bytemuck::cast_slice(&packed));
+    }
+}
+
 impl GpuP2g3D {
     /// Create a new GPU P2G 3D solver
     ///
@@ -758,60 +792,39 @@ impl GpuP2g3D {
         let particle_count = positions.len().min(self.max_particles) as u32;
         let density_count = densities.len().min(self.max_particles);
 
-        // Convert to padded vec4 format for GPU
-        let positions_padded: Vec<[f32; 4]> = positions
-            .iter()
-            .take(particle_count as usize)
-            .enumerate()
-            .map(|(i, p)| {
-                [
-                    p.x,
-                    p.y,
-                    p.z,
-                    self.volume_weights.get(i).copied().unwrap_or(1.0),
-                ]
-            })
-            .collect();
-
-        let velocities_padded: Vec<[f32; 4]> = velocities
-            .iter()
-            .take(particle_count as usize)
-            .map(|v| [v.x, v.y, v.z, 0.0])
-            .collect();
-
-        // Extract C matrix columns
-        let c_col0: Vec<[f32; 4]> = c_matrices
-            .iter()
-            .take(particle_count as usize)
-            .map(|c| [c.x_axis.x, c.x_axis.y, c.x_axis.z, 0.0])
-            .collect();
-
-        let c_col1: Vec<[f32; 4]> = c_matrices
-            .iter()
-            .take(particle_count as usize)
-            .map(|c| [c.y_axis.x, c.y_axis.y, c.y_axis.z, 0.0])
-            .collect();
-
-        let c_col2: Vec<[f32; 4]> = c_matrices
-            .iter()
-            .take(particle_count as usize)
-            .map(|c| [c.z_axis.x, c.z_axis.y, c.z_axis.z, 0.0])
-            .collect();
-
-        // Upload to GPU
-        queue.write_buffer(
-            &self.positions_buffer,
-            0,
-            bytemuck::cast_slice(&positions_padded),
-        );
-        queue.write_buffer(
+        let n = particle_count as usize;
+        write_particle_plane(queue, &self.positions_buffer, 0, n, |i| {
+            let p = positions[i];
+            [
+                p.x,
+                p.y,
+                p.z,
+                self.volume_weights.get(i).copied().unwrap_or(1.0),
+            ]
+        });
+        write_particle_plane(
+            queue,
             &self.velocities_buffer,
             0,
-            bytemuck::cast_slice(&velocities_padded),
+            velocities.len().min(n),
+            |i| {
+                let v = velocities[i];
+                [v.x, v.y, v.z, 0.0]
+            },
         );
-        queue.write_buffer(&self.c_col0_buffer, 0, bytemuck::cast_slice(&c_col0));
-        queue.write_buffer(&self.c_col1_buffer, 0, bytemuck::cast_slice(&c_col1));
-        queue.write_buffer(&self.c_col2_buffer, 0, bytemuck::cast_slice(&c_col2));
+        for (axis, buffer) in [
+            &self.c_col0_buffer,
+            &self.c_col1_buffer,
+            &self.c_col2_buffer,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_particle_plane(queue, buffer, 0, c_matrices.len().min(n), |i| {
+                let c = c_matrices[i].col(axis);
+                [c.x, c.y, c.z, 0.0]
+            });
+        }
         if density_count > 0 {
             queue.write_buffer(
                 &self.densities_buffer,

@@ -3391,10 +3391,13 @@ impl GpuFlip3D {
         if positions.is_empty() {
             return;
         }
-        let packed: Vec<[f32; 4]> = positions
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
+        super::p2g_3d::write_particle_plane(
+            queue,
+            &self.positions_buffer,
+            first,
+            positions.len(),
+            |i| {
+                let p = positions[i];
                 [
                     p.x,
                     p.y,
@@ -3405,18 +3408,17 @@ impl GpuFlip3D {
                         .copied()
                         .unwrap_or(1.0),
                 ]
-            })
-            .collect();
-        queue.write_buffer(
-            &self.positions_buffer,
-            (first * 16) as u64,
-            bytemuck::cast_slice(&packed),
+            },
         );
-        let packed: Vec<[f32; 4]> = velocities.iter().map(|p| [p.x, p.y, p.z, 0.0]).collect();
-        queue.write_buffer(
+        super::p2g_3d::write_particle_plane(
+            queue,
             &self.velocities_buffer,
-            (first * 16) as u64,
-            bytemuck::cast_slice(&packed),
+            first,
+            velocities.len(),
+            |i| {
+                let v = velocities[i];
+                [v.x, v.y, v.z, 0.0]
+            },
         );
         for (axis, buffer) in [
             self.c_col0_buffer.as_ref(),
@@ -3426,14 +3428,10 @@ impl GpuFlip3D {
         .into_iter()
         .enumerate()
         {
-            let packed: Vec<[f32; 4]> = affine
-                .iter()
-                .map(|c| {
-                    let p = [c.x_axis, c.y_axis, c.z_axis][axis];
-                    [p.x, p.y, p.z, 0.0]
-                })
-                .collect();
-            queue.write_buffer(buffer, (first * 16) as u64, bytemuck::cast_slice(&packed));
+            super::p2g_3d::write_particle_plane(queue, buffer, first, affine.len(), |i| {
+                let c = affine[i].col(axis);
+                [c.x, c.y, c.z, 0.0]
+            });
         }
     }
     fn schedule_readback_range(
