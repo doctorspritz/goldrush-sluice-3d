@@ -171,6 +171,11 @@ fn main() {
                     break;
                 }
             }
+            let pressure_residual = sim.measure_pressure_residual(&device, &queue).map(|r| {
+                json!({"fluid_cells":r.fluid_cells,"max_abs":r.max_abs,
+                    "rms":r.rms,"rhs_l2":r.rhs_l2,"relative_l2":r.relative_l2,
+                    "max_backward_error":r.max_backward_error})
+            });
             let max_speed = v.iter().map(|v| v.length()).fold(0f32, f32::max);
             let max_drift = p
                 .iter()
@@ -191,11 +196,14 @@ fn main() {
                                 .sum::<f64>())
                 })
                 .sum::<f64>();
-            let passed = error.is_none() && max_speed < 1e-3 && max_drift < 0.02 * h;
+            let passed = error.is_none()
+                && pressure_residual.is_ok()
+                && max_speed < 1e-3
+                && max_drift < 0.02 * h;
             let row = json!({"geometry":geometry,"uses_sdf":use_sdf,"excluded_seed_points":excluded_seed_points,"grid":n,"per_axis":per_axis,"hz":hz,"alpha":alpha,
                 "pressure_sweeps":pressure_iterations+sim.volume_iterations,"particles":p.len(),
                 "duration_s":steps as f64/hz as f64,"max_speed_mps":max_speed,"max_drift_m":max_drift,
-                "kinetic_energy_j":energy,"refusal":error,"passed":passed});
+                "kinetic_energy_j":energy,"pressure_residual":pressure_residual,"refusal":error,"passed":passed});
             println!("{row}");
             cases.push(row);
         }

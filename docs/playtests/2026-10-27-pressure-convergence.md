@@ -1,0 +1,32 @@
+# Conservative pressure convergence and remaining static-water instability
+
+The opt-in phase solver now uses a mixed-boundary relaxation estimate and updates pressure from its face-flux residual. At unchanged 120 total sweeps, the fine 5 mm / 240 Hz exterior pressure-only column drifts 0.01930 mm over 0.5 physical seconds, down from 1.76823 mm; source-enabled drift falls 0.11189 → 0.00587 mm. The complete 96-case gravity matrix improves 44 → 62 passing cases. No previously passing gravity case becomes a failure. Some already-failing cases have larger drift, so this is an aggregate improvement rather than uniform physical convergence. Sustained and SDF/obstacle equilibrium still fails, so conservative water remains opt-in and the signed playable app is preserved.
+
+| Unchanged physical gate: speed < 1 mm/s and drift < 0.02 cell | Before | Final |
+|---|---:|---:|
+| exterior-short | 11/12 | 12/12 |
+| exterior-long | 10/12 | 12/12 |
+| mask-short | 11/12 | 12/12 |
+| mask-long | 10/12 | 12/12 |
+| exterior-2s | 0/12 | 6/12 |
+| mask-2s | 2/12 | 8/12 |
+| sdf-short | 0/12 | 0/12 |
+| block-short | 0/12 | 0/12 |
+
+Short means 0.1 physical seconds; long means 0.5; 2s means 2 physical seconds. Every pair retains the same grid, particle count and spacing, timestep, pressure work, gravity, volume-source strengths, geometry and valid seed points. The example additionally refuses a failed residual measurement. No tolerance, force, support resolution, flip blend, particle population or timestep is relaxed.
+
+The previous largest-dimension estimate assumed a different rectangular mode. Weighted pressure now estimates closed-axis constant modes and cell-centred one-/two-open-end modes, with potential interior air distinguished from an ungrounded Neumann box. It remains a heuristic for nonuniform mobility and irregular geometry, bounded by the existing 1.95 relaxation ceiling. The direct update `p += omega*(b-Ap)/diagonal` accumulates face pressure differences, avoiding subtraction of absolute diagonal sums. Only the ready weighted-mobility branch uses it; ordinary pressure and zero-ready position repair retain the original update. No normal-step diagnostic buffer or pass is added. Primary numerical context: [Netlib SOR parameter selection](https://www.netlib.org/linalg/old_html_templates/subsubsection2.6.2.3.1.html).
+
+`GpuPressure3D::measure_residual` measures the actual stored `b-Ap`, including staggered variable mobility and air/solid/exterior boundaries. It creates its output, pipeline and readback only when requested, reports absolute/RMS/RHS-relative and componentwise backward errors, detects nonfinite values, and never mutates pressure or RHS. A nonzero residual against zero RHS has an undefined relative norm, rather than a zero/converged result. The full-step wrapper refuses measurement after diagnostic reprojection has restored an unmatched pressure/RHS pair. Values use the solver's projection scaling, not pascals.
+
+An independent CPU face-flux oracle verifies 20 ordinary/weighted/ready/boundary combinations, read-only behaviour, zero sources, NaNs and an incompatible isolated cell. 32 manufactured configurations cover rectangular/cubic shapes, every exterior face, closed/open boundaries, 20:1 positive mobility contrast and a free surface/internal obstacle. The same 64 criteria at 120/480 sweeps improve 43/64 → 64/64. An initial estimate failed 2 criteria and was corrected for the cell-centred half-wave and interior-air grounding; its failure receipt remains. The 480-sweep mean RMS residual then falls 7.1365e-9 → 1.8498e-9 with the face-residual update. This is measured on those fixtures, not a universal accuracy bound.
+
+The longer diagnostic is deliberately retained as a failure. At 2 seconds, fine exterior source-enabled water still reaches 0.06397 m/s and 15.864 mm drift with 120 sweeps. At 480 sweeps the masked source-enabled case drifts 1.209 mm despite a stored equation relative residual of 1.43e-5. Static SDF/obstacle cases also move despite small high-sweep residuals. A converged pressure equation does not qualify the complete particle/constraint/boundary step. The next investigation is tracked by `menace-49t`; hydrostatic, phase-solid, dense-bed, calibrated riffle, energy and real-time gates remain open.
+
+Two actual shader-layout tests and 24 explicit GPU test functions pass across residual/convergence, phase exchange, volume response, affine momentum/energy, refusal handling and all five original/conservative machine/soil/save pipelines. Maintained-package strict Clippy/formatting pass. Changed engine regions are formatted and free of new Clippy warnings; 98 pre-existing game-library warnings remain. The layout fixture now assembles the production pressure/mobility shader pair and verifies the 32-byte ABI including the new phase-relaxation field.
+
+A 120-tick ordinary replay plus 12 warmup ticks produces equal complete physical saves at 92.600004829 s, with 116,139 water particles and 4,430 grains. Only the three keyed contact-history arrays are sorted; all other fields, ordering, floats and signed zeros are retained. Canonical SHA256 is `e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d` in both versions. Different raw hashes reflect history-array serialization order. This proves that replay's state compatibility, not full physical calibration.
+
+No fresh native FPS, motion or throughput qualification is claimed. Diagnostic wall times include optional residual work and the baseline began while the user's game was open. The two short ordinary headless probes also do not establish a speedup. The installed signed app remains the verified rendering build from 9de5567, SHA256 `94c26a945f82ef3db346e9e3bf9c30df5db36400ef1cea2f4e3b867bb6648180`. Its renderer, original dirty checkout and user stash are preserved.
+
+Heavy jobs ran sequentially, with one compiler/test job and one test thread. The user's open game was left alone; later process checks no longer listed it. Scoped cleanup reports zero task-owned browser/Node/game/compiler/encoder jobs, and no new panic or WindowServer report appeared. Six historical baseline filenames were no longer listed at final verification; none of this task's commands deleted diagnostic reports. Exact sources, immutable binaries, negative controls, full matrices, test commands, residuals and limitations are retained in the [receipt](2026-10-27-pressure-convergence.json) and its artifact directory. The full staged mining-game goal remains active.

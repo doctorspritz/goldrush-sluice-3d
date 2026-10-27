@@ -4761,6 +4761,20 @@ impl GpuFlip3D {
         staging.unmap();
     }
 
+    /// Opt-in residual of the stored pressure/RHS pair. Diagnostic reprojection
+    /// restores the first pressure but retains its second RHS, so that mode
+    /// cannot supply a matched pair for this measurement.
+    pub fn measure_pressure_residual(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<super::pressure_3d::PressureResidual3D, String> {
+        if self.pressure_diagnostics_enabled {
+            return Err("Stored pressure and RHS differ after diagnostic reprojection".into());
+        }
+        self.pressure.measure_residual(device, queue)
+    }
+
     pub fn read_physics_diagnostics(
         &self,
         device: &wgpu::Device,

@@ -17,7 +17,7 @@ struct Params {
     omega: f32,  // SOR relaxation factor (typically 1.5-1.9 for 3D)
     h_sq: f32,   // cell_size^2, needed to scale divergence in Poisson equation
     open_boundaries: u32,  // Bitmask: 1=-X, 2=+X, 4=-Y, 8=+Y, 16=-Z, 32=+Z
-    _pad0: u32,
+    phase_omega: f32, // weighted mixed-boundary convergence estimate
     _pad1: u32,
 }
 
@@ -387,25 +387,58 @@ fn neighbour_mask(id:vec3<u32>)->u32 {
 }
 fn solve_weighted(id:vec3<u32>,mask:u32) {
     let idx=get_index(id.x,id.y,id.z);
+    let p=pressure[idx];
     let nu=(params.width+1u)*params.height;
     let ui=id.z*nu+id.y*(params.width+1u)+id.x;
     let vi=id.z*params.width*(params.height+1u)+id.y*params.width+id.x;
     let wi=idx;
     // The same fixed neighbour summation order is used by every dispatch.
-    var terms=weighted_term(mask&3u,idx-1u,face_mobility(0u,ui));
-    terms+=weighted_term((mask>>2u)&3u,idx+1u,face_mobility(0u,ui+1u));
-    terms+=weighted_term((mask>>4u)&3u,idx-params.width,face_mobility(1u,vi));
-    terms+=weighted_term((mask>>6u)&3u,idx+params.width,face_mobility(1u,vi+params.width));
-    terms+=weighted_term((mask>>8u)&3u,idx-params.width*params.height,face_mobility(2u,wi));
-    terms+=weighted_term((mask>>10u)&3u,idx+params.width*params.height,face_mobility(2u,wi+params.width*params.height));
+    var terms=weighted_term(mask&3u,idx-1u,face_mobility(0u,ui),p);
+    terms+=weighted_term((mask>>2u)&3u,idx+1u,face_mobility(0u,ui+1u),p);
+    terms+=weighted_term((mask>>4u)&3u,idx-params.width,face_mobility(1u,vi),p);
+    terms+=weighted_term((mask>>6u)&3u,idx+params.width,face_mobility(1u,vi+params.width),p);
+    terms+=weighted_term((mask>>8u)&3u,idx-params.width*params.height,face_mobility(2u,wi),p);
+    terms+=weighted_term((mask>>10u)&3u,idx+params.width*params.height,face_mobility(2u,wi+params.width*params.height),p);
     let diagonal=terms.x;let sum=terms.y;
     if diagonal<=0. {pressure[idx]=0.;return;}
-    let new_p=(sum-divergence[idx]*params.h_sq)/diagonal;
-    pressure[idx]=mix(pressure[idx],new_p,params.omega);
+    // Correct the face-flux residual directly. Forming a new absolute
+    // pressure and subtracting it again magnifies roundoff on a large gauge
+    // or nearly hydrostatic column. The represented operator is unchanged.
+    let correction=(sum-divergence[idx]*params.h_sq)/diagonal;
+    pressure[idx]=p+params.phase_omega*correction;
 }
 
-fn weighted_term(code:u32,neighbour:u32,coefficient:f32)->vec2<f32> {
+fn weighted_term(code:u32,neighbour:u32,coefficient:f32,p:f32)->vec2<f32> {
     if code==2u {return vec2(0.);}
-    if code==1u {return vec2(coefficient,coefficient*pressure[neighbour]);}
-    return vec2(coefficient,0.);
+    if code==1u {return vec2(coefficient,coefficient*(pressure[neighbour]-p));}
+    return vec2(coefficient,-coefficient*p);
+}
+
+// Opt-in diagnostic entry only. Other entry points never bind or allocate it.
+@group(1) @binding(0) var<storage,read_write> residual_output:array<vec4<f32>>;
+@compute @workgroup_size(8,8,4)
+fn measure_residual(@builtin(global_invocation_id) id:vec3<u32>) {
+    if !is_valid(id.x,id.y,id.z) {return;}
+    let idx=get_index(id.x,id.y,id.z);
+    if cell_type[idx]!=CELL_FLUID {residual_output[idx]=vec4(0.);return;}
+    let mask=neighbour_mask(id);let p=pressure[idx];
+    let ui=id.z*(params.width+1u)*params.height+id.y*(params.width+1u)+id.x;
+    let vi=id.z*params.width*(params.height+1u)+id.y*params.width+id.x;
+    let neighbours=array(idx-1u,idx+1u,idx-params.width,idx+params.width,
+                          idx-params.width*params.height,idx+params.width*params.height);
+    let coefficients=array(face_mobility(0u,ui),face_mobility(0u,ui+1u),
+                           face_mobility(1u,vi),face_mobility(1u,vi+params.width),
+                           face_mobility(2u,idx),face_mobility(2u,idx+params.width*params.height));
+    var applied=0.;var scale=0.;
+    for(var face=0u;face<6u;face++) {
+        let code=(mask>>(2u*face))&3u;
+        if code==2u {continue;}
+        var q=0.;if code==1u {q=pressure[neighbours[face]];}
+        let a=coefficients[face];
+        // Face differences avoid cancellation from subtracting two large
+        // diagonal sums and agree with the pressure-gradient flux operator.
+        applied+=a*(p-q);scale+=abs(a)*(abs(p)+abs(q));
+    }
+    let b = -divergence[idx]*params.h_sq;
+    residual_output[idx]=vec4(b-applied,b,scale+abs(b),1.);
 }

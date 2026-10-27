@@ -35,8 +35,51 @@ struct PressureParams3D {
     omega: f32, // SOR relaxation factor (1.5-1.9)
     h_sq: f32,  // cell_size^2, for Poisson equation scaling
     open_boundaries: u32, // Bitmask: 1=-X, 2=+X, 4=-Y, 8=+Y, 16=-Z, 32=+Z
-    _pad0: u32,
+    phase_omega: f32,
     _pad1: u32,
+}
+
+/// Residual of the stored pressure equation, before any velocity correction.
+/// Diagnostics are opt-in and never add work or buffers to ordinary stepping.
+#[derive(Debug, Clone, Default)]
+pub struct PressureResidual3D {
+    pub fluid_cells: usize,
+    pub max_abs: f64,
+    pub rms: f64,
+    pub rhs_l2: f64,
+    /// Undefined if a zero RHS has a nonzero residual; this is not convergence.
+    pub relative_l2: Option<f64>,
+    pub max_backward_error: f64,
+}
+
+/// Rectangular mixed-boundary estimate for the weighted operator. This is a
+/// convergence heuristic, not an optimum for arbitrary mobility/air/solid masks.
+/// A closed axis admits a constant mode; a single open end has a half-wave.
+/// The fully closed case estimates the first nonconstant mode, retaining its
+/// pressure nullspace and exposing incompatible sources through the residual.
+fn phase_relaxation(shape: [u32; 3], open: u32, has_air: bool) -> f32 {
+    let mut theta = [0.; 3];
+    for (axis, angle) in theta.iter_mut().enumerate() {
+        let ends = ((open >> (2 * axis)) & 3).count_ones();
+        let n = shape[axis].max(1) as f32;
+        *angle = match ends {
+            0 => 0.,
+            // Neumann at the lower face and zero pressure at the next air
+            // centre: cos(theta*(j+1/2)), theta*(N+1/2)=pi/2.
+            1 => std::f32::consts::PI / (2. * n + 1.),
+            _ => std::f32::consts::PI / (n + 1.),
+        };
+    }
+    if open & 63 == 0 {
+        let axis = (0..3).max_by_key(|&axis| shape[axis]).unwrap();
+        let n = shape[axis].max(1) as f32;
+        // Air inside a closed exterior still grounds pressure. CPU air may
+        // later receive fluid on the GPU, so this remains a spectral estimate,
+        // not a claim that the host mask is current fluid occupancy.
+        theta[axis] = std::f32::consts::PI / if has_air { 2. * n + 1. } else { n };
+    }
+    let rho = theta.iter().map(|v| v.cos()).sum::<f32>() / 3.;
+    (2. / (1. + (1. - rho * rho).max(0.).sqrt())).clamp(1., 1.95)
 }
 
 /// GPU-based pressure solver for 3D FLIP
@@ -73,6 +116,8 @@ pub struct GpuPressure3D {
     // Bind groups
     divergence_bind_group: wgpu::BindGroup,
     pressure_bind_group: wgpu::BindGroup,
+    pressure_bind_group_layout: wgpu::BindGroupLayout,
+    variable_mobility_allowed: bool,
     gradient_bind_group: wgpu::BindGroup,
 }
 
@@ -142,6 +187,7 @@ impl GpuPressure3D {
             contents: &[0; 16],
             usage: wgpu::BufferUsages::STORAGE,
         });
+        let variable_mobility_allowed = mobility.is_some();
         let mobility_constants = std::collections::HashMap::from([(
             "VARIABLE_MOBILITY_ALLOWED".to_string(),
             f64::from(u32::from(mobility.is_some())),
@@ -777,8 +823,151 @@ impl GpuPressure3D {
             gradient_w_pipeline,
             divergence_bind_group,
             pressure_bind_group,
+            pressure_bind_group_layout,
+            variable_mobility_allowed,
             gradient_bind_group,
         }
+    }
+
+    /// Measure b-Ap for the actual stored equation, including variable MAC
+    /// mobility, solid Neumann faces and zero-pressure air/open boundaries.
+    /// Creates its pipeline and scratch/readback buffers only on this call.
+    /// It does not clear pressure, recompute divergence, or apply a gradient.
+    pub fn measure_residual(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<PressureResidual3D, String> {
+        let count = u64::from(self.width) * u64::from(self.height) * u64::from(self.depth);
+        if count == 0 {
+            return Ok(PressureResidual3D::default());
+        }
+        let bytes = count * 16;
+        let output = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pressure residual diagnostic"),
+            size: bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pressure residual readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Pressure residual output"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Pressure residual output"),
+            layout: &layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: output.as_entire_binding(),
+            }],
+        });
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Pressure residual operator"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("shaders/pressure_mobility.wgsl"),
+                    include_str!("shaders/pressure_3d.wgsl"),
+                )
+                .into(),
+            ),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Pressure residual operator"),
+            bind_group_layouts: &[&self.pressure_bind_group_layout, &layout],
+            push_constant_ranges: &[],
+        });
+        let constants = std::collections::HashMap::from([(
+            "VARIABLE_MOBILITY_ALLOWED".to_string(),
+            f64::from(u32::from(self.variable_mobility_allowed)),
+        )]);
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Measure stored pressure residual"),
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: Some("measure_residual"),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
+            cache: None,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &self.pressure_bind_group, &[]);
+            pass.set_bind_group(1, &group, &[]);
+            pass.dispatch_workgroups(
+                self.width.div_ceil(8),
+                self.height.div_ceil(8),
+                self.depth.div_ceil(4),
+            );
+        }
+        encoder.copy_buffer_to_buffer(&output, 0, &staging, 0, bytes);
+        queue.submit(Some(encoder.finish()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv()
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        let mut result = PressureResidual3D::default();
+        let mut r2 = 0.;
+        let mut b2 = 0.;
+        let mut nonfinite = false;
+        {
+            let data = staging.slice(..).get_mapped_range();
+            for row in bytemuck::cast_slice::<u8, [f32; 4]>(&data) {
+                if row[3] == 0. {
+                    continue;
+                }
+                result.fluid_cells += 1;
+                nonfinite |= row.iter().any(|x| !x.is_finite());
+                let r = f64::from(row[0]);
+                let b = f64::from(row[1]);
+                r2 += r * r;
+                b2 += b * b;
+                result.max_abs = result.max_abs.max(r.abs());
+                if row[2] > 0. {
+                    result.max_backward_error =
+                        result.max_backward_error.max(r.abs() / f64::from(row[2]));
+                }
+            }
+        }
+        staging.unmap();
+        if nonfinite {
+            return Err("Nonfinite stored pressure equation or residual".into());
+        }
+        result.rms = (r2 / result.fluid_cells.max(1) as f64).sqrt();
+        result.rhs_l2 = b2.sqrt();
+        result.relative_l2 = if b2 > 0. {
+            Some((r2 / b2).sqrt())
+        } else if r2 == 0. {
+            Some(0.)
+        } else {
+            None
+        };
+        Ok(result)
     }
 
     /// Upload cell types and initialize pressure to zero
@@ -809,8 +998,9 @@ impl GpuPressure3D {
         );
 
         // Upload pressure params
-        // NOTE: For 3D grids, optimal SOR omega is approximately:
-        //   omega = 2 / (1 + sin(π/N)) where N is largest grid dimension
+        // Retain the ordinary solver's existing largest-dimension estimate.
+        // The weighted operator has a separate mixed-boundary estimate; neither
+        // formula is a universal optimum for irregular variable coefficients.
         let max_dim = self.width.max(self.height).max(self.depth) as f32;
         let omega = 2.0 / (1.0 + (std::f32::consts::PI / max_dim).sin());
         let omega = omega.clamp(1.0, 1.95);
@@ -821,7 +1011,15 @@ impl GpuPressure3D {
             omega,
             h_sq: cell_size * cell_size, // Poisson equation needs dx²
             open_boundaries,
-            _pad0: 0,
+            phase_omega: if self.variable_mobility_allowed {
+                phase_relaxation(
+                    [self.width, self.height, self.depth],
+                    open_boundaries,
+                    cell_types.contains(&0),
+                )
+            } else {
+                omega
+            },
             _pad1: 0,
         };
         queue.write_buffer(
@@ -1077,8 +1275,21 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gpu/shaders").join(shader);
         let source = fs::read_to_string(&shader_path)
             .unwrap_or_else(|e| panic!("Failed to read {:?}: {e}", shader_path));
-        let module = naga::front::wgsl::parse_str(&source)
-            .unwrap_or_else(|e| panic!("Failed to parse {:?}: {}", shader_path, e.emit_to_string(&source)));
+        let source = if shader == "pressure_3d.wgsl" {
+            format!(
+                "{}\n{source}",
+                include_str!("shaders/pressure_mobility.wgsl")
+            )
+        } else {
+            source
+        };
+        let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| {
+            panic!(
+                "Failed to parse {:?}: {}",
+                shader_path,
+                e.emit_to_string(&source)
+            )
+        });
 
         let mut layouter = naga::proc::Layouter::default();
         let gctx = naga::proc::GlobalCtx {
@@ -1140,6 +1351,10 @@ mod tests {
         assert_eq!(
             *layout.offsets.get("h_sq").unwrap(),
             offset_of!(PressureParams3D, h_sq) as u32
+        );
+        assert_eq!(
+            *layout.offsets.get("phase_omega").unwrap(),
+            offset_of!(PressureParams3D, phase_omega) as u32
         );
     }
 }
