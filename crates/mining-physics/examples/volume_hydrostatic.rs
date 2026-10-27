@@ -3,6 +3,8 @@
 use game::gpu::flip_3d::GpuFlip3D;
 use glam::{Mat3, Vec3};
 use serde_json::json;
+#[path = "support/hydro_trace.rs"]
+mod hydro_trace;
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
@@ -36,6 +38,7 @@ fn main() {
         None,
     ))
     .unwrap();
+    let trace_settings = hydro_trace::Settings::from_args(&args);
     let mut cases = Vec::new();
     for alpha in [0., 1.] {
         for (n, per_axis, hz, pressure_iterations) in [
@@ -46,6 +49,9 @@ fn main() {
             (12, 2, 120, 440),
             (24, 2, 240, 440),
         ] {
+            if !trace_settings.selected(n, alpha, pressure_iterations, hz, per_axis) {
+                continue;
+            }
             let h = 0.12 / n as f32;
             let dt = 1. / hz as f32;
             let wall = if voxel { n / 12 } else { 0 };
@@ -116,7 +122,17 @@ fn main() {
             let sdf = use_sdf.then_some(distances.as_slice());
             let steps = (duration * hz as f32).round() as usize;
             let mut error = None;
+            let name =
+                format!("alpha-{alpha}-n{n}-p{per_axis}-hz{hz}-iterations{pressure_iterations}");
+            let mut trace = trace_settings.case(&name,h,per_axis,||json!({"geometry":geometry,"uses_sdf":use_sdf,"grid":n,"per_axis":per_axis,"hz":hz,"alpha":alpha,"pressure_iterations":pressure_iterations,"volume_iterations":sim.volume_iterations,"flip_ratio":sim.flip_ratio,"dt":dt,"gravity":-9.81,"cells":cells,"sdf":sdf}));
             for step in 0..steps {
+                let input = trace
+                    .as_ref()
+                    .and_then(|t| t.input(step, steps, &p, &v, &c));
+                if input.is_some() {
+                    sim.request_gather_velocity_readback(&device, p.len())
+                        .unwrap();
+                }
                 sim.step(
                     &device,
                     &queue,
@@ -132,6 +148,17 @@ fn main() {
                     0.,
                     pressure_iterations,
                 );
+                if let Some(input) = input {
+                    let gathered = sim.take_gather_velocities(&device).unwrap();
+                    trace.as_mut().unwrap().record(
+                        (step, dt),
+                        input,
+                        (&p, &v, &c),
+                        &gathered,
+                        &sim,
+                        (&device, &queue),
+                    );
+                }
                 if step == 0
                     && alpha == 0.
                     && n == 12
@@ -208,10 +235,11 @@ fn main() {
             cases.push(row);
         }
     }
+    assert!(!cases.is_empty(), "selection matched no physical fixture");
     let passed = cases.iter().all(|c| c["passed"] == true);
     std::fs::write(output, serde_json::to_vec_pretty(&json!({
         "protocol":"initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
-        "geometry":geometry,"uses_sdf":use_sdf,"requested_duration_s":duration,
+        "geometry":geometry,"uses_sdf":use_sdf,"requested_duration_s":duration,"selection":trace_settings.metadata(),
         "gate":"max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
         "passed":passed,"cases":cases
     })).unwrap()).unwrap();

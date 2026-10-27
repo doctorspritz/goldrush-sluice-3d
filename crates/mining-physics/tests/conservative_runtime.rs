@@ -971,3 +971,70 @@ fn voxel_wall_shear_preserves_tangent_momentum_without_creating_energy() {
         "wall transfer creates energy or loses tangent momentum"
     );
 }
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn gather_snapshot_preserves_complete_physical_continuation() {
+    let (device, queue) = device();
+    let initial = cloud();
+    let mut sims = [
+        configured(&device, initial.len()),
+        configured(&device, initial.len()),
+    ];
+    for sim in &mut sims {
+        sim.density_projection_enabled = false;
+        sim.set_particle_volumes(vec![1.; initial.len()]);
+    }
+    let mut p = [initial.clone(), initial.clone()];
+    let velocities: Vec<_> = initial
+        .iter()
+        .map(|p| Vec3::new(-0.2 * p.y, 0.2 * p.x, 0.01))
+        .collect();
+    let affine = Mat3::from_cols(Vec3::new(0., -0.2, 0.), Vec3::new(0.2, 0., 0.), Vec3::ZERO);
+    let mut v = [velocities.clone(), velocities];
+    let mut c = [vec![affine; initial.len()], vec![affine; initial.len()]];
+    let rho = vec![1.; initial.len()];
+    let cells = vec![0u32; 12 * 12 * 12];
+    assert!(sims[1]
+        .request_gather_velocity_readback(&device, 0)
+        .is_err());
+    for step in 0..4 {
+        if step == 1 {
+            sims[1]
+                .request_gather_velocity_readback(&device, initial.len())
+                .unwrap();
+            assert!(sims[1]
+                .request_gather_velocity_readback(&device, initial.len())
+                .is_err());
+        }
+        for i in 0..2 {
+            sims[i].step(
+                &device,
+                &queue,
+                &mut p[i],
+                &mut v[i],
+                &mut c[i],
+                &rho,
+                &cells,
+                None,
+                None,
+                1. / 240.,
+                0.,
+                0.,
+                0,
+            );
+            assert_eq!(sims[i].take_phase_error(), None);
+        }
+        if step == 1 {
+            let gathered = sims[1].take_gather_velocities(&device).unwrap();
+            assert_eq!(
+                gathered, v[1],
+                "contact-free post-step velocity differs from the captured gather field"
+            );
+            assert!(sims[1].take_gather_velocities(&device).is_err());
+        }
+        assert_eq!(p[0], p[1], "snapshot changed particle transport");
+        assert_eq!(v[0], v[1], "snapshot changed particle momentum");
+        assert_eq!(c[0], c[1], "snapshot changed the affine continuation");
+    }
+}

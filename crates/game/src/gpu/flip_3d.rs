@@ -36,11 +36,19 @@ pub struct PhysicsDiagnostics {
     pub avg_pressure: f32,
 }
 
+// One explicitly requested G2P snapshot, before advection/contact changes velocity.
+struct GatherVelocityReadback {
+    buffer: wgpu::Buffer,
+    count: u32,
+    captured: bool,
+}
+
 /// GPU-accelerated 3D FLIP simulation
 pub struct GpuFlip3D {
     phase_transfer: Option<PhaseTransfer3D>,
     phase_metadata: Option<Arc<wgpu::Buffer>>,
     phase_error: Option<u32>,
+    gather_velocity_readback: Option<GatherVelocityReadback>,
     profile_stages: Vec<(&'static str, [f64; 2])>,
     device_timer: Option<super::timing::GpuStageTimer>,
     // Grid dimensions
@@ -2803,6 +2811,7 @@ impl GpuFlip3D {
             phase_transfer,
             phase_metadata,
             phase_error: None,
+            gather_velocity_readback: None,
             width,
             height,
             depth,
@@ -4395,6 +4404,18 @@ impl GpuFlip3D {
         if let Some(phase) = &self.phase_transfer {
             phase.encode_validate_particles(&mut encoder, g2p_count);
         }
+        if let Some(trace) = self.gather_velocity_readback.as_mut() {
+            if !trace.captured && trace.count == g2p_count {
+                encoder.copy_buffer_to_buffer(
+                    &self.velocities_buffer,
+                    0,
+                    &trace.buffer,
+                    0,
+                    u64::from(g2p_count) * 16,
+                );
+                trace.captured = true;
+            }
+        }
         submit(encoder, "FLIP 3D G2P Encoder");
 
         // ========== Sediment Density Projection (Granular Packing) ==========
@@ -4759,6 +4780,89 @@ impl GpuFlip3D {
             output[..count].copy_from_slice(&slice[..count]);
         }
         staging.unmap();
+    }
+
+    /// Capture the next matching G2P velocity field before advection/contact.
+    /// Diagnostic allocation is explicit, single-use and capped at 16 MiB.
+    /// Check the step's phase status separately; a snapshot does not certify success.
+    pub fn request_gather_velocity_readback(
+        &mut self,
+        device: &wgpu::Device,
+        count: usize,
+    ) -> Result<(), String> {
+        if self.gather_velocity_readback.is_some() {
+            return Err("Drain the existing gather snapshot before requesting another".into());
+        }
+        if count == 0 || count > self.max_particles || count > (16 * 1024 * 1024 / 16) {
+            return Err(
+                "Gather snapshot count exceeds the live-capacity or diagnostic limit".into(),
+            );
+        }
+        self.gather_velocity_readback = Some(GatherVelocityReadback {
+            buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Opt-in pre-advection velocity snapshot"),
+                size: count as u64 * 16,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            count: count as u32,
+            captured: false,
+        });
+        Ok(())
+    }
+
+    /// Read the requested snapshot without modifying the authoritative fields.
+    pub fn take_gather_velocities(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Result<Vec<glam::Vec3>, String> {
+        let trace = self
+            .gather_velocity_readback
+            .take()
+            .ok_or("No gather snapshot requested")?;
+        if !trace.captured {
+            return Err("No matching gather step was captured".into());
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        trace
+            .buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |r| {
+                let _ = tx.send(r);
+            });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv()
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        let result = {
+            let data = trace.buffer.slice(..).get_mapped_range();
+            bytemuck::cast_slice::<u8, [f32; 4]>(&data)
+                .iter()
+                .map(|v| glam::Vec3::new(v[0], v[1], v[2]))
+                .collect::<Vec<_>>()
+        };
+        trace.buffer.unmap();
+        if result.iter().any(|v| !v.is_finite()) {
+            return Err("Nonfinite gather snapshot".into());
+        }
+        Ok(result)
+    }
+
+    /// Raw fixed-point transfer moments for independent diagnostic readback.
+    pub fn diagnostic_phase_moments(&self) -> Option<&wgpu::Buffer> {
+        self.phase_transfer
+            .as_ref()
+            .map(PhaseTransfer3D::status_buffer)
+    }
+
+    /// Unforced water and face-response planes; no diagnostic copies are made.
+    pub fn diagnostic_phase_water(&self) -> Option<[&wgpu::Buffer; 3]> {
+        self.phase_transfer.as_ref().map(|p| p.water.each_ref())
+    }
+
+    /// The actual ready header and MAC coefficients used by projection.
+    pub fn diagnostic_phase_mobility(&self) -> Option<[&wgpu::Buffer; 3]> {
+        self.phase_transfer.as_ref().map(|p| p.mobility.each_ref())
     }
 
     /// Opt-in residual of the stored pressure/RHS pair. Diagnostic reprojection
