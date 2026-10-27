@@ -3373,3 +3373,69 @@ fn changing_channel_kernels_retain_water_and_mineral_between_snapshots() {
         "rotating principal support contracted between snapshots"
     );
 }
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn refracted_slurry_matches_independent_ray_slab_intersections() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 64);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let i=p.y*8u+p.x;
+ // Slabs 0.5--12 mm thick, incident angles 0--89 degrees. No shader Snell
+ // expression is used to construct the independently intersected CPU oracle.
+ let angle=f32(i%16u)*89./15.*3.14159265359/180.;
+ let cosine=cos(angle);let depth=0.0005+f32(i/16u)*0.004;
+ let eye_path=depth/cosine;
+ let path=refracted_column_path(eye_path,cosine);
+ result[i]=vec4(path,exp(-vec3(10.,100.,1000.)*path));
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    let mut legacy_worst: f64 = 0.;
+    for (i, value) in values.chunks_exact(4).enumerate() {
+        // Trace the transmitted unit vector against two parallel planes.
+        // Tangential optical momentum is conserved across the interface.
+        let angle = ((i % 16) as f64 * 89. / 15.).to_radians();
+        let depth = 0.0005 + (i / 16) as f64 * 0.004;
+        let tangent = angle.sin() / 1.333;
+        let ray = [tangent, -(1. - tangent * tangent).sqrt(), 0.];
+        let end = [ray[0] * (-depth / ray[1]), -depth, 0.];
+        let expected = end.iter().map(|c| c * c).sum::<f64>().sqrt();
+        assert!(value.iter().all(|v| v.is_finite()));
+        assert!(
+            (value[0] as f64 / expected - 1.).abs() < 0.000002,
+            "refracted path differs from ray/slab intersection: {i}: {value:?}, {expected}"
+        );
+        for (v, beta) in value[1..].iter().zip([10., 100., 1000.]) {
+            assert!((*v as f64 - (-beta * expected).exp()).abs() < 0.000002);
+        }
+        legacy_worst = legacy_worst.max(depth / angle.cos() / expected - 1.);
+    }
+    assert!(
+        legacy_worst > 35.,
+        "grazing negative control was not exercised"
+    );
+    println!("Unrefracted ray/slab maximum relative path error: {legacy_worst}");
+}

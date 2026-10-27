@@ -437,11 +437,22 @@ fn channel_ripple_normal_footprint(normal:vec3<f32>,world:vec3<f32>,flow:vec2<f3
 fn channel_ripple_normal(normal:vec3<f32>,world:vec3<f32>,flow:vec2<f32>,time:f32,footprint:f32,confidence:f32)->vec3<f32> {
     return channel_ripple_normal_footprint(normal,world,flow,time,vec2(footprint,0.),vec2(0.,footprint),confidence);
 }
-fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,original:vec3<f32>)->vec3<f32> {
+// A locally parallel liquid slab has normal thickness L*cos(theta_i).
+// Absorption follows the transmitted path through it, not the longer eye ray.
+// This is a local homogeneous-column approximation, not a new fluid volume.
+fn refracted_column_path(column:f32,cosine:f32)->f32 {
+    let ci=clamp(cosine,0.,1.);let eta=1./1.333;
+    let ct=sqrt(1.-eta*eta*(1.-ci*ci));
+    return max(column,0.)*ci/ct;
+}
+fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,original:vec3<f32>,channel:bool)->vec3<f32> {
     let position=view_point(pixel,depth);
     let normal_view=normalize((u.view_from_world*vec4(normal,0.)).xyz);
     let transmitted=refract(normalize(position),normal_view,1./1.333);
-    let under=position+transmitted*(thickness/max(-transmitted.z,0.05));
+    // Channel thickness already measures travel along the refracted ray.
+    // Retain the river's existing camera-depth intersection approximation.
+    let distance=select(thickness/max(-transmitted.z,0.05),thickness,channel);
+    let under=position+transmitted*distance;
     let projected=u.clip_from_world*u.world_from_view*vec4(under,1.);
     let uv=vec2(projected.x/projected.w*0.5+0.5,0.5-projected.y/projected.w*0.5);
     let offset=clamp(uv*u.viewport.xy-pixel,vec2(-10.),vec2(10.));
@@ -570,6 +581,9 @@ fn eye_ray_path(view_gap:f32,ray_cosine:f32)->f32 {
     var n = normalize(cross(dy,dx)); if n.z < 0. { n = -n; }
     normal = normalize((u.world_from_view * vec4(n,0.)).xyz);
     }
+    // Optical thickness uses the reconstructed geometric sheet. Reflection
+    // detail must not turn capillary normals into moving extinction patches.
+    let optical_normal=normal;
     // Dual-phase advection blends at resets, so a varying flow field cannot
     // stretch the normal detail indefinitely. Simulation time also freezes it.
     let eye_world=normalize(u.world_from_view[3].xyz-world.xyz);
@@ -631,7 +645,11 @@ fn eye_ray_path(view_gap:f32,ray_cosine:f32)->f32 {
     // channel columns carry the same cross section normalized by visible water.
     let beta=select(column.y/max(column.x,0.000001),river_extinction(optical),river);
     let extinction=suspended_extinction(beta);
-    let transmission=exp(-extinction*thickness);
+    var absorption_path=thickness;
+    if in_channel {
+        absorption_path=refracted_column_path(thickness,abs(dot(optical_normal,eye_world)));
+    }
+    let transmission=exp(-extinction*absorption_path);
     // Keep the accepted detached outlet's source and surface-lighting path.
     var scattering=mix(vec3(0.035,0.18,0.18),vec3(0.22,0.13,0.055),clamp(beta/120.,0.,1.));
     if in_channel || river {
@@ -642,7 +660,8 @@ fn eye_ray_path(view_gap:f32,ray_cosine:f32)->f32 {
         scattering*=0.35+0.65*max(dot(normal,light),0.);
     }
     var background=original.rgb;
-    if river || in_channel {background=refracted_scene(q,normal,depth,thickness*ray_cosine,background);}
+    if river || in_channel {background=refracted_scene(q,normal,depth,
+        select(thickness*ray_cosine,absorption_path,in_channel),background,in_channel);}
     let body=background*transmission+scattering*(vec3(1.)-transmission);
     // A uniform 0.5 mm film stays fully covered. At a sloping bank use the
     // full-resolution contact and film gradients to soften only the last pixel.

@@ -1,0 +1,246 @@
+{
+  "base_commit": "18f8aaa53964c30f859a088cf988da2fc20ecaac",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-refraction-20261027",
+  "scope": "Correct refracted ray travel through the local homogeneous channel column for absorption and the bed image. Keep reconstructed geometric normals separate from capillary reflection normals. No surface or physical solver change.",
+  "changed_production_source": "crates/mining/src/water_compose.wgsl",
+  "quality": [
+    {
+      "name": "water_optics",
+      "exit": 0,
+      "wall_seconds": 8.642376541996782
+    },
+    {
+      "name": "visible_water_column",
+      "exit": 0,
+      "wall_seconds": 2.076579666998441
+    },
+    {
+      "name": "crest_chain",
+      "exit": 0,
+      "wall_seconds": 2.080559791000269
+    },
+    {
+      "name": "app-tests",
+      "exit": 0,
+      "wall_seconds": 20.803431791999174
+    },
+    {
+      "name": "clippy",
+      "exit": 0,
+      "wall_seconds": 11.703244874999655
+    },
+    {
+      "name": "format",
+      "exit": 0,
+      "wall_seconds": 0.5560730830002285
+    }
+  ],
+  "gpu": {
+    "optics_passed": 18,
+    "visible_column_passed": 5,
+    "complete_chain_passed": 1,
+    "ordinary_app_passed": 69,
+    "app_profiles_unrun": 2,
+    "slab_cases": 64,
+    "slab_normal_depth_m": [
+      0.0005,
+      0.0125
+    ],
+    "incident_angle_degrees": [
+      0,
+      89
+    ],
+    "path_relative_error_limit": 2e-06,
+    "transmission_absolute_error_limit": 2e-06,
+    "legacy_worst_relative_path_error": 36.894757846941225
+  },
+  "native": {
+    "frozen": {
+      "final": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_pixels": 160629,
+        "max_channel_delta": 74
+      },
+      "normal": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_pixels": 0,
+        "max_channel_delta": 0
+      },
+      "sediment": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_pixels": 0,
+        "max_channel_delta": 0
+      },
+      "river": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_pixels": 0,
+        "max_channel_delta": 0
+      },
+      "outlet": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_pixels": 27552,
+        "max_channel_delta": 104
+      }
+    },
+    "motion": {
+      "before": {
+        "frames": 46,
+        "wall_seconds": 4.925534583,
+        "physical_seconds": 1.8000000938773155,
+        "worker_advances": 44,
+        "presentation_advances": 42,
+        "presentation_holds": 3,
+        "physical_start": 90.4333380497992,
+        "physical_end": 92.23333814367652,
+        "underruns": 0
+      },
+      "after": {
+        "frames": 47,
+        "wall_seconds": 4.933741417,
+        "physical_seconds": 1.933333434164524,
+        "worker_advances": 46,
+        "presentation_advances": 46,
+        "presentation_holds": 0,
+        "physical_start": 92.13333813846111,
+        "physical_end": 94.06667157262564,
+        "underruns": 0
+      }
+    }
+  },
+  "detached_outlet_control": {
+    "box": [
+      750,
+      290,
+      1030,
+      750
+    ],
+    "identical": true
+  },
+  "benchmarks": {
+    "before": {
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "failure": null,
+      "gold_balance_error_g": 1.3642420526593924e-12,
+      "mean_fps": 59.70660983934827,
+      "p95_frame_ms": 23.433916999999997,
+      "passed": false,
+      "simulation_wall_ratio": 0.35822459279659624,
+      "water_balance_error_m3": -7.824222620911314e-06
+    },
+    "after": {
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "failure": null,
+      "gold_balance_error_g": 1.8189894035458565e-12,
+      "mean_fps": 57.24158408198887,
+      "p95_frame_ms": 28.04675,
+      "passed": false,
+      "simulation_wall_ratio": 0.3764685658133318,
+      "water_balance_error_m3": -7.855554194691194e-06
+    }
+  },
+  "review": "Inspected matched frozen colour, normal, sediment, outlet and river comparisons and every one of the 47 final temporal crops. Crest shoulders have reduced optical opacity; broad standing-wave geometry remains. Whole-video playback and manual inputs were not rechecked. The earlier binary has three startup presentation holds; candidate has none. Their moving clips cover different physical intervals and are not trajectory-matched visual comparisons.",
+  "physical_sources_at_head": true,
+  "source_manifest": {
+    "crates/mining-physics/tests/water_optics.rs": "9ee284807d3ef0158fbcf95e95363d5b0a4e11e87962d79d93c48c7093b72fdc",
+    "crates/mining/src/water_compose.wgsl": "e2632699e804f01fb4ab2568248353458eaefca0fceff77143fef673cf11e4cf"
+  },
+  "original_dirty_files_preserved": true,
+  "original_status_preserved": true,
+  "user_stash_preserved": true,
+  "installed_app": {
+    "path": "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app",
+    "sha256": "94c26a945f82ef3db346e9e3bf9c30df5db36400ef1cea2f4e3b867bb6648180",
+    "codesign_verified": true,
+    "previous_backup": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-refraction-20261027/previous-app/First Bend.app",
+    "previous_sha256": "04befd6971d8726df348f0d3f5781028b6f20b64dce274e4f8ee5274eb1a75f2"
+  },
+  "media": {
+    "2026-10-27-crest-refraction.jpg": "c3b900f1eda0f6a1d180cd101c8de4c11d9d699d722a6555cb0811f9496526fb",
+    "2026-10-27-crest-refraction.frames-1.jpg": "6a842cf5ce79460058b072acb6bc629934c8927e890c36ecf056fe6bcc2b90c0",
+    "2026-10-27-crest-refraction.frames-2.jpg": "3fda725b01629ff3418a8872050fe191a9c76b124663ccc2501321ecc0d684ad",
+    "2026-10-27-crest-refraction.mp4": "ee21e10d9f9d0dd654de83087f2417fbac9d349a11449b7ede16fbe0e0f82886"
+  },
+  "cleanup": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=0 rss_mib=0.0\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=0 rss_mib=0.0\n",
+  "new_crash_reports": [],
+  "limitations": [
+    "Local parallel homogeneous-column approximation: not full refracted-ray integration through a stratified 3D suspension or a nonparallel riffle/floor.",
+    "The visible crest/patch improvement is modest. Standing waves, real suspension plumes, grain stippling and wider water art remain.",
+    "The existing refraction pixel displacement bound and geometric column bounds remain.",
+    "Sequential 20-second benchmark windows vary; no speedup or physical-real-time claim. Both overall benchmark gates fail on physical rate, while material budgets pass.",
+    "Two optional app profiling checks unrun; the existing game constructor warning remains.",
+    "No additional render pass, render target, particle, or physical solver simplification."
+  ],
+  "full_goal_complete": false,
+  "beads": {
+    "bd_sync_supported": false,
+    "scoped_rows": [
+      "menace-g3p",
+      "sluice-water-polish",
+      "sluice-optical-projection-20261024"
+    ],
+    "total_rows": 239,
+    "unrelated_literal_rows_preserved": 236
+  }
+}
