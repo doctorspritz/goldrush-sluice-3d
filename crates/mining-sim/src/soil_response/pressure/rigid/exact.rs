@@ -340,6 +340,7 @@ impl RawMoments {
     }
 }
 struct Cell {
+    vertices: [DVec3; 4],
     planes: [Halfspace; 4],
     quick_planes: [Affine; 4],
     low: Point,
@@ -358,6 +359,61 @@ fn face_separated(poly: &ExactPoly, vertices: &[DVec3; 4], cell: &Cell) -> bool 
                 && poly.points.iter().all(|p| !exact.at(p).is_negative())
         })
 }
+// Floating axes are hints only. Any finite nonzero direction is a valid
+// separating axis if EXACT projections of both represented tetrahedra prove it.
+// This avoids assuming a rounded face normal has the exact outward orientation.
+fn axis_separated(a: &[Point], b: &[Point; 4], axis: DVec3) -> bool {
+    if !axis.is_finite() || axis == DVec3::ZERO {
+        return false;
+    }
+    let axis = point(axis);
+    let interval = |vertices: &[Point]| {
+        let mut values = vertices.iter().map(|p| dot(&axis, p));
+        let first = values.next().unwrap();
+        values.fold((first.clone(), first), |(lo, hi), v| {
+            (lo.min(v.clone()), hi.max(v))
+        })
+    };
+    let (alo, ahi) = interval(a);
+    let (blo, bhi) = interval(b);
+    ahi <= blo || bhi <= alo
+}
+fn float_axis_hint(a: &[DVec3; 4], b: &[DVec3; 4], axis: DVec3) -> bool {
+    if !axis.is_finite() || axis == DVec3::ZERO {
+        return false;
+    }
+    let origin = a[0];
+    let ap = a.map(|p| (p - origin).dot(axis));
+    let bp = b.map(|p| (p - origin).dot(axis));
+    if ap.into_iter().chain(bp).any(|v| !v.is_finite()) {
+        return false;
+    }
+    let interval = |p: [f64; 4]| {
+        (
+            p.into_iter().fold(f64::INFINITY, f64::min),
+            p.into_iter().fold(f64::NEG_INFINITY, f64::max),
+        )
+    };
+    let (alo, ahi) = interval(ap);
+    let (blo, bhi) = interval(bp);
+    ahi < blo || bhi < alo
+}
+// The existing rejection considers opposing faces only. A separating face of
+// the source can cut none of its vertices out of an opposing face, yet still
+// prove that their axis-overlapping tetrahedra have zero common volume.
+// Only original root tetrahedra use this certificate; constructed recursive
+// intersections retain complete rational clipping and its resource bounds.
+fn reverse_face_separated(poly: &ExactPoly, source: &WorldCell, cell: &Cell) -> bool {
+    let mut exact_vertices = None;
+    source.planes.iter().any(|face| {
+        float_axis_hint(&source.tet, &cell.vertices, face.gradient)
+            && axis_separated(
+                &poly.points,
+                exact_vertices.get_or_insert_with(|| cell.vertices.map(point)),
+                face.gradient,
+            )
+    })
+}
 struct Rule {
     cells: Vec<Cell>,
     face_rejection: bool,
@@ -374,7 +430,7 @@ impl Rule {
         start: usize,
         depth: usize,
         field: &Halfspace,
-        root: Option<&[DVec3; 4]>,
+        root: Option<&WorldCell>,
     ) -> Result<RawMoments, String> {
         if depth > MAX_DEPTH {
             return Err("Exact union overlapping-component depth bound exceeded".into());
@@ -397,7 +453,10 @@ impl Rule {
                     continue;
                 }
                 if self.face_rejection
-                    && root.is_some_and(|vertices| face_separated(poly, vertices, cell))
+                    && root.is_some_and(|source| {
+                        face_separated(poly, &source.tet, cell)
+                            || reverse_face_separated(poly, source, cell)
+                    })
                 {
                     continue;
                 }
@@ -468,6 +527,7 @@ fn union_impl(
     let cells = bc
         .iter()
         .map(|b| Cell {
+            vertices: b.tet,
             planes: geometry::FACES.map(|f| Halfspace::face(f.map(|i| b.tet[i]))),
             quick_planes: b.planes,
             low: point(b.minimum),
@@ -506,9 +566,8 @@ fn union_impl(
             let constant = q(p.value) - dot(&normal, &point(p.origin));
             Halfspace { normal, constant }
         };
-        let (moments, energy, volume_error, energy_error) = rule
-            .integrate(&whole, 0, 0, &field, Some(&a.tet))?
-            .converted()?;
+        let (moments, energy, volume_error, energy_error) =
+            rule.integrate(&whole, 0, 0, &field, Some(a))?.converted()?;
         if moments.volume > 0. {
             result.overlap_volume_m3 += moments.volume;
             result.union_volume_roundoff_estimate_m3 += volume_error;

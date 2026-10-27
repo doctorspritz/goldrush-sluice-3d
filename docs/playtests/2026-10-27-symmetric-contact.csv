@@ -1,0 +1,5 @@
+run,mode,cpu_wall_seconds,canonical_sha256
+sat-before-1,before,15.839599334,71c55beedd8e877e55ffab4de0d65c7ac1b4f694f70e962c65c0f162db38e47f
+sat-before-2,before,15.887534125,71c55beedd8e877e55ffab4de0d65c7ac1b4f694f70e962c65c0f162db38e47f
+sat-after-1,after,11.21026475,71c55beedd8e877e55ffab4de0d65c7ac1b4f694f70e962c65c0f162db38e47f
+sat-after-2,after,11.230978166,71c55beedd8e877e55ffab4de0d65c7ac1b4f694f70e962c65c0f162db38e47f

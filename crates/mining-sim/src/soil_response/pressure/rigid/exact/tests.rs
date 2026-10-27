@@ -24,6 +24,7 @@ fn opposing(apex: DVec3) -> WorldCell {
 }
 fn prepared(b: &WorldCell) -> Cell {
     Cell {
+        vertices: b.tet,
         planes: geometry::FACES.map(|f| Halfspace::face(f.map(|i| b.tet[i]))),
         quick_planes: b.planes,
         low: point(b.minimum),
@@ -145,5 +146,96 @@ fn fast_face_hints_match_complete_exact_union_through_rotation_and_overlapping_p
         assert!(reference.overlap_volume_m3 > 0.);
         // Debug retains every response field, full precision and signed zero.
         assert_eq!(format!("{filtered:?}"), format!("{reference:?}"));
+    }
+}
+
+#[test]
+fn source_face_certifies_zero_when_opposing_face_and_axis_bounds_cannot() {
+    let a = source();
+    let b = WorldCell::new(
+        [
+            DVec3::new(0., -0.125, 1.4375),
+            DVec3::new(-0.125, -0.1875, 1.4375),
+            DVec3::new(0.5, 0.6875, 0.25),
+            DVec3::new(0.0625, -0.25, 1.5),
+        ],
+        None,
+    )
+    .unwrap();
+    let poly = ExactPoly::tet(a.tet);
+    let prepared = prepared(&b);
+    assert!(a.intersects(&b));
+    assert!(
+        !face_separated(&poly, &a.tet, &prepared),
+        "existing opposing-face path already rejected fixture"
+    );
+    assert!(reverse_face_separated(&poly, &a, &prepared));
+    let fast = union_impl(
+        std::slice::from_ref(&a),
+        std::slice::from_ref(&b),
+        RigidMotion::default(),
+        RigidMotion::default(),
+        DVec3::ZERO,
+        true,
+    )
+    .unwrap();
+    let full = union_impl(
+        std::slice::from_ref(&a),
+        std::slice::from_ref(&b),
+        RigidMotion::default(),
+        RigidMotion::default(),
+        DVec3::ZERO,
+        false,
+    )
+    .unwrap();
+    assert_eq!(full.overlap_volume_m3, 0.);
+    assert_eq!(format!("{fast:?}"), format!("{full:?}"));
+    // Exercise this new rejection alongside positive overlapping parts. The
+    // latter still require recursive inclusion-exclusion of constructed polys.
+    let mut parts = [
+        b,
+        opposing(DVec3::new(0.5, 0.5, 0.9)),
+        opposing(DVec3::new(0.52, 0.51, 0.91)),
+    ];
+    for (i, part) in parts.iter_mut().enumerate() {
+        part.rigid_component = i;
+    }
+    let am = RigidMotion {
+        linear_velocity_m_s: DVec3::new(0.1, -0.2, 0.3),
+        angular_velocity_rad_s: DVec3::new(0.2, 0.3, -0.1),
+        ..Default::default()
+    };
+    let bm = RigidMotion {
+        angular_velocity_rad_s: DVec3::new(-0.3, 0.1, 0.2),
+        ..Default::default()
+    };
+    let fast = union_impl(std::slice::from_ref(&a), &parts, am, bm, DVec3::ZERO, true).unwrap();
+    let full = union_impl(&[a], &parts, am, bm, DVec3::ZERO, false).unwrap();
+    assert!(full.overlap_volume_m3 > 0. && full.union_maximum_depth > 0);
+    assert_eq!(format!("{fast:?}"), format!("{full:?}"));
+}
+
+#[test]
+fn exact_projection_refuses_zero_invalid_and_misleading_axes_for_positive_slivers() {
+    let a = source();
+    let poly = ExactPoly::tet(a.tet);
+    for depth in [2_f64.powi(-40), 0.1] {
+        let b = opposing(DVec3::new(0.5, 0.5, 1. - depth));
+        let points = b.tet.map(point);
+        for axis in [
+            DVec3::ZERO,
+            DVec3::splat(f64::NAN),
+            DVec3::splat(f64::INFINITY),
+            DVec3::X,
+            DVec3::Y,
+            DVec3::Z,
+            DVec3::ONE,
+            DVec3::new(1., -2., 3.),
+            DVec3::splat(f64::from_bits(1)),
+            DVec3::splat(f64::MAX),
+        ] {
+            assert!(!axis_separated(&poly.points, &points, axis));
+        }
+        assert!(!reverse_face_separated(&poly, &a, &prepared(&b)));
     }
 }
