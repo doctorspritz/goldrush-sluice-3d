@@ -247,6 +247,27 @@ struct ContactContext {
     guard: f64,
     synthetic: bool,
 }
+/// Exact evaluated endpoints of one dyadic refinement interval. Sharing a
+/// midpoint or an admitted endpoint avoids repeated trigonometry without
+/// interpolating phase or changing any contact arithmetic or tolerance.
+#[derive(Clone, Copy)]
+struct WireBracket {
+    lo: f64,
+    hi: f64,
+    lower: (DVec3, DVec3),
+    upper: (DVec3, DVec3),
+}
+impl WireBracket {
+    fn at(self, screen: &Screen, sweep: &WireSweep, u: f64) -> (DVec3, DVec3) {
+        if u.to_bits() == self.lo.to_bits() {
+            self.lower
+        } else if u.to_bits() == self.hi.to_bits() {
+            self.upper
+        } else {
+            screen.offset_at(sweep.time0 + (sweep.time1 - sweep.time0) * u)
+        }
+    }
+}
 struct WireSweep {
     start: DVec3,
     delta: DVec3,
@@ -746,6 +767,132 @@ impl Screen {
     fn refine_wire(
         &mut self,
         sweep: &WireSweep,
+        bracket: WireBracket,
+        depth: usize,
+    ) -> Result<Option<Hit>, String> {
+        self.count_query()?;
+        if depth > 20 {
+            return Err("Screen exact-phase contact refinement exhausted; state retained".into());
+        }
+        let WireBracket {
+            lo,
+            hi,
+            lower,
+            upper,
+        } = bracket;
+        let phase = |u: f64| sweep.time0 + (sweep.time1 - sweep.time0) * u;
+        let (offset0, velocity) = lower;
+        let q0 = sweep.start + sweep.delta * lo - offset0;
+        let q1 = sweep.start + sweep.delta * hi - upper.0;
+        let duration = (sweep.time1 - sweep.time0) * (hi - lo);
+        let error = sweep.acceleration * duration * duration / 8.;
+        let delta = q0 - segment_closest(q0, sweep.wire.a, sweep.wire.b);
+        let gap = delta.length() - sweep.radius;
+        if gap <= CONTACT_SKIN_M {
+            let normal = delta
+                .try_normalize()
+                .ok_or("Screen refined contact normal undefined")?;
+            if (sweep.velocity - velocity).dot(normal) < -1e-10 {
+                return Ok(Some(Hit {
+                    u: lo,
+                    normal,
+                    velocity,
+                    surface: Surface::Wire,
+                    index: sweep.index,
+                }));
+            }
+        }
+        // Being inside the fat bracket is not physical contact. Include that
+        // entire uncertain interval even if its first chord points away.
+        let candidate = if gap <= error + CONTACT_SKIN_M {
+            Some(0.)
+        } else {
+            cast_capsule(
+                q0,
+                q1 - q0,
+                sweep.wire.a,
+                sweep.wire.b,
+                sweep.radius + error + CONTACT_SKIN_M,
+            )
+        };
+        let Some(candidate) = candidate else {
+            return Ok(None);
+        };
+        if error <= CONTACT_SKIN_M * 0.25 {
+            let u = lo + (hi - lo) * candidate;
+            let actual = sweep.start + sweep.delta * u;
+            let (offset, velocity) = bracket.at(self, sweep, u);
+            let delta =
+                actual - segment_closest(actual, sweep.wire.a + offset, sweep.wire.b + offset);
+            let normal = delta
+                .try_normalize()
+                .ok_or("Screen refined contact normal undefined")?;
+            if delta.length() - sweep.radius <= CONTACT_SKIN_M + 1e-12
+                && (sweep.velocity - velocity).dot(normal) < -1e-10
+            {
+                return Ok(Some(Hit {
+                    u,
+                    normal,
+                    velocity,
+                    surface: Surface::Wire,
+                    index: sweep.index,
+                }));
+            }
+            // A separating bracket start must not hide a later true entry.
+            if let Some(local) = cast_capsule(q0, q1 - q0, sweep.wire.a, sweep.wire.b, sweep.radius)
+            {
+                let u = lo + (hi - lo) * local;
+                let actual = sweep.start + sweep.delta * u;
+                let (offset, velocity) = bracket.at(self, sweep, u);
+                let delta =
+                    actual - segment_closest(actual, sweep.wire.a + offset, sweep.wire.b + offset);
+                let normal = delta
+                    .try_normalize()
+                    .ok_or("Screen refined contact normal undefined")?;
+                if delta.length() - sweep.radius <= CONTACT_SKIN_M + 1e-12
+                    && (sweep.velocity - velocity).dot(normal) < -1e-10
+                {
+                    return Ok(Some(Hit {
+                        u,
+                        normal,
+                        velocity,
+                        surface: Surface::Wire,
+                        index: sweep.index,
+                    }));
+                }
+            }
+            return Ok(None);
+        }
+        let mid = (lo + hi) * 0.5;
+        let middle = self.offset_at(phase(mid));
+        if let Some(hit) = self.refine_wire(
+            sweep,
+            WireBracket {
+                lo,
+                hi: mid,
+                lower,
+                upper: middle,
+            },
+            depth + 1,
+        )? {
+            return Ok(Some(hit));
+        }
+        self.refine_wire(
+            sweep,
+            WireBracket {
+                lo: mid,
+                hi,
+                lower: middle,
+                upper,
+            },
+            depth + 1,
+        )
+    }
+    // Original uncached arithmetic is a test-only refinement reference.
+    #[cfg(test)]
+    fn refine_wire_reference(
+        &mut self,
+        sweep: &WireSweep,
         lo: f64,
         hi: f64,
         depth: usize,
@@ -838,10 +985,10 @@ impl Screen {
             return Ok(None);
         }
         let mid = (lo + hi) * 0.5;
-        if let Some(hit) = self.refine_wire(sweep, lo, mid, depth + 1)? {
+        if let Some(hit) = self.refine_wire_reference(sweep, lo, mid, depth + 1)? {
             return Ok(Some(hit));
         }
-        self.refine_wire(sweep, mid, hi, depth + 1)
+        self.refine_wire_reference(sweep, mid, hi, depth + 1)
     }
     fn advance(
         &mut self,
@@ -886,8 +1033,28 @@ impl Screen {
                 let end = start + p.velocity * remaining;
                 let t0 = self.drive_time(at);
                 let t1 = self.drive_time(at + remaining);
-                let off0 = self.offset_at(t0).0;
-                let off1 = self.offset_at(t1).0;
+                let drive0 = self.offset_at(t0);
+                let drive1 = self.offset_at(t1);
+                let off0 = drive0.0;
+                let off1 = drive1.0;
+                // Preserve the uncached root's exact phase expressions,
+                // including their floating-point evaluation order.
+                let lower_time = t0 + (t1 - t0) * 0.;
+                let upper_time = t0 + (t1 - t0) * 1.;
+                let bracket = WireBracket {
+                    lo: 0.,
+                    hi: 1.,
+                    lower: if lower_time.to_bits() == t0.to_bits() {
+                        drive0
+                    } else {
+                        self.offset_at(lower_time)
+                    },
+                    upper: if upper_time.to_bits() == t1.to_bits() {
+                        drive1
+                    } else {
+                        self.offset_at(upper_time)
+                    },
+                };
                 let local0 = self.to_local(start - off0);
                 let local1 = self.to_local(end - off1);
                 let low = local0.min(local1) - DVec3::splat(r + self.config.wire_radius_m + guard);
@@ -921,7 +1088,7 @@ impl Screen {
                         index,
                         acceleration: acceleration - G,
                     };
-                    if let Some(hit) = self.refine_wire(&sweep, 0., 1., 0)? {
+                    if let Some(hit) = self.refine_wire(&sweep, bracket, 0)? {
                         choose(&mut best, hit);
                     }
                 }
@@ -2722,6 +2889,94 @@ mod tests {
             rotation: Quat::IDENTITY,
             angular_velocity: Vec3::new(311.76086, -0.061976466, -0.013173505),
         }
+    }
+    #[test]
+    fn shared_wire_brackets_match_uncached_phase_hits_and_query_work() {
+        let mut hits = 0;
+        let mut misses = 0;
+        for case in 0..2048 {
+            let mut screen = Screen::new(
+                Vec3::new(14.55, 1.8, 17.2),
+                [0., 0.37, -1.2, 3.1][(case / 5) % 4],
+            );
+            screen.motor_on = (case / 3) % 2 == 0;
+            screen.time =
+                [0., 0.00001, 0.123, 2.0333334393799305, 13.766667384654284][(case / 11) % 5];
+            screen.config.slope_deg = [0., 12., 25.][(case / 17) % 3];
+            screen.frame = Some(ScreenFrame::new(&screen));
+            let wires = screen.rest_wires();
+            let index = (case * 37) % wires.len();
+            let wire = wires[index];
+            let t0 = screen.time + (case % 17) as f64 * 1e-5;
+            let t1 = t0 + [1. / 960., 0.0002, 0.0005][(case / 7) % 3];
+            let radius = [4e-5, 0.00015, 0.0015, 0.003][(case / 7) % 4] + wire.radius;
+            let n = (screen.normal() + screen.across() * (((case / 13) % 11) as f64 - 5.) * 0.25)
+                .normalize();
+            let gap = [-1e-6, -1e-10, 0., 1e-10, 5e-7, 1e-4][(case / 2) % 6];
+            let point = wire.a.lerp(wire.b, (case % 7) as f64 / 6.);
+            let start = point + screen.offset_at(t0).0 + n * (radius + gap);
+            let velocity = screen.offset_at(t0).1
+                + n * if case % 2 == 0 { -0.35 } else { 0.35 }
+                + screen.downstream() * 0.1;
+            let omega = std::f64::consts::TAU * screen.config.frequency_hz;
+            let sweep = WireSweep {
+                start,
+                delta: velocity * (t1 - t0),
+                velocity,
+                time0: t0,
+                time1: t1,
+                wire,
+                radius,
+                index,
+                acceleration: if screen.motor_on {
+                    omega
+                        * omega
+                        * (screen.config.amplitude_downstream_m + screen.config.amplitude_normal_m)
+                } else {
+                    0.
+                },
+            };
+            let phase = |u: f64| t0 + (t1 - t0) * u;
+            let bracket = WireBracket {
+                lo: 0.,
+                hi: 1.,
+                lower: screen.offset_at(phase(0.)),
+                upper: screen.offset_at(phase(1.)),
+            };
+            screen.last_step = ScreenStep::default();
+            let cached = screen.refine_wire(&sweep, bracket, 0);
+            let cached_queries = screen.last_step.contact_queries;
+            screen.last_step = ScreenStep::default();
+            let reference = screen.refine_wire_reference(&sweep, 0., 1., 0);
+            if matches!(reference, Ok(Some(_))) {
+                hits += 1;
+            }
+            if matches!(reference, Ok(None)) {
+                misses += 1;
+            }
+            let signature = |hit: Hit| {
+                (
+                    hit.u.to_bits(),
+                    hit.normal.to_array().map(f64::to_bits),
+                    hit.velocity.to_array().map(f64::to_bits),
+                    hit.surface,
+                    hit.index,
+                )
+            };
+            assert_eq!(
+                cached.map(|hit| hit.map(signature)),
+                reference.map(|hit| hit.map(signature)),
+                "case {case}"
+            );
+            assert_eq!(
+                cached_queries, screen.last_step.contact_queries,
+                "case {case}"
+            );
+        }
+        assert!(
+            hits > 100 && misses > 100,
+            "hit/miss coverage {hits}/{misses}"
+        );
     }
     #[test]
     fn transaction_frame_keeps_exact_drive_geometry_and_is_not_saved() {
