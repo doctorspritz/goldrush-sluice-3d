@@ -38,6 +38,9 @@ pub enum Action {
     Camera,
     TogglePump,
     ToggleFeed,
+    ToggleScreen,
+    ScreenAperture,
+    ClearScreen,
     Engine,
     Cleanup,
     Place(Placement),
@@ -68,6 +71,7 @@ pub struct Session {
     pub material_motion: Option<crate::payload::MaterialMotion>,
     pub active_soil: Option<crate::soil::ActiveSoil>,
     pub tailings: Option<crate::tailings::Tailings>,
+    pub plant: Option<crate::plant::Plant>,
 }
 #[derive(Serialize, Deserialize)]
 struct Save {
@@ -90,6 +94,8 @@ struct Save {
     tailings: Option<crate::tailings::Tailings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mechanical_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    plant: Option<crate::plant::Plant>,
 }
 impl Default for Session {
     fn default() -> Self {
@@ -130,6 +136,7 @@ impl Session {
             material_motion: None,
             active_soil: None,
             tailings: None,
+            plant: None,
         }
     }
     /// Current playable profile. `new` retains the existing laboratory/legacy
@@ -148,6 +155,28 @@ impl Session {
         self.enable_spatial_tailings()?;
         self.site.loose_gold.get_or_insert_with(Default::default);
         Ok(())
+    }
+    pub fn enable_screen(&mut self) -> Result<(), String> {
+        if self.plant.is_some() {
+            return Ok(());
+        }
+        let plant = crate::plant::Plant::new(&self.sluice)?;
+        let inlet = plant.screen.origin;
+        let hopper = Sluice::hopper_position(&self.site);
+        if Vec3::new(inlet.x - hopper.x, 0., inlet.z - hopper.z).length() > 0.75
+            || inlet.y > hopper.y + 1.56
+            || inlet.y < hopper.y + 1.10
+        {
+            return Err(
+                "Place the sluice below the hopper chute before connecting its screen".into(),
+            );
+        }
+        self.enable_loose_gold()?;
+        self.plant = Some(plant);
+        Ok(())
+    }
+    pub fn hopper_top(&self) -> f32 {
+        self.site.height(HOPPER_X, HOPPER_Z) + if self.plant.is_some() { 2.10 } else { 1.55 }
     }
     /// Migrate a historical pooled pile only once, at its former visible
     /// location. Its discarded historical particle trajectories are unknown.
@@ -195,6 +224,16 @@ impl Session {
     /// Preview and commit share all placement checks, including player reach
     /// and the requirement to drain/clean an existing active installation.
     pub fn validate_placement(&self, placement: Placement) -> Result<(), String> {
+        if self
+            .plant
+            .as_ref()
+            .is_some_and(|p| p.screen.motor_on || p.material().mass_kg() > 0. || p.water_m3() > 0.)
+        {
+            return Err("Stop and empty the screen before moving connected equipment".into());
+        }
+        if let Some(plant) = &self.plant {
+            plant.relocated(&self.sluice, placement)?;
+        }
         if self.paused {
             return Err("Resume the shift first".into());
         }
@@ -208,7 +247,12 @@ impl Session {
             .validate_relocation(placement, &self.site, self.machine.position)
     }
     pub fn on_action(&mut self, a: Action) -> Result<(), String> {
-        if self.paused {
+        if self.paused
+            && !matches!(
+                a,
+                Action::ToggleScreen | Action::ScreenAperture | Action::ClearScreen
+            )
+        {
             return Err("Resume the shift first".into());
         }
         let result = match a {
@@ -261,10 +305,71 @@ impl Session {
                 }
             }
             Action::Place(p) => self.validate_placement(p).and_then(|()| {
+                let next_plant = self
+                    .plant
+                    .as_ref()
+                    .map(|plant| plant.relocated(&self.sluice, p))
+                    .transpose()?;
                 self.sluice.relocate(p, &self.site, self.machine.position)?;
+                self.plant = next_plant;
                 self.message = "Sluice installed. P starts the pump; O starts the feed.".into();
                 Ok(())
             }),
+            Action::ToggleScreen | Action::ScreenAperture | Action::ClearScreen => (|| {
+                if !self.near_plant() || self.player.mode != ControlMode::OnFoot {
+                    Err("Walk to the processing plant".into())
+                } else {
+                    match a {
+                        Action::ToggleScreen => {
+                            if self.plant.is_none() {
+                                self.enable_screen()?;
+                            }
+                            let screen = &mut self.plant.as_mut().unwrap().screen;
+                            screen.motor_on = !screen.motor_on;
+                            self.message = if screen.motor_on {
+                                "Screen motor running. O opens the finite hopper feed."
+                            } else {
+                                "Screen stopped. M changes an empty deck; L empties the stopped screen."
+                            }
+                            .into();
+                            Ok(())
+                        }
+                        Action::ScreenAperture => {
+                            let screen = &mut self
+                                .plant
+                                .as_mut()
+                                .ok_or("Fit a screen with K first")?
+                                .screen;
+                            let mut config = screen.config.clone();
+                            config.aperture_m = if config.aperture_m < 0.004 {
+                                0.006
+                            } else if config.aperture_m < 0.009 {
+                                0.012
+                            } else {
+                                0.003
+                            };
+                            screen.set_config(config)?;
+                            self.message = format!(
+                                "Screen aperture {:.0} mm",
+                                screen.config.aperture_m * 1000.
+                            );
+                            Ok(())
+                        }
+                        _ => {
+                            let plant = self.plant.as_mut().ok_or("Fit a screen with K first")?;
+                            if plant.screen.motor_on {
+                                Err("Stop the screen before collecting rejects: K".into())
+                            } else {
+                                let m = plant.clear_rejects()?;
+                                self.player.hand.add(m);
+                                self.message =
+                                    format!("Emptied screen and bin: {:.3} m³ in hand", m.volume());
+                                Ok(())
+                            }
+                        }
+                    }
+                }
+            })(),
             Action::TogglePump | Action::ToggleFeed | Action::Cleanup => {
                 if !self.near_plant() || self.player.mode != ControlMode::OnFoot {
                     Err("Walk to the processing plant".into())
@@ -312,7 +417,12 @@ impl Session {
                     Err("Your hand bucket is empty".into())
                 } else {
                     let forward = Vec3::new(self.player.yaw.sin(), 0.0, self.player.yaw.cos());
-                    let position = self.player.position + Vec3::Y * 1.85 + forward * 0.60;
+                    let height = if self.plant.is_some() && self.near_plant() {
+                        2.35
+                    } else {
+                        1.85
+                    };
+                    let position = self.player.position + Vec3::Y * height + forward * 0.60;
                     let m = self.player.hand.take_fraction(1.0);
                     self.falling.push(FallingLoad {
                         position,
@@ -357,7 +467,15 @@ impl Session {
                 }
                 Action::ToggleFeed => {
                     self.message = if self.sluice.feed_on {
-                        "Feed open. Your hopper material is entering the sluice.".into()
+                        if let Some(p) = &self.plant {
+                            if p.screen.motor_on {
+                                "Feed open: hopper → dry screen → wet sluice.".into()
+                            } else {
+                                "Feed gate open; K starts the stopped screen motor.".into()
+                            }
+                        } else {
+                            "Feed open. Your hopper material is entering the sluice.".into()
+                        }
                     } else {
                         "Feed stopped. Leave water running to flush the remaining gangue.".into()
                     }
@@ -401,13 +519,18 @@ impl Session {
         }];
         for side in [-1., 1.] {
             for axis in [Vec3::X, Vec3::Z] {
+                let (height, halfwidth, halfheight) = if self.plant.is_some() {
+                    (1.86, 0.78, 0.24)
+                } else {
+                    (1.20, 0.55, 0.35)
+                };
                 obstacles.push(crate::tracks::Obstacle {
-                    center: hopper + Vec3::Y * 1.20 + axis * (side * 0.55),
+                    center: hopper + Vec3::Y * height + axis * (side * halfwidth),
                     rotation: glam::Quat::IDENTITY,
                     half_extents: if axis == Vec3::X {
-                        Vec3::new(0.025, 0.35, 0.55)
+                        Vec3::new(0.025, halfheight, halfwidth)
                     } else {
-                        Vec3::new(0.55, 0.35, 0.025)
+                        Vec3::new(halfwidth, halfheight, 0.025)
                     },
                 });
             }
@@ -428,6 +551,15 @@ impl Session {
         obstacles
     }
     pub fn step(&mut self, input: Controls) {
+        if self
+            .plant
+            .as_ref()
+            .is_some_and(|p| !p.connected_to(&self.sluice))
+        {
+            self.paused = true;
+            self.message = "Invalid plant state; shift retained".into();
+            return;
+        }
         if self.paused {
             return;
         }
@@ -515,7 +647,7 @@ impl Session {
             }
             self.player.position = position;
         }
-        let top = Sluice::hopper_top(&self.site);
+        let top = self.hopper_top();
         let mut impacts = Vec::new();
         if self.active_soil.is_some() {
             if let Some(error) = self
@@ -544,7 +676,8 @@ impl Session {
                 }
             }
             let p = load.position;
-            let over_hopper = (p.x - HOPPER_X).abs() < 0.85 && (p.z - HOPPER_Z).abs() < 0.85;
+            let mouth = if self.plant.is_some() { 0.80 } else { 0.85 };
+            let over_hopper = (p.x - HOPPER_X).abs() < mouth && (p.z - HOPPER_Z).abs() < mouth;
             if over_hopper && before.y >= top - 0.03 && p.y <= top {
                 impacts.push((i, true));
             } else if p.y <= self.site.height(p.x, p.z) || !Site::bounds(p, 0.2) {
@@ -622,18 +755,36 @@ impl Session {
         self.sluice.water_used_m3 += actual.water_m3;
         self.sluice.inlet.last_water_m3 = actual.water_m3;
         self.sluice.accept_intake(actual);
-        self.sluice.feed(dt, fraction > 0.01);
-        if self.site.loose_gold.is_some()
-            && self.sluice.feed_on
-            && self.sluice.pump_on
-            && fraction > 0.01
-        {
-            self.sluice.drain_pending_gold();
+        if let Some(plant) = &mut self.plant {
+            let result = plant
+                .step(&mut self.sluice, dt, fraction > 0.01)
+                .and_then(|()| {
+                    plant.release_spills(
+                        self.tailings.as_mut().expect("screen has spatial tailings"),
+                    )
+                });
+            if let Err(error) = result {
+                self.paused = true;
+                // Preserve the bounded diagnostic for tests/development logs,
+                // without dumping contact coordinates into the game HUD.
+                eprintln!("Plant simulation refusal: {error}");
+                self.message = "Plant paused; stock retained. Near the hopper: K stops the screen, L empties it.".into();
+            }
+        } else {
+            self.sluice.feed(dt, fraction > 0.01);
+            if self.site.loose_gold.is_some()
+                && self.sluice.feed_on
+                && self.sluice.pump_on
+                && fraction > 0.01
+            {
+                self.sluice.drain_pending_gold();
+            }
         }
     }
 
     pub fn accounted_gold(&self) -> f64 {
-        self.site.remaining_gold()
+        self.plant.as_ref().map_or(0., |p| p.material().gold_g)
+            + self.site.remaining_gold()
             + self.site.hydraulic.exported_gold_g
             + self.site.loose_gold.as_ref().map_or(0., |g| g.exported_g)
             + self.machine.bucket.gold_g
@@ -659,6 +810,9 @@ impl Session {
     }
     pub fn accounted_material(&self) -> Material {
         let mut total = self.site.stored_material();
+        if let Some(plant) = &self.plant {
+            total.add(plant.material());
+        }
         total.gold_g += self.site.loose_gold.as_ref().map_or(0., |g| g.exported_g);
         for m in [
             crate::intake::Suspension {
@@ -870,7 +1024,9 @@ impl Session {
         site.normalize_bed_age();
         serde_json::to_string(&Save {
             // v8 preserves spatial payload/rigid parcels and boundary receipts.
-            version: if self.site.loose_gold.is_some() {
+            version: if self.plant.is_some() {
+                14
+            } else if self.site.loose_gold.is_some() {
                 13
             } else if self.tailings.is_some() {
                 12
@@ -879,6 +1035,7 @@ impl Session {
             },
             mechanical_version: self.tailings.as_ref().map(|_| mechanical_version),
             tailings: self.tailings.clone(),
+            plant: self.plant.clone(),
             site,
             machine: self.machine.clone(),
             sluice: self.sluice.clone(),
@@ -898,13 +1055,19 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if (s.version == 13) != s.site.has_loose_gold() {
+        if (s.version == 14) != s.plant.is_some() {
+            return Err("Invalid plant save envelope".into());
+        }
+        if s.plant.as_ref().is_some_and(|p| !p.connected_to(&s.sluice)) {
+            return Err("Invalid saved screen/circuit state".into());
+        }
+        if matches!(s.version, 13 | 14) != s.site.has_loose_gold() {
             return Err("Invalid independent-gold save envelope".into());
         }
-        if s.version == 13 && s.sluice.hopper.handling_volume_m3() > 0.85001 {
+        if matches!(s.version, 13 | 14) && s.sluice.hopper.handling_volume_m3() > 0.85001 {
             return Err("Independent-gold hopper exceeds physical capacity".into());
         }
-        let version = if matches!(s.version, 12 | 13) {
+        let version = if matches!(s.version, 12..=14) {
             if s.tailings.is_none() || s.water_balance.is_none() {
                 return Err("Spatial save lacks tailings or water ownership".into());
             }
@@ -1064,6 +1227,7 @@ impl Session {
             material_motion: s.material_motion,
             active_soil: s.active_soil,
             tailings: s.tailings,
+            plant: s.plant,
         };
         if (session.accounted_gold() - session.initial_gold_g).abs() > 1e-3 {
             return Err("Save has an inconsistent gold ledger".into());
@@ -1071,9 +1235,11 @@ impl Session {
         Ok(session)
     }
     pub fn stored_water_m3(&self) -> f64 {
-        self.tailings
-            .as_ref()
-            .map_or(0., |t| t.active_material().pore_water_m3)
+        self.plant.as_ref().map_or(0., |p| p.water_m3())
+            + self
+                .tailings
+                .as_ref()
+                .map_or(0., |t| t.active_material().pore_water_m3)
             + self.site.water_volume_m3()
             + self
                 .active_soil

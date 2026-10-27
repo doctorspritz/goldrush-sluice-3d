@@ -221,6 +221,17 @@ pub fn input(
     }
     if game.session.paused || game.help {
         game.stop_controls();
+        if game.session.paused && !game.help {
+            for (key, action) in [
+                (KeyCode::KeyK, Action::ToggleScreen),
+                (KeyCode::KeyL, Action::ClearScreen),
+                (KeyCode::KeyM, Action::ScreenAperture),
+            ] {
+                if keys.just_pressed(key) {
+                    let _ = game.action(action);
+                }
+            }
+        }
         return;
     }
     let over_ui = ui.iter().any(|i| *i != Interaction::None);
@@ -344,6 +355,9 @@ pub fn input(
             (KeyCode::KeyP, Action::TogglePump),
             (KeyCode::KeyO, Action::ToggleFeed),
             (KeyCode::KeyC, Action::Cleanup),
+            (KeyCode::KeyK, Action::ToggleScreen),
+            (KeyCode::KeyM, Action::ScreenAperture),
+            (KeyCode::KeyL, Action::ClearScreen),
         ] {
             if keys.just_pressed(key) {
                 let _ = game.action(action);
@@ -527,6 +541,24 @@ mod tests {
         assert!(
             matches!(app.world().resource::<Game>().pending.last(),Some(Command::Water(v)) if (*v+0.002).abs()<1e-9)
         );
+    }
+    #[test]
+    fn paused_plant_maintenance_still_reaches_the_worker_command_path() {
+        let mut app = input_app();
+        app.world_mut().resource_mut::<Game>().session.paused = true;
+        press(&mut app, KeyCode::KeyK);
+        app.update();
+        assert!(matches!(
+            app.world().resource::<Game>().pending.last(),
+            Some(Command::Action(Action::ToggleScreen))
+        ));
+        clear_edges(&mut app);
+        press(&mut app, KeyCode::KeyL);
+        app.update();
+        assert!(matches!(
+            app.world().resource::<Game>().pending.last(),
+            Some(Command::Action(Action::ClearScreen))
+        ));
     }
     fn clear_edges(app: &mut App) {
         app.world_mut()

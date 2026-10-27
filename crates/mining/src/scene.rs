@@ -965,13 +965,16 @@ fn equipment(commands: &mut Commands, meshes: &mut Assets<Mesh>, p: &Palette, si
     let h = site.height(HOPPER_X, HOPPER_Z);
     for x in [-0.65, 0.65] {
         for z in [-0.65, 0.65] {
-            box_part(
+            let leg = box_part(
                 commands,
                 p,
                 Vec3::new(HOPPER_X + x, h + 0.58, HOPPER_Z + z),
                 Vec3::new(0.085, 1.16, 0.085),
                 p.steel.clone(),
             );
+            commands
+                .entity(leg)
+                .insert(crate::screen_render::LegacyHopper);
         }
     }
     // Four sloping sheets form a genuinely open hopper.
@@ -1018,14 +1021,18 @@ fn equipment(commands: &mut Commands, meshes: &mut Assets<Mesh>, p: &Palette, si
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(p.yellow.clone()),
         Transform::from_xyz(HOPPER_X, 0.0, HOPPER_Z),
+        crate::screen_render::LegacyHopper,
     ));
-    box_part(
+    let chute = box_part(
         commands,
         p,
         Vec3::new(HOPPER_X, h + 0.84, HOPPER_Z + 0.59),
         Vec3::new(0.35, 0.12, 0.65),
         p.steel.clone(),
     );
+    commands
+        .entity(chute)
+        .insert(crate::screen_render::LegacyHopper);
     commands.spawn((
         Mesh3d(p.sphere.clone()),
         MeshMaterial3d(p.hopper_load.clone()),
@@ -1356,7 +1363,11 @@ pub fn sync_material(
         };
         *t = Transform::from_xyz(
             HOPPER_X,
-            SluiceTop::height(&s.site) - 0.45 + amount * 0.25,
+            if s.plant.is_some() {
+                s.site.height(HOPPER_X, HOPPER_Z) + 1.67 + amount * 0.27
+            } else {
+                SluiceTop::height(&s.site) - 0.45 + amount * 0.25
+            },
             HOPPER_Z,
         )
         .with_scale(Vec3::new(0.50, 0.28 * amount.max(0.1), 0.50));

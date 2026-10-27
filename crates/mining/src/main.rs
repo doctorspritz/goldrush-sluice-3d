@@ -11,6 +11,7 @@ mod motion_capture;
 mod render_exit;
 mod runtime;
 mod scene;
+mod screen_render;
 mod sediment;
 mod terrain_water;
 mod validation;
@@ -128,7 +129,7 @@ fn main() -> AppExit {
                 scene::sync_terrain,
                 water::sync,
                 scene::sync_plant,
-                scene::sync_material,
+                (scene::sync_material, screen_render::sync).chain(),
                 (sediment::sync, sediment::sync_tailings).chain(),
                 scene::guides,
                 hud::update,

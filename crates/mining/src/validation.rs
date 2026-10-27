@@ -96,6 +96,7 @@ impl Default for Validation {
                 matches!(
                     a.as_str(),
                     "--check-controls"
+                        | "--check-screen"
                         | "--mechanism-motion"
                         | "--payload-motion"
                         | "--soil-motion"

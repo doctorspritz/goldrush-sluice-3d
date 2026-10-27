@@ -365,14 +365,15 @@ pub fn update(
     let foot = s.player.mode == ControlMode::OnFoot;
     for (role, mut text) in &mut text {
         text.0=match role {
-            HudText::Scene=>if game.demo {"FLOWING SLUICE  /  LIVE PAYDIRT".into()} else {"FIRST BEND  /  YOUR FIRST CLAIM".into()},
+            HudText::Scene=>if game.demo {"RUNNING PLANT  /  LIVE PAYDIRT".into()} else {"FIRST BEND  /  YOUR FIRST CLAIM".into()},
             HudText::Mode=>format!("{}  /  {}",if foot{"ON FOOT"}else{"EXCAVATOR"},if s.player.third_person{"EXTERNAL VIEW"}else{"FIRST PERSON"}),
             HudText::Numbers=>format!("{:.2} g",s.sluice.concentrate.gold_g),
             HudText::Objective=>{
                 if s.active_soil.is_some() {"SOIL CONTACT TRIAL\n\nMove the bucket into the bank.\nR/F boom · T/G stick · Y/H curl.\nDrained frictional soil.\nWet/cohesive mud uncalibrated.".into()}
                 else if s.machine.articulation.is_some() { "MECHANISM VALIDATION\n\nDrive, swing and move the arm.\nWatch load and pump feedback.\nDigging and dumping unavailable.".into() }
-                else if game.demo { "FLOWING DEMO\n\nPaydirt and water are flowing.\nP pump · O feed · arrows set rates.\nNew shift starts a fresh claim.".into() }
+                else if game.demo { "RUNNING PLANT\n\nFinite pay passes the dry screen\ninto the wet sluice. K motor.\nM empty-deck aperture · L empty screen.".into() }
                 else if s.sluice.concentrate.gold_g>=GOLD_TARGET_G {format!("FIRST GOLD RECOVERED\n\n{:.2} g from your claim.\nKeep digging, or save your shift.",s.sluice.concentrate.gold_g)}
+                else if s.plant.as_ref().is_some_and(|p|!p.screen.motor_on) && s.sluice.feed_on {"SCREEN STOPPED\n\nThe open hopper feed is held.\nK restarts the screen motor.\nL empties the stopped screen.".into()}
                 else if s.sluice.placement.is_some() && s.sluice.pump_on && s.sluice.feed_on {"WASHING
 
 Pump and feed are enabled.
@@ -397,13 +398,16 @@ P restarts water; O opens feed.".into()}
                 else if s.sluice.processed_m3<0.01{"04   START WASHING\n\nWalk to the sluice. P starts water,\nO opens the feed gate.".into()}
                 else{format!("05   LIFT THE MATS\n\nStop feed with O, let it clear,\nstop water with P, then C to collect.\nTarget: {GOLD_TARGET_G:.0} g")}
             },
-            HudText::Clock=>format!("Hopper  {:.3} / 0.850 m³\nWater  {}  ·  {:.2} / {:.2} L/s\nFeed  {}  ·  {:.3} L/s\nShift  {:02}:{:02}",s.sluice.hopper.volume(),if s.sluice.pump_on{"ON"}else{"OFF"},s.sluice.inlet.last_water_m3 / mining_sim::FIXED_DT as f64 * 1000.,s.sluice.flow_m3s*1000.0,
-                if s.sluice.feed_on{"ON"}else{"OFF"},s.sluice.feed_m3s*1000.0,s.sim_time as u64/60,s.sim_time as u64%60),
+            HudText::Clock=>{
+                let screen=s.plant.as_ref().map_or_else(||"K fits a screen".into(),|p|format!("Deck {} · {:.0} mm · Rejects {:.1} L",if p.screen.motor_on{"ON"}else{"OFF"},p.screen.config.aperture_m*1000.,p.screen.oversize.iter().map(|g|g.material.volume()).sum::<f64>().max(0.)*1000.));
+                format!("Hopper  {:.3} / 0.850 m³\nWater  {}  ·  {:.2} / {:.2} L/s\nFeed  {}  ·  {:.3} L/s\n{}\nShift  {:02}:{:02}",s.sluice.hopper.volume(),if s.sluice.pump_on{"ON"}else{"OFF"},s.sluice.inlet.last_water_m3 / mining_sim::FIXED_DT as f64 * 1000.,s.sluice.flow_m3s*1000.0,
+                if s.sluice.feed_on{"ON"}else{"OFF"},s.sluice.feed_m3s*1000.0,screen,s.sim_time as u64/60,s.sim_time as u64%60)
+            },
             HudText::Context=>{
                 if let Some(p)=game.placement {
                     format!("SLUICE  {:.1}°   ·   {}\nR / Q rotate   ·   [ / ] slope   ·   Click build   ·   Esc cancel",p.slope_deg,game.placement_error.as_deref().unwrap_or("Ready to connect"))
                 }else if foot && s.near_plant() && s.sluice.placement.is_some() {
-                    "Click to look · Esc frees mouse · P water · O feed · Up / Down water rate · Left / Right feed rate · C lift mats when stopped".into()
+                    "P water · O feed · K screen motor / fit · M empty-deck aperture · L empty stopped screen · Arrows set water/feed · C lift mats".into()
                 }else if foot {
                     format!("WASD walk   ·   Click to capture mouse / shovel   ·   Esc release   ·   E / Tab cab   ·   B place   ·   Shovel: click   ·   Hand load: {:.1} L",s.player.hand.volume()*1000.0)
                 }else{
@@ -432,7 +436,7 @@ P restarts water; O opens feed.".into()}
             HudText::Message=>s.message.clone(),
             HudText::Help=>"OPERATING THE CLAIM\n\nON FOOT\nWASD walk · Shift run · Click captures mouse
 Move mouse to look · Esc releases it
-Right-drag also looks while the cursor is free\nE / Tab enter cab · Left-click shovel · J pour\nB sluice preview · R / Q rotate · [ / ] slope\n\nIN THE EXCAVATOR\nWASD tracks · Q / E swing the upper body\nR / F raise / lower boom · T / G extend / tuck stick\nY / H curl / open bucket · Space / left-click cut · J dump\nTab leave cab · I engine · V first / third person\n\nAT THE PLANT\nP pump · O feed · C lift mats when stopped\nUp / Down water · Left / Right feed\nShift + arrows: larger rate changes\n\nF5 save · F9 restore · Esc mouse / pause · F1 help".into(),
+Right-drag also looks while the cursor is free\nE / Tab enter cab · Left-click shovel · J pour\nB sluice preview · R / Q rotate · [ / ] slope\n\nIN THE EXCAVATOR\nWASD tracks · Q / E swing the upper body\nR / F raise / lower boom · T / G extend / tuck stick\nY / H curl / open bucket · Space / left-click cut · J dump\nTab leave cab · I engine · V first / third person\n\nAT THE PLANT\nP pump · O feed · C lift mats when stopped\nK fit screen / motor · M empty-deck aperture\nL empty stopped screen with motor stopped\nUp / Down water · Left / Right feed\nShift + arrows: larger rate changes\n\nF5 save · F9 restore · Esc mouse / pause · F1 help".into(),
         };
     }
     for mut node in &mut panels.p0() {

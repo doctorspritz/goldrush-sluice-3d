@@ -14,6 +14,52 @@ pub const MAX_GRAINS: usize = INITIAL_GRAIN_STORAGE;
 pub const FLUID_CELL: f32 = 0.01;
 pub const WATER_PARTICLE_M3: f64 = (FLUID_CELL * FLUID_CELL * FLUID_CELL / 8.0) as f64;
 pub const MAX_WATER_PARTICLES: usize = 300_000;
+/// At most 32 bulk batches with four dry phases, plus 32 pending gold grains.
+/// This bounds one screen admission; it is not a physical screen capacity.
+pub const SCREEN_FEED_BATCH_MAX: usize = 160;
+
+#[derive(Clone, Debug, Default)]
+pub struct ScreenFeed {
+    pub grains: Vec<Grain>,
+    /// Free moisture only; normal batches attach all water to mineral grains.
+    pub moisture_m3: f64,
+}
+
+#[derive(Clone, Copy)]
+struct ScreenFeedCheckpoint {
+    hopper: Material,
+    time: f32,
+    feed_credit: f64,
+    pending_gold_g: f64,
+    sequence: u64,
+    feed_water_credit_m3: f64,
+    water_used_m3: f64,
+    processed_m3: f64,
+}
+impl ScreenFeedCheckpoint {
+    fn capture(s: &Sluice) -> Self {
+        Self {
+            hopper: s.hopper,
+            time: s.time,
+            feed_credit: s.feed_credit,
+            pending_gold_g: s.pending_gold_g,
+            sequence: s.sequence,
+            feed_water_credit_m3: s.feed_water_credit_m3,
+            water_used_m3: s.water_used_m3,
+            processed_m3: s.processed_m3,
+        }
+    }
+    fn restore(self, s: &mut Sluice) {
+        s.hopper = self.hopper;
+        s.time = self.time;
+        s.feed_credit = self.feed_credit;
+        s.pending_gold_g = self.pending_gold_g;
+        s.sequence = self.sequence;
+        s.feed_water_credit_m3 = self.feed_water_credit_m3;
+        s.water_used_m3 = self.water_used_m3;
+        s.processed_m3 = self.processed_m3;
+    }
+}
 
 /// Saves without a profile are the first playable build: retain their grid,
 /// particle volumes and geometry instead of reinterpreting live water at 1 cm.
@@ -581,9 +627,150 @@ impl Sluice {
         )
     }
     pub fn feed(&mut self, dt: f32, water_available: bool) {
-        if self.placement.is_none() {
-            return;
+        self.feed_mode(dt, water_available, false);
+    }
+    /// Emit the existing deterministic feed population into an upstream screen.
+    /// Current channel particles and all water buffers stay in their owners.
+    /// Numerical state advances, while throughput/water-use counters wait for
+    /// the actual later screen-to-sluice admission.
+    pub fn take_screen_feed(
+        &mut self,
+        dt: f32,
+        water_available: bool,
+    ) -> Result<ScreenFeed, String> {
+        let parcel = self.parcel_volume();
+        let credit_cap = parcel * if self.granular_packets { 32.01 } else { 2.01 };
+        if !dt.is_finite()
+            || !(0. ..=crate::FIXED_DT).contains(&dt)
+            || !self.hopper.valid()
+            || !self.hopper.volume().is_finite()
+            || !self.hopper.handling_volume_m3().is_finite()
+            || self.hopper.handling_volume_m3() > 0.85001
+            || !parcel.is_finite()
+            || parcel <= 0.
+            || self
+                .parcel_volume_m3
+                .is_some_and(|v| !v.is_finite() || !(1e-9..=PARCEL_VOLUME).contains(&v))
+            || !self.feed_credit.is_finite()
+            || !(0. ..=credit_cap).contains(&self.feed_credit)
+            || !self.pending_gold_g.is_finite()
+            || self.pending_gold_g < 0.
+            || !(self.pending_gold_g + self.hopper.gold_g).is_finite()
+            || !self.feed_m3s.is_finite()
+            || self.feed_m3s < 0.
+            || !self.time.is_finite()
+            || self.time < 0.
+            || !(self.time + dt).is_finite()
+            || !self.water_credit_m3.is_finite()
+            || self.water_credit_m3 < 0.
+            || !self.feed_water_credit_m3.is_finite()
+            || self.feed_water_credit_m3 < 0.
+            || !self.water_used_m3.is_finite()
+            || self.water_used_m3 < 0.
+            || !self.processed_m3.is_finite()
+            || self.processed_m3 < 0.
+            || self.placement.is_some_and(|p| {
+                !p.inlet.is_finite() || !p.yaw.is_finite() || !(3. ..=12.).contains(&p.slope_deg)
+            })
+            || self.sequence.checked_add(64).is_none()
+        {
+            return Err("Invalid or exhausted screen feed state; hopper retained".into());
         }
+        if dt == 0. || self.placement.is_none() {
+            return Ok(ScreenFeed::default());
+        }
+        let mut batch = Vec::new();
+        batch
+            .try_reserve_exact(SCREEN_FEED_BATCH_MAX)
+            .map_err(|_| "Cannot reserve screen feed batch; hopper retained")?;
+        let before = ScreenFeedCheckpoint::capture(self);
+        let existing = std::mem::replace(&mut self.grains, batch);
+        let moisture = self.feed_mode(dt, water_available, true);
+        if self.feed_on && self.pump_on && water_available {
+            self.drain_pending_gold_mode(true);
+        }
+        let mut grains = std::mem::replace(&mut self.grains, existing);
+        // Mineral phase capacities add to at least the source's mixed void
+        // capacity: gold contributes solid volume but cannot carry pore water.
+        let capacity = grains
+            .iter()
+            .map(|g| g.material.pore_volume_m3())
+            .sum::<f64>();
+        let attached = moisture.min(capacity);
+        let mut remaining = attached;
+        let last = grains
+            .iter()
+            .rposition(|g| g.material.pore_volume_m3() > 0.);
+        for (i, g) in grains.iter_mut().enumerate() {
+            let pore = g.material.pore_volume_m3();
+            if pore > 0. {
+                let amount = if Some(i) == last {
+                    remaining
+                } else {
+                    (attached * (pore / capacity)).min(remaining)
+                };
+                g.material.pore_water_m3 = amount;
+                remaining -= amount;
+            }
+        }
+        // A pure-water numerical residue has no dry grain to own it. Keep it
+        // in the existing donor rather than bypass the screen or lose it.
+        self.hopper.pore_water_m3 += moisture - attached;
+        let mut after = self.hopper;
+        after.gold_g += self.pending_gold_g;
+        for g in &grains {
+            after.add(g.material);
+        }
+        let mut initial = before.hopper;
+        initial.gold_g += before.pending_gold_g;
+        let conserved = [
+            (initial.soil_m3, after.soil_m3),
+            (initial.sand_m3, after.sand_m3),
+            (initial.gravel_m3, after.gravel_m3),
+            (initial.gold_g, after.gold_g),
+            (initial.pore_water_m3, after.pore_water_m3),
+        ]
+        .iter()
+        .all(|(a, b)| {
+            a.is_finite() && b.is_finite() && (a - b).abs() <= (a.abs() * 1e-10).max(1e-20)
+        });
+        let valid = grains.len() <= SCREEN_FEED_BATCH_MAX
+            && moisture.is_finite()
+            && moisture >= 0.
+            && self.hopper.valid()
+            && conserved
+            && self.pending_gold_g.is_finite()
+            && self.pending_gold_g >= 0.
+            && grains.iter().all(|g| {
+                g.material.valid()
+                    && g.material.solid_volume_m3() > 0.
+                    && g.position.is_finite()
+                    && g.velocity.is_finite()
+                    && g.affine.is_finite()
+                    && g.rotation.is_finite()
+                    && g.angular_velocity.is_finite()
+                    && (0.00002..=0.02).contains(&g.diameter_m)
+            });
+        if !valid {
+            before.restore(self);
+            return Err(
+                "Screen feed refused invalid or nonconservative batch; hopper retained".into(),
+            );
+        }
+        // These are downstream receipts, not source-parcelization counters.
+        self.feed_water_credit_m3 = before.feed_water_credit_m3;
+        self.water_used_m3 = before.water_used_m3;
+        self.processed_m3 = before.processed_m3;
+        Ok(ScreenFeed {
+            grains,
+            moisture_m3: 0.,
+        })
+    }
+    fn feed_mode(&mut self, dt: f32, water_available: bool, screen: bool) -> f64 {
+        if self.placement.is_none() {
+            return 0.;
+        }
+        let mut released_moisture = 0.;
         self.time += dt;
         if !self.feed_on && self.pending_gold_g > 0.0 {
             let pending = Material {
@@ -595,7 +782,15 @@ impl Sluice {
         if self.feed_on && self.pump_on && water_available {
             self.feed_credit = (self.feed_credit + self.feed_m3s as f64 * dt as f64)
                 .min(self.parcel_volume() * if self.granular_packets { 32.0 } else { 2.0 });
-            while self.feed_credit >= self.parcel_volume() && !self.hopper.is_empty() {
+            while self.feed_credit >= self.parcel_volume()
+                && if screen {
+                    self.hopper.volume() > 0.
+                        || self.hopper.gold_g > 0.
+                        || self.hopper.pore_water_m3 > 0.
+                } else {
+                    !self.hopper.is_empty()
+                }
+            {
                 let moisture = self.hopper.pore_water_m3
                     * (self.parcel_volume() / self.hopper.volume().max(1e-30)).min(1.);
                 let room = self
@@ -605,26 +800,46 @@ impl Sluice {
                     as f64
                     * self.profile.particle_m3()
                     - self.water_credit_m3
-                    - self.feed_water_credit_m3;
+                    - self.feed_water_credit_m3
+                    - if screen { released_moisture } else { 0. };
                 if moisture > room.max(0.) {
                     break;
                 }
-                let mut m = self.hopper.take_volume(self.parcel_volume());
+                let mut m = if screen && self.hopper.volume() > 0. && self.hopper.volume() < 1e-12 {
+                    self.hopper
+                        .take_fraction(self.parcel_volume() / self.hopper.volume())
+                } else {
+                    self.hopper.take_volume(self.parcel_volume())
+                };
                 // Keep moisture at its own feed chute and source velocity.
                 // Never dilute the suspended river-intake carrier with it.
-                self.feed_water_credit_m3 += m.pore_water_m3;
-                self.water_used_m3 += m.pore_water_m3;
+                if screen {
+                    released_moisture += m.pore_water_m3;
+                } else {
+                    self.feed_water_credit_m3 += m.pore_water_m3;
+                    self.water_used_m3 += m.pore_water_m3;
+                }
                 m.pore_water_m3 = 0.;
-                self.processed_m3 += m.volume();
+                if !screen {
+                    self.processed_m3 += m.volume();
+                }
                 self.feed_credit -= self.parcel_volume();
-                self.emit(m);
+                if screen {
+                    self.emit_mode(m, true);
+                } else {
+                    self.emit(m);
+                }
             }
         }
+        released_moisture
     }
     /// Continue finite physical gold emission when bulk feed is exhausted.
     /// New independent-gold operations use this bounded batch; no weighted
     /// macro gold parcel or recovery percentage replaces actual DEM grains.
     pub fn drain_pending_gold(&mut self) {
+        self.drain_pending_gold_mode(false);
+    }
+    fn drain_pending_gold_mode(&mut self, screen: bool) {
         if self.placement.is_none() || !self.feed_on || !self.pump_on {
             return;
         }
@@ -633,13 +848,20 @@ impl Sluice {
                 break;
             }
             let before = self.pending_gold_g;
-            self.emit(Material::default());
+            if screen {
+                self.emit_mode(Material::default(), true);
+            } else {
+                self.emit(Material::default());
+            }
             if self.pending_gold_g == before {
                 break;
             }
         }
     }
     fn emit(&mut self, m: Material) {
+        self.emit_mode(m, false);
+    }
+    fn emit_mode(&mut self, m: Material, screen: bool) {
         self.sequence += 1;
         let z = ((self.sequence.wrapping_mul(1664525) % 1000) as f32 / 1000.0 - 0.5)
             * self.profile.width()
@@ -700,7 +922,11 @@ impl Sluice {
                 material.gold_g = physical_mass;
                 self.pending_gold_g -= physical_mass;
             }
-            if !material.is_empty() {
+            if if screen {
+                material.volume() > 0. || material.gold_g > 0.
+            } else {
+                !material.is_empty()
+            } {
                 let position = if self.granular_packets {
                     // A continuous chute footprint, without coincident sand,
                     // gravel and gold clumps or the old 40-lane repeating lattice.

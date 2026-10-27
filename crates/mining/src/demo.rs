@@ -11,7 +11,9 @@ pub fn session() -> Result<Session, String> {
     let mut session = Session::load_json(&json)?;
     session.enable_spatial_tailings()?;
     session.enable_loose_gold()?;
-    session.message = "Flowing demo: real paydirt and water. Click to look; Esc frees the mouse. P water, O feed.".into();
+    session.enable_screen()?;
+    session.plant.as_mut().unwrap().screen.motor_on = true;
+    session.message = "Running plant: finite hopper / dry screen / wet sluice. K screen · M empty-deck aperture · L empty stopped screen.".into();
     Ok(session)
 }
 pub fn initial() -> (Session, bool) {

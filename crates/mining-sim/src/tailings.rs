@@ -177,7 +177,7 @@ impl Tailings {
 fn fields(m: Material) -> [f64; 5] {
     [m.soil_m3, m.sand_m3, m.gravel_m3, m.gold_g, m.pore_water_m3]
 }
-fn valid_grain(g: &Grain) -> bool {
+pub(crate) fn valid_grain(g: &Grain) -> bool {
     g.position.is_finite()
         && g.position.length() < 1000.
         && g.velocity.is_finite()
@@ -209,6 +209,28 @@ pub fn world_grain(s: &Sluice, g: &Grain) -> Result<Grain, String> {
     if !valid_grain(&out) {
         return Err("Invalid outgoing solid; retained in sluice".into());
     }
+    Ok(out)
+}
+/// Inverse of the reflected grid/world boundary. No re-emission, position
+/// clamp, added impulse, grading change or loss of axial/affine state.
+pub fn grid_grain(s: &Sluice, g: &Grain) -> Result<Grain, String> {
+    let p = s.placement.ok_or("Place the receiving sluice first")?;
+    if !valid_grain(g) {
+        return Err("Invalid world solid; retained by plant".into());
+    }
+    let b = Mat3::from_cols(p.forward(), Vec3::Y, p.right());
+    let local = b.transpose() * (g.position - p.inlet);
+    let floor = s.grid_to_local(Vec3::ZERO).y;
+    let mut out = g.clone();
+    out.position = Vec3::new(
+        local.x,
+        local.y - floor,
+        local.z + s.profile.width() * 0.5 + s.profile.cell(),
+    );
+    out.velocity = b.transpose() * g.velocity;
+    out.affine = b.transpose() * g.affine * b;
+    out.angular_velocity = -(b.transpose() * g.angular_velocity);
+    out.rotation = Quat::from_mat3(&(b.transpose() * Mat3::from_quat(g.rotation) * b)).normalize();
     Ok(out)
 }
 fn admit_gold(site: &mut Site, g: &Grain, dt: f32) -> bool {

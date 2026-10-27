@@ -47,10 +47,10 @@ fn sample_counts(s: &Sluice) -> Vec<usize> {
 pub(crate) fn visible_grains(s: &Sluice) -> usize {
     sample_counts(s).iter().sum()
 }
-struct Geometry {
-    positions: Vec<[f32; 3]>,
-    normals: Vec<[f32; 3]>,
-    indices: Vec<u32>,
+pub(crate) struct Geometry {
+    pub(crate) positions: Vec<[f32; 3]>,
+    pub(crate) normals: Vec<[f32; 3]>,
+    pub(crate) indices: Vec<u32>,
 }
 fn geometry(s: &Sluice) -> [Geometry; 3] {
     let counts = sample_counts(s);
@@ -194,7 +194,7 @@ fn tailings_geometry(t: &mining_sim::tailings::Tailings) -> [Geometry; 3] {
             .map(|p| &p.grain),
     )
 }
-fn world_geometry<'a>(
+pub(crate) fn world_geometry<'a>(
     grains: impl Iterator<Item = &'a mining_sim::sluice::Grain>,
 ) -> [Geometry; 3] {
     const BUDGET: usize = 4096;

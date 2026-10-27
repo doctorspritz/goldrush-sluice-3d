@@ -4,6 +4,7 @@ use crate::{app::Game, hud::HudButton, validation::Validation};
 use bevy::{
     input::mouse::AccumulatedMouseMotion,
     prelude::*,
+    render::view::screenshot::{save_to_disk, Screenshot},
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 use mining_sim::ControlMode;
@@ -23,6 +24,11 @@ pub struct Check {
     payload_motion: bool,
     soil_motion: bool,
     soil_saved: bool,
+    screen_mode: bool,
+    screen_ready: bool,
+    screen_before: Option<(mining_sim::Material, mining_sim::Material)>,
+    screen_saved: Option<serde_json::Value>,
+    screen_stages: Vec<serde_json::Value>,
 }
 impl Check {
     pub fn from_args() -> Self {
@@ -45,9 +51,10 @@ impl Check {
             mechanism_motion,
             payload_motion: args.iter().any(|a| a == "--payload-motion"),
             soil_motion: args.iter().any(|a| a == "--soil-motion"),
+            screen_mode: args.iter().any(|a| a == "--check-screen"),
             path: args
                 .iter()
-                .position(|a| a == "--check-controls")
+                .position(|a| matches!(a.as_str(), "--check-controls" | "--check-screen"))
                 .and_then(|i| args.get(i + 1))
                 .map(PathBuf::from),
             ..default()
@@ -68,6 +75,7 @@ pub fn inject(
     mut mouse: ResMut<ButtonInput<MouseButton>>,
     mut motion: ResMut<AccumulatedMouseMotion>,
     mut buttons: Query<(&HudButton, &mut Interaction)>,
+    validation: Res<Validation>,
 ) {
     if (check.path.is_none()
         && !check.mechanism_motion
@@ -77,7 +85,32 @@ pub fn inject(
     {
         return;
     }
+    if check.screen_mode && !check.screen_ready {
+        if !validation.capture_scene_ready() || !validation.ready() {
+            return;
+        }
+        check.screen_ready = true;
+    }
     check.frame += 1;
+    if check.screen_mode {
+        let key = match check.frame {
+            181 | 182 => Some(KeyCode::Escape),
+            220 | 221 | 460 | 461 => Some(KeyCode::KeyK),
+            260 | 261 => Some(KeyCode::KeyL),
+            300 | 301 => Some(KeyCode::KeyM),
+            340 | 341 => Some(KeyCode::F5),
+            400 | 401 => Some(KeyCode::F9),
+            _ => None,
+        };
+        if let Some(key) = key {
+            if matches!(check.frame, 181 | 220 | 260 | 300 | 340 | 400 | 460) {
+                keys.press(key);
+            } else {
+                keys.release(key);
+            }
+        }
+        return;
+    }
     if check.soil_motion {
         // Enter through the ordinary key handler; the analog validation stroke
         // below uses the same latched joystick packet and worker as gameplay.
@@ -236,6 +269,10 @@ pub fn observe(
     windows: Query<(&Window, &CursorOptions), With<PrimaryWindow>>,
 ) {
     if check.path.is_none() || check.finished {
+        return;
+    }
+    if check.screen_mode {
+        observe_screen(&mut check, &game, &mut validation, &mut commands, &mut exit);
         return;
     }
     let s = &game.session;
@@ -404,6 +441,177 @@ pub fn observe(
             }
         }
         _ => {}
+    }
+}
+
+fn observe_screen(
+    check: &mut Check,
+    game: &Game,
+    validation: &mut Validation,
+    commands: &mut Commands,
+    exit: &mut MessageWriter<AppExit>,
+) {
+    let s = &game.session;
+    let plant = s.plant.as_ref();
+    if check.frame == 400 {
+        validation.restore_requested = true;
+        validation.saved = false;
+    }
+    let observed = matches!(check.frame, 200 | 240 | 280 | 320 | 380 | 440 | 500);
+    if observed {
+        let path = check.path.as_ref().unwrap();
+        let name = path.file_stem().unwrap_or_default().to_string_lossy();
+        let photo = path.with_file_name(format!("{name}-screen-{}.png", check.frame));
+        if let Some(parent) = path.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                validation.failure = Some(error.to_string());
+            }
+        }
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(photo.clone()));
+        check.screen_stages.push(serde_json::json!({"frame":check.frame,"sim_time":s.sim_time,"snapshot_id":game.snapshot_id,"paused":s.paused,"motor_on":plant.map(|p|p.screen.motor_on),"aperture_m":plant.map(|p|p.screen.config.aperture_m),"plant_material":plant.map(|p|p.material()),"hand":s.player.hand,"message":s.message,"screenshot":photo}));
+    }
+    match check.frame {
+        200 => {
+            check.screen_before = plant.map(|p| (p.material(), s.player.hand));
+            check.clock = s.sim_time;
+            check.expect(
+                s.paused
+                    && plant.is_some_and(|p| {
+                        p.screen.motor_on
+                            && !p.material().is_empty()
+                            && (p.screen.config.aperture_m - 0.003).abs() < 1e-12
+                    }),
+                "Escape pauses the loaded running 3 mm screen with real stock",
+                validation,
+            );
+        }
+        240 => check.expect(
+            s.paused
+                && plant.is_some_and(|p| !p.screen.motor_on)
+                && (s.sim_time - check.clock).abs() < 1e-8,
+            "K stops the screen while the physical clock stays paused",
+            validation,
+        ),
+        280 => {
+            let transferred = check.screen_before.is_some_and(|(stock, hand)| {
+                s.player.hand.wet_mass_kg() > hand.wet_mass_kg()
+                    && (s.player.hand.volume() - hand.volume() - stock.volume()).abs() < 1e-10
+                    && (s.player.hand.gold_g - hand.gold_g - stock.gold_g).abs() < 1e-9
+                    && (s.player.hand.pore_water_m3 - hand.pore_water_m3 - stock.pore_water_m3)
+                        .abs()
+                        < 1e-10
+            });
+            check.expect(
+                plant.is_some_and(|p| p.material().is_empty()) && transferred,
+                "L moves actual screen and bin stock into hand without loss",
+                validation,
+            );
+        }
+        320 => check.expect(
+            plant.is_some_and(|p| {
+                !p.screen.motor_on && (p.screen.config.aperture_m - 0.006).abs() < 1e-12
+            }),
+            "M changes the stopped empty deck from 3 to 6 mm",
+            validation,
+        ),
+        380 => {
+            let path = if game.demo && std::env::var_os("SLUICE_SAVE_PATH").is_none() {
+                crate::app::save_path().with_file_name("flowing-demo.json")
+            } else {
+                crate::app::save_path()
+            };
+            match mining_sim::storage::load(&path) {
+                Ok(saved) => {
+                    check.screen_saved = Some(
+                        serde_json::json!({"path":path,"aperture_m":saved.plant.as_ref().map(|p|p.screen.config.aperture_m),"motor_on":saved.plant.as_ref().map(|p|p.screen.motor_on),"plant_material":saved.plant.as_ref().map(|p|p.material()),"hand":saved.player.hand}),
+                    );
+                    check.expect(
+                        s.message.starts_with("Shift saved")
+                            && saved.plant.as_ref().is_some_and(|p| {
+                                !p.screen.motor_on
+                                    && p.material().is_empty()
+                                    && (p.screen.config.aperture_m - 0.006).abs() < 1e-12
+                            })
+                            && saved.player.hand == s.player.hand,
+                        "F5 writes the actual modified deck and transferred hand stock",
+                        validation,
+                    );
+                }
+                Err(error) => {
+                    validation.failure = Some(format!("Cannot verify screen save: {error}"))
+                }
+            }
+        }
+        440 => {
+            check.clock = s.sim_time;
+            let same_hand = check
+                .screen_saved
+                .as_ref()
+                .is_some_and(|saved| saved["hand"] == serde_json::json!(s.player.hand));
+            check.expect(
+                validation.saved
+                    && same_hand
+                    && plant.is_some_and(|p| {
+                        !p.screen.motor_on && (p.screen.config.aperture_m - 0.006).abs() < 1e-12
+                    }),
+                "F9 acknowledges restoration of saved 6 mm deck and hand stock",
+                validation,
+            );
+        }
+        500 => {
+            check.expect(
+                !s.paused && s.sim_time > check.clock && plant.is_some_and(|p| p.screen.motor_on),
+                "K restarts the restored screen and physical time advances",
+                validation,
+            );
+            check.expect(
+                (s.accounted_gold() - s.initial_gold_g).abs() < 1e-7
+                    && s.water_balance_error_m3().abs() < 2e-5,
+                "Actual gold and environmental water budgets close after maintenance",
+                validation,
+            );
+        }
+        560 => {
+            let photos_written = check.screen_stages.len() == 7
+                && check.screen_stages.iter().all(|stage| {
+                    stage["screenshot"].as_str().is_some_and(|path| {
+                        std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0)
+                    })
+                });
+            check.expect(
+                photos_written,
+                "All seven native stage screenshots reached disk",
+                validation,
+            );
+            check.expect(
+                (s.accounted_gold() - s.initial_gold_g).abs() < 1e-7
+                    && s.water_balance_error_m3().abs() < 2e-5,
+                "Gold and water remain balanced through the final screenshot write",
+                validation,
+            );
+        }
+        _ => {}
+    }
+    if validation.failure.is_some() || check.frame == 560 {
+        let mut receipt = serde_json::json!({"passed":validation.failure.is_none(),"failure":validation.failure,"input_source":"synthetic Bevy keyboard events through the native gameplay input handler; OS key delivery, focus and manual operation are not exercised","checks":check.checks,"before":check.screen_before,"stages":check.screen_stages,"actual_save":check.screen_saved,"gold_error_g":s.accounted_gold()-s.initial_gold_g,"water_error_m3":s.water_balance_error_m3(),"save_restored":validation.saved});
+        if let Err(error) = std::fs::write(
+            check.path.as_ref().unwrap(),
+            serde_json::to_vec_pretty(&receipt).unwrap(),
+        ) {
+            validation.failure = Some(format!("Cannot write screen replay receipt: {error}"));
+            receipt["passed"] = serde_json::json!(false);
+            receipt["failure"] = serde_json::json!(validation.failure);
+        }
+        println!("NATIVE SCREEN INPUT CHECK: {receipt}");
+        check.finished = true;
+        validation.input_complete = validation.failure.is_none();
+        exit.write(if validation.input_complete {
+            AppExit::Success
+        } else {
+            AppExit::error()
+        });
     }
 }
 
