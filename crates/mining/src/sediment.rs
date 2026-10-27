@@ -187,16 +187,27 @@ pub fn sync(
 }
 
 fn tailings_geometry(t: &mining_sim::tailings::Tailings) -> [Geometry; 3] {
+    world_geometry(
+        t.packets
+            .iter()
+            .filter(|p| !p.contact_pending)
+            .map(|p| &p.grain),
+    )
+}
+fn world_geometry<'a>(
+    grains: impl Iterator<Item = &'a mining_sim::sluice::Grain>,
+) -> [Geometry; 3] {
     const BUDGET: usize = 4096;
-    let mut selected: Vec<_> = t
-        .packets
+    let grains: Vec<_> = grains.collect();
+    let mut selected: Vec<_> = grains
         .iter()
-        .filter(|p| !p.contact_pending && p.grain.kind == GrainKind::Gold)
+        .copied()
+        .filter(|g| g.kind == GrainKind::Gold)
         .collect();
-    let minerals: Vec<_> = t
-        .packets
+    let minerals: Vec<_> = grains
         .iter()
-        .filter(|p| !p.contact_pending && p.grain.kind != GrainKind::Gold)
+        .copied()
+        .filter(|g| g.kind != GrainKind::Gold)
         .collect();
     if selected.len() > BUDGET {
         selected = (0..BUDGET)
@@ -209,14 +220,9 @@ fn tailings_geometry(t: &mining_sim::tailings::Tailings) -> [Geometry; 3] {
     let wants: Vec<_> = selected
         .iter()
         .map(|p| {
-            p.grain.represented_grains().ceil().clamp(
-                1.,
-                if p.grain.diameter_m < 0.0002 {
-                    8.
-                } else {
-                    512.
-                },
-            ) as usize
+            p.represented_grains()
+                .ceil()
+                .clamp(1., if p.diameter_m < 0.0002 { 8. } else { 512. }) as usize
         })
         .collect();
     let free = BUDGET - selected.len();
@@ -238,7 +244,7 @@ fn tailings_geometry(t: &mining_sim::tailings::Tailings) -> [Geometry; 3] {
         [5, 0, 3],
     ];
     for (p, want) in selected.into_iter().zip(wants) {
-        let g = &p.grain;
+        let g = p;
         let kind = match g.kind {
             GrainKind::Sand => 0,
             GrainKind::Gravel => 1,
@@ -285,17 +291,20 @@ pub fn sync_tailings(
     capture: Res<crate::motion_capture::MotionCapture>,
     palette: Res<crate::scene::Palette>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut handles: Local<Option<[Handle<Mesh>; 3]>>,
+    mut handles: Local<Option<[Handle<Mesh>; 6]>>,
     mut revision: Local<Option<(u64, u64)>>,
 ) {
     if capture.water_only {
         return;
     }
-    let key = (game.simulation_generation, game.session.sim_time.to_bits());
+    let key = (game.simulation_generation, game.snapshot_id);
     if handles.is_some() && *revision == Some(key) {
         return;
     }
-    if handles.is_none() && game.session.tailings.is_none() {
+    if handles.is_none()
+        && game.session.tailings.is_none()
+        && game.session.site.loose_gold.is_none()
+    {
         return;
     }
     if handles.is_none() {
@@ -311,7 +320,7 @@ pub fn sync_tailings(
             ));
             commands.spawn((
                 Mesh3d(handle.clone()),
-                MeshMaterial3d(materials[i].clone()),
+                MeshMaterial3d(materials[i % 3].clone()),
                 Transform::default(),
                 NoFrustumCulling,
                 bevy::light::NotShadowCaster,
@@ -332,7 +341,21 @@ pub fn sync_tailings(
                 indices: Vec::new(),
             })
         });
-    for (handle, data) in handles.as_ref().unwrap().iter().zip(geometry) {
+    let loose_geometry = world_geometry(
+        game.session
+            .site
+            .loose_gold
+            .iter()
+            .flat_map(|g| &g.particles)
+            .filter(|p| !p.buried)
+            .map(|p| &p.grain),
+    );
+    for (handle, data) in handles
+        .as_ref()
+        .unwrap()
+        .iter()
+        .zip(geometry.into_iter().chain(loose_geometry))
+    {
         let mut mesh = Mesh::new(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,

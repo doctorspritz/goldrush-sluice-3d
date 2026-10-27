@@ -5,6 +5,7 @@ pub mod bucket;
 pub mod contact_history;
 pub mod earthworks;
 pub mod intake;
+pub mod loose_gold;
 pub mod machine;
 pub mod material;
 pub mod outflow;

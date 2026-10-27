@@ -181,6 +181,9 @@ impl Site {
                 }
             }
         }
+        if let Some(gold) = &self.loose_gold {
+            out.material.gold_g += gold.preview_cut(self, &out.cells);
+        }
         if !out.material.is_empty() {
             // Resistance depends on burial relative to uncut ground around
             // the tool, not just the tiny layer removed in this timestep.
@@ -230,7 +233,14 @@ impl Site {
         material
     }
     pub(crate) fn excavate_columns(&mut self, cuts: Vec<(usize, f32)>) -> Material {
-        let mut batch = Material::default();
+        // Resolve independent gold against the PRE-CUT triangle geometry.
+        let mut loose = self.loose_gold.take();
+        let gold_g = loose.as_mut().map_or(0., |gold| gold.take_cut(self, &cuts));
+        self.loose_gold = loose;
+        let mut batch = Material {
+            gold_g,
+            ..Default::default()
+        };
         for (i, depth) in cuts {
             let mut material = self.column_material(i, depth);
             material.pore_water_m3 = self.take_pore_water(i, material.pore_water_m3);

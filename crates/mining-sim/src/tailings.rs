@@ -119,6 +119,10 @@ impl Tailings {
         let mut exported = Material::default();
         self.packets.retain_mut(|p| {
             if p.contact_pending {
+                if admit_gold(site, &p.grain, dt) {
+                    received.add(p.grain.material);
+                    return false;
+                }
                 return true;
             }
             let g = &mut p.grain;
@@ -140,6 +144,10 @@ impl Tailings {
                             .normalize();
                     }
                     p.contact_pending = true;
+                    if admit_gold(site, g, (dt as f64 - time).max(0.) as f32) {
+                        received.add(g.material);
+                        return false;
+                    }
                     return true;
                 } else {
                     // Valid admitted world coordinates and material; no fallible
@@ -202,6 +210,20 @@ pub fn world_grain(s: &Sluice, g: &Grain) -> Result<Grain, String> {
         return Err("Invalid outgoing solid; retained in sluice".into());
     }
     Ok(out)
+}
+fn admit_gold(site: &mut Site, g: &Grain, dt: f32) -> bool {
+    let Some(mut gold) = site.loose_gold.take() else {
+        return false;
+    };
+    let result = gold.admit_and_advance(g, site, dt);
+    site.loose_gold = Some(gold);
+    result.is_ok()
+}
+fn pure_gold(g: &Grain) -> bool {
+    g.kind == crate::GrainKind::Gold
+        && g.material.gold_g > 0.
+        && g.material.volume() == 0.
+        && g.material.pore_water_m3 == 0.
 }
 fn trajectory(g: &Grain, t: f64) -> DVec3 {
     g.position.as_dvec3() + g.velocity.as_dvec3() * t - DVec3::Y * (0.5 * G * t * t)
@@ -274,6 +296,20 @@ fn first_event(site: &Site, g: &Grain, dt: f64) -> Option<(f64, bool)> {
             }
         }
     }
+    // Pure gold uses the same triangle contact surface as its downstream owner.
+    // Include diagonal crossings so each interval has one affine bed plane.
+    if pure_gold(g) && v.x + v.z != 0. {
+        let a = p.x + p.z;
+        let speed = v.x + v.z;
+        let lo = a.min(a + speed * stop);
+        let hi = a.max(a + speed * stop);
+        for k in ((lo / CELL as f64).floor() as i32 + 1)..=((hi / CELL as f64).ceil() as i32) {
+            let time = (k as f64 * CELL as f64 - a) / speed;
+            if time > 0. && time < stop {
+                breaks.push(time);
+            }
+        }
+    }
     breaks.sort_by(f64::total_cmp);
     breaks.dedup();
     for interval in breaks.windows(2) {
@@ -283,7 +319,17 @@ fn first_event(site: &Site, g: &Grain, dt: f64) -> Option<(f64, bool)> {
         for water in [false, true] {
             let gap = |t| {
                 let at = trajectory(g, t);
-                at.y - g.collision_radius() as f64 - bilinear(site, water, at)
+                if !water && pure_gold(g) {
+                    let (height, normal) = crate::loose_gold::bed_at(site, at);
+                    at.y - g.diameter_m as f64 * 0.5 / normal.y - height
+                } else {
+                    let radius = if pure_gold(g) {
+                        g.diameter_m * 0.5
+                    } else {
+                        g.collision_radius()
+                    };
+                    at.y - radius as f64 - bilinear(site, water, at)
+                }
             };
             if let Some(u) = crossing(gap(a), gap(mid), gap(b)) {
                 let t = a + (b - a) * u;

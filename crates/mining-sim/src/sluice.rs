@@ -367,10 +367,15 @@ impl Sluice {
     pub fn hopper_top(site: &Site) -> f32 {
         site.height(HOPPER_X, HOPPER_Z) + 1.55
     }
+    pub fn hopper_remainder(&self, material: Material) -> Material {
+        let mut input = material;
+        input.take_handling_volume((0.85 - self.hopper.handling_volume_m3()).max(0.));
+        input
+    }
     pub fn add_to_hopper(&mut self, material: Material) -> Material {
         let mut input = material;
-        let room = (0.85 - self.hopper.volume()).max(0.0);
-        self.hopper.add(input.take_volume(room));
+        let room = (0.85 - self.hopper.handling_volume_m3()).max(0.0);
+        self.hopper.add(input.take_handling_volume(room));
         input
     }
     pub fn active_material(&self) -> Material {
@@ -388,7 +393,7 @@ impl Sluice {
         self.inlet.withdrawn.add(packet.suspension);
     }
     pub fn intake_has_room(&self) -> bool {
-        self.inlet.material().volume()
+        self.inlet.material().handling_volume_m3()
             < self
                 .parcel_volume()
                 .min(PARCEL_VOLUME)
@@ -581,8 +586,11 @@ impl Sluice {
         }
         self.time += dt;
         if !self.feed_on && self.pending_gold_g > 0.0 {
-            self.hopper.gold_g += self.pending_gold_g;
-            self.pending_gold_g = 0.0;
+            let pending = Material {
+                gold_g: self.pending_gold_g,
+                ..Material::default()
+            };
+            self.pending_gold_g = self.add_to_hopper(pending).gold_g;
         }
         if self.feed_on && self.pump_on && water_available {
             self.feed_credit = (self.feed_credit + self.feed_m3s as f64 * dt as f64)
@@ -610,6 +618,24 @@ impl Sluice {
                 self.processed_m3 += m.volume();
                 self.feed_credit -= self.parcel_volume();
                 self.emit(m);
+            }
+        }
+    }
+    /// Continue finite physical gold emission when bulk feed is exhausted.
+    /// New independent-gold operations use this bounded batch; no weighted
+    /// macro gold parcel or recovery percentage replaces actual DEM grains.
+    pub fn drain_pending_gold(&mut self) {
+        if self.placement.is_none() || !self.feed_on || !self.pump_on {
+            return;
+        }
+        for _ in 0..crate::intake::ADMISSION_BATCH {
+            if self.pending_gold_g <= 0. {
+                break;
+            }
+            let before = self.pending_gold_g;
+            self.emit(Material::default());
+            if self.pending_gold_g == before {
+                break;
             }
         }
     }

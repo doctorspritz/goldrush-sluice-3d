@@ -304,6 +304,12 @@ fn apply(session: &mut Session, solver: &mut impl Solver, commands: Vec<Command>
             }
             Command::Load(path) => match storage::load(&path) {
                 Ok(mut restored) => {
+                    if session.site.loose_gold.is_some() {
+                        if let Err(e) = restored.enable_loose_gold() {
+                            session.message = format!("Load failed: {e}");
+                            continue;
+                        }
+                    }
                     if session.tailings.is_some() {
                         if let Err(e) = restored.enable_spatial_tailings() {
                             session.message = format!("Load failed: {e}");

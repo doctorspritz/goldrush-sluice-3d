@@ -140,6 +140,14 @@ impl Session {
             .enable_spatial_tailings()
             .expect("empty new operation");
         session
+            .enable_loose_gold()
+            .expect("empty independent gold operation");
+        session
+    }
+    pub fn enable_loose_gold(&mut self) -> Result<(), String> {
+        self.enable_spatial_tailings()?;
+        self.site.loose_gold.get_or_insert_with(Default::default);
+        Ok(())
     }
     /// Migrate a historical pooled pile only once, at its former visible
     /// location. Its discarded historical particle trajectories are unknown.
@@ -424,6 +432,15 @@ impl Session {
             return;
         }
         let dt = FIXED_DT;
+        if let Some(mut gold) = self.site.loose_gold.take() {
+            let result = gold.step(&self.site, dt);
+            self.site.loose_gold = Some(gold);
+            if let Err(error) = result {
+                self.paused = true;
+                self.message = format!("Independent gold paused: {error}");
+                return;
+            }
+        }
         if let Some(t) = &mut self.tailings {
             let exported = t.step(&mut self.site, dt);
             self.water_balance.boundary_outflow_m3 += exported.pore_water_m3;
@@ -535,6 +552,20 @@ impl Session {
             }
         }
         for (i, hopper) in impacts.into_iter().rev() {
+            let pending = &self.falling[i];
+            let (at, remainder) = if hopper {
+                (
+                    pending.position + Vec3::X * 1.3,
+                    self.sluice.hopper_remainder(pending.material),
+                )
+            } else {
+                (pending.position, pending.material)
+            };
+            if let Err(error) = self.site.prepare_deposit(at, remainder) {
+                self.paused = true;
+                self.message = format!("Deposit paused; load retained: {error}");
+                return;
+            }
             let load = self.falling.swap_remove(i);
             if let Some(parcel) = load.rigid_parcel() {
                 let motion = self.material_motion.get_or_insert_with(Default::default);
@@ -547,11 +578,13 @@ impl Session {
             if hopper {
                 let overflow = self.sluice.add_to_hopper(load.material);
                 self.delivered_m3 += load.material.volume() - overflow.volume();
-                if !overflow.is_empty() {
-                    self.site.deposit(load.position + Vec3::X * 1.3, overflow);
-                }
+                self.site
+                    .try_deposit(load.position + Vec3::X * 1.3, overflow)
+                    .expect("preflight deposit");
             } else {
-                self.site.deposit(load.position, load.material);
+                self.site
+                    .try_deposit(load.position, load.material)
+                    .expect("preflight deposit");
             }
         }
         crate::outflow::step(&mut self.sluice, &mut self.site, dt);
@@ -590,11 +623,19 @@ impl Session {
         self.sluice.inlet.last_water_m3 = actual.water_m3;
         self.sluice.accept_intake(actual);
         self.sluice.feed(dt, fraction > 0.01);
+        if self.site.loose_gold.is_some()
+            && self.sluice.feed_on
+            && self.sluice.pump_on
+            && fraction > 0.01
+        {
+            self.sluice.drain_pending_gold();
+        }
     }
 
     pub fn accounted_gold(&self) -> f64 {
         self.site.remaining_gold()
             + self.site.hydraulic.exported_gold_g
+            + self.site.loose_gold.as_ref().map_or(0., |g| g.exported_g)
             + self.machine.bucket.gold_g
             + self.player.hand.gold_g
             + self.sluice.active_material().gold_g
@@ -618,6 +659,7 @@ impl Session {
     }
     pub fn accounted_material(&self) -> Material {
         let mut total = self.site.stored_material();
+        total.gold_g += self.site.loose_gold.as_ref().map_or(0., |g| g.exported_g);
         for m in [
             crate::intake::Suspension {
                 solid_m3: self.site.hydraulic.exported_material_m3,
@@ -828,7 +870,9 @@ impl Session {
         site.normalize_bed_age();
         serde_json::to_string(&Save {
             // v8 preserves spatial payload/rigid parcels and boundary receipts.
-            version: if self.tailings.is_some() {
+            version: if self.site.loose_gold.is_some() {
+                13
+            } else if self.tailings.is_some() {
                 12
             } else {
                 mechanical_version
@@ -854,7 +898,13 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        let version = if s.version == 12 {
+        if (s.version == 13) != s.site.has_loose_gold() {
+            return Err("Invalid independent-gold save envelope".into());
+        }
+        if s.version == 13 && s.sluice.hopper.handling_volume_m3() > 0.85001 {
+            return Err("Independent-gold hopper exceeds physical capacity".into());
+        }
+        let version = if matches!(s.version, 12 | 13) {
             if s.tailings.is_none() || s.water_balance.is_none() {
                 return Err("Spatial save lacks tailings or water ownership".into());
             }

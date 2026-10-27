@@ -27,6 +27,7 @@ pub struct Site {
     pub excavated: Material,
     pub hydraulic: HeightfieldState,
     pub soil_water: crate::soil_water::SoilWater,
+    pub loose_gold: Option<crate::loose_gold::LooseGold>,
 }
 
 /// Authoritative extra channels from the original GPU heightfield. Geology,
@@ -158,8 +159,13 @@ pub struct SiteSnapshot {
     hydraulic: HeightfieldState,
     #[serde(default)]
     soil_water: crate::soil_water::SoilWater,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    loose_gold: Option<crate::loose_gold::LooseGold>,
 }
 impl SiteSnapshot {
+    pub(crate) fn has_loose_gold(&self) -> bool {
+        self.loose_gold.is_some()
+    }
     pub(crate) fn normalize_bed_age(&mut self) {
         self.hydraulic.normalize_bed_age();
     }
@@ -258,6 +264,7 @@ impl Site {
             excavated: Material::default(),
             hydraulic: HeightfieldState::default(),
             soil_water: Default::default(),
+            loose_gold: None,
         };
         site.initialize_ponded_soil();
         site
@@ -291,7 +298,9 @@ impl Site {
             && p.z < EXTENT - margin
     }
     pub fn remaining_gold(&self) -> f64 {
-        self.gold_g.iter().sum::<f64>() + self.hydraulic.suspended_gold_g.iter().sum::<f64>()
+        self.gold_g.iter().sum::<f64>()
+            + self.hydraulic.suspended_gold_g.iter().sum::<f64>()
+            + self.loose_gold.as_ref().map_or(0., |g| g.material().gold_g)
     }
     pub fn water_volume_m3(&self) -> f64 {
         (0..WIDTH * WIDTH)
@@ -413,7 +422,63 @@ impl Site {
             .min((capacity / (cells.len().max(1) as f64 * (CELL * CELL) as f64)) as f32 * 0.999);
         self.excavate_columns(cells.into_iter().map(|i| (i, depth)).collect())
     }
+    /// Preflight bulk receipt while its donor still exists. Pure gold has no
+    /// paydirt carrier; existing bulk handling reconstitutes a nominal 100um
+    /// grain population, an explicit grading/shape approximation.
+    pub fn prepare_deposit(&mut self, p: Vec3, m: Material) -> Result<(), String> {
+        if !p.is_finite() || p.length() >= 1000. || !m.valid() {
+            return Err("Invalid bulk deposit".into());
+        }
+        if m.gold_g > 0. {
+            if let Some(gold) = &mut self.loose_gold {
+                if !(gold.admitted_g + m.gold_g).is_finite() {
+                    return Err("Independent gold receipt overflow; donor retained".into());
+                }
+                gold.try_reserve(1)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn try_deposit(&mut self, p: Vec3, mut m: Material) -> Result<(), String> {
+        self.prepare_deposit(p, m)?;
+        if m.gold_g > 0. {
+            // Existing bulk handling has discarded individual size/shape. Keep
+            // reconstituted loose gold separate from paydirt provenance even
+            // when its accompanying mineral load contains no paydirt carrier.
+            let (height, normal) = crate::loose_gold::bed_at(self, p.as_dvec3());
+            let position = Vec3::new(p.x, (height + 0.00005 / normal.y) as f32, p.z);
+            let grain = crate::sluice::Grain {
+                kind: crate::GrainKind::Gold,
+                position,
+                velocity: Vec3::ZERO,
+                material: Material {
+                    gold_g: m.gold_g,
+                    ..Default::default()
+                },
+                resting: false,
+                diameter_m: 0.0001,
+                affine: glam::Mat3::ZERO,
+                rotation: glam::Quat::IDENTITY,
+                angular_velocity: Vec3::ZERO,
+                volume_resolved: true,
+            };
+            if let Some(gold) = &mut self.loose_gold {
+                gold.admit(&grain)?;
+                m.gold_g = 0.;
+            }
+        }
+        // Custody transfers retain subgrid stock too; is_empty is only a UI
+        // tolerance and must not discard a positive mineral/water remainder.
+        if m.volume() > 0. || m.gold_g > 0. || m.pore_water_m3 > 0. {
+            self.deposit_bulk(p, m);
+        }
+        Ok(())
+    }
     pub fn deposit(&mut self, p: Vec3, m: Material) {
+        self.try_deposit(p, m)
+            .expect("valid preflight bulk deposit");
+    }
+    fn deposit_bulk(&mut self, p: Vec3, m: Material) {
         let cx = (p.x / CELL).clamp(2.0, (WIDTH - 3) as f32) as usize;
         let cz = (p.z / CELL).clamp(2.0, (WIDTH - 3) as f32) as usize;
         for dz in -2i32..=2 {
@@ -503,6 +568,13 @@ impl Site {
                 *gold -= removed;
                 packet.suspension.gold_g += removed;
             }
+            // Existing aggregate intake reconstitutes grading at the nozzle.
+            // Independent mobile gold is sampled by actual withdrawn water;
+            // supported/buried gold remains outside this mixed suspension.
+            if let Some(gold) = &mut self.loose_gold {
+                packet.suspension.gold_g +=
+                    gold.withdraw_mobile(i, ((before - after) / before.max(1e-30)).clamp(0., 1.));
+            }
             packet.water_m3 += taken;
         }
         if packet.water_m3 > 0. {
@@ -540,6 +612,7 @@ impl Site {
             gravel: self.world.gravel_thickness.clone(),
             hydraulic: self.hydraulic.clone(),
             soil_water: self.soil_water.clone(),
+            loose_gold: self.loose_gold.clone(),
         }
     }
     pub fn restore(s: SiteSnapshot) -> Result<Self, String> {
@@ -575,6 +648,7 @@ impl Site {
             || !s.excavated.valid()
             || !s.hydraulic.valid()
             || !s.soil_water.valid()
+            || s.loose_gold.as_ref().is_some_and(|g| !g.valid())
         {
             return Err("Invalid site quantities".into());
         }
@@ -591,6 +665,7 @@ impl Site {
         site.world.gravel_thickness = s.gravel;
         site.hydraulic = s.hydraulic;
         site.soil_water = s.soil_water;
+        site.loose_gold = s.loose_gold;
         for (i, remainder) in site.hydraulic.bed_remainder_m3.iter().enumerate() {
             for (class, volume) in remainder.iter().enumerate() {
                 let height = site.bed_layer(i, class);

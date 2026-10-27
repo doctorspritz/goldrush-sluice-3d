@@ -81,7 +81,24 @@ impl Material {
         *self = self.scaled(1.0 - f);
         taken
     }
+    /// Handling occupancy includes independently added gold solids. Reference
+    /// mineral packing remains the inherited prototype, not a compaction law.
+    pub fn handling_volume_m3(self) -> f64 {
+        self.volume() + self.gold_g * 0.001 / GOLD_DENSITY_KG_M3
+    }
+    pub fn take_handling_volume(&mut self, volume: f64) -> Self {
+        let available = self.handling_volume_m3();
+        if available <= 0. {
+            return Self::default();
+        }
+        self.take_fraction(volume.max(0.) / available)
+    }
     pub fn take_volume(&mut self, volume: f64) -> Self {
+        if self.volume() == 0. && self.gold_g > 0. {
+            // Pure gold still occupies finite physical volume. Keep mineral
+            // reference-volume behavior unchanged for ordinary bulk feed.
+            return self.take_fraction(volume.max(0.) / self.solid_volume_m3());
+        }
         if self.volume() < 1e-12 {
             return Self::default();
         }

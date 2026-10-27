@@ -198,7 +198,7 @@ fn spatial_save_retains_finite_airborne_state_and_refuses_downgrade_or_corruptio
     assert_eq!(s.save_json().unwrap(), replay.save_json().unwrap());
     let s = restored.clone();
     let value: serde_json::Value = serde_json::from_str(&saved).unwrap();
-    assert_eq!(value["version"], 12);
+    assert_eq!(value["version"], 13);
     assert_eq!(value["mechanical_version"], 6);
     assert_eq!(
         serde_json::to_value(&restored.tailings).unwrap(),
@@ -257,7 +257,7 @@ fn modern_envelope_keeps_mechanism_version_guards() {
     s.machine.enable_articulation().unwrap();
     let json = s.save_json().unwrap();
     let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 12);
+    assert_eq!(value["version"], 13);
     assert_eq!(value["mechanical_version"], 11);
     assert!(Session::load_json(&json).is_ok());
     s.activate_soil(&[(100 * mining_sim::site::WIDTH + 104, 0.02)], 1)

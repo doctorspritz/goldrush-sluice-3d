@@ -10,6 +10,7 @@ pub fn session() -> Result<Session, String> {
         .map_err(|e| e.to_string())?;
     let mut session = Session::load_json(&json)?;
     session.enable_spatial_tailings()?;
+    session.enable_loose_gold()?;
     session.message = "Flowing demo: real paydirt and water. Click to look; Esc frees the mouse. P water, O feed.".into();
     Ok(session)
 }
