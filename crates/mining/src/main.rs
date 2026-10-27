@@ -6,6 +6,7 @@ mod environment;
 mod fluid_surface;
 mod foliage;
 mod ground_material;
+mod hopper_render;
 mod hud;
 mod motion_capture;
 mod render_exit;
@@ -129,7 +130,12 @@ fn main() -> AppExit {
                 scene::sync_terrain,
                 water::sync,
                 scene::sync_plant,
-                (scene::sync_material, screen_render::sync).chain(),
+                (
+                    scene::sync_material,
+                    hopper_render::sync,
+                    screen_render::sync,
+                )
+                    .chain(),
                 (sediment::sync, sediment::sync_tailings).chain(),
                 scene::guides,
                 hud::update,

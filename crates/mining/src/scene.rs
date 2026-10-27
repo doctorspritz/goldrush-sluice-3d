@@ -70,8 +70,6 @@ pub(crate) struct PersonPart {
 #[derive(Component)]
 pub(crate) struct SluiceVisual;
 #[derive(Component)]
-pub(crate) struct HopperFill;
-#[derive(Component)]
 pub(crate) struct TailingsPile;
 #[derive(Component)]
 pub(crate) struct FallingVisual {
@@ -222,9 +220,9 @@ pub fn setup(
         chrome: material(&mut materials, Color::srgb(0.63, 0.70, 0.72), 0.20, 0.9),
         glass: materials.add(glass),
         dirt: material(&mut materials, Color::srgb(0.29, 0.17, 0.085), 0.96, 0.0),
-        soil: materials.add(soil_material),
+        soil: materials.add(soil_material.clone()),
         bucket_load: material(&mut materials, Color::srgb(0.29, 0.17, 0.085), 0.96, 0.0),
-        hopper_load: material(&mut materials, Color::srgb(0.29, 0.17, 0.085), 0.96, 0.0),
+        hopper_load: materials.add(soil_material),
         sand: material(&mut materials, Color::srgb(0.50, 0.38, 0.23), 0.9, 0.0),
         gold: material(&mut materials, Color::srgb(0.98, 0.66, 0.10), 0.23, 0.8),
         blue: material(&mut materials, Color::srgb(0.12, 0.23, 0.28), 0.85, 0.0),
@@ -1034,10 +1032,10 @@ fn equipment(commands: &mut Commands, meshes: &mut Assets<Mesh>, p: &Palette, si
         .entity(chute)
         .insert(crate::screen_render::LegacyHopper);
     commands.spawn((
-        Mesh3d(p.sphere.clone()),
+        Mesh3d(meshes.add(crate::hopper_render::empty_mesh())),
         MeshMaterial3d(p.hopper_load.clone()),
         Transform::default(),
-        HopperFill,
+        crate::hopper_render::Fill::default(),
     ));
     commands.spawn((
         Mesh3d(p.sphere.clone()),
@@ -1328,7 +1326,6 @@ pub fn sync_material(
     palette: Res<Palette>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut sets: ParamSet<(
-        Query<(&mut Transform, &mut Visibility), With<HopperFill>>,
         Query<(&mut Transform, &mut Visibility), With<TailingsPile>>,
         Query<(&FallingVisual, &mut Transform, &mut Visibility)>,
     )>,
@@ -1355,24 +1352,6 @@ pub fn sync_material(
     }
 
     for (mut t, mut v) in &mut sets.p0() {
-        let amount = (s.sluice.hopper.volume() / 0.85) as f32;
-        *v = if amount > 0.001 {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-        *t = Transform::from_xyz(
-            HOPPER_X,
-            if s.plant.is_some() {
-                s.site.height(HOPPER_X, HOPPER_Z) + 1.67 + amount * 0.27
-            } else {
-                SluiceTop::height(&s.site) - 0.45 + amount * 0.25
-            },
-            HOPPER_Z,
-        )
-        .with_scale(Vec3::new(0.50, 0.28 * amount.max(0.1), 0.50));
-    }
-    for (mut t, mut v) in &mut sets.p1() {
         let amount = s.sluice.tailings.volume() as f32;
         if let Some(placement) = s.sluice.placement {
             let pos = bvec(placement.outlet() + placement.forward() * 0.8);
@@ -1386,7 +1365,7 @@ pub fn sync_material(
             Visibility::Hidden
         };
     }
-    for (parcel, mut t, mut v) in &mut sets.p2() {
+    for (parcel, mut t, mut v) in &mut sets.p1() {
         if let Some(load) = s.falling.get(parcel.index) {
             let size = (load.material.volume() as f32).cbrt() * 0.65;
             *v = Visibility::Visible;
@@ -1405,12 +1384,6 @@ pub fn sync_material(
         } else {
             *v = Visibility::Hidden;
         }
-    }
-}
-struct SluiceTop;
-impl SluiceTop {
-    fn height(site: &Site) -> f32 {
-        mining_sim::Sluice::hopper_top(site)
     }
 }
 

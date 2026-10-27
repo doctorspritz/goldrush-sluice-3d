@@ -304,8 +304,9 @@ fn geometry(screen: &Screen, site: &mining_sim::Site) -> [Geometry; 5] {
         Vec3::new(0.13, 0.08, 0.025),
     );
     let h = site.height(HOPPER_X, HOPPER_Z);
-    let mouth = h + 2.10;
-    let bottom = h + 1.62;
+    let bowl = crate::hopper_render::Bowl::screen();
+    let mouth = h + bowl.top as f32;
+    let bottom = h + bowl.bottom as f32;
     let corner = |i: usize, y: f32, r: f32| {
         let (x, z) = [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)][i % 4];
         Vec3::new(HOPPER_X + x * r, y, HOPPER_Z + z * r)
@@ -315,17 +316,17 @@ fn geometry(screen: &Screen, site: &mining_sim::Site) -> [Geometry; 5] {
         quad(
             &mut out[2],
             [
-                corner(i, mouth, 0.8),
-                corner(i + 1, mouth, 0.8),
-                corner(i + 1, bottom, 0.175),
-                corner(i, bottom, 0.175),
+                corner(i, mouth, bowl.upper_half as f32),
+                corner(i + 1, mouth, bowl.upper_half as f32),
+                corner(i + 1, bottom, bowl.lower_half as f32),
+                corner(i, bottom, bowl.lower_half as f32),
             ],
             true,
         );
         beam(
             &mut out[2],
-            corner(i, mouth, 0.8),
-            corner(i + 1, mouth, 0.8),
+            corner(i, mouth, bowl.upper_half as f32),
+            corner(i + 1, mouth, bowl.upper_half as f32),
             0.045,
             0.045,
         );
