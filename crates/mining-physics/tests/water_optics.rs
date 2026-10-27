@@ -3159,6 +3159,180 @@ fn crest_filter_fixture(noise_period: f32, entry: &str, limit: f64) {
 
 #[test]
 #[ignore = "requires real GPU; run explicitly with --ignored"]
+fn oblique_crest_caps_are_rejected_without_muddy_moment_or_wave_drift() {
+    let (device, queue) = device();
+    let size = 256u32;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("rotated physical crest"),
+        size: wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&Default::default());
+    let mut uniforms = [0f32; 72];
+    uniforms[32] = 0.256;
+    uniforms[37] = 0.256;
+    uniforms[42] = -1.;
+    uniforms[47] = 1.;
+    uniforms[64] = 512.;
+    uniforms[65] = 512.;
+    uniforms[66] = 0.045;
+    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&uniforms),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[0, 1, 2, 3, 4].map(|binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            count: None,
+            ty: if binding == 1 {
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                }
+            } else {
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                }
+            },
+        }),
+    });
+    let entries: Vec<_> = (0..5)
+        .map(|binding| wgpu::BindGroupEntry {
+            binding,
+            resource: if binding == 1 {
+                uniform.as_entire_binding()
+            } else {
+                wgpu::BindingResource::TextureView(&view)
+            },
+        })
+        .collect();
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &layout,
+        entries: &entries,
+    });
+    let (buffer, out_layout, out_group) = output(&device, (size * size) as u64);
+    let shader = std::env::var_os("SLUICE_CREST_SHADER")
+        .map(|p| std::fs::read_to_string(p).unwrap())
+        .unwrap_or_else(|| include_str!("../../mining/src/water_blur.wgsl").to_owned());
+    // Each texel spans 2 mm: 24 mm sampling caps over a 120 mm hydraulic
+    // wave. Rotate the physical signal, not the filter, through a half-turn.
+    let mut ratios = Vec::new();
+    for degrees in (0..180).step_by(15) {
+        let angle = (degrees as f64).to_radians();
+        let height = |x: u32, y: u32, noise: bool| {
+            let q = (x as f64 - 128.) * angle.cos() + (y as f64 - 128.) * angle.sin();
+            1. + 0.002 * (std::f64::consts::TAU * q / 60.).cos()
+                + if noise {
+                    0.001 * (std::f64::consts::TAU * q / 12. + 0.37).cos()
+                } else {
+                    0.
+                }
+        };
+        for noisy in [false, true] {
+            let field: Vec<f32> = (0..size)
+                .flat_map(|y| {
+                    (0..size)
+                        .flat_map(move |x| [(1. / height(x, y, noisy)) as f32, 0.025, 1.25, 2.])
+                })
+                .collect();
+            let mut current = field.clone();
+            for direction in ["vec2(1,0)", "vec2(0,1)"] {
+                queue.write_texture(
+                    texture.as_image_copy(),
+                    bytemuck::cast_slice(&current),
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(size * 16),
+                        rows_per_image: None,
+                    },
+                    texture.size(),
+                );
+                let source = format!(
+                    "{shader}\n{}",
+                    r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ result[p.y*256u+p.x]=optical_surface(vec2<i32>(p.xy),DIRECTION);
+}"#
+                    .replace("DIRECTION", direction)
+                );
+                current = execute(
+                    &device,
+                    &queue,
+                    source,
+                    &[&group, &out_group],
+                    &[&layout, &out_layout],
+                    &buffer,
+                    [32, 32],
+                );
+            }
+            let mut before = 0.;
+            let mut after = 0.;
+            let mut bias = 0.;
+            let mut maximum_wave_error = 0f64;
+            for y in 96..160 {
+                for x in 96..160 {
+                    let i = ((y * size + x) * 4) as usize;
+                    let expected = height(x, y, false);
+                    before += ((field[i] as f64).recip() - expected).powi(2);
+                    let error = (current[i] as f64).recip() - expected;
+                    after += error * error;
+                    bias += error;
+                    maximum_wave_error = maximum_wave_error.max(error.abs());
+                    assert_eq!(
+                        &current[i + 1..i + 4],
+                        &field[i + 1..i + 4],
+                        "water/mineral/coverage changed at {degrees} degrees"
+                    );
+                }
+            }
+            if noisy {
+                let ratio = (after / before).sqrt();
+                ratios.push(ratio);
+                println!(
+                    "oblique cap angle={degrees}, RMS ratio={ratio}, mean depth error={} m",
+                    bias / 4096.
+                );
+                assert!(
+                    (bias / 4096.).abs() < 0.00002,
+                    "bulk sheet shifted at {degrees} degrees"
+                );
+            } else {
+                println!(
+                    "resolved wave angle={degrees}, maximum depth error={maximum_wave_error} m"
+                );
+                assert!(
+                    maximum_wave_error < 0.00005,
+                    "resolved hydraulic wave changed at {degrees} degrees"
+                );
+            }
+        }
+    }
+    let maximum = ratios.iter().copied().fold(0f64, f64::max);
+    assert!(
+        maximum < 0.35,
+        "diagonal cap survives, RMS ratios={ratios:?}"
+    );
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
 fn changing_channel_kernels_retain_water_and_mineral_between_snapshots() {
     let (device, queue) = device();
     let mut particles = Vec::<[f32; 56]>::new();

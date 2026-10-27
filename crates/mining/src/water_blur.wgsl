@@ -347,27 +347,52 @@ fn resolved_depth(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->f32 {
     let inverse=1./center.r-sixth*support*continuous;
     return select(center.r,1./max(inverse,0.000001),inverse>0.);
 }
-// The compact 6 mm filter rejects 12 mm particle sampling noise. A second,
-// wider band rejects 20-30 mm kernel caps without broadening riffle waves.
-// Fourteenth-order rejection keeps the long-wave response nearly flat. This runs
-// before visible water/sediment integration and never supplies missing coverage.
-fn crest_detail_depth(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->f32 {
+// Interpolate along a lattice line, including the two diagonals. Flooring
+// each screen coordinate independently chooses different rows on a negative
+// diagonal. A scalar offset keeps all four taps on the same physical line.
+fn sheet_line_inverse(pixel:vec2<i32>,direction:vec2<i32>,offset:f32)->vec3<f32> {
+    let size=vec2<i32>(textureDimensions(depths));
+    let base=pixel+direction*i32(floor(offset));let t=fract(offset);
+    var values:array<f32,4>;var support=1.;
+    for(var i=0;i<4;i++) {
+        let q=base+direction*(i-1);
+        if any(q<vec2(0)) || any(q>=size) {return vec3(0.);}
+        let tap=textureLoad(depths,q,0);
+        if tap.r<=0. || tap.a<=0.5 {return vec3(0.);}
+        values[i]=1./tap.r;support=min(support,smoothstep(0.1,0.7,tap.a-1.));
+    }
+    let v=vec4(values[0],values[1],values[2],values[3]);
+    let changes=abs(v.yzw-v.xyz);
+    let continuous=1.-smoothstep(0.65,0.9,max(changes.x,max(changes.y,changes.z))/max(changes.x+changes.y+changes.z,0.000001));
+    let t2=t*t;let t3=t2*t;
+    let weights=vec4(-0.5*t+t2-0.5*t3,1.-2.5*t2+1.5*t3,
+                     0.5*t+2.*t2-1.5*t3,-0.5*t2+0.5*t3);
+    return vec3(mix(mix(v.y,v.z,t),dot(v,weights),continuous),support,1.);
+}
+// The compact 6 mm filter rejects 12 mm particle sampling noise. The wider
+// band rejects 20-30 mm caps. Match its tangent-metre support in four screen
+// directions: x/y alone leave the same oblique cap almost unfiltered.
+fn crest_detail_residual(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->f32 {
     let step=sheet_filter_step(pixel,direction,center,0.011);
     let coefficients=array<f32,15>(-1.,14.,-91.,364.,-1001.,2002.,-3003.,3432.,-3003.,2002.,-1001.,364.,-91.,14.,-1.);
     let inverse=1./center.r;
     var residual=0.;var support=1.;var variation=0.;var jump=0.;var previous=0.;
     for(var i=0;i<15;i++) {
-        let sample=sheet_inverse(vec2<f32>(pixel)+vec2<f32>(direction)*(f32(i-7)*step),direction);
-        if sample.z==0. {return center.r;}
+        let sample=sheet_line_inverse(pixel,direction,f32(i-7)*step);
+        if sample.z==0. {return 0.;}
         support=min(support,sample.y);
-        // Subtract the centre before summing a zero-sum stencil. Large camera
-        // depths must not lose small waves to cancellation of the coefficients.
         residual+=(sample.x-inverse)*coefficients[i];
         if i>0 {let change=abs(sample.x-previous);variation+=change;jump=max(jump,change);}
         previous=sample.x;
     }
+    // Keep steps and separate layers; missing support never supplies coverage.
     let continuous=1.-smoothstep(0.5,0.8,jump/max(variation,0.000001));
-    let corrected=inverse-residual*(support*continuous/16384.);
+    return residual*(support*continuous/16384.);
+}
+fn crest_detail_depth(pixel:vec2<i32>,direction:vec2<i32>,center:vec4<f32>)->f32 {
+    let diagonal=select(vec2(1,1),vec2(1,-1),direction.y!=0);
+    let corrected=1./center.r-crest_detail_residual(pixel,direction,center)
+        -crest_detail_residual(pixel,diagonal,center);
     return select(center.r,1./max(corrected,0.000001),corrected>0.);
 }
 fn optical_surface(pixel:vec2<i32>,direction:vec2<i32>)->vec4<f32> {

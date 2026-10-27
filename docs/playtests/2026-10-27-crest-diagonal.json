@@ -1,0 +1,443 @@
+{
+  "base_commit": "97393dacfc24b37f3c78a2cabcd20f58cd5df480",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-diagonal-20261027",
+  "scope": "Correct directional bias in the pre-integration crest filter. Each of the two existing passes filters one screen axis and one tangent-metre-scaled diagonal. Visible water/mineral moments are integrated after the corrected geometry. Physical solvers and optical-exchange policy remain at base commit.",
+  "source_manifest": {
+    "crates/mining-physics/tests/water_optics.rs": "5abc18cfbb4fa7f6ec9926111e0cba8b26114e63f7042c0f760962aa57ad9c6d",
+    "crates/mining/src/water_blur.wgsl": "3134f4db328d22d7df6d0b42bfb01143a0d05346363741e1a79f720faa3acdb7"
+  },
+  "gpu": {
+    "optics_passed": 19,
+    "visible_column_passed": 5,
+    "complete_chain_passed": 1,
+    "ordinary_app_passed": 69,
+    "app_profiles_unrun": 2,
+    "angular_fixture": {
+      "baseline_failed_proposed_gate": true,
+      "before": [
+        {
+          "angle_degrees": 0,
+          "noise_rms_ratio": 0.1350035100696646
+        },
+        {
+          "angle_degrees": 15,
+          "noise_rms_ratio": 0.22523907053969777
+        },
+        {
+          "angle_degrees": 30,
+          "noise_rms_ratio": 0.539860480843689
+        },
+        {
+          "angle_degrees": 45,
+          "noise_rms_ratio": 0.8069786102484969
+        },
+        {
+          "angle_degrees": 60,
+          "noise_rms_ratio": 0.5401316876449612
+        },
+        {
+          "angle_degrees": 75,
+          "noise_rms_ratio": 0.22561534284508517
+        },
+        {
+          "angle_degrees": 90,
+          "noise_rms_ratio": 0.13500483046903142
+        },
+        {
+          "angle_degrees": 105,
+          "noise_rms_ratio": 0.22562847591689258
+        },
+        {
+          "angle_degrees": 120,
+          "noise_rms_ratio": 0.5401483245564256
+        },
+        {
+          "angle_degrees": 135,
+          "noise_rms_ratio": 0.8069892941875404
+        },
+        {
+          "angle_degrees": 150,
+          "noise_rms_ratio": 0.5398845552646858
+        },
+        {
+          "angle_degrees": 165,
+          "noise_rms_ratio": 0.22530019417205693
+        }
+      ],
+      "after": [
+        {
+          "angle_degrees": 0,
+          "noise_rms_ratio": 0.038779503773857964
+        },
+        {
+          "angle_degrees": 15,
+          "noise_rms_ratio": 0.2417622120598256
+        },
+        {
+          "angle_degrees": 30,
+          "noise_rms_ratio": 0.24343551170725808
+        },
+        {
+          "angle_degrees": 45,
+          "noise_rms_ratio": 0.03304323470719338
+        },
+        {
+          "angle_degrees": 60,
+          "noise_rms_ratio": 0.11628922612885266
+        },
+        {
+          "angle_degrees": 75,
+          "noise_rms_ratio": 0.11542686863646567
+        },
+        {
+          "angle_degrees": 90,
+          "noise_rms_ratio": 0.03859783968260497
+        },
+        {
+          "angle_degrees": 105,
+          "noise_rms_ratio": 0.24618181021160232
+        },
+        {
+          "angle_degrees": 120,
+          "noise_rms_ratio": 0.247354165237893
+        },
+        {
+          "angle_degrees": 135,
+          "noise_rms_ratio": 0.03330709837215314
+        },
+        {
+          "angle_degrees": 150,
+          "noise_rms_ratio": 0.11397056529892557
+        },
+        {
+          "angle_degrees": 165,
+          "noise_rms_ratio": 0.12026458673250383
+        }
+      ],
+      "maximum_resolved_wave_depth_error_m": 2.7318445916524325e-07
+    },
+    "full_chain_maximum_ridge_error_m": 3.745933386856137e-05,
+    "unchanged_full_chain_limit_m": 5e-05
+  },
+  "quality": [
+    {
+      "name": "water_optics",
+      "exit": 0,
+      "wall_seconds": 5.662313875000109
+    },
+    {
+      "name": "visible_water_column",
+      "exit": 0,
+      "wall_seconds": 2.3557672499955515
+    },
+    {
+      "name": "crest_chain",
+      "exit": 0,
+      "wall_seconds": 3.1224254589978955
+    },
+    {
+      "name": "app-tests",
+      "exit": 0,
+      "wall_seconds": 19.677196834003553
+    },
+    {
+      "name": "clippy",
+      "exit": 0,
+      "wall_seconds": 11.480321666000236
+    },
+    {
+      "name": "format",
+      "exit": 0,
+      "wall_seconds": 0.5638570000010077
+    }
+  ],
+  "native": {
+    "frozen": {
+      "final": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_pixels": 62164,
+        "max_channel_delta": 161
+      },
+      "normal": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_pixels": 110480,
+        "max_channel_delta": 203
+      },
+      "sediment": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_pixels": 1205,
+        "max_channel_delta": 84
+      },
+      "river": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_pixels": 0,
+        "max_channel_delta": 0
+      },
+      "outlet": {
+        "identical_physical_fields": {
+          "sim_time": true,
+          "fluid_clock": true,
+          "solver_steps": true,
+          "tracks": true,
+          "machine": true,
+          "excavated_m3": true,
+          "delivered_m3": true,
+          "flow": true,
+          "surface": true,
+          "active_soil": true,
+          "material_motion": true
+        },
+        "changed_pixels": 6591,
+        "max_channel_delta": 50
+      }
+    },
+    "motion": {
+      "before": {
+        "frames": 47,
+        "wall_seconds": 4.988871958,
+        "physical_seconds": 1.933333434164524,
+        "worker_advances": 46,
+        "presentation_advances": 46,
+        "presentation_holds": 0,
+        "physical_start": 91.8666714578867,
+        "physical_end": 93.80000489205122,
+        "underruns": 0
+      },
+      "after": {
+        "frames": 46,
+        "wall_seconds": 4.93210975,
+        "physical_seconds": 1.933333434164524,
+        "worker_advances": 45,
+        "presentation_advances": 45,
+        "presentation_holds": 0,
+        "physical_start": 91.66667144745588,
+        "physical_end": 93.6000048816204,
+        "underruns": 0
+      }
+    }
+  },
+  "native_checks": [
+    {
+      "name": "before-final",
+      "exit": 1,
+      "wall_seconds": 8.406807291001314
+    },
+    {
+      "name": "before-final-ready",
+      "exit": 0,
+      "wall_seconds": 6.905953042005422
+    },
+    {
+      "name": "after-final-ready",
+      "exit": 1,
+      "wall_seconds": 8.725319000004674
+    },
+    {
+      "name": "after-final",
+      "exit": 0,
+      "wall_seconds": 6.921423625004536
+    },
+    {
+      "name": "before-normal",
+      "exit": 0,
+      "wall_seconds": 6.950712416997703
+    },
+    {
+      "name": "before-sediment",
+      "exit": 0,
+      "wall_seconds": 6.936030124998069
+    },
+    {
+      "name": "before-river",
+      "exit": 0,
+      "wall_seconds": 6.915136416006135
+    },
+    {
+      "name": "before-outlet",
+      "exit": 0,
+      "wall_seconds": 6.919617583000218
+    },
+    {
+      "name": "after-normal",
+      "exit": 0,
+      "wall_seconds": 6.943869417002134
+    },
+    {
+      "name": "after-sediment",
+      "exit": 0,
+      "wall_seconds": 6.925762332997692
+    },
+    {
+      "name": "after-river",
+      "exit": 0,
+      "wall_seconds": 6.694993916004023
+    },
+    {
+      "name": "after-outlet",
+      "exit": 0,
+      "wall_seconds": 6.934280417000991
+    },
+    {
+      "name": "before-motion",
+      "exit": 0,
+      "wall_seconds": 11.473038249998353
+    },
+    {
+      "name": "after-motion",
+      "exit": 0,
+      "wall_seconds": 11.537731749995146
+    },
+    {
+      "name": "before-benchmark",
+      "exit": 1,
+      "wall_seconds": 25.436456708004698
+    },
+    {
+      "name": "after-benchmark",
+      "exit": 1,
+      "wall_seconds": 25.655498874999466
+    }
+  ],
+  "detached_outlet_control": {
+    "crop": [
+      750,
+      290,
+      1030,
+      750
+    ],
+    "rgb_byte_identical": true,
+    "size": [
+      280,
+      460
+    ]
+  },
+  "benchmarks": {
+    "before": {
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "failure": null,
+      "gold_balance_error_g": 1.8189894035458565e-12,
+      "mean_fps": 55.853995011586825,
+      "p95_frame_ms": 28.401875,
+      "passed": false,
+      "simulation_wall_ratio": 0.3848480612059857,
+      "water_balance_error_m3": -7.849941688675699e-06
+    },
+    "after": {
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "failure": null,
+      "gold_balance_error_g": 1.8189894035458565e-12,
+      "mean_fps": 55.53938963083052,
+      "p95_frame_ms": 28.515459,
+      "passed": false,
+      "simulation_wall_ratio": 0.3848658277950265,
+      "water_balance_error_m3": -7.849941688675699e-06
+    }
+  },
+  "review": "Inspected matched frozen final colour, normal, sediment, river and outlet views, and all46 candidate temporal crops. Small local crest highlights and refraction/opacity transitions improve. Native improvement is modest; broad hydraulic standing waves, actual suspension plumes and grain stippling remain. Whole-video playback and manual controls not rechecked. Moving before/after clips cover different physical intervals; they are not matched trajectory comparisons.",
+  "render_targets_or_passes_added": 0,
+  "physical_sources_at_base_commit": true,
+  "installed_app": {
+    "path": "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app",
+    "sha256": "c5d666f03066a5220d5520890e128c6e478714e6562c7af549aaed409ba1dce1",
+    "previous_app_path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-diagonal-20261027/previous-app/First Bend.app",
+    "previous_sha256": "94c26a945f82ef3db346e9e3bf9c30df5db36400ef1cea2f4e3b867bb6648180",
+    "signed_verified": true,
+    "launched_after_install": false
+  },
+  "media": {
+    "2026-10-27-crest-diagonal.jpg": "a4b8c6dbef800025e0097cebe33937af441befa7561be0e47c0bbf3d6cd215ff",
+    "2026-10-27-crest-diagonal.frames-1.jpg": "3f066aa80e9685a557d69dd1a47550751e570e5b7bd548a69aa26f26c3ed6e25",
+    "2026-10-27-crest-diagonal.frames-2.jpg": "2ad3d0d6d1582e606f3d5af989e94e2bc41edbbd85c5981911bab0f00a238ee2",
+    "2026-10-27-crest-diagonal.mp4": "9f58023332aae76432262f74362dd71b02d6bbbed70fa99e1e6d1d81e50a4700"
+  },
+  "beads": {
+    "bd_sync_supported": false,
+    "scoped_rows": [
+      "menace-23w",
+      "menace-hzf",
+      "sluice-water-polish",
+      "menace-49t"
+    ],
+    "total_rows": 243,
+    "unrelated_literal_rows_preserved": 239
+  },
+  "original_dirty_files_preserved": true,
+  "user_stash_preserved": true,
+  "unfinished_physics_experiment_preserved": {
+    "directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-diagonal-20261027/preserved-hydro",
+    "patch": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-diagonal-20261027/preserved-hydro.patch",
+    "files": {
+      "README.md": "50e0e0ff2df30d26d83da8ad000158bb6b59bb5e5e97223d60b35355d14ad2c4",
+      "crates/game/src/gpu/g2p_3d.rs": "cb4d584573e6c80bae41b9c74fe580799bf63427f7b0005d26b14c93d0a54e71",
+      "crates/game/src/gpu/flip_3d.rs": "58cf5508c2d296a4110488c4d395a9d8c1a70f79c7923561d3a4e5c61aa2f5e1",
+      "crates/game/src/gpu/shaders/g2p_3d.wgsl": "826485652dfdb1c5fa708096558b552db44c59aebe14be0176e85728028eb2ae",
+      "crates/game/src/gpu/shaders/sdf_collision_3d.wgsl": "aafd554b77e27326ccaa8eb57d03474416be4f4d10b2d2e2eb32aab7522c622d",
+      "crates/mining-physics/tests/conservative_runtime.rs": "420b27feead183170ea6ff90578b92cadab8d08a355d44a3ff2730372faafef2",
+      "crates/mining-physics/examples/volume_hydrostatic.rs": "0287635fa1b0abd74c085c79c91dfed0368067ceea2aa9e01de08dbdb6ac7d62",
+      "crates/mining-physics/examples/support/hydro_trace.rs": "36cd59b5431124a33472ddb5957f3bb70d71cacc5e9329ab092270cc73446348"
+    },
+    "qualified": false
+  },
+  "cleanup": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=0 rss_mib=0.0\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=0 rss_mib=0.0\n",
+  "new_crash_reports": [],
+  "limitations": [
+    "Four directions reduce but do not eliminate all angular variation. Worst synthetic cap RMS is0.24735, with a small15deg worsening0.22524->0.24176; no claim of improvement at every angle.",
+    "Synthetic24mm cap suppression is not a native-scene amplitude measurement.",
+    "Broad hydraulic waves and true sediment plumes remain. Slurry path remains the existing local homogeneous refracted-column approximation.",
+    "First cold-start frozen capture for each binary failed the constant-clock gate due to capture-before-restore; failures retained and tracked as menace-hzf. Warmed frozen controls pass without loosening their assertions.",
+    "Both native20s windows fail physical real-time throughput while bulk/dry-mass budgets pass. Short sequential windows do not establish a speedup or exact cost difference.",
+    "Two optional app profiles and manual operator inputs unrun. Existing game constructor warning unchanged.",
+    "Unfinished hydrostatic/marker-transport experiment is archived and unqualified; it is not included in this build."
+  ],
+  "full_goal_complete": false
+}
