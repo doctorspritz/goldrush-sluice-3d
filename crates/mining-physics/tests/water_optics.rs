@@ -3613,3 +3613,162 @@ fn refracted_slurry_matches_independent_ray_slab_intersections() {
     );
     println!("Unrefracted ray/slab maximum relative path error: {legacy_worst}");
 }
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn crest_highlight_footprint_matches_pixel_integration_at_every_screen_angle() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 64);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let i=p.y*8u+p.x;
+ let angle=f32(i%16u)*3.14159265359/16.;
+ let scale=0.01*f32(1u+i/16u);
+ // Rotate the sampling axes of the same physical normal field. Include both
+ // an anisotropic full-rank patch; its pixel trace is invariant.
+ let a=vec3(scale,0.,0.);let b=vec3(0.,scale*0.6,0.);
+ let dx=a*cos(angle)+b*sin(angle);let dy=b*cos(angle)-a*sin(angle);
+ let variance=pixel_normal_variance(dx,dy);
+ let legacy=0.5*max(dot(dx,dx),dot(dy,dy));
+ let eye=normalize(vec3(0.2,1.,0.3));let light=normalize(vec3(-0.2,1.,-0.3));
+ let sun=channel_sun(vec3(0.,1.,0.),eye,light,variance);
+ result[i]=vec4(variance,legacy,sun,channel_sun(vec3(0.,1.,0.),eye,light,0.));
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    let mut legacy_min = f64::INFINITY;
+    let mut legacy_max = 0f64;
+    let mut worst = 0f64;
+    for (i, v) in values.chunks_exact(4).enumerate() {
+        let angle = (i % 16) as f64 * std::f64::consts::PI / 16.;
+        let scale = 0.01 * (1 + i / 16) as f64;
+        // Independent midpoint quadrature of the linear normal field over
+        // [-1/2,1/2]^2. No shader variance expression is reused here.
+        let mut integral = 0.;
+        for y in 0..64 {
+            for x in 0..64 {
+                let u = (x as f64 + 0.5) / 64. - 0.5;
+                let w = (y as f64 + 0.5) / 64. - 0.5;
+                let nx = scale * (u * angle.cos() - w * angle.sin());
+                let ny = scale * 0.6 * (u * angle.sin() + w * angle.cos());
+                integral += (nx * nx + ny * ny) / 4096.;
+            }
+        }
+        let error = (v[0] as f64 / integral - 1.).abs();
+        worst = worst.max(error);
+        assert!(v.iter().all(|x| x.is_finite()));
+        assert!(
+            error < 0.0003,
+            "pixel integral differs at {i}: {v:?}, {integral}"
+        );
+        assert!(
+            v[2] > 0. && v[2] < v[3],
+            "unresolved slopes must broaden the sun lobe"
+        );
+        let ratio = v[1] as f64 / integral;
+        legacy_min = legacy_min.min(ratio);
+        legacy_max = legacy_max.max(ratio);
+        if i % 16 > 0 {
+            let reference = values[(i / 16) * 16 * 4];
+            assert!(
+                (v[0] / reference - 1.).abs() < 0.000001,
+                "camera roll changed the footprint"
+            );
+        }
+    }
+    assert!(
+        legacy_min > 3. && legacy_max > 4.4,
+        "legacy over-broadening negative control missing"
+    );
+    println!("pixel-box quadrature max relative error={worst}, legacy variance ratios={legacy_min}..{legacy_max}");
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn refracted_crest_rejects_foreground_brown_taps_on_inclined_water() {
+    let (device, queue) = device();
+    let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[],
+    });
+    let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &empty,
+        entries: &[],
+    });
+    let (buffer, layout, group) = output(&device, 64);
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../mining/src/water_compose.wgsl"),
+        r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let i=p.y*8u+p.x;
+ let tilt=f32(i%8u)*70./7.*3.14159265359/180.;
+ let roll=f32((i/8u)%4u)*3.14159265359/4.;
+ let n=vec3(sin(tilt)*cos(roll),sin(tilt)*sin(roll),cos(tilt));
+ let ray=vec3(0.04*cos(roll),0.04*sin(roll),-1.);
+ let crossing=cos(tilt)/(cos(tilt)-0.04*sin(tilt));
+ let t=crossing+select(-0.002,0.002,i>=32u);
+ let candidate=ray*t;let surface=vec3(0.,0.,-1.);
+ let accepted=refraction_background_visible(surface,n,candidate,true);
+ // The old camera-Z guard accepts foreground objects on the receding side.
+ let old= -candidate.z>1.001;
+ let river=refraction_background_visible(surface,n,candidate,false);
+ let reversed=refraction_background_visible(surface,-n,candidate,true);
+ result[i]=vec4(select(0.,1.,accepted),select(0.,1.,old),select(0.,1.,river),select(0.,1.,reversed));
+}"#
+    );
+    let values = execute(
+        &device,
+        &queue,
+        source,
+        &[&empty_group, &group],
+        &[&empty, &layout],
+        &buffer,
+        [1, 1],
+    );
+    let mut false_brown_taps = 0;
+    for (i, v) in values.chunks_exact(4).enumerate() {
+        // Intersect the shifted camera ray with the independently constructed
+        // plane z = -1 - tan(tilt)*(x*cos(roll)+y*sin(roll)). Then place the
+        // opaque scene point on either side. No GPU visibility formula reused.
+        let tilt = ((i % 8) as f64 * 10.).to_radians();
+        let ray_depth = 1. / (1. - 0.04 * tilt.tan());
+        let behind = i >= 32;
+        assert_eq!(v[0], f32::from(behind), "wrong side of water at {i}: {v:?}");
+        assert_eq!(v[3], v[0], "flipped normal changed the plane test");
+        let candidate_depth = ray_depth + if behind { 0.002 } else { -0.002 };
+        let old = candidate_depth > 1.001;
+        assert_eq!(v[2], f32::from(old), "river visibility changed");
+        if !behind && v[1] > 0.5 {
+            false_brown_taps += 1;
+        }
+    }
+    assert!(
+        false_brown_taps >= 24,
+        "legacy foreground-leak negative control missing"
+    );
+    println!("legacy foreground brown taps accepted={false_brown_taps}/32; corrected=0/32; submerged taps retained=32/32");
+}

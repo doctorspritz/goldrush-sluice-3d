@@ -445,9 +445,19 @@ fn refracted_column_path(column:f32,cosine:f32)->f32 {
     let ct=sqrt(1.-eta*eta*(1.-ci*ci));
     return max(column,0.)*ci/ct;
 }
-fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,original:vec3<f32>,channel:bool)->vec3<f32> {
+// A refracted tap must be behind the geometric water plane at that tap.
+// Comparing only with the ORIGINAL pixel's camera depth admits foreground
+// brown grains/walls on the receding side of a crest. Optical normal detail
+// bends the ray but must not move this visibility plane.
+fn refraction_background_visible(surface:vec3<f32>,geometric_normal:vec3<f32>,candidate:vec3<f32>,channel:bool)->bool {
+    if !channel {return -candidate.z> -surface.z+0.001;}
+    let facing=select(-geometric_normal,geometric_normal,dot(geometric_normal,-surface)>=0.);
+    return dot(facing,candidate-surface)< -0.0001;
+}
+fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,geometric_normal:vec3<f32>,depth:f32,thickness:f32,original:vec3<f32>,channel:bool)->vec3<f32> {
     let position=view_point(pixel,depth);
     let normal_view=normalize((u.view_from_world*vec4(normal,0.)).xyz);
+    let geometric_view=normalize((u.view_from_world*vec4(geometric_normal,0.)).xyz);
     let transmitted=refract(normalize(position),normal_view,1./1.333);
     // Channel thickness already measures travel along the refracted ray.
     // Retain the river's existing camera-depth intersection approximation.
@@ -466,7 +476,7 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
         let xy=vec2((f32(q.x)+0.5)/u.viewport.x*2.-1.,1.-(f32(q.y)+0.5)/u.viewport.y*2.);
         let p=u.view_from_clip*vec4(xy,z,1.);
         // Validate every tap: interpolation must not drag walls/player into water.
-        let behind=z>0. && -p.z/max(p.w,0.000001)>depth+0.001;
+        let behind=z>0. && refraction_background_visible(position,geometric_view,p.xyz/max(p.w,0.000001),channel);
         let w=select(1.-f.x,f.x,x==1)*select(1.-f.y,f.y,y==1);
         colour+=select(original,textureLoad(scene,q,0).rgb,behind)*w;
     }}
@@ -479,6 +489,13 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,depth:f32,thickness:f32,orig
 fn visible_column_path(column:f32,view_gap:f32,channel:bool)->f32 {
     return min(max(view_gap,0.),select(max(column,0.0002),max(column,0.),channel));
 }
+// Linear normal variation integrated over a uniform pixel box. The two
+// screen directions form one footprint; selecting the larger derivative makes
+// an identical crest change roughness when the camera rolls. This is a bounded
+// antialiasing estimate, not a calibrated GGX slope variance.
+fn pixel_normal_variance(dx:vec3<f32>,dy:vec3<f32>)->f32 {
+    return (dot(dx,dx)+dot(dy,dy))/12.;
+}
 // Dielectric GGX sun reflection. The old broad, additive Phong lobe lit every
 // standing wave like a plastic cap. Fresnel and masking bound reflected energy;
 // measured pixel normal variance supplies only unresolved slope roughness.
@@ -486,7 +503,7 @@ fn channel_sun(normal:vec3<f32>,eye:vec3<f32>,light:vec3<f32>,variance:f32)->f32
     let nv=max(dot(normal,eye),0.0001);let nl=max(dot(normal,light),0.);
     if nl<=0. {return 0.;}
     let h=normalize(eye+light);let nh=max(dot(normal,h),0.);let vh=max(dot(eye,h),0.);
-    let alpha2=clamp(0.0004+0.5*variance,0.0004,1.);
+    let alpha2=clamp(0.0004+variance,0.0004,1.);
     let d=1.+nh*nh*(alpha2-1.);
     let distribution=alpha2/(3.14159265*d*d);
     let masking=2.*nv/(nv+sqrt(alpha2+(1.-alpha2)*nv*nv))
@@ -618,7 +635,7 @@ fn eye_ray_path(view_gap:f32,ray_cosine:f32)->f32 {
     // fixed broad channel lobe painted a soft bright cap on every resolved
     // standing wave. Normal confidence is not surface roughness.
     let nx=dpdx(normal);let ny=dpdy(normal);
-    let variance=max(dot(nx,nx),dot(ny,ny));
+    let variance=pixel_normal_variance(nx,ny);
     var specular=pow(max(dot(normal,half_vector),0.),96.)*0.32;
     if in_channel {specular=channel_sun(normal,eye_world,light,variance);}
     let reflection=reflect(-eye_world,normal);
@@ -660,7 +677,7 @@ fn eye_ray_path(view_gap:f32,ray_cosine:f32)->f32 {
         scattering*=0.35+0.65*max(dot(normal,light),0.);
     }
     var background=original.rgb;
-    if river || in_channel {background=refracted_scene(q,normal,depth,
+    if river || in_channel {background=refracted_scene(q,normal,optical_normal,depth,
         select(thickness*ray_cosine,absorption_path,in_channel),background,in_channel);}
     let body=background*transmission+scattering*(vec3(1.)-transmission);
     // A uniform 0.5 mm film stays fully covered. At a sloping bank use the
