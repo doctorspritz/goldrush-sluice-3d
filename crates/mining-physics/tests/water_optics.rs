@@ -3003,6 +3003,16 @@ fn legacy_profile(d:array<f32,8>)->f32 {
 #[test]
 #[ignore = "requires real GPU; run explicitly with --ignored"]
 fn close_view_denoises_particle_domes_without_flattening_riffle_waves() {
+    crest_filter_fixture(6., "geometry_surface", 0.30);
+}
+
+#[test]
+#[ignore = "requires real GPU; run explicitly with --ignored"]
+fn wider_crest_caps_are_removed_without_blurring_hydraulic_waves_or_muddy_moments() {
+    crest_filter_fixture(12., "optical_surface", 0.35);
+}
+
+fn crest_filter_fixture(noise_period: f32, entry: &str, limit: f64) {
     let (device, queue) = device();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("metre-scaled crest with particle sampling ripple"),
@@ -3019,13 +3029,14 @@ fn close_view_denoises_particle_domes_without_flattening_riffle_waves() {
         view_formats: &[],
     });
     // At z=1 each texel spans 2 mm in world space. A 120 mm hydraulic wave
-    // must survive while a 12 mm sampling ripple is rejected. Vary its phase
+    // must survive while a 12 or 24 mm sampling ripple is rejected. Vary its phase
     // in every row; the expected smooth profile is independent of the filter.
     let field: Vec<f32> = (0..8)
         .flat_map(|y| {
             (0..256).flat_map(move |x| {
                 let wave = 0.002 * (std::f32::consts::TAU * (x as f32 - 128.) / 60.).cos();
-                let noise = 0.001 * (std::f32::consts::TAU * x as f32 / 6. + y as f32 * 0.37).cos();
+                let noise = 0.001
+                    * (std::f32::consts::TAU * x as f32 / noise_period + y as f32 * 0.37).cos();
                 [1. / (1. + wave + noise), 0.025, 1.25, 2.]
             })
         })
@@ -3100,9 +3111,10 @@ fn close_view_denoises_particle_domes_without_flattening_riffle_waves() {
 @group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
 @compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
  let pixel=vec2(i32(p.x)+64,i32(p.y));
- let filtered=geometry_surface(pixel,vec2(1,0));
+ let filtered=FILTER(pixel,vec2(1,0));
  result[p.y*128u+p.x]=vec4(1./filtered.r,filtered.gba);
 }"#
+        .replace("FILTER", entry)
     );
     let values = execute(
         &device,
@@ -3136,7 +3148,7 @@ fn close_view_denoises_particle_domes_without_flattening_riffle_waves() {
         mean / 1024.
     );
     assert!(
-        reduction < 0.30,
+        reduction < limit,
         "close-view kernel domes survive: {reduction}"
     );
     assert!(
