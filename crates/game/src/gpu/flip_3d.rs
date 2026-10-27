@@ -3593,7 +3593,9 @@ impl GpuFlip3D {
             phase.set_volume_boundaries(queue, self.open_boundaries);
         }
 
-        self.p2g.prepare(queue, count, self.cell_size);
+        // Both callers already prepared P2G with these exact parameters:
+        // step_internal via upload_particles, and step_in_place directly.
+        // Keep a single upload before the ordered substep's dispatches.
         self.water_p2g.prepare(queue, count, self.cell_size);
 
         let mut encoder = encoder_for("FLIP 3D Step Encoder");

@@ -51,7 +51,18 @@ pub struct Hydraulics {
     grain_exit_capture: grain_exits::Capture,
     pub adapter_name: String,
 }
+/// Transient host staging, fully overwritten before use and never serialized.
+#[derive(Default)]
+struct UploadScratch {
+    pos: Vec<Vec3>,
+    vel: Vec<Vec3>,
+    affine: Vec<Mat3>,
+    density: Vec<f32>,
+    diameters: Vec<f32>,
+    wetness: Vec<bool>,
+}
 struct LocalSluice {
+    upload: UploadScratch,
     flip: GpuFlip3D,
     grid: sim3d::Grid3D,
     cell_types: Vec<u32>,
@@ -367,6 +378,7 @@ impl Hydraulics {
             ),
         );
         self.sluice = Some(LocalSluice {
+            upload: UploadScratch::default(),
             flip,
             riffles_enabled: s.sluice.riffles_enabled,
             cleanups: s.sluice.cleanups,
@@ -500,29 +512,43 @@ impl Hydraulics {
         if nw + s.sluice.grains.len() == 0 {
             return Ok(());
         }
-        let mut pos: Vec<_> = s
-            .sluice
-            .water
-            .iter()
-            .map(|p| p.position)
-            .chain(s.sluice.grains.iter().map(|p| p.position))
-            .collect();
-        let mut vel: Vec<_> = s
-            .sluice
-            .water
-            .iter()
-            .map(|p| p.velocity)
-            .chain(s.sluice.grains.iter().map(|p| p.velocity))
-            .collect();
-        let mut affine: Vec<_> = s
-            .sluice
-            .water
-            .iter()
-            .map(|p| p.affine)
-            .chain(s.sluice.grains.iter().map(|p| p.affine))
-            .collect();
-        let density: Vec<_> = std::iter::repeat_n(1.0, nw)
-            .chain(s.sluice.grains.iter().map(|g| {
+        let UploadScratch {
+            mut pos,
+            mut vel,
+            mut affine,
+            mut density,
+            mut diameters,
+            mut wetness,
+        } = std::mem::take(&mut l.upload);
+        pos.clear();
+        vel.clear();
+        affine.clear();
+        density.clear();
+        diameters.clear();
+        wetness.clear();
+        pos.extend(
+            s.sluice
+                .water
+                .iter()
+                .map(|p| p.position)
+                .chain(s.sluice.grains.iter().map(|p| p.position)),
+        );
+        vel.extend(
+            s.sluice
+                .water
+                .iter()
+                .map(|p| p.velocity)
+                .chain(s.sluice.grains.iter().map(|p| p.velocity)),
+        );
+        affine.extend(
+            s.sluice
+                .water
+                .iter()
+                .map(|p| p.affine)
+                .chain(s.sluice.grains.iter().map(|p| p.affine)),
+        );
+        density.extend(
+            std::iter::repeat_n(1.0, nw).chain(s.sluice.grains.iter().map(|g| {
                 if g.volume_resolved {
                     g.density_kg_m3() / 1000.
                 } else if g.kind == GrainKind::Gold {
@@ -530,8 +556,8 @@ impl Hydraulics {
                 } else {
                     constants::GANGUE_DENSITY
                 }
-            }))
-            .collect();
+            })),
+        );
         // DEM contact history persists between steps. New parcels append clumps;
         // removal below uses the same swap operation on both arrays.
         while l.dem.clumps.len() < s.sluice.grains.len() {
@@ -606,8 +632,16 @@ impl Hydraulics {
                 l.water_cells[i] += 1;
             }
         }
-        let mut diameters = Vec::with_capacity(s.sluice.grains.len());
-        let mut wetness = Vec::with_capacity(s.sluice.grains.len());
+        let offsets = [-0.6, 0.0, 0.6];
+        let samples: Vec<Vec3> = offsets
+            .into_iter()
+            .flat_map(|x| {
+                offsets
+                    .into_iter()
+                    .flat_map(move |y| offsets.into_iter().map(move |z| Vec3::new(x, y, z)))
+            })
+            .filter(|p| p.length_squared() <= 1.0)
+            .collect();
         for g in &s.sluice.grains {
             let wet = geometry::neighbouring_water(g.position, dx, &l.water_cells, &index);
             wetness.push(wet);
@@ -619,16 +653,6 @@ impl Hydraulics {
                 -g.diameter_m
             });
             if g.volume_resolved && g.resting {
-                let offsets = [-0.6, 0.0, 0.6];
-                let samples: Vec<Vec3> = offsets
-                    .into_iter()
-                    .flat_map(|x| {
-                        offsets
-                            .into_iter()
-                            .flat_map(move |y| offsets.into_iter().map(move |z| Vec3::new(x, y, z)))
-                    })
-                    .filter(|p| p.length_squared() <= 1.0)
-                    .collect();
                 for offset in &samples {
                     if let Some(i) = index(g.position + *offset * g.collision_radius()) {
                         l.bed_fraction[i] +=
@@ -931,6 +955,14 @@ impl Hydraulics {
             self.grain_exit_capture.complete_removal_stage();
         }
         s.sluice.contacts = l.dem.contact_history();
+        l.upload = UploadScratch {
+            pos,
+            vel,
+            affine,
+            density,
+            diameters,
+            wetness,
+        };
         self.timings.finish_ms = finished.elapsed().as_secs_f64() * 1000.0;
         // Cleanup empties the domain after the fluid drains. It never changes
         // retention probabilities or grants a target yield.
