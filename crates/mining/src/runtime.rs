@@ -123,7 +123,7 @@ pub fn receive(
 pub fn dispatch(
     mut game: ResMut<Game>,
     mut runtime: NonSendMut<Runtime>,
-    validation: Res<Validation>,
+    mut validation: ResMut<Validation>,
 ) {
     if game.session.paused && game.pending.is_empty() && game.look_delta == [0.0; 2] {
         runtime.next_tick = Instant::now();
@@ -165,6 +165,9 @@ pub fn dispatch(
             }),
         };
         if let Err(e) = runtime.worker.submit(work) {
+            if validation.automated() {
+                validation.failure = Some(e.clone());
+            }
             game.session.message = e;
             game.session.paused = true;
             runtime.failed = true;

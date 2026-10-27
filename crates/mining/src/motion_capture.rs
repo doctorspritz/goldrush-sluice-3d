@@ -28,6 +28,7 @@ pub struct MotionCapture {
     view: Option<String>,
     initial_bulk: Option<f64>,
     initial_dry_mass: Option<f64>,
+    initial_sim_time: Option<f64>,
 }
 impl Default for MotionCapture {
     fn default() -> Self {
@@ -115,7 +116,62 @@ impl Default for MotionCapture {
             view,
             initial_bulk: None,
             initial_dry_mass: None,
+            initial_sim_time: None,
         }
+    }
+}
+
+impl MotionCapture {
+    fn observe_baseline(&mut self, session: &mining_sim::Session, scene_ready: bool) -> bool {
+        if !scene_ready {
+            return false;
+        }
+        if self.initial_bulk.is_none() {
+            self.initial_bulk = Some(session.accounted_bulk_material_m3());
+            self.initial_dry_mass = Some(session.accounted_dry_mass_kg());
+            self.initial_sim_time = Some(session.sim_time);
+        }
+        true
+    }
+
+    fn report(
+        &self,
+        session: &mining_sim::Session,
+        validation: &crate::validation::Validation,
+        presentation: serde_json::Value,
+        failure: Option<&str>,
+    ) -> serde_json::Value {
+        let (base_passed, advancing_intervals) =
+            recording_status(&self.frames, self.frozen, session.paused);
+        let end_reached = self.end_sim_time.is_none_or(|t| {
+            self.frames
+                .last()
+                .and_then(|f| f["sim_time"].as_f64())
+                .is_some_and(|last| last >= t)
+        });
+        let baseline_selected = self.initial_bulk.is_some()
+            && self.initial_dry_mass.is_some()
+            && self.initial_sim_time.is_some();
+        let passed = base_passed
+            && end_reached
+            && baseline_selected
+            && validation.capture_scene_ready()
+            && failure.is_none();
+        serde_json::json!({
+            "source":"native Bevy screenshot, actual GPU output; capture overhead affects cadence",
+            "passed":passed,"failure":failure,
+            "requested_end_sim_time":self.end_sim_time,"end_sim_time_reached":end_reached,
+            "expected_frozen":self.frozen,"paused":session.paused,"session_message":session.message,
+            "advancing_intervals":advancing_intervals,
+            "wall_seconds":self.recording.map_or(0.,|started|started.elapsed().as_secs_f64()),
+            "frames":self.frames,"water_presentation":presentation,
+            "reference_sim_time":self.initial_sim_time,
+            "restore_requested":validation.restore_requested,"restore_acknowledged":validation.saved,
+            "reference_bulk_m3":self.initial_bulk,"accounted_bulk_m3":session.accounted_bulk_material_m3(),
+            "reference_dry_mass_kg":self.initial_dry_mass,"accounted_dry_mass_kg":session.accounted_dry_mass_kg(),
+            "water_balance_error_m3":session.water_balance_error_m3(),
+            "gold_balance_error_g":session.accounted_gold()-session.initial_gold_g,
+        })
     }
 }
 
@@ -256,7 +312,7 @@ type SoilRenderQuery<'w, 's> = Query<
 >;
 pub fn update(
     mut commands: Commands,
-    game: Res<crate::app::Game>,
+    (game, validation): (Res<crate::app::Game>, Res<crate::validation::Validation>),
     water: Res<crate::water::WaterSplats>,
     mut capture: ResMut<MotionCapture>,
     mut exit: MessageWriter<AppExit>,
@@ -266,12 +322,30 @@ pub fn update(
     let Some(directory) = capture.directory.clone() else {
         return;
     };
-    if capture.initial_bulk.is_none() {
-        capture.initial_bulk = Some(game.session.accounted_bulk_material_m3());
-        capture.initial_dry_mass = Some(game.session.accounted_dry_mass_kg());
-    }
-    if crate::water::surface_failed(&water) {
+    let failure = validation
+        .failure
+        .as_deref()
+        .or_else(|| crate::water::surface_failed(&water).then_some("Water render pipeline failed"));
+    if let Some(error) = failure {
+        // A failed load/worker can never reach render readiness. Preserve an
+        // explicit nonpass receipt and stop instead of waiting for warmup.
+        let report = capture.report(
+            &game.session,
+            &validation,
+            water.presentation_report(),
+            Some(error),
+        );
+        std::fs::write(
+            directory.join("frames.json"),
+            serde_json::to_vec(&report).unwrap(),
+        )
+        .expect("failed motion receipt");
+        eprintln!("MOTION CAPTURE FAILED: {error}");
+        capture.directory = None;
         exit.write(AppExit::error());
+        return;
+    }
+    if !capture.observe_baseline(&game.session, validation.capture_scene_ready()) {
         return;
     }
     if capture.started.elapsed().as_secs_f64() < 5. || !crate::water::surface_ready(&water) {
@@ -284,17 +358,14 @@ pub fn update(
             .filter(|p| p.path().extension().is_some_and(|p| p == "png"))
             .count();
         if finished.elapsed().as_secs_f64() > 1. && written == capture.frames.len() {
-            let (base_passed, advancing_intervals) =
-                recording_status(&capture.frames, capture.frozen, game.session.paused);
-            let end_reached = capture.end_sim_time.is_none_or(|t| {
-                capture
-                    .frames
-                    .last()
-                    .and_then(|f| f["sim_time"].as_f64())
-                    .is_some_and(|last| last >= t)
-            });
-            let passed = base_passed && end_reached;
-            let report = serde_json::json!({"source":"native Bevy screenshot, actual GPU output; capture overhead affects cadence","passed":passed,"requested_end_sim_time":capture.end_sim_time,"end_sim_time_reached":end_reached,"expected_frozen":capture.frozen,"paused":game.session.paused,"session_message":game.session.message,"advancing_intervals":advancing_intervals,"wall_seconds":capture.recording.unwrap().elapsed().as_secs_f64(),"frames":capture.frames,"water_presentation":water.presentation_report(),"reference_bulk_m3":capture.initial_bulk,"accounted_bulk_m3":game.session.accounted_bulk_material_m3(),"reference_dry_mass_kg":capture.initial_dry_mass,"accounted_dry_mass_kg":game.session.accounted_dry_mass_kg(),"water_balance_error_m3":game.session.water_balance_error_m3(),"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
+            let report = capture.report(
+                &game.session,
+                &validation,
+                water.presentation_report(),
+                None,
+            );
+            let passed = report["passed"].as_bool().unwrap();
+            let advancing_intervals = report["advancing_intervals"].as_u64().unwrap();
             std::fs::write(
                 directory.join("frames.json"),
                 serde_json::to_vec(&report).unwrap(),
@@ -519,5 +590,175 @@ mod recording_tests {
             recording_status(&frames(&[1., 0.9, 1.]), false, false),
             (false, 1)
         );
+    }
+}
+
+#[cfg(test)]
+mod baseline_tests {
+    use super::*;
+    use crate::{app::Game, validation::Validation, water::WaterSplats};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct Fixture {
+        app: App,
+        directory: PathBuf,
+    }
+    impl Fixture {
+        fn new(validation: Validation) -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let directory = std::env::temp_dir().join(format!(
+                "sluice-motion-baseline-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            assert!(!directory.exists(), "preserve prior test evidence");
+            std::fs::create_dir(&directory).unwrap();
+            let capture = MotionCapture {
+                directory: Some(directory.clone()),
+                ..MotionCapture::default()
+            };
+            let mut app = App::new();
+            // Exercise the real capture system without a window, renderer,
+            // GPU, simulation worker or screenshot request during warmup.
+            app.add_message::<AppExit>()
+                .insert_resource(Game::default())
+                .insert_resource(validation)
+                .insert_resource(capture)
+                .init_resource::<WaterSplats>()
+                .init_resource::<Assets<Mesh>>()
+                .add_systems(Update, update);
+            Self { app, directory }
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn pending_restore_skips_placeholder_then_keeps_first_restored_stock_before_warmup() {
+        let mut validation = Validation::default();
+        validation.restore_requested = true;
+        validation.saved = false;
+        let mut fixture = Fixture::new(validation);
+        fixture.app.update();
+        let capture = fixture.app.world().resource::<MotionCapture>();
+        assert!(capture.initial_bulk.is_none());
+        assert!(capture.frames.is_empty());
+        assert!(capture.recording.is_none());
+        let expected = {
+            let mut game = fixture.app.world_mut().resource_mut::<Game>();
+            // Distinct finite scene stock makes a placeholder baseline observable.
+            game.session.sluice.hopper.soil_m3 = 0.02;
+            game.session.sim_time = 37.;
+            game.session.message = "Shift restored".into();
+            (
+                game.session.accounted_bulk_material_m3(),
+                game.session.accounted_dry_mass_kg(),
+            )
+        };
+        fixture.app.world_mut().resource_mut::<Validation>().saved = true;
+        fixture.app.update();
+        let capture = fixture.app.world().resource::<MotionCapture>();
+        assert_eq!(capture.initial_bulk, Some(expected.0));
+        assert_eq!(capture.initial_dry_mass, Some(expected.1));
+        assert_eq!(capture.initial_sim_time, Some(37.));
+        assert!(
+            capture.recording.is_none(),
+            "readiness warmup must not start recording"
+        );
+        fixture
+            .app
+            .world_mut()
+            .resource_mut::<Game>()
+            .session
+            .sluice
+            .hopper
+            .soil_m3 += 0.01;
+        fixture.app.update();
+        let capture = fixture.app.world().resource::<MotionCapture>();
+        assert_eq!(
+            capture.initial_bulk,
+            Some(expected.0),
+            "warmup must not move the baseline"
+        );
+    }
+
+    #[test]
+    fn new_scene_selects_its_baseline_without_requiring_a_restore() {
+        let mut fixture = Fixture::new(Validation::default());
+        let expected = fixture
+            .app
+            .world()
+            .resource::<Game>()
+            .session
+            .accounted_bulk_material_m3();
+        fixture.app.update();
+        let capture = fixture.app.world().resource::<MotionCapture>();
+        assert_eq!(capture.initial_bulk, Some(expected));
+        assert_eq!(capture.initial_sim_time, Some(0.));
+        assert!(capture.frames.is_empty());
+    }
+
+    #[test]
+    fn load_and_worker_failures_write_nonpass_and_exit_before_surface_readiness() {
+        for error in [
+            "Load failed: missing fixture",
+            "Simulation worker disconnected",
+        ] {
+            let mut validation = Validation::default();
+            validation.restore_requested = true;
+            validation.failure = Some(error.into());
+            let mut fixture = Fixture::new(validation);
+            fixture.app.update();
+            let report: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(fixture.directory.join("frames.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(report["passed"], false);
+            assert_eq!(report["failure"], error);
+            assert!(report["reference_bulk_m3"].is_null());
+            assert_eq!(report["frames"].as_array().unwrap().len(), 0);
+            assert!(fixture
+                .app
+                .world_mut()
+                .resource_mut::<Messages<AppExit>>()
+                .drain()
+                .any(|exit| matches!(exit, AppExit::Error(_))));
+            assert!(fixture
+                .app
+                .world()
+                .resource::<MotionCapture>()
+                .directory
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn recorded_progress_and_intended_frozen_pause_cannot_hide_a_worker_failure() {
+        let validation = Validation::default();
+        let mut capture = MotionCapture::default();
+        let mut session = mining_sim::Session::new();
+        session.paused = true;
+        capture.frozen = true;
+        capture.frames = vec![
+            serde_json::json!({"sim_time":1.}),
+            serde_json::json!({"sim_time":1.}),
+        ];
+        assert!(capture.observe_baseline(&session, true));
+        let healthy = capture.report(&session, &validation, serde_json::Value::Null, None);
+        assert_eq!(
+            healthy["passed"], true,
+            "intended frozen capture remains valid"
+        );
+        let failed = capture.report(
+            &session,
+            &validation,
+            serde_json::Value::Null,
+            Some("worker stopped"),
+        );
+        assert_eq!(failed["passed"], false);
+        assert_eq!(failed["failure"], "worker stopped");
     }
 }

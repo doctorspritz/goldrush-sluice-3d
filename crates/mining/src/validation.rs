@@ -135,7 +135,20 @@ impl Validation {
         }
     }
     pub fn automated(&self) -> bool {
-        self.active() || self.capture.is_some() || self.input_check || self.flow_benchmark.is_some()
+        self.active()
+            || self.capture.is_some()
+            || self.motion_capture
+            || self.input_check
+            || self.flow_benchmark.is_some()
+    }
+    /// CLI loading is asynchronous. Capture the first acknowledged scene,
+    /// before renderer readiness warmup, rather than its temporary new shift.
+    pub(crate) fn capture_scene_ready(&self) -> bool {
+        if self.load_path.is_some() || self.restore_requested {
+            self.restore_requested && self.saved
+        } else {
+            true
+        }
     }
     pub fn ready(&self) -> bool {
         self.frames >= 180
@@ -591,5 +604,52 @@ pub fn update(
         eprintln!("MINING VALIDATION FAILED: {error}");
         let _ = std::fs::write(dir.join("failure.txt"), error);
         exit.write(AppExit::error());
+    }
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+
+    #[test]
+    fn motion_capture_enables_automated_worker_and_load_failure_reporting() {
+        let mut validation = Validation {
+            directory: None,
+            capture: None,
+            input_check: false,
+            flow_benchmark: None,
+            motion_capture: false,
+            ..Validation::default()
+        };
+        assert!(!validation.automated());
+        validation.motion_capture = true;
+        assert!(validation.automated());
+    }
+
+    #[test]
+    fn requested_load_waits_for_acknowledgement_without_blocking_new_scene_checks() {
+        let mut validation = Validation {
+            load_path: None,
+            restore_requested: false,
+            saved: false,
+            input_check: true,
+            ..Validation::default()
+        };
+        assert!(
+            validation.capture_scene_ready(),
+            "new-scene scripted controls can start"
+        );
+        validation.load_path = Some(PathBuf::from("requested-shift.json"));
+        assert!(
+            !validation.capture_scene_ready(),
+            "configured load is not yet queued"
+        );
+        validation.restore_requested = true;
+        assert!(
+            !validation.capture_scene_ready(),
+            "queued load is not an acknowledgement"
+        );
+        validation.saved = true;
+        assert!(validation.capture_scene_ready());
     }
 }

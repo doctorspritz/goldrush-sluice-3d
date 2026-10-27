@@ -482,6 +482,74 @@ fn refracted_scene(pixel:vec2<f32>,normal:vec3<f32>,geometric_normal:vec3<f32>,d
     }}
     return colour;
 }
+// Local reflections use the existing opaque scene, never the water output.
+// The finite screen/depth image cannot observe off-screen or hidden objects:
+// missing observations retain the sky instead of inventing reflected geometry.
+struct ReflectionProbe { pixel:vec2<f32>, gap:f32, on_screen:bool, solid:bool };
+fn reflection_probe(position:vec3<f32>)->ReflectionProbe {
+    var out:ReflectionProbe;
+    let clip=u.clip_from_world*u.world_from_view*vec4(position,1.);
+    if clip.w<=0.00001 || position.z>= -0.01 {return out;}
+    out.pixel=vec2(clip.x/clip.w*0.5+0.5,0.5-clip.y/clip.w*0.5)*u.viewport.xy;
+    if any(out.pixel<vec2(0.5)) || any(out.pixel>=u.viewport.xy-vec2(0.5)) {return out;}
+    out.on_screen=true;
+    let q=vec2<i32>(out.pixel);
+    let depth=textureLoad(scene_depth,q,0);
+    if depth<=0. {return out;}
+    let xy=(vec2<f32>(q)+0.5)/u.viewport.xy;
+    let scene_point=u.view_from_clip*vec4(xy.x*2.-1.,1.-xy.y*2.,depth,1.);
+    if scene_point.w<=0.000001 {return out;}
+    out.gap= -position.z+scene_point.z/scene_point.w;
+    out.solid=true;
+    return out;
+}
+fn channel_reflection(position:vec3<f32>,direction:vec3<f32>,geometric_normal:vec3<f32>,fallback:vec3<f32>)->vec4<f32> {
+    // Optical ripple normals may turn below the resolved sheet. That does not
+    // make the submerged floor a reflected object above the water.
+    if position.z>= -0.01 || dot(direction,geometric_normal)<=0.0001 {return vec4(fallback,0.);}
+    let origin=position+geometric_normal*0.001;
+    var previous=reflection_probe(origin);
+    if !previous.on_screen {return vec4(fallback,0.);}
+    var lo=0.;
+    for(var i=1;i<=16;i++) {
+        let distance=0.8*f32(i)/16.;
+        let current=reflection_probe(origin+direction*distance);
+        if !current.on_screen {break;}
+        if previous.solid && current.solid && previous.gap<0. && current.gap>=0. {
+            var left=lo;var right=distance;
+            // Refine a front-to-back crossing. A depth silhouette is not itself
+            // a hit: the final point must lie near the observed opaque surface.
+            for(var j=0;j<5;j++) {
+                let middle=(left+right)*0.5;
+                let probe=reflection_probe(origin+direction*middle);
+                if probe.solid && probe.gap>=0. {right=middle;} else {left=middle;}
+            }
+            let hit=origin+direction*right;
+            let probe=reflection_probe(hit);
+            if !probe.solid || abs(probe.gap)>0.015 {return vec4(fallback,0.);}
+            let base=vec2<i32>(floor(probe.pixel-0.5));let f=fract(probe.pixel-0.5);
+            var colour=vec3(0.);var support=0.;
+            for(var y=0;y<2;y++){for(var x=0;x<2;x++){
+                let q=base+vec2(x,y);
+                if any(q<vec2(0)) || any(q>=vec2<i32>(u.viewport.xy)) {continue;}
+                let depth=textureLoad(scene_depth,q,0);
+                if depth<=0. {continue;}
+                let xy=(vec2<f32>(q)+0.5)/u.viewport.xy;
+                let point=u.view_from_clip*vec4(xy.x*2.-1.,1.-xy.y*2.,depth,1.);
+                if point.w<=0.000001 {continue;}
+                let actual=point.xyz/point.w;
+                if dot(geometric_normal,actual-position)<=0.0005 || length(actual-hit)>0.025 {continue;}
+                let weight=select(1.-f.x,f.x,x==1)*select(1.-f.y,f.y,y==1);
+                colour+=textureLoad(scene,q,0).rgb*weight;support+=weight;
+            }}
+            let edge=min(min(probe.pixel.x,probe.pixel.y),min(u.viewport.x-probe.pixel.x,u.viewport.y-probe.pixel.y));
+            let confidence=support*smoothstep(0.,16.,edge)*(1.-smoothstep(0.55,0.8,right));
+            return vec4(mix(fallback,colour/max(support,0.000001),confidence),confidence);
+        }
+        previous=current;lo=distance;
+    }
+    return vec4(fallback,0.);
+}
 // Both inputs are distances along the eye ray. The particle volume integral
 // starts at the raw envelope; the joined interface can be farther back. A
 // visible liquid interval cannot contain more water than its geometric length.
@@ -640,6 +708,12 @@ fn eye_ray_path(view_gap:f32,ray_cosine:f32)->f32 {
     if in_channel {specular=channel_sun(normal,eye_world,light,variance);}
     let reflection=reflect(-eye_world,normal);
     let sky=mix(vec3(0.19,0.25,0.24),vec3(0.48,0.66,0.76),smoothstep(-0.1,0.65,reflection.y));
+    var environment=sky;
+    if in_channel && u.sediment.w==0. {
+        let reflected_view=normalize((u.view_from_world*vec4(reflection,0.)).xyz);
+        let geometric_view=normalize((u.view_from_world*vec4(optical_normal,0.)).xyz);
+        environment=channel_reflection(position,reflected_view,geometric_view,sky).rgb;
+    }
 
     // Optical columns are integrated in world metres along the eye ray, not
     // camera-Z metres. Mixing those units made oblique crests alternate
@@ -688,5 +762,5 @@ fn eye_ray_path(view_gap:f32,ray_cosine:f32)->f32 {
     if u.sediment.w==2. {return vec4(mix(original.rgb,normal*0.5+vec3(0.5),coverage),original.a);}
     if u.sediment.w==3. {return vec4(mix(original.rgb,vec3(clamp(thickness*2.,0.,1.)),coverage),original.a);}
     if u.sediment.w==4. {return vec4(mix(original.rgb,vec3(clamp(beta/1200.,0.,1.)),coverage),original.a);}
-    return vec4(mix(original.rgb,mix(body,sky,fresnel)+vec3(specular),coverage),original.a);
+    return vec4(mix(original.rgb,mix(body,environment,fresnel)+vec3(specular),coverage),original.a);
 }
