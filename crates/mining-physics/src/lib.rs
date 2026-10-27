@@ -4,6 +4,7 @@
 //! sediment coupling and GPU scheduling corrections.
 pub mod calibration;
 pub mod geometry;
+pub mod grain_exits;
 mod particle_storage;
 pub mod phase_exchange;
 mod terrain;
@@ -47,6 +48,7 @@ pub struct Hydraulics {
     terrain_loaded: bool,
     initial_grain_storage: usize,
     conservative_phases: bool,
+    grain_exit_capture: grain_exits::Capture,
     pub adapter_name: String,
 }
 struct LocalSluice {
@@ -84,6 +86,25 @@ impl Hydraulics {
         let mut solver = Self::new()?;
         solver.initial_grain_storage = grains;
         Ok(solver)
+    }
+    /// Observe existing solver-domain grain removals without changing physics.
+    /// The bound is 1..=4096 records per public step. +X is the buffered solver
+    /// domain exit, not the physical sluice lip. Capture is disabled by default.
+    pub fn enable_grain_exit_capture(&mut self, limit: usize) -> Result<(), String> {
+        self.grain_exit_capture.enable(limit)
+    }
+    /// Stop observing grain exits, retaining bounded diagnostic storage for reuse.
+    pub fn disable_grain_exit_capture(&mut self) {
+        self.grain_exit_capture.disable();
+    }
+    /// Replace a reusable snapshot with the latest step's observation. Reserve
+    /// failure retains the pending snapshot. Reuse the same output value across
+    /// calls; only a successful whole step can produce a complete observation.
+    pub fn take_grain_exit_snapshot(
+        &mut self,
+        out: &mut grain_exits::Snapshot,
+    ) -> Result<(), String> {
+        self.grain_exit_capture.take_into(out)
     }
     pub fn storage_diagnostics(&self) -> serde_json::Value {
         self.sluice.as_ref().map_or(serde_json::Value::Null, |l| serde_json::json!({
@@ -199,6 +220,7 @@ impl Hydraulics {
             terrain_loaded: false,
             initial_grain_storage: mining_sim::sluice::INITIAL_GRAIN_STORAGE,
             conservative_phases: false,
+            grain_exit_capture: grain_exits::Capture::default(),
             adapter_name,
         })
     }
@@ -209,6 +231,12 @@ impl Hydraulics {
         self.sluice = None;
     }
     pub fn step(&mut self, s: &mut Session) -> Result<(), String> {
+        self.grain_exit_capture.begin_step(s.sim_time);
+        let result = self.step_inner(s);
+        self.grain_exit_capture.finish_step(result.is_ok());
+        result
+    }
+    fn step_inner(&mut self, s: &mut Session) -> Result<(), String> {
         if s.paused {
             return Ok(());
         }
@@ -856,14 +884,32 @@ impl Hydraulics {
         if let Some(outlet) = s.sluice.outlet() {
             s.site.world.add_water(outlet, returned as f32);
         }
+        let exit_domain = if self.grain_exit_capture.enabled() {
+            let domain = [
+                l.grid.width as f32 * dx,
+                l.grid.height as f32 * dx,
+                l.grid.depth as f32 * dx,
+            ];
+            self.grain_exit_capture.begin_removal_stage(domain);
+            Some(domain)
+        } else {
+            None
+        };
         for i in (0..s.sluice.grains.len()).rev() {
             if !in_domain(s.sluice.grains[i].position) {
+                if let Some(domain) = exit_domain {
+                    self.grain_exit_capture
+                        .record(&s.sluice.grains[i], i, domain);
+                }
                 s.sluice
                     .tailings
                     .add(s.sluice.grains.swap_remove(i).material);
                 l.free_templates.push(l.dem.clumps[i].template_idx);
                 l.dem.remove_clump(i);
             }
+        }
+        if exit_domain.is_some() {
+            self.grain_exit_capture.complete_removal_stage();
         }
         s.sluice.contacts = l.dem.contact_history();
         self.timings.finish_ms = finished.elapsed().as_secs_f64() * 1000.0;
