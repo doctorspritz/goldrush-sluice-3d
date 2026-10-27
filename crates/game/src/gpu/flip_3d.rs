@@ -790,6 +790,7 @@ impl GpuFlip3D {
                 [0; 3]
             },
             phase_metadata.clone(),
+            !conservative,
         );
         g2p.set_conservative_phase_exchange(conservative);
 
@@ -3731,7 +3732,7 @@ impl GpuFlip3D {
                         0,
                         destination,
                         n.div_ceil(64) as u64 * 256,
-                        (n * 4) as u64,
+                        (n * 8) as u64,
                     );
                 }
             }

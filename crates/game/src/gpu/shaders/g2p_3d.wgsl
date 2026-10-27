@@ -17,6 +17,7 @@
 const BSPLINE_SUPPORT_RADIUS: f32 = 1.5;  // Support range [-1.5, 1.5] for quadratic B-spline
 const EPSILON_METERS: f32 = 0.001;        // Small epsilon for numerical checks
 override PHASE_EXCHANGE_ALLOWED: bool=false;
+override WATER_SUPPORT_ALLOWED: bool=false;
 const GRAVITY: f32 = 9.81;                // Gravity magnitude (m/s²)
 
 struct Params {
@@ -127,6 +128,15 @@ fn phase_face_velocity(axis:u32,index:u32,mixture:f32,predictor:f32,rho:f32,part
     return c*predictor+b*(u0+ratio*dq)+c/rho*scale_ratio*dq;
 }
 
+// Carrier validity comes from actual water P2G weight, not its velocity.
+// A supported stationary face is data; an unsupported face is not a zero flow.
+fn carrier_face_supported(axis:u32,index:u32)->bool {
+    if !WATER_SUPPORT_ALLOWED {return true;}
+    if axis==0u {return water_grid_u[(params.width+1u)*params.height*params.depth+index]>0.;}
+    if axis==1u {return water_grid_v[params.width*(params.height+1u)*params.depth+index]>0.;}
+    return water_grid_w[params.width*params.height*(params.depth+1u)+index]>0.;
+}
+
 @compute @workgroup_size(128)
 fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= params.particle_count) {
@@ -154,6 +164,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     var new_c_row2 = vec3<f32>(0.0, 0.0, 0.0);  // Row 2 of C matrix (from W velocity)
     var weight_sum = vec3<f32>(0.0, 0.0, 0.0);  // u, v, w weight sums
     var water_velocity = vec3<f32>(0.0, 0.0, 0.0);
+    var water_weight_sum = vec3<f32>(0.0, 0.0, 0.0);
 
     // Also sample old grid velocity for FLIP delta
     // NOTE: old and new use same stencil, so weights are identical
@@ -204,7 +215,10 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 new_velocity.x += w * u_val;
                 old_grid_vel.x += w * u_old;
                 weight_sum.x += w;
-                if is_sediment && !phase {water_velocity.x += w * water_grid_u[idx];}
+                if is_sediment && !phase && carrier_face_supported(0u,idx) {
+                    water_velocity.x += w * water_grid_u[idx];
+                    water_weight_sum.x += w;
+                }
                 // Use the same local reference in both affine sums. A constant
                 // velocity cancels analytically; centering avoids amplifying its
                 // floating point first-moment residue by 4/h^2 at walls.
@@ -258,7 +272,10 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 new_velocity.y += w * v_val;
                 old_grid_vel.y += w * v_old;
                 weight_sum.y += w;
-                if is_sediment && !phase {water_velocity.y += w * water_grid_v[idx];}
+                if is_sediment && !phase && carrier_face_supported(1u,idx) {
+                    water_velocity.y += w * water_grid_v[idx];
+                    water_weight_sum.y += w;
+                }
                 // Use the same local reference in both affine sums. A constant
                 // velocity cancels analytically; centering avoids amplifying its
                 // floating point first-moment residue by 4/h^2 at walls.
@@ -311,7 +328,10 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
                 new_velocity.z += w * w_val;
                 old_grid_vel.z += w * w_old;
                 weight_sum.z += w;
-                if is_sediment && !phase {water_velocity.z += w * water_grid_w[idx];}
+                if is_sediment && !phase && carrier_face_supported(2u,idx) {
+                    water_velocity.z += w * water_grid_w[idx];
+                    water_weight_sum.z += w;
+                }
                 // Use the same local reference in both affine sums. A constant
                 // velocity cancels analytically; centering avoids amplifying its
                 // floating point first-moment residue by 4/h^2 at walls.
@@ -333,7 +353,8 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         new_c_row0 /= weight_sum.x;
         if phase && !is_sediment {old_grid_c0 /= weight_sum.x;}
         if (is_sediment) {
-            water_velocity.x /= weight_sum.x;
+            let carrier_weight=select(weight_sum.x,water_weight_sum.x,WATER_SUPPORT_ALLOWED);
+            if carrier_weight>WEIGHT_EPSILON {water_velocity.x /= carrier_weight;}
         }
     }
     if (weight_sum.y > WEIGHT_EPSILON) {
@@ -342,7 +363,8 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         new_c_row1 /= weight_sum.y;
         if phase && !is_sediment {old_grid_c1 /= weight_sum.y;}
         if (is_sediment) {
-            water_velocity.y /= weight_sum.y;
+            let carrier_weight=select(weight_sum.y,water_weight_sum.y,WATER_SUPPORT_ALLOWED);
+            if carrier_weight>WEIGHT_EPSILON {water_velocity.y /= carrier_weight;}
         }
     }
     if (weight_sum.z > WEIGHT_EPSILON) {
@@ -351,7 +373,8 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         new_c_row2 /= weight_sum.z;
         if phase && !is_sediment {old_grid_c2 /= weight_sum.z;}
         if (is_sediment) {
-            water_velocity.z /= weight_sum.z;
+            let carrier_weight=select(weight_sum.z,water_weight_sum.z,WATER_SUPPORT_ALLOWED);
+            if carrier_weight>WEIGHT_EPSILON {water_velocity.z /= carrier_weight;}
         }
     }
 
@@ -411,6 +434,16 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         let equilibrium = water_velocity - vec3<f32>(0.0, submerged_gravity / drag_rate, 0.0);
         final_velocity = mix(old_particle_vel, equilibrium, 1.0 - exp(-drag_rate * params.dt));
+        if WATER_SUPPORT_ALLOWED {
+            // Do not invent a carrier velocity in an unobserved component.
+            // Missing vertical carrier data uses the existing dry gravity law.
+            // This is a data-availability fallback, not an immersion model.
+            if water_weight_sum.x<=WEIGHT_EPSILON {final_velocity.x=old_particle_vel.x;}
+            if water_weight_sum.y<=WEIGHT_EPSILON {
+                final_velocity.y=old_particle_vel.y-sediment_params.gravity*params.dt;
+            }
+            if water_weight_sum.z<=WEIGHT_EPSILON {final_velocity.z=old_particle_vel.z;}
+        }
         if diameter < 0. { final_velocity = old_particle_vel - vec3(0.,sediment_params.gravity * params.dt,0.); }
     } else {
         // Water: full FLIP/PIC blend

@@ -57,6 +57,10 @@ fn divide_u(@builtin(global_invocation_id) id: vec3<u32>) {
         let water_idx=idx+water_offset((params.width+1u)*params.height*params.depth);
         let sum=f32(u_sum[water_idx])*INV_SCALE;let weight=f32(u_weight[water_idx])*INV_SCALE;
         if weight>0.0 {grid_u[water_idx]=sum/weight;}else{grid_u[water_idx]=0.0;}
+        // Supported stationary water is distinct from an unsupported zero.
+        grid_u[water_idx+(params.width+1u)*params.height*params.depth]=select(0.0,1.0,u_weight[water_idx]>0);
+    } else if params.include_sediment==0u {
+        grid_u[idx+(params.width+1u)*params.height*params.depth]=select(0.0,1.0,integer_weight>0);
     }
 }
 
@@ -84,6 +88,10 @@ fn divide_v(@builtin(global_invocation_id) id: vec3<u32>) {
         let water_idx=idx+water_offset(params.width*(params.height+1u)*params.depth);
         let sum=f32(v_sum[water_idx])*INV_SCALE;let weight=f32(v_weight[water_idx])*INV_SCALE;
         if weight>0.0 {grid_v[water_idx]=sum/weight;}else{grid_v[water_idx]=0.0;}
+        // Supported stationary water is distinct from an unsupported zero.
+        grid_v[water_idx+params.width*(params.height+1u)*params.depth]=select(0.0,1.0,v_weight[water_idx]>0);
+    } else if params.include_sediment==0u {
+        grid_v[idx+params.width*(params.height+1u)*params.depth]=select(0.0,1.0,integer_weight>0);
     }
 }
 
@@ -111,5 +119,9 @@ fn divide_w(@builtin(global_invocation_id) id: vec3<u32>) {
         let water_idx=idx+water_offset(params.width*params.height*(params.depth+1u));
         let sum=f32(w_sum[water_idx])*INV_SCALE;let weight=f32(w_weight[water_idx])*INV_SCALE;
         if weight>0.0 {grid_w[water_idx]=sum/weight;}else{grid_w[water_idx]=0.0;}
+        // Supported stationary water is distinct from an unsupported zero.
+        grid_w[water_idx+params.width*params.height*(params.depth+1u)]=select(0.0,1.0,w_weight[water_idx]>0);
+    } else if params.include_sediment==0u {
+        grid_w[idx+params.width*params.height*(params.depth+1u)]=select(0.0,1.0,integer_weight>0);
     }
 }

@@ -188,10 +188,14 @@ impl GpuP2g3D {
             mapped_at_creation: false,
         });
 
+        // The water velocity plane is followed by an explicit support mask.
+        // Integer accumulators retain their original allocation and arithmetic.
+        let output_allocated = |n: usize| allocated(n) + n;
+
         // Create output grid buffers (f32)
         let grid_u_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid U"),
-            size: (allocated(u_size) * std::mem::size_of::<f32>()) as u64,
+            size: (output_allocated(u_size) * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -200,7 +204,7 @@ impl GpuP2g3D {
 
         let grid_v_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid V"),
-            size: (allocated(v_size) * std::mem::size_of::<f32>()) as u64,
+            size: (output_allocated(v_size) * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -209,7 +213,7 @@ impl GpuP2g3D {
 
         let grid_w_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid W"),
-            size: (allocated(w_size) * std::mem::size_of::<f32>()) as u64,
+            size: (output_allocated(w_size) * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -759,7 +763,14 @@ impl GpuP2g3D {
             .iter()
             .take(particle_count as usize)
             .enumerate()
-            .map(|(i,p)| [p.x, p.y, p.z, self.volume_weights.get(i).copied().unwrap_or(1.0)])
+            .map(|(i, p)| {
+                [
+                    p.x,
+                    p.y,
+                    p.z,
+                    self.volume_weights.get(i).copied().unwrap_or(1.0),
+                ]
+            })
             .collect();
 
         let velocities_padded: Vec<[f32; 4]> = velocities
@@ -858,7 +869,9 @@ impl GpuP2g3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("P2G 3D Scatter Pass"),
-                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("P2G 3D Scatter Pass")),
+                timestamp_writes: timer
+                    .as_deref_mut()
+                    .map(|timer| timer.pass("P2G 3D Scatter Pass")),
             });
             pass.set_pipeline(&self.scatter_pipeline);
             pass.set_bind_group(0, &self.scatter_bind_group, &[]);
@@ -870,7 +883,9 @@ impl GpuP2g3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("P2G 3D Divide U Pass"),
-                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("P2G 3D Divide U Pass")),
+                timestamp_writes: timer
+                    .as_deref_mut()
+                    .map(|timer| timer.pass("P2G 3D Divide U Pass")),
             });
             pass.set_pipeline(&self.divide_u_pipeline);
             pass.set_bind_group(0, &self.divide_bind_group, &[]);
@@ -884,7 +899,9 @@ impl GpuP2g3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("P2G 3D Divide V Pass"),
-                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass("P2G 3D Divide V Pass")),
+                timestamp_writes: timer
+                    .as_deref_mut()
+                    .map(|timer| timer.pass("P2G 3D Divide V Pass")),
             });
             pass.set_pipeline(&self.divide_v_pipeline);
             pass.set_bind_group(0, &self.divide_bind_group, &[]);
@@ -908,7 +925,6 @@ impl GpuP2g3D {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
     }
-
 
     /// Grid buffer sizes
     pub fn grid_sizes(&self) -> (usize, usize, usize) {

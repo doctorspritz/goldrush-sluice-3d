@@ -56,9 +56,16 @@ fn terminal_settling_is_independent_of_substep_count() {
             "still water and unchanged grids",
             bytemuck::cast_slice(&[0.0f32; 576]),
         );
-        let solver = GpuG2p3D::new(
+        // Real stationary water has support even though its velocity is zero.
+        let mut supported_water = vec![0.0f32; 576];
+        supported_water.extend([1.0f32; 576]);
+        let carrier = buffer(
+            "supported stationary water",
+            bytemuck::cast_slice(&supported_water),
+        );
+        let solver = GpuG2p3D::new_with_metadata(
             &device, 8, 8, 8, 3, position, velocity, c0, c1, c2, density, &grid, &grid, &grid,
-            &grid, &grid, &grid, &grid, &grid, &grid, &grid, [0; 3],
+            &grid, &grid, &grid, &grid, &carrier, &carrier, &carrier, [0; 3], None, true,
         );
         solver.upload_grain_diameters(&queue, 0, &diameters);
         let params = SedimentParams3D {

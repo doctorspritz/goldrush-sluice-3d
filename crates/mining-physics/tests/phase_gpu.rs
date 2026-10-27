@@ -210,6 +210,7 @@ fn phase_transfer_pressure_and_gather_match_oracle_with_momentum_and_freefall_co
             &phase.water[2],
             [0; 3],
             Some(metadata.clone()),
+            false,
         );
         gather.set_conservative_phase_exchange(true);
         let sed = SedimentParams3D {

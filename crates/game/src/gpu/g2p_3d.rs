@@ -173,10 +173,14 @@ impl GpuG2p3D {
             water_grid_w_buffer,
             water_offsets,
             None,
+            false,
         )
     }
 
     /// Shared phase metadata must contain four capacity planes (rho,d,b,c).
+    /// Ordinary support-aware water inputs contain velocity[n] then a 0/1
+    /// support[n] plane. Velocity-only callers keep water_support false.
+    /// Phase response buffers have their separate unchanged layout.
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_metadata(
         device: &wgpu::Device,
@@ -202,8 +206,13 @@ impl GpuG2p3D {
         water_grid_w_buffer: &wgpu::Buffer,
         water_offsets: [u64; 3],
         metadata: Option<Arc<wgpu::Buffer>>,
+        water_support: bool,
     ) -> Self {
         let phase_buffers = metadata.is_some();
+        assert!(
+            !water_support || !phase_buffers,
+            "water support planes and conservative phase response have different layouts"
+        );
         let mut water_sizes = [
             ((width + 1) * height * depth) as u64,
             (width * (height + 1) * depth) as u64,
@@ -212,6 +221,8 @@ impl GpuG2p3D {
         .map(|n| {
             if phase_buffers {
                 ((n + 4).div_ceil(64) * 64 + 4 * n) * 4
+            } else if water_support {
+                n * 8
             } else {
                 n * 4
             }
@@ -240,6 +251,21 @@ impl GpuG2p3D {
                 );
             }
         }
+        if water_support {
+            for (axis, buffer) in [
+                water_grid_u_buffer,
+                water_grid_v_buffer,
+                water_grid_w_buffer,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                assert!(
+                    buffer.size() >= water_offsets[axis] + water_sizes[axis],
+                    "water carrier velocity/support plane is truncated"
+                );
+            }
+        }
         let particle_metadata_buffer = metadata.unwrap_or_else(|| {
             Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Grain density and diameter metadata"),
@@ -248,10 +274,16 @@ impl GpuG2p3D {
                 mapped_at_creation: false,
             }))
         });
-        let phase_constants = std::collections::HashMap::from([(
-            "PHASE_EXCHANGE_ALLOWED".to_string(),
-            f64::from(u32::from(phase_buffers)),
-        )]);
+        let phase_constants = std::collections::HashMap::from([
+            (
+                "PHASE_EXCHANGE_ALLOWED".to_string(),
+                f64::from(u32::from(phase_buffers)),
+            ),
+            (
+                "WATER_SUPPORT_ALLOWED".to_string(),
+                f64::from(u32::from(water_support)),
+            ),
+        ]);
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("G2P 3D Shader"),
@@ -743,7 +775,6 @@ impl GpuG2p3D {
         let workgroups = particle_count.div_ceil(self.workgroup_size);
         pass.dispatch_workgroups(workgroups, 1, 1);
     }
-
 
     /// Download particle data from GPU
     pub fn download(
