@@ -20,6 +20,7 @@ pub mod soil_response;
 pub mod soil_water;
 pub mod storage;
 pub mod surface_bed;
+pub mod tailings;
 pub mod tracks;
 pub mod water_balance;
 

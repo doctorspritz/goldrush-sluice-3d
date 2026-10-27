@@ -884,6 +884,18 @@ impl Hydraulics {
         if let Some(outlet) = s.sluice.outlet() {
             s.site.world.add_water(outlet, returned as f32);
         }
+        if let Some(t) = &mut s.tailings {
+            let count = s
+                .sluice
+                .grains
+                .iter()
+                .filter(|g| !in_domain(g.position))
+                .count();
+            t.prepare_batch(count)?;
+            for g in s.sluice.grains.iter().filter(|g| !in_domain(g.position)) {
+                mining_sim::tailings::world_grain(&s.sluice, g)?;
+            }
+        }
         let exit_domain = if self.grain_exit_capture.enabled() {
             let domain = [
                 l.grid.width as f32 * dx,
@@ -901,9 +913,16 @@ impl Hydraulics {
                     self.grain_exit_capture
                         .record(&s.sluice.grains[i], i, domain);
                 }
-                s.sluice
-                    .tailings
-                    .add(s.sluice.grains.swap_remove(i).material);
+                if let Some(t) = &mut s.tailings {
+                    let g = mining_sim::tailings::world_grain(&s.sluice, &s.sluice.grains[i])
+                        .expect("preflighted exit");
+                    t.accept(&g).expect("preflighted tailings batch");
+                    s.sluice.grains.swap_remove(i);
+                } else {
+                    s.sluice
+                        .tailings
+                        .add(s.sluice.grains.swap_remove(i).material);
+                }
                 l.free_templates.push(l.dem.clumps[i].template_idx);
                 l.dem.remove_clump(i);
             }

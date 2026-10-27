@@ -37,7 +37,7 @@ pub struct Game {
 impl Default for Game {
     fn default() -> Self {
         Self {
-            session: Session::new(),
+            session: Session::new_operation(),
             controls: Controls::default(),
             placement: None,
             demo: false,
@@ -79,7 +79,7 @@ impl Game {
         self.session = if demo {
             crate::demo::session().expect("Validated demo")
         } else {
-            Session::new()
+            Session::new_operation()
         };
         self.snapshot_id += 1;
         self.command(Command::Reset(Box::new(self.session.clone())));

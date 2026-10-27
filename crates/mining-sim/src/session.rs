@@ -67,6 +67,7 @@ pub struct Session {
     pub water_balance: crate::water_balance::WaterBalance,
     pub material_motion: Option<crate::payload::MaterialMotion>,
     pub active_soil: Option<crate::soil::ActiveSoil>,
+    pub tailings: Option<crate::tailings::Tailings>,
 }
 #[derive(Serialize, Deserialize)]
 struct Save {
@@ -85,6 +86,10 @@ struct Save {
     material_motion: Option<crate::payload::MaterialMotion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     active_soil: Option<crate::soil::ActiveSoil>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tailings: Option<crate::tailings::Tailings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mechanical_version: Option<u32>,
 }
 impl Default for Session {
     fn default() -> Self {
@@ -124,7 +129,47 @@ impl Session {
             water_balance,
             material_motion: None,
             active_soil: None,
+            tailings: None,
         }
+    }
+    /// Current playable profile. `new` retains the existing laboratory/legacy
+    /// format; the app's new shifts and demo use spatial discharge.
+    pub fn new_operation() -> Self {
+        let mut session = Self::new();
+        session
+            .enable_spatial_tailings()
+            .expect("empty new operation");
+        session
+    }
+    /// Migrate a historical pooled pile only once, at its former visible
+    /// location. Its discarded historical particle trajectories are unknown.
+    pub fn enable_spatial_tailings(&mut self) -> Result<(), String> {
+        if self.tailings.is_some() {
+            return Ok(());
+        }
+        let mut m = self.sluice.tailings;
+        // Historic gold has no saved position/size. Keep its existing owner;
+        // the class-3 terrain tag cannot receive independent gold grains.
+        let historic_gold_g = m.gold_g;
+        m.gold_g = 0.;
+        let mut t = crate::tailings::Tailings::default();
+        if m.volume() > 0. || m.gold_g > 0. || m.pore_water_m3 > 0. {
+            let p = self
+                .sluice
+                .placement
+                .ok_or("Place the existing tailings pile before migration")?;
+            let at = p.outlet() + p.forward() * 0.8;
+            self.site.receive_tailings(at, m, true)?;
+            t.released = m;
+            t.received = m;
+            t.historic_bed = m;
+            self.sluice.tailings = Material {
+                gold_g: historic_gold_g,
+                ..Default::default()
+            };
+        }
+        self.tailings = Some(t);
+        Ok(())
     }
     pub fn near_plant(&self) -> bool {
         self.player
@@ -379,6 +424,10 @@ impl Session {
             return;
         }
         let dt = FIXED_DT;
+        if let Some(t) = &mut self.tailings {
+            let exported = t.step(&mut self.site, dt);
+            self.water_balance.boundary_outflow_m3 += exported.pore_water_m3;
+        }
         self.sim_time += dt as f64;
         self.player.tool_swing = (self.player.tool_swing - dt * 2.8).max(0.0);
         let obstacles = self.mechanical_obstacles();
@@ -553,6 +602,10 @@ impl Session {
             + self.sluice.concentrate.gold_g
             + self.falling.iter().map(|l| l.material.gold_g).sum::<f64>()
             + self
+                .tailings
+                .as_ref()
+                .map_or(0., |t| t.active_material().gold_g + t.exported.gold_g)
+            + self
                 .active_soil
                 .as_ref()
                 .map_or(0., |s| s.material().gold_g)
@@ -584,6 +637,10 @@ impl Session {
         }
         if let Some(soil) = &self.active_soil {
             total.add(soil.material());
+        }
+        if let Some(t) = &self.tailings {
+            total.add(t.active_material());
+            total.add(t.exported);
         }
         total
     }
@@ -748,11 +805,8 @@ impl Session {
         Ok(report)
     }
     pub fn save_json(&self) -> Result<String, String> {
-        let mut site = self.site.snapshot();
-        site.normalize_bed_age();
-        serde_json::to_string(&Save {
-            // v8 preserves spatial payload/rigid parcels and boundary receipts.
-            version: if self.machine.bucket_model() == crate::bucket::Model::MountedShellV2 {
+        let mechanical_version =
+            if self.machine.bucket_model() == crate::bucket::Model::MountedShellV2 {
                 11
             } else if self
                 .machine
@@ -769,7 +823,18 @@ impl Session {
                 7
             } else {
                 6
+            };
+        let mut site = self.site.snapshot();
+        site.normalize_bed_age();
+        serde_json::to_string(&Save {
+            // v8 preserves spatial payload/rigid parcels and boundary receipts.
+            version: if self.tailings.is_some() {
+                12
+            } else {
+                mechanical_version
             },
+            mechanical_version: self.tailings.as_ref().map(|_| mechanical_version),
+            tailings: self.tailings.clone(),
             site,
             machine: self.machine.clone(),
             sluice: self.sluice.clone(),
@@ -789,20 +854,40 @@ impl Session {
             return Err("Save file is too large".into());
         }
         let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if !matches!(s.version, 2..=11) {
+        let version = if s.version == 12 {
+            if s.tailings.is_none() || s.water_balance.is_none() {
+                return Err("Spatial save lacks tailings or water ownership".into());
+            }
+            s.mechanical_version
+                .filter(|v| (6..=11).contains(v))
+                .ok_or("Invalid spatial save mechanism version")?
+        } else {
+            if s.tailings.is_some() || s.mechanical_version.is_some() {
+                return Err("Legacy save contains unsupported spatial tailings".into());
+            }
+            s.version
+        };
+        if s.tailings.as_ref().is_some_and(|t| !t.valid()) {
+            return Err("Invalid spatial tailings state".into());
+        }
+
+        if !matches!(version, 2..=11) {
             return Err("Unsupported save version".into());
         }
         if !matches!(
-            (s.version, s.site.bed_age_unit()),
+            (version, s.site.bed_age_unit()),
             (2, crate::site::BedAgeUnit::Legacy20HzSteps)
                 | (3..=11, crate::site::BedAgeUnit::Microseconds)
         ) {
             return Err("Invalid saved terrain clock".into());
         }
         let carried_water = s
-            .active_soil
+            .tailings
             .as_ref()
-            .map_or(0., |s| s.material().pore_water_m3)
+            .map_or(0., |t| t.active_material().pore_water_m3)
+            + s.active_soil
+                .as_ref()
+                .map_or(0., |s| s.material().pore_water_m3)
             + s.machine.bucket.pore_water_m3
             + s.player.hand.pore_water_m3
             + s.sluice.active_material().pore_water_m3
@@ -812,14 +897,14 @@ impl Session {
                 .iter()
                 .map(|l| l.material.pore_water_m3)
                 .sum::<f64>();
-        if s.version < 4
+        if version < 4
             && (s.site.soil_water_m3() > 0.
                 || carried_water > 0.
                 || s.sluice.feed_water_credit_m3 > 0.)
         {
             return Err("Legacy save contains unsupported soil water".into());
         }
-        if s.version < 5 && (s.site.bed_remainder_m3() > 0. || s.site.has_projection_inventory()) {
+        if version < 5 && (s.site.bed_remainder_m3() > 0. || s.site.has_projection_inventory()) {
             return Err("Legacy save contains unsupported subgrid bed inventory".into());
         }
         let advanced = s
@@ -834,15 +919,14 @@ impl Session {
             .articulation
             .as_ref()
             .is_some_and(|a| a.bucket_model().is_shell());
-        if (s.version == 10) != (s.machine.bucket_model() == crate::bucket::Model::ShellV1)
-            || (s.version == 11)
-                != (s.machine.bucket_model() == crate::bucket::Model::MountedShellV2)
-            || (s.version >= 10 && !shell)
-            || (s.version < 7 && s.machine.articulation.is_some())
-            || (s.version == 7 && s.machine.articulation.is_none())
-            || (s.version < 8 && advanced)
-            || (s.version == 8 && !advanced)
-            || (s.version < 10 && (s.version == 9) != s.active_soil.is_some())
+        if (version == 10) != (s.machine.bucket_model() == crate::bucket::Model::ShellV1)
+            || (version == 11) != (s.machine.bucket_model() == crate::bucket::Model::MountedShellV2)
+            || (version >= 10 && !shell)
+            || (version < 7 && s.machine.articulation.is_some())
+            || (version == 7 && s.machine.articulation.is_none())
+            || (version < 8 && advanced)
+            || (version == 8 && !advanced)
+            || (version < 10 && (version == 9) != s.active_soil.is_some())
             || (s.active_soil.is_some() && s.machine.articulation.is_none())
         {
             return Err("Saved material dynamics do not match the format version".into());
@@ -850,7 +934,7 @@ impl Session {
         if s.material_motion.as_ref().is_some_and(|m| !m.valid()) {
             return Err("Invalid material boundary receipt".into());
         }
-        if s.version < 6 && s.machine.tracks.carries_motion() {
+        if version < 6 && s.machine.tracks.carries_motion() {
             return Err("Legacy save contains unsupported machine dynamics".into());
         }
         if s.active_soil.as_ref().is_some_and(|soil| !soil.valid()) {
@@ -929,6 +1013,7 @@ impl Session {
             water_balance,
             material_motion: s.material_motion,
             active_soil: s.active_soil,
+            tailings: s.tailings,
         };
         if (session.accounted_gold() - session.initial_gold_g).abs() > 1e-3 {
             return Err("Save has an inconsistent gold ledger".into());
@@ -936,7 +1021,10 @@ impl Session {
         Ok(session)
     }
     pub fn stored_water_m3(&self) -> f64 {
-        self.site.water_volume_m3()
+        self.tailings
+            .as_ref()
+            .map_or(0., |t| t.active_material().pore_water_m3)
+            + self.site.water_volume_m3()
             + self
                 .active_soil
                 .as_ref()

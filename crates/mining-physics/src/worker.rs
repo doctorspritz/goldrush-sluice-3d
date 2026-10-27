@@ -304,6 +304,12 @@ fn apply(session: &mut Session, solver: &mut impl Solver, commands: Vec<Command>
             }
             Command::Load(path) => match storage::load(&path) {
                 Ok(mut restored) => {
+                    if session.tailings.is_some() {
+                        if let Err(e) = restored.enable_spatial_tailings() {
+                            session.message = format!("Load failed: {e}");
+                            continue;
+                        }
+                    }
                     if session.machine.articulation.is_some() {
                         if let Err(e) = restored.machine.enable_articulation() {
                             session.message = format!("Load failed: {e}");
@@ -343,6 +349,54 @@ mod tests {
             assert!(Instant::now() < deadline);
             thread::sleep(Duration::from_millis(1));
         }
+    }
+    #[test]
+    fn playable_legacy_load_migrates_tailings_but_lab_load_preserves_policy() {
+        let path = std::env::temp_dir().join(format!(
+            "sluice-tailings-worker-{}.json",
+            std::process::id()
+        ));
+        let mut old = Session::new();
+        old.sluice.placement = Some(mining_sim::Placement::suggested(&old.site));
+        let m = old
+            .site
+            .dig(mining_sim::Vec3::new(19., 0., 22.), 0.2, 0.1, 0.01);
+        old.sluice.tailings.add(m);
+        storage::save(&old, &path).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        for modern in [false, true] {
+            let mut s = if modern {
+                Session::new_operation()
+            } else {
+                Session::new()
+            };
+            assert!(apply(
+                &mut s,
+                &mut SlowSolver,
+                vec![Command::Load(path.clone())]
+            ));
+            assert_eq!(s.tailings.is_some(), modern);
+            assert!((s.accounted_gold() - old.accounted_gold()).abs() < 1e-7);
+            assert!(
+                (s.accounted_bulk_material_m3() - old.accounted_bulk_material_m3()).abs() < 1e-7
+            );
+            if modern {
+                assert_eq!(s.sluice.tailings.gold_g, m.gold_g);
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+        }
+        old.sluice.placement = None;
+        storage::save(&old, &path).unwrap();
+        let mut s = Session::new_operation();
+        let before = s.accounted_material();
+        assert!(!apply(
+            &mut s,
+            &mut SlowSolver,
+            vec![Command::Load(path.clone())]
+        ));
+        assert!(s.message.starts_with("Load failed:"));
+        assert_eq!(s.accounted_material(), before);
+        std::fs::remove_file(path).unwrap();
     }
     #[test]
     fn two_tick_packets_preserve_fixed_steps_and_apply_actions_once() {

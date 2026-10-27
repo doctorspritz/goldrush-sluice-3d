@@ -129,7 +129,7 @@ fn main() -> AppExit {
                 water::sync,
                 scene::sync_plant,
                 scene::sync_material,
-                sediment::sync,
+                (sediment::sync, sediment::sync_tailings).chain(),
                 scene::guides,
                 hud::update,
                 validation::update,
