@@ -22,7 +22,20 @@ pub struct SlurryField {
     cells: Vec<Cell>,
 }
 impl SlurryField {
+    /// Legacy field retained for the accepted outlet's existing optical sample.
+    /// Moving sand alone does not establish contact with the liquid carrier.
     pub fn new(s: &Sluice) -> Self {
+        Self::build(s, None)
+    }
+    /// Channel optics include only moving sand in the supplied current water
+    /// neighbourhood. The physics adapter supplies the same coarse presence
+    /// criterion used for drag; this is not an exact submergence calculation.
+    /// The mask follows the complete, unfiltered grain array in snapshot order.
+    pub fn new_with_suspension(s: &Sluice, wet: &[bool]) -> Self {
+        assert_eq!(wet.len(), s.grains.len(), "complete grain wetness mask");
+        Self::build(s, Some(wet))
+    }
+    fn build(s: &Sluice, wet: Option<&[bool]>) -> Self {
         let extent = Vec3::new(
             s.profile.length(),
             (s.floor_cells() + 1) as f32 * s.profile.cell() + 0.20,
@@ -45,8 +58,8 @@ impl SlurryField {
                 },
             );
         }
-        for g in &s.grains {
-            if g.kind != GrainKind::Sand || g.resting {
+        for (index, g) in s.grains.iter().enumerate() {
+            if g.kind != GrainKind::Sand || g.resting || wet.is_some_and(|mask| !mask[index]) {
                 continue;
             }
             let volume = g.solid_volume();

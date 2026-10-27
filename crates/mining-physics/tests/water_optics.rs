@@ -507,13 +507,19 @@ fn overlapping_columns_keep_colour_and_normals_when_the_front_particle_changes()
         &buffer,
         [2, 2],
     );
-    for value in values.as_chunks::<4>().0 {
+    for (i, value) in values.as_chunks::<4>().0.iter().enumerate() {
         assert!((value[0] - 0.04).abs() < 1e-6);
         assert!((value[1] - 1.).abs() < 1e-6);
         assert!((value[2] - 50.).abs() < 0.001, "colour jumped: {value:?}");
+        // The 4x4 cubic stencil fits completely for full-size pixels 3..=12.
+        // That resolved sheet owns confidence; image-border fallbacks retain
+        // the original 0.8 gradient coherence. Neither depends on the front
+        // particle's alternating normal or sediment marker.
+        let supported = (3..=12).contains(&(i % 16)) && (3..=12).contains(&(i / 16));
+        let expected = if supported { 1. } else { 0.8 };
         assert!(
-            (value[3] - 0.8).abs() < 1e-6,
-            "normal confidence jumped: {value:?}"
+            (value[3] - expected).abs() < 1e-6,
+            "sheet/fallback confidence jumped: pixel={i}, {value:?}"
         );
     }
     // A subpixel camera shift must not expose alternating source texels as
@@ -2595,6 +2601,193 @@ fn inclined_sheet_has_projective_normal_and_uniform_suspension() {
                 &edge[i * 4..i * 4 + 2]
             );
         }
+    }
+
+    // The same resolved curved sheet must supply the same detail eligibility
+    // even when overlapping particle gradients oppose one another. The normal
+    // sums are valid additive pairs: +Z/+Z, nearly +X/-X, and exactly +X/-X.
+    // Only those sums change; surface geometry, carrier, concentration and flow
+    // stay identical. This probes production reconstruction AND ripple shading.
+    let curve = |x: f32, y: f32| {
+        let x = x - 16.;
+        let y = y - 16.;
+        1. / (1. + 0.01 * x - 0.008 * y + 0.001 * x * x + 0.0005 * x * y + 0.0008 * y * y)
+    };
+    let write = |texture: &wgpu::Texture, values: Vec<f32>| {
+        queue.write_texture(
+            texture.as_image_copy(),
+            bytemuck::cast_slice(&values),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(32 * 16),
+                rows_per_image: None,
+            },
+            texture.size(),
+        );
+    };
+    write(&raw, field(&|x, y| [curve(x, y), -1., 0.65, 0.12]));
+    write(&joined, field(&|x, y| [curve(x, y), 0.04, 10., 2.]));
+    let shader = include_str!("../../mining/src/water_compose.wgsl");
+    let detail_probe = r#"
+@group(1) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(8,8) fn probe(@builtin(global_invocation_id) p:vec3<u32>) {
+ let pixel=vec2<f32>(p.xy)+28.5;let i=(p.y*8u+p.x)*3u;
+ let sampled=sample_depth(pixel);
+ if sampled.x<=0. || sampled.y<=0. {
+  result[i]=vec4(0.);result[i+1u]=vec4(0.);result[i+2u]=vec4(0.);return;
+ }
+ let joined=channel_surface(pixel,sampled.x);let normal=joined.normal.xyz;
+ let world=view_point(pixel,sampled.x);
+ let dx0=view_point(pixel+vec2(1.,0.),sampled.x)-world;
+ let dy0=view_point(pixel+vec2(0.,1.),sampled.x)-world;
+ let denominator=dot(normal,world);
+ let dx=dx0-world*(dot(normal,dx0)/denominator);
+ let dy=dy0-world*(dot(normal,dy0)/denominator);
+ let detail=channel_ripple_normal_footprint(normal,world,joined.flow,0.73,dx.xz,dy.xz,joined.normal.w);
+ result[i]=joined.normal;
+ result[i+1u]=vec4(detail,channel_patch(pixel).confidence);
+ result[i+2u]=vec4(joined.column,joined.flow);
+}"#;
+    let source = format!("{shader}\n{detail_probe}");
+    let old_shader = shader.replace(
+        "out.normal=vec4(world_n,max(out.normal.w,sheet.confidence));",
+        "out.normal=vec4(world_n,select(sheet.confidence,out.normal.w,out.normal.w>0.));",
+    );
+    assert_ne!(
+        old_shader, shader,
+        "legacy confidence control was not installed"
+    );
+    let old_source = format!("{old_shader}\n{detail_probe}");
+    let run = |source: &str| {
+        execute(
+            &device,
+            &queue,
+            source.to_owned(),
+            &[&group, &out_group],
+            &[&layout, &out_layout],
+            &buffer,
+            [1, 1],
+        )[..64 * 12]
+            .to_vec()
+    };
+    let point = |px: f64, py: f64| {
+        let x = px * 0.5 - 16.5;
+        let y = py * 0.5 - 16.5;
+        let z = 1. / (1. + 0.01 * x - 0.008 * y + 0.001 * x * x + 0.0005 * x * y + 0.0008 * y * y);
+        glam::DVec3::new(0.2 * (px / 32. - 1.) * z, 0.2 * (1. - py / 32.) * z, -z)
+    };
+    let mut reference = Vec::new();
+    let mut maximum_detail = 0f32;
+    let mut maximum_legacy_error = 0f32;
+    for (mode, sums) in [
+        [0., 0., 2., 2.],
+        [0., 0., 0.002, 2.000002],
+        [0., 0., 0., 2.],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        write(&normals, field(&|_, _| sums));
+        let values = run(&source);
+        for (i, value) in values.chunks_exact(12).enumerate() {
+            assert!(value.iter().all(|v| v.is_finite()));
+            assert_eq!(value[7], 1., "curved sheet fixture lacks full support");
+            assert_eq!(
+                value[3], 1.,
+                "kernel cancellation vetoed a valid sheet: {mode}: {value:?}"
+            );
+            let px = (i % 8) as f64 + 28.5;
+            let py = (i / 8) as f64 + 28.5;
+            let dx = point(px + 0.0001, py) - point(px - 0.0001, py);
+            let dy = point(px, py + 0.0001) - point(px, py - 0.0001);
+            let expected = dy.cross(dx).normalize();
+            let measured = glam::Vec3::from_slice(value);
+            assert!(
+                (measured.as_dvec3() - expected).length() < 0.001,
+                "confidence correction changed the geometric crest tangent"
+            );
+            maximum_detail =
+                maximum_detail.max((glam::Vec3::from_slice(&value[4..]) - measured).length());
+        }
+        if mode == 0 {
+            reference = values;
+        } else {
+            for (a, b) in values.iter().zip(&reference) {
+                assert!(
+                    (a - b).abs() < 0.000002,
+                    "same sheet/flow acquired different geometric or detail normals: mode={mode}"
+                );
+            }
+        }
+        if mode == 1 {
+            let old = run(&old_source);
+            for (old, fixed) in old.chunks_exact(12).zip(reference.chunks_exact(12)) {
+                assert!(
+                    old[3] > 0. && old[3] < 0.002,
+                    "legacy cancellation control missing"
+                );
+                assert!(
+                    (glam::Vec3::from_slice(old) - glam::Vec3::from_slice(fixed)).length()
+                        < 0.000002
+                );
+                maximum_legacy_error = maximum_legacy_error.max(
+                    (glam::Vec3::from_slice(&old[4..]) - glam::Vec3::from_slice(&fixed[4..]))
+                        .length(),
+                );
+            }
+        }
+    }
+    assert!(
+        maximum_detail > 0.01,
+        "fixture did not exercise resolved moving detail"
+    );
+    assert!(
+        maximum_legacy_error > 0.01,
+        "legacy confidence did not measurably suppress crest detail"
+    );
+    println!("Supported curved-sheet detail: maximum slope change={maximum_detail}, legacy cancellation error={maximum_legacy_error}");
+
+    // Missing coverage and an independent layer step cannot become a supported
+    // sheet merely because detail eligibility is now corrected. At rejected
+    // patches, preserve the previous normal/confidence/column/flow exactly.
+    write(&normals, field(&|_, _| [0., 0., 0.002, 2.000002]));
+    for sparse in [true, false] {
+        let depth = |x: f32, y: f32| {
+            if sparse {
+                if x == 16. && y == 16. {
+                    1.
+                } else {
+                    0.
+                }
+            } else if x < 16. {
+                1.
+            } else {
+                1.4
+            }
+        };
+        write(&raw, field(&|x, y| [depth(x, y), -1., 0.65, 0.12]));
+        write(&joined, field(&|x, y| [depth(x, y), 0.04, 10., 2.]));
+        let fixed = run(&source);
+        let old = run(&old_source);
+        let mut checked = 0;
+        for (fixed, old) in fixed.chunks_exact(12).zip(old.chunks_exact(12)) {
+            if fixed[3] <= 0. || fixed[7] != 0. {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                fixed[3] < 0.002,
+                "unsupported patch gained detail confidence"
+            );
+            assert_eq!(
+                fixed, old,
+                "rejected sparse/layer fallback changed: sparse={sparse}"
+            );
+        }
+        assert!(
+            checked > 0,
+            "sparse/layer rejection control was not exercised"
+        );
     }
 }
 

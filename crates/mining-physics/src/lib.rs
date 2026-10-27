@@ -581,18 +581,7 @@ impl Hydraulics {
         let mut diameters = Vec::with_capacity(s.sluice.grains.len());
         let mut wetness = Vec::with_capacity(s.sluice.grains.len());
         for g in &s.sluice.grains {
-            let mut wet = false;
-            for x in -1..=1 {
-                for y in -1..=1 {
-                    for z in -1..=1 {
-                        if let Some(i) =
-                            index(g.position + Vec3::new(x as f32, y as f32, z as f32) * dx)
-                        {
-                            wet |= l.water_cells[i] > 0;
-                        }
-                    }
-                }
-            }
+            let wet = geometry::neighbouring_water(g.position, dx, &l.water_cells, &index);
             wetness.push(wet);
             diameters.push(if !g.volume_resolved {
                 0.0

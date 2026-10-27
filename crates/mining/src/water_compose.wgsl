@@ -349,7 +349,12 @@ fn channel_surface(pixel:vec2<f32>,depth:f32)->ChannelSurface {
         var world_n=normalize((u.world_from_view*vec4(n,0.)).xyz);
         if dot(world_n,(u.world_from_view*vec4(-origin,0.)).xyz)<0. {world_n = -world_n;}
         if out.normal.w>0. {world_n=normalize(mix(out.normal.xyz,world_n,sheet.confidence));}
-        out.normal=vec4(world_n,select(sheet.confidence,out.normal.w,out.normal.w>0.));
+        // A supported continuous sheet supplies its own detail eligibility.
+        // Kernel gradients can cancel around a curved crest even when this
+        // sheet and tangent are fully resolved. Retaining that old coherence
+        // suppresses the travelling detail precisely on the crest shoulders.
+        // Rejected/missing sheets never enter this branch and keep fallback.
+        out.normal=vec4(world_n,max(out.normal.w,sheet.confidence));
     }
     out.column=column/max(column_weight,0.000001);
     out.flow=flow_sum/max(flow_weight,0.000001);

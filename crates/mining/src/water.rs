@@ -1114,6 +1114,17 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
     let radius = sluice.profile.cell() * 0.85 * weight.cbrt();
     let mut slurry = mining_sim::slurry::SlurryField::new(sluice);
     let outlet_extinction = slurry.outlet_extinction(sluice);
+    // Preserve the accepted outlet sample above. Airborne feed must not seed
+    // a broad suspended-water plume or disappear as if it were already wet.
+    let wet = mining_physics::geometry::grain_wetness(sluice);
+    if sluice
+        .grains
+        .iter()
+        .zip(&wet)
+        .any(|(g, wet)| g.kind == mining_sim::GrainKind::Sand && !g.resting && !wet)
+    {
+        slurry = mining_sim::slurry::SlurryField::new_with_suspension(sluice, &wet);
+    }
     slurry.reconstruct_channel();
     // Select IDs before evaluating the optical field or transforming positions.
     let mut selected: Vec<_> = sluice

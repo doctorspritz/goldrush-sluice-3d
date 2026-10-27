@@ -8,6 +8,7 @@ use bevy::{
 use mining_sim::{GrainKind, Sluice};
 pub(crate) const MAX_POINTS: usize = 32_768;
 fn sample_counts(s: &Sluice) -> Vec<usize> {
+    let wet = mining_physics::geometry::grain_wetness(s);
     let wants: Vec<_> = s
         .grains
         .iter()
@@ -29,12 +30,13 @@ fn sample_counts(s: &Sluice) -> Vec<usize> {
     wants
         .into_iter()
         .zip(&s.grains)
-        .map(|(n, g)| {
-            // All suspended sand already contributes to the conservative
-            // optical field, including coarse sand above 1.5 mm. Drawing it
-            // again as opaque geometry doubles its appearance and writes
-            // brown islands into scene depth. Keep deposited sand and gold.
-            if g.kind == GrainKind::Sand && !g.resting {
+        .enumerate()
+        .map(|(i, (n, g))| {
+            // The physical adapter's nearby-water indicator also selects
+            // channel optics. Keep moving sand without that carrier visible;
+            // wet moving sand has one optical representation. This coarse
+            // indicator does not establish exact particle submergence.
+            if g.kind == GrainKind::Sand && !g.resting && wet[i] {
                 0
             } else {
                 1 + (n - 1) * free / extra.max(free).max(1)
@@ -187,15 +189,24 @@ pub fn sync(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn carrier_at(s: &mut Sluice, position: mining_sim::Vec3) {
+        let mut water = s.water[0].clone();
+        water.position = position;
+        s.water = vec![water];
+    }
+
     #[test]
     fn suspended_fines_use_optics_without_changing_material_or_hiding_gold_and_bed() {
         let mut s = crate::demo::session().unwrap().sluice;
-        let fine = s
+        let mut fine = s
             .grains
             .iter()
             .find(|g| g.kind == GrainKind::Sand && !g.resting)
             .unwrap()
             .clone();
+        fine.position = mining_sim::Vec3::new(0.6, 0.3, 0.2);
+        carrier_at(&mut s, fine.position);
         let gold = s
             .grains
             .iter()
@@ -227,6 +238,8 @@ mod tests {
             .clone();
         sand.resting = false;
         sand.diameter_m = 0.002;
+        sand.position = mining_sim::Vec3::new(0.6, 0.3, 0.2);
+        carrier_at(&mut s, sand.position);
         s.grains = vec![sand];
         let before = serde_json::to_string(&s).unwrap();
         let field = mining_sim::slurry::SlurryField::new(&s);
@@ -236,6 +249,59 @@ mod tests {
         assert_eq!(before, serde_json::to_string(&s).unwrap());
         s.grains[0].resting = true;
         assert!(sample_counts(&s)[0] > 0);
+    }
+
+    #[test]
+    fn local_water_selects_moving_sand_without_reallocating_dry_bed_or_gold_proxies() {
+        let mut s = crate::demo::session().unwrap().sluice;
+        let mut wet_sand = s
+            .grains
+            .iter()
+            .find(|g| g.kind == GrainKind::Sand && g.diameter_m < 0.0002)
+            .unwrap()
+            .clone();
+        wet_sand.position = mining_sim::Vec3::new(0.6, 0.3, 0.2);
+        wet_sand.resting = false;
+        let mut dry_sand = wet_sand.clone();
+        dry_sand.position.y += 0.1;
+        let mut bed = wet_sand.clone();
+        bed.resting = true;
+        let mut gold = s
+            .grains
+            .iter()
+            .find(|g| g.kind == GrainKind::Gold)
+            .unwrap()
+            .clone();
+        gold.position = wet_sand.position;
+        carrier_at(&mut s, wet_sand.position);
+        s.grains = vec![wet_sand, dry_sand, bed, gold];
+        assert_eq!(
+            mining_physics::geometry::grain_wetness(&s),
+            vec![true, false, true, true]
+        );
+        let before = serde_json::to_string(&s).unwrap();
+        let counts = sample_counts(&s);
+        let meshes = geometry(&s);
+        assert_eq!(counts[0], 0, "wet moving sand uses channel optics");
+        assert!(counts[1] > 0, "dry moving sand remains visible");
+        assert!(counts[2] > 0, "wet resting bed remains visible");
+        assert_eq!(counts[3], 1, "wet individual gold remains visible");
+        assert_eq!(meshes[0].positions.len(), (counts[1] + counts[2]) * 6);
+        assert_eq!(meshes[2].positions.len(), 6);
+        assert_eq!(before, serde_json::to_string(&s).unwrap());
+
+        // Loss of local carrier restores the formerly wet parcel's physical
+        // proxies without changing anyone else's reserved quota or seeds.
+        s.water.clear();
+        let dry_counts = sample_counts(&s);
+        let dry_meshes = geometry(&s);
+        assert!(dry_counts[0] > 0);
+        assert_eq!(dry_counts[1..], counts[1..]);
+        assert_eq!(
+            dry_meshes[0].positions[dry_counts[0] * 6..],
+            meshes[0].positions
+        );
+        assert_eq!(dry_meshes[2].positions, meshes[2].positions);
     }
     #[test]
     fn removing_a_parcel_does_not_reseed_surviving_proxy_clouds() {

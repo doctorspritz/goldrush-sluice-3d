@@ -163,3 +163,70 @@ fn a_uniform_mixture_keeps_extinction_across_optical_cell_phases() {
         }
     }
 }
+
+#[test]
+fn channel_suspension_mask_preserves_carrier_and_rejects_only_unwetted_sand() {
+    let mut s = column();
+    let p = s.grains[0].position;
+    s.grains.push(fine(p + Vec3::Y * 0.1, 7e-6, 0.00005));
+    let mut bed = fine(p, 3e-6, 0.00008);
+    bed.resting = true;
+    s.grains.push(bed);
+    let before = serde_json::to_string(&s).unwrap();
+    let legacy = SlurryField::new(&s);
+    let legacy_outlet = legacy.outlet_extinction(&s).to_bits();
+    let mut channel = SlurryField::new_with_suspension(&s, &[true, false, true]);
+    assert!((channel.projected_volumes().0 - legacy.projected_volumes().0).abs() < 1e-15);
+    assert!((channel.projected_volumes().1 - s.grains[0].solid_volume()).abs() < 1e-15);
+    let mut expected = s.clone();
+    expected.grains.remove(1);
+    let mut reference = SlurryField::new(&expected);
+    channel.reconstruct_channel();
+    reference.reconstruct_channel();
+    for i in 0..101 {
+        let query = p + Vec3::new((i as f32 - 50.) * 0.006, 0.001, 0.003);
+        let actual = channel.sample_channel(query);
+        let expected = reference.sample_channel(query);
+        assert_eq!(
+            [actual.0.to_bits(), actual.1.to_bits()],
+            [expected.0.to_bits(), expected.1.to_bits()]
+        );
+    }
+    assert_eq!(
+        SlurryField::new(&s).outlet_extinction(&s).to_bits(),
+        legacy_outlet
+    );
+    assert_eq!(before, serde_json::to_string(&s).unwrap());
+    let dry = SlurryField::new_with_suspension(&s, &[false; 3]);
+    assert_eq!(dry.projected_volumes().1, 0.);
+    assert_eq!(dry.sample_channel(p).1, 0.);
+    assert_eq!(
+        dry.projected_volumes().0.to_bits(),
+        legacy.projected_volumes().0.to_bits()
+    );
+}
+
+#[test]
+fn wet_channel_projection_is_invariant_to_coincident_parcel_splitting() {
+    let mut s = column();
+    let p = s.grains[0].position;
+    let mut full = SlurryField::new_with_suspension(&s, &[true]);
+    full.reconstruct_channel();
+    s.grains[0].material.soil_m3 *= 0.5;
+    s.grains.push(s.grains[0].clone());
+    let mut split = SlurryField::new_with_suspension(&s, &[true, true]);
+    split.reconstruct_channel();
+    for offset in [-0.05, -0.01, 0., 0.015, 0.05] {
+        let q = p + Vec3::X * offset;
+        let a = full.sample_channel(q);
+        let b = split.sample_channel(q);
+        assert!((a.0 - b.0).abs() < 1e-7);
+        assert!((a.1 - b.1).abs() < 1e-3);
+    }
+}
+
+#[test]
+#[should_panic(expected = "complete grain wetness mask")]
+fn suspension_mask_cannot_silently_omit_grain_entries() {
+    SlurryField::new_with_suspension(&column(), &[]);
+}
