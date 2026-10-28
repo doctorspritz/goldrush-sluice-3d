@@ -100,7 +100,7 @@ fn solve_red(id: vec3<u32>) {
         return;
     }
 
-    if variable_mobility() {solve_weighted(id,neighbour_mask(id));return;}
+    if PERIODIC_Z || variable_mobility() {solve_weighted(id,neighbour_mask(id));return;}
 
     let p = pressure[idx];
 
@@ -203,7 +203,7 @@ fn solve_black(id: vec3<u32>) {
         return;
     }
 
-    if variable_mobility() {solve_weighted(id,neighbour_mask(id));return;}
+    if PERIODIC_Z || variable_mobility() {solve_weighted(id,neighbour_mask(id));return;}
 
     let p = pressure[idx];
 
@@ -331,10 +331,12 @@ fn pressure_black_packed(@builtin(global_invocation_id) id:vec3<u32>) {
 // their boundary interpretation once, while preserving the six-term sum order.
 @group(0) @binding(4) var<storage,read_write> stencil: array<u32>;
 fn neighbour_code(q: vec3<i32>, boundary: u32) -> u32 {
-    if any(q < vec3(0)) || any(q >= vec3<i32>(i32(params.width),i32(params.height),i32(params.depth))) {
+    var wrapped=q;
+    if PERIODIC_Z {let n=i32(params.depth);wrapped.z=((q.z%n)+n)%n;}
+    if any(wrapped < vec3(0)) || any(wrapped >= vec3<i32>(i32(params.width),i32(params.height),i32(params.depth))) {
         return select(2u,0u,(params.open_boundaries & boundary)!=0u);
     }
-    let ct=cell_type[get_index(u32(q.x),u32(q.y),u32(q.z))];
+    let ct=cell_type[get_index(u32(wrapped.x),u32(wrapped.y),u32(wrapped.z))];
     return select(select(0u,1u,ct==CELL_FLUID),2u,ct==CELL_SOLID);
 }
 @compute @workgroup_size(8,8,4)
@@ -354,7 +356,7 @@ fn solve_stencil(id:vec3<u32>) {
     let idx=get_index(id.x,id.y,id.z);
     let mask=stencil[idx];
     if (mask&0x80000000u)==0u {return;}
-    if variable_mobility() {solve_weighted(id,mask);return;}
+    if PERIODIC_Z || variable_mobility() {solve_weighted(id,mask);return;}
     let p=pressure[idx];
     var sum=0.;
     sum+=stencil_pressure(mask&3u,idx-1u,p);
@@ -385,6 +387,16 @@ fn neighbour_mask(id:vec3<u32>)->u32 {
         | (neighbour_code(p+vec3(0,0,-1),16u)<<8u)
         | (neighbour_code(p+vec3(0,0,1),32u)<<10u);
 }
+// Canonical neighbouring cells. Invalid X/Y indices remain unreachable through
+// their boundary mask; periodic Z always addresses an actual opposite-edge cell.
+fn z_neighbours(id:vec3<u32>)->vec2<u32> {
+    let idx=get_index(id.x,id.y,id.z);let plane=params.width*params.height;
+    if PERIODIC_Z {
+        return vec2(get_index(id.x,id.y,(id.z+params.depth-1u)%params.depth),
+                    get_index(id.x,id.y,(id.z+1u)%params.depth));
+    }
+    return vec2(idx-plane,idx+plane);
+}
 fn solve_weighted(id:vec3<u32>,mask:u32) {
     let idx=get_index(id.x,id.y,id.z);
     let p=pressure[idx];
@@ -397,8 +409,8 @@ fn solve_weighted(id:vec3<u32>,mask:u32) {
     terms+=weighted_term((mask>>2u)&3u,idx+1u,face_mobility(0u,ui+1u),p);
     terms+=weighted_term((mask>>4u)&3u,idx-params.width,face_mobility(1u,vi),p);
     terms+=weighted_term((mask>>6u)&3u,idx+params.width,face_mobility(1u,vi+params.width),p);
-    terms+=weighted_term((mask>>8u)&3u,idx-params.width*params.height,face_mobility(2u,wi),p);
-    terms+=weighted_term((mask>>10u)&3u,idx+params.width*params.height,face_mobility(2u,wi+params.width*params.height),p);
+    terms+=weighted_term((mask>>8u)&3u,z_neighbours(id).x,face_mobility(2u,wi),p);
+    terms+=weighted_term((mask>>10u)&3u,z_neighbours(id).y,face_mobility(2u,wi+params.width*params.height),p);
     let diagonal=terms.x;let sum=terms.y;
     if diagonal<=0. {pressure[idx]=0.;return;}
     // Correct the face-flux residual directly. Forming a new absolute
@@ -425,7 +437,7 @@ fn measure_residual(@builtin(global_invocation_id) id:vec3<u32>) {
     let ui=id.z*(params.width+1u)*params.height+id.y*(params.width+1u)+id.x;
     let vi=id.z*params.width*(params.height+1u)+id.y*params.width+id.x;
     let neighbours=array(idx-1u,idx+1u,idx-params.width,idx+params.width,
-                          idx-params.width*params.height,idx+params.width*params.height);
+                          z_neighbours(id).x,z_neighbours(id).y);
     let coefficients=array(face_mobility(0u,ui),face_mobility(0u,ui+1u),
                            face_mobility(1u,vi),face_mobility(1u,vi+params.width),
                            face_mobility(2u,idx),face_mobility(2u,idx+params.width*params.height));

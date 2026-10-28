@@ -86,6 +86,7 @@ fn phase_relaxation(shape: [u32; 3], open: u32, has_air: bool) -> f32 {
 pub struct GpuPressure3D {
     pub compact_iterations: bool,
     pub cached_stencil: bool,
+    periodic_z: bool,
     width: u32,
     height: u32,
     depth: u32,
@@ -141,6 +142,7 @@ impl GpuPressure3D {
             grid_v_buffer,
             grid_w_buffer,
             None,
+            false,
         )
     }
 
@@ -168,7 +170,39 @@ impl GpuPressure3D {
             grid_v_buffer,
             grid_w_buffer,
             Some(mobility),
+            false,
         )
+    }
+
+    /// Experimental periodic lateral projection for strip benchmarks. This is
+    /// not a complete periodic FLIP solver: transfers/advection must also wrap.
+    /// W face zero owns the seam; the depth face is a redundant output copy.
+    /// Odd periodic depths are incompatible with the red/black checkerboard.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_periodic_z(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        mobility: Option<[&wgpu::Buffer; 3]>,
+    ) -> Result<Self, String> {
+        if width == 0 || height == 0 || depth < 2 || !depth.is_multiple_of(2) {
+            return Err("Periodic pressure requires nonzero X/Y and even Z depth >= 2".into());
+        }
+        Ok(Self::new_impl(
+            device,
+            width,
+            height,
+            depth,
+            grid_u_buffer,
+            grid_v_buffer,
+            grid_w_buffer,
+            mobility,
+            true,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -181,6 +215,7 @@ impl GpuPressure3D {
         grid_v_buffer: &wgpu::Buffer,
         grid_w_buffer: &wgpu::Buffer,
         mobility: Option<[&wgpu::Buffer; 3]>,
+        periodic_z: bool,
     ) -> Self {
         let unused = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Constant pressure mobility header"),
@@ -188,10 +223,15 @@ impl GpuPressure3D {
             usage: wgpu::BufferUsages::STORAGE,
         });
         let variable_mobility_allowed = mobility.is_some();
-        let mobility_constants = std::collections::HashMap::from([(
+        let periodic_constants = std::collections::HashMap::from([(
+            "PERIODIC_Z".to_string(),
+            f64::from(u32::from(periodic_z)),
+        )]);
+        let mut mobility_constants = periodic_constants.clone();
+        mobility_constants.insert(
             "VARIABLE_MOBILITY_ALLOWED".to_string(),
             f64::from(u32::from(mobility.is_some())),
-        )]);
+        );
         let mobility = mobility.unwrap_or([&unused; 3]);
         let cell_count = (width * height * depth) as usize;
 
@@ -677,7 +717,10 @@ impl GpuPressure3D {
                 layout: Some(&divergence_pipeline_layout),
                 module: &divergence_shader,
                 entry_point: Some("compute_divergence"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &periodic_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -801,6 +844,7 @@ impl GpuPressure3D {
         Self {
             compact_iterations: true,
             cached_stencil: true,
+            periodic_z,
             stencil_prepare,
             stencil_red,
             stencil_black,
@@ -892,10 +936,16 @@ impl GpuPressure3D {
             bind_group_layouts: &[&self.pressure_bind_group_layout, &layout],
             push_constant_ranges: &[],
         });
-        let constants = std::collections::HashMap::from([(
-            "VARIABLE_MOBILITY_ALLOWED".to_string(),
-            f64::from(u32::from(self.variable_mobility_allowed)),
-        )]);
+        let constants = std::collections::HashMap::from([
+            (
+                "VARIABLE_MOBILITY_ALLOWED".to_string(),
+                f64::from(u32::from(self.variable_mobility_allowed)),
+            ),
+            (
+                "PERIODIC_Z".to_string(),
+                f64::from(u32::from(self.periodic_z)),
+            ),
+        ]);
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Measure stored pressure residual"),
             layout: Some(&pipeline_layout),
@@ -978,6 +1028,10 @@ impl GpuPressure3D {
         cell_size: f32,
         open_boundaries: u32,
     ) {
+        assert!(
+            !self.periodic_z || open_boundaries & 48 == 0,
+            "Periodic Z cannot also have open Z boundaries"
+        );
         queue.write_buffer(&self.cell_type_buffer, 0, bytemuck::cast_slice(cell_types));
 
         // Upload grid params
@@ -1003,7 +1057,13 @@ impl GpuPressure3D {
         // formula is a universal optimum for irregular variable coefficients.
         let max_dim = self.width.max(self.height).max(self.depth) as f32;
         let omega = 2.0 / (1.0 + (std::f32::consts::PI / max_dim).sin());
-        let omega = omega.clamp(1.0, 1.95);
+        // Width-independent initial SOR for periodic comparison controls. It is
+        // deliberately not claimed optimal for a loaded/irregular strip.
+        let omega = if self.periodic_z {
+            1.5
+        } else {
+            omega.clamp(1.0, 1.95)
+        };
         let pressure_params = PressureParams3D {
             width: self.width,
             height: self.height,
@@ -1011,7 +1071,9 @@ impl GpuPressure3D {
             omega,
             h_sq: cell_size * cell_size, // Poisson equation needs dx²
             open_boundaries,
-            phase_omega: if self.variable_mobility_allowed {
+            phase_omega: if self.periodic_z {
+                1.5
+            } else if self.variable_mobility_allowed {
                 phase_relaxation(
                     [self.width, self.height, self.depth],
                     open_boundaries,

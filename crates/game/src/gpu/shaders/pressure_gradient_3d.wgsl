@@ -90,6 +90,10 @@ fn get_cell_type(i: i32, j: i32, k: i32) -> u32 {
     if (u32(j) >= params.height) {
         return select(CELL_SOLID, CELL_AIR, open_pos_y);
     }
+    if PERIODIC_Z {
+        let n=i32(params.depth);let layer=((k%n)+n)%n;
+        return cell_type[cell_index(u32(i),u32(j),u32(layer))];
+    }
     // -Z boundary (side wall)
     if (k < 0) {
         return select(CELL_SOLID, CELL_AIR, open_neg_z);
@@ -103,15 +107,17 @@ fn get_cell_type(i: i32, j: i32, k: i32) -> u32 {
 }
 
 fn get_pressure(i: i32, j: i32, k: i32) -> f32 {
-    if (i < 0 || j < 0 || k < 0 ||
-        u32(i) >= params.width || u32(j) >= params.height || u32(k) >= params.depth) {
+    var layer=k;
+    if PERIODIC_Z {let n=i32(params.depth);layer=((k%n)+n)%n;}
+    if (i < 0 || j < 0 || layer < 0 ||
+        u32(i) >= params.width || u32(j) >= params.height || u32(layer) >= params.depth) {
         return 0.0;
     }
-    let ct = cell_type[cell_index(u32(i), u32(j), u32(k))];
+    let ct = cell_type[cell_index(u32(i), u32(j), u32(layer))];
     if (ct != CELL_FLUID) {
         return 0.0;  // Air and solid have zero pressure
     }
-    return pressure[cell_index(u32(i), u32(j), u32(k))];
+    return pressure[cell_index(u32(i), u32(j), u32(layer))];
 }
 
 // Apply pressure gradient to U velocity component
@@ -225,6 +231,25 @@ fn apply_gradient_w(@builtin(global_invocation_id) id: vec3<u32>) {
     let k = id.z;  // 0 to depth (inclusive)
 
     if (i >= params.width || j >= params.height || k > params.depth) {
+        return;
+    }
+
+    if PERIODIC_Z {
+        // Only one invocation owns the seam. Computing the depth copy in a
+        // separate invocation would race a read of canonical W0 against its write.
+        if k==params.depth {return;}
+        let face=w_index(i,j,k);
+        let back=get_cell_type(i32(i),i32(j),i32(k)-1);
+        let front=get_cell_type(i32(i),i32(j),i32(k));
+        var velocity=grid_w[face];
+        if back==CELL_SOLID || front==CELL_SOLID {velocity=0.;}
+        else if back==CELL_FLUID || front==CELL_FLUID {
+            let p0=get_pressure(i32(i),i32(j),i32(k)-1);
+            let p1=get_pressure(i32(i),i32(j),i32(k));
+            velocity-=face_mobility(2u,face)*(p1-p0)*params.inv_cell_size;
+        }
+        grid_w[face]=velocity;
+        if k==0u {grid_w[w_index(i,j,params.depth)]=velocity;}
         return;
     }
 

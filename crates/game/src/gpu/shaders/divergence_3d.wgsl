@@ -1,3 +1,4 @@
+override PERIODIC_Z:bool=false;
 // Divergence Computation Shader (3D)
 //
 // Computes divergence of MAC staggered velocity field:
@@ -43,7 +44,8 @@ fn v_index(i: u32, j: u32, k: u32) -> u32 {
 
 fn w_index(i: u32, j: u32, k: u32) -> u32 {
     // W grid: width x height x (depth+1)
-    return k * params.width * params.height + j * params.width + i;
+    var layer=k;if PERIODIC_Z {layer%=params.depth;}
+    return layer * params.width * params.height + j * params.width + i;
 }
 
 @compute @workgroup_size(8, 8, 4)

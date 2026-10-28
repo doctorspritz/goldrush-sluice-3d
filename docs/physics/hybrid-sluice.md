@@ -4,6 +4,8 @@
 
 The recommendation is a reduced-width, vertically resolved sluice model combined with cheap full-width hydraulic/bed state and fine visual detail. Separately investigate bulk wet-sand fields for ground, tailings and pond berms. A single cloned strip is a useful first experiment; lateral blockage, spill and off-centre feed require additional state before it can represent the complete plant.
 
+Implementation progress: the [periodic pressure projection prerequisite](../playtests/2026-10-28-periodic-projection.md) now passes independent seam/flux controls and repeated-domain equality. Projection-only paired measurements favour 12/8 cm domains, while ordinary-mode complete saved states remain exact. Particle transfers, density/vorticity, collision/advection and the complete strip water solver remain to implement; no new playable mode or whole-game speedup is claimed.
+
 ## Published implementations and what they support
 
 | Primary source inspected | Technique worth borrowing | Limit for this game |
