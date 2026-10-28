@@ -103,20 +103,11 @@ impl Plant {
         }
         self.screen.set_bulk_deck(config)?;
         // Older readers reject this model instead of silently reverting its law.
-        self.model_version = if self.screen.bulk_deck().is_some() {
-            2
-        } else {
-            1
-        };
+        self.model_version = self.screen.processing_model_version();
         Ok(())
     }
     pub fn valid(&self) -> bool {
-        self.model_version
-            == if self.screen.bulk_deck().is_some() {
-                2
-            } else {
-                1
-            }
+        self.model_version == self.screen.processing_model_version()
             && self.connections == routes()
             && self.screen.valid()
             && self.pending_feed.len() <= SCREEN_FEED_BATCH_MAX

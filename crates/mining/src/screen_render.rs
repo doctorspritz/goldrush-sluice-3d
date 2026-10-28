@@ -6,10 +6,10 @@ use bevy::{
     prelude::*, render::render_resource::PrimitiveTopology,
 };
 use mining_sim::{
-    screen::{Screen, ScreenConfig},
+    screen::{BulkBedField, BulkDeck, Screen, ScreenConfig},
     sluice::{Grain, HOPPER_X, HOPPER_Z},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{app::Game, motion_capture::MotionCapture, scene::Palette, sediment::Geometry};
 
@@ -20,7 +20,8 @@ pub(crate) struct LegacyHopper;
 #[derive(Component)]
 pub(crate) struct ScreenPart;
 
-const PARTS: usize = 8;
+const PARTS: usize = 9;
+const BED: usize = 8;
 const WIRES: usize = 0;
 
 fn empty() -> Geometry {
@@ -183,12 +184,14 @@ struct RestKey {
     yaw: f32,
     config: ScreenConfig,
     hopper_height: f32,
+    bulk: Option<BulkDeck>,
 }
 
 #[derive(Clone)]
 struct ParticleSample {
     grain: Grain,
     position: DVec3,
+    bed_supported: bool,
 }
 
 struct Frame {
@@ -196,11 +199,14 @@ struct Frame {
     elapsed_time: f64,
     particles: HashMap<u64, ParticleSample>,
     queued: Vec<Grain>,
+    bed: Option<BulkBedField>,
 }
 
 impl Frame {
     fn from_screen(screen: &Screen) -> Self {
+        let supported: HashSet<_> = screen.bulk_bed_particles().into_iter().collect();
         Self {
+            bed: screen.bulk_bed_field(),
             drive_time: screen.time,
             elapsed_time: screen.elapsed_time_s,
             particles: screen
@@ -210,6 +216,7 @@ impl Frame {
                     (
                         p.id,
                         ParticleSample {
+                            bed_supported: supported.contains(&p.id),
                             grain: p.grain.clone(),
                             position: DVec3::from_array(p.position.to_array()),
                         },
@@ -230,6 +237,7 @@ impl Frame {
 #[derive(Default)]
 pub(crate) struct Visuals {
     handles: Option<[Handle<Mesh>; PARTS]>,
+    bed_material: Option<Handle<StandardMaterial>>,
     entities: Vec<Entity>,
     rest_key: Option<RestKey>,
     snapshot_key: Option<(u64, u64)>,
@@ -382,11 +390,37 @@ fn upload(meshes: &mut Assets<Mesh>, handle: &Handle<Mesh>, data: Geometry) {
     }
 }
 
+fn upload_coloured(
+    meshes: &mut Assets<Mesh>,
+    handle: &Handle<Mesh>,
+    data: crate::screen_bed_render::BedMesh,
+) {
+    upload(meshes, handle, data.geometry);
+    if let Some(mesh) = meshes.get_mut(handle) {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, data.colours);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, data.uvs);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, data.tangents);
+    }
+}
+fn sampled_bed(previous: Option<&Frame>, current: &Frame, alpha: f64) -> Option<BulkBedField> {
+    let newest = current.bed.as_ref()?;
+    Some(
+        previous
+            .and_then(|p| p.bed.as_ref())
+            .and_then(|old| old.interpolated(newest, alpha))
+            .unwrap_or_else(|| newest.clone()),
+    )
+}
+
 fn sampled_grains(previous: Option<&Frame>, current: &Frame, alpha: f64) -> Vec<Grain> {
     let mut particles: Vec<_> = current.particles.iter().collect();
     particles.sort_unstable_by_key(|(id, _)| **id);
     let mut out = Vec::with_capacity(particles.len() + current.queued.len());
     for (id, sample) in particles {
+        // The mean envelope already depicts this cohort's finite on-deck stock.
+        if sample.bed_supported {
+            continue;
+        }
         let mut grain = sample.grain.clone();
         let position = if let Some(old) = previous.and_then(|frame| frame.particles.get(id)) {
             grain.rotation = old
@@ -415,6 +449,7 @@ pub(crate) struct RenderContext<'w, 's> {
     time: Res<'w, Time>,
     palette: Res<'w, Palette>,
     meshes: ResMut<'w, Assets<Mesh>>,
+    bed_materials: ResMut<'w, Assets<StandardMaterial>>,
     visuals: Local<'s, Visuals>,
     parts: Query<'w, 's, (&'static mut Transform, &'static mut Visibility), With<ScreenPart>>,
     legacy: Query<'w, 's, &'static mut Visibility, (With<LegacyHopper>, Without<ScreenPart>)>,
@@ -428,6 +463,7 @@ pub(crate) fn sync(context: RenderContext) {
         time,
         palette,
         mut meshes,
+        mut bed_materials,
         mut visuals,
         mut parts,
         mut legacy,
@@ -457,6 +493,19 @@ pub(crate) fn sync(context: RenderContext) {
     };
     let screen = &plant.screen;
     if visuals.handles.is_none() {
+        let detail = bed_materials
+            .get(&palette.hopper_load)
+            .cloned()
+            .unwrap_or_default();
+        let bed_material = bed_materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: detail.base_color_texture,
+            normal_map_texture: detail.normal_map_texture,
+            perceptual_roughness: 0.94,
+            reflectance: 0.35,
+            ..Default::default()
+        });
+        visuals.bed_material = Some(bed_material.clone());
         let materials = [
             palette.chrome.clone(),
             palette.steel.clone(),
@@ -466,6 +515,7 @@ pub(crate) fn sync(context: RenderContext) {
             palette.dirt.clone(),
             palette.sand.clone(),
             palette.gold.clone(),
+            bed_material,
         ];
         let mut entities = Vec::with_capacity(PARTS);
         let handles = std::array::from_fn(|i| {
@@ -501,6 +551,7 @@ pub(crate) fn sync(context: RenderContext) {
         yaw: screen.yaw,
         config: screen.config.clone(),
         hopper_height: game.session.site.height(HOPPER_X, HOPPER_Z),
+        bulk: screen.bulk_deck().cloned(),
     };
     if visuals.rest_key.as_ref() != Some(&key) {
         for (handle, data) in visuals
@@ -568,8 +619,29 @@ pub(crate) fn sync(context: RenderContext) {
     if let Ok((mut transform, _)) = parts.get_mut(visuals.entities[WIRES]) {
         transform.translation = offset;
     }
+    let bed = sampled_bed(visuals.previous.as_ref(), current, alpha);
+    let roughness = crate::screen_bed_render::roughness(bed.as_ref());
+    let material_handle = visuals.bed_material.as_ref().unwrap();
+    if bed_materials
+        .get(material_handle)
+        .is_some_and(|m| (m.perceptual_roughness - roughness).abs() > 1e-5)
+    {
+        bed_materials
+            .get_mut(material_handle)
+            .unwrap()
+            .perceptual_roughness = roughness;
+    }
+    let bed_mesh = crate::screen_bed_render::geometry(bed.as_ref());
+    upload_coloured(
+        &mut meshes,
+        &visuals.handles.as_ref().unwrap()[BED],
+        bed_mesh,
+    );
+    if let Ok((mut transform, _)) = parts.get_mut(visuals.entities[BED]) {
+        *transform = crate::screen_bed_render::transform(screen, drive_time);
+    }
     let grains = sampled_grains(visuals.previous.as_ref(), current, alpha);
-    for (handle, data) in visuals.handles.as_ref().unwrap()[5..]
+    for (handle, data) in visuals.handles.as_ref().unwrap()[5..BED]
         .iter()
         .zip(crate::sediment::world_geometry(grains.iter()))
     {
@@ -614,6 +686,39 @@ mod tests {
         assert_eq!(
             mesh[0].positions.len(),
             screen.wire_segments(screen.time).len() * 8 * 8
+        );
+    }
+    #[test]
+    fn supported_bulk_cohorts_are_depicted_once_and_airborne_reference_grains_remain() {
+        let s = crate::screen_bed_render::loaded_screen(true);
+        let f = Frame::from_screen(&s);
+        assert!(!f.particles.is_empty());
+        assert!(f.particles.values().all(|p| p.bed_supported));
+        assert!(sampled_grains(None, &f, 1.).is_empty());
+        assert!(sampled_bed(None, &f, 1.).unwrap().integrated_volume_m3() > 0.);
+        let mut reference = Screen::new(s.origin, s.yaw);
+        let mut g = s.particles[0].grain.clone();
+        g.position.y += 0.05;
+        reference.admit(&[g], 0.).unwrap();
+        let f = Frame::from_screen(&reference);
+        assert_eq!(sampled_grains(None, &f, 1.).len(), 1);
+        assert!(sampled_bed(None, &f, 1.).is_none());
+    }
+    #[test]
+    fn recorded_bed_interpolation_has_matching_volume_and_paused_cleanup_is_empty() {
+        let mut s = crate::screen_bed_render::loaded_screen(true);
+        let a = Frame::from_screen(&s);
+        let before = a.bed.as_ref().unwrap().integrated_volume_m3();
+        s.motor_on = false;
+        s.cleanout().unwrap();
+        let b = Frame::from_screen(&s);
+        let halfway = sampled_bed(Some(&a), &b, 0.5).unwrap();
+        assert!((halfway.integrated_volume_m3() - before * 0.5).abs() < 1e-15);
+        assert_eq!(
+            sampled_bed(Some(&a), &b, 1.)
+                .unwrap()
+                .integrated_volume_m3(),
+            0.
         );
     }
 }

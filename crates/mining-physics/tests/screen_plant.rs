@@ -124,7 +124,7 @@ fn exercise_circuit(bulk: bool) {
     assert!((s.accounted_gold() - s.initial_gold_g).abs() < 1e-7);
     println!(
         "{}",
-        serde_json::json!({"bulk_deck":bulk,"ticks":480,"full_state_underflow_matches":full_state_matches,"maximum_deck_particles":maximum_deck,"live_plant_restored":restored,"screen_admitted":s.plant.as_ref().unwrap().screen.admitted,"screen_delivered":s.plant.as_ref().unwrap().screen.delivered,"collected_rejects":rejects,"gold_error_g":s.accounted_gold()-s.initial_gold_g,"bulk_error_m3":s.accounted_material().volume()-baseline.volume(),"water_error_m3":s.water_balance_error_m3(),"limits":if bulk { "Uncalibrated statistical bulk deck, local loading/adhesion and inelastic mean transport; no screen-water solver or explicit dense contact packing. Original wet sluice retained." } else { "Dilute physical-diameter parcels in a dry moving wire screen; no dense packing/blinding or screen-water hydraulics. Original wet sluice retained." }})
+        serde_json::json!({"model_version":s.plant.as_ref().unwrap().model_version,"bulk_deck":bulk,"ticks":480,"full_state_underflow_matches":full_state_matches,"maximum_deck_particles":maximum_deck,"live_plant_restored":restored,"screen_admitted":s.plant.as_ref().unwrap().screen.admitted,"screen_delivered":s.plant.as_ref().unwrap().screen.delivered,"collected_rejects":rejects,"gold_error_g":s.accounted_gold()-s.initial_gold_g,"bulk_error_m3":s.accounted_material().volume()-baseline.volume(),"water_error_m3":s.water_balance_error_m3(),"limits":if bulk { "Uncalibrated statistical bulk deck, local loading/adhesion and inelastic mean transport; no screen-water solver or explicit dense contact packing. Original wet sluice retained." } else { "Dilute physical-diameter parcels in a dry moving wire screen; no dense packing/blinding or screen-water hydraulics. Original wet sluice retained." }})
     );
     if let Some(path) = std::env::var_os("SLUICE_SCREEN_OUTPUT") {
         let dir = std::path::PathBuf::from(path);
@@ -144,4 +144,84 @@ fn exercise_circuit(bulk: bool) {
         assert!(Session::load_json(&legacy).is_ok());
         std::fs::write(dir.join("legacy-render.save.json"), legacy).unwrap();
     }
+}
+
+#[test]
+#[ignore = "requires an actual Metal/Vulkan adapter"]
+fn wet_overburden_and_real_river_water_build_a_finite_clearable_deck() {
+    let mut s = Session::new_operation();
+    s.sluice.placement = Some(Placement::suggested(&s.site));
+    s.enable_screen().unwrap();
+    s.plant
+        .as_mut()
+        .unwrap()
+        .set_bulk_screen(Some(mining_sim::screen::BulkDeck::default()))
+        .unwrap();
+    let baseline = s.accounted_material();
+    let water = s.stored_water_m3();
+    let mut wet = s.site.dig(Vec3::new(19., 0., 20.), 0.4, 0.10, 0.003);
+    assert!(wet.soil_m3 > 0.002 && wet.gravel_m3 < 1e-12);
+    let packet = s.site.withdraw_intake(
+        Vec3::new(
+            mining_sim::Site::river_center(mining_sim::sluice::HOPPER_Z),
+            0.,
+            mining_sim::sluice::HOPPER_Z,
+        ),
+        (wet.pore_volume_m3() * 0.7) as f32,
+    );
+    assert!(packet.water_m3 > 0.);
+    wet.add(packet.suspension.material());
+    wet.pore_water_m3 += packet.water_m3;
+    assert!(wet.valid() && wet.saturation() > 0.6);
+    assert!(s.sluice.add_to_hopper(wet).is_empty());
+    assert!((s.stored_water_m3() - water).abs() < 1e-9);
+    s.sluice.feed_on = true;
+    s.sluice.pump_on = true;
+    s.sluice.feed_m3s = 0.0001;
+    s.plant.as_mut().unwrap().screen.motor_on = true;
+    let mut h = Hydraulics::new().unwrap();
+    for tick in 0..240 {
+        s.step(Default::default());
+        assert!(!s.paused, "wet step{tick}: {}", s.message);
+        h.step(&mut s).unwrap();
+        assert!((s.accounted_gold() - s.initial_gold_g).abs() < 1e-7);
+        assert!((s.accounted_material().volume() - baseline.volume()).abs() < 1e-5);
+        assert!(s.water_balance_error_m3().abs() < 2e-5);
+    }
+    let field = s.plant.as_ref().unwrap().screen.bulk_bed_field().unwrap();
+    let bed_volume = field.integrated_volume_m3();
+    assert!(bed_volume > 0.0001, "held bed{bed_volume}");
+    assert!(field.cells().iter().any(|c| c.blinded > 0.));
+    assert_eq!(s.plant.as_ref().unwrap().model_version, 3);
+    s.sluice.feed_on = false;
+    let json = s.save_json().unwrap();
+    let loaded = Session::load_json(&json).unwrap();
+    assert_eq!(
+        serde_json::to_value(&s.plant).unwrap(),
+        serde_json::to_value(&loaded.plant).unwrap()
+    );
+    if let Some(path) = std::env::var_os("SLUICE_WET_BED_FIXTURE") {
+        std::fs::write(path, &json).unwrap();
+    }
+    let before = s.accounted_material();
+    let stored = s.stored_water_m3();
+    s.player.position = mining_sim::Sluice::hopper_position(&s.site) + Vec3::X * 1.5;
+    s.on_action(Action::ToggleScreen).unwrap();
+    s.on_action(Action::ClearScreen).unwrap();
+    assert!(
+        s.plant
+            .as_ref()
+            .unwrap()
+            .screen
+            .bulk_bed_field()
+            .unwrap()
+            .integrated_volume_m3()
+            == 0.
+    );
+    assert!((s.accounted_material().volume() - before.volume()).abs() < 1e-10);
+    assert!((s.stored_water_m3() - stored).abs() < 1e-10);
+    println!(
+        "{}",
+        serde_json::json!({"wet_bed":true,"model_version":3,"ticks":240,"held_volume_m3":bed_volume,"wet_source":wet,"source_water_m3":packet.water_m3,"gold_error_g":s.accounted_gold()-s.initial_gold_g,"bulk_error_m3":s.accounted_material().volume()-baseline.volume(),"water_error_m3":s.water_balance_error_m3(),"saved_live_plant":true,"actual_stopped_cleanup":true})
+    );
 }

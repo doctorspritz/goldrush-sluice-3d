@@ -307,7 +307,7 @@ fn actual_dug_feed_bulk_screen_saved_plant_and_sluice_keep_finite_custody() {
     }
     assert_eq!(s.save_json().unwrap(), restored.save_json().unwrap());
     let p = s.plant.as_ref().unwrap();
-    assert_eq!(p.model_version, 2);
+    assert_eq!(p.model_version, 3);
     assert!(p.screen.delivered.mass_kg() > 0. && !s.sluice.grains.is_empty());
     assert!((s.accounted_material().volume() - baseline.volume()).abs() < 1e-7);
     assert!((s.accounted_gold() - s.initial_gold_g).abs() < 1e-7);
@@ -433,7 +433,7 @@ fn offcentre_wet_stock_blinds_its_lane_without_a_width_wide_clog_flag() {
     assert!(bed
         .iter()
         .enumerate()
-        .filter(|(i, _)| i % 4 != 0)
+        .filter(|(i, _)| i % 4 >= 2)
         .all(|(_, c)| c.0 == 0. && c.1 == 0.));
     assert_eq!(s.particles.len(), 32);
     budget(&s);

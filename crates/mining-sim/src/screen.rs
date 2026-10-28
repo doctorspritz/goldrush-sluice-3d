@@ -3,6 +3,9 @@
 //! Optional bulk-deck loading/adhesion is an independently saved statistical
 //! approximation; neither mode has a screen-water or explicit packing solver.
 //! Wires, gutter and catch bin have the same geometry exposed to presentation.
+#[path = "screen_bed.rs"]
+mod bed;
+pub use bed::{BulkBedCell, BulkBedField, BulkBedSample, BulkProjection};
 #[path = "bulk_screen.rs"]
 mod bulk;
 use crate::{sluice::Grain, Material, Vec3};
@@ -530,14 +533,27 @@ impl Screen {
     pub fn bulk_deck(&self) -> Option<&BulkDeck> {
         self.bulk.as_ref().map(|b| &b.config)
     }
-    /// Local coarse bed diagnostics own no additional material or water.
+    pub fn processing_model_version(&self) -> u32 {
+        match self.bulk_deck().map(|c| c.projection) {
+            None => 1,
+            Some(BulkProjection::CellBinsV1) => 2,
+            Some(BulkProjection::SmoothCellsV2) => 3,
+        }
+    }
+    /// Derived diagnostics own no additional material or water.
+    pub fn bulk_bed_field(&self) -> Option<BulkBedField> {
+        self.bulk.as_ref().map(|b| b.field_at(self, self.time))
+    }
     pub fn bulk_bed(&self) -> Option<Vec<(f64, f64)>> {
-        self.bulk.as_ref().map(|b| {
-            b.bed(self)
-                .into_iter()
-                .map(|c| (c.depth_m, c.blinded))
-                .collect()
-        })
+        self.bulk_bed_field()
+            .map(|b| b.cells().iter().map(|c| (c.depth_m, c.blinded)).collect())
+    }
+    /// Supported IDs represented by the derived field; airborne/products retain
+    /// their independent visual/physical state.
+    pub fn bulk_bed_particles(&self) -> Vec<u64> {
+        self.bulk
+            .as_ref()
+            .map_or_else(Vec::new, |b| b.supported_ids(self))
     }
     fn stock_count(&self) -> usize {
         self.particles.len() + self.undersize.len() + self.oversize.len() + self.spills.len()

@@ -12,6 +12,7 @@ mod motion_capture;
 mod render_exit;
 mod runtime;
 mod scene;
+mod screen_bed_render;
 mod screen_render;
 mod sediment;
 mod terrain_water;
