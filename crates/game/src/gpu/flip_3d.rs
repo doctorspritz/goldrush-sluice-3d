@@ -55,6 +55,7 @@ pub struct GpuFlip3D {
     pub width: u32,
     pub height: u32,
     pub depth: u32,
+    periodic_z: bool,
     pub cell_size: f32,
     /// Bitmask for open boundaries (particles can exit without clamping):
     /// Bit 0 (1): -X open, Bit 1 (2): +X open
@@ -309,6 +310,7 @@ impl GpuFlip3D {
             max_particles,
             self.paired_water_transfer,
             self.phase_transfer.is_some(),
+            self.periodic_z,
         );
         next.open_boundaries = self.open_boundaries;
         next.cpu_sediment_contacts = self.cpu_sediment_contacts;
@@ -398,7 +400,39 @@ impl GpuFlip3D {
             max_particles,
             paired_water_transfer,
             false,
+            false,
         )
+    }
+
+    /// Experimental water-only periodic-Z strip. Keep the ordinary constructor
+    /// as the reference. Solids, variable marker volumes, sorted transfers and
+    /// open-Z boundaries require additional coupled ownership/geometry work.
+    pub fn new_periodic_z(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        cell_size: f32,
+        max_particles: usize,
+    ) -> Self {
+        let mut solver = Self::new_with_options(
+            device,
+            width,
+            height,
+            depth,
+            cell_size,
+            max_particles,
+            true,
+            false,
+            true,
+        );
+        solver.sediment_rest_particles = 0.;
+        solver.sediment_porosity_drag = 0.;
+        solver
+    }
+
+    pub fn is_periodic_z(&self) -> bool {
+        self.periodic_z
     }
 
     /// Explicit conservative runtime for validation before the gameplay default
@@ -428,6 +462,7 @@ impl GpuFlip3D {
             max_particles,
             true,
             true,
+            false,
         ))
     }
     pub fn conservative_phase_exchange(&self) -> bool {
@@ -472,7 +507,21 @@ impl GpuFlip3D {
         max_particles: usize,
         paired_water_transfer: bool,
         conservative: bool,
+        periodic_z: bool,
     ) -> Self {
+        assert!(
+            !periodic_z || (width > 0 && height > 0 && depth >= 2 && depth.is_multiple_of(2)),
+            "periodic pressure needs nonzero X/Y and an even Z depth of at least two"
+        );
+        assert!(
+            !periodic_z || !conservative,
+            "periodic conservative phase geometry is not implemented"
+        );
+        let periodic_constants = if periodic_z {
+            std::collections::HashMap::from([("PERIODIC_Z".to_string(), 1.)])
+        } else {
+            std::collections::HashMap::new()
+        };
         // Shared particle buffers for P2G/G2P
         let particle_buffer_size = (max_particles * std::mem::size_of::<[f32; 4]>()) as u64;
         let positions_buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
@@ -523,37 +572,71 @@ impl GpuFlip3D {
         }));
 
         // Create P2G solver (owns the grid velocity buffers)
-        let mut p2g = GpuP2g3D::new(
-            device,
-            width,
-            height,
-            depth,
-            max_particles,
-            true,  // include_sediment
-            false, // use_tiled_scatter (unsorted particles)
-            Arc::clone(&positions_buffer),
-            Arc::clone(&velocities_buffer),
-            Arc::clone(&densities_buffer),
-            Arc::clone(&c_col0_buffer),
-            Arc::clone(&c_col1_buffer),
-            Arc::clone(&c_col2_buffer),
-        );
+        let mut p2g = if periodic_z {
+            GpuP2g3D::new_periodic_z(
+                device,
+                width,
+                height,
+                depth,
+                max_particles,
+                true, // include_sediment
+                Arc::clone(&positions_buffer),
+                Arc::clone(&velocities_buffer),
+                Arc::clone(&densities_buffer),
+                Arc::clone(&c_col0_buffer),
+                Arc::clone(&c_col1_buffer),
+                Arc::clone(&c_col2_buffer),
+            )
+        } else {
+            GpuP2g3D::new(
+                device,
+                width,
+                height,
+                depth,
+                max_particles,
+                true,  // include_sediment
+                false, // use_tiled_scatter (unsorted particles)
+                Arc::clone(&positions_buffer),
+                Arc::clone(&velocities_buffer),
+                Arc::clone(&densities_buffer),
+                Arc::clone(&c_col0_buffer),
+                Arc::clone(&c_col1_buffer),
+                Arc::clone(&c_col2_buffer),
+            )
+        };
 
-        let water_p2g = GpuP2g3D::new(
-            device,
-            width,
-            height,
-            depth,
-            max_particles,
-            false, // include_sediment
-            false, // use_tiled_scatter (unsorted particles)
-            Arc::clone(&positions_buffer),
-            Arc::clone(&velocities_buffer),
-            Arc::clone(&densities_buffer),
-            Arc::clone(&c_col0_buffer),
-            Arc::clone(&c_col1_buffer),
-            Arc::clone(&c_col2_buffer),
-        );
+        let water_p2g = if periodic_z {
+            GpuP2g3D::new_periodic_z(
+                device,
+                width,
+                height,
+                depth,
+                max_particles,
+                false, // include_sediment
+                Arc::clone(&positions_buffer),
+                Arc::clone(&velocities_buffer),
+                Arc::clone(&densities_buffer),
+                Arc::clone(&c_col0_buffer),
+                Arc::clone(&c_col1_buffer),
+                Arc::clone(&c_col2_buffer),
+            )
+        } else {
+            GpuP2g3D::new(
+                device,
+                width,
+                height,
+                depth,
+                max_particles,
+                false, // include_sediment
+                false, // use_tiled_scatter (unsorted particles)
+                Arc::clone(&positions_buffer),
+                Arc::clone(&velocities_buffer),
+                Arc::clone(&densities_buffer),
+                Arc::clone(&c_col0_buffer),
+                Arc::clone(&c_col1_buffer),
+                Arc::clone(&c_col2_buffer),
+            )
+        };
 
         p2g.paired_water = paired_water_transfer;
         // Create particle sorter for cache coherence optimization
@@ -708,10 +791,13 @@ impl GpuFlip3D {
             .as_ref()
             .map(PhaseTransfer3D::status_buffer)
             .unwrap_or(&phase_status_dummy);
-        let phase_constants = std::collections::HashMap::from([(
+        let mut phase_constants = std::collections::HashMap::from([(
             "PHASE_RUNTIME_ALLOWED".to_string(),
             f64::from(u32::from(conservative)),
         )]);
+        if periodic_z {
+            phase_constants.insert("PERIODIC_Z".into(), 1.);
+        }
         let pressure = if let Some(phase) = &phase_transfer {
             GpuPressure3D::new_with_mobility(
                 device,
@@ -723,6 +809,18 @@ impl GpuFlip3D {
                 &p2g.grid_w_buffer,
                 phase.mobility.each_ref(),
             )
+        } else if periodic_z {
+            GpuPressure3D::new_periodic_z(
+                device,
+                width,
+                height,
+                depth,
+                &p2g.grid_u_buffer,
+                &p2g.grid_v_buffer,
+                &p2g.grid_w_buffer,
+                None,
+            )
+            .expect("validated periodic pressure shape")
         } else {
             GpuPressure3D::new(
                 device,
@@ -735,63 +833,117 @@ impl GpuFlip3D {
             )
         };
 
-        let mut g2p = GpuG2p3D::new_with_metadata(
-            device,
-            width,
-            height,
-            depth,
-            max_particles,
-            Arc::clone(&positions_buffer),
-            Arc::clone(&velocities_buffer),
-            Arc::clone(&c_col0_buffer),
-            Arc::clone(&c_col1_buffer),
-            Arc::clone(&c_col2_buffer),
-            Arc::clone(&densities_buffer),
-            &p2g.grid_u_buffer,
-            &p2g.grid_v_buffer,
-            &p2g.grid_w_buffer,
-            &grid_u_old_buffer,
-            &grid_v_old_buffer,
-            &grid_w_old_buffer,
-            &vorticity_mag_buffer,
-            phase_transfer
-                .as_ref()
-                .map(|p| &p.water[0])
-                .unwrap_or(if paired_water_transfer {
-                    &p2g.grid_u_buffer
-                } else {
-                    &water_p2g.grid_u_buffer
-                }),
-            phase_transfer
-                .as_ref()
-                .map(|p| &p.water[1])
-                .unwrap_or(if paired_water_transfer {
-                    &p2g.grid_v_buffer
-                } else {
-                    &water_p2g.grid_v_buffer
-                }),
-            phase_transfer
-                .as_ref()
-                .map(|p| &p.water[2])
-                .unwrap_or(if paired_water_transfer {
-                    &p2g.grid_w_buffer
-                } else {
-                    &water_p2g.grid_w_buffer
-                }),
-            if conservative {
-                [0; 3]
-            } else if paired_water_transfer {
-                [
-                    (((width + 1) * height * depth) as usize).div_ceil(64) as u64 * 256,
-                    ((width * (height + 1) * depth) as usize).div_ceil(64) as u64 * 256,
-                    ((width * height * (depth + 1)) as usize).div_ceil(64) as u64 * 256,
-                ]
+        let mut g2p =
+            if periodic_z {
+                GpuG2p3D::new_periodic_z(
+                    device,
+                    width,
+                    height,
+                    depth,
+                    max_particles,
+                    Arc::clone(&positions_buffer),
+                    Arc::clone(&velocities_buffer),
+                    Arc::clone(&c_col0_buffer),
+                    Arc::clone(&c_col1_buffer),
+                    Arc::clone(&c_col2_buffer),
+                    Arc::clone(&densities_buffer),
+                    &p2g.grid_u_buffer,
+                    &p2g.grid_v_buffer,
+                    &p2g.grid_w_buffer,
+                    &grid_u_old_buffer,
+                    &grid_v_old_buffer,
+                    &grid_w_old_buffer,
+                    &vorticity_mag_buffer,
+                    phase_transfer.as_ref().map(|p| &p.water[0]).unwrap_or(
+                        if paired_water_transfer {
+                            &p2g.grid_u_buffer
+                        } else {
+                            &water_p2g.grid_u_buffer
+                        },
+                    ),
+                    phase_transfer.as_ref().map(|p| &p.water[1]).unwrap_or(
+                        if paired_water_transfer {
+                            &p2g.grid_v_buffer
+                        } else {
+                            &water_p2g.grid_v_buffer
+                        },
+                    ),
+                    phase_transfer.as_ref().map(|p| &p.water[2]).unwrap_or(
+                        if paired_water_transfer {
+                            &p2g.grid_w_buffer
+                        } else {
+                            &water_p2g.grid_w_buffer
+                        },
+                    ),
+                    if conservative {
+                        [0; 3]
+                    } else if paired_water_transfer {
+                        [
+                            (((width + 1) * height * depth) as usize).div_ceil(64) as u64 * 256,
+                            ((width * (height + 1) * depth) as usize).div_ceil(64) as u64 * 256,
+                            ((width * height * (depth + 1)) as usize).div_ceil(64) as u64 * 256,
+                        ]
+                    } else {
+                        [0; 3]
+                    },
+                    !conservative,
+                )
             } else {
-                [0; 3]
-            },
-            phase_metadata.clone(),
-            !conservative,
-        );
+                GpuG2p3D::new_with_metadata(
+                    device,
+                    width,
+                    height,
+                    depth,
+                    max_particles,
+                    Arc::clone(&positions_buffer),
+                    Arc::clone(&velocities_buffer),
+                    Arc::clone(&c_col0_buffer),
+                    Arc::clone(&c_col1_buffer),
+                    Arc::clone(&c_col2_buffer),
+                    Arc::clone(&densities_buffer),
+                    &p2g.grid_u_buffer,
+                    &p2g.grid_v_buffer,
+                    &p2g.grid_w_buffer,
+                    &grid_u_old_buffer,
+                    &grid_v_old_buffer,
+                    &grid_w_old_buffer,
+                    &vorticity_mag_buffer,
+                    phase_transfer.as_ref().map(|p| &p.water[0]).unwrap_or(
+                        if paired_water_transfer {
+                            &p2g.grid_u_buffer
+                        } else {
+                            &water_p2g.grid_u_buffer
+                        },
+                    ),
+                    phase_transfer.as_ref().map(|p| &p.water[1]).unwrap_or(
+                        if paired_water_transfer {
+                            &p2g.grid_v_buffer
+                        } else {
+                            &water_p2g.grid_v_buffer
+                        },
+                    ),
+                    phase_transfer.as_ref().map(|p| &p.water[2]).unwrap_or(
+                        if paired_water_transfer {
+                            &p2g.grid_w_buffer
+                        } else {
+                            &water_p2g.grid_w_buffer
+                        },
+                    ),
+                    if conservative {
+                        [0; 3]
+                    } else if paired_water_transfer {
+                        [
+                            (((width + 1) * height * depth) as usize).div_ceil(64) as u64 * 256,
+                            ((width * (height + 1) * depth) as usize).div_ceil(64) as u64 * 256,
+                            ((width * height * (depth + 1)) as usize).div_ceil(64) as u64 * 256,
+                        ]
+                    } else {
+                        [0; 3]
+                    },
+                    phase_metadata.clone(),
+                    !conservative,
+                )
+            };
         g2p.set_conservative_phase_exchange(conservative);
 
         let phase_cell_binding = |volume: bool| {
@@ -1174,7 +1326,10 @@ impl GpuFlip3D {
                 layout: Some(&vorticity_pipeline_layout),
                 module: &vorticity_shader,
                 entry_point: Some("compute_vorticity"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &periodic_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -1345,7 +1500,10 @@ impl GpuFlip3D {
                 layout: Some(&vorticity_confine_pipeline_layout),
                 module: &vorticity_confine_shader,
                 entry_point: Some("apply_confinement_u"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &periodic_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -1355,7 +1513,10 @@ impl GpuFlip3D {
                 layout: Some(&vorticity_confine_pipeline_layout),
                 module: &vorticity_confine_shader,
                 entry_point: Some("apply_confinement_v"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &periodic_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -1365,7 +1526,10 @@ impl GpuFlip3D {
                 layout: Some(&vorticity_confine_pipeline_layout),
                 module: &vorticity_confine_shader,
                 entry_point: Some("apply_confinement_w"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &periodic_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -1794,7 +1958,10 @@ impl GpuFlip3D {
             layout: Some(&bc_pipeline_layout),
             module: &bc_shader,
             entry_point: Some("enforce_bc_u"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &periodic_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -1803,7 +1970,10 @@ impl GpuFlip3D {
             layout: Some(&bc_pipeline_layout),
             module: &bc_shader,
             entry_point: Some("enforce_bc_v"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &periodic_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -1812,7 +1982,10 @@ impl GpuFlip3D {
             layout: Some(&bc_pipeline_layout),
             module: &bc_shader,
             entry_point: Some("enforce_bc_w"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &periodic_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -1900,7 +2073,10 @@ impl GpuFlip3D {
                 layout: Some(&fluid_cell_expand_pipeline_layout),
                 module: &fluid_cell_expand_shader,
                 entry_point: Some("expand_fluid_cells"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &periodic_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -2433,14 +2609,18 @@ impl GpuFlip3D {
             push_constant_ranges: &[],
         });
 
-        let density_position_grid_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Density Position Grid 3D Pipeline"),
-            layout: Some(&density_position_grid_pipeline_layout),
-            module: &density_position_grid_shader,
-            entry_point: Some("compute_position_grid"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let density_position_grid_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Density Position Grid 3D Pipeline"),
+                layout: Some(&density_position_grid_pipeline_layout),
+                module: &density_position_grid_shader,
+                entry_point: Some("compute_position_grid"),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &periodic_constants,
+                    ..Default::default()
+                },
+                cache: None,
+            });
 
         // Density Correct pass
         let density_correct_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -2773,6 +2953,10 @@ impl GpuFlip3D {
                 push_constant_ranges: &[],
             });
 
+        let mut collision_constants = phase_constants.clone();
+        if periodic_z {
+            collision_constants.insert("SDF_PERIODIC_Z".into(), 1.);
+        }
         let sdf_collision_pipeline =
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("SDF Collision 3D Pipeline"),
@@ -2780,7 +2964,7 @@ impl GpuFlip3D {
                 module: &sdf_collision_shader,
                 entry_point: Some("sdf_collision"),
                 compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &phase_constants,
+                    constants: &collision_constants,
                     ..Default::default()
                 },
                 cache: None,
@@ -2809,6 +2993,7 @@ impl GpuFlip3D {
         });
 
         Self {
+            periodic_z,
             phase_transfer,
             phase_metadata,
             phase_error: None,
@@ -3067,6 +3252,10 @@ impl GpuFlip3D {
         dt: f32,
     ) {
         assert!(
+            !self.periodic_z,
+            "periodic water requires the complete FLIP step"
+        );
+        assert!(
             self.phase_transfer.is_none(),
             "conservative phases require the full FLIP step"
         );
@@ -3272,12 +3461,20 @@ impl GpuFlip3D {
         std::mem::take(&mut self.profile_stages)
     }
     pub fn set_particle_volumes(&mut self, weights: Vec<f32>) {
+        assert!(
+            !self.periodic_z || weights.iter().all(|w| *w == 1.),
+            "periodic pilot needs uniform unit marker volumes"
+        );
         self.p2g.volume_weights = weights;
     }
     pub fn upload_grain_diameters(&self, queue: &wgpu::Queue, first: usize, values: &[f32]) {
         self.g2p.upload_grain_diameters(queue, first, values);
     }
     pub fn upload_sediment_fraction(&self, queue: &wgpu::Queue, values: &[f32]) {
+        assert!(
+            !self.periodic_z || values.iter().all(|v| *v == 0.),
+            "periodic pilot has no owned sediment bed"
+        );
         queue.write_buffer(
             &self.sediment_fraction_buffer,
             0,
@@ -3519,6 +3716,26 @@ impl GpuFlip3D {
         flow_accel: f32,
         pressure_iterations: u32,
     ) -> u32 {
+        if self.periodic_z {
+            assert_eq!(
+                self.open_boundaries & 48,
+                0,
+                "open Z and periodic Z are incompatible"
+            );
+            assert!(
+                !self.use_sorted_p2g && !self.use_cell_centric_p2g,
+                "periodic sorted transfers are not implemented"
+            );
+            assert_eq!(
+                self.gravel_obstacle_count, 0,
+                "periodic gravel ownership is not implemented"
+            );
+            assert_eq!(
+                self.sediment_porosity_drag, 0.,
+                "periodic bed coupling is not implemented"
+            );
+        }
+
         let profiling = std::env::var_os("SLUICE_PROFILE_STAGES").is_some();
         let batched = self.batch_submissions && !profiling;
         assert!(
@@ -4190,7 +4407,7 @@ impl GpuFlip3D {
             pass.set_bind_group(0, &self.bc_bind_group, &[]);
             let workgroups_x = self.width.div_ceil(8);
             let workgroups_y = self.height.div_ceil(8);
-            let workgroups_z = (self.depth + 1).div_ceil(8);
+            let workgroups_z = (self.depth + 1).div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -4326,7 +4543,7 @@ impl GpuFlip3D {
             pass.set_bind_group(0, &self.bc_bind_group, &[]);
             let workgroups_x = self.width.div_ceil(8);
             let workgroups_y = self.height.div_ceil(8);
-            let workgroups_z = (self.depth + 1).div_ceil(8);
+            let workgroups_z = (self.depth + 1).div_ceil(4);
             pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
 
@@ -4664,6 +4881,18 @@ impl GpuFlip3D {
         pressure_iterations: u32,
         readback: ReadbackMode,
     ) -> bool {
+        if self.periodic_z {
+            assert!(
+                densities
+                    .get(..positions.len())
+                    .is_some_and(|rho| rho.iter().all(|v| *v == 1.)),
+                "periodic pilot needs one water density per marker"
+            );
+            assert!(
+                positions.len() <= self.max_particles,
+                "periodic pilot must not truncate water"
+            );
+        }
         let particle_count = positions.len().min(self.max_particles);
         if particle_count == 0 {
             return false;

@@ -1,0 +1,398 @@
+{
+  "stage": "Complete experimental periodic water loop and shared W-boundary coverage fix",
+  "baseline_commit": "1fe85dea09179134420b3471f03c36b8e31bfef9",
+  "started_utc": "2026-10-28T01:57:47.667798+00:00",
+  "goal_status": "active",
+  "full_operation_complete": false,
+  "complete_water_only_strip_loop": true,
+  "playable_strip_integrated": false,
+  "periodic_conservative_phases": false,
+  "calibrated_gold_recovery": false,
+  "new_native_render_qualification": false,
+  "source_manifest": {
+    "crates/game/src/gpu/flip_3d.rs": "db6e44286cb21e3c03d05fe3016915caa3ea6212933cf58826e504072d436c45",
+    "crates/game/src/gpu/shaders/density_error_3d.wgsl": "9f29a063ec080265556f9ad7e5ca75d8e586bbdf919f64804f021c6a70128a20",
+    "crates/game/src/gpu/shaders/density_position_grid_3d.wgsl": "ce57b47d8f230ed2a555f80be3f997ac0a43aac03ac5b850c6ca303d168fb69a",
+    "crates/game/src/gpu/shaders/density_correct_3d.wgsl": "765888ceb87410bdc50416c46de3531e23e8c8bb4d0914f7a0ed7130a0b118c1",
+    "crates/game/src/gpu/shaders/fluid_cell_expand_3d.wgsl": "ba3c170542baa0ad35ec81139eb2f39870da1b38434a30640234e931f26ab56b",
+    "crates/game/src/gpu/shaders/vorticity_3d.wgsl": "c23c57ae3806c0272f3bc667004e070fa85cdc88b5f4e0b69132ba1e27dedfd2",
+    "crates/game/src/gpu/shaders/vorticity_confine_3d.wgsl": "85251e959ff468628b2f237590c668381bc7890cc4f61cdccef9613c2390c682",
+    "crates/game/src/gpu/shaders/enforce_bc_3d.wgsl": "5dfc58537a0583af2853a945a06e87f8394be564cb91942c0c2c20d4673a8f8a",
+    "crates/game/src/gpu/shaders/sample_sdf_3d.wgsl": "7f7a1d327a07e89b2d13d5af24fe24dede7d0824c3746f335dec0ce9ae787cb2",
+    "crates/game/src/gpu/shaders/sdf_collision_3d.wgsl": "08e2f51ce02610434e16526951660ebbcc0e8dd9678609d3470e7c71b63ad38c",
+    "crates/mining-physics/tests/periodic_water.rs": "43b8c01d5693d0a84b1ab32e1fd30a06cc071aaca4cbc0017b6f23e18ca24bef",
+    "crates/mining-physics/examples/periodic_water_probe.rs": "725c3d287b369a36fb942ab3241fcf9826e221dda609671bc914769264145b18",
+    "Cargo.lock": "cdcf28719ac98f0c2f974bb1e693ef1a972ebfbb3591f9daf60451db0af71ade"
+  },
+  "quality": {
+    "regression-tests": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 11014,
+      "discarded_log_bytes": 0
+    },
+    "resident-controls": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 2464,
+      "discarded_log_bytes": 0
+    },
+    "mine-pipeline-tests": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 4364,
+      "discarded_log_bytes": 0
+    },
+    "lint-final": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 990,
+      "discarded_log_bytes": 0
+    },
+    "game-lint": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 365535,
+      "discarded_log_bytes": 0
+    },
+    "build-final-probe": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 652,
+      "discarded_log_bytes": 0
+    },
+    "ordinary-replay": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1292,
+      "discarded_log_bytes": 0
+    },
+    "width-resident": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 3743,
+      "discarded_log_bytes": 0
+    },
+    "width-sync": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 3766,
+      "discarded_log_bytes": 0
+    }
+  },
+  "test_counts_by_run": {
+    "regression-tests": 29,
+    "resident-controls": 7,
+    "mine-pipeline-tests": 5
+  },
+  "distinct_actual_metal_tests": 35,
+  "test_names": [
+    "a_large_live_shift_restores_and_continues_with_the_same_physical_state",
+    "articulated_machine_survives_original_water_pipeline_and_full_live_restore",
+    "batching_preserves_results_and_density_projection_preserves_momentum",
+    "collocated_curl_and_confinement_match_analytic_periodic_flow",
+    "conservative_large_live_shift_restores_and_continues_identically",
+    "conservative_pipeline_survives_excavation_pumping_camera_and_live_restore",
+    "density_marking_gradient_and_positive_face_gather_match_physical_neighbours",
+    "divide_copies_canonical_seam_velocity_and_support_without_stale_data",
+    "every_open_face_allows_water_to_leave_without_a_false_sdf_contact",
+    "evolving_riffle_water_matches_repeated_domains_and_survives_storage_growth",
+    "finite_dug_feed_crosses_actual_screen_and_continues_in_original_wet_sluice",
+    "full_upload_preserves_raw_planes_short_inputs_and_untouched_tails",
+    "gather_matches_image_oracle_for_periodic_affine_pic_and_flip_fields",
+    "moving_soil_survives_original_water_pipeline_and_shell_restore",
+    "ordinary_w_boundary_passes_cover_upper_z_and_apply_both_slip_factors",
+    "original_pipeline_survives_excavation_pumping_camera_and_live_restore",
+    "packed_bed_contact_slides_without_cell_snaps_or_tangential_damping",
+    "paired_transfer_and_joined_readback_preserve_nonuniform_mixed_parcels",
+    "periodic_closed_gauge_and_incompatible_source_remain_visible",
+    "periodic_faces_match_independent_flux_projection_and_all_schedules",
+    "periodic_strip_matches_four_repeated_domains_bit_for_bit",
+    "periodic_water_advects_through_multiple_seams_and_retains_velocity",
+    "phase_transfer_pressure_and_gather_match_oracle_with_momentum_and_freefall_controls",
+    "range_upload_preserves_prefix_suffix_affine_columns_and_volume_defaults",
+    "reallocation_preserves_transfers_parameters_and_warm_pressure",
+    "represented_volume_uses_integrated_voxel_support_without_surface_suction",
+    "resident_four_substep_frames_equal_complete_sync_water_states",
+    "scatter_preserves_physical_face_mass_momentum_and_single_home_counts",
+    "sediment_carrier_uses_wrapped_support_and_preserves_missing_components",
+    "signed_distance_interpolation_wraps_instead_of_creating_a_side_wall",
+    "sparse_carrier_preserves_constant_translation",
+    "spatial_payload_exchange_survives_the_water_pipeline_and_shell_restore",
+    "tiled_domains_match_strip_scatter_gather_and_affine_state",
+    "volume_repair_samples_the_faces_where_deltas_were_written",
+    "wet_feed_releases_its_water_into_real_flip_and_survives_restore"
+  ],
+  "full_workspace_suite_run": false,
+  "format": {
+    "passed": true,
+    "scope": "new periodic API, test and example; changed host spans formatted; no whole legacy game format claim"
+  },
+  "game_lint": {
+    "existing_warning_count": 98,
+    "changed_primary_warning_count": 0,
+    "changed_primary_warnings": []
+  },
+  "width_comparison": {
+    "width-resident": {
+      "widths": [
+        {
+          "depth_cm": 38,
+          "median_step_ms": 5.42173565625,
+          "water_only_physical_ratio": 0.7685116258244847,
+          "particles": 172672
+        },
+        {
+          "depth_cm": 12,
+          "median_step_ms": 2.831046875,
+          "water_only_physical_ratio": 1.4717760135904734,
+          "particles": 54528
+        },
+        {
+          "depth_cm": 8,
+          "median_step_ms": 2.355759125,
+          "water_only_physical_ratio": 1.7687151626655664,
+          "particles": 36352
+        }
+      ],
+      "paired": {
+        "12_cm_factor": {
+          "median": 1.9223429129299419,
+          "range": [
+            1.893750435509653,
+            1.9676970614626956
+          ]
+        },
+        "8_cm_factor": {
+          "median": 2.2974446845908107,
+          "range": [
+            2.2626038590759547,
+            2.37471026514996
+          ]
+        }
+      },
+      "state": {
+        "38": {
+          "state_fnv1a64": "bfc951f13fd58faa",
+          "live_particles": 165733,
+          "retired_particles": 6939,
+          "mean_downstream_ms": 0.5180407215745042,
+          "backflow_fraction": 0.027942534075893154,
+          "outlet_particles_per_cm": 402.13157894736844,
+          "mean_y_m": 0.17602932705851917,
+          "max_speed_ms": 1.9829607009887695
+        },
+        "12": {
+          "state_fnv1a64": "78c7513c7bdf1580",
+          "live_particles": 52389,
+          "retired_particles": 2139,
+          "mean_downstream_ms": 0.5173628087079372,
+          "backflow_fraction": 0.02406993834583596,
+          "outlet_particles_per_cm": 396.6666666666667,
+          "mean_y_m": 0.17573170733527213,
+          "max_speed_ms": 1.7851459980010986
+        },
+        "8": {
+          "state_fnv1a64": "a17652aac22206bc",
+          "live_particles": 34865,
+          "retired_particles": 1487,
+          "mean_downstream_ms": 0.5164680949888668,
+          "backflow_fraction": 0.028825469668722216,
+          "outlet_particles_per_cm": 402.0,
+          "mean_y_m": 0.17609951922547087,
+          "max_speed_ms": 1.966390609741211
+        }
+      }
+    },
+    "width-sync": {
+      "widths": [
+        {
+          "depth_cm": 38,
+          "median_step_ms": 13.625378906249999,
+          "water_only_physical_ratio": 0.3058019092638962,
+          "particles": 172672
+        },
+        {
+          "depth_cm": 12,
+          "median_step_ms": 8.544442718749998,
+          "water_only_physical_ratio": 0.48764641780930873,
+          "particles": 54528
+        },
+        {
+          "depth_cm": 8,
+          "median_step_ms": 9.40422396875,
+          "water_only_physical_ratio": 0.4430633402416826,
+          "particles": 36352
+        }
+      ],
+      "paired": {
+        "12_cm_factor": {
+          "median": 1.5539218098915089,
+          "range": [
+            1.4080896857517229,
+            1.6802605947789493
+          ]
+        },
+        "8_cm_factor": {
+          "median": 1.49427995465097,
+          "range": [
+            1.3789352681225016,
+            1.6947496096820365
+          ]
+        }
+      },
+      "state": {
+        "38": {
+          "state_fnv1a64": "bfc951f13fd58faa",
+          "live_particles": 165733,
+          "retired_particles": 6939,
+          "mean_downstream_ms": 0.5180407215745042,
+          "backflow_fraction": 0.027942534075893154,
+          "outlet_particles_per_cm": 402.13157894736844,
+          "mean_y_m": 0.17602932705851917,
+          "max_speed_ms": 1.9829607009887695
+        },
+        "12": {
+          "state_fnv1a64": "78c7513c7bdf1580",
+          "live_particles": 52389,
+          "retired_particles": 2139,
+          "mean_downstream_ms": 0.5173628087079372,
+          "backflow_fraction": 0.02406993834583596,
+          "outlet_particles_per_cm": 396.6666666666667,
+          "mean_y_m": 0.17573170733527213,
+          "max_speed_ms": 1.7851459980010986
+        },
+        "8": {
+          "state_fnv1a64": "a17652aac22206bc",
+          "live_particles": 34865,
+          "retired_particles": 1487,
+          "mean_downstream_ms": 0.5164680949888668,
+          "backflow_fraction": 0.028825469668722216,
+          "outlet_particles_per_cm": 402.0,
+          "mean_y_m": 0.17609951922547087,
+          "max_speed_ms": 1.966390609741211
+        }
+      }
+    },
+    "cross_cadence_state_fingerprints_match": true
+  },
+  "benchmark": {
+    "geometry": "actual reference centre section extruded periodically;1cm;162x52 XY",
+    "dt": 0.004166666666666667,
+    "pressure_sweeps": 80,
+    "density_sweeps": 40,
+    "warmup_substeps_per_block": 64,
+    "measured_substeps_per_block": 16,
+    "cycles": 6,
+    "width_order_cm": [
+      38,
+      12,
+      8,
+      8,
+      12,
+      38
+    ],
+    "samples_per_width_per_cadence": 12,
+    "resident": "upload/read full state once per four substeps; intervening three use existing resident GPU path",
+    "sync": "upload/read every substep, same retirement boundary",
+    "finite_volume": "live plus retired marker count equals initial count; real domain exits to a benchmark-only ledger, no material creation",
+    "limitations": "short finite pulse, extruded geometry, uniform lateral feed, no minerals/plant/world/render. Fixed1/240 substep is declared pilot configuration, not a whole-game timing measurement. No steady-state gold/eddy calibration."
+  },
+  "ordinary_replay": {
+    "ticks": 150,
+    "canonical_sha256": [
+      "65cfe7297c15460ff10ec9a7bfa3cad4cda65bf02929e4e13c1080dbd677bc6d",
+      "9cae5a573699e2aa3ff573d235a4f21661999d6cbabd793590e82edfdf8a8dcd"
+    ],
+    "exact": false,
+    "expected_model_change": "Both shared W boundary passes now cover the full physical depth; old ceil(Z/8) missed faces in four-cell shader workgroups. Independent negative control reproduces missed slip; corrected full solver applies both factors.",
+    "metrics": {
+      "water_particles": {
+        "before": 116221,
+        "after": 116044
+      },
+      "grains": {
+        "before": 606,
+        "after": 606
+      },
+      "mean_downstream_ms": {
+        "before": 0.38941890001296997,
+        "after": 0.39188629388809204
+      },
+      "backflow_fraction": {
+        "before": 0.026871219487011815,
+        "after": 0.025766088724966392
+      },
+      "water_depth_m": {
+        "before": 0.025487061589956284,
+        "after": 0.02544824592769146
+      },
+      "whole_water_balance_error_m3": {
+        "before": 1.013777986003106e-07,
+        "after": 1.0131909533583894e-07
+      },
+      "water_balance_error_m3": {
+        "before": 0.0,
+        "after": 0.0
+      },
+      "gold_balance_error_g": {
+        "before": -5.002220859751105e-12,
+        "after": -5.002220859751105e-12
+      },
+      "bulk_material_error_m3": {
+        "before": 3.845229912258219e-09,
+        "after": 3.845229912258219e-09
+      },
+      "dry_mass_error_kg": {
+        "before": 6.880029104650021e-06,
+        "after": 6.880029104650021e-06
+      }
+    },
+    "reference": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/periodic-projection-20261028/matched-0-reference.json.save.json",
+    "candidate_raw_sha256": "eda35da896b0d851f291d7e1be4d068f94c3ed8c6cf869ed4ff8412c6a7624f7",
+    "candidate_bytes": 29612099,
+    "normalisation": "Only unique contact-history key ordering and JSON object keys. No floats or particle/cell order changed."
+  },
+  "preliminary_benchmark": "water-widths.json predates the explicit exit ledger and resident comparison; retained as preliminary evidence only, not used for final factors",
+  "initial_failures": [
+    "Uniform-flow exact float equality differed by one rounding unit; bounded 2e-5 m/s drift across64steps, with2e-6m circular position bound.",
+    "Strict lint found a manual range expression in the new test; corrected without suppression."
+  ],
+  "preservation": {
+    "hashes": {
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/.local_version": "7f7703782311c7e5abdfa236f341c35d6e53e6274b13f810f22b76e3abdeac35",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/beads.db": "53792066b1a4c4364cdbcc94ab457e1be81183352fcffe7fef32e48c0a84829d",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/beads.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/CURRENT_STATE.md": "81798480c259b171b4c5e39b0e211f383e87dff17dd97958ff87dcf7fc32da14",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/DEM_INTEGRATION_STATUS.md": "b24caec8b76121870bd0d7a692060b28af334f63497eb9661b8f37ab9993c0d7",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/daemon-2026-01-22T20-34-31.310.log.gz": "44ef64d492ec33fec302ffd2a44c7a5085351fca67de8afd5261e4773d0f25ea",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/VERIFIED_STATE_2026-06-08.md": "850a888643f4c101c1ead51f3a8c999e863a90cf4728b07f38ee0478fdb1a741",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/solutions/simulation-issues/dem-sdf-coupling-root-causes-2026-06-08.md": "79b0ebf9ff10964d5d76a5d0f44c79685e9287a748906a72ee9b4bfcaabba07a",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/plans/mpm-first-slice.md": "010a8408f6575298a15990c8cb4e9bf87cbc2a577c2949708e98360cec467c72",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app/Contents/MacOS/mining": "f86b867d1bff601217233bd7addcca85b283c8e10f1a56530915f58ebe6ac058",
+      "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/plant-screen-20261027/gpu-fixtures-v8/modern.save.json": "1e79eb2c62f7266f8d8ba3e1e93e79fd3f303317d2d16694656c3333782f46ba"
+    },
+    "unchanged": true,
+    "stash": "a6c6b857da29269271eebb03025767414eabde90",
+    "new_crash_reports": [],
+    "cleanup": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=0 rss_mib=0.0\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=4 rss_mib=350.3\n"
+  },
+  "retention": {
+    "no_app_or_binary_copies_created": true,
+    "verified_transient_replay_removed_bytes": 29612099,
+    "free_disk_bytes": 40630558720
+  },
+  "beads": {
+    "issue": "sluice-hybrid-20261028",
+    "status": "in_progress",
+    "unrelated_literal_rows_preserved": 262,
+    "installed_sync_command": "unavailable; attempted command recorded in local evidence; owned-row export and normal git synchronization used"
+  },
+  "remaining": [
+    "Periodic conservative phase geometry and material/bed ownership",
+    "Width-consistent local loading/clogging, off-centre feed, lateral diversion/spill and cleanout",
+    "Gold size/shape washout, burial and recovery calibration with full flow regimes",
+    "Renderer/save/world inlet/outlet integration and sustained native whole-game checks",
+    "Every unfinished requirement in the full mine operation plan"
+  ]
+}

@@ -1,3 +1,4 @@
+override PERIODIC_Z: bool = false;
 override PHASE_RUNTIME_ALLOWED:bool=false;
 @group(0) @binding(8) var<storage,read> phase_status:array<u32>;
 // Density Position Correction Shader (3D) - Blub-Style Trilinear Sampling
@@ -36,6 +37,11 @@ const CELL_FLUID: u32 = 1u;
 const CELL_SOLID: u32 = 2u;
 const SEDIMENT_DENSITY_THRESHOLD: f32 = 1.0;
 
+fn periodic_k(k: i32) -> u32 {
+    if PERIODIC_Z { return u32(((k % i32(params.depth)) + i32(params.depth)) % i32(params.depth)); }
+    return u32(k);
+}
+
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
 }
@@ -43,29 +49,29 @@ fn cell_index(i: u32, j: u32, k: u32) -> u32 {
 fn get_cell_type(i: i32, j: i32, k: i32) -> u32 {
     if (i < 0 || i >= i32(params.width)) { return CELL_AIR; }
     if (j < 0 || j >= i32(params.height)) { return CELL_AIR; }
-    if (k < 0 || k >= i32(params.depth)) { return CELL_AIR; }
-    return cell_type[cell_index(u32(i), u32(j), u32(k))];
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return CELL_AIR; }
+    return cell_type[cell_index(u32(i), u32(j), periodic_k(k))];
 }
 
 fn sample_delta_x(i: i32, j: i32, k: i32) -> f32 {
     if (i < 0 || i >= i32(params.width)) { return 0.0; }
     if (j < 0 || j >= i32(params.height)) { return 0.0; }
-    if (k < 0 || k >= i32(params.depth)) { return 0.0; }
-    return position_delta_x[cell_index(u32(i), u32(j), u32(k))];
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return 0.0; }
+    return position_delta_x[cell_index(u32(i), u32(j), periodic_k(k))];
 }
 
 fn sample_delta_y(i: i32, j: i32, k: i32) -> f32 {
     if (i < 0 || i >= i32(params.width)) { return 0.0; }
     if (j < 0 || j >= i32(params.height)) { return 0.0; }
-    if (k < 0 || k >= i32(params.depth)) { return 0.0; }
-    return position_delta_y[cell_index(u32(i), u32(j), u32(k))];
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return 0.0; }
+    return position_delta_y[cell_index(u32(i), u32(j), periodic_k(k))];
 }
 
 fn sample_delta_z(i: i32, j: i32, k: i32) -> f32 {
     if (i < 0 || i >= i32(params.width)) { return 0.0; }
     if (j < 0 || j >= i32(params.height)) { return 0.0; }
-    if (k < 0 || k >= i32(params.depth)) { return 0.0; }
-    return position_delta_z[cell_index(u32(i), u32(j), u32(k))];
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return 0.0; }
+    return position_delta_z[cell_index(u32(i), u32(j), periodic_k(k))];
 }
 
 // Positive X face of a cell-centred pressure field.
@@ -204,7 +210,13 @@ fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
     let correction_scale: f32 = 1.0 / params.cell_size;  
     let delta = vec3<f32>(delta_x, delta_y, delta_z) * correction_scale;
 
-    let corrected = pos + delta;
+    var corrected = pos + delta;
+    if PERIODIC_Z {
+        let period = f32(params.depth) * params.cell_size;
+        corrected.z -= floor(corrected.z / period) * period;
+        if corrected.z >= period { corrected.z = 0.; }
+        corrected.z = max(corrected.z, 0.);
+    }
     positions[pid] = vec4<f32>(corrected, positions[pid].w);
 
     // Damp velocities slightly during position correction to bleed off jitter energy

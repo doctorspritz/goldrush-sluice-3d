@@ -1,9 +1,12 @@
+override SDF_PERIODIC_Z: bool = false;
 // Shared cell-centred geometry query for collision and volume admission.
 fn sdf_at(i: i32, j: i32, k: i32) -> f32 {
-    if (k < 0 || k >= i32(params.depth)) { return -params.cell_size; }
+    var kk = k;
+    if SDF_PERIODIC_Z { kk = ((k % i32(params.depth)) + i32(params.depth)) % i32(params.depth); }
+    if (kk < 0 || kk >= i32(params.depth)) { return -params.cell_size; }
     if (i < 0 || j < 0) { return -params.cell_size; }
     if (i >= i32(params.width) || j >= i32(params.height)) { return params.cell_size; }
-    return sdf[cell_index(u32(i), u32(j), u32(k))];
+    return sdf[cell_index(u32(i), u32(j), u32(kk))];
 }
 
 fn sample_sdf(pos: vec3<f32>) -> f32 {

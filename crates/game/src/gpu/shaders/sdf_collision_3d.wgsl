@@ -1,3 +1,4 @@
+override PERIODIC_Z: bool = false;
 override PHASE_RUNTIME_ALLOWED:bool=false;
 @group(0) @binding(7) var<storage,read> phase_status:array<u32>;
 // SDF Collision Shader (3D)
@@ -36,6 +37,17 @@ fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
 }
 
+fn periodic_cell_z(k: i32) -> i32 {
+    if PERIODIC_Z { return ((k % i32(params.depth)) + i32(params.depth)) % i32(params.depth); }
+    return k;
+}
+fn periodic_position_z(z: f32) -> f32 {
+    let period = f32(params.depth) * params.cell_size;
+    var result = z - floor(z / period) * period;
+    if result >= period { result = 0.; }
+    return max(result, 0.);
+}
+
 fn is_cell_solid(i: i32, j: i32, k: i32) -> bool {
     // Check open boundary flags for out-of-bounds cells
     let open_neg_x = (params.open_boundaries & 1u) != 0u;
@@ -52,10 +64,10 @@ fn is_cell_solid(i: i32, j: i32, k: i32) -> bool {
     if (j < 0) { return !open_neg_y; }
     if (j >= i32(params.height)) { return !open_pos_y; }
     // Z bounds
-    if (k < 0) { return !open_neg_z; }
-    if (k >= i32(params.depth)) { return !open_pos_z; }
+    if (!PERIODIC_Z && k < 0) { return !open_neg_z; }
+    if (!PERIODIC_Z && k >= i32(params.depth)) { return !open_pos_z; }
 
-    return cell_type[cell_index(u32(i), u32(j), u32(k))] == CELL_SOLID;
+    return cell_type[cell_index(u32(i), u32(j), u32(periodic_cell_z(k)))] == CELL_SOLID;
 }
 
 fn bed_index(i: i32, k: i32) -> u32 {
@@ -64,7 +76,8 @@ fn bed_index(i: i32, k: i32) -> u32 {
 
 fn bed_height_at(i: i32, k: i32) -> f32 {
     let ii = clamp(i, 0, i32(params.width) - 1);
-    let kk = clamp(k, 0, i32(params.depth) - 1);
+    var kk = clamp(k, 0, i32(params.depth) - 1);
+    if PERIODIC_Z { kk = periodic_cell_z(k); }
     return bed_height[bed_index(ii, kk)];
 }
 
@@ -118,6 +131,7 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Euler advection
     pos += vel * params.dt;
+    if PERIODIC_Z { pos.z = periodic_position_z(pos.z); }
     if (is_sediment && params.cpu_sediment_contacts != 0u) {
         // Do not cancel the normal impact before DEM can compute the normal
         // reaction and its Coulomb friction budget. DEM runs every substep.
@@ -146,8 +160,8 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
     // repeatedly stranded water above riffles and manufactured visible pops.
     if (!is_sediment) {
         let cell = vec3<i32>(floor(pos / params.cell_size));
-        let internal = all(cell > vec3<i32>(0)) &&
-            all(cell < vec3<i32>(i32(params.width)-1, i32(params.height)-1, i32(params.depth)-1));
+        let internal_xy = cell.x > 0 && cell.x < i32(params.width)-1 && cell.y > 0 && cell.y < i32(params.height)-1;
+        let internal = internal_xy && (PERIODIC_Z || (cell.z > 0 && cell.z < i32(params.depth)-1));
         if (internal && is_cell_solid(cell.x, cell.y, cell.z)) {
             let skin = params.cell_size * 0.001;
             var best = pos;
@@ -237,11 +251,11 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     // Z boundaries
-    if (pos.z < min_z && !open_neg_z) {
+    if (!PERIODIC_Z && pos.z < min_z && !open_neg_z) {
         pos.z = min_z;
         if (vel.z < 0.0) { vel.z = 0.0; }
     }
-    if (pos.z > max_z && !open_pos_z) {
+    if (!PERIODIC_Z && pos.z > max_z && !open_pos_z) {
         pos.z = max_z;
         if (vel.z > 0.0) { vel.z = 0.0; }
     }
@@ -260,6 +274,7 @@ fn sdf_collision(@builtin(global_invocation_id) id: vec3<u32>) {
     //     }
     // }
 
+    if PERIODIC_Z { pos.z = periodic_position_z(pos.z); }
     positions[pid] = vec4<f32>(pos, positions[pid].w);
     velocities[pid] = vec4<f32>(vel, 0.0);
 }

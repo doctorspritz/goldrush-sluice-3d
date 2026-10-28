@@ -1,3 +1,4 @@
+override PERIODIC_Z: bool = false;
 // Boundary Condition Enforcement Shader (3D)
 //
 // Zeros out velocity components at domain boundaries and solid cell faces.
@@ -188,6 +189,24 @@ fn enforce_bc_w(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let idx = w_index(i, j, k);
+
+    if PERIODIC_Z {
+        if k == params.depth { return; }
+        let back = (k + params.depth - 1u) % params.depth;
+        var value = grid_w[idx];
+        let solid = cell_type[cell_index(i,j,back)] == CELL_SOLID || cell_type[cell_index(i,j,k)] == CELL_SOLID;
+        if solid { value = 0.; }
+        else if params.slip_factor < 1. {
+            var floor = j < 4u && (params.open_boundaries & 4u) == 0u;
+            if j >= 4u {
+                floor = cell_type[cell_index(i,j-1u,back)] == CELL_SOLID || cell_type[cell_index(i,j-1u,k)] == CELL_SOLID;
+            }
+            if floor { value *= params.slip_factor; }
+        }
+        grid_w[idx] = value;
+        if k == 0u { grid_w[w_index(i,j,params.depth)] = value; }
+        return;
+    }
 
     // Check open boundary flags
     let open_neg_z = (params.open_boundaries & 16u) != 0u;

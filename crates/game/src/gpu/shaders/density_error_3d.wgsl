@@ -1,3 +1,4 @@
+override PERIODIC_Z: bool = false;
 override PHASE_RUNTIME_ALLOWED:bool=false;
 @group(0) @binding(4) var<storage,read> represented_volume:array<f32>;
 // Density Error Shader (3D)
@@ -29,6 +30,11 @@ const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
 const CELL_SOLID: u32 = 2u;
 
+fn periodic_k(k: i32) -> u32 {
+    if PERIODIC_Z { return u32(((k % i32(params.depth)) + i32(params.depth)) % i32(params.depth)); }
+    return u32(k);
+}
+
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
 }
@@ -36,8 +42,8 @@ fn cell_index(i: u32, j: u32, k: u32) -> u32 {
 fn get_cell_type(i: i32, j: i32, k: i32) -> u32 {
     if (i < 0 || i >= i32(params.width)) { return CELL_AIR; }
     if (j < 0 || j >= i32(params.height)) { return CELL_AIR; }
-    if (k < 0 || k >= i32(params.depth)) { return CELL_AIR; }
-    return cell_type[cell_index(u32(i), u32(j), u32(k))];
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return CELL_AIR; }
+    return cell_type[cell_index(u32(i), u32(j), periodic_k(k))];
 }
 
 @compute @workgroup_size(8, 8, 4)
