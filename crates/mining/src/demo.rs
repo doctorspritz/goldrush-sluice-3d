@@ -2,6 +2,9 @@
 use mining_sim::Session;
 use std::io::Read;
 pub fn session() -> Result<Session, String> {
+    configured_session(std::env::args().any(|a| a == "--bulk-screen"))
+}
+fn configured_session(bulk: bool) -> Result<Session, String> {
     let mut decoder =
         flate2::read::ZlibDecoder::new(&include_bytes!("../assets/demo/flowing.json.zlib")[..]);
     let mut json = String::new();
@@ -12,6 +15,13 @@ pub fn session() -> Result<Session, String> {
     session.enable_spatial_tailings()?;
     session.enable_loose_gold()?;
     session.enable_screen()?;
+    if bulk {
+        session
+            .plant
+            .as_mut()
+            .unwrap()
+            .set_bulk_screen(Some(mining_sim::screen::BulkDeck::default()))?;
+    }
     session.plant.as_mut().unwrap().screen.motor_on = true;
     session.message = "Running plant: finite hopper / dry screen / wet sluice. K screen · M empty-deck aperture · L empty stopped screen.".into();
     Ok(session)
@@ -27,6 +37,31 @@ pub fn initial() -> (Session, bool) {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn opt_in_bulk_demo_and_restarts_use_the_same_saved_finite_circuit() {
+        for _ in 0..2 {
+            let s = super::configured_session(true).unwrap();
+            let p = s.plant.as_ref().unwrap();
+            assert!(p.screen.motor_on && p.screen.bulk_deck().is_some());
+            assert_eq!(p.model_version, 2);
+            assert!(p.connected_to(&s.sluice));
+            assert!(s.sluice.water.len() > 10000 && s.sluice.hopper.volume() > 0.4);
+            assert!((s.accounted_gold() - s.initial_gold_g).abs() < 1e-7);
+            let restored = mining_sim::Session::load_json(&s.save_json().unwrap()).unwrap();
+            assert_eq!(
+                serde_json::to_value(&restored.plant).unwrap(),
+                serde_json::to_value(&s.plant).unwrap()
+            );
+        }
+        assert!(super::configured_session(false)
+            .unwrap()
+            .plant
+            .unwrap()
+            .screen
+            .bulk_deck()
+            .is_none());
+    }
+
     #[test]
     fn bundled_demo_has_real_flow_finite_paydirt_and_balanced_ledger() {
         let s = super::session().unwrap();

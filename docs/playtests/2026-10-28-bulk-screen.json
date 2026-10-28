@@ -1,0 +1,629 @@
+{
+  "date": "2026-10-28",
+  "baseline_commit": "e80296f9a2e0f0628698c470aa3d999b4493e962",
+  "goal_status": "active",
+  "full_operation_complete": false,
+  "real_time_achieved": false,
+  "empirically_calibrated": false,
+  "default_screen_changed": false,
+  "installed_app_changed": false,
+  "original_water_riffle_terrain_sources_unchanged": true,
+  "opt_in": "target/playable/mining --bulk-screen (running demo; same factory on restart; saved model retained on load)",
+  "model": "Finite weighted parcels with local bulk depth/adhesive coverage and saved statistical residence exposure. Explicit detailed wires remain default/reference.",
+  "source_manifest": {
+    "crates/mining-sim/src/bulk_screen.rs": "e91d380dc5d008e917c5489b61c032ddc18aa17c14043eb07edc91208cc6bca6",
+    "crates/mining-sim/src/screen.rs": "419e65e370692832a97f7fc181a73c9327e8cecf48061f042cbbfe7786a653f9",
+    "crates/mining-sim/src/plant.rs": "22b8ff640e4b108ed41d40ec68a02f670f9a95566a5da14d6bb7eaa1494203ee",
+    "crates/mining-sim/tests/bulk_screen.rs": "6de6a9226fa14db1c4380b20710479c8d29af69a70d4efc7896717cc663bb94b",
+    "crates/mining-physics/tests/screen_plant.rs": "fb804fd2b39c0edc4afdadc1c49f4a8785df88371273ebe1499a2d7d12c1c1fe",
+    "crates/mining/src/demo.rs": "527a1efd4a5351315fa701ccf4ee7dabc3ea552cfbb5594e0a1669316c6f8ac0"
+  },
+  "quality": {
+    "cpu-circuit": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 22984,
+      "discarded_log_bytes": 0
+    },
+    "qualified-bulk-controls": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1959,
+      "discarded_log_bytes": 0
+    },
+    "metal-circuit": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 2985,
+      "discarded_log_bytes": 0
+    },
+    "demo-controls": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1315,
+      "discarded_log_bytes": 0
+    },
+    "final-native-build": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 637,
+      "discarded_log_bytes": 0
+    },
+    "lint-app": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1102,
+      "discarded_log_bytes": 0
+    },
+    "lint-sim": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 293,
+      "discarded_log_bytes": 0
+    }
+  },
+  "unique_cpu_domain_checks": 145,
+  "focused_app_checks": 2,
+  "actual_metal_circuit_checks": 2,
+  "format_changed_files_passed": true,
+  "lint_scope": "Strict --no-deps for mining binary and mining-sim library/bulk tests.",
+  "broader_style_status": "Workspace fmt --all --check has existing unrelated differences; dependency-inclusive strict Clippy has 10 existing sim3d lints. Those broad commands did not pass. Changed-source format and owned-crate lint checks pass.",
+  "screen_only_cost": {
+    "ticks": 120,
+    "parcels": 32,
+    "wire_ms": 32.4492,
+    "bulk_ms": 1.4496,
+    "cost_ratio": 22.384933774834437,
+    "scope": "Different models; dilute screen only, not overall/native/accuracy evidence."
+  },
+  "static_geometric_control": {
+    "samples": 1024,
+    "expected_probability": 0.25,
+    "observed_probability": 0.2392578125
+  },
+  "metal_circuits": [
+    {
+      "bulk_deck": true,
+      "bulk_error_m3": 7.446828931279015e-09,
+      "collected_rejects": {
+        "gold_g": 0.004730140878812461,
+        "gravel_m3": 0.001650000000000027,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "full_state_underflow_matches": 1008,
+      "gold_error_g": -5.9117155615240335e-12,
+      "limits": "Uncalibrated statistical bulk deck, local loading/adhesion and inelastic mean transport; no screen-water solver or explicit dense contact packing. Original wet sluice retained.",
+      "live_plant_restored": true,
+      "maximum_deck_particles": 239,
+      "screen_admitted": {
+        "gold_g": 0.04556998993151615,
+        "gravel_m3": 0.0023999999999999968,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "screen_delivered": {
+        "gold_g": 0.04072297199654689,
+        "gravel_m3": 0.0006940000000000039,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "ticks": 480,
+      "water_error_m3": 1.998775349676407e-07
+    },
+    {
+      "bulk_deck": false,
+      "bulk_error_m3": 7.558071501989616e-09,
+      "collected_rejects": {
+        "gold_g": 0.004896256906206953,
+        "gravel_m3": 0.0013820000000000206,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "full_state_underflow_matches": 1170,
+      "gold_error_g": -7.275957614183426e-12,
+      "limits": "Dilute physical-diameter parcels in a dry moving wire screen; no dense packing/blinding or screen-water hydraulics. Original wet sluice retained.",
+      "live_plant_restored": true,
+      "maximum_deck_particles": 283,
+      "screen_admitted": {
+        "gold_g": 0.04556998993151615,
+        "gravel_m3": 0.0023999999999999968,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "screen_delivered": {
+        "gold_g": 0.040568504212584275,
+        "gravel_m3": 0.0010180000000000117,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "ticks": 480,
+      "water_error_m3": 1.979442885158278e-07
+    }
+  ],
+  "matched_physical_time_grade_difference": {
+    "seconds": 8,
+    "gravel_screen_underflow_relative": -0.3182711198428332,
+    "gold_screen_underflow_relative": 0.0038075789817930694,
+    "not_sluice_recovery": true
+  },
+  "native_windows": {
+    "native-bulk": {
+      "bulk_budget_passed": true,
+      "bulk_material_error_m3": 4.498680254982901e-07,
+      "bulk_tolerance_m3": 0.00041246746177885075,
+      "detail_revision": 2,
+      "displayed_grains": 8535,
+      "dry_mass_budget_passed": true,
+      "dry_mass_error_kg": 0.0008096167584881186,
+      "dry_mass_tolerance_kg": 0.8074216197138994,
+      "exported_gold_g": 4.487311575458121,
+      "exported_material_m3": [
+        0.0,
+        0.6872192181626025,
+        0.0,
+        0.4930017144887913
+      ],
+      "failure": null,
+      "fluid_surface_ready": true,
+      "gold_balance_error_g": 2.2737367544323206e-12,
+      "grains": 3746,
+      "initial_bulk_material_m3": 412.46746177885075,
+      "initial_dry_mass_kg": 807421.6197138994,
+      "inlet": {
+        "emission_clock": 0.0,
+        "emitted": {
+          "gold_g": 0.00614654257568056,
+          "solid_m3": [
+            0.0,
+            0.005429027723377771,
+            0.0,
+            0.0006622618421932785
+          ]
+        },
+        "last_water_m3": 6.249640136957169e-05,
+        "pending": {
+          "gold_g": 7.086310038481975e-06,
+          "solid_m3": [
+            0.0,
+            0.0,
+            8.302683560807342e-21,
+            0.0
+          ]
+        },
+        "ready": {
+          "gold_g": 6.124522203897185e-11,
+          "solid_m3": [
+            0.0,
+            6.599961827041524e-10,
+            2.9416154162033575e-26,
+            6.561784308460481e-12
+          ]
+        },
+        "sequence": 4545,
+        "withdrawn": {
+          "gold_g": 0.006153628946964282,
+          "solid_m3": [
+            0.0,
+            0.005429028383373915,
+            8.302712976961498e-21,
+            0.0006622618487550645
+          ]
+        }
+      },
+      "last_worker_tick_ms": 73.857958,
+      "max_water_speed_mps": 1.0800000429153442,
+      "mean_fps": 59.92000446221025,
+      "one_second_ratios": [
+        0.4999548636543336,
+        0.5244402314785653,
+        0.4619680907033572,
+        0.499710839416575,
+        0.4999997550771648,
+        0.5211267910130634,
+        0.46200549813036185,
+        0.4986939879142856,
+        0.49192503530086545,
+        0.49669324954266214,
+        0.495439586922383,
+        0.4965065237558033,
+        0.49190829837423916,
+        0.46215326387153965,
+        0.49974686281202824,
+        0.4988562937626159,
+        0.49103059508856184,
+        0.4997173110083291,
+        0.4275353177650735,
+        0.4648965393197027,
+        0.4651697941448033,
+        0.4283596188539621,
+        0.45975679555620336,
+        0.4656370125134376,
+        0.45993511923466146,
+        0.43327161472832904,
+        0.46627998962259626,
+        0.4326897839660014,
+        0.46579375484776364,
+        0.4246160591499609,
+        0.4283425408095718,
+        0.42684062975908366,
+        0.46363296664212805,
+        0.4288999598719184,
+        0.4301198586395156,
+        0.4292362954929477,
+        0.4322803210712981,
+        0.4270774544852701,
+        0.4323935304345002,
+        0.426086058170014,
+        0.4270417498331362,
+        0.432270870013417,
+        0.43323573319272457,
+        0.42620257807397777,
+        0.42626854098583156,
+        0.4330216344843035,
+        0.4309849551157384,
+        0.4331386601057103,
+        0.42914925795567455,
+        0.4302564133350013,
+        0.39546830017636714,
+        0.42687020339962656,
+        0.4332578247970575,
+        0.43318883330891517,
+        0.4262685934007013,
+        0.4317462923975168,
+        0.39474124522915943,
+        0.433116545153905,
+        0.39944399482083504
+      ],
+      "outflow_particles": 10658,
+      "p95_frame_ms": 20.562125,
+      "passed": false,
+      "paused": false,
+      "phase_model": "legacy",
+      "simulation_seconds": 27.13333474844694,
+      "simulation_wall_ratio": 0.45217506950070663,
+      "sluice_water_balance_error_m3": 0.0,
+      "slurry": {
+        "feed_grading": "Alluvial",
+        "fine_parcels_below_200um": 98,
+        "independently_resolved_grain_collisions": false,
+        "optical_grid_m": 0.029999999329447746,
+        "optics_calibrated": false,
+        "outlet_extinction_m1": 253.5103759765625,
+        "projected_suspended_fines_m3": 0.000544222177507741,
+        "projected_water_m3": 0.014460499963490773,
+        "projection_fines_error_m3": 3.2526065174565133e-19,
+        "projection_water_error_m3": 2.6020852139652106e-17,
+        "represented_grains": 1131608161.0049078,
+        "solver_parcels": 3746
+      },
+      "stored_water_m3": 12.744331068441806,
+      "terrain_fine_cells": 362,
+      "terrain_water_splats": 2772,
+      "wall_seconds": 60.006259917,
+      "warmup_seconds": 5,
+      "water_balance": {
+        "baseline_sim_time": 0.0,
+        "boundary_outflow_m3": 9.720780222200395,
+        "external_inflow_m3": 8.351994522847235,
+        "initial_stored_m3": 14.113124481402338,
+        "legacy_baseline": false
+      },
+      "water_balance_error_m3": -7.71360737417126e-06,
+      "water_cfl_speed_mps": 1.0799999237060547,
+      "water_marker_m3": 1.2499999968440534e-07,
+      "water_markers_per_cell": 8,
+      "water_mean_downstream_ms": 0.38728201389312744,
+      "water_near_cfl_limit": 564,
+      "water_particles": 115684,
+      "water_presentation": {
+        "buffer_underrun_frames": 0,
+        "coalesced_surface_requests": 228,
+        "interpolation_alpha": 0.06441251188516617,
+        "max_capture_ms": 1.055125,
+        "max_surface_build_ms": 153.198542,
+        "max_surface_queue_ms": 101.18199999999999,
+        "mean_capture_ms": 0.38783992575927984,
+        "mean_surface_build_ms": 98.0454788545453,
+        "mean_surface_queue_ms": 37.371584601515124,
+        "paired_render_particles": 66070,
+        "presented_sim_time": 69.46881737351828,
+        "surface_builds": 660
+      },
+      "worker_busy_fraction": 0.9991590590703399,
+      "worker_mean_ms": 73.47524288848037,
+      "worker_packets": 816,
+      "worker_phases_mean_ms": [
+        2.0320540073529427,
+        47.15366999387259,
+        14.176073927696079,
+        2.085682425245097,
+        3.966322873774511
+      ]
+    },
+    "native-reference": {
+      "bulk_budget_passed": true,
+      "bulk_material_error_m3": 2.7266094093647553e-07,
+      "bulk_tolerance_m3": 0.00041246746177794224,
+      "detail_revision": 2,
+      "displayed_grains": 7980,
+      "dry_mass_budget_passed": true,
+      "dry_mass_error_kg": 0.0004907171241939068,
+      "dry_mass_tolerance_kg": 0.8074216197123445,
+      "exported_gold_g": 4.426940972095158,
+      "exported_material_m3": [
+        0.0,
+        0.637147879540783,
+        0.0,
+        0.4863921559259197
+      ],
+      "failure": null,
+      "fluid_surface_ready": true,
+      "gold_balance_error_g": 2.2737367544323206e-12,
+      "grains": 3593,
+      "initial_bulk_material_m3": 412.4674617779423,
+      "initial_dry_mass_kg": 807421.6197123445,
+      "inlet": {
+        "emission_clock": 0.0,
+        "emitted": {
+          "gold_g": 0.006073208900314153,
+          "solid_m3": [
+            0.0,
+            0.004644424751848975,
+            0.0,
+            0.0006538414419085669
+          ]
+        },
+        "last_water_m3": 6.249640136957169e-05,
+        "pending": {
+          "gold_g": 1.588837404655502e-06,
+          "solid_m3": [
+            0.0,
+            0.0,
+            1.2407633327243146e-22,
+            0.0
+          ]
+        },
+        "ready": {
+          "gold_g": 3.065300765376785e-10,
+          "solid_m3": [
+            0.0,
+            2.4906737633349985e-09,
+            8.502573419197994e-28,
+            3.266385470709832e-11
+          ]
+        },
+        "sequence": 3949,
+        "withdrawn": {
+          "gold_g": 0.0060747980442489155,
+          "solid_m3": [
+            0.0,
+            0.004644427242522771,
+            1.2407718352977336e-22,
+            0.0006538414745724233
+          ]
+        }
+      },
+      "last_worker_tick_ms": 94.0835,
+      "max_water_speed_mps": 1.0800000429153442,
+      "mean_fps": 59.987219690360924,
+      "one_second_ratios": [
+        0.4253925702653794,
+        0.4270785240250041,
+        0.3998275784256713,
+        0.433088192070396,
+        0.39839376334119864,
+        0.39503380401522276,
+        0.3997774947136307,
+        0.3999143724002318,
+        0.39916699287751767,
+        0.39700411190796747,
+        0.43011420188886934,
+        0.3999562088585949,
+        0.43031316725306923,
+        0.39988317179976035,
+        0.3933666785610506,
+        0.3999900047119177,
+        0.3996401113715662,
+        0.3961903864332724,
+        0.3998505603208328,
+        0.3963679200734849,
+        0.39341181559159427,
+        0.3630763447212974,
+        0.39785638696079273,
+        0.39319130707856476,
+        0.39360376291241744,
+        0.36237266035774923,
+        0.3921778377978291,
+        0.3624427031393552,
+        0.3999352313541463,
+        0.3968933382564235,
+        0.3632955450862561,
+        0.3967114971709981,
+        0.3627372439108483,
+        0.39925139136495086,
+        0.36190858316974506,
+        0.3665490847473168,
+        0.3962342109210322,
+        0.3638777747868252,
+        0.3333069084810509,
+        0.3970623715820952,
+        0.3631284378223971,
+        0.36664016524011106,
+        0.36650780465650495,
+        0.36525174618158435,
+        0.32907517293578625,
+        0.3665421226806466,
+        0.3331227475189352,
+        0.36077830296790936,
+        0.333223359018783,
+        0.3666045312909839,
+        0.3664984021844861,
+        0.33333004508396424,
+        0.3642023108534338,
+        0.3299785279894648,
+        0.3658655923426795,
+        0.36477819877815854,
+        0.33000851493010064,
+        0.36398845871063074,
+        0.3295980163981808
+      ],
+      "outflow_particles": 10280,
+      "p95_frame_ms": 20.245834000000002,
+      "passed": false,
+      "paused": false,
+      "phase_model": "legacy",
+      "simulation_seconds": 22.800001189112663,
+      "simulation_wall_ratio": 0.3799036208576835,
+      "sluice_water_balance_error_m3": 0.0,
+      "slurry": {
+        "feed_grading": "Alluvial",
+        "fine_parcels_below_200um": 105,
+        "independently_resolved_grain_collisions": false,
+        "optical_grid_m": 0.029999999329447746,
+        "optics_calibrated": false,
+        "outlet_extinction_m1": 242.19338989257812,
+        "projected_suspended_fines_m3": 0.000611595472102508,
+        "projected_water_m3": 0.014497999963396114,
+        "projection_fines_error_m3": 2.6020852139652106e-18,
+        "projection_water_error_m3": 4.5102810375396984e-17,
+        "represented_grains": 1237379956.096764,
+        "solver_parcels": 3593
+      },
+      "stored_water_m3": 12.796064050698831,
+      "terrain_fine_cells": 363,
+      "terrain_water_splats": 2773,
+      "wall_seconds": 60.01522475,
+      "warmup_seconds": 5,
+      "water_balance": {
+        "baseline_sim_time": 0.0,
+        "boundary_outflow_m3": 9.117048385065527,
+        "external_inflow_m3": 7.799995460547507,
+        "initial_stored_m3": 14.113124481402338,
+        "legacy_baseline": false
+      },
+      "water_balance_error_m3": -7.506185486505501e-06,
+      "water_cfl_speed_mps": 1.0799999237060547,
+      "water_marker_m3": 1.2499999968440534e-07,
+      "water_markers_per_cell": 8,
+      "water_mean_downstream_ms": 0.3881186544895172,
+      "water_near_cfl_limit": 369,
+      "water_particles": 115984,
+      "water_presentation": {
+        "buffer_underrun_frames": 0,
+        "coalesced_surface_requests": 79,
+        "interpolation_alpha": 0.8490633368492126,
+        "max_capture_ms": 1.147125,
+        "max_surface_build_ms": 126.19775,
+        "max_surface_queue_ms": 97.000292,
+        "mean_capture_ms": 0.3723526018641813,
+        "mean_surface_build_ms": 96.32740764925377,
+        "mean_surface_queue_ms": 38.20203096716421,
+        "paired_render_particles": 66045,
+        "presented_sim_time": 64.92830549687007,
+        "surface_builds": 670
+      },
+      "worker_busy_fraction": 1.000245656882256,
+      "worker_mean_ms": 87.76311096929821,
+      "worker_packets": 684,
+      "worker_phases_mean_ms": [
+        2.057505850877195,
+        47.89413609210529,
+        12.453993074561401,
+        2.1328925292397645,
+        3.8299097105263096
+      ]
+    }
+  },
+  "native_state_checks": {
+    "native-bulk": {
+      "raw_save_sha256": "4d182747d749cb4f4419174ca45bd6d411761935a35d6209739c5f63bf626314",
+      "raw_save_bytes": 31578485,
+      "plant_model_version": 2,
+      "bulk_config": {
+        "cells_downstream": 16,
+        "cells_across": 4,
+        "soil_yield_pa": 25.0
+      },
+      "resident_count": 123,
+      "residence_count": 123,
+      "screen_delivered": {
+        "soil_m3": 0.00081847272690804,
+        "sand_m3": 0.0,
+        "gravel_m3": 0.0006956506857512362,
+        "gold_g": 0.04396021721694178,
+        "pore_water_m3": 0.0
+      },
+      "screen_stock_counts": {
+        "particles": 123,
+        "undersize": 5,
+        "oversize": 898,
+        "spills": 0
+      }
+    },
+    "native-reference": {
+      "raw_save_sha256": "0fb3d4a779514ec93467669b27cf91f80edb4fa5887461ae3cbe0aea42caba05",
+      "raw_save_bytes": 31420385,
+      "plant_model_version": 1,
+      "bulk_config": null,
+      "resident_count": 168,
+      "residence_count": null,
+      "screen_delivered": {
+        "soil_m3": 0.000692158151037456,
+        "sand_m3": 0.0,
+        "gravel_m3": 0.0009242012190575911,
+        "gold_g": 0.03670044251736868,
+        "pore_water_m3": 0.0
+      },
+      "screen_stock_counts": {
+        "particles": 168,
+        "undersize": 5,
+        "oversize": 505,
+        "spills": 0
+      }
+    }
+  },
+  "native_throughput_observed_ratio": 1.1902362722415245,
+  "native_comparison_limit": "One serial pair from the same demo setup; trajectories and final grain counts differ. No repeatability or grading-accuracy claim. Both real-time gates fail.",
+  "visual_inspection": "Both 1440x900 native views show connected shaker/gutter/sluice, current water and moving stock. Static frames do not qualify animation or final visual quality. Wire moire and shiny/patchy riffle-water presentation remain.",
+  "cleanup": {
+    "removed_files": 16,
+    "logical_bytes": 157142354,
+    "allocated_bytes": 157184000,
+    "native_candidate_preserved": true,
+    "installed_app_and_pinned_fixture_unchanged": true,
+    "source_status_unchanged": true,
+    "remaining_artifact_bytes": 1097986,
+    "retained_capture_previews": [
+      "native-bulk.jpg",
+      "native-reference.jpg"
+    ]
+  },
+  "local_evidence_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/bulk-screen-20261028",
+  "limitations": [
+    "Uncalibrated statistical attempt/accessibility/mean-friction laws; representative parcels pass as a whole.",
+    "No deck-water/spray solver, explicit dense packing/cohesive fracture or bulk actuator-work/passivity audit.",
+    "Overload control measures bed growth and product change; the fine-feed product difference is small. Packed and mixed-grade operating regimes need qualification.",
+    "Bulk bed is not yet rendered as a continuous material layer; original grain presentation remains.",
+    "No reduced-width/full-width lane/head/active-bed integration yet; loaded DEM/fluids/rendering still limit real time.",
+    "Full pads, digging, wet mud, upgraded wash plants, ponds, tailings, erosion/flood/failure and complete playable operation remain active."
+  ],
+  "next": "Keep menace-94n/calibration open. Establish per-size operating envelopes, mean bed presentation and dense-grade/load validity, then full-width finite active-bed/cohort and lane/head/water ownership/reaction/wake integration. Continue complete operation/failure/graphics scope.",
+  "research_sources": [
+    {
+      "url": "https://research.monash.edu/en/publications/discrete-particle-simulation-of-particle-flow-and-separation-on-a/",
+      "scope": "Primary author abstract: aperture shape, single attempts and number of attempts."
+    },
+    {
+      "url": "https://www.sciencedirect.com/science/article/pii/S0263876218303095",
+      "scope": "Primary paper abstract/search excerpt: moist screening, capillary bonds and flooded conditions. Publisher full text returned403."
+    }
+  ],
+  "research_is_not_validation_of_local_surrogate_coefficients": true
+}

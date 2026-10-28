@@ -4,9 +4,26 @@ use mining_sim::{session::Controls, Action, Placement, Session, Vec3};
 #[test]
 #[ignore = "requires an actual Metal/Vulkan adapter"]
 fn finite_dug_feed_crosses_actual_screen_and_continues_in_original_wet_sluice() {
+    exercise_circuit(false);
+}
+
+#[test]
+#[ignore = "requires an actual Metal/Vulkan adapter"]
+fn finite_bulk_deck_circuit_continues_in_original_wet_sluice() {
+    exercise_circuit(true);
+}
+
+fn exercise_circuit(bulk: bool) {
     let mut s = Session::new_operation();
     s.sluice.placement = Some(Placement::suggested(&s.site));
     s.enable_screen().unwrap();
+    if bulk {
+        s.plant
+            .as_mut()
+            .unwrap()
+            .set_bulk_screen(Some(mining_sim::screen::BulkDeck::default()))
+            .unwrap();
+    }
     // Initial operator pose for the separate native K/L/M maintenance replay.
     // No runtime teleport or material injection is part of that replay.
     s.player.position = mining_sim::Sluice::hopper_position(&s.site) + Vec3::X * 1.5;
@@ -107,7 +124,7 @@ fn finite_dug_feed_crosses_actual_screen_and_continues_in_original_wet_sluice() 
     assert!((s.accounted_gold() - s.initial_gold_g).abs() < 1e-7);
     println!(
         "{}",
-        serde_json::json!({"ticks":480,"full_state_underflow_matches":full_state_matches,"maximum_deck_particles":maximum_deck,"live_plant_restored":restored,"screen_admitted":s.plant.as_ref().unwrap().screen.admitted,"screen_delivered":s.plant.as_ref().unwrap().screen.delivered,"collected_rejects":rejects,"gold_error_g":s.accounted_gold()-s.initial_gold_g,"bulk_error_m3":s.accounted_material().volume()-baseline.volume(),"water_error_m3":s.water_balance_error_m3(),"limits":"Dilute physical-diameter point parcels in a dry moving screen; no dense packing/blinding or screen-water hydraulics. Original wet sluice solver retained."})
+        serde_json::json!({"bulk_deck":bulk,"ticks":480,"full_state_underflow_matches":full_state_matches,"maximum_deck_particles":maximum_deck,"live_plant_restored":restored,"screen_admitted":s.plant.as_ref().unwrap().screen.admitted,"screen_delivered":s.plant.as_ref().unwrap().screen.delivered,"collected_rejects":rejects,"gold_error_g":s.accounted_gold()-s.initial_gold_g,"bulk_error_m3":s.accounted_material().volume()-baseline.volume(),"water_error_m3":s.water_balance_error_m3(),"limits":if bulk { "Uncalibrated statistical bulk deck, local loading/adhesion and inelastic mean transport; no screen-water solver or explicit dense contact packing. Original wet sluice retained." } else { "Dilute physical-diameter parcels in a dry moving wire screen; no dense packing/blinding or screen-water hydraulics. Original wet sluice retained." }})
     );
     if let Some(path) = std::env::var_os("SLUICE_SCREEN_OUTPUT") {
         let dir = std::path::PathBuf::from(path);

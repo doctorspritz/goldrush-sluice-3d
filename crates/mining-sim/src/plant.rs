@@ -86,13 +86,37 @@ impl Plant {
         }
         let mut next = Self::for_placement(s, p)?;
         let origin = next.screen.origin;
+        next.model_version = self.model_version;
         next.screen = self.screen.clone();
         next.screen.origin = origin;
         next.screen.yaw = p.yaw;
         Ok(next)
     }
+    pub fn set_bulk_screen(
+        &mut self,
+        config: Option<crate::screen::BulkDeck>,
+    ) -> Result<(), String> {
+        if !self.valid() || !self.pending_feed.is_empty() || self.pending_moisture_m3 != 0. {
+            return Err(
+                "Empty the complete feeder circuit before changing its screen model".into(),
+            );
+        }
+        self.screen.set_bulk_deck(config)?;
+        // Older readers reject this model instead of silently reverting its law.
+        self.model_version = if self.screen.bulk_deck().is_some() {
+            2
+        } else {
+            1
+        };
+        Ok(())
+    }
     pub fn valid(&self) -> bool {
-        self.model_version == 1
+        self.model_version
+            == if self.screen.bulk_deck().is_some() {
+                2
+            } else {
+                1
+            }
             && self.connections == routes()
             && self.screen.valid()
             && self.pending_feed.len() <= SCREEN_FEED_BATCH_MAX

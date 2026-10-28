@@ -1,8 +1,13 @@
-//! Finite moving screen prototype. Weighted parcels follow their physical grain
-//! diameter and wet mass in this deliberately dilute domain: there is no parcel
-//! packing, cohesion, screen-water solver, or dense blinding/clogging model.
+//! Finite moving screen with detailed wires by default. Its weighted parcels
+//! follow physical grain diameter and wet mass in a deliberately dilute domain.
+//! Optional bulk-deck loading/adhesion is an independently saved statistical
+//! approximation; neither mode has a screen-water or explicit packing solver.
 //! Wires, gutter and catch bin have the same geometry exposed to presentation.
+#[path = "bulk_screen.rs"]
+mod bulk;
 use crate::{sluice::Grain, Material, Vec3};
+pub use bulk::BulkDeck;
+use bulk::BulkState;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 
@@ -98,7 +103,8 @@ pub struct ScreenStep {
     pub intervals: usize,
     pub contact_queries: usize,
     pub contacts: usize,
-    /// Work supplied to grains by the prescribed moving wires, sum J dot v_wire.
+    /// Detailed-wire mode only: work supplied by wires, sum J dot v_wire.
+    /// The statistical bulk law does not resolve this actuator-work audit.
     pub motor_work_j: f64,
     /// Explicit numerical gravitational work of the bounded clearance repair.
     /// This is not physical actuator work or an additional energy allowance.
@@ -127,6 +133,8 @@ pub struct Screen {
     pub free_water_admitted_m3: f64,
     pub free_water_delivered_m3: f64,
     pub last_step: ScreenStep,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bulk: Option<BulkState>,
     installed_config: ScreenConfig,
     next_id: u64,
     /// Transaction-local immutable geometry; never persisted or retained by
@@ -286,6 +294,7 @@ fn same_feature(a: Hit, b: Hit) -> bool {
 impl Screen {
     pub fn new(origin: Vec3, yaw: f32) -> Self {
         Self {
+            bulk: None,
             installed_config: ScreenConfig::default(),
             config: ScreenConfig::default(),
             origin,
@@ -506,6 +515,30 @@ impl Screen {
         self.time = 0.;
         Ok(())
     }
+    /// Select the statistical bulk deck only while stopped and completely empty.
+    /// Detailed wire contacts remain the default and an independent reference.
+    pub fn set_bulk_deck(&mut self, config: Option<BulkDeck>) -> Result<(), String> {
+        if !self.valid() || self.motor_on || self.stock_count() != 0 || self.free_water_m3 != 0. {
+            return Err("Stop and empty screen before changing its processing model".into());
+        }
+        if config.as_ref().is_some_and(|c| !c.valid()) {
+            return Err("Invalid bulk screen parameters".into());
+        }
+        self.bulk = config.map(BulkState::new);
+        Ok(())
+    }
+    pub fn bulk_deck(&self) -> Option<&BulkDeck> {
+        self.bulk.as_ref().map(|b| &b.config)
+    }
+    /// Local coarse bed diagnostics own no additional material or water.
+    pub fn bulk_bed(&self) -> Option<Vec<(f64, f64)>> {
+        self.bulk.as_ref().map(|b| {
+            b.bed(self)
+                .into_iter()
+                .map(|c| (c.depth_m, c.blinded))
+                .collect()
+        })
+    }
     fn stock_count(&self) -> usize {
         self.particles.len() + self.undersize.len() + self.oversize.len() + self.spills.len()
     }
@@ -554,6 +587,9 @@ impl Screen {
         self.try_reserve_feed(grains.len())?;
         for g in grains {
             self.next_id += 1;
+            if let Some(bulk) = &mut self.bulk {
+                bulk.admit(self.next_id);
+            }
             self.admitted.add(g.material);
             self.particles.push(ScreenParticle {
                 id: self.next_id,
@@ -605,6 +641,9 @@ impl Screen {
         out.try_reserve(self.stock_count())
             .map_err(|_| "Cannot reserve cleanout; screen stock retained")?;
         out.extend(self.particles.drain(..).map(|p| p.grain));
+        if let Some(bulk) = &mut self.bulk {
+            bulk.clear();
+        }
         out.append(&mut self.undersize);
         out.append(&mut self.oversize);
         out.append(&mut self.spills);
@@ -648,6 +687,9 @@ impl Screen {
             .iter()
             .all(|v| v.is_finite() && *v >= 0.)
         {
+            return false;
+        }
+        if self.bulk.as_ref().is_some_and(|b| !b.valid(self)) {
             return false;
         }
         let mut ids = std::collections::BTreeSet::new();
@@ -716,16 +758,21 @@ impl Screen {
         next.spills
             .try_reserve(next.particles.len())
             .map_err(|_| "Cannot reserve screen spills".to_string())?;
-        let wires = next.rest_wires();
-        let gutter = next.gutter_triangles();
-        let bin = next.bin_triangles();
-        let mut particles = std::mem::take(&mut next.particles);
-        for mut particle in particles.drain(..) {
-            match next.advance(&mut particle, dt as f64, &wires, &gutter, &bin)? {
-                Some(Surface::Gutter) => next.undersize.push(particle.grain),
-                Some(Surface::Bin) => next.oversize.push(particle.grain),
-                Some(Surface::Wire) => next.spills.push(particle.grain),
-                None => next.particles.push(particle),
+        if let Some(mut bulk) = next.bulk.take() {
+            bulk.step(&mut next, dt as f64)?;
+            next.bulk = Some(bulk);
+        } else {
+            let wires = next.rest_wires();
+            let gutter = next.gutter_triangles();
+            let bin = next.bin_triangles();
+            let mut particles = std::mem::take(&mut next.particles);
+            for mut particle in particles.drain(..) {
+                match next.advance(&mut particle, dt as f64, &wires, &gutter, &bin)? {
+                    Some(Surface::Gutter) => next.undersize.push(particle.grain),
+                    Some(Surface::Bin) => next.oversize.push(particle.grain),
+                    Some(Surface::Wire) => next.spills.push(particle.grain),
+                    None => next.particles.push(particle),
+                }
             }
         }
         next.elapsed_time_s += dt as f64;
